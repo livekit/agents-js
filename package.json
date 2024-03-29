@@ -1,10 +1,21 @@
 {
   "name": "@livekit/agents",
-  "module": "src/index.ts",
   "version": "0.1.0",
+  "description": "LiveKit Node Agents",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "author": "aoife cassidy <aoife@cassidy.sh>",
   "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src"
+  },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.1.3",
+    "typescript-eslint": "^7.4.0"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"
