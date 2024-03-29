@@ -10,6 +10,9 @@
     "build": "tsc",
     "lint": "eslint src"
   },
+  "bin": {
+    "agents": "dist/cli.js"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "eslint": "^8.57.0",
