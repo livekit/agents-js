@@ -1,0 +1,15 @@
+{
+  "name": "@livekit/agents",
+  "module": "src/index.ts",
+  "version": "0.1.0",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@livekit/protocol": "^1.12.0"
+  }
+}

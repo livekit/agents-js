@@ -1,0 +1,14 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: livekit-agents
+Upstream-Contact: LiveKit, Inc. <https://livekit.io>
+Source: https://livekit.io
+
+# trivial files
+Files: .gitignore flake.lock
+Copyright: 2024 LiveKit, Inc.
+License: Apache-2.0
+
+# node project files
+Files: package.json tsconfig.json bun.lockb .prettierrc
+Copyright: 2024 LiveKit, Inc.
+License: Apache-2.0
