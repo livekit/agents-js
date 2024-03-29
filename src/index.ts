@@ -2,11 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { version } from '../package.json';
 import { VAD, VADEventType, VADStream } from './vad';
 import { Plugin } from './plugin';
 
-module.exports = {
+const version = '0.1.0';
+
+export {
   version,
   VAD,
   VADEventType,

@@ -9,6 +9,6 @@ Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
 
 # node project files
-Files: package.json tsconfig.json bun.lockb .prettierrc
+Files: package.json tsconfig.json bun.lockb .prettierrc eslint.config.js
 Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
