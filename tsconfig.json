@@ -13,5 +13,5 @@
     "sourceMap": true,
     "outDir": "dist"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["**/*.ts"]
 }
