@@ -8,7 +8,12 @@ Files: .gitignore flake.lock
 Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
 
-# node project files
+# global project files
 Files: package.json tsconfig.json bun.lockb .prettierrc eslint.config.js
+Copyright: 2024 LiveKit, Inc.
+License: Apache-2.0
+
+# agents project files
+Files: agents/package.json
 Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
