@@ -9,7 +9,7 @@ Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
 
 # global project files
-Files: package.json tsconfig.json bun.lockb .prettierrc eslint.config.js
+Files: package.json tsconfig.json bun.lockb .prettierrc eslint.config.mjs
 Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
 
