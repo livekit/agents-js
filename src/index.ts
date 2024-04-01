@@ -2,6 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export { VAD, VADEventType, VADStream } from './vad';
-export { Plugin } from './plugin';
-export { version } from './version';
+export * from './vad';
+export * from './plugin';
+export * from './version';

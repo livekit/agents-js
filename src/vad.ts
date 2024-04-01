@@ -10,7 +10,7 @@ export enum VADEventType {
   END_OF_SPEECH = 3,
 }
 
-interface VADEvent {
+export interface VADEvent {
   type: VADEventType;
   samplesIndex: number;
   duration: number;
@@ -33,11 +33,11 @@ export abstract class VAD {
   }): VADStream;
 }
 
-export abstract class VADStream {
+export abstract class VADStream implements IterableIterator<VADEvent> {
   abstract pushFrame(frame: AudioFrame): void;
-  abstract aclose(wait: boolean): Promise<void>;
-  abstract anext(): Promise<VADEvent>;
-  private aiter(): VADStream {
+  abstract close(wait: boolean): Promise<void>;
+  abstract next(): IteratorResult<VADEvent>;
+  [Symbol.iterator](): VADStream {
     return this;
   }
 }

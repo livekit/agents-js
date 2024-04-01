@@ -24,6 +24,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "commander": "^12.0.0",
     "@livekit/protocol": "^1.12.0"
   }
 }
