@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: agents CI
+on: [push, pull_request]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: REUSE-3.0 compliance check
+        uses: fsfe/reuse-action@v3
+      - uses: oven-sh/setup-bun@v1
+      - name: ESLint
+        run: |
+          bun install
+          cd agents
+          bun lint
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v1
+      - name: Bun build
+        run: |
+          bun install
+          cd agents
+          bun run build
