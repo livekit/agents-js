@@ -4,16 +4,24 @@
 
 import { Room, LocalParticipant, RemoteParticipant } from '@livekit/rtc-node';
 import { Job } from '@livekit/protocol';
+import { EventEmitter } from 'events';
 
 export class JobContext {
   #job: Job;
   #room: Room;
   #publisher: RemoteParticipant | undefined;
+  tx: EventEmitter;
 
-  constructor(job: Job, room: Room, publisher: RemoteParticipant | undefined = undefined) {
+  constructor(
+    tx: EventEmitter,
+    job: Job,
+    room: Room,
+    publisher: RemoteParticipant | undefined = undefined,
+  ) {
     this.#job = job;
     this.#room = room;
     this.#publisher = publisher;
+    this.tx = tx;
   }
 
   get id(): string {
@@ -36,8 +44,7 @@ export class JobContext {
     return this.#room.localParticipant;
   }
 
-  // TODO(nbsp): aio
-  // async shutdown() {
-  //   await this.closeTx.close();
-  // }
+  async shutdown() {
+    this.tx.removeAllListeners();
+  }
 }
