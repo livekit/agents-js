@@ -45,6 +45,6 @@ export class JobContext {
   }
 
   async shutdown() {
-    this.tx.removeAllListeners();
+    this.tx.emit('close');
   }
 }

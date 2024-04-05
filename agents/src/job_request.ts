@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { JobContext } from './job_context';
 import { VideoGrant } from 'livekit-server-sdk';
 import { Job, ParticipantInfo, Room } from '@livekit/protocol';
@@ -27,7 +31,7 @@ enum AutoSubscribe {
 
 type AgentEntry = (ctx: JobContext) => Promise<void>;
 
-type AcceptData = {
+export type AcceptData = {
   entry: AgentEntry;
   autoSubscribe: AutoSubscribe;
   autoDisconnect: AutoDisconnect;
