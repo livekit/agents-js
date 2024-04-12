@@ -20,10 +20,10 @@ import { runJob } from './job_main';
 import { EventEmitter } from 'events';
 import { log } from '../log';
 
-const START_TIMEOUT = 90;
-const PING_INTERVAL = 5;
-const PING_TIMEOUT = 90;
-const HIGH_PING_THRESHOLD = 10; // milliseconds
+const START_TIMEOUT = 90 * 1000;
+const PING_INTERVAL = 5 * 1000;
+const PING_TIMEOUT = 90 * 1000;
+const HIGH_PING_THRESHOLD = 10;
 
 export class JobProcess {
   #job: Job;
@@ -103,6 +103,7 @@ export class JobProcess {
           const delay = Date.now() - msg.timestamp;
           if (delay > HIGH_PING_THRESHOLD) {
             this.logger.warn(`job is unresponsive (${delay}ms delay)`);
+            // @ts-expect-error: this actually works fine types/bun doesn't have a typedecl for it yet
             pongTimeout.refresh();
           }
         } else if (msg instanceof UserExit || msg instanceof ShutdownResponse) {
