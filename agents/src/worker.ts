@@ -29,7 +29,7 @@ const cpuLoad = (): number =>
   (os
     .cpus()
     .reduce(
-      (acc, x) => acc + x.times.user / Object.values(x.times).reduce((acc, x) => acc + x, 0),
+      (acc, x) => acc + x.times.idle / Object.values(x.times).reduce((acc, x) => acc + x, 0),
       0,
     ) /
     os.cpus().length) *
