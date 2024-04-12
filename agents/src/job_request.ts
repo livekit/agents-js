@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { JobContext } from './job_context';
-import { VideoGrant } from 'livekit-server-sdk';
 import { Job, ParticipantInfo, Room } from '@livekit/protocol';
 import { log } from './log';
 import { EventEmitter } from 'events';
@@ -35,16 +34,15 @@ export type AcceptData = {
   entry: AgentEntry;
   autoSubscribe: AutoSubscribe;
   autoDisconnect: AutoDisconnect;
-  grants: VideoGrant;
   name: string;
   identity: string;
   metadata: string;
   assign: EventEmitter;
 };
 
-type AvailRes = {
+export type AvailRes = {
   avail: boolean;
-  data: AcceptData | undefined;
+  data?: AcceptData;
 };
 
 export class JobRequest {
@@ -91,7 +89,6 @@ export class JobRequest {
     entry: AgentEntry,
     autoSubscribe: AutoSubscribe = AutoSubscribe.SUBSCRIBE_ALL,
     autoDisconnect: AutoDisconnect = AutoDisconnect.ROOM_EMPTY,
-    grants: VideoGrant,
     name: string = '',
     identity: string = '',
     metadata: string = '',
@@ -110,7 +107,6 @@ export class JobRequest {
       entry,
       autoSubscribe,
       autoDisconnect,
-      grants,
       name,
       identity,
       metadata,

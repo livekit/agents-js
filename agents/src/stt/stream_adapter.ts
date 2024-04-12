@@ -12,7 +12,7 @@ export class StreamAdapterWrapper extends SpeechStream {
   stt: STT;
   vadStream: VADStream;
   eventQueue: (SpeechEvent | undefined)[];
-  language: string | undefined;
+  language?: string;
   task: {
     run: Promise<void>;
     cancel: () => void;

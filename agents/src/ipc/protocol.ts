@@ -31,7 +31,7 @@ export class StartJobRequest implements Message {
 
 export class StartJobResponse implements Message {
   static MSG_ID = 1;
-  err: Error | undefined;
+  err?: Error;
 
   get MSG_ID(): number {
     return StartJobResponse.MSG_ID;

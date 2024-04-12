@@ -49,7 +49,7 @@ export abstract class STT {
     this.#streamingSupported = streamingSupported;
   }
 
-  abstract recognize(buffer: AudioBuffer, language: string | undefined): Promise<SpeechEvent>;
+  abstract recognize(buffer: AudioBuffer, language?: string): Promise<SpeechEvent>;
 
   abstract stream(language: string | undefined): SpeechStream;
 

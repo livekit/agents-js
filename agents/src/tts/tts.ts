@@ -17,7 +17,7 @@ export enum SynthesisEventType {
 
 export class SynthesisEvent {
   type: SynthesisEventType;
-  audio: SynthesizedAudio | undefined;
+  audio?: SynthesizedAudio;
 
   constructor(type: SynthesisEventType, audio: SynthesizedAudio | undefined = undefined) {
     this.type = type;
@@ -26,7 +26,7 @@ export class SynthesisEvent {
 }
 
 export abstract class SynthesizeStream implements IterableIterator<SynthesisEvent> {
-  abstract pushText(token: string | undefined): void;
+  abstract pushText(token?: string): void;
 
   markSegmentEnd() {
     this.pushText(undefined);
