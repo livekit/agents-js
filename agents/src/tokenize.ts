@@ -7,7 +7,7 @@ export interface SegmentedSentence {
 }
 
 export abstract class SentenceTokenizer {
-  abstract tokenize(text: string, language: string | undefined): SegmentedSentence[];
+  abstract tokenize(text: string, language?: string): SegmentedSentence[];
   abstract stream(language: string | undefined): SentenceStream;
 }
 

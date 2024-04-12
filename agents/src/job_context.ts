@@ -9,7 +9,7 @@ import { EventEmitter } from 'events';
 export class JobContext {
   #job: Job;
   #room: Room;
-  #publisher: RemoteParticipant | undefined;
+  #publisher?: RemoteParticipant;
   tx: EventEmitter;
 
   constructor(
