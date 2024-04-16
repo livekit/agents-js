@@ -2,16 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { runApp } from '../agents/src/cli'
-import { JobContext, JobRequest, WorkerOptions } from '../agents/src'
+import { runApp } from '../agents/src/cli';
+import { JobContext, JobRequest, WorkerOptions } from '../agents/src';
 
 const requestFunc = async (req: JobRequest) => {
-  console.log('received request', req)
+  console.log('received request', req);
   await req.accept(async (_: JobContext) => {
-    console.log('starting voice assistant...')
+    console.log('starting voice assistant...');
 
     // etc
-  })
-}
+  });
+};
 
-runApp(new WorkerOptions({ requestFunc }))
+runApp(new WorkerOptions({ requestFunc }));
