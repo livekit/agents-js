@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2024 aoife cassidy <aoife@cassidy.sh>
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# aikit-js
+# Agents Framework for NodeJS
 
 This is a Node port of the [LiveKit Agents framework](https://livekit.io/agents), originally written in Python.
 
@@ -27,8 +27,8 @@ This project depends on an as-yet-unreleased version of `@livekit/rtc-node`. Tha
 rtc-node$ bun link
 Success! Registered "@livekit/rtc-node"
 
-rtc-node$ cd ~/src/aikit-js
-aikit-js$ bun link @livekit/rtc-node
+rtc-node$ cd ~/src/agents-js
+agents-js$ bun link @livekit/rtc-node
 ```
 
 This will not add the package to `package.json`, however it will be imported and ready to use. Now you can build the project:
