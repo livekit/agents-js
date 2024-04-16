@@ -10,9 +10,6 @@
     "build": "bun run build.ts",
     "lint": "eslint src"
   },
-  "bin": {
-    "agents": "dist/cli.js"
-  },
   "devDependencies": {
     "@types/bun": "latest",
     "@types/ws": "^8.5.10",

@@ -12,6 +12,7 @@ import {
   ParticipantPermission,
   ServerMessage,
   JobAssignment,
+  AvailabilityRequest,
 } from '@livekit/protocol';
 import { AcceptData } from './job_request';
 import { HTTPServer } from './http_server';
@@ -119,6 +120,15 @@ class ActiveJob {
   }
 }
 
+class PendingAssignment {
+  promise = new Promise<JobAssignment>((resolve) => {
+    this.resolve = resolve; // oh, JavaScript.
+  });
+  resolve(arg: JobAssignment) {
+    arg;
+  }
+}
+
 export class Worker {
   opts: WorkerOptions;
   #id = 'unregistered';
@@ -127,7 +137,7 @@ export class Worker {
   httpServer: HTTPServer;
   logger = log.child({ version });
   event = new EventEmitter();
-  pending: { [id: string]: { value?: JobAssignment } } = {};
+  pending: { [id: string]: { value: PendingAssignment } } = {};
   processes: { [id: string]: { proc: JobProcess; activeJob: ActiveJob } } = {};
 
   constructor(opts: WorkerOptions) {
@@ -192,18 +202,16 @@ export class Worker {
   }
 
   startProcess(job: Job, url: string, token: string, acceptData: AcceptData) {
-    const proc = new JobProcess(job, url, token, acceptData.entry);
+    const proc = new JobProcess(job, url, token, acceptData);
     this.processes[job.id] = { proc, activeJob: new ActiveJob(job, acceptData) };
-    new Promise((_, reject) => {
-      try {
-        proc.run();
-      } catch (e) {
+    proc
+      .run()
+      .catch(() => {
         proc.logger.error(`error running job process ${proc.job.id}`);
-        reject(e);
-      } finally {
+      })
+      .finally(() => {
         delete this.processes[job.id];
-      }
-    });
+      });
   }
 
   runWS(ws: WebSocket) {
@@ -240,61 +248,7 @@ export class Worker {
           break;
         }
         case 'availability': {
-          const tx = new EventEmitter();
-          const req = new JobRequest(msg.message.value.job!, tx);
-          this.event.on('recv', (av: AvailRes) => {
-            const msg = new WorkerMessage({
-              message: {
-                case: 'availability',
-                value: {
-                  available: av.avail,
-                  jobId: req.id,
-                  participantIdentity: av.data?.identity,
-                  participantName: av.data?.name,
-                  participantMetadata: av.data?.metadata,
-                },
-              },
-            });
-
-            this.pending[req.id] = { value: undefined };
-            this.event.emit('worker_msg', msg);
-
-            new Promise((_, reject) => {
-              const timer = setTimeout(() => {
-                reject(new Error(`assignment for job ${req.id} timed out`));
-              }, ASSIGNMENT_TIMEOUT);
-              Promise.resolve(this.pending[req.id].value).then((value) => {
-                clearTimeout(timer);
-                const url = value?.url || this.opts.wsURL;
-
-                try {
-                  this.opts.requestFunc(req);
-                } catch (e) {
-                  log.child({ req }).error(`user request hadnler for job ${req.id} failed`);
-                } finally {
-                  if (!req.answered) {
-                    log
-                      .child({ req })
-                      .error(`no answer for job ${req.id}, automatically rejecting the job`);
-                    this.event.emit(
-                      'worker_msg',
-                      new WorkerMessage({
-                        message: {
-                          case: 'availability',
-                          value: {
-                            available: false,
-                          },
-                        },
-                      }),
-                    );
-                  }
-                }
-
-                this.startProcess(value!.job!, url, value!.token, av.data!);
-              });
-            });
-          });
-
+          this.availability(msg.message.value);
           break;
         }
         case 'assignment': {
@@ -302,7 +256,7 @@ export class Worker {
           if (job.id in this.pending) {
             const task = this.pending[job.id];
             delete this.pending[job.id];
-            task.value = msg.message.value;
+            task.value.resolve(msg.message.value);
           } else {
             log.child({ job }).warn('received assignment for unknown job ' + job.id);
           }
@@ -348,10 +302,69 @@ export class Worker {
     }, LOAD_INTERVAL);
   }
 
+  async availability(msg: AvailabilityRequest) {
+    const tx = new EventEmitter();
+    const req = new JobRequest(msg.job!, tx);
+
+    tx.on('recv', async (av: AvailRes) => {
+      const msg = new WorkerMessage({
+        message: {
+          case: 'availability',
+          value: {
+            available: av.avail,
+            jobId: req.id,
+            participantIdentity: av.data?.identity,
+            participantName: av.data?.name,
+            participantMetadata: av.data?.metadata,
+          },
+        },
+      });
+
+      this.pending[req.id] = { value: new PendingAssignment() };
+      this.event.emit('worker_msg', msg);
+      if (!av.avail) return;
+
+      const timer = setTimeout(() => {
+        log.child({ req }).warn(`assignment for job ${req.id} timed out`);
+        return;
+      }, ASSIGNMENT_TIMEOUT);
+      this.pending[req.id].value.promise.then((value) => {
+        clearTimeout(timer);
+        const url = value.url || this.opts.wsURL;
+        this.startProcess(value!.job!, url, value.token, av.data!);
+      });
+    });
+
+    try {
+      this.opts.requestFunc(req);
+    } catch (e) {
+      log.child({ req }).error(`user request handler for job ${req.id} failed`);
+    } finally {
+      if (!req.answered) {
+        log.child({ req }).error(`no answer for job ${req.id}, automatically rejecting the job`);
+        this.event.emit(
+          'worker_msg',
+          new WorkerMessage({
+            message: {
+              case: 'availability',
+              value: {
+                available: false,
+              },
+            },
+          }),
+        );
+      }
+    }
+  }
+
   async close() {
     if (this.closed) return;
+    this.closed = true;
     this.logger.info('shutting down worker');
     await this.httpServer.close();
-    this.session;
+    for await (const value of Object.values(this.processes)) {
+      value.proc.close();
+    }
+    this.session?.close();
   }
 }

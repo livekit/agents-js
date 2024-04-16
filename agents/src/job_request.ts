@@ -21,14 +21,14 @@ enum AutoDisconnect {
   NONE,
 }
 
-enum AutoSubscribe {
+export enum AutoSubscribe {
   SUBSCRIBE_ALL,
   SUBSCRIBE_NONE,
   VIDEO_ONLY,
   AUDIO_ONLY,
 }
 
-type AgentEntry = (ctx: JobContext) => Promise<void>;
+export type AgentEntry = (ctx: JobContext) => Promise<void>;
 
 export type AcceptData = {
   entry: AgentEntry;
@@ -102,6 +102,8 @@ export class JobRequest {
     assign.on('error', (e) => {
       throw e;
     });
+
+    if (identity === '') identity = 'agent-' + this.id;
 
     const data: AcceptData = {
       entry,
