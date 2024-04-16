@@ -22,6 +22,7 @@ const runWorker = async (args: CliArgs) => {
 
   process.on('SIGINT', async () => {
     await worker.close();
+    log.info('worker closed');
     process.exit(130); // SIGINT exit code
   });
 
@@ -29,6 +30,7 @@ const runWorker = async (args: CliArgs) => {
     await worker.run();
   } catch {
     log.fatal('worker failed');
+    process.exit(1);
   }
 };
 
