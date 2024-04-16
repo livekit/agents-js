@@ -3,13 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Job } from '@livekit/protocol';
-import { JobContext } from '../job_context';
+import { AcceptData } from '../job_request';
 
 export type JobMainArgs = {
   jobID: string;
   url: string;
   token: string;
-  target: (arg: JobContext) => void;
+  acceptData: AcceptData;
 };
 
 export interface Message {
