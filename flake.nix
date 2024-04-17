@@ -15,8 +15,9 @@
       };
 
       in {
-        devShell = pkgs.mkShell {
-          nativeBuildInputs = with pkgs; [ bun reuse ];
+        devShell = with pkgs; mkShell {
+          nativeBuildInputs = [ bun reuse ];
+          LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib/";
         };
       }
     );
