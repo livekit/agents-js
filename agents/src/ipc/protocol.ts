@@ -13,109 +13,48 @@ export type JobMainArgs = {
 };
 
 export interface Message {
-  MSG_ID: number; // TypeScript is weird with statics; this requires a getter hack
+  type: IPC_MESSAGE;
 }
 
-export class StartJobRequest implements Message {
-  static MSG_ID = 0;
+export interface StartJobRequest extends Message {
+  type: IPC_MESSAGE.StartJobRequest;
   job: Job;
-
-  get MSG_ID(): number {
-    return StartJobRequest.MSG_ID;
-  }
-
-  constructor(job = new Job()) {
-    this.job = job;
-  }
 }
 
-export class StartJobResponse implements Message {
-  static MSG_ID = 1;
+export interface StartJobResponse extends Message {
+  type: IPC_MESSAGE.StartJobResponse;
   err?: Error;
-
-  get MSG_ID(): number {
-    return StartJobResponse.MSG_ID;
-  }
-
-  constructor(err: Error | undefined = undefined) {
-    this.err = err;
-  }
 }
 
-export class Log implements Message {
-  static MSG_ID = 2;
-  level: number;
-  message: string;
-
-  get MSG_ID(): number {
-    return Log.MSG_ID;
-  }
-
-  constructor(level = 10, message = '') {
-    this.level = level;
-    this.message = message;
-  }
-}
-
-export class Ping implements Message {
-  static MSG_ID = 3;
+export interface Ping extends Message {
+  type: IPC_MESSAGE.Ping;
   timestamp: number;
-
-  get MSG_ID(): number {
-    return Ping.MSG_ID;
-  }
-
-  constructor(timestamp = 0) {
-    this.timestamp = timestamp;
-  }
 }
 
-export class Pong implements Message {
-  static MSG_ID = 4;
+export interface Pong extends Message {
+  type: IPC_MESSAGE.Pong;
   lastTimestamp: number;
   timestamp: number;
-
-  get MSG_ID(): number {
-    return Pong.MSG_ID;
-  }
-
-  constructor(lastTimestamp = 0, timestamp = 0) {
-    this.lastTimestamp = lastTimestamp;
-    this.timestamp = timestamp;
-  }
 }
 
-export class ShutdownRequest implements Message {
-  static MSG_ID = 5;
-
-  get MSG_ID(): number {
-    return ShutdownRequest.MSG_ID;
-  }
+export interface ShutdownRequest extends Message {
+  type: IPC_MESSAGE.ShutdownRequest;
 }
 
-export class ShutdownResponse implements Message {
-  static MSG_ID = 6;
-
-  get MSG_ID(): number {
-    return ShutdownResponse.MSG_ID;
-  }
+export interface ShutdownResponse extends Message {
+  type: IPC_MESSAGE.ShutdownResponse;
 }
 
-export class UserExit implements Message {
-  static MSG_ID = 7;
-
-  get MSG_ID(): number {
-    return UserExit.MSG_ID;
-  }
+export interface UserExit extends Message {
+  type: IPC_MESSAGE.UserExit;
 }
 
-export const IPC_MESSAGES: { [x: number]: Message } = {
-  [StartJobRequest.MSG_ID]: new StartJobRequest(),
-  [StartJobResponse.MSG_ID]: new StartJobResponse(),
-  [Log.MSG_ID]: new Log(),
-  [Ping.MSG_ID]: new Ping(),
-  [Pong.MSG_ID]: new Pong(),
-  [ShutdownRequest.MSG_ID]: new ShutdownRequest(),
-  [ShutdownResponse.MSG_ID]: new ShutdownResponse(),
-  [UserExit.MSG_ID]: new UserExit(),
-};
+export enum IPC_MESSAGE {
+  StartJobRequest,
+  StartJobResponse,
+  Ping,
+  Pong,
+  ShutdownRequest,
+  ShutdownResponse,
+  UserExit,
+}

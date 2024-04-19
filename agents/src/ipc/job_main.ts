@@ -2,24 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  JobMainArgs,
-  Message,
-  Ping,
-  Pong,
-  ShutdownRequest,
-  ShutdownResponse,
-  StartJobRequest,
-  StartJobResponse,
-  UserExit,
-} from './protocol';
+import { IPC_MESSAGE, JobMainArgs, Message, Ping, StartJobRequest } from './protocol';
 import { Room } from '@livekit/rtc-node';
 import { EventEmitter, once } from 'events';
 import { JobContext } from '../job_context';
 import { log } from '../log';
 import { AgentEntry } from '../job_request';
 
-export const runJob = (event: EventEmitter, args: JobMainArgs) => {
+export const runJob = async (event: EventEmitter, args: JobMainArgs) => {
   const room = new Room();
   const conn = room.connect(args.url, args.token);
   let request: StartJobRequest | undefined = undefined;
@@ -30,7 +20,7 @@ export const runJob = (event: EventEmitter, args: JobMainArgs) => {
 
   const start = () => {
     if (request && room.isConnected && !closed) {
-      event.emit('msg', new StartJobResponse());
+      event.emit('msg', { type: IPC_MESSAGE.StartJobResponse });
 
       task = args.acceptData.entry;
       context = new JobContext(event, request.job, room);
@@ -44,36 +34,36 @@ export const runJob = (event: EventEmitter, args: JobMainArgs) => {
       .then(() => {
         if (!closed) start();
       })
-      .catch(() => {
-        if (!closed) event.emit('msg', new StartJobResponse());
+      .catch((err) => {
+        if (!closed) event.emit('msg', { type: IPC_MESSAGE.StartJobResponse, err });
       });
   });
 
-  event.once('close', () => {
-    event.emit('msg', new UserExit());
-    closed = true;
-  });
-
   event.on('msg', (msg: Message) => {
-    if (msg instanceof ShutdownRequest) {
+    if (msg.type === IPC_MESSAGE.ShutdownRequest) {
       shuttingDown = true;
       closed = true;
-    } else if (msg instanceof StartJobRequest) {
-      request = msg;
+      event.emit('close')
+    } else if (msg.type === IPC_MESSAGE.StartJobRequest) {
+      request = msg as StartJobRequest;
       start();
-    } else if (msg instanceof Ping) {
-      event.emit('msg', new Pong(msg.timestamp, Date.now()));
+    } else if (msg.type === IPC_MESSAGE.Ping) {
+      event.emit('msg', {
+        type: IPC_MESSAGE.Pong,
+        lastTimestamp: (msg as Ping).timestamp,
+        timestamp: Date.now(),
+      });
     }
   });
 
-  once(event, 'close').then(() => {
-    log.debug('disconnecting from room');
-    room.disconnect().then(() => {
-      if (shuttingDown) {
-        event.emit('msg', new ShutdownResponse());
-      }
-
-      event.removeAllListeners();
-    });
-  });
+  await once(event, 'close');
+  log.debug('disconnecting from room');
+  await room.disconnect();
+  if (shuttingDown) {
+    event.emit('msg', { type: IPC_MESSAGE.ShutdownResponse });
+  } else {
+    event.emit('msg', { type: IPC_MESSAGE.UserExit });
+    closed = true;
+  }
+  event.emit('exit');
 };

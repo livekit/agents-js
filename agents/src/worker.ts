@@ -363,7 +363,7 @@ export class Worker {
     this.logger.info('shutting down worker');
     await this.httpServer.close();
     for await (const value of Object.values(this.processes)) {
-      value.proc.close();
+      await value.proc.close();
     }
     this.session?.close();
   }

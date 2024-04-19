@@ -3,18 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Job } from '@livekit/protocol';
-import {
-  JobMainArgs,
-  Log,
-  Message,
-  Ping,
-  Pong,
-  ShutdownRequest,
-  ShutdownResponse,
-  StartJobRequest,
-  StartJobResponse,
-  UserExit,
-} from './protocol';
+import { IPC_MESSAGE, JobMainArgs, Message, Pong, StartJobResponse } from './protocol';
 import { runJob } from './job_main';
 import { EventEmitter, once } from 'events';
 import { log } from '../log';
@@ -30,8 +19,10 @@ export class JobProcess {
   #job: Job;
   args: JobMainArgs;
   event: EventEmitter;
-  closed = false;
   logger: Logger;
+  startTimeout?: Timer;
+  pongTimeout?: Timer;
+  pingInterval?: Timer;
 
   constructor(job: Job, url: string, token: string, acceptData: AcceptData) {
     this.#job = job;
@@ -46,75 +37,56 @@ export class JobProcess {
 
   async close() {
     this.logger.info('closing job process');
-    this.event.emit('msg', new ShutdownRequest());
-    this.event.removeAllListeners();
+    this.event.emit('msg', { type: IPC_MESSAGE.ShutdownRequest });
+    await this.clear();
+    await once(this.event, 'exit')
     this.logger.info('job process closed');
+  }
+
+  async clear() {
+    clearTimeout(this.startTimeout)
+    clearTimeout(this.pongTimeout)
+    clearTimeout(this.pingInterval)
   }
 
   async run() {
     let resp: StartJobResponse | undefined = undefined;
 
     runJob(this.event, this.args);
-    this.event.emit('msg', new StartJobRequest(this.job));
+    this.event.emit('msg', { type: IPC_MESSAGE.StartJobRequest, job: this.job });
 
-    setTimeout(() => {
+    this.startTimeout = setTimeout(() => {
       if (resp === undefined) {
         this.logger.error('process start timed out, killing job');
         this.close();
       }
     }, START_TIMEOUT);
 
-    const pingInterval = setInterval(() => {
-      if (this.closed) clearInterval(pingInterval);
-      else {
-        this.event.emit('msg', new Ping(Date.now()));
-      }
+    this.pingInterval = setInterval(() => {
+      this.event.emit('msg', { type: IPC_MESSAGE.Ping, timestamp: Date.now() });
     }, PING_INTERVAL);
 
-    const pongTimeout = setTimeout(() => {
+    this.pongTimeout = setTimeout(() => {
       this.logger.error('job ping timed out, killing job');
       this.close();
     }, PING_TIMEOUT);
 
     this.event.on('msg', (msg: Message) => {
-      if (msg instanceof StartJobResponse) {
-        resp = msg;
-      } else if (msg instanceof Log) {
-        switch (msg.level) {
-          // pino uses 10, 20, ..., 60 as representations for log levels
-          case 10:
-            this.logger.trace(msg.message);
-            break;
-          case 20:
-            this.logger.debug(msg.message);
-            break;
-          case 30:
-            this.logger.info(msg.message);
-            break;
-          case 40:
-            this.logger.warn(msg.message);
-            break;
-          case 50:
-            this.logger.error(msg.message);
-            break;
-          case 60:
-            this.logger.fatal(msg.message);
-            break;
-        }
-      } else if (msg instanceof Pong) {
-        const delay = Date.now() - msg.timestamp;
+      if (msg.type === IPC_MESSAGE.StartJobResponse) {
+        resp = msg as StartJobResponse;
+      } else if (msg.type === IPC_MESSAGE.Pong) {
+        const delay = Date.now() - (msg as Pong).timestamp;
         if (delay > HIGH_PING_THRESHOLD) {
           this.logger.warn(`job is unresponsive (${delay}ms delay)`);
         }
         // @ts-expect-error: this actually works fine types/bun doesn't have a typedecl for it yet
-        pongTimeout.refresh();
-      } else if (msg instanceof UserExit || msg instanceof ShutdownResponse) {
+        this.pongTimeout.refresh();
+      } else if (msg.type === IPC_MESSAGE.UserExit || msg.type === IPC_MESSAGE.ShutdownResponse) {
         this.logger.info('job exiting');
         this.close();
       }
     });
 
-    await once(this.event, 'close');
-    this.close();
+    await once(this.event, 'exit');
   }
 }
