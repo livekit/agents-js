@@ -5,10 +5,11 @@
 import { Job } from '@livekit/protocol';
 import { IPC_MESSAGE, JobMainArgs, Message, Pong, StartJobResponse } from './protocol';
 import { runJob } from './job_main';
-import { EventEmitter, once } from 'events';
+import { once } from 'events';
 import { log } from '../log';
-import { AcceptData } from '../job_request';
 import { Logger } from 'pino';
+import { AcceptData } from '../job_request';
+import { ChildProcess } from 'child_process';
 
 const START_TIMEOUT = 90 * 1000;
 const PING_INTERVAL = 5 * 1000;
@@ -18,16 +19,15 @@ const HIGH_PING_THRESHOLD = 10;
 export class JobProcess {
   #job: Job;
   args: JobMainArgs;
-  event: EventEmitter;
   logger: Logger;
+  process?: ChildProcess;
   startTimeout?: Timer;
   pongTimeout?: Timer;
   pingInterval?: Timer;
 
-  constructor(job: Job, url: string, token: string, acceptData: AcceptData) {
+  constructor(job: Job, acceptData: AcceptData, raw: string, fallbackURL: string) {
     this.#job = job;
-    this.args = { jobID: job.id, url, token, acceptData };
-    this.event = new EventEmitter();
+    this.args = { entry: acceptData.entry.toString(), raw: raw, fallbackURL };
     this.logger = log.child({ job_id: this.#job.id });
   }
 
@@ -37,41 +37,42 @@ export class JobProcess {
 
   async close() {
     this.logger.info('closing job process');
-    this.event.emit('msg', { type: IPC_MESSAGE.ShutdownRequest });
     await this.clear();
-    await once(this.event, 'exit')
+    this.process!.send({ type: IPC_MESSAGE.ShutdownRequest });
+    await once(this.process!, 'disconnect');
     this.logger.info('job process closed');
   }
 
   async clear() {
-    clearTimeout(this.startTimeout)
-    clearTimeout(this.pongTimeout)
-    clearTimeout(this.pingInterval)
+    clearTimeout(this.startTimeout);
+    clearTimeout(this.pongTimeout);
+    clearInterval(this.pingInterval);
   }
 
   async run() {
     let resp: StartJobResponse | undefined = undefined;
 
-    runJob(this.event, this.args);
-    this.event.emit('msg', { type: IPC_MESSAGE.StartJobRequest, job: this.job });
-
     this.startTimeout = setTimeout(() => {
       if (resp === undefined) {
         this.logger.error('process start timed out, killing job');
-        this.close();
+        this.process?.kill();
+        this.clear();
       }
     }, START_TIMEOUT);
 
     this.pingInterval = setInterval(() => {
-      this.event.emit('msg', { type: IPC_MESSAGE.Ping, timestamp: Date.now() });
+      this.process?.send({ type: IPC_MESSAGE.Ping, timestamp: Date.now() });
     }, PING_INTERVAL);
 
     this.pongTimeout = setTimeout(() => {
       this.logger.error('job ping timed out, killing job');
-      this.close();
+      this.process?.kill();
+      this.clear();
     }, PING_TIMEOUT);
 
-    this.event.on('msg', (msg: Message) => {
+    this.process = runJob(this.args);
+
+    this.process.on('message', (msg: Message) => {
       if (msg.type === IPC_MESSAGE.StartJobResponse) {
         resp = msg as StartJobResponse;
       } else if (msg.type === IPC_MESSAGE.Pong) {
@@ -83,10 +84,10 @@ export class JobProcess {
         this.pongTimeout.refresh();
       } else if (msg.type === IPC_MESSAGE.UserExit || msg.type === IPC_MESSAGE.ShutdownResponse) {
         this.logger.info('job exiting');
-        this.close();
+        this.clear();
       }
     });
 
-    await once(this.event, 'exit');
+    await once(this.process, 'disconnect');
   }
 }

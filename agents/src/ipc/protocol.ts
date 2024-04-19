@@ -2,23 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Job } from '@livekit/protocol';
-import { AcceptData } from '../job_request';
-
 export type JobMainArgs = {
-  jobID: string;
-  url: string;
-  token: string;
-  acceptData: AcceptData;
+  entry: string;
+  raw: string;
+  fallbackURL: string;
 };
 
 export interface Message {
   type: IPC_MESSAGE;
-}
-
-export interface StartJobRequest extends Message {
-  type: IPC_MESSAGE.StartJobRequest;
-  job: Job;
 }
 
 export interface StartJobResponse extends Message {

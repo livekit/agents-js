@@ -2,30 +2,58 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { IPC_MESSAGE, JobMainArgs, Message, Ping, StartJobRequest } from './protocol';
+import { IPC_MESSAGE, JobMainArgs, Message, Ping } from './protocol';
 import { Room } from '@livekit/rtc-node';
 import { EventEmitter, once } from 'events';
 import { JobContext } from '../job_context';
 import { log } from '../log';
-import { AgentEntry } from '../job_request';
+import { ChildProcess, fork } from 'child_process';
+import { JobAssignment, ServerMessage } from '@livekit/protocol';
 
-export const runJob = async (event: EventEmitter, args: JobMainArgs) => {
+export const runJob = (args: JobMainArgs): ChildProcess => {
+  return fork(__filename, [args.raw, args.entry, args.fallbackURL]);
+};
+
+if (process.send) {
+  // process.argv:
+  //   [0] `node' or `bun'
+  //   [1] __filename
+  //   [2] proto.JobAssignment, serialized to JSON string
+  //   [3] entry function, serialized to string
+  //   [4] fallback URL in case JobAssignment.url is empty
+
+  const msg = new ServerMessage();
+  msg.fromJsonString(process.argv[2]);
+  const args = msg.message.value as JobAssignment;
+
   const room = new Room();
-  const conn = room.connect(args.url, args.token);
-  let request: StartJobRequest | undefined = undefined;
+  const closeEvent = new EventEmitter();
   let shuttingDown = false;
   let closed = false;
-  let task: AgentEntry | undefined = undefined;
-  let context: JobContext | undefined = undefined;
+
+  process.on('message', (msg: Message) => {
+    if (msg.type === IPC_MESSAGE.ShutdownRequest) {
+      shuttingDown = true;
+      closed = true;
+      closeEvent.emit('close');
+    } else if (msg.type === IPC_MESSAGE.Ping) {
+      process.send!({
+        type: IPC_MESSAGE.Pong,
+        lastTimestamp: (msg as Ping).timestamp,
+        timestamp: Date.now(),
+      });
+    }
+  });
+
+  // don't do anything on C-c
+  process.on('SIGINT', () => {});
+
+  const conn = room.connect(args.url || process.argv[4], args.token);
 
   const start = () => {
-    if (request && room.isConnected && !closed) {
-      event.emit('msg', { type: IPC_MESSAGE.StartJobResponse });
-
-      task = args.acceptData.entry;
-      context = new JobContext(event, request.job, room);
-
-      task(context);
+    if (room.isConnected && !closed) {
+      process.send!({ type: IPC_MESSAGE.StartJobResponse });
+      new Function('return ' + process.argv[3])()(new JobContext(closeEvent, args.job!, room));
     }
   };
 
@@ -35,35 +63,17 @@ export const runJob = async (event: EventEmitter, args: JobMainArgs) => {
         if (!closed) start();
       })
       .catch((err) => {
-        if (!closed) event.emit('msg', { type: IPC_MESSAGE.StartJobResponse, err });
+        if (!closed) process.send!({ type: IPC_MESSAGE.StartJobResponse, err });
       });
   });
 
-  event.on('msg', (msg: Message) => {
-    if (msg.type === IPC_MESSAGE.ShutdownRequest) {
-      shuttingDown = true;
-      closed = true;
-      event.emit('close')
-    } else if (msg.type === IPC_MESSAGE.StartJobRequest) {
-      request = msg as StartJobRequest;
-      start();
-    } else if (msg.type === IPC_MESSAGE.Ping) {
-      event.emit('msg', {
-        type: IPC_MESSAGE.Pong,
-        lastTimestamp: (msg as Ping).timestamp,
-        timestamp: Date.now(),
-      });
-    }
-  });
-
-  await once(event, 'close');
+  await once(closeEvent, 'close');
   log.debug('disconnecting from room');
   await room.disconnect();
   if (shuttingDown) {
-    event.emit('msg', { type: IPC_MESSAGE.ShutdownResponse });
+    process.send({ type: IPC_MESSAGE.ShutdownResponse });
   } else {
-    event.emit('msg', { type: IPC_MESSAGE.UserExit });
-    closed = true;
+    process.send({ type: IPC_MESSAGE.UserExit });
   }
-  event.emit('exit');
-};
+  process.exit();
+}
