@@ -11,8 +11,8 @@ import {
   WorkerMessage,
   ParticipantPermission,
   ServerMessage,
-  JobAssignment,
   AvailabilityRequest,
+  JobAssignment,
 } from '@livekit/protocol';
 import { AcceptData } from './job_request';
 import { HTTPServer } from './http_server';
@@ -120,11 +120,18 @@ class ActiveJob {
   }
 }
 
+type AssignmentPair = {
+  // this string is the JSON string version of the JobAssignment.
+  // we keep it around to unpack it again in the child, because we can't pass Job directly.
+  raw: string;
+  asgn: JobAssignment;
+};
+
 class PendingAssignment {
-  promise = new Promise<JobAssignment>((resolve) => {
+  promise = new Promise<AssignmentPair>((resolve) => {
     this.resolve = resolve; // oh, JavaScript.
   });
-  resolve(arg: JobAssignment) {
+  resolve(arg: AssignmentPair) {
     arg;
   }
 }
@@ -201,8 +208,8 @@ export class Worker {
     await Promise.all([workerWS(), this.httpServer.run()]);
   }
 
-  startProcess(job: Job, url: string, token: string, acceptData: AcceptData) {
-    const proc = new JobProcess(job, url, token, acceptData);
+  startProcess(job: Job, acceptData: AcceptData, raw: string) {
+    const proc = new JobProcess(job, acceptData, raw, this.opts.wsURL);
     this.processes[job.id] = { proc, activeJob: new ActiveJob(job, acceptData) };
     proc
       .run()
@@ -256,7 +263,10 @@ export class Worker {
           if (job.id in this.pending) {
             const task = this.pending[job.id];
             delete this.pending[job.id];
-            task.value.resolve(msg.message.value);
+            task.value.resolve({
+              asgn: msg.message.value,
+              raw: msg.toJsonString(),
+            });
           } else {
             log.child({ job }).warn('received assignment for unknown job ' + job.id);
           }
@@ -328,10 +338,9 @@ export class Worker {
         log.child({ req }).warn(`assignment for job ${req.id} timed out`);
         return;
       }, ASSIGNMENT_TIMEOUT);
-      this.pending[req.id].value.promise.then((value) => {
+      this.pending[req.id].value.promise.then(({ asgn, raw }) => {
         clearTimeout(timer);
-        const url = value.url || this.opts.wsURL;
-        this.startProcess(value!.job!, url, value.token, av.data!);
+        this.startProcess(asgn!.job!, av.data!, raw);
       });
     });
 
