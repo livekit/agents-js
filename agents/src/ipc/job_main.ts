@@ -53,6 +53,14 @@ if (process.send) {
   const start = () => {
     if (room.isConnected && !closed) {
       process.send!({ type: IPC_MESSAGE.StartJobResponse });
+
+      // JavaScript doesn't let us pass down function arguments to children /as functions/,
+      // because the [Function] type is a class, and thus is incompatible with the Web Workers
+      // structured clone algorithm, which only allows simple types and object literals.
+      // attempting to pass a function here through IPC will lead to a runtime DataCloneError.
+      //
+      // further info:
+      // https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm
       new Function('return ' + process.argv[3])()(new JobContext(closeEvent, args.job!, room));
     }
   };
