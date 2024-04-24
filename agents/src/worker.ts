@@ -170,7 +170,7 @@ export class Worker {
       throw new Error('--api-secret is required, or set LIVEKIT_API_SECRET env var');
 
     const workerWS = async () => {
-      // const retries = 0;
+      let retries = 0;
       while (!this.closed) {
         const token = new AccessToken(this.opts.apiKey, this.opts.apiSecret);
         token.addGrant({ agent: true });
@@ -181,27 +181,31 @@ export class Worker {
         this.session = new WebSocket(url + 'agent', {
           headers: { authorization: 'Bearer ' + jwt },
         });
-        this.session.on('open', () => {
-          this.session!.removeAllListeners('close');
+
+        try {
+          await new Promise((resolve, reject) => {
+            this.session!.on('open', resolve);
+            this.session!.on('error', (error) => reject(error));
+            this.session!.on('close', (code) => reject(`WebSocket returned ${code}`));
+          });
+
           this.runWS(this.session!);
-        });
-        return;
+          return;
+        } catch (e) {
+          if (this.closed) return;
+          if (retries >= this.opts.maxRetry) {
+            throw new Error(`failed to connect to LiveKit server after ${retries} attempts: ${e}`);
+          }
 
-        // TODO(nbsp): retries that actually work
-        // if (this.session.readyState !== WebSocket.OPEN) {
-        //   if (this.closed) return;
-        //   if (retries >= this.opts.maxRetry) {
-        //     throw new Error(`failed to connect to LiveKit server after ${retries} attempts: ${e}`);
-        //   }
+          retries++;
+          const delay = Math.min(retries * 2, 10);
 
-        //   const delay = Math.min(retries * 2, 10);
-        //   retries++;
+          this.logger.warn(
+            `failed to connect to LiveKit server, retrying in ${delay} seconds: ${e} (${retries}/${this.opts.maxRetry})`,
+          );
 
-        //   this.logger.warn(
-        //     `failed to connect to LiveKit server, retrying in ${delay} seconds: ${e} (${retries}/${this.opts.maxRetry})`,
-        //   );
-        //   await new Promise((resolve) => setTimeout(resolve, delay));
-        // }
+          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
+        }
       }
     };
 
@@ -235,7 +239,8 @@ export class Worker {
 
     ws.addEventListener('close', () => {
       closingWS = true;
-      if (!this.closed) throw new Error('worker connection closed unexpectedly');
+      this.logger.error('worker connection closed unexpectedly');
+      this.close();
     });
 
     ws.addEventListener('message', (event) => {
