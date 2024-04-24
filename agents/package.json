@@ -7,13 +7,12 @@
   "author": "aoife cassidy <aoife@cassidy.sh>",
   "type": "module",
   "scripts": {
-    "build": "bun run build.ts",
+    "build": "tsc",
     "lint": "eslint src"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "@types/ws": "^8.5.10",
-    "bun-plugin-dts": "^0.2.1",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-prettier": "^5.1.3",
