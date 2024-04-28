@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { JobContext } from './job_context';
 import { Job, ParticipantInfo, Room } from '@livekit/protocol';
 import { log } from './log';
 import { EventEmitter } from 'events';
@@ -28,10 +27,8 @@ export enum AutoSubscribe {
   AUDIO_ONLY,
 }
 
-export type AgentEntry = (ctx: JobContext) => Promise<void>;
-
 export type AcceptData = {
-  entry: AgentEntry;
+  entry: string; // filename
   autoSubscribe: AutoSubscribe;
   autoDisconnect: AutoDisconnect;
   name: string;
@@ -86,7 +83,7 @@ export class JobRequest {
   }
 
   async accept(
-    entry: AgentEntry,
+    entry: string,
     autoSubscribe: AutoSubscribe = AutoSubscribe.SUBSCRIBE_ALL,
     autoDisconnect: AutoDisconnect = AutoDisconnect.ROOM_EMPTY,
     name: string = '',

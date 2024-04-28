@@ -1,4 +1,4 @@
 {
   "private": true,
-  "workspaces": ["agents"]
+  "workspaces": ["agents", "plugins/*", "examples"]
 }
