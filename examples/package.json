@@ -1,0 +1,16 @@
+{
+  "private": true,
+  "name": "livekit-agents-examples",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@livekit/agents": "workspace:*",
+    "@livekit/elevenlabs": "workspace:*",
+    "@livekit/rtc-node": "^0.1.0"
+  }
+}

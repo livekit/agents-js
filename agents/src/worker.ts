@@ -221,6 +221,7 @@ export class Worker {
         proc.logger.error(`error running job process ${proc.job.id}`);
       })
       .finally(() => {
+        proc.clear();
         delete this.processes[job.id];
       });
   }
