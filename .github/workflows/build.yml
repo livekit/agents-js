@@ -19,6 +19,8 @@ jobs:
           bun install
           cd agents
           bun lint
+          cd ../plugins/elevenlabs
+          bun lint
 
   build:
     name: Build
@@ -31,4 +33,6 @@ jobs:
         run: |
           bun install
           cd agents
+          bun run build
+          cd ../plugins/elevenlabs
           bun run build
