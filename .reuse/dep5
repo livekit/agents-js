@@ -9,11 +9,11 @@ Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
 
 # global project files
-Files: package.json tsconfig.json bun.lockb .prettierrc eslint.config.mjs
+Files: package.json bun.lockb .prettierrc eslint.config.mjs
 Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
 
-# agents project files
-Files: agents/package.json
+# sub-project files
+Files: agents/package.json examples/package.json plugins/elevenlabs/package.json agents/tsconfig.json plugins/elevenlabs/tsconfig.json
 Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
