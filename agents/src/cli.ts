@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { version } from '.';
+import { version } from './version.js';
 import { Option, Command } from 'commander';
-import { WorkerOptions, Worker } from './worker';
+import { WorkerOptions, Worker } from './worker.js';
 import { EventEmitter } from 'events';
-import { log } from './log';
+import { log } from './log.js';
 
 type CliArgs = {
   opts: WorkerOptions;

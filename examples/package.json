@@ -2,6 +2,10 @@
   "private": true,
   "name": "livekit-agents-examples",
   "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },

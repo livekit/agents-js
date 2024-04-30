@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { TTSModels } from './models';
+import { TTSModels } from './models.js';
 import { log, tts } from '@livekit/agents';
 import { RawData, WebSocket } from 'ws';
 import { URL } from 'url';

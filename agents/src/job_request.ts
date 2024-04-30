@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Job, ParticipantInfo, Room } from '@livekit/protocol';
-import { log } from './log';
+import { log } from './log.js';
 import { EventEmitter } from 'events';
 
 class AnsweredError extends Error {

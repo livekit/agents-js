@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Job } from '@livekit/protocol';
-import { IPC_MESSAGE, JobMainArgs, Message, Pong, StartJobResponse } from './protocol';
-import { runJob } from './job_main';
+import { IPC_MESSAGE, JobMainArgs, Message, Pong, StartJobResponse } from './protocol.js';
+import { runJob } from './job_main.js';
 import { once } from 'events';
-import { log } from '../log';
+import { log } from '../log.js';
 import { Logger } from 'pino';
-import { AcceptData } from '../job_request';
+import { AcceptData } from '../job_request.js';
 import { ChildProcess } from 'child_process';
 
 const START_TIMEOUT = 90 * 1000;

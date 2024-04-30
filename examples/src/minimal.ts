@@ -8,9 +8,9 @@ import { fileURLToPath } from 'url';
 // your entry file *has* to include an exported function [entry].
 // this file will be imported from inside the library, and this function
 // will be called.
-export const entry = async (_: JobContext) => {
+export const entry = async (job: JobContext) => {
   console.log('starting voice assistant...');
-
+  job;
   // etc
 };
 

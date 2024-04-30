@@ -4,7 +4,7 @@
 
 import os from 'os';
 import { WebSocket } from 'ws';
-import { AvailRes, JobRequest } from './job_request';
+import { AvailRes, JobRequest } from './job_request.js';
 import {
   JobType,
   Job,
@@ -14,13 +14,13 @@ import {
   AvailabilityRequest,
   JobAssignment,
 } from '@livekit/protocol';
-import { AcceptData } from './job_request';
-import { HTTPServer } from './http_server';
-import { log } from './log';
-import { version } from './version';
+import { AcceptData } from './job_request.js';
+import { HTTPServer } from './http_server.js';
+import { log } from './log.js';
+import { version } from './version.js';
 import { AccessToken } from 'livekit-server-sdk';
 import { EventEmitter } from 'events';
-import { JobProcess } from './ipc/job_process';
+import { JobProcess } from './ipc/job_process.js';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 15 * 1000;

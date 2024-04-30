@@ -2,8 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { TTS, SynthesisEvent, SynthesisEventType, SynthesizedAudio, SynthesizeStream } from './tts';
-import { SentenceStream, SentenceTokenizer } from '../tokenize';
+import {
+  TTS,
+  SynthesisEvent,
+  SynthesisEventType,
+  SynthesizedAudio,
+  SynthesizeStream,
+} from './tts.js';
+import { SentenceStream, SentenceTokenizer } from '../tokenize.js';
 
 export class StreamAdapterWrapper extends SynthesizeStream {
   closed: boolean;
