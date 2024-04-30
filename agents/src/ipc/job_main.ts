@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { IPC_MESSAGE, JobMainArgs, Message, Ping } from './protocol';
+import { IPC_MESSAGE, JobMainArgs, Message, Ping } from './protocol.js';
 import { Room } from '@livekit/rtc-node';
 import { EventEmitter, once } from 'events';
-import { JobContext } from '../job_context';
-import { log } from '../log';
+import { JobContext } from '../job_context.js';
+import { log } from '../log.js';
 import { ChildProcess, fork } from 'child_process';
 import { JobAssignment, ServerMessage } from '@livekit/protocol';
 

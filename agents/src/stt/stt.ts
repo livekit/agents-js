@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { AudioFrame } from '@livekit/rtc-node';
-import { AudioBuffer } from '../utils';
+import { AudioBuffer } from '../utils.js';
 
 export enum SpeechEventType {
   START_OF_SPEECH = 0,

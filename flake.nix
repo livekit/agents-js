@@ -16,7 +16,7 @@
 
       in {
         devShell = with pkgs; mkShell {
-          nativeBuildInputs = [ bun reuse ];
+          nativeBuildInputs = [ nodejs nodePackages.pnpm reuse ];
           LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib/";
         };
       }

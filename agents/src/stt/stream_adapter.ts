@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { STT, SpeechEvent, SpeechEventType, SpeechStream } from './stt';
-import { VADEventType, VADStream } from '../vad';
+import { STT, SpeechEvent, SpeechEventType, SpeechStream } from './stt.js';
+import { VADEventType, VADStream } from '../vad.js';
 import { AudioFrame } from '@livekit/rtc-node';
-import { AudioBuffer, mergeFrames } from '../utils';
+import { AudioBuffer, mergeFrames } from '../utils.js';
 
 export class StreamAdapterWrapper extends SpeechStream {
   closed: boolean;
