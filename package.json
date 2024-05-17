@@ -4,6 +4,7 @@
   "scripts": {
     "build": "turbo run build",
     "build:agents": "turbo run build --filter=@livekit/agents...",
+    "build:plugins": "turbo run build --filter=@livekit/agents-plugin-*...",
     "lint": "turbo lint"
   },
   "devDependencies": {

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { cli, JobContext, JobRequest, log, WorkerOptions } from '@livekit/agents';
-import { TTS } from '@livekit/elevenlabs';
+import { TTS } from '@livekit/agents-plugin-elevenlabs';
 import { AudioSource, LocalAudioTrack, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
 import { fileURLToPath } from 'url';
 

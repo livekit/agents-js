@@ -1,5 +1,5 @@
 {
-  "name": "@livekit/elevenlabs",
+  "name": "@livekit/agents-plugin-elevenlabs",
   "version": "0.1.0",
   "description": "ElevenLabs plugin for LiveKit Node Agents",
   "main": "dist/index.js",
