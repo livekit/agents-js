@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import { Room, LocalParticipant, RemoteParticipant } from '@livekit/rtc-node';
-import { Job } from '@livekit/protocol';
-import { EventEmitter } from 'events';
+import type { Job } from '@livekit/protocol';
+import type { LocalParticipant, RemoteParticipant, Room } from '@livekit/rtc-node';
+import type { EventEmitter } from 'events';
 
 export class JobContext {
   #job: Job;

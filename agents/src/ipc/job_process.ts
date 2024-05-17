@@ -1,15 +1,20 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import { Job } from '@livekit/protocol';
-import { IPC_MESSAGE, JobMainArgs, Message, Pong, StartJobResponse } from './protocol.js';
-import { runJob } from './job_main.js';
+import type { Job } from '@livekit/protocol';
+import type { ChildProcess } from 'child_process';
 import { once } from 'events';
+import type { Logger } from 'pino';
+import type { AcceptData } from '../job_request.js';
 import { log } from '../log.js';
-import { Logger } from 'pino';
-import { AcceptData } from '../job_request.js';
-import { ChildProcess } from 'child_process';
+import { runJob } from './job_main.js';
+import {
+  IPC_MESSAGE,
+  type JobMainArgs,
+  type Message,
+  type Pong,
+  type StartJobResponse,
+} from './protocol.js';
 
 const START_TIMEOUT = 90 * 1000;
 const PING_INTERVAL = 5 * 1000;
@@ -21,9 +26,9 @@ export class JobProcess {
   args: JobMainArgs;
   logger: Logger;
   process?: ChildProcess;
-  startTimeout?: Timer;
-  pongTimeout?: Timer;
-  pingInterval?: Timer;
+  startTimeout?: ReturnType<typeof setTimeout>;
+  pongTimeout?: ReturnType<typeof setTimeout>;
+  pingInterval?: ReturnType<typeof setInterval>;
 
   constructor(job: Job, acceptData: AcceptData, raw: string, fallbackURL: string) {
     this.#job = job;

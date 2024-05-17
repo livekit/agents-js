@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import { version } from './version.js';
-import { Option, Command } from 'commander';
-import { WorkerOptions, Worker } from './worker.js';
-import { EventEmitter } from 'events';
+import { Command, Option } from 'commander';
+import type { EventEmitter } from 'events';
 import { log } from './log.js';
+import { version } from './version.js';
+import { Worker, type WorkerOptions } from './worker.js';
 
 type CliArgs = {
   opts: WorkerOptions;

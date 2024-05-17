@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import { createServer, ServerResponse, Server, IncomingMessage } from 'http';
+import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'http';
 
 const healthCheck = async (res: ServerResponse) => {
   res.writeHead(200);

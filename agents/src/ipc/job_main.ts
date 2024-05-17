@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import { IPC_MESSAGE, JobMainArgs, Message, Ping } from './protocol.js';
+import { type JobAssignment, ServerMessage } from '@livekit/protocol';
 import { Room } from '@livekit/rtc-node';
+import { type ChildProcess, fork } from 'child_process';
 import { EventEmitter, once } from 'events';
 import { JobContext } from '../job_context.js';
 import { log } from '../log.js';
-import { ChildProcess, fork } from 'child_process';
-import { JobAssignment, ServerMessage } from '@livekit/protocol';
+import { IPC_MESSAGE, type JobMainArgs, type Message, type Ping } from './protocol.js';
 
 export const runJob = (args: JobMainArgs): ChildProcess => {
   return fork(__filename, [args.raw, args.entry, args.fallbackURL]);

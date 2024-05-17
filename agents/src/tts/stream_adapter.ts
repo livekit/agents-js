@@ -1,15 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+import type { SentenceStream, SentenceTokenizer } from '../tokenize.js';
 import {
-  TTS,
   SynthesisEvent,
   SynthesisEventType,
-  SynthesizedAudio,
   SynthesizeStream,
+  type SynthesizedAudio,
+  TTS,
 } from './tts.js';
-import { SentenceStream, SentenceTokenizer } from '../tokenize.js';
 
 export class StreamAdapterWrapper extends SynthesizeStream {
   closed: boolean;

@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import { cli, JobContext, JobRequest, WorkerOptions } from '@livekit/agents';
+import { type JobContext, type JobRequest, WorkerOptions, cli } from '@livekit/agents';
 import { fileURLToPath } from 'url';
 
 // your entry file *has* to include an exported function [entry].
