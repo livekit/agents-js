@@ -8,10 +8,12 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "api:check": "api-extractor run --typescript-compiler-folder ../../node_modules/typescript",
+    "api:update": "api-extractor run --local --typescript-compiler-folder ../../node_modules/typescript --verbose"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@microsoft/api-extractor": "^7.35.0",
     "@types/ws": "^8.5.10",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
