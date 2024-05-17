@@ -16,7 +16,7 @@
 
       in {
         devShell = with pkgs; mkShell {
-          nativeBuildInputs = [ nodejs nodePackages.pnpm reuse ];
+          nativeBuildInputs = [ nodejs nodePackages.pnpm reuse turbo ];
           LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib/";
         };
       }

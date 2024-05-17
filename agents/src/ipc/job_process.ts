@@ -80,8 +80,7 @@ export class JobProcess {
         if (delay > HIGH_PING_THRESHOLD) {
           this.logger.warn(`job is unresponsive (${delay}ms delay)`);
         }
-        // @ts-expect-error: this actually works fine types/bun doesn't have a typedecl for it yet
-        this.pongTimeout.refresh();
+        this.pongTimeout?.refresh();
       } else if (msg.type === IPC_MESSAGE.UserExit || msg.type === IPC_MESSAGE.ShutdownResponse) {
         this.logger.info('job exiting');
         this.clear();

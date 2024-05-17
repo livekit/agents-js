@@ -1,0 +1,17 @@
+{
+  "name": "@livekit/agents-monorepo",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "build:agents": "turbo run build --filter=@livekit/agents...",
+    "lint": "turbo lint"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.1",
+    "@livekit/changesets-changelog-github": "^0.0.4",
+    "@rushstack/heft": "^0.66.0",
+    "prettier": "^3.2.5",
+    "turbo": "^1.13.3",
+    "typescript": "5.4.5"
+  }
+}

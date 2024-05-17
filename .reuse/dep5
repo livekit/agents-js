@@ -4,16 +4,16 @@ Upstream-Contact: LiveKit, Inc. <https://livekit.io>
 Source: https://livekit.io
 
 # trivial files
-Files: .gitignore flake.lock
+Files: .gitignore flake.lock .prettierignore package.json
 Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
 
 # global project files
-Files: .prettierrc eslint.config.mjs pnpm-lock.yaml pnpm-workspace.yaml
+Files: .prettierrc eslint.config.mjs .eslintrc pnpm-lock.yaml pnpm-workspace.yaml api-extractor-shared.json turbo.json tsconfig.json vitest.workspace.ts
 Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
 
 # sub-project files
-Files: agents/package.json examples/package.json plugins/elevenlabs/package.json agents/tsconfig.json plugins/elevenlabs/tsconfig.json examples/tsconfig.json
+Files: agents/package.json agents/api-extractor.json examples/package.json plugins/elevenlabs/package.json plugins/elevenlabs/api-extractor agents/tsconfig.json plugins/elevenlabs/tsconfig.json examples/tsconfig.json
 Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
