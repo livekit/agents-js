@@ -8,17 +8,13 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "lint": "eslint src",
+    "lint": "eslint -f unix \"src/**/*.{ts,js}\"",
     "api:check": "api-extractor run --typescript-compiler-folder ../../node_modules/typescript",
     "api:update": "api-extractor run --local --typescript-compiler-folder ../../node_modules/typescript --verbose"
   },
   "devDependencies": {
     "@microsoft/api-extractor": "^7.35.0",
-    "@types/ws": "^8.5.10",
-    "eslint": "^8.57.0",
-    "eslint-config-prettier": "^9.1.0",
-    "eslint-plugin-prettier": "^5.1.3",
-    "typescript-eslint": "^7.4.0"
+    "@types/ws": "^8.5.10"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"

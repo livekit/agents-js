@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import { Job, ParticipantInfo, Room } from '@livekit/protocol';
-import { log } from './log.js';
+import type { Job, ParticipantInfo, Room } from '@livekit/protocol';
 import { EventEmitter } from 'events';
+import { log } from './log.js';
 
 class AnsweredError extends Error {
   constructor() {

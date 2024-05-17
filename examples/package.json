@@ -4,10 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "lint": "eslint src"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
+    "lint": "eslint -f unix \"src/**/*.ts\""
   },
   "peerDependencies": {
     "typescript": "^5.0.0"

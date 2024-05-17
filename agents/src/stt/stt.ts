@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import { AudioFrame } from '@livekit/rtc-node';
-import { AudioBuffer } from '../utils.js';
+import type { AudioFrame } from '@livekit/rtc-node';
+import type { AudioBuffer } from '../utils.js';
 
 export enum SpeechEventType {
   START_OF_SPEECH = 0,

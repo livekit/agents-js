@@ -1,26 +1,25 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import os from 'os';
-import { WebSocket } from 'ws';
-import { AvailRes, JobRequest } from './job_request.js';
 import {
+  type AvailabilityRequest,
+  type Job,
+  type JobAssignment,
   JobType,
-  Job,
-  WorkerMessage,
   ParticipantPermission,
   ServerMessage,
-  AvailabilityRequest,
-  JobAssignment,
+  WorkerMessage,
 } from '@livekit/protocol';
-import { AcceptData } from './job_request.js';
+import { EventEmitter } from 'events';
+import { AccessToken } from 'livekit-server-sdk';
+import os from 'os';
+import { WebSocket } from 'ws';
 import { HTTPServer } from './http_server.js';
+import { JobProcess } from './ipc/job_process.js';
+import { type AvailRes, JobRequest } from './job_request.js';
+import type { AcceptData } from './job_request.js';
 import { log } from './log.js';
 import { version } from './version.js';
-import { AccessToken } from 'livekit-server-sdk';
-import { EventEmitter } from 'events';
-import { JobProcess } from './ipc/job_process.js';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 15 * 1000;

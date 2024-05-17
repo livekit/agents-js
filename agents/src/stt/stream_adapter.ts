@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+import type { AudioFrame } from '@livekit/rtc-node';
+import { type AudioBuffer, mergeFrames } from '../utils.js';
+import { VADEventType, type VADStream } from '../vad.js';
 import { STT, SpeechEvent, SpeechEventType, SpeechStream } from './stt.js';
-import { VADEventType, VADStream } from '../vad.js';
-import { AudioFrame } from '@livekit/rtc-node';
-import { AudioBuffer, mergeFrames } from '../utils.js';
 
 export class StreamAdapterWrapper extends SpeechStream {
   closed: boolean;

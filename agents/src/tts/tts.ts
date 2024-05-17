@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import { AudioFrame } from '@livekit/rtc-node';
+import type { AudioFrame } from '@livekit/rtc-node';
 
 export interface SynthesizedAudio {
   text: string;

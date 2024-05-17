@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import { TTSModels } from './models.js';
 import { log, tts } from '@livekit/agents';
-import { RawData, WebSocket } from 'ws';
-import { URL } from 'url';
 import { AudioFrame } from '@livekit/rtc-node';
+import { URL } from 'url';
+import { type RawData, WebSocket } from 'ws';
+import type { TTSModels } from './models.js';
 
 type Voice = {
   id: string;

@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { StreamAdapter, StreamAdapterWrapper } from './stream_adapter.js';
+import {
+  SynthesisEvent,
+  SynthesisEventType,
+  SynthesizeStream,
+  type SynthesizedAudio,
+  TTS,
+} from './tts.js';
 
 export {
   TTS,
@@ -8,5 +16,6 @@ export {
   SynthesisEventType,
   SynthesizedAudio,
   SynthesizeStream,
-} from './tts.js';
-export { StreamAdapter, StreamAdapterWrapper } from './stream_adapter.js';
+  StreamAdapter,
+  StreamAdapterWrapper,
+};
