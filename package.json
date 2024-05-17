@@ -1,10 +1,13 @@
 {
   "name": "@livekit/agents-monorepo",
   "private": true,
+  "type": "module",
   "scripts": {
     "build": "turbo run build",
     "build:agents": "turbo run build --filter=@livekit/agents...",
     "build:plugins": "turbo run build --filter=@livekit/agents-plugin-*...",
+    "api:check": "turbo run api:check",
+    "api:update": "turbo run api:update",
     "lint": "turbo lint"
   },
   "devDependencies": {
