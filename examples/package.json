@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/elevenlabs": "workspace:*",
+    "@livekit/agents-plugin-elevenlabs": "workspace:*",
     "@livekit/rtc-node": "^0.1.0"
   }
 }
