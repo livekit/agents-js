@@ -8,7 +8,9 @@
     "build:plugins": "turbo run build --filter=@livekit/agents-plugin-*...",
     "api:check": "turbo run api:check",
     "api:update": "turbo run api:update",
-    "lint": "turbo lint"
+    "lint": "turbo lint",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.1",
@@ -16,6 +18,7 @@
     "@rushstack/heft": "^0.66.0",
     "prettier": "^3.2.5",
     "turbo": "^1.13.3",
-    "typescript": "5.4.5"
+    "typescript": "5.4.5",
+    "vitest": "^1.6.0"
   }
 }
