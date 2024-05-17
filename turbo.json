@@ -1,0 +1,20 @@
+{
+  "$schema": "https://turborepo.org/schema.json",
+  "globalEnv": ["ELEVEN_API_KEY", "LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"],
+  "pipeline": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "lint": {
+      "outputs": []
+    },
+    "api:check": {
+      "cache": false,
+      "dependsOn": ["^build"]
+    },
+    "api:update": {
+      "dependsOn": ["^build"]
+    }
+  }
+}
