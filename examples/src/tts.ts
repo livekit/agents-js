@@ -1,12 +1,27 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, type JobRequest, WorkerOptions, cli, log } from '@livekit/agents';
+import {
+  type JobContext,
+  type JobRequest,
+  WorkerOptions,
+  cli,
+  defineAgent,
+  log,
+} from '@livekit/agents';
 import { TTS } from '@livekit/agents-plugin-elevenlabs';
 import { AudioSource, LocalAudioTrack, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
 import { fileURLToPath } from 'url';
 
-export const entry = async (job: JobContext) => {
+const requestFunc = async (req: JobRequest) => {
+  await req.accept(__filename);
+};
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  cli.runApp(new WorkerOptions({ requestFunc }));
+}
+
+export default defineAgent(async (job: JobContext) => {
   log.info('starting TTS example agent');
 
   const source = new AudioSource(24000, 1);
@@ -27,12 +42,4 @@ export const entry = async (job: JobContext) => {
   await tts.synthesize('Goodbye.').then((output) => {
     source.captureFrame(output.data);
   });
-};
-
-const requestFunc = async (req: JobRequest) => {
-  await req.accept(__filename);
-};
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  cli.runApp(new WorkerOptions({ requestFunc }));
-}
+});
