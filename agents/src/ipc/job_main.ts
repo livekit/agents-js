@@ -54,9 +54,9 @@ if (process.send) {
       process.send!({ type: IPC_MESSAGE.StartJobResponse });
 
       // here we import the file containing the exported entry function, and call it.
-      // the function in that file /has/ to be called [entry] and /has/ to be exported.
-      import(process.argv[3]).then((ext) => {
-        ext.entry(new JobContext(closeEvent, args.job!, room));
+      // the file must export default an Agent, usually using defineAgent().
+      import(process.argv[3]).then((agent) => {
+        agent.entry(new JobContext(closeEvent, args.job!, room));
       });
     }
   };

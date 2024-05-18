@@ -13,5 +13,6 @@ export * from './job_request.js';
 export * from './worker.js';
 export * from './utils.js';
 export * from './log.js';
+export * from './generator.js';
 
 export { cli, stt, tts };
