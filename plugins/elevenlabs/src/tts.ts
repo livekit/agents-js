@@ -98,36 +98,8 @@ export class TTS extends tts.TTS {
       });
   }
 
-  synthesize(text: string): Promise<tts.SynthesizedAudio> {
-    const voice = this.config.voice;
-
-    return new Promise<tts.SynthesizedAudio>((resolve) => {
-      const url = new URL(`${this.config.baseURL}/text-to-speech/${voice.id}`);
-      url.searchParams.append('output_format', 'pcm_' + this.config.sampleRate);
-
-      fetch(url.toString(), {
-        method: 'POST',
-        headers: { [AUTHORIZATION_HEADER]: this.config.apiKey },
-        body: JSON.stringify({
-          text,
-          model_id: this.config.modelID,
-          voice_settings: this.config.voice.settings || undefined,
-        }),
-      })
-        .then((data) => data.arrayBuffer())
-        .then((data) => new DataView(data, 0, data.byteLength))
-        .then((data) =>
-          resolve({
-            text,
-            data: new AudioFrame(
-              new Uint16Array(data.buffer),
-              this.config.sampleRate,
-              1,
-              data.byteLength,
-            ),
-          }),
-        );
-    });
+  async synthesize(text: string): Promise<tts.ChunkedStream> {
+    return new ChunkedStream(text, this.config);
   }
 
   stream(): tts.SynthesizeStream {
@@ -291,5 +263,69 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     } finally {
       this.eventQueue.push(undefined);
     }
+  }
+}
+
+class ChunkedStream extends tts.ChunkedStream {
+  config: TTSOptions;
+  text: string;
+  queue: (tts.SynthesizedAudio | undefined)[] = [];
+
+  constructor(text: string, config: TTSOptions) {
+    super();
+    this.config = config;
+    this.text = text;
+  }
+
+  async next(): Promise<IteratorResult<tts.SynthesizedAudio>> {
+    await this.run();
+    const audio = this.queue.shift();
+    if (audio) {
+      return { done: false, value: audio };
+    } else {
+      return { done: true, value: undefined };
+    }
+  }
+
+  async close() {
+    this.queue.push(undefined);
+  }
+
+  async run() {
+    const voice = this.config.voice;
+
+    const url = new URL(`${this.config.baseURL}/text-to-speech/${voice.id}/stream`);
+    url.searchParams.append('output_format', 'pcm_' + this.config.sampleRate);
+    url.searchParams.append('optimize_streaming_latency', this.config.latency.toString());
+
+    await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        [AUTHORIZATION_HEADER]: this.config.apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        text: this.text,
+        model_id: this.config.modelID,
+        voice_settings: this.config.voice.settings || undefined,
+      }),
+    })
+      .then((data) => data.arrayBuffer())
+      .then((data) => new DataView(data, 0, data.byteLength))
+      .then((data) =>
+        this.queue.push(
+          {
+            text: this.text,
+            data: new AudioFrame(
+              new Uint16Array(data.buffer),
+              this.config.sampleRate,
+              1,
+              data.byteLength / 2,
+            ),
+          },
+          undefined,
+        ),
+      )
+      .catch(() => this.queue.push(undefined));
   }
 }

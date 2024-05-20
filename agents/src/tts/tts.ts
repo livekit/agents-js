@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import { mergeFrames } from '../utils.js';
 
 export interface SynthesizedAudio {
   text: string;
@@ -46,11 +47,32 @@ export abstract class TTS {
     this.#streamingSupported = streamingSupported;
   }
 
-  abstract synthesize(text: string): Promise<SynthesizedAudio>;
+  abstract synthesize(text: string): Promise<ChunkedStream>;
 
   abstract stream(): SynthesizeStream;
 
   get streamingSupported(): boolean {
     return this.#streamingSupported;
+  }
+}
+
+export abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> {
+  async collect(): Promise<AudioFrame> {
+    const frames = [];
+    for await (const ev of this) {
+      frames.push(ev.data);
+    }
+    return mergeFrames(frames);
+  }
+
+  abstract close(): Promise<void>;
+  abstract next(): Promise<IteratorResult<SynthesizedAudio>>;
+
+  [Symbol.iterator](): ChunkedStream {
+    return this;
+  }
+
+  [Symbol.asyncIterator](): ChunkedStream {
+    return this;
   }
 }

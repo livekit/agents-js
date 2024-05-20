@@ -7,7 +7,6 @@ import { once } from 'events';
 import type { Logger } from 'pino';
 import type { AcceptData } from '../job_request.js';
 import { log } from '../log.js';
-import { runJob } from './job_main.js';
 import {
   IPC_MESSAGE,
   type JobMainArgs,
@@ -41,7 +40,7 @@ export class JobProcess {
   }
 
   async close() {
-    this.logger.info('closing job process');
+    this.logger.debug('closing job process');
     await this.clear();
     this.process!.send({ type: IPC_MESSAGE.ShutdownRequest });
     await once(this.process!, 'disconnect');
@@ -75,7 +74,7 @@ export class JobProcess {
       this.clear();
     }, PING_TIMEOUT);
 
-    this.process = runJob(this.args);
+    this.process = await import('./job_main.js').then((main) => main.runJob(this.args));
 
     this.process.on('message', (msg: Message) => {
       if (msg.type === IPC_MESSAGE.StartJobResponse) {
@@ -87,7 +86,7 @@ export class JobProcess {
         }
         this.pongTimeout?.refresh();
       } else if (msg.type === IPC_MESSAGE.UserExit || msg.type === IPC_MESSAGE.ShutdownResponse) {
-        this.logger.info('job exiting');
+        this.logger.debug('job exiting');
         this.clear();
       }
     });
