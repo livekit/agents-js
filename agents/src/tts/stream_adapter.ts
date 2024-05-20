@@ -2,13 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { SentenceStream, SentenceTokenizer } from '../tokenize.js';
-import {
-  SynthesisEvent,
-  SynthesisEventType,
-  SynthesizeStream,
-  type SynthesizedAudio,
-  TTS,
-} from './tts.js';
+import { ChunkedStream, SynthesisEvent, SynthesisEventType, SynthesizeStream, TTS } from './tts.js';
 
 export class StreamAdapterWrapper extends SynthesizeStream {
   closed: boolean;
@@ -41,10 +35,12 @@ export class StreamAdapterWrapper extends SynthesizeStream {
         reject(new Error('cancelled'));
       };
       for await (const sentence of this.sentenceStream) {
-        const audio = await this.tts.synthesize(sentence.text);
-        this.eventQueue.push(new SynthesisEvent(SynthesisEventType.STARTED));
-        this.eventQueue.push(new SynthesisEvent(SynthesisEventType.AUDIO, audio));
-        this.eventQueue.push(new SynthesisEvent(SynthesisEventType.FINISHED));
+        const audio = await this.tts.synthesize(sentence.text).then((data) => data.next());
+        if (!audio.done) {
+          this.eventQueue.push(new SynthesisEvent(SynthesisEventType.STARTED));
+          this.eventQueue.push(new SynthesisEvent(SynthesisEventType.AUDIO, audio.value));
+          this.eventQueue.push(new SynthesisEvent(SynthesisEventType.FINISHED));
+        }
       }
     }
   }
@@ -86,7 +82,7 @@ export class StreamAdapter extends TTS {
     this.tokenizer = tokenizer;
   }
 
-  synthesize(text: string): Promise<SynthesizedAudio> {
+  synthesize(text: string): Promise<ChunkedStream> {
     return this.tts.synthesize(text);
   }
 

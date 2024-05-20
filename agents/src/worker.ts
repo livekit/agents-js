@@ -216,8 +216,8 @@ export class Worker {
     this.processes[job.id] = { proc, activeJob: new ActiveJob(job, acceptData) };
     proc
       .run()
-      .catch(() => {
-        proc.logger.error(`error running job process ${proc.job.id}`);
+      .catch((e) => {
+        proc.logger.error(`error running job process ${proc.job.id}: ${e}`);
       })
       .finally(() => {
         proc.clear();
@@ -374,7 +374,7 @@ export class Worker {
   async close() {
     if (this.closed) return;
     this.closed = true;
-    this.logger.info('shutting down worker');
+    this.logger.debug('shutting down worker');
     await this.httpServer.close();
     for await (const value of Object.values(this.processes)) {
       await value.proc.close();

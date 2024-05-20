@@ -10,15 +10,15 @@ import { log } from '../log.js';
 import { IPC_MESSAGE, type JobMainArgs, type Message, type Ping } from './protocol.js';
 
 export const runJob = (args: JobMainArgs): ChildProcess => {
-  return fork(__filename, [args.raw, args.entry, args.fallbackURL]);
+  return fork(import.meta.filename, [args.raw, args.entry, args.fallbackURL]);
 };
 
 if (process.send) {
   // process.argv:
-  //   [0] `node' or `bun'
-  //   [1] __filename
+  //   [0] `node'
+  //   [1] import.meta.filename
   //   [2] proto.JobAssignment, serialized to JSON string
-  //   [3] __filename of function containing entry file
+  //   [3] import.meta.filename of function containing entry file
   //   [4] fallback URL in case JobAssignment.url is empty
 
   const msg = new ServerMessage();
@@ -56,7 +56,7 @@ if (process.send) {
       // here we import the file containing the exported entry function, and call it.
       // the file must export default an Agent, usually using defineAgent().
       import(process.argv[3]).then((agent) => {
-        agent.entry(new JobContext(closeEvent, args.job!, room));
+        agent.default.entry(new JobContext(closeEvent, args.job!, room));
       });
     }
   };

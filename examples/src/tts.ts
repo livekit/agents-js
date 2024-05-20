@@ -14,7 +14,7 @@ import { AudioSource, LocalAudioTrack, TrackPublishOptions, TrackSource } from '
 import { fileURLToPath } from 'url';
 
 const requestFunc = async (req: JobRequest) => {
-  await req.accept(__filename);
+  await req.accept(import.meta.filename);
 };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
@@ -32,14 +32,20 @@ export default defineAgent(async (job: JobContext) => {
 
   const tts = new TTS();
   log.info('speaking "Hello!"');
-  await tts.synthesize('Hello!').then((output) => {
-    source.captureFrame(output.data);
-  });
+  await tts
+    .synthesize('Hello!')
+    .then((output) => output.collect())
+    .then((output) => {
+      source.captureFrame(output);
+    });
 
   await new Promise((resolve) => setTimeout(resolve, 1000));
 
   log.info('speaking "Goodbye."');
-  await tts.synthesize('Goodbye.').then((output) => {
-    source.captureFrame(output.data);
-  });
+  await tts
+    .synthesize('Goodbye.')
+    .then((output) => output.collect())
+    .then((output) => {
+      source.captureFrame(output);
+    });
 });

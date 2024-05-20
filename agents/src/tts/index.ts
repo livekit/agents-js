@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { StreamAdapter, StreamAdapterWrapper } from './stream_adapter.js';
 import {
+  ChunkedStream,
   SynthesisEvent,
   SynthesisEventType,
   SynthesizeStream,
@@ -18,4 +19,5 @@ export {
   SynthesizeStream,
   StreamAdapter,
   StreamAdapterWrapper,
+  ChunkedStream,
 };
