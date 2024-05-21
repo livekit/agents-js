@@ -14,9 +14,7 @@
   },
   "devDependencies": {
     "@microsoft/api-extractor": "^7.35.0",
-    "@types/ws": "^8.5.10"
-  },
-  "peerDependencies": {
+    "@types/ws": "^8.5.10",
     "typescript": "^5.0.0"
   },
   "dependencies": {
