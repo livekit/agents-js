@@ -9,7 +9,7 @@ Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
 
 # global project files
-Files: .prettierrc eslint.config.mjs .eslintrc pnpm-lock.yaml pnpm-workspace.yaml api-extractor-shared.json turbo.json tsconfig.json vitest.workspace.ts
+Files: .prettierrc eslint.config.mjs .eslintrc pnpm-lock.yaml pnpm-workspace.yaml api-extractor-shared.json turbo.json tsconfig.json vitest.workspace.ts .changeset/*
 Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
 
