@@ -13,10 +13,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   cli.runApp(new WorkerOptions({ requestFunc }));
 }
 
+const myAgent = {
+  entry: async (job: JobContext) => {
+    console.log('starting voice assistant...');
+    job;
+  },
+};
+
 // your entry file has to provide a default export of type Agent.
 // use the defineAgent() helper function to generate your agent.
-export default defineAgent(async (job: JobContext) => {
-  console.log('starting voice assistant...');
-  job;
-  // etc
-});
+export default defineAgent(myAgent);

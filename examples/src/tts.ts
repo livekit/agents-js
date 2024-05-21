@@ -21,31 +21,33 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   cli.runApp(new WorkerOptions({ requestFunc }));
 }
 
-export default defineAgent(async (job: JobContext) => {
-  log.info('starting TTS example agent');
+export default defineAgent({
+  entry: async (job: JobContext) => {
+    log.info('starting TTS example agent');
 
-  const source = new AudioSource(24000, 1);
-  const track = LocalAudioTrack.createAudioTrack('agent-mic', source);
-  const options = new TrackPublishOptions();
-  options.source = TrackSource.SOURCE_MICROPHONE;
-  await job.room.localParticipant?.publishTrack(track, options);
+    const source = new AudioSource(24000, 1);
+    const track = LocalAudioTrack.createAudioTrack('agent-mic', source);
+    const options = new TrackPublishOptions();
+    options.source = TrackSource.SOURCE_MICROPHONE;
+    await job.room.localParticipant?.publishTrack(track, options);
 
-  const tts = new TTS();
-  log.info('speaking "Hello!"');
-  await tts
-    .synthesize('Hello!')
-    .then((output) => output.collect())
-    .then((output) => {
-      source.captureFrame(output);
-    });
+    const tts = new TTS();
+    log.info('speaking "Hello!"');
+    await tts
+      .synthesize('Hello!')
+      .then((output) => output.collect())
+      .then((output) => {
+        source.captureFrame(output);
+      });
 
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
-  log.info('speaking "Goodbye."');
-  await tts
-    .synthesize('Goodbye.')
-    .then((output) => output.collect())
-    .then((output) => {
-      source.captureFrame(output);
-    });
+    log.info('speaking "Goodbye."');
+    await tts
+      .synthesize('Goodbye.')
+      .then((output) => output.collect())
+      .then((output) => {
+        source.captureFrame(output);
+      });
+  },
 });
