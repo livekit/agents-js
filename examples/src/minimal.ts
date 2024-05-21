@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, type JobRequest, WorkerOptions, cli, defineAgent } from '@livekit/agents';
+import {
+  type Agent,
+  type JobContext,
+  type JobRequest,
+  WorkerOptions,
+  cli,
+  defineAgent,
+} from '@livekit/agents';
 import { fileURLToPath } from 'url';
 
 const requestFunc = async (req: JobRequest) => {
@@ -13,7 +20,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   cli.runApp(new WorkerOptions({ requestFunc }));
 }
 
-const myAgent = {
+const myAgent: Agent = {
   entry: async (job: JobContext) => {
     console.log('starting voice assistant...');
     job;
