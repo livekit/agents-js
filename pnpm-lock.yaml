@@ -92,9 +92,6 @@ importers:
       pino-pretty:
         specifier: ^11.0.0
         version: 11.0.0
-      typescript:
-        specifier: ^5.0.0
-        version: 5.4.5
       ws:
         specifier: ^8.16.0
         version: 8.17.0
@@ -105,6 +102,9 @@ importers:
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
+      typescript:
+        specifier: ^5.0.0
+        version: 5.4.5
 
   examples:
     dependencies:
@@ -117,6 +117,7 @@ importers:
       '@livekit/rtc-node':
         specifier: ^0.1.0
         version: 0.1.0
+    devDependencies:
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -129,9 +130,6 @@ importers:
       '@livekit/rtc-node':
         specifier: ^0.1.0
         version: 0.1.0
-      typescript:
-        specifier: ^5.0.0
-        version: 5.4.5
       ws:
         specifier: ^8.16.0
         version: 8.17.0
@@ -142,6 +140,9 @@ importers:
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
+      typescript:
+        specifier: ^5.0.0
+        version: 5.4.5
 
 packages:
 
