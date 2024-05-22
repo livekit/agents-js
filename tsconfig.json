@@ -12,5 +12,17 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "sourceMap": true
+  },
+  "typedocOptions": {
+    "entryPoints": ["agents", "plugins/*"],
+    "entryPointStrategy": "packages",
+    "name": "LiveKit Agents",
+    "excludeInternal": true,
+    "excludePrivate": true,
+    "excludeProtected": true,
+    "excludeExternals": true,
+    "includeVersion": true,
+    "out": "docs",
+    "theme": "default"
   }
 }
