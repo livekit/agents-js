@@ -14,5 +14,6 @@ export * from './worker.js';
 export * from './utils.js';
 export * from './log.js';
 export * from './generator.js';
+export * from './tokenize.js';
 
 export { cli, stt, tts };

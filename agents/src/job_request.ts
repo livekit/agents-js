@@ -13,7 +13,7 @@ class AnsweredError extends Error {
   }
 }
 
-enum AutoDisconnect {
+export enum AutoDisconnect {
   ROOM_EMPTY,
   PUBLISHER_LEFT,
   NONE,
@@ -44,12 +44,12 @@ export type AvailRes = {
 export class JobRequest {
   #job: Job;
   #answered = false;
-  tx: EventEmitter;
-  logger = log.child({ job: this.job });
+  #tx: EventEmitter;
+  #logger = log.child({ job: this.job });
 
   constructor(job: Job, tx: EventEmitter) {
     this.#job = job;
-    this.tx = tx;
+    this.#tx = tx;
   }
 
   get id(): string {
@@ -77,8 +77,8 @@ export class JobRequest {
       throw new AnsweredError();
     }
     this.#answered = true;
-    this.tx.emit('recv', { avail: false, data: undefined } as AvailRes);
-    this.logger.info('rejected job', this.id);
+    this.#tx.emit('recv', { avail: false, data: undefined } as AvailRes);
+    this.#logger.info('rejected job', this.id);
   }
 
   async accept(
@@ -111,8 +111,8 @@ export class JobRequest {
       assign,
     };
 
-    this.tx.emit('recv', { avail: true, data } as AvailRes);
+    this.#tx.emit('recv', { avail: true, data } as AvailRes);
 
-    this.logger.info('accepted job', this.id);
+    this.#logger.info('accepted job', this.id);
   }
 }
