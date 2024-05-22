@@ -35,3 +35,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Build docs
+        if: steps.changesets.outputs.published == 'true'
+        run: pnpm doc
+      - name: S3 upload
+        if: steps.changesets.outputs.published == 'true'
+        run: aws s3 cp docs/ s3://livekit-docs/agents-js --recursive
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.DOCS_DEPLOY_AWS_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.DOCS_DEPLOY_AWS_API_SECRET }}
+          AWS_DEFAULT_REGION: "us-east-1"
