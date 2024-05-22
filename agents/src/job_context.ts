@@ -9,7 +9,7 @@ export class JobContext {
   #job: Job;
   #room: Room;
   #publisher?: RemoteParticipant;
-  tx: EventEmitter;
+  #tx: EventEmitter;
 
   constructor(
     tx: EventEmitter,
@@ -20,7 +20,7 @@ export class JobContext {
     this.#job = job;
     this.#room = room;
     this.#publisher = publisher;
-    this.tx = tx;
+    this.#tx = tx;
   }
 
   get id(): string {
@@ -44,6 +44,6 @@ export class JobContext {
   }
 
   async shutdown() {
-    this.tx.emit('close');
+    this.#tx.emit('close');
   }
 }
