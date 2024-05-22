@@ -45,6 +45,7 @@ if (process.send) {
   });
 
   // don't do anything on C-c
+  // this is handled in cli, triggering a termination of all child processes at once.
   process.on('SIGINT', () => {});
 
   const conn = room.connect(args.url || process.argv[4], args.token);

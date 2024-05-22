@@ -11,7 +11,9 @@ export interface Agent {
 
 /**
  * Helper to define an agent according to the required interface.
- * @example `export default defineAgent(myAgent);`
+ * @example export default defineAgent(async (job: JobContext) => {
+ *   // ...
+ * });
  */
 export function defineAgent(entry: entryFunction): Agent {
   return { entry };
