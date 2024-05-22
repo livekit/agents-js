@@ -13,7 +13,8 @@
     "format:write": "prettier --write \"**/src/**/*.{ts,tsx,md,json}\"",
     "lint": "turbo lint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "doc": "typedoc"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.1",
@@ -35,6 +36,7 @@
     "eslint-plugin-tsdoc": "^0.2.17",
     "prettier": "^3.2.5",
     "turbo": "^1.13.3",
+    "typedoc": "^0.25.13",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"
   }

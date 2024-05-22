@@ -6,5 +6,10 @@
     "rootDir": "./src",
     "declarationDir": "./dist",
     "outDir": "./dist"
+  },
+  "typedocOptions": {
+    "name": "plugins/agents-plugin-elevenlabs",
+    "entryPointStrategy": "resolve",
+    "entryPoints": ["src/index.ts"]
   }
 }
