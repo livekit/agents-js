@@ -5,6 +5,10 @@ import type { Job } from '@livekit/protocol';
 import type { LocalParticipant, RemoteParticipant, Room } from '@livekit/rtc-node';
 import type { EventEmitter } from 'events';
 
+/**
+ * JobContext contains information about the job, the room, and the participant.
+ * It is called internally by {@link Worker} and should not be created manually.
+ */
 export class JobContext {
   #job: Job;
   #room: Room;
