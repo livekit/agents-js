@@ -5,6 +5,11 @@ import { AudioFrame } from '@livekit/rtc-node';
 
 export type AudioBuffer = AudioFrame[] | AudioFrame;
 
+/**
+ * Merge one or more {@link AudioFrame}s into a single one.
+ *
+ * @param buffer Either an {@link AudioFrame} or a list thereof
+ */
 export const mergeFrames = (buffer: AudioBuffer): AudioFrame => {
   if (Array.isArray(buffer)) {
     buffer = buffer as AudioFrame[];

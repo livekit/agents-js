@@ -128,10 +128,10 @@ type AssignmentPair = {
 
 class PendingAssignment {
   promise = new Promise<AssignmentPair>((resolve) => {
-    this.resolve = resolve; // oh, JavaScript.
+    this.resolve = resolve; // this is how JavaScript lets you resolve promises externally
   });
   resolve(arg: AssignmentPair) {
-    arg;
+    arg; // useless call to counteract TypeScript E6133
   }
 }
 
