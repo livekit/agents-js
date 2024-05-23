@@ -10,8 +10,18 @@ export interface SynthesizedAudio {
 }
 
 export enum SynthesisEventType {
+  /**
+   * Indicate the start of synthesis.
+   * Retriggered after FINISHED.
+   */
   STARTED = 0,
+  /**
+   * Indicate that audio data is available.
+   */
   AUDIO = 1,
+  /**
+   * Indicate the end of synthesis. Does not necessarily mean stream is done.
+   */
   FINISHED = 2,
 }
 

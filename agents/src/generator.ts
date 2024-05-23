@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { JobContext } from './job_context.js';
 
-type entryFunction = (job: JobContext) => Promise<void>;
+export type entryFunction = (job: JobContext) => Promise<void>;
 
 export interface Agent {
   entry: entryFunction;
@@ -11,7 +11,9 @@ export interface Agent {
 
 /**
  * Helper to define an agent according to the required interface.
- * @example `export default defineAgent(myAgent);`
+ * @example export default defineAgent(async (job: JobContext) => {
+ *   // ...
+ * });
  */
 export function defineAgent(agent: Agent): Agent {
   return agent;

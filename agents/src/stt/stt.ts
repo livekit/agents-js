@@ -5,9 +5,25 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import type { AudioBuffer } from '../utils.js';
 
 export enum SpeechEventType {
+  /**
+   * Indicate the start of speech.
+   * If the STT doesn't support this event, this will be emitted at the same time
+   * as the first INTERMIN_TRANSCRIPT.
+   */
   START_OF_SPEECH = 0,
+  /**
+   * Interim transcript, useful for real-time transcription.
+   */
   INTERIM_TRANSCRIPT = 1,
+  /**
+   * Final transcript, emitted when the STT is confident enough that a certain
+   * portion of the speech will not change.
+   */
   FINAL_TRANSCRIPT = 2,
+  /**
+   * Indicate the end of speech, emitted when the user stops speaking.
+   * The first alternative is a combination of all the previous FINAL_TRANSCRIPT events.
+   */
   END_OF_SPEECH = 3,
 }
 
@@ -30,8 +46,19 @@ export class SpeechEvent {
 }
 
 export abstract class SpeechStream implements IterableIterator<SpeechEvent> {
+  /**
+   * Push a frame to be recognised.
+   * It is recommended to push frames as soon as they are available.
+   */
   abstract pushFrame(token: AudioFrame): void;
 
+  /**
+   * Close the stream.
+   *
+   * @param wait
+   *   Whether to wait for the STT to finish processing the remaining
+   *   frames before closing
+   */
   abstract close(wait: boolean): Promise<void>;
 
   abstract next(): IteratorResult<SpeechEvent>;

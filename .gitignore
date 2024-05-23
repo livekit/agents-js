@@ -179,3 +179,6 @@ dist
 
 # API extractor
 temp
+
+# typedoc
+docs

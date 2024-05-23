@@ -35,7 +35,7 @@ const cpuLoad = (): number =>
     os.cpus().length) *
   100;
 
-class WorkerPermissions {
+export class WorkerPermissions {
   canPublish: boolean;
   canSubscribe: boolean;
   canPublishData: boolean;
@@ -128,31 +128,31 @@ type AssignmentPair = {
 
 class PendingAssignment {
   promise = new Promise<AssignmentPair>((resolve) => {
-    this.resolve = resolve; // oh, JavaScript.
+    this.resolve = resolve; // this is how JavaScript lets you resolve promises externally
   });
   resolve(arg: AssignmentPair) {
-    arg;
+    arg; // useless call to counteract TypeScript E6133
   }
 }
 
 export class Worker {
-  opts: WorkerOptions;
+  #opts: WorkerOptions;
   #id = 'unregistered';
-  session: WebSocket | undefined = undefined;
-  closed = false;
-  httpServer: HTTPServer;
-  logger = log.child({ version });
-  event = new EventEmitter();
-  pending: { [id: string]: { value: PendingAssignment } } = {};
-  processes: { [id: string]: { proc: JobProcess; activeJob: ActiveJob } } = {};
+  #session: WebSocket | undefined = undefined;
+  #closed = false;
+  #httpServer: HTTPServer;
+  #logger = log.child({ version });
+  #event = new EventEmitter();
+  #pending: { [id: string]: { value: PendingAssignment } } = {};
+  #processes: { [id: string]: { proc: JobProcess; activeJob: ActiveJob } } = {};
 
   constructor(opts: WorkerOptions) {
     opts.wsURL = opts.wsURL || process.env.LIVEKIT_URL || '';
     opts.apiKey = opts.apiKey || process.env.LIVEKIT_API_KEY || '';
     opts.apiSecret = opts.apiSecret || process.env.LIVEKIT_API_SECRET || '';
 
-    this.opts = opts;
-    this.httpServer = new HTTPServer(opts.host, opts.port);
+    this.#opts = opts;
+    this.#httpServer = new HTTPServer(opts.host, opts.port);
   }
 
   get id(): string {
@@ -160,47 +160,47 @@ export class Worker {
   }
 
   async run() {
-    this.logger.info('starting worker');
+    this.#logger.info('starting worker');
 
-    if (this.opts.wsURL === '') throw new Error('--url is required, or set LIVEKIT_URL env var');
-    if (this.opts.apiKey === '')
+    if (this.#opts.wsURL === '') throw new Error('--url is required, or set LIVEKIT_URL env var');
+    if (this.#opts.apiKey === '')
       throw new Error('--api-key is required, or set LIVEKIT_API_KEY env var');
-    if (this.opts.apiSecret === '')
+    if (this.#opts.apiSecret === '')
       throw new Error('--api-secret is required, or set LIVEKIT_API_SECRET env var');
 
     const workerWS = async () => {
       let retries = 0;
-      while (!this.closed) {
-        const token = new AccessToken(this.opts.apiKey, this.opts.apiSecret);
+      while (!this.#closed) {
+        const token = new AccessToken(this.#opts.apiKey, this.#opts.apiSecret);
         token.addGrant({ agent: true });
         const jwt = await token.toJwt();
 
-        const url = new URL(this.opts.wsURL);
+        const url = new URL(this.#opts.wsURL);
         url.protocol = url.protocol.replace('http', 'ws');
-        this.session = new WebSocket(url + 'agent', {
+        this.#session = new WebSocket(url + 'agent', {
           headers: { authorization: 'Bearer ' + jwt },
         });
 
         try {
           await new Promise((resolve, reject) => {
-            this.session!.on('open', resolve);
-            this.session!.on('error', (error) => reject(error));
-            this.session!.on('close', (code) => reject(`WebSocket returned ${code}`));
+            this.#session!.on('open', resolve);
+            this.#session!.on('error', (error) => reject(error));
+            this.#session!.on('close', (code) => reject(`WebSocket returned ${code}`));
           });
 
-          this.runWS(this.session!);
+          this.runWS(this.#session!);
           return;
         } catch (e) {
-          if (this.closed) return;
-          if (retries >= this.opts.maxRetry) {
+          if (this.#closed) return;
+          if (retries >= this.#opts.maxRetry) {
             throw new Error(`failed to connect to LiveKit server after ${retries} attempts: ${e}`);
           }
 
           retries++;
           const delay = Math.min(retries * 2, 10);
 
-          this.logger.warn(
-            `failed to connect to LiveKit server, retrying in ${delay} seconds: ${e} (${retries}/${this.opts.maxRetry})`,
+          this.#logger.warn(
+            `failed to connect to LiveKit server, retrying in ${delay} seconds: ${e} (${retries}/${this.#opts.maxRetry})`,
           );
 
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
@@ -208,12 +208,12 @@ export class Worker {
       }
     };
 
-    await Promise.all([workerWS(), this.httpServer.run()]);
+    await Promise.all([workerWS(), this.#httpServer.run()]);
   }
 
   startProcess(job: Job, acceptData: AcceptData, raw: string) {
-    const proc = new JobProcess(job, acceptData, raw, this.opts.wsURL);
-    this.processes[job.id] = { proc, activeJob: new ActiveJob(job, acceptData) };
+    const proc = new JobProcess(job, acceptData, raw, this.#opts.wsURL);
+    this.#processes[job.id] = { proc, activeJob: new ActiveJob(job, acceptData) };
     proc
       .run()
       .catch((e) => {
@@ -221,7 +221,7 @@ export class Worker {
       })
       .finally(() => {
         proc.clear();
-        delete this.processes[job.id];
+        delete this.#processes[job.id];
       });
   }
 
@@ -230,22 +230,22 @@ export class Worker {
 
     const send = (msg: WorkerMessage) => {
       if (closingWS) {
-        this.event.off('worker_msg', send);
+        this.#event.off('worker_msg', send);
         return;
       }
       ws.send(msg.toBinary());
     };
-    this.event.on('worker_msg', send);
+    this.#event.on('worker_msg', send);
 
     ws.addEventListener('close', () => {
       closingWS = true;
-      this.logger.error('worker connection closed unexpectedly');
+      this.#logger.error('worker connection closed unexpectedly');
       this.close();
     });
 
     ws.addEventListener('message', (event) => {
       if (event.type !== 'message') {
-        this.logger.warn('unexpected message type: ' + event.type);
+        this.#logger.warn('unexpected message type: ' + event.type);
         return;
       }
 
@@ -265,9 +265,9 @@ export class Worker {
         }
         case 'assignment': {
           const job = msg.message.value.job!;
-          if (job.id in this.pending) {
-            const task = this.pending[job.id];
-            delete this.pending[job.id];
+          if (job.id in this.#pending) {
+            const task = this.#pending[job.id];
+            delete this.#pending[job.id];
             task.value.resolve({
               asgn: msg.message.value,
               raw: msg.toJsonString(),
@@ -280,19 +280,19 @@ export class Worker {
       }
     });
 
-    this.event.emit(
+    this.#event.emit(
       'worker_msg',
       new WorkerMessage({
         message: {
           case: 'register',
           value: {
-            type: this.opts.workerType,
-            namespace: this.opts.namespace,
+            type: this.#opts.workerType,
+            namespace: this.#opts.namespace,
             allowedPermissions: new ParticipantPermission({
-              canPublish: this.opts.permissions.canPublish,
-              canSubscribe: this.opts.permissions.canSubscribe,
-              canPublishData: this.opts.permissions.canPublishData,
-              hidden: this.opts.permissions.hidden,
+              canPublish: this.#opts.permissions.canPublish,
+              canSubscribe: this.#opts.permissions.canSubscribe,
+              canPublishData: this.#opts.permissions.canPublishData,
+              hidden: this.#opts.permissions.hidden,
               agent: true,
             }),
             version,
@@ -303,7 +303,7 @@ export class Worker {
 
     const loadMonitor = setInterval(() => {
       if (closingWS) clearInterval(loadMonitor);
-      this.event.emit(
+      this.#event.emit(
         'worker_msg',
         new WorkerMessage({
           message: {
@@ -335,28 +335,28 @@ export class Worker {
         },
       });
 
-      this.pending[req.id] = { value: new PendingAssignment() };
-      this.event.emit('worker_msg', msg);
+      this.#pending[req.id] = { value: new PendingAssignment() };
+      this.#event.emit('worker_msg', msg);
       if (!av.avail) return;
 
       const timer = setTimeout(() => {
         log.child({ req }).warn(`assignment for job ${req.id} timed out`);
         return;
       }, ASSIGNMENT_TIMEOUT);
-      this.pending[req.id].value.promise.then(({ asgn, raw }) => {
+      this.#pending[req.id].value.promise.then(({ asgn, raw }) => {
         clearTimeout(timer);
         this.startProcess(asgn!.job!, av.data!, raw);
       });
     });
 
     try {
-      this.opts.requestFunc(req);
+      this.#opts.requestFunc(req);
     } catch (e) {
       log.child({ req }).error(`user request handler for job ${req.id} failed`);
     } finally {
       if (!req.answered) {
         log.child({ req }).error(`no answer for job ${req.id}, automatically rejecting the job`);
-        this.event.emit(
+        this.#event.emit(
           'worker_msg',
           new WorkerMessage({
             message: {
@@ -372,13 +372,13 @@ export class Worker {
   }
 
   async close() {
-    if (this.closed) return;
-    this.closed = true;
-    this.logger.debug('shutting down worker');
-    await this.httpServer.close();
-    for await (const value of Object.values(this.processes)) {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.#logger.debug('shutting down worker');
+    await this.#httpServer.close();
+    for await (const value of Object.values(this.#processes)) {
       await value.proc.close();
     }
-    this.session?.close();
+    this.#session?.close();
   }
 }

@@ -5,11 +5,15 @@ import type { Job } from '@livekit/protocol';
 import type { LocalParticipant, RemoteParticipant, Room } from '@livekit/rtc-node';
 import type { EventEmitter } from 'events';
 
+/**
+ * JobContext contains information about the job, the room, and the participant.
+ * It is called internally by {@link Worker} and should not be created manually.
+ */
 export class JobContext {
   #job: Job;
   #room: Room;
   #publisher?: RemoteParticipant;
-  tx: EventEmitter;
+  #tx: EventEmitter;
 
   constructor(
     tx: EventEmitter,
@@ -20,7 +24,7 @@ export class JobContext {
     this.#job = job;
     this.#room = room;
     this.#publisher = publisher;
-    this.tx = tx;
+    this.#tx = tx;
   }
 
   get id(): string {
@@ -44,6 +48,6 @@ export class JobContext {
   }
 
   async shutdown() {
-    this.tx.emit('close');
+    this.#tx.emit('close');
   }
 }
