@@ -4,7 +4,7 @@ Upstream-Contact: LiveKit, Inc. <https://livekit.io>
 Source: https://livekit.io
 
 # trivial files
-Files: .gitignore flake.lock .prettierignore package.json
+Files: .gitignore flake.lock .prettierignore package.json **/CHANGELOG.md
 Copyright: 2024 LiveKit, Inc.
 License: Apache-2.0
 
