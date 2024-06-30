@@ -9,14 +9,13 @@ import { Worker, type WorkerOptions } from './worker.js';
 
 type CliArgs = {
   opts: WorkerOptions;
-  logLevel: string;
   production: boolean;
   watch: boolean;
   event?: EventEmitter;
 };
 
 const runWorker = async (args: CliArgs) => {
-  log.level = args.logLevel;
+  log.level = args.opts.logLevel;
   const worker = new Worker(args.opts);
 
   process.on('SIGINT', async () => {
@@ -41,7 +40,8 @@ export const runApp = (opts: WorkerOptions) => {
     .addOption(
       new Option('--log-level <level>', 'Set the logging level')
         .choices(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
-        .default('trace'),
+        .default('info')
+        .env('LOG_LEVEL'),
     )
     .addOption(
       new Option('--url <string>', 'LiveKit server or Cloud project websocket URL')
@@ -67,13 +67,28 @@ export const runApp = (opts: WorkerOptions) => {
       opts.wsURL = options.url || opts.wsURL;
       opts.apiKey = options.apiKey || opts.apiKey;
       opts.apiSecret = options.apiSecret || opts.apiSecret;
+      opts.logLevel = options.logLevel || opts.logLevel;
       runWorker({
         opts,
         production: true,
         watch: false,
-        logLevel: options.logLevel,
       });
     });
 
   program.parse();
+};
+
+// like runApp but without calling `start' in the CLI.
+// useful for wrapped applications
+export const runHeadless = (opts: WorkerOptions) => {
+  opts.wsURL = process.env.LIVEKIT_URL || opts.wsURL;
+  opts.apiKey = process.env.LIVEKIT_API_KEY || opts.apiKey;
+  opts.apiSecret = process.env.LIVEKIT_API_SECRET || opts.apiSecret;
+  opts.logLevel = process.env.LOG_LEVEL || opts.logLevel;
+
+  runWorker({
+    opts,
+    production: true,
+    watch: false,
+  });
 };
