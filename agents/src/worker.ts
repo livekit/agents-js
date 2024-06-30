@@ -69,6 +69,7 @@ export class WorkerOptions {
   apiSecret?: string;
   host: string;
   port: number;
+  logLevel: string;
 
   constructor({
     requestFunc,
@@ -82,6 +83,7 @@ export class WorkerOptions {
     apiSecret = undefined,
     host = 'localhost',
     port = 8081,
+    logLevel = 'info',
   }: {
     requestFunc: (arg: JobRequest) => Promise<void>;
     cpuLoadFunc?: () => number;
@@ -94,6 +96,7 @@ export class WorkerOptions {
     apiSecret?: string;
     host?: string;
     port?: number;
+    logLevel?: string;
   }) {
     this.requestFunc = requestFunc;
     this.cpuLoadFunc = cpuLoadFunc;
@@ -106,6 +109,7 @@ export class WorkerOptions {
     this.apiSecret = apiSecret;
     this.host = host;
     this.port = port;
+    this.logLevel = logLevel;
   }
 }
 
