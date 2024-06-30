@@ -13,7 +13,7 @@ import { fileURLToPath } from 'url';
 
 const requestFunc = async (req: JobRequest) => {
   console.log('received request', req);
-  await req.accept(import.meta.filename);
+  await req.accept(fileURLToPath(import.meta.url));
 };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
