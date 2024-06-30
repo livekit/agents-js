@@ -220,7 +220,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }).then((msg) => {
           const json = JSON.parse(msg.toString());
           if ('audio' in json) {
-            const data = new Uint16Array(Buffer.from(json.audio, 'base64'));
+            const data = new Int16Array(Buffer.from(json.audio, 'base64'));
             const audioFrame = new AudioFrame(
               data,
               this.config.sampleRate,
@@ -317,7 +317,7 @@ class ChunkedStream extends tts.ChunkedStream {
           {
             text: this.text,
             data: new AudioFrame(
-              new Uint16Array(data.buffer),
+              new Int16Array(data.buffer),
               this.config.sampleRate,
               1,
               data.byteLength / 2,
