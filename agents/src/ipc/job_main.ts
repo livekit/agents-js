@@ -5,12 +5,13 @@ import { type JobAssignment, ServerMessage } from '@livekit/protocol';
 import { Room } from '@livekit/rtc-node';
 import { type ChildProcess, fork } from 'child_process';
 import { EventEmitter, once } from 'events';
+import { fileURLToPath } from 'url';
 import { JobContext } from '../job_context.js';
 import { log } from '../log.js';
 import { IPC_MESSAGE, type JobMainArgs, type Message, type Ping } from './protocol.js';
 
 export const runJob = (args: JobMainArgs): ChildProcess => {
-  return fork(import.meta.filename, [args.raw, args.entry, args.fallbackURL]);
+  return fork(fileURLToPath(import.meta.url), [args.raw, args.entry, args.fallbackURL]);
 };
 
 if (process.send) {
