@@ -76,7 +76,7 @@ export class WorkerOptions {
     cpuLoadFunc = cpuLoad,
     namespace = 'default',
     permissions = new WorkerPermissions(),
-    workerType = JobType.JT_PUBLISHER,
+    workerType = JobType.JT_ROOM,
     maxRetry = MAX_RECONNECT_ATTEMPTS,
     wsURL = 'ws://localhost:7880',
     apiKey = undefined,
