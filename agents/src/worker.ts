@@ -299,7 +299,7 @@ export class Worker {
               hidden: this.#opts.permissions.hidden,
               agent: true,
             }),
-            version,
+            version
           },
         },
       }),
