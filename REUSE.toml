@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+version = 1
+SPDX-PackageName = "agents-js"
+SPDX-PackageSupplier = "LiveKit, Inc. <https://livekit.io>"
+SPDX-PackageDownloadLocation = "https://github.com/livekit/agents-js"
+
+# trivial files
+[[annotations]]
+path = [".gitignore", "flake.lock", ".envrc", "packages/livekit-rtc/.gitignore", ".changeset/**", "**/CHANGELOG.md", "NOTICE"]
+SPDX-FileCopyrightText = "2024 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+# pnpm files
+[[annotations]]
+path = ["pnpm-workspace.yaml", "pnpm-lock.yaml"]
+SPDX-FileCopyrightText = "2024 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+# project configuration files
+[[annotations]]
+path = ["packages/livekit-rtc/.npmignore", ".prettierrc", ".prettierignore", ".eslintrc", "**.json"]
+SPDX-FileCopyrightText = "2024 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
