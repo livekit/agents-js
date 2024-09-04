@@ -15,8 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: REUSE-3.0 compliance check
-        uses: fsfe/reuse-action@v3
+      - name: REUSE-3.2 compliance check
+        uses: fsfe/reuse-action@v4
       - uses: pnpm/action-setup@v4
         with:
           version: 9
