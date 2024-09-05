@@ -27,13 +27,14 @@ const ASSIGNMENT_TIMEOUT = 15 * 1000;
 const LOAD_INTERVAL = 5 * 1000;
 
 const defaultCpuLoad = (): number =>
-   1 - (os
-     .cpus()
-     .reduce(
-       (acc, x) => acc + x.times.idle / Object.values(x.times).reduce((acc, x) => acc + x, 0),
-       0,
-     ) /
-     os.cpus().length)
+  1 -
+  os
+    .cpus()
+    .reduce(
+      (acc, x) => acc + x.times.idle / Object.values(x.times).reduce((acc, x) => acc + x, 0),
+      0,
+    ) /
+    os.cpus().length;
 
 export class WorkerPermissions {
   canPublish: boolean;
@@ -318,11 +319,11 @@ export class Worker {
       const oldStatus = currentStatus;
       const currentLoad = this.#opts.loadFunc();
       const isFull = currentLoad >= this.#opts.loadThreshold;
-      const currentlyAvailable = !isFull
+      const currentlyAvailable = !isFull;
       currentStatus = currentlyAvailable ? WorkerStatus.WS_AVAILABLE : WorkerStatus.WS_FULL;
 
       if (oldStatus != currentStatus) {
-        const extra = { load:currentLoad, loadThreshold: this.#opts.loadThreshold };
+        const extra = { load: currentLoad, loadThreshold: this.#opts.loadThreshold };
         if (isFull) {
           log.child(extra).info('worker is at full capacity, marking as unavailable');
         } else {
@@ -337,7 +338,7 @@ export class Worker {
             case: 'updateWorker',
             value: {
               load: currentLoad,
-              status: currentStatus
+              status: currentStatus,
             },
           },
         }),
