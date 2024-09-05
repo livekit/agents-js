@@ -9,6 +9,7 @@ import {
   ParticipantPermission,
   ServerMessage,
   WorkerMessage,
+  WorkerStatus,
 } from '@livekit/protocol';
 import { EventEmitter } from 'events';
 import { AccessToken } from 'livekit-server-sdk';
@@ -25,15 +26,15 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 15 * 1000;
 const LOAD_INTERVAL = 5 * 1000;
 
-const cpuLoad = (): number =>
-  (os
+const defaultCpuLoad = (): number =>
+  1 -
+  os
     .cpus()
     .reduce(
       (acc, x) => acc + x.times.idle / Object.values(x.times).reduce((acc, x) => acc + x, 0),
       0,
     ) /
-    os.cpus().length) *
-  100;
+    os.cpus().length;
 
 export class WorkerPermissions {
   canPublish: boolean;
@@ -59,7 +60,8 @@ export class WorkerPermissions {
 
 export class WorkerOptions {
   requestFunc: (arg: JobRequest) => Promise<void>;
-  cpuLoadFunc: () => number;
+  loadFunc: () => number;
+  loadThreshold: number;
   namespace: string;
   permissions: WorkerPermissions;
   workerType: JobType;
@@ -73,7 +75,8 @@ export class WorkerOptions {
 
   constructor({
     requestFunc,
-    cpuLoadFunc = cpuLoad,
+    loadFunc = defaultCpuLoad,
+    loadThreshold = 0.65,
     namespace = 'default',
     permissions = new WorkerPermissions(),
     workerType = JobType.JT_ROOM,
@@ -86,7 +89,10 @@ export class WorkerOptions {
     logLevel = 'info',
   }: {
     requestFunc: (arg: JobRequest) => Promise<void>;
-    cpuLoadFunc?: () => number;
+    /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
+    loadFunc?: () => number;
+    /** When the load exceeds this threshold, the worker will be marked as unavailable. */
+    loadThreshold?: number;
     namespace?: string;
     permissions?: WorkerPermissions;
     workerType?: JobType;
@@ -99,7 +105,8 @@ export class WorkerOptions {
     logLevel?: string;
   }) {
     this.requestFunc = requestFunc;
-    this.cpuLoadFunc = cpuLoadFunc;
+    this.loadFunc = loadFunc;
+    this.loadThreshold = loadThreshold;
     this.namespace = namespace;
     this.permissions = permissions;
     this.workerType = workerType;
@@ -305,15 +312,33 @@ export class Worker {
       }),
     );
 
+    let currentStatus = WorkerStatus.WS_AVAILABLE;
     const loadMonitor = setInterval(() => {
       if (closingWS) clearInterval(loadMonitor);
+
+      const oldStatus = currentStatus;
+      const currentLoad = this.#opts.loadFunc();
+      const isFull = currentLoad >= this.#opts.loadThreshold;
+      const currentlyAvailable = !isFull;
+      currentStatus = currentlyAvailable ? WorkerStatus.WS_AVAILABLE : WorkerStatus.WS_FULL;
+
+      if (oldStatus != currentStatus) {
+        const extra = { load: currentLoad, loadThreshold: this.#opts.loadThreshold };
+        if (isFull) {
+          log.child(extra).info('worker is at full capacity, marking as unavailable');
+        } else {
+          log.child(extra).info('worker is below capacity, marking as available');
+        }
+      }
+
       this.#event.emit(
         'worker_msg',
         new WorkerMessage({
           message: {
             case: 'updateWorker',
             value: {
-              load: cpuLoad(),
+              load: currentLoad,
+              status: currentStatus,
             },
           },
         }),
