@@ -312,7 +312,7 @@ export class Worker {
       }),
     );
 
-    var currentStatus = WorkerStatus.WS_AVAILABLE;
+    let currentStatus = WorkerStatus.WS_AVAILABLE;
     const loadMonitor = setInterval(() => {
       if (closingWS) clearInterval(loadMonitor);
 
