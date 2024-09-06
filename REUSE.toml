@@ -21,6 +21,6 @@ SPDX-License-Identifier = "Apache-2.0"
 
 # project configuration files
 [[annotations]]
-path = ["packages/livekit-rtc/.npmignore", ".prettierrc", ".prettierignore", ".eslintrc", "**.json"]
+path = [".prettierrc", ".prettierignore", ".eslintrc", "**.json"]
 SPDX-FileCopyrightText = "2024 LiveKit, Inc."
 SPDX-License-Identifier = "Apache-2.0"
