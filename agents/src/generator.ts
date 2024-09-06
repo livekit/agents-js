@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { JobContext } from './job_context.js';
+import type { JobContext } from './job.js';
 
 export type entryFunction = (job: JobContext) => Promise<void>;
 
