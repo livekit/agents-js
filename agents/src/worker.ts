@@ -10,21 +10,23 @@ import {
   ServerMessage,
   WorkerMessage,
   WorkerStatus,
+  TrackSource,
 } from '@livekit/protocol';
 import { EventEmitter } from 'events';
 import { AccessToken } from 'livekit-server-sdk';
 import os from 'os';
 import { WebSocket } from 'ws';
 import { HTTPServer } from './http_server.js';
-import { JobProcess } from './ipc/job_process.js';
-import { type AvailRes, JobRequest } from './job_request.js';
-import type { AcceptData } from './job_request.js';
 import { log } from './log.js';
 import { version } from './version.js';
+import { JobContext, JobExecutorType, JobProcess, JobRequest, RunningJobInfo } from './job.js';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
-const ASSIGNMENT_TIMEOUT = 15 * 1000;
-const LOAD_INTERVAL = 5 * 1000;
+const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
+const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
+
+const defaultInitializeProcessFunc = (proc: JobProcess) => {};
+const defaultRequestFunc = async (ctx: JobRequest) => { await ctx.accept() };
 
 const defaultCpuLoad = (): number =>
   1 -
@@ -41,6 +43,7 @@ export class WorkerPermissions {
   canSubscribe: boolean;
   canPublishData: boolean;
   canUpdateMetadata: boolean;
+  canPublishSources: TrackSource[];
   hidden: boolean;
 
   constructor(
@@ -48,22 +51,30 @@ export class WorkerPermissions {
     canSubscribe = true,
     canPublishData = true,
     canUpdateMetadata = true,
+    canPublishSources: TrackSource[] = [],
     hidden = false,
   ) {
     this.canPublish = canPublish;
     this.canSubscribe = canSubscribe;
     this.canPublishData = canPublishData;
     this.canUpdateMetadata = canUpdateMetadata;
+    this.canPublishSources = canPublishSources
     this.hidden = hidden;
   }
 }
 
 export class WorkerOptions {
-  requestFunc: (arg: JobRequest) => Promise<void>;
+  entrypointFunc: (ctx: JobContext) => Promise<void>;
+  requestFunc: (job: JobRequest) => Promise<void>;
+  prewarmFunc: (proc: JobProcess) => any;
   loadFunc: () => number;
+  jobExecutorType: JobExecutorType;
   loadThreshold: number;
-  namespace: string;
+  numIdleProcesses: number;
+  shutdownProcessTimeout: number;
+  initializeProcessTimeout: number;
   permissions: WorkerPermissions;
+  agentName: string;
   workerType: JobType;
   maxRetry: number;
   wsURL: string;
@@ -74,11 +85,17 @@ export class WorkerOptions {
   logLevel: string;
 
   constructor({
-    requestFunc,
+    entrypointFunc,
+    requestFunc = defaultRequestFunc,
+    prewarmFunc = defaultInitializeProcessFunc,
     loadFunc = defaultCpuLoad,
+    jobExecutorType = JobExecutorType.PROCESS,
     loadThreshold = 0.65,
-    namespace = 'default',
+    numIdleProcesses = 3,
+    shutdownProcessTimeout = 60,
+    initializeProcessTimeout = 10,
     permissions = new WorkerPermissions(),
+    agentName = "",
     workerType = JobType.JT_ROOM,
     maxRetry = MAX_RECONNECT_ATTEMPTS,
     wsURL = 'ws://localhost:7880',
@@ -88,13 +105,19 @@ export class WorkerOptions {
     port = 8081,
     logLevel = 'info',
   }: {
-    requestFunc: (arg: JobRequest) => Promise<void>;
+    entrypointFunc: (ctx: JobContext) => Promise<void>;
+    requestFunc: (job: JobRequest) => Promise<void>;
+    prewarmFunc: (proc: JobProcess) => any;
     /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
     loadFunc?: () => number;
+    jobExecutorType: JobExecutorType;
     /** When the load exceeds this threshold, the worker will be marked as unavailable. */
     loadThreshold?: number;
-    namespace?: string;
+    numIdleProcesses: number;
+    shutdownProcessTimeout: number;
+    initializeProcessTimeout: number;
     permissions?: WorkerPermissions;
+    agentName: string;
     workerType?: JobType;
     maxRetry?: number;
     wsURL?: string;
@@ -104,11 +127,17 @@ export class WorkerOptions {
     port?: number;
     logLevel?: string;
   }) {
+    this.entrypointFunc = entrypointFunc;
     this.requestFunc = requestFunc;
+    this.prewarmFunc = prewarmFunc;
     this.loadFunc = loadFunc;
+    this.jobExecutorType = jobExecutorType;
     this.loadThreshold = loadThreshold;
-    this.namespace = namespace;
+    this.numIdleProcesses = numIdleProcesses
+    this.shutdownProcessTimeout = shutdownProcessTimeout
+    this.initializeProcessTimeout = initializeProcessTimeout
     this.permissions = permissions;
+    this.agentName = agentName
     this.workerType = workerType;
     this.maxRetry = maxRetry;
     this.wsURL = wsURL;
@@ -148,49 +177,69 @@ class PendingAssignment {
 
 export class Worker {
   #opts: WorkerOptions;
+  #procPool: ProcPool;
+
   #id = 'unregistered';
+  #closed = true;
+  #draining = false;
+  #connecting = false;
+  #pending: { [id: string]: PendingAssignment } = {};
+
+  #close = () => {};
+  #closePromise = new Promise<void>((resolve) => {
+    this.#close = resolve;
+  });
+
+  #event = new EventEmitter();
   #session: WebSocket | undefined = undefined;
-  #closed = false;
   #httpServer: HTTPServer;
   #logger = log().child({ version });
-  #event = new EventEmitter();
-  #pending: { [id: string]: { value: PendingAssignment } } = {};
-  #processes: { [id: string]: { proc: JobProcess; activeJob: ActiveJob } } = {};
 
   constructor(opts: WorkerOptions) {
     opts.wsURL = opts.wsURL || process.env.LIVEKIT_URL || '';
     opts.apiKey = opts.apiKey || process.env.LIVEKIT_API_KEY || '';
     opts.apiSecret = opts.apiSecret || process.env.LIVEKIT_API_SECRET || '';
 
+    if (opts.wsURL === '') throw new Error('--url is required, or set LIVEKIT_URL env var');
+    if (opts.apiKey === '')
+      throw new Error('--api-key is required, or set LIVEKIT_API_KEY env var');
+    if (opts.apiSecret === '')
+      throw new Error('--api-secret is required, or set LIVEKIT_API_SECRET env var');
+
+    this.#procPool = new ProcPool(
+      opts.prewarmFunc,
+      opts.entrypointFunc,
+      opts.numIdleProcesses,
+      opts.jobExecutorType,
+      opts.initializeProcessTimeout,
+      opts.shutdownProcessTimeout,
+    );
+
     this.#opts = opts;
     this.#httpServer = new HTTPServer(opts.host, opts.port);
   }
 
-  get id(): string {
-    return this.#id;
-  }
-
   async run() {
-    this.#logger.info('starting worker');
+    if (!this.#closed) {
+      throw new Error("worker is already running")
+    }
 
-    if (this.#opts.wsURL === '') throw new Error('--url is required, or set LIVEKIT_URL env var');
-    if (this.#opts.apiKey === '')
-      throw new Error('--api-key is required, or set LIVEKIT_API_KEY env var');
-    if (this.#opts.apiSecret === '')
-      throw new Error('--api-secret is required, or set LIVEKIT_API_SECRET env var');
+    this.#logger.info("starting worker")
+    this.#closed = false
+    this.#procPool.start()
 
     const workerWS = async () => {
       let retries = 0;
+
       while (!this.#closed) {
+        const url = new URL(this.#opts.wsURL);
+        url.protocol = url.protocol.replace('http', 'ws');
         const token = new AccessToken(this.#opts.apiKey, this.#opts.apiSecret);
         token.addGrant({ agent: true });
         const jwt = await token.toJwt();
-
-        const url = new URL(this.#opts.wsURL);
-        url.protocol = url.protocol.replace('http', 'ws');
         this.#session = new WebSocket(url + 'agent', {
           headers: { authorization: 'Bearer ' + jwt },
-        });
+        })
 
         try {
           await new Promise((resolve, reject) => {
@@ -199,7 +248,8 @@ export class Worker {
             this.#session!.on('close', (code) => reject(`WebSocket returned ${code}`));
           });
 
-          this.runWS(this.#session!);
+          retries = 0;
+          this.runWS(this.#session);
           return;
         } catch (e) {
           if (this.#closed) return;
@@ -217,9 +267,14 @@ export class Worker {
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         }
       }
-    };
+    }
 
     await Promise.all([workerWS(), this.#httpServer.run()]);
+    this.#close();
+  }
+
+  get id(): string {
+    return this.#id;
   }
 
   startProcess(job: Job, acceptData: AcceptData, raw: string) {

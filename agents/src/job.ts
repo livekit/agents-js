@@ -13,6 +13,11 @@ import {
 } from '@livekit/rtc-node';
 import { log } from './log.js';
 
+export enum JobExecutorType {
+  PROCESS,
+  THREAD
+}
+
 export enum AutoSubscribe {
   SUBSCRIBE_ALL,
   SUBSCRIBE_NONE,
