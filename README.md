@@ -26,4 +26,4 @@ $ pnpm build
 Your output will be in the `dist/` directory.
 
 ## License
-This project is licensed under `Apache-2.0`, and is [REUSE-3.0](https://reuse.software) compliant. Refer to [the license](LICENSES/Apache-2.0.txt) for details.
+This project is licensed under `Apache-2.0`, and is [REUSE-3.2](https://reuse.software) compliant. Refer to [the license](LICENSES/Apache-2.0.txt) for details.

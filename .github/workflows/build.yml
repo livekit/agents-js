@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-name: agents CI
+name: Build
 on:
   push:
     branches: [main]
@@ -10,13 +10,17 @@ on:
     branches: [main]
 
 jobs:
-  test:
-    name: Test and build
+  reuse:
+    name: REUSE-3.2
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: REUSE-3.2 compliance check
-        uses: fsfe/reuse-action@v4
+      - uses: fsfe/reuse-action@v4
+  lint:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - name: Setup node
         uses: actions/setup-node@v4
@@ -29,5 +33,18 @@ jobs:
         run: pnpm lint
       - name: Prettier
         run: pnpm format:check
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install
       - name: Build
         run: pnpm build
