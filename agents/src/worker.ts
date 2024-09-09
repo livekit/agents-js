@@ -4,29 +4,39 @@
 import {
   type AvailabilityRequest,
   type Job,
-  type JobAssignment,
+  JobAssignment,
+  JobTermination,
   JobType,
   ParticipantPermission,
   ServerMessage,
+  TrackSource,
   WorkerMessage,
   WorkerStatus,
-  TrackSource,
 } from '@livekit/protocol';
 import { EventEmitter } from 'events';
 import { AccessToken } from 'livekit-server-sdk';
 import os from 'os';
 import { WebSocket } from 'ws';
 import { HTTPServer } from './http_server.js';
+import {
+  JobAcceptArguments,
+  JobContext,
+  JobExecutorType,
+  JobProcess,
+  JobRequest,
+  RunningJobInfo,
+} from './job.js';
 import { log } from './log.js';
-import { version } from './version.js';
-import { JobContext, JobExecutorType, JobProcess, JobRequest, RunningJobInfo } from './job.js';
+import { protocolVersion as version } from './version.js';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
 
-const defaultInitializeProcessFunc = (proc: JobProcess) => {};
-const defaultRequestFunc = async (ctx: JobRequest) => { await ctx.accept() };
+const defaultInitializeProcessFunc = (_: JobProcess) => {};
+const defaultRequestFunc = async (ctx: JobRequest) => {
+  await ctx.accept();
+};
 
 const defaultCpuLoad = (): number =>
   1 -
@@ -58,7 +68,7 @@ export class WorkerPermissions {
     this.canSubscribe = canSubscribe;
     this.canPublishData = canPublishData;
     this.canUpdateMetadata = canUpdateMetadata;
-    this.canPublishSources = canPublishSources
+    this.canPublishSources = canPublishSources;
     this.hidden = hidden;
   }
 }
@@ -95,7 +105,7 @@ export class WorkerOptions {
     shutdownProcessTimeout = 60,
     initializeProcessTimeout = 10,
     permissions = new WorkerPermissions(),
-    agentName = "",
+    agentName = '',
     workerType = JobType.JT_ROOM,
     maxRetry = MAX_RECONNECT_ATTEMPTS,
     wsURL = 'ws://localhost:7880',
@@ -133,11 +143,11 @@ export class WorkerOptions {
     this.loadFunc = loadFunc;
     this.jobExecutorType = jobExecutorType;
     this.loadThreshold = loadThreshold;
-    this.numIdleProcesses = numIdleProcesses
-    this.shutdownProcessTimeout = shutdownProcessTimeout
-    this.initializeProcessTimeout = initializeProcessTimeout
+    this.numIdleProcesses = numIdleProcesses;
+    this.shutdownProcessTimeout = shutdownProcessTimeout;
+    this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
-    this.agentName = agentName
+    this.agentName = agentName;
     this.workerType = workerType;
     this.maxRetry = maxRetry;
     this.wsURL = wsURL;
@@ -149,28 +159,11 @@ export class WorkerOptions {
   }
 }
 
-class ActiveJob {
-  job: Job;
-  acceptData: AcceptData;
-
-  constructor(job: Job, acceptData: AcceptData) {
-    this.job = job;
-    this.acceptData = acceptData;
-  }
-}
-
-type AssignmentPair = {
-  // this string is the JSON string version of the JobAssignment.
-  // we keep it around to unpack it again in the child, because we can't pass Job directly.
-  raw: string;
-  asgn: JobAssignment;
-};
-
 class PendingAssignment {
-  promise = new Promise<AssignmentPair>((resolve) => {
+  promise = new Promise<JobAssignment>((resolve) => {
     this.resolve = resolve; // this is how JavaScript lets you resolve promises externally
   });
-  resolve(arg: AssignmentPair) {
+  resolve(arg: JobAssignment) {
     arg; // useless call to counteract TypeScript E6133
   }
 }
@@ -183,6 +176,7 @@ export class Worker {
   #closed = true;
   #draining = false;
   #connecting = false;
+  #tasks: Promise<void>[] = [];
   #pending: { [id: string]: PendingAssignment } = {};
 
   #close = () => {};
@@ -221,12 +215,12 @@ export class Worker {
 
   async run() {
     if (!this.#closed) {
-      throw new Error("worker is already running")
+      throw new Error('worker is already running');
     }
 
-    this.#logger.info("starting worker")
-    this.#closed = false
-    this.#procPool.start()
+    this.#logger.info('starting worker');
+    this.#closed = false;
+    this.#procPool.start();
 
     const workerWS = async () => {
       let retries = 0;
@@ -239,7 +233,7 @@ export class Worker {
         const jwt = await token.toJwt();
         this.#session = new WebSocket(url + 'agent', {
           headers: { authorization: 'Bearer ' + jwt },
-        })
+        });
 
         try {
           await new Promise((resolve, reject) => {
@@ -267,7 +261,7 @@ export class Worker {
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         }
       }
-    }
+    };
 
     await Promise.all([workerWS(), this.#httpServer.run()]);
     this.#close();
@@ -277,19 +271,48 @@ export class Worker {
     return this.#id;
   }
 
-  startProcess(job: Job, acceptData: AcceptData, raw: string) {
-    const proc = new JobProcess(job, acceptData, raw, this.#opts.wsURL);
-    this.#processes[job.id] = { proc, activeJob: new ActiveJob(job, acceptData) };
-    proc
-      .run()
-      .catch((e) => {
-        proc.logger.error(`error running job process ${proc.job.id}: ${e}`);
-      })
-      .finally(() => {
-        proc.clear();
-        delete this.#processes[job.id];
-      });
+  // TODO(nbsp): activeJobs
+  // get activeJobs(): RunningJobInfo[] {
+  // }
+
+  async drain(timeout?: number) {
+    if (this.#draining) {
+      return;
+    }
+
+    this.#logger.info('draining worker');
+    this.#draining = true;
+
+    this.#event.emit(
+      'worker_msg',
+      new WorkerMessage({
+        message: {
+          case: 'updateWorker',
+          value: {
+            status: WorkerStatus.WS_FULL,
+          },
+        },
+      }),
+    );
+
+    const joinJobs = async () => {
+      for (const proc of this.#procPool.processes) {
+        if (proc.runningJob) {
+          await proc.join();
+        }
+      }
+    };
+
+    const timer = setTimeout(() => {
+      throw new Error('timed out draining');
+    }, timeout);
+    if (timeout === undefined) clearTimeout(timer);
+    await joinJobs().then(() => {
+      clearTimeout(timer);
+    });
   }
+
+  // TODO(nbsp): simulate_job
 
   runWS(ws: WebSocket) {
     let closingWS = false;
@@ -317,16 +340,26 @@ export class Worker {
 
       const msg = new ServerMessage();
       msg.fromBinary(event.data as Uint8Array);
+
+      // register is the only valid first message, and it is only valid as the
+      // first message
+      if (this.#connecting && msg.message.case !== 'register') {
+        throw new Error('expected register response as first message');
+      }
+
       switch (msg.message.case) {
         case 'register': {
           this.#id = msg.message.value.workerId;
           log()
             .child({ id: this.id, server_info: msg.message.value.serverInfo })
             .info('registered worker');
+          this.#connecting = false;
           break;
         }
         case 'availability': {
-          this.availability(msg.message.value);
+          const task = this.availability(msg.message.value);
+          this.#tasks.push(task);
+          task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
           break;
         }
         case 'assignment': {
@@ -334,15 +367,18 @@ export class Worker {
           if (job.id in this.#pending) {
             const task = this.#pending[job.id];
             delete this.#pending[job.id];
-            task.value.resolve({
-              asgn: msg.message.value,
-              raw: msg.toJsonString(),
-            });
+            task.resolve(msg.message.value);
           } else {
             log()
               .child({ job })
               .warn('received assignment for unknown job ' + job.id);
           }
+          break;
+        }
+        case 'termination': {
+          const task = this.termination(msg.message.value);
+          this.#tasks.push(task);
+          task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
           break;
         }
       }
@@ -355,7 +391,7 @@ export class Worker {
           case: 'register',
           value: {
             type: this.#opts.workerType,
-            namespace: this.#opts.namespace,
+            agentName: this.#opts.agentName,
             allowedPermissions: new ParticipantPermission({
               canPublish: this.#opts.permissions.canPublish,
               canSubscribe: this.#opts.permissions.canSubscribe,
@@ -400,71 +436,116 @@ export class Worker {
           },
         }),
       );
-    }, LOAD_INTERVAL);
+    }, UPDATE_LOAD_INTERVAL);
   }
 
   async availability(msg: AvailabilityRequest) {
-    const tx = new EventEmitter();
-    const req = new JobRequest(msg.job!, tx);
+    let answered = false;
+    let req: JobRequest;
 
-    tx.on('recv', async (av: AvailRes) => {
-      const msg = new WorkerMessage({
-        message: {
-          case: 'availability',
-          value: {
-            available: av.avail,
-            jobId: req.id,
-            participantIdentity: av.data?.identity,
-            participantName: av.data?.name,
-            participantMetadata: av.data?.metadata,
+    const onReject = async () => {
+      answered = true;
+      this.#event.emit(
+        'worker_msg',
+        new WorkerMessage({
+          message: {
+            case: 'availability',
+            value: {
+              jobId: msg.job!.id,
+              available: false,
+            },
           },
-        },
-      });
+        }),
+      );
+    };
 
-      this.#pending[req.id] = { value: new PendingAssignment() };
-      this.#event.emit('worker_msg', msg);
-      if (!av.avail) return;
+    const onAccept = async (args: JobAcceptArguments) => {
+      answered = true;
 
+      this.#event.emit(
+        'worker_msg',
+        new WorkerMessage({
+          message: {
+            case: 'availability',
+            value: {
+              jobId: msg.job!.id,
+              available: true,
+              participantIdentity: args.identity,
+              participantName: args.name,
+              participantMetadata: args.metadata,
+            },
+          },
+        }),
+      );
+
+      this.#pending[req.id] = new PendingAssignment();
       const timer = setTimeout(() => {
-        log().child({ req }).warn(`assignment for job ${req.id} timed out`);
+        this.#logger.child({ req }).warn(`assignment for job ${req.id} timed out`);
         return;
       }, ASSIGNMENT_TIMEOUT);
-      this.#pending[req.id].value.promise.then(({ asgn, raw }) => {
+      this.#pending[req.id].promise.then(async (asgn) => {
         clearTimeout(timer);
-        this.startProcess(asgn!.job!, av.data!, raw);
-      });
-    });
 
-    try {
-      this.#opts.requestFunc(req);
-    } catch (e) {
-      log().child({ req }).error(`user request handler for job ${req.id} failed`);
-    } finally {
-      if (!req.answered) {
-        log().child({ req }).error(`no answer for job ${req.id}, automatically rejecting the job`);
-        this.#event.emit(
-          'worker_msg',
-          new WorkerMessage({
-            message: {
-              case: 'availability',
-              value: {
-                available: false,
-              },
-            },
-          }),
-        );
-      }
+        await this.#procPool.launchJob({
+          acceptArguments: args,
+          job: msg.job!,
+          url: asgn.url || this.#opts.wsURL,
+          token: asgn.token,
+        });
+      });
+
+      req = new JobRequest(msg.job!, onReject, onAccept);
+      this.#logger
+        .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
+        .info('received job request');
+
+      const jobRequestTask = async () => {
+        try {
+          await this.#opts.requestFunc(req);
+        } catch (e) {
+          this.#logger
+            .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
+            .info('jobRequestFunc failed');
+          await onReject();
+        }
+
+        if (!answered) {
+          this.#logger
+            .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
+            .info('no answer was given inside the jobRequestFunc, automatically rejecting the job');
+        }
+      };
+
+      const task = jobRequestTask();
+      this.#tasks.push(task);
+      task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
+    };
+  }
+
+  async termination(msg: JobTermination) {
+    const proc = this.#procPool.getByJobId(msg.jobId);
+    if (proc === undefined) {
+      // safe to ignore
+      return;
     }
+    await proc.close();
   }
 
   async close() {
-    if (this.#closed) return;
-    this.#closed = true;
-    this.#logger.debug('shutting down worker');
-    await this.#httpServer.close();
-    for await (const value of Object.values(this.#processes)) {
-      await value.proc.close();
+    if (this.#closed) {
+      await this.#closePromise;
+      return;
     }
+
+    this.#logger.info('shutting down worker');
+
+    this.#closed = true;
+
+    await this.#procPool.close();
+    await this.#httpServer.close();
+    await Promise.allSettled(this.#tasks);
+
     this.#session?.close();
+    await this.#closePromise;
   }
 }
