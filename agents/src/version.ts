@@ -4,7 +4,7 @@
 
 /**
  * this is not the version of the LiveKit Agents for Node package, but instead
- * the version of {@link https://github.com/livekit/agents Python Agents} that
+ * the version of {@link https://github.com/livekit/agents | Python Agents} that
  * this port is built after.
  */
 export const protocolVersion = '0.8.10';

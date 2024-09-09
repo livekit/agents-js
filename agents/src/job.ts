@@ -2,20 +2,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type * as proto from '@livekit/protocol';
-import {
+import type {
   E2EEOptions,
   LocalParticipant,
   RemoteParticipant,
   Room,
-  RoomEvent,
   RtcConfiguration,
-  TrackKind,
 } from '@livekit/rtc-node';
+import { RoomEvent, TrackKind } from '@livekit/rtc-node';
 import { log } from './log.js';
 
 export enum JobExecutorType {
   PROCESS,
-  THREAD
+  THREAD,
 }
 
 export enum AutoSubscribe {
@@ -151,10 +150,10 @@ export class JobContext {
 
 export class JobProcess {
   #pid = process.pid;
-  #userData: { [id: string]: any } = {};
-  #startArguments: any;
+  #userData: { [id: string]: unknown } = {};
+  #startArguments: unknown;
 
-  constructor(startArguments?: any) {
+  constructor(startArguments?: unknown) {
     this.#startArguments = startArguments;
   }
 
@@ -162,11 +161,11 @@ export class JobProcess {
     return this.#pid;
   }
 
-  get userData(): { [id: string]: any } {
+  get userData(): { [id: string]: unknown } {
     return this.#userData;
   }
 
-  get startArguments(): any {
+  get startArguments(): unknown {
     return this.#startArguments;
   }
 }

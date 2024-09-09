@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { JobContext, JobExecutorType, JobProcess, RunningJobInfo } from '../job.js';
+import type { JobContext, JobProcess, RunningJobInfo } from '../job.js';
+import { JobExecutorType } from '../job.js';
+import { JobExecutor } from './job_executor.js';
 
 const MAX_CONCURRENT_INITIALIZATIONS = 3;
 
 export class ProcPool {
-  initializeProcessFunc: (proc: JobProcess) => any;
+  initializeProcessFunc: (proc: JobProcess) => unknown;
   jobEntrypointFunc: (ctx: JobContext) => Promise<void>;
   numIdleProcesses: number;
   jobExecutorType: JobExecutorType;
@@ -27,7 +29,7 @@ export class ProcPool {
   });
 
   constructor(
-    initializeProcessFunc: (proc: JobProcess) => any,
+    initializeProcessFunc: (proc: JobProcess) => unknown,
     jobEntrypointFunc: (ctx: JobContext) => Promise<void>,
     numIdleProcesses: number,
     jobExecutorType: JobExecutorType,
@@ -47,7 +49,7 @@ export class ProcPool {
   }
 
   getByJobId(id: string): JobExecutor | null {
-    this.executors.find((x) => x.runningJob && x.runningJob.job.id === id) || null;
+    return this.executors.find((x) => x.runningJob && x.runningJob.job.id === id) || null;
   }
 
   async launchJob(info: RunningJobInfo) {

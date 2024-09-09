@@ -1,14 +1,12 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { JobAssignment, JobTermination, TrackSource } from '@livekit/protocol';
 import {
   type AvailabilityRequest,
-  JobAssignment,
-  JobTermination,
   JobType,
   ParticipantPermission,
   ServerMessage,
-  TrackSource,
   WorkerMessage,
   WorkerStatus,
 } from '@livekit/protocol';
@@ -18,7 +16,8 @@ import os from 'os';
 import { WebSocket } from 'ws';
 import { HTTPServer } from './http_server.js';
 import { ProcPool } from './ipc/proc_pool.js';
-import { JobAcceptArguments, JobContext, JobExecutorType, JobProcess, JobRequest } from './job.js';
+import type { JobAcceptArguments, JobContext, JobProcess } from './job.js';
+import { JobExecutorType, JobRequest } from './job.js';
 import { log } from './log.js';
 import { protocolVersion as version } from './version.js';
 
@@ -26,7 +25,9 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
 
-const defaultInitializeProcessFunc = (_: JobProcess) => {};
+const defaultInitializeProcessFunc = (_: JobProcess) => {
+  _;
+};
 const defaultRequestFunc = async (ctx: JobRequest) => {
   await ctx.accept();
 };
@@ -69,7 +70,7 @@ export class WorkerPermissions {
 export class WorkerOptions {
   entrypointFunc: (ctx: JobContext) => Promise<void>;
   requestFunc: (job: JobRequest) => Promise<void>;
-  prewarmFunc: (proc: JobProcess) => any;
+  prewarmFunc: (proc: JobProcess) => unknown;
   loadFunc: () => number;
   jobExecutorType: JobExecutorType;
   loadThreshold: number;
@@ -110,7 +111,7 @@ export class WorkerOptions {
   }: {
     entrypointFunc: (ctx: JobContext) => Promise<void>;
     requestFunc: (job: JobRequest) => Promise<void>;
-    prewarmFunc: (proc: JobProcess) => any;
+    prewarmFunc: (proc: JobProcess) => unknown;
     /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
     loadFunc?: () => number;
     jobExecutorType: JobExecutorType;
@@ -434,7 +435,6 @@ export class Worker {
 
   async availability(msg: AvailabilityRequest) {
     let answered = false;
-    let req: JobRequest;
 
     const onReject = async () => {
       answered = true;
@@ -486,38 +486,38 @@ export class Worker {
           token: asgn.token,
         });
       });
-
-      req = new JobRequest(msg.job!, onReject, onAccept);
-      this.#logger
-        .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
-        .info('received job request');
-
-      const jobRequestTask = async () => {
-        try {
-          await this.#opts.requestFunc(req);
-        } catch (e) {
-          this.#logger
-            .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
-            .info('jobRequestFunc failed');
-          await onReject();
-        }
-
-        if (!answered) {
-          this.#logger
-            .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
-            .info('no answer was given inside the jobRequestFunc, automatically rejecting the job');
-        }
-      };
-
-      const task = jobRequestTask();
-      this.#tasks.push(task);
-      task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
     };
+
+    const req = new JobRequest(msg.job!, onReject, onAccept);
+    this.#logger
+      .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
+      .info('received job request');
+
+    const jobRequestTask = async () => {
+      try {
+        await this.#opts.requestFunc(req);
+      } catch (e) {
+        this.#logger
+          .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
+          .info('jobRequestFunc failed');
+        await onReject();
+      }
+
+      if (!answered) {
+        this.#logger
+          .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
+          .info('no answer was given inside the jobRequestFunc, automatically rejecting the job');
+      }
+    };
+
+    const task = jobRequestTask();
+    this.#tasks.push(task);
+    task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
   }
 
   async termination(msg: JobTermination) {
     const proc = this.#procPool.getByJobId(msg.jobId);
-    if (proc === undefined) {
+    if (proc === null) {
       // safe to ignore
       return;
     }
