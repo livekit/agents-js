@@ -1,15 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { JobContext, JobProcess, RunningJobInfo } from '../job.js';
+import type { RunningJobInfo } from '../job.js';
 import { JobExecutorType } from '../job.js';
 import type { JobExecutor } from './job_executor.js';
 
 const MAX_CONCURRENT_INITIALIZATIONS = 3;
 
 export class ProcPool {
-  initializeProcessFunc: (proc: JobProcess) => unknown;
-  jobEntrypointFunc: (ctx: JobContext) => Promise<void>;
+  agent: string;
   numIdleProcesses: number;
   jobExecutorType: JobExecutorType;
   initializeTimeout: number;
@@ -40,15 +39,13 @@ export class ProcPool {
   };
 
   constructor(
-    initializeProcessFunc: (proc: JobProcess) => unknown,
-    jobEntrypointFunc: (ctx: JobContext) => Promise<void>,
+    agent: string,
     numIdleProcesses: number,
     jobExecutorType: JobExecutorType,
     initializeTimeout: number,
     closeTimeout: number,
   ) {
-    this.initializeProcessFunc = initializeProcessFunc;
-    this.jobEntrypointFunc = jobEntrypointFunc;
+    this.agent = agent;
     this.numIdleProcesses = numIdleProcesses;
     this.jobExecutorType = jobExecutorType;
     this.initializeTimeout = initializeTimeout;
@@ -73,21 +70,11 @@ export class ProcPool {
     let proc: JobExecutor;
     switch (this.jobExecutorType) {
       case JobExecutorType.THREAD: {
-        proc = new ThreadJobExecutor(
-          this.initializeProcessFunc,
-          this.jobEntrypointFunc,
-          this.initializeTimeout,
-          this.closeTimeout,
-        );
+        proc = new ThreadJobExecutor(this.agent, this.initializeTimeout, this.closeTimeout);
         break;
       }
       case JobExecutorType.PROCESS: {
-        proc = new ProcJobExecutor(
-          this.initializeProcessFunc,
-          this.jobEntrypointFunc,
-          this.initializeTimeout,
-          this.closeTimeout,
-        );
+        proc = new ProcJobExecutor(this.agent, this.initializeTimeout, this.closeTimeout);
         break;
       }
     }

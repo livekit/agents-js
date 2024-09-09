@@ -25,7 +25,7 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
 
-const defaultInitializeProcessFunc = (_: JobProcess) => {
+export const defaultInitializeProcessFunc = (_: JobProcess) => {
   _;
 };
 const defaultRequestFunc = async (ctx: JobRequest) => {
@@ -68,9 +68,8 @@ export class WorkerPermissions {
 }
 
 export class WorkerOptions {
-  entrypointFunc: (ctx: JobContext) => Promise<void>;
+  agent: string;
   requestFunc: (job: JobRequest) => Promise<void>;
-  prewarmFunc: (proc: JobProcess) => unknown;
   loadFunc: () => number;
   jobExecutorType: JobExecutorType;
   loadThreshold: number;
@@ -89,9 +88,8 @@ export class WorkerOptions {
   logLevel: string;
 
   constructor({
-    entrypointFunc,
+    agent,
     requestFunc = defaultRequestFunc,
-    prewarmFunc = defaultInitializeProcessFunc,
     loadFunc = defaultCpuLoad,
     jobExecutorType = JobExecutorType.PROCESS,
     loadThreshold = 0.65,
@@ -109,6 +107,8 @@ export class WorkerOptions {
     port = 8081,
     logLevel = 'info',
   }: {
+    /** Path to a file that has Agent as a default export, dynamically imported later for entrypoint and prewarm functions */
+    agent: string;
     entrypointFunc: (ctx: JobContext) => Promise<void>;
     requestFunc: (job: JobRequest) => Promise<void>;
     prewarmFunc: (proc: JobProcess) => unknown;
@@ -131,9 +131,8 @@ export class WorkerOptions {
     port?: number;
     logLevel?: string;
   }) {
-    this.entrypointFunc = entrypointFunc;
+    this.agent = agent;
     this.requestFunc = requestFunc;
-    this.prewarmFunc = prewarmFunc;
     this.loadFunc = loadFunc;
     this.jobExecutorType = jobExecutorType;
     this.loadThreshold = loadThreshold;
@@ -195,8 +194,7 @@ export class Worker {
       throw new Error('--api-secret is required, or set LIVEKIT_API_SECRET env var');
 
     this.#procPool = new ProcPool(
-      opts.prewarmFunc,
-      opts.entrypointFunc,
+      opts.agent,
       opts.numIdleProcesses,
       opts.jobExecutorType,
       opts.initializeProcessTimeout,
