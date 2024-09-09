@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { JobContext, JobProcess, RunningJobInfo } from '../job.js';
 import { JobExecutorType } from '../job.js';
-import { JobExecutor } from './job_executor.js';
+import type { JobExecutor } from './job_executor.js';
 
 const MAX_CONCURRENT_INITIALIZATIONS = 3;
 
@@ -29,7 +29,7 @@ export class ProcPool {
         this.promiseQueue.push(resolve);
       }
     });
-  }
+  };
   advanceQueue = () => {
     if (this.promiseQueue.length > 0) {
       const next = this.promiseQueue.shift();
@@ -38,7 +38,6 @@ export class ProcPool {
       }
     }
   };
-    
 
   constructor(
     initializeProcessFunc: (proc: JobProcess) => unknown,
