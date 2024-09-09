@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type AvailabilityRequest,
-  type Job,
   JobAssignment,
   JobTermination,
   JobType,
@@ -18,14 +17,8 @@ import { AccessToken } from 'livekit-server-sdk';
 import os from 'os';
 import { WebSocket } from 'ws';
 import { HTTPServer } from './http_server.js';
-import {
-  JobAcceptArguments,
-  JobContext,
-  JobExecutorType,
-  JobProcess,
-  JobRequest,
-  RunningJobInfo,
-} from './job.js';
+import { ProcPool } from './ipc/proc_pool.js';
+import { JobAcceptArguments, JobContext, JobExecutorType, JobProcess, JobRequest } from './job.js';
 import { log } from './log.js';
 import { protocolVersion as version } from './version.js';
 
