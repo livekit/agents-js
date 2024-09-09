@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "module": "ES2020",
+    "module": "ES2022",
     "moduleResolution": "node",
     "declaration": true,
     "declarationMap": true,

@@ -8,7 +8,7 @@ export type prewarmFunction = (proc: JobProcess) => unknown;
 
 export interface Agent {
   entry: entryFunction;
-  prewarm: prewarmFunction;
+  prewarm?: prewarmFunction;
 }
 
 /**

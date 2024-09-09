@@ -4,6 +4,7 @@
 import type { RunningJobInfo } from '../job.js';
 import { JobExecutorType } from '../job.js';
 import type { JobExecutor } from './job_executor.js';
+import { ThreadJobExecutor } from './thread_job_executor.js';
 
 const MAX_CONCURRENT_INITIALIZATIONS = 3;
 

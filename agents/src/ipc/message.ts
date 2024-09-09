@@ -31,4 +31,8 @@ export type IPCMessage =
   | {
       case: 'exiting';
       value: { reason?: string };
+    }
+  | {
+      case: 'done';
+      value: undefined;
     };
