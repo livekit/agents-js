@@ -7,7 +7,7 @@ export abstract class JobExecutor {
   abstract get started(): boolean;
   abstract get startArguments(): unknown;
   abstract set startArguments(value: unknown);
-  abstract get runningJob(): RunningJobInfo;
+  abstract get runningJob(): RunningJobInfo | undefined;
 
   abstract start(): Promise<void>;
   abstract join(): Promise<void>;
