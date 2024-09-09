@@ -15,18 +15,30 @@ export class ProcPool {
   initializeTimeout: number;
   closeTimeout: number;
   executors: JobExecutor[] = [];
+  queue: JobExecutor[] = [];
   tasks: Promise<void>[] = [];
   started = false;
   closed = false;
-  queue = [];
 
-  advanceQueue = () => {};
-  queueNext = new Promise<void>((resolve) => {
-    if (this.queue.length < MAX_CONCURRENT_INITIALIZATIONS) {
-      resolve();
+  promiseQueue: (() => void)[] = [];
+  queueNext = () => {
+    return new Promise<void>((resolve) => {
+      if (this.queue.length < MAX_CONCURRENT_INITIALIZATIONS) {
+        resolve();
+      } else {
+        this.promiseQueue.push(resolve);
+      }
+    });
+  }
+  advanceQueue = () => {
+    if (this.promiseQueue.length > 0) {
+      const next = this.promiseQueue.shift();
+      if (next) {
+        next();
+      }
     }
-    this.advanceQueue = resolve;
-  });
+  };
+    
 
   constructor(
     initializeProcessFunc: (proc: JobProcess) => unknown,
@@ -116,7 +128,7 @@ export class ProcPool {
 
   async run() {
     while (true) {
-      await this.queueNext(); // TODO(nbsp): this only works once
+      await this.queueNext();
       const task = this.procWatchTask();
       this.tasks.push(task);
       task.finally(() => this.tasks.splice(this.tasks.indexOf(task)));
