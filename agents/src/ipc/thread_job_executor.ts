@@ -4,15 +4,10 @@
 import type { Worker } from 'worker_threads';
 import type { RunningJobInfo } from '../job.js';
 import { log } from '../log.js';
+import type { ProcOpts } from './job_executor.js';
 import { JobExecutor } from './job_executor.js';
 import { runThreaded } from './job_main.js';
 import type { IPCMessage } from './message.js';
-
-interface ProcOpts {
-  agent: string;
-  initializeTimeout: number;
-  closeTimeout: number;
-}
 
 export class ThreadJobExecutor extends JobExecutor {
   #opts: ProcOpts;

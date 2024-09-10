@@ -15,9 +15,10 @@ import { AccessToken } from 'livekit-server-sdk';
 import os from 'os';
 import { WebSocket } from 'ws';
 import { HTTPServer } from './http_server.js';
+import { JobExecutorType } from './ipc/job_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
-import type { JobAcceptArguments, JobContext, JobProcess } from './job.js';
-import { JobExecutorType, JobRequest } from './job.js';
+import type { JobAcceptArguments, JobContext, JobProcess, RunningJobInfo } from './job.js';
+import { JobRequest } from './job.js';
 import { log } from './log.js';
 import { protocolVersion as version } from './version.js';
 
@@ -25,9 +26,7 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
 
-export const defaultInitializeProcessFunc = (_: JobProcess) => {
-  _;
-};
+export const defaultInitializeProcessFunc = (_: JobProcess) => _;
 const defaultRequestFunc = async (ctx: JobRequest) => {
   await ctx.accept();
 };
@@ -91,7 +90,7 @@ export class WorkerOptions {
     agent,
     requestFunc = defaultRequestFunc,
     loadFunc = defaultCpuLoad,
-    jobExecutorType = JobExecutorType.PROCESS,
+    jobExecutorType = JobExecutorType.THREAD,
     loadThreshold = 0.65,
     numIdleProcesses = 3,
     shutdownProcessTimeout = 60,
@@ -263,9 +262,11 @@ export class Worker {
     return this.#id;
   }
 
-  // TODO(nbsp): activeJobs
-  // get activeJobs(): RunningJobInfo[] {
-  // }
+  get activeJobs(): RunningJobInfo[] {
+    return this.#procPool.processes
+      .filter((proc) => proc.runningJob)
+      .map((proc) => proc.runningJob!);
+  }
 
   async drain(timeout?: number) {
     if (this.#draining) {

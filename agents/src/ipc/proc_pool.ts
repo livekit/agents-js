@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { RunningJobInfo } from '../job.js';
-import { JobExecutorType } from '../job.js';
-import type { JobExecutor } from './job_executor.js';
+import type { JobExecutor, JobExecutorType } from './job_executor.js';
 import { ThreadJobExecutor } from './thread_job_executor.js';
 
 const MAX_CONCURRENT_INITIALIZATIONS = 3;
@@ -15,29 +14,70 @@ export class ProcPool {
   initializeTimeout: number;
   closeTimeout: number;
   executors: JobExecutor[] = [];
-  queue: JobExecutor[] = [];
   tasks: Promise<void>[] = [];
   started = false;
   closed = false;
 
-  promiseQueue: (() => void)[] = [];
-  queueNext = () => {
-    return new Promise<void>((resolve) => {
-      if (this.queue.length < MAX_CONCURRENT_INITIALIZATIONS) {
-        resolve();
-      } else {
-        this.promiseQueue.push(resolve);
-      }
-    });
-  };
-  advanceQueue = () => {
-    if (this.promiseQueue.length > 0) {
-      const next = this.promiseQueue.shift();
+  // equivalent to warmed_proc_queue
+  warmedProcQueue: JobExecutor[] = [];
+  warmedResolver?: (_: JobExecutor) => void;
+  warmedEnqueue(item: JobExecutor) {
+    if (this.warmedResolver) {
+      this.warmedResolver(item);
+      this.warmedResolver = undefined;
+    } else {
+      this.warmedProcQueue.push(item);
+    }
+  }
+  async warmedDequeue(): Promise<JobExecutor> {
+    if (this.warmedProcQueue.length > 0) {
+      return this.warmedProcQueue.shift()!;
+    } else {
+      return new Promise<JobExecutor>((resolve) => {
+        this.warmedResolver = resolve;
+      });
+    }
+  }
+
+  // equivalent to init_sem
+  initQueue: (() => void)[] = [];
+  initDequeue() {
+    if (this.procQueue.length > 0) {
+      const next = this.procQueue.shift();
       if (next) {
         next();
       }
     }
-  };
+  }
+  async initEnqueue() {
+    if (this.initQueue.length < MAX_CONCURRENT_INITIALIZATIONS) {
+      return;
+    } else {
+      return new Promise<void>((resolve) => {
+        this.initQueue.push(resolve);
+      });
+    }
+  }
+
+  // equivalent to proc_needed_sem
+  procQueue: (() => void)[] = [];
+  async procEnqueue() {
+    if (this.warmedProcQueue.length < this.numIdleProcesses) {
+      return;
+    } else {
+      return new Promise<void>((resolve) => {
+        this.procQueue.push(resolve);
+      });
+    }
+  }
+  procDequeue() {
+    if (this.procQueue.length > 0) {
+      const next = this.procQueue.shift();
+      if (next) {
+        next();
+      }
+    }
+  }
 
   constructor(
     agent: string,
@@ -62,29 +102,18 @@ export class ProcPool {
   }
 
   async launchJob(info: RunningJobInfo) {
-    // TODO(nbsp): wait for next in queue
-    this.advanceQueue();
+    const proc = await this.warmedDequeue();
+    this.procDequeue();
     await proc.launchJob(info);
   }
 
   async procWatchTask() {
-    let proc: JobExecutor;
-    switch (this.jobExecutorType) {
-      case JobExecutorType.THREAD: {
-        proc = new ThreadJobExecutor(this.agent, this.initializeTimeout, this.closeTimeout);
-        break;
-      }
-      case JobExecutorType.PROCESS: {
-        proc = new ProcJobExecutor(this.agent, this.initializeTimeout, this.closeTimeout);
-        break;
-      }
-    }
+    const proc = new ThreadJobExecutor(this.agent, this.initializeTimeout, this.closeTimeout);
 
     try {
       this.executors.push(proc);
 
-      // TODO(nbsp): init semaphore
-      // --block--
+      await this.initEnqueue();
       if (this.closed) {
         return;
       }
@@ -92,11 +121,12 @@ export class ProcPool {
       await proc.start();
       try {
         await proc.initialize();
-        this.queue.push(proc);
+        this.warmedEnqueue(proc);
       } catch {
-        this.advanceQueue();
+        this.procDequeue();
       }
-      // --end block--
+
+      this.initDequeue();
 
       await proc.join();
     } finally {
@@ -115,7 +145,7 @@ export class ProcPool {
 
   async run() {
     while (true) {
-      await this.queueNext();
+      await this.procEnqueue();
       const task = this.procWatchTask();
       this.tasks.push(task);
       task.finally(() => this.tasks.splice(this.tasks.indexOf(task)));
