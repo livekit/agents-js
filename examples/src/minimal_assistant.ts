@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { type JobContext, type JobRequest, WorkerOptions, cli, defineAgent } from '@livekit/agents';
-import { TTS } from '@livekit/agents-plugin-elevenlabs';
+import { VoiceAssistant } from '@livekit/agents-plugin-openai';
 import { AudioSource, LocalAudioTrack, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
 
 export default defineAgent({
   entry: async (job: JobContext) => {
-    console.log('starting TTS example agent');
+    console.log('starting assistant example agent');
 
     // prepare our audio track and start publishing it to the room
     const source = new AudioSource(24000, 1);
@@ -16,16 +16,19 @@ export default defineAgent({
     options.source = TrackSource.SOURCE_MICROPHONE;
     await job.room.localParticipant?.publishTrack(track, options);
 
+    const assistant = new VoiceAssistant();
+    assistant.connect();
+
     // ask ElevenLabs to synthesize "Hello!"
-    const tts = new TTS();
-    console.log('speaking "Hello!"');
-    await tts
-      .synthesize('Hello!')
-      .then((output) => output.collect())
-      .then((output) => {
-        // send the audio to our track
-        source.captureFrame(output);
-      });
+    // const tts = new TTS();
+    // console.log('speaking "Hello!"');
+    // await tts
+    //   .synthesize('Hello!')
+    //   .then((output) => output.collect())
+    //   .then((output) => {
+    //     // send the audio to our track
+    //     source.captureFrame(output);
+    //   });
   },
 });
 
