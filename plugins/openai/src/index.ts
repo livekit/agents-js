@@ -2,4 +2,4 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export * from './voice_assistant.js';
+export * from './voice_assistant/index.js';
