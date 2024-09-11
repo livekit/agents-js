@@ -147,11 +147,6 @@ export class JobContext {
 export class JobProcess {
   #pid = process.pid;
   #userData: { [id: string]: unknown } = {};
-  #startArguments: unknown;
-
-  constructor(startArguments?: unknown) {
-    this.#startArguments = startArguments;
-  }
 
   get pid(): number {
     return this.#pid;
@@ -159,10 +154,6 @@ export class JobProcess {
 
   get userData(): { [id: string]: unknown } {
     return this.#userData;
-  }
-
-  get startArguments(): unknown {
-    return this.#startArguments;
   }
 }
 

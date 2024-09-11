@@ -14,7 +14,6 @@ export class ProcJobExecutor extends JobExecutor {
   #opts: ProcOpts;
   #started = false;
   #closing = false;
-  #userArgs: unknown = undefined;
   #runningJob?: RunningJobInfo = undefined;
   #proc?: ChildProcess;
   #pingInterval?: ReturnType<typeof setInterval>;
@@ -47,14 +46,6 @@ export class ProcJobExecutor extends JobExecutor {
     return this.#started;
   }
 
-  get startArguments(): unknown {
-    return this.#userArgs;
-  }
-
-  set startArguments(value: unknown) {
-    this.#userArgs = value;
-  }
-
   get runningJob(): RunningJobInfo | undefined {
     return this.#runningJob;
   }
@@ -68,7 +59,6 @@ export class ProcJobExecutor extends JobExecutor {
 
     this.#proc = runProcess({
       agentFile: this.#opts.agent,
-      userArguments: this.#userArgs,
     });
 
     try {

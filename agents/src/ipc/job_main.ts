@@ -16,7 +16,7 @@ import type { IPCMessage } from './message.js';
 
 type StartArgs = {
   agentFile: string;
-  userArguments: unknown;
+  // userArguments: unknown;
 };
 
 type JobTask = {
@@ -25,7 +25,7 @@ type JobTask = {
 };
 
 export const runProcess = (args: StartArgs): ChildProcess => {
-  return fork(fileURLToPath(import.meta.url), [args.agentFile, JSON.stringify(args.userArguments)]);
+  return fork(fileURLToPath(import.meta.url), [args.agentFile]);
 };
 
 const startJob = (
@@ -87,7 +87,6 @@ if (process.send) {
   //   [0] `node'
   //   [1] import.meta.filename
   //   [2] import.meta.filename of function containing entry file
-  //   [3] userArguments, as a JSON string
   const agent: Agent = await import(process.argv[2]).then((agent) => agent.default);
   if (!agent.prewarm) {
     agent.prewarm = defaultInitializeProcessFunc;
@@ -102,7 +101,7 @@ if (process.send) {
       throw new Error('first message must be InitializeRequest');
     }
   });
-  const proc = new JobProcess(JSON.parse(process.argv[3]));
+  const proc = new JobProcess();
 
   log().child({ pid: proc.pid }).debug('initializing job runner');
   agent.prewarm(proc);

@@ -16,8 +16,6 @@ export abstract class JobExecutor {
   NO_MESSAGE_TIMEOUT = 15 * 1000;
 
   abstract get started(): boolean;
-  abstract get startArguments(): unknown;
-  abstract set startArguments(value: unknown);
   abstract get runningJob(): RunningJobInfo | undefined;
 
   abstract start(): Promise<void>;
