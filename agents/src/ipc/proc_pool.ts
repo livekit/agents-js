@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { RunningJobInfo } from '../job.js';
-import type { JobExecutor, JobExecutorType } from './job_executor.js';
+import type { JobExecutor } from './job_executor.js';
 import { ProcJobExecutor } from './proc_job_executor.js';
 
 const MAX_CONCURRENT_INITIALIZATIONS = 3;
@@ -10,7 +10,6 @@ const MAX_CONCURRENT_INITIALIZATIONS = 3;
 export class ProcPool {
   agent: string;
   numIdleProcesses: number;
-  jobExecutorType: JobExecutorType;
   initializeTimeout: number;
   closeTimeout: number;
   executors: JobExecutor[] = [];
@@ -82,13 +81,11 @@ export class ProcPool {
   constructor(
     agent: string,
     numIdleProcesses: number,
-    jobExecutorType: JobExecutorType,
     initializeTimeout: number,
     closeTimeout: number,
   ) {
     this.agent = agent;
     this.numIdleProcesses = numIdleProcesses;
-    this.jobExecutorType = jobExecutorType;
     this.initializeTimeout = initializeTimeout;
     this.closeTimeout = closeTimeout;
   }

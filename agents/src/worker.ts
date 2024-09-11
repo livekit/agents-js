@@ -15,7 +15,6 @@ import { AccessToken } from 'livekit-server-sdk';
 import os from 'os';
 import { WebSocket } from 'ws';
 import { HTTPServer } from './http_server.js';
-import { JobExecutorType } from './ipc/job_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
@@ -70,7 +69,6 @@ export class WorkerOptions {
   agent: string;
   requestFunc: (job: JobRequest) => Promise<void>;
   loadFunc: () => number;
-  jobExecutorType: JobExecutorType;
   loadThreshold: number;
   numIdleProcesses: number;
   shutdownProcessTimeout: number;
@@ -90,7 +88,6 @@ export class WorkerOptions {
     agent,
     requestFunc = defaultRequestFunc,
     loadFunc = defaultCpuLoad,
-    jobExecutorType = JobExecutorType.PROCESS,
     loadThreshold = 0.65,
     numIdleProcesses = 3,
     shutdownProcessTimeout = 60,
@@ -111,7 +108,6 @@ export class WorkerOptions {
     requestFunc?: (job: JobRequest) => Promise<void>;
     /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
     loadFunc?: () => number;
-    jobExecutorType?: JobExecutorType;
     /** When the load exceeds this threshold, the worker will be marked as unavailable. */
     loadThreshold?: number;
     numIdleProcesses?: number;
@@ -131,7 +127,6 @@ export class WorkerOptions {
     this.agent = agent;
     this.requestFunc = requestFunc;
     this.loadFunc = loadFunc;
-    this.jobExecutorType = jobExecutorType;
     this.loadThreshold = loadThreshold;
     this.numIdleProcesses = numIdleProcesses;
     this.shutdownProcessTimeout = shutdownProcessTimeout;
@@ -193,7 +188,6 @@ export class Worker {
     this.#procPool = new ProcPool(
       opts.agent,
       opts.numIdleProcesses,
-      opts.jobExecutorType,
       opts.initializeProcessTimeout,
       opts.shutdownProcessTimeout,
     );

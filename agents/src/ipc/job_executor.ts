@@ -9,11 +9,6 @@ export interface ProcOpts {
   closeTimeout: number;
 }
 
-export enum JobExecutorType {
-  PROCESS,
-  // THREAD, // not yet implemented
-}
-
 export abstract class JobExecutor {
   PING_INTERVAL = 2.5 * 1000;
   PING_TIMEOUT = 90 * 1000;
