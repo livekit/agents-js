@@ -97,15 +97,10 @@ if (process.send) {
   // this is handled in cli, triggering a termination of all child processes at once.
   process.on('SIGINT', () => {});
 
-  let gotRequest = () => {};
-  process.once('message', (msg: IPCMessage) => {
+  await once(process, 'message').then(([msg]: IPCMessage[]) => {
     if (msg.case !== 'initializeRequest') {
       throw new Error('first message must be InitializeRequest');
     }
-    gotRequest();
-  });
-  await new Promise<void>((resolve) => {
-    gotRequest = resolve;
   });
   const proc = new JobProcess(JSON.parse(process.argv[3]));
 

@@ -38,6 +38,7 @@ export class JobContext {
   #room: Room;
   #onConnect: () => void;
   #onShutdown: (s: string) => void;
+  /** @internal */
   shutdownCallbacks: (() => Promise<void>)[] = [];
   #participantEntrypoints: ((job: JobContext, p: RemoteParticipant) => Promise<void>)[] = [];
   #participantTasks: {

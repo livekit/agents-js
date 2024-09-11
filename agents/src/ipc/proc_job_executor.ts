@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { ChildProcess } from 'child_process';
+import { once } from 'events';
 import type { RunningJobInfo } from '../job.js';
 import { log } from '../log.js';
 import type { ProcOpts } from './job_executor.js';
@@ -116,25 +117,18 @@ export class ProcJobExecutor extends JobExecutor {
   }
 
   async initialize() {
-    let gotResponse = () => {};
     const timer = setTimeout(() => {
       const err = new Error('runner initialization timed out');
       this.#initErr(err);
       throw err;
     }, this.#opts.initializeTimeout);
-    this.#proc!.once('message', (msg: IPCMessage) => {
+    this.#proc!.send({ case: 'initializeRequest' });
+    await once(this.#proc!, 'message').then(([msg]: IPCMessage[]) => {
       clearTimeout(timer);
       if (msg.case !== 'initializeResponse') {
         throw new Error('first message must be InitializeResponse');
       }
-      gotResponse();
     });
-    const response = new Promise<void>((resolve) => {
-      gotResponse = resolve;
-    });
-
-    this.#proc!.send({ case: 'initializeRequest' });
-    await response;
     this.#init();
   }
 
