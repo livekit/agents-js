@@ -28,6 +28,7 @@ export enum ServerEvent {
   vadSpeechStarted = 'vad_speech_started',
   vadSpeechStopped = 'vad_speech_stopped',
   inputTranscribed = 'input_transcribed',
+  modelListening = 'model_listening',
 }
 
 export enum ClientEvent {
