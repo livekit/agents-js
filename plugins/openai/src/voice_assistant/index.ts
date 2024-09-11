@@ -216,7 +216,14 @@ export class VoiceAssistant {
       participantIdentity,
       trackSid,
       segments: [
-        { text: transcription, final: true, id: event.item_id as string, startTime: 0, endTime: 0, language: '' },
+        {
+          text: transcription,
+          final: true,
+          id: event.item_id as string,
+          startTime: 0,
+          endTime: 0,
+          language: '',
+        },
       ],
     });
   }
