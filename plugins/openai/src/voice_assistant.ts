@@ -2,7 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 // import { log } from '@livekit/agents';
-import { AudioStream, TrackSource, AudioStreamEvent, AudioFrameEvent, RoomEvent, Room, RemoteAudioTrack, RemoteParticipant } from '@livekit/rtc-node';
+import { AudioByteStream } from '@livekit/agents';
+import {
+  AudioFrameEvent,
+  AudioStream,
+  AudioStreamEvent,
+  RemoteAudioTrack,
+  RemoteParticipant,
+  Room,
+  RoomEvent,
+  TrackSource,
+  LocalAudioTrack,
+  TrackPublishOptions,
+  AudioSource,
+} from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
 
 enum Voice {
@@ -58,26 +71,26 @@ const INPUT_PCM_FRAME_SIZE = 2400; // 100ms
 const OUTPUT_PCM_FRAME_SIZE = 1200; // 50ms
 
 type InferenceConfig = {
-  systemMessage: string;
+  system_message: string;
   voice: Voice;
-  maxTokens: number;
+  max_tokens: number;
   temperature: number;
-  disableAudio: boolean;
-  turnEndType: TurnEndType;
-  transcribeInput: boolean;
-  audioFormat: AudioFormat;
+  disable_audio: boolean;
+  turn_end_type: TurnEndType;
+  transcribe_input: boolean;
+  audio_format: AudioFormat;
   // TODO: tools and tool_choice
 };
 
 const defaultInferenceConfig: InferenceConfig = {
-  systemMessage: 'You are a helpful assistant.',
+  system_message: 'You are a helpful assistant.',
   voice: Voice.alloy,
-  maxTokens: 2048,
+  max_tokens: 2048,
   temperature: 0.8,
-  disableAudio: false,
-  turnEndType: TurnEndType.serverDetection,
-  transcribeInput: true,
-  audioFormat: AudioFormat.pcm16,
+  disable_audio: false,
+  turn_end_type: TurnEndType.serverDetection,
+  transcribe_input: true,
+  audio_format: AudioFormat.pcm16,
 };
 
 type ImplOptions = {
@@ -106,8 +119,11 @@ export class VoiceAssistant {
 
   private ws: WebSocket | null = null;
   private connected: boolean = false;
+  private sessionStarted: boolean = false;
   // private room: Room;
   private participant: RemoteParticipant | string | null = null;
+  private localTrack: LocalAudioTrack | null = null;
+  private localSource: AudioSource | null = null;
   // private linkedParticipant: RemoteParticipant | null = null;
   // private subscribedTrack: RemoteAudioTrack | null = null;
 
@@ -144,6 +160,12 @@ export class VoiceAssistant {
         }
       }
 
+      this.localSource = new AudioSource(SAMPLE_RATE, NUM_CHANNELS);
+      this.localTrack = LocalAudioTrack.createAudioTrack('agent-mic', this.localSource);
+      const options = new TrackPublishOptions();
+      options.source = TrackSource.SOURCE_MICROPHONE;
+      room.localParticipant?.publishTrack(this.localTrack, options);
+
       this.ws = new WebSocket(API_URL, {
         headers: {
           Authorization: `Bearer ${this.options.apiKey}`,
@@ -152,11 +174,6 @@ export class VoiceAssistant {
 
       this.ws.onopen = () => {
         this.connected = true;
-        this.sendClientCommand({
-          event: ClientEvent.setInferenceConfig,
-          ...this.options.inferenceConfig,
-        });
-        resolve();
       };
 
       this.ws.onerror = (error) => {
@@ -168,8 +185,20 @@ export class VoiceAssistant {
         this.ws = null;
       };
 
-      this.ws.onmessage = (event) => {
-        this.handleServerCommand(JSON.parse(event.data as string));
+      this.ws.onmessage = (message) => {
+        const event = JSON.parse(message.data as string);
+        console.log('<-', event);
+        if (event.event == ServerEvent.startSession && !this.sessionStarted) {
+          this.sendClientCommand({
+            event: ClientEvent.setInferenceConfig,
+            ...this.options.inferenceConfig,
+          });
+          this.sessionStarted = true;
+          resolve();
+          return;
+        }
+
+        this.handleServerEvent(event);
       };
     });
   }
@@ -179,12 +208,17 @@ export class VoiceAssistant {
       console.error('WebSocket is not connected');
       return;
     }
-    console.log('sendClientCommand', JSON.stringify(command));
+    const truncatedDataPartial = command['data']
+      ? { data: (command['data'] as string).slice(0, 30) + '…' }
+      : {};
+    console.log('->', {
+      ...command,
+      ...truncatedDataPartial,
+    });
     this.ws.send(JSON.stringify(command));
   }
 
-  private handleServerCommand(command: Record<string, unknown>): void {
-    console.log('handleServerCommand', command);
+  private handleServerEvent(event: Record<string, unknown>): void {
     // Handle different types of server commands here
     // switch (command.type) {
     //   case 'audio':
@@ -215,14 +249,19 @@ export class VoiceAssistant {
 
   private subscribeToMicrophone(): void {
     const readAudioStreamTask = async (audioStream: AudioStream) => {
+      const bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, INPUT_PCM_FRAME_SIZE);
+
       audioStream.on(AudioStreamEvent.FrameReceived, (ev: AudioFrameEvent) => {
         const audioData = ev.frame.data;
-        const base64Audio = Buffer.from(audioData.buffer).toString('base64');
-        this.sendClientCommand({
-          event: ClientEvent.addUserAudio,
-          data: base64Audio,
-        });
+        for (const frame of bstream.write(audioData.buffer)) {
+          this.sendClientCommand({
+            event: ClientEvent.addUserAudio,
+            data: Buffer.from(frame.data.buffer).toString('base64'),
+          });
+        }
       });
+
+      
     };
 
     if (!this.linkedParticipant) {
