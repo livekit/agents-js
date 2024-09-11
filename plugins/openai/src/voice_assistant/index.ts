@@ -57,15 +57,10 @@ export class VoiceAssistant {
 
   private ws: WebSocket | null = null;
   private connected: boolean = false;
-  // private sessionStarted: boolean = false;
-  // private room: Room;
   private participant: RemoteParticipant | string | null = null;
   private localTrack: LocalAudioTrack | null = null;
   private localSource: AudioSource | null = null;
-  private playoutBStream: AudioByteStream | null = null;
-  // private linkedParticipant: RemoteParticipant | null = null;
-  // private subscribedTrack: RemoteAudioTrack | null = null;
-
+  
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise((resolve, reject) => {
       if (this.ws !== null) {
@@ -104,11 +99,6 @@ export class VoiceAssistant {
       const options = new TrackPublishOptions();
       options.source = TrackSource.SOURCE_MICROPHONE;
       room.localParticipant?.publishTrack(this.localTrack, options);
-      this.playoutBStream = new AudioByteStream(
-        proto.SAMPLE_RATE,
-        proto.NUM_CHANNELS,
-        proto.INPUT_PCM_FRAME_SIZE,
-      );
 
       this.ws = new WebSocket(proto.API_URL, {
         headers: {
@@ -170,25 +160,19 @@ export class VoiceAssistant {
       case proto.ServerEvent.startSession:
         break;
       case proto.ServerEvent.addItem:
-        // this.handleAddItem(event);
         break;
       case proto.ServerEvent.addContent:
         this.handleAddContent(event);
         break;
       case proto.ServerEvent.itemAdded:
-        // this.handleItemAdded(event);
         break;
       case proto.ServerEvent.turnFinished:
-        // this.handleTurnFinished(event);
         break;
       case proto.ServerEvent.vadSpeechStarted:
-        // this.handleVadSpeechStarted(event);
         break;
       case proto.ServerEvent.vadSpeechStopped:
-        // this.handleVadSpeechStopped(event);
         break;
       case proto.ServerEvent.inputTranscribed:
-        // this.handleInputTranscribed(event);
         break;
       default:
         console.warn('Unknown server event:', event);
