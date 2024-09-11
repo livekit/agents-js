@@ -3,16 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // import { log } from '@livekit/agents';
 import { AudioByteStream } from '@livekit/agents';
+import type { AudioFrameEvent, RemoteAudioTrack, RemoteParticipant, Room } from '@livekit/rtc-node';
 import {
   AudioFrame,
-  AudioFrameEvent,
   AudioSource,
   AudioStream,
   AudioStreamEvent,
   LocalAudioTrack,
-  RemoteAudioTrack,
-  RemoteParticipant,
-  Room,
   RoomEvent,
   TrackPublishOptions,
   TrackSource,
@@ -173,6 +170,7 @@ export class VoiceAssistant {
       case proto.ServerEvent.vadSpeechStopped:
         break;
       case proto.ServerEvent.inputTranscribed:
+        this.handleInputTranscribed(event);
         break;
       default:
         console.warn('Unknown server event:', event);
@@ -204,6 +202,23 @@ export class VoiceAssistant {
       default:
         break;
     }
+  }
+
+  private handleInputTranscribed(event: Record<string, unknown>): void {
+    const transcription = event.transcript as string;
+    const participantIdentity = this.linkedParticipant?.identity;
+    const trackSid = this.subscribedTrack?.sid;
+    if (!participantIdentity || !trackSid) {
+      console.error('Participant or track not set');
+      return;
+    }
+    this.room?.localParticipant?.publishTranscription({
+      participantIdentity,
+      trackSid,
+      segments: [
+        { text: transcription, final: true, id: event.item_id as string, startTime: 0, endTime: 0, language: '' },
+      ],
+    });
   }
 
   private linkParticipant(participantIdentity: string): void {
