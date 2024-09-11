@@ -60,7 +60,8 @@ export class JobContext {
     this.#room = room;
     this.#onConnect = onConnect;
     this.#onShutdown = onShutdown;
-    this.#room.on(RoomEvent.ParticipantConnected, this.#onParticipantConnected);
+    this.onParticipantConnected = this.onParticipantConnected.bind(this)
+    this.#room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
   }
 
   get proc(): JobProcess {
@@ -98,7 +99,7 @@ export class JobContext {
     await this.#room.connect(this.#info.url, this.#info.token, opts);
     this.#onConnect();
 
-    this.#room.remoteParticipants.forEach(this.#onParticipantConnected);
+    this.#room.remoteParticipants.forEach(this.onParticipantConnected);
 
     if ([AutoSubscribe.AUDIO_ONLY, AutoSubscribe.VIDEO_ONLY].includes(autoSubscribe)) {
       this.#room.remoteParticipants.forEach((p) => {
@@ -118,7 +119,7 @@ export class JobContext {
     this.#onShutdown(reason);
   }
 
-  #onParticipantConnected(p: RemoteParticipant) {
+  onParticipantConnected(p: RemoteParticipant) {
     for (const callback of this.#participantEntrypoints) {
       if (
         p.identity in this.#participantTasks &&

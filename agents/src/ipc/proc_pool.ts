@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { RunningJobInfo } from '../job.js';
-import { Mutex } from '../utils.js';
+import { Mutex, Queue } from '../utils.js';
 import type { JobExecutor } from './job_executor.js';
 import { ProcJobExecutor } from './proc_job_executor.js';
 
@@ -19,27 +19,7 @@ export class ProcPool {
   initMutex = new Mutex();
   procMutex = new Mutex(); // XXX(nbsp): wip, needs to support more than one
   procUnlock?: () => void;
-
-  // equivalent to warmed_proc_queue
-  warmedProcQueue: JobExecutor[] = [];
-  warmedResolver?: (_: JobExecutor) => void;
-  warmedEnqueue(item: JobExecutor) {
-    if (this.warmedResolver) {
-      this.warmedResolver(item);
-      this.warmedResolver = undefined;
-    } else {
-      this.warmedProcQueue.push(item);
-    }
-  }
-  async warmedDequeue(): Promise<JobExecutor> {
-    if (this.warmedProcQueue.length > 0) {
-      return this.warmedProcQueue.shift()!;
-    } else {
-      return new Promise<JobExecutor>((resolve) => {
-        this.warmedResolver = resolve;
-      });
-    }
-  }
+  warmedProcQueue = new Queue<JobExecutor>();
 
   constructor(
     agent: string,
@@ -62,7 +42,7 @@ export class ProcPool {
   }
 
   async launchJob(info: RunningJobInfo) {
-    const proc = await this.warmedDequeue();
+    const proc = await this.warmedProcQueue.get();
     if (this.procUnlock) {
       this.procUnlock();
       this.procUnlock = undefined;
@@ -84,7 +64,7 @@ export class ProcPool {
       await proc.start();
       try {
         await proc.initialize();
-        this.warmedEnqueue(proc);
+        await this.warmedProcQueue.put(proc);
       } catch {
         if (this.procUnlock) {
           this.procUnlock();

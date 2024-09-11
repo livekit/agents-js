@@ -7,7 +7,6 @@ import type { RunningJobInfo } from '../job.js';
 import { log } from '../log.js';
 import type { ProcOpts } from './job_executor.js';
 import { JobExecutor } from './job_executor.js';
-import { runProcess } from './job_main.js';
 import type { IPCMessage } from './message.js';
 
 export class ProcJobExecutor extends JobExecutor {
@@ -57,13 +56,16 @@ export class ProcJobExecutor extends JobExecutor {
       throw new Error('runner is closed');
     }
 
-    this.#proc = runProcess({
+    this.#proc = await import('./job_main.js').then((m) => m.runProcess({
       agentFile: this.#opts.agent,
-    });
+    }));
 
-    try {
-      await this.#initPromise;
-    } catch {}
+    this.#started = true;
+    this.run()
+  }
+
+  async run() {
+    await this.#initPromise;
 
     this.#pingInterval = setInterval(() => {
       this.#proc!.send({ case: 'pingRequest', value: { timestamp: Date.now() } });
@@ -93,7 +95,7 @@ export class ProcJobExecutor extends JobExecutor {
         }
       }
     };
-    this.#proc.on('message', listener);
+    this.#proc!.on('message', listener);
 
     await this.#joinPromise;
   }
@@ -144,6 +146,6 @@ export class ProcJobExecutor extends JobExecutor {
       throw new Error('executor already has a running job');
     }
     this.#runningJob = info;
-    this.#proc!.send({ case: 'startJobRequest', value: info });
+    this.#proc!.send({ case: 'startJobRequest', value: { runningJob: info } });
   }
 }
