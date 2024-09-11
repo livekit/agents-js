@@ -81,8 +81,8 @@ importers:
         specifier: ^1.21.0
         version: 1.21.0
       '@livekit/rtc-node':
-        specifier: ^0.7.0
-        version: 0.7.0
+        specifier: file:../../node-sdks/packages/livekit-rtc
+        version: file:../node-sdks/packages/livekit-rtc
       commander:
         specifier: ^12.0.0
         version: 12.0.0
@@ -156,8 +156,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.7.0
-        version: 0.7.0
+        specifier: file:../../../node-sdks/packages/livekit-rtc
+        version: file:../node-sdks/packages/livekit-rtc
       ws:
         specifier: ^8.16.0
         version: 8.17.0
@@ -531,6 +531,10 @@ packages:
 
   '@livekit/rtc-node@0.7.0':
     resolution: {integrity: sha512-ITRv6CCfjGC/K7aI3AZnNBD3eQnHPguL0q8SmH52quebwNn1BYW+IZAzoIa4VCNnOlrfCdrGT1DCmZQz61nn0w==}
+    engines: {node: '>= 18'}
+
+  '@livekit/rtc-node@file:../node-sdks/packages/livekit-rtc':
+    resolution: {directory: ../node-sdks/packages/livekit-rtc, type: directory}
     engines: {node: '>= 18'}
 
   '@manypkg/find-root@1.1.0':
@@ -3412,6 +3416,11 @@ snapshots:
       '@livekit/rtc-node-linux-arm64-gnu': 0.7.0
       '@livekit/rtc-node-linux-x64-gnu': 0.7.0
       '@livekit/rtc-node-win32-x64-msvc': 0.7.0
+
+  '@livekit/rtc-node@file:../node-sdks/packages/livekit-rtc':
+    dependencies:
+      '@bufbuild/protobuf': 1.9.0
+      typed-emitter: 2.1.0
 
   '@manypkg/find-root@1.1.0':
     dependencies:

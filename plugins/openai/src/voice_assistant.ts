@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { log } from '@livekit/agents';
-import { AudioFrame } from '@livekit/rtc-node';
-import { URL } from 'url';
-import { type RawData, WebSocket } from 'ws';
+// import { log } from '@livekit/agents';
+import { AudioStream, TrackSource, AudioStreamEvent, AudioFrameEvent, RoomEvent, Room, RemoteAudioTrack, RemoteParticipant } from '@livekit/rtc-node';
+import { WebSocket } from 'ws';
 
 enum Voice {
   alloy = 'alloy',
@@ -88,6 +87,10 @@ type ImplOptions = {
 
 export class VoiceAssistant {
   options: ImplOptions;
+  room: Room | null = null;
+  linkedParticipant: RemoteParticipant | null = null;
+  subscribedTrack: RemoteAudioTrack | null = null;
+  readMicroTask: { promise: Promise<void>; cancel: () => void } | null = null;
 
   constructor(apiKey?: string, inferenceConfig: InferenceConfig = defaultInferenceConfig) {
     apiKey = apiKey || process.env.OPENAI_API_KEY;
@@ -104,7 +107,7 @@ export class VoiceAssistant {
   private ws: WebSocket | null = null;
   private isConnected: boolean = false;
 
-  connect(): Promise<void> {
+  start(room: Room): Promise<void> {
     return new Promise((resolve, reject) => {
       if (this.isConnected) {
         resolve();
@@ -113,8 +116,8 @@ export class VoiceAssistant {
 
       this.ws = new WebSocket(API_URL, {
         headers: {
-          Authorization: `Bearer ${this.options.apiKey}`
-        }
+          Authorization: `Bearer ${this.options.apiKey}`,
+        },
       });
 
       this.ws.onopen = () => {
@@ -138,6 +141,16 @@ export class VoiceAssistant {
       this.ws.onmessage = (event) => {
         this.handleServerCommand(JSON.parse(event.data as string));
       };
+
+      // Use the room parameter as needed
+      // For example, you could set up event listeners or perform actions with the room
+      room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
+        if (!this.linkedParticipant) {
+          this.linkedParticipant = participant;
+          this.subscribeToMicrophone(participant);
+          console.log(`Linked to participant: ${participant.identity}`);
+        }
+      });
     });
   }
 
@@ -163,5 +176,49 @@ export class VoiceAssistant {
     //   default:
     //     console.warn('Unknown server command:', command);
     // }
+  }
+
+  private subscribeToMicrophone(participant: RemoteParticipant): void {
+    const readAudioStreamTask = async (audioStream: AudioStream) => {
+      audioStream.on(AudioStreamEvent.FrameReceived, (ev: AudioFrameEvent) => {
+        const audioData = ev.frame.data;
+        const base64Audio = Buffer.from(audioData.buffer).toString('base64');
+        this.sendClientCommand({
+          event: ClientEvent.addUserAudio,
+          data: base64Audio,
+        });
+      });
+    };
+
+    for (const publication of participant.trackPublications.values()) {
+      if (publication.source !== TrackSource.SOURCE_MICROPHONE) {
+        continue;
+      }
+
+      if (!publication.subscribed) {
+        publication.setSubscribed(true);
+      }
+
+      const track = publication.track;
+
+      if (track && track !== this.subscribedTrack) {
+        this.subscribedTrack = track as RemoteAudioTrack;
+        if (this.readMicroTask) {
+          this.readMicroTask.cancel();
+        }
+
+        let cancel: () => void;
+        this.readMicroTask = {
+          promise: new Promise<void>((resolve, reject) => {
+            cancel = () => {
+              // Cleanup logic here
+              reject(new Error('Task cancelled'));
+            };
+            readAudioStreamTask(new AudioStream(track)).then(resolve).catch(reject);
+          }),
+          cancel: () => cancel(),
+        };
+      }
+    }
   }
 }

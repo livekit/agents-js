@@ -4,7 +4,7 @@
   "description": "OpenAI plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "author": "Ben Cherry <ben@livekit.io>",
+  "author": "LiveKit",
   "type": "module",
   "scripts": {
     "build": "tsc",
@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "^0.7.0",
+    "@livekit/rtc-node": "file:../../../node-sdks/packages/livekit-rtc",
     "ws": "^8.16.0"
   }
 }

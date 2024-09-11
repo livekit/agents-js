@@ -17,7 +17,7 @@ export default defineAgent({
     await job.room.localParticipant?.publishTrack(track, options);
 
     const assistant = new VoiceAssistant();
-    assistant.connect();
+    assistant.start(job.room);
 
     // ask ElevenLabs to synthesize "Hello!"
     // const tts = new TTS();
