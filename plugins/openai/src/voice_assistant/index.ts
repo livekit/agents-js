@@ -144,13 +144,16 @@ export class VoiceAssistant {
       console.error('WebSocket is not connected');
       return;
     }
-    const truncatedDataPartial = command['data']
-      ? { data: (command['data'] as string).slice(0, 30) + '…' }
-      : {};
-    console.log('->', {
-      ...command,
-      ...truncatedDataPartial,
-    });
+
+    if (command.event !== proto.ClientEvent.addUserAudio) {
+      const truncatedDataPartial = command['data']
+        ? { data: (command['data'] as string).slice(0, 30) + '…' }
+        : {};
+      console.log('->', {
+        ...command,
+        ...truncatedDataPartial,
+      });
+    }
     this.ws.send(JSON.stringify(command));
   }
 
