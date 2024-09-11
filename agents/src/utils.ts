@@ -46,14 +46,16 @@ export const mergeFrames = (buffer: AudioBuffer): AudioFrame => {
 export class Mutex {
   #locking: Promise<void>;
   #locks: number;
+  #limit: number;
 
-  constructor() {
+  constructor(limit = 1) {
     this.#locking = Promise.resolve();
     this.#locks = 0;
+    this.#limit = limit;
   }
 
   isLocked(): boolean {
-    return this.#locks > 0;
+    return this.#locks >= this.#limit;
   }
 
   async lock(): Promise<() => void> {
@@ -79,17 +81,15 @@ export class Mutex {
 export class Queue<T> {
   #items: T[] = [];
   #limit?: number;
-
-  // XXX(nbsp): ugly, but *simple*. will work on making this lighter later
-  #events = new EventEmitter()
+  #events = new EventEmitter();
 
   constructor(limit?: number) {
-    this.#limit = limit
+    this.#limit = limit;
   }
 
   async get(): Promise<T> {
     if (this.#items.length === 0) {
-      await once(this.#events, 'put')
+      await once(this.#events, 'put');
     }
     const item = this.#items.shift()!;
     this.#events.emit('get');
@@ -98,7 +98,7 @@ export class Queue<T> {
 
   async put(item: T) {
     if (this.#limit && this.#items.length >= this.#limit) {
-      await once(this.#events, 'get')
+      await once(this.#events, 'get');
     }
     this.#items.push(item);
     this.#events.emit('put');

@@ -8,7 +8,6 @@ import { ProcJobExecutor } from './proc_job_executor.js';
 
 export class ProcPool {
   agent: string;
-  numIdleProcesses: number;
   initializeTimeout: number;
   closeTimeout: number;
   executors: JobExecutor[] = [];
@@ -17,7 +16,7 @@ export class ProcPool {
   closed = false;
   controller = new AbortController();
   initMutex = new Mutex();
-  procMutex = new Mutex(); // XXX(nbsp): wip, needs to support more than one
+  procMutex: Mutex;
   procUnlock?: () => void;
   warmedProcQueue = new Queue<JobExecutor>();
 
@@ -28,7 +27,7 @@ export class ProcPool {
     closeTimeout: number,
   ) {
     this.agent = agent;
-    this.numIdleProcesses = numIdleProcesses;
+    this.procMutex = new Mutex(numIdleProcesses);
     this.initializeTimeout = initializeTimeout;
     this.closeTimeout = closeTimeout;
   }

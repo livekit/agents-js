@@ -56,12 +56,14 @@ export class ProcJobExecutor extends JobExecutor {
       throw new Error('runner is closed');
     }
 
-    this.#proc = await import('./job_main.js').then((m) => m.runProcess({
-      agentFile: this.#opts.agent,
-    }));
+    this.#proc = await import('./job_main.js').then((m) =>
+      m.runProcess({
+        agentFile: this.#opts.agent,
+      }),
+    );
 
     this.#started = true;
-    this.run()
+    this.run();
   }
 
   async run() {

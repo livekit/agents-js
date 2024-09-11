@@ -60,7 +60,7 @@ export class JobContext {
     this.#room = room;
     this.#onConnect = onConnect;
     this.#onShutdown = onShutdown;
-    this.onParticipantConnected = this.onParticipantConnected.bind(this)
+    this.onParticipantConnected = this.onParticipantConnected.bind(this);
     this.#room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
   }
 
