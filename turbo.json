@@ -1,6 +1,13 @@
 {
   "$schema": "https://turborepo.org/schema.json",
-  "globalEnv": ["ELEVEN_API_KEY", "LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "LOG_LEVEL"],
+  "globalEnv": [
+    "ELEVEN_API_KEY",
+    "OPENAI_API_KEY",
+    "LIVEKIT_URL",
+    "LIVEKIT_API_KEY",
+    "LIVEKIT_API_SECRET",
+    "LOG_LEVEL"
+  ],
   "pipeline": {
     "build": {
       "dependsOn": ["^build"],

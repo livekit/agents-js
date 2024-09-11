@@ -15,5 +15,6 @@ export * from './utils.js';
 export * from './log.js';
 export * from './generator.js';
 export * from './tokenize.js';
+export * from './audio.js';
 
 export { cli, stt, tts };

@@ -19,7 +19,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@livekit/rtc-node": "^0.7.0",
+    "@livekit/rtc-node": "file:../../node-sdks/packages/livekit-rtc",
     "@livekit/protocol": "^1.21.0",
     "commander": "^12.0.0",
     "livekit-server-sdk": "^2.6.1",
