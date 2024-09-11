@@ -19,7 +19,7 @@ import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
 import { log } from './log.js';
-import { protocolVersion as version } from './version.js';
+import { version } from './version.js';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
