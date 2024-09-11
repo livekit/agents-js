@@ -105,13 +105,43 @@ export class VoiceAssistant {
   }
 
   private ws: WebSocket | null = null;
-  private isConnected: boolean = false;
+  private connected: boolean = false;
+  // private room: Room;
+  private participant: RemoteParticipant | string | null = null;
+  // private linkedParticipant: RemoteParticipant | null = null;
+  // private subscribedTrack: RemoteAudioTrack | null = null;
 
-  start(room: Room): Promise<void> {
+  start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise((resolve, reject) => {
-      if (this.isConnected) {
+      if (this.ws !== null) {
+        console.log('VoiceAssistant already started');
         resolve();
         return;
+      }
+
+      room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
+        if (!this.linkedParticipant) {
+          return;
+        }
+
+        this.linkParticipant(participant.identity);
+      });
+
+      this.room = room;
+      this.participant = participant;
+
+      if (participant) {
+        if (typeof participant === 'string') {
+          this.linkParticipant(participant);
+        } else {
+          this.linkParticipant(participant.identity);
+        }
+      } else {
+        // No participant specified, try to find the first participant in the room
+        for (const participant of room.remoteParticipants.values()) {
+          this.linkParticipant(participant.identity);
+          break;
+        }
       }
 
       this.ws = new WebSocket(API_URL, {
@@ -121,7 +151,7 @@ export class VoiceAssistant {
       });
 
       this.ws.onopen = () => {
-        this.isConnected = true;
+        this.connected = true;
         this.sendClientCommand({
           event: ClientEvent.setInferenceConfig,
           ...this.options.inferenceConfig,
@@ -134,29 +164,20 @@ export class VoiceAssistant {
       };
 
       this.ws.onclose = () => {
-        this.isConnected = false;
+        this.connected = false;
         this.ws = null;
       };
 
       this.ws.onmessage = (event) => {
         this.handleServerCommand(JSON.parse(event.data as string));
       };
-
-      // Use the room parameter as needed
-      // For example, you could set up event listeners or perform actions with the room
-      room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
-        if (!this.linkedParticipant) {
-          this.linkedParticipant = participant;
-          this.subscribeToMicrophone(participant);
-          console.log(`Linked to participant: ${participant.identity}`);
-        }
-      });
     });
   }
 
   private sendClientCommand(command: Record<string, unknown>): void {
-    if (!this.isConnected || !this.ws) {
-      throw new Error('WebSocket is not connected');
+    if (!this.connected || !this.ws) {
+      console.error('WebSocket is not connected');
+      return;
     }
     console.log('sendClientCommand', JSON.stringify(command));
     this.ws.send(JSON.stringify(command));
@@ -178,7 +199,21 @@ export class VoiceAssistant {
     // }
   }
 
-  private subscribeToMicrophone(participant: RemoteParticipant): void {
+  private linkParticipant(participantIdentity: string): void {
+    if (!this.room) {
+      console.error('Room is not set');
+      return;
+    }
+
+    this.linkedParticipant = this.room.remoteParticipants.get(participantIdentity) || null;
+    if (!this.linkedParticipant) {
+      console.error(`Participant with identity ${participantIdentity} not found`);
+      return;
+    }
+    this.subscribeToMicrophone();
+  }
+
+  private subscribeToMicrophone(): void {
     const readAudioStreamTask = async (audioStream: AudioStream) => {
       audioStream.on(AudioStreamEvent.FrameReceived, (ev: AudioFrameEvent) => {
         const audioData = ev.frame.data;
@@ -190,7 +225,12 @@ export class VoiceAssistant {
       });
     };
 
-    for (const publication of participant.trackPublications.values()) {
+    if (!this.linkedParticipant) {
+      console.error('Participant is not set');
+      return;
+    }
+
+    for (const publication of this.linkedParticipant.trackPublications.values()) {
       if (publication.source !== TrackSource.SOURCE_MICROPHONE) {
         continue;
       }
@@ -214,7 +254,9 @@ export class VoiceAssistant {
               // Cleanup logic here
               reject(new Error('Task cancelled'));
             };
-            readAudioStreamTask(new AudioStream(track)).then(resolve).catch(reject);
+            readAudioStreamTask(new AudioStream(track, SAMPLE_RATE, NUM_CHANNELS))
+              .then(resolve)
+              .catch(reject);
           }),
           cancel: () => cancel(),
         };
