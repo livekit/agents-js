@@ -40,3 +40,36 @@ export const mergeFrames = (buffer: AudioBuffer): AudioFrame => {
 
   return buffer;
 };
+
+/** @internal */
+export class Mutex {
+  #locking: Promise<void>;
+  #locks: number;
+
+  constructor() {
+    this.#locking = Promise.resolve();
+    this.#locks = 0;
+  }
+
+  isLocked(): boolean {
+    return this.#locks > 0;
+  }
+
+  async lock(): Promise<() => void> {
+    this.#locks += 1;
+
+    let unlockNext: () => void;
+
+    const willLock = new Promise<void>(
+      (resolve) =>
+        (unlockNext = () => {
+          this.#locks -= 1;
+          resolve();
+        }),
+    );
+
+    const willUnlock = this.#locking.then(() => unlockNext);
+    this.#locking = this.#locking.then(() => willLock);
+    return willUnlock;
+  }
+}

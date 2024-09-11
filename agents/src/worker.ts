@@ -207,6 +207,7 @@ export class Worker {
 
     const workerWS = async () => {
       let retries = 0;
+      this.#connecting = true;
 
       while (!this.#closed) {
         const url = new URL(this.#opts.wsURL);
@@ -226,6 +227,7 @@ export class Worker {
           });
 
           retries = 0;
+          this.#logger.debug('connected to LiveKit server');
           this.runWS(this.#session);
           return;
         } catch (e) {
@@ -467,15 +469,16 @@ export class Worker {
         this.#logger.child({ req }).warn(`assignment for job ${req.id} timed out`);
         return;
       }, ASSIGNMENT_TIMEOUT);
-      this.#pending[req.id].promise.then(async (asgn) => {
+      const asgn = await this.#pending[req.id].promise.then(async (asgn) => {
         clearTimeout(timer);
+        return asgn;
+      });
 
-        await this.#procPool.launchJob({
-          acceptArguments: args,
-          job: msg.job!,
-          url: asgn.url || this.#opts.wsURL,
-          token: asgn.token,
-        });
+      await this.#procPool.launchJob({
+        acceptArguments: args,
+        job: msg.job!,
+        url: asgn.url || this.#opts.wsURL,
+        token: asgn.token,
       });
     };
 

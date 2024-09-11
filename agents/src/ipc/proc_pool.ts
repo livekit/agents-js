@@ -2,10 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { RunningJobInfo } from '../job.js';
+import { Mutex } from '../utils.js';
 import type { JobExecutor } from './job_executor.js';
 import { ProcJobExecutor } from './proc_job_executor.js';
-
-const MAX_CONCURRENT_INITIALIZATIONS = 3;
 
 export class ProcPool {
   agent: string;
@@ -16,6 +15,10 @@ export class ProcPool {
   tasks: Promise<void>[] = [];
   started = false;
   closed = false;
+  controller = new AbortController();
+  initMutex = new Mutex();
+  procMutex = new Mutex(); // XXX(nbsp): wip, needs to support more than one
+  procUnlock?: () => void;
 
   // equivalent to warmed_proc_queue
   warmedProcQueue: JobExecutor[] = [];
@@ -35,46 +38,6 @@ export class ProcPool {
       return new Promise<JobExecutor>((resolve) => {
         this.warmedResolver = resolve;
       });
-    }
-  }
-
-  // equivalent to init_sem
-  initQueue: (() => void)[] = [];
-  initDequeue() {
-    if (this.procQueue.length > 0) {
-      const next = this.procQueue.shift();
-      if (next) {
-        next();
-      }
-    }
-  }
-  async initEnqueue() {
-    if (this.initQueue.length < MAX_CONCURRENT_INITIALIZATIONS) {
-      return;
-    } else {
-      return new Promise<void>((resolve) => {
-        this.initQueue.push(resolve);
-      });
-    }
-  }
-
-  // equivalent to proc_needed_sem
-  procQueue: (() => void)[] = [];
-  async procEnqueue() {
-    if (this.warmedProcQueue.length < this.numIdleProcesses) {
-      return;
-    } else {
-      return new Promise<void>((resolve) => {
-        this.procQueue.push(resolve);
-      });
-    }
-  }
-  procDequeue() {
-    if (this.procQueue.length > 0) {
-      const next = this.procQueue.shift();
-      if (next) {
-        next();
-      }
     }
   }
 
@@ -100,7 +63,10 @@ export class ProcPool {
 
   async launchJob(info: RunningJobInfo) {
     const proc = await this.warmedDequeue();
-    this.procDequeue();
+    if (this.procUnlock) {
+      this.procUnlock();
+      this.procUnlock = undefined;
+    }
     await proc.launchJob(info);
   }
 
@@ -110,7 +76,7 @@ export class ProcPool {
     try {
       this.executors.push(proc);
 
-      await this.initEnqueue();
+      const unlock = await this.initMutex.lock();
       if (this.closed) {
         return;
       }
@@ -120,11 +86,13 @@ export class ProcPool {
         await proc.initialize();
         this.warmedEnqueue(proc);
       } catch {
-        this.procDequeue();
+        if (this.procUnlock) {
+          this.procUnlock();
+          this.procUnlock = undefined;
+        }
       }
 
-      this.initDequeue();
-
+      unlock();
       await proc.join();
     } finally {
       this.executors.splice(this.executors.indexOf(proc));
@@ -137,12 +105,12 @@ export class ProcPool {
     }
 
     this.started = true;
-    this.run();
+    this.run(this.controller.signal);
   }
 
-  async run() {
-    while (true) {
-      await this.procEnqueue();
+  async run(signal: AbortSignal) {
+    while (!signal.aborted) {
+      this.procUnlock = await this.procMutex.lock();
       const task = this.procWatchTask();
       this.tasks.push(task);
       task.finally(() => this.tasks.splice(this.tasks.indexOf(task)));
@@ -154,6 +122,7 @@ export class ProcPool {
       return;
     }
     this.closed = true;
+    this.controller.abort();
     await Promise.allSettled(this.tasks);
   }
 }
