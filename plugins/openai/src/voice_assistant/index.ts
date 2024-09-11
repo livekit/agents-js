@@ -60,7 +60,7 @@ export class VoiceAssistant {
   private participant: RemoteParticipant | string | null = null;
   private localTrack: LocalAudioTrack | null = null;
   private localSource: AudioSource | null = null;
-  
+
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise((resolve, reject) => {
       if (this.ws !== null) {
