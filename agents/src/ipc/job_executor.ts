@@ -10,8 +10,8 @@ export interface ProcOpts {
 }
 
 export enum JobExecutorType {
-  // PROCESS, // not yet implemented
-  THREAD,
+  PROCESS,
+  // THREAD, // not yet implemented
 }
 
 export abstract class JobExecutor {

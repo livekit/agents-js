@@ -17,7 +17,7 @@ import { WebSocket } from 'ws';
 import { HTTPServer } from './http_server.js';
 import { JobExecutorType } from './ipc/job_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
-import type { JobAcceptArguments, JobContext, JobProcess, RunningJobInfo } from './job.js';
+import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
 import { log } from './log.js';
 import { protocolVersion as version } from './version.js';
@@ -90,7 +90,7 @@ export class WorkerOptions {
     agent,
     requestFunc = defaultRequestFunc,
     loadFunc = defaultCpuLoad,
-    jobExecutorType = JobExecutorType.THREAD,
+    jobExecutorType = JobExecutorType.PROCESS,
     loadThreshold = 0.65,
     numIdleProcesses = 3,
     shutdownProcessTimeout = 60,
@@ -108,19 +108,17 @@ export class WorkerOptions {
   }: {
     /** Path to a file that has Agent as a default export, dynamically imported later for entrypoint and prewarm functions */
     agent: string;
-    entrypointFunc: (ctx: JobContext) => Promise<void>;
-    requestFunc: (job: JobRequest) => Promise<void>;
-    prewarmFunc: (proc: JobProcess) => unknown;
+    requestFunc?: (job: JobRequest) => Promise<void>;
     /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
     loadFunc?: () => number;
-    jobExecutorType: JobExecutorType;
+    jobExecutorType?: JobExecutorType;
     /** When the load exceeds this threshold, the worker will be marked as unavailable. */
     loadThreshold?: number;
-    numIdleProcesses: number;
-    shutdownProcessTimeout: number;
-    initializeProcessTimeout: number;
+    numIdleProcesses?: number;
+    shutdownProcessTimeout?: number;
+    initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;
-    agentName: string;
+    agentName?: string;
     workerType?: JobType;
     maxRetry?: number;
     wsURL?: string;

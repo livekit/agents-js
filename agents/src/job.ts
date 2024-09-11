@@ -38,7 +38,7 @@ export class JobContext {
   #room: Room;
   #onConnect: () => void;
   #onShutdown: (s: string) => void;
-  #shutdownCallbacks: (() => Promise<void>)[] = [];
+  shutdownCallbacks: (() => Promise<void>)[] = [];
   #participantEntrypoints: ((job: JobContext, p: RemoteParticipant) => Promise<void>)[] = [];
   #participantTasks: {
     [id: string]: {
@@ -79,7 +79,7 @@ export class JobContext {
   }
 
   addShutdownCallback(callback: () => Promise<void>) {
-    this.#shutdownCallbacks.push(callback);
+    this.shutdownCallbacks.push(callback);
   }
 
   async connect(

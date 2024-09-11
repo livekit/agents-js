@@ -1,21 +1,21 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { Worker } from 'worker_threads';
+import type { ChildProcess } from 'child_process';
 import type { RunningJobInfo } from '../job.js';
 import { log } from '../log.js';
 import type { ProcOpts } from './job_executor.js';
 import { JobExecutor } from './job_executor.js';
-import { runThreaded } from './job_main.js';
+import { runProcess } from './job_main.js';
 import type { IPCMessage } from './message.js';
 
-export class ThreadJobExecutor extends JobExecutor {
+export class ProcJobExecutor extends JobExecutor {
   #opts: ProcOpts;
   #started = false;
   #closing = false;
   #userArgs: unknown = undefined;
   #runningJob?: RunningJobInfo = undefined;
-  #worker?: Worker;
+  #proc?: ChildProcess;
   #pingInterval?: ReturnType<typeof setInterval>;
   #pongTimeout?: ReturnType<typeof setTimeout>;
 
@@ -65,7 +65,7 @@ export class ThreadJobExecutor extends JobExecutor {
       throw new Error('runner is closed');
     }
 
-    this.#worker = runThreaded({
+    this.#proc = runProcess({
       agentFile: this.#opts.agent,
       userArguments: this.#userArgs,
     });
@@ -75,7 +75,7 @@ export class ThreadJobExecutor extends JobExecutor {
     } catch {}
 
     this.#pingInterval = setInterval(() => {
-      this.#worker!.emit('message', { case: 'pingRequest', value: { timestamp: Date.now() } });
+      this.#proc!.send({ case: 'pingRequest', value: { timestamp: Date.now() } });
     }, this.PING_INTERVAL);
 
     this.#pongTimeout = setTimeout(() => {
@@ -96,13 +96,13 @@ export class ThreadJobExecutor extends JobExecutor {
           log.child({ reason: msg.value.reason }).debug('job exiting');
         }
         case 'done': {
-          this.#worker!.off('message', listener);
+          this.#proc!.off('message', listener);
           this.#join();
           break;
         }
       }
     };
-    this.#worker.on('message', listener);
+    this.#proc.on('message', listener);
 
     await this.#joinPromise;
   }
@@ -122,7 +122,7 @@ export class ThreadJobExecutor extends JobExecutor {
       this.#initErr(err);
       throw err;
     }, this.#opts.initializeTimeout);
-    this.#worker!.once('message', (msg) => {
+    this.#proc!.once('message', (msg: IPCMessage) => {
       clearTimeout(timer);
       if (msg.case !== 'initializeResponse') {
         throw new Error('first message must be InitializeResponse');
@@ -133,7 +133,7 @@ export class ThreadJobExecutor extends JobExecutor {
       gotResponse = resolve;
     });
 
-    this.#worker!.emit('message', { case: 'initializeRequest' });
+    this.#proc!.send({ case: 'initializeRequest' });
     await response;
     this.#init();
   }
@@ -143,7 +143,7 @@ export class ThreadJobExecutor extends JobExecutor {
       return;
     }
     this.#closing = true;
-    this.#worker!.emit('message', { case: 'shutdownRequest' });
+    this.#proc!.send({ case: 'shutdownRequest' });
 
     const timer = setTimeout(() => {
       log.error('job shutdown is taking too much time');
@@ -160,6 +160,6 @@ export class ThreadJobExecutor extends JobExecutor {
       throw new Error('executor already has a running job');
     }
     this.#runningJob = info;
-    this.#worker!.emit('message', { case: 'startJobRequest', value: info });
+    this.#proc!.send({ case: 'startJobRequest', value: info });
   }
 }

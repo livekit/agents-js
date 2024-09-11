@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { RunningJobInfo } from '../job.js';
 import type { JobExecutor, JobExecutorType } from './job_executor.js';
-import { ThreadJobExecutor } from './thread_job_executor.js';
+import { ProcJobExecutor } from './proc_job_executor.js';
 
 const MAX_CONCURRENT_INITIALIZATIONS = 3;
 
@@ -108,7 +108,7 @@ export class ProcPool {
   }
 
   async procWatchTask() {
-    const proc = new ThreadJobExecutor(this.agent, this.initializeTimeout, this.closeTimeout);
+    const proc = new ProcJobExecutor(this.agent, this.initializeTimeout, this.closeTimeout);
 
     try {
       this.executors.push(proc);
