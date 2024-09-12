@@ -171,6 +171,7 @@ export class VoiceAssistant {
       case proto.ServerEvent.turnFinished:
         break;
       case proto.ServerEvent.vadSpeechStarted:
+        this.handleVadSpeechStarted(event);
         break;
       case proto.ServerEvent.vadSpeechStopped:
         break;
@@ -299,6 +300,30 @@ export class VoiceAssistant {
         {
           text: transcription,
           final: true,
+          id: itemId,
+          startTime: 0,
+          endTime: 0,
+          language: '',
+        },
+      ],
+    });
+  }
+
+  private handleVadSpeechStarted(event: Record<string, unknown>): void {
+    const itemId = event.item_id as string;
+    const participantIdentity = this.linkedParticipant?.identity;
+    const trackSid = this.subscribedTrack?.sid;
+    if (!participantIdentity || !trackSid || !itemId) {
+      console.error('Participant or track or itemId not set');
+      return;
+    }
+    this.room?.localParticipant?.publishTranscription({
+      participantIdentity,
+      trackSid,
+      segments: [
+        {
+          text: '',
+          final: false,
           id: itemId,
           startTime: 0,
           endTime: 0,
