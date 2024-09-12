@@ -45,7 +45,7 @@ export class JobRequest {
   #job: Job;
   #answered = false;
   #tx: EventEmitter;
-  #logger = log.child({ job: this.job });
+  #logger = log().child({ job: this.job });
 
   constructor(job: Job, tx: EventEmitter) {
     this.#job = job;

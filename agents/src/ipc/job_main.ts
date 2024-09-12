@@ -74,7 +74,7 @@ if (process.send) {
   });
 
   await once(closeEvent, 'close');
-  log.debug('disconnecting from room');
+  log().debug('disconnecting from room');
   await room.disconnect();
   if (shuttingDown) {
     process.send({ type: IPC_MESSAGE.ShutdownResponse });

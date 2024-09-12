@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'events';
-import { log } from './log.js';
+import { log, setLog } from './log.js';
 import { version } from './version.js';
 import { Worker, type WorkerOptions } from './worker.js';
 
@@ -15,19 +15,19 @@ type CliArgs = {
 };
 
 const runWorker = async (args: CliArgs) => {
-  log.level = args.opts.logLevel;
+  setLog({ pretty: !args.production, level: args.opts.logLevel });
   const worker = new Worker(args.opts);
 
   process.on('SIGINT', async () => {
     await worker.close();
-    log.info('worker closed');
+    log().info('worker closed');
     process.exit(130); // SIGINT exit code
   });
 
   try {
     await worker.run();
   } catch {
-    log.fatal('worker failed');
+    log().fatal('worker failed');
     process.exit(1);
   }
 };
@@ -71,6 +71,22 @@ export const runApp = (opts: WorkerOptions) => {
       runWorker({
         opts,
         production: true,
+        watch: false,
+      });
+    });
+
+  program
+    .command('dev')
+    .description('Start the worker in development mode')
+    .action(() => {
+      const options = program.optsWithGlobals();
+      opts.wsURL = options.url || opts.wsURL;
+      opts.apiKey = options.apiKey || opts.apiKey;
+      opts.apiSecret = options.apiSecret || opts.apiSecret;
+      opts.logLevel = options.logLevel || opts.logLevel;
+      runWorker({
+        opts,
+        production: false,
         watch: false,
       });
     });
