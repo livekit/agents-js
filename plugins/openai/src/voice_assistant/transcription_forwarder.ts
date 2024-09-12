@@ -16,11 +16,10 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
   private currentText: string = '';
   private totalAudioDuration: number = 0;
   private currentAudioTimestamp: number = 0;
-  private readonly DEFAULT_CHARS_PER_SECOND = 2;
+  private readonly DEFAULT_CHARS_PER_SECOND = 16;
   private charsPerSecond: number = this.DEFAULT_CHARS_PER_SECOND;
   private messageId: string;
   private isRunning: boolean = false;
-  private readonly SLEEP_INTERVAL = 0.125;
 
   constructor(room: Room, participantIdentity: string, trackSid: string, messageId: string) {
     this.room = room;
@@ -66,16 +65,21 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
       if (actualDuration > 0 && this.currentText.length > 0) {
         this.charsPerSecond = this.currentText.length / actualDuration;
       }
-      this.publishTranscription();
     }
+  }
+
+  private computeSleepInterval(): number {
+    return Math.min(Math.max(1 / this.charsPerSecond, 0.0625), 0.5);
   }
 
   private async startPublishingLoop(): Promise<void> {
     this.isRunning = true;
+    let sleepInterval = this.computeSleepInterval();
     while (this.isRunning) {
-      this.currentAudioTimestamp += this.SLEEP_INTERVAL;
+      this.currentAudioTimestamp += sleepInterval;
       await this.publishTranscription();
-      await new Promise((resolve) => setTimeout(resolve, this.SLEEP_INTERVAL * 1000));
+      sleepInterval = this.computeSleepInterval();
+      await new Promise((resolve) => setTimeout(resolve, sleepInterval * 1000));
     }
   }
 
@@ -102,12 +106,7 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
 
   async close(): Promise<void> {
     this.isRunning = false;
-    // Wait for the last iteration of the loop to complete
-    await new Promise((resolve) => setTimeout(resolve, this.SLEEP_INTERVAL));
-
-    // Publish final transcription
-    await this.publishTranscription();
-
+    
     // Publish any remaining text as final
     if (this.currentText.length > 0) {
       await this.room.localParticipant?.publishTranscription({

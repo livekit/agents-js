@@ -156,7 +156,7 @@ export class VoiceAssistant {
     });
   }
 
-  addUserMessage(text: string): void {
+  addUserMessage(text: string, generate: boolean = true): void {
     this.sendClientCommand({
       event: proto.ClientEvent.ADD_ITEM,
       type: 'message',
@@ -168,6 +168,11 @@ export class VoiceAssistant {
         },
       ],
     });
+    if (generate) {
+      this.sendClientCommand({
+        event: proto.ClientEvent.GENERATE,
+      });
+    }
   }
 
   private sendClientCommand(command: Record<string, unknown>): void {
