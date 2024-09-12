@@ -1,10 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type {
+  JobAssignment,
+  JobTermination,
+  ParticipantInfo,
+  TrackSource,
+} from '@livekit/protocol';
 import {
   type AvailabilityRequest,
-  type Job,
-  type JobAssignment,
   JobType,
   ParticipantPermission,
   ServerMessage,
@@ -12,19 +16,25 @@ import {
   WorkerStatus,
 } from '@livekit/protocol';
 import { EventEmitter } from 'events';
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import os from 'os';
 import { WebSocket } from 'ws';
 import { HTTPServer } from './http_server.js';
-import { JobProcess } from './ipc/job_process.js';
-import { type AvailRes, JobRequest } from './job_request.js';
-import type { AcceptData } from './job_request.js';
+import { ProcPool } from './ipc/proc_pool.js';
+import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
+import { JobRequest } from './job.js';
 import { log } from './log.js';
+import { Future } from './utils.js';
 import { version } from './version.js';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
-const ASSIGNMENT_TIMEOUT = 15 * 1000;
-const LOAD_INTERVAL = 5 * 1000;
+const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
+const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
+
+export const defaultInitializeProcessFunc = (_: JobProcess) => _;
+const defaultRequestFunc = async (ctx: JobRequest) => {
+  await ctx.accept();
+};
 
 const defaultCpuLoad = (): number =>
   1 -
@@ -41,6 +51,7 @@ export class WorkerPermissions {
   canSubscribe: boolean;
   canPublishData: boolean;
   canUpdateMetadata: boolean;
+  canPublishSources: TrackSource[];
   hidden: boolean;
 
   constructor(
@@ -48,22 +59,28 @@ export class WorkerPermissions {
     canSubscribe = true,
     canPublishData = true,
     canUpdateMetadata = true,
+    canPublishSources: TrackSource[] = [],
     hidden = false,
   ) {
     this.canPublish = canPublish;
     this.canSubscribe = canSubscribe;
     this.canPublishData = canPublishData;
     this.canUpdateMetadata = canUpdateMetadata;
+    this.canPublishSources = canPublishSources;
     this.hidden = hidden;
   }
 }
 
 export class WorkerOptions {
-  requestFunc: (arg: JobRequest) => Promise<void>;
+  agent: string;
+  requestFunc: (job: JobRequest) => Promise<void>;
   loadFunc: () => number;
   loadThreshold: number;
-  namespace: string;
+  numIdleProcesses: number;
+  shutdownProcessTimeout: number;
+  initializeProcessTimeout: number;
   permissions: WorkerPermissions;
+  agentName: string;
   workerType: JobType;
   maxRetry: number;
   wsURL: string;
@@ -74,11 +91,15 @@ export class WorkerOptions {
   logLevel: string;
 
   constructor({
-    requestFunc,
+    agent,
+    requestFunc = defaultRequestFunc,
     loadFunc = defaultCpuLoad,
     loadThreshold = 0.65,
-    namespace = 'default',
+    numIdleProcesses = 3,
+    shutdownProcessTimeout = 60 * 1000,
+    initializeProcessTimeout = 10 * 1000,
     permissions = new WorkerPermissions(),
+    agentName = '',
     workerType = JobType.JT_ROOM,
     maxRetry = MAX_RECONNECT_ATTEMPTS,
     wsURL = 'ws://localhost:7880',
@@ -88,13 +109,18 @@ export class WorkerOptions {
     port = 8081,
     logLevel = 'info',
   }: {
-    requestFunc: (arg: JobRequest) => Promise<void>;
+    /** Path to a file that has Agent as a default export, dynamically imported later for entrypoint and prewarm functions */
+    agent: string;
+    requestFunc?: (job: JobRequest) => Promise<void>;
     /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
     loadFunc?: () => number;
     /** When the load exceeds this threshold, the worker will be marked as unavailable. */
     loadThreshold?: number;
-    namespace?: string;
+    numIdleProcesses?: number;
+    shutdownProcessTimeout?: number;
+    initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;
+    agentName?: string;
     workerType?: JobType;
     maxRetry?: number;
     wsURL?: string;
@@ -104,11 +130,15 @@ export class WorkerOptions {
     port?: number;
     logLevel?: string;
   }) {
+    this.agent = agent;
     this.requestFunc = requestFunc;
     this.loadFunc = loadFunc;
     this.loadThreshold = loadThreshold;
-    this.namespace = namespace;
+    this.numIdleProcesses = numIdleProcesses;
+    this.shutdownProcessTimeout = shutdownProcessTimeout;
+    this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
+    this.agentName = agentName;
     this.workerType = workerType;
     this.maxRetry = maxRetry;
     this.wsURL = wsURL;
@@ -120,74 +150,73 @@ export class WorkerOptions {
   }
 }
 
-class ActiveJob {
-  job: Job;
-  acceptData: AcceptData;
-
-  constructor(job: Job, acceptData: AcceptData) {
-    this.job = job;
-    this.acceptData = acceptData;
-  }
-}
-
-type AssignmentPair = {
-  // this string is the JSON string version of the JobAssignment.
-  // we keep it around to unpack it again in the child, because we can't pass Job directly.
-  raw: string;
-  asgn: JobAssignment;
-};
-
 class PendingAssignment {
-  promise = new Promise<AssignmentPair>((resolve) => {
+  promise = new Promise<JobAssignment>((resolve) => {
     this.resolve = resolve; // this is how JavaScript lets you resolve promises externally
   });
-  resolve(arg: AssignmentPair) {
+  resolve(arg: JobAssignment) {
     arg; // useless call to counteract TypeScript E6133
   }
 }
 
 export class Worker {
   #opts: WorkerOptions;
+  #procPool: ProcPool;
+
   #id = 'unregistered';
+  #closed = true;
+  #draining = false;
+  #connecting = false;
+  #tasks: Promise<void>[] = [];
+  #pending: { [id: string]: PendingAssignment } = {};
+  #close = new Future();
+
+  event = new EventEmitter();
   #session: WebSocket | undefined = undefined;
-  #closed = false;
   #httpServer: HTTPServer;
   #logger = log().child({ version });
-  #event = new EventEmitter();
-  #pending: { [id: string]: { value: PendingAssignment } } = {};
-  #processes: { [id: string]: { proc: JobProcess; activeJob: ActiveJob } } = {};
 
   constructor(opts: WorkerOptions) {
     opts.wsURL = opts.wsURL || process.env.LIVEKIT_URL || '';
     opts.apiKey = opts.apiKey || process.env.LIVEKIT_API_KEY || '';
     opts.apiSecret = opts.apiSecret || process.env.LIVEKIT_API_SECRET || '';
 
+    if (opts.wsURL === '') throw new Error('--url is required, or set LIVEKIT_URL env var');
+    if (opts.apiKey === '')
+      throw new Error('--api-key is required, or set LIVEKIT_API_KEY env var');
+    if (opts.apiSecret === '')
+      throw new Error('--api-secret is required, or set LIVEKIT_API_SECRET env var');
+
+    this.#procPool = new ProcPool(
+      opts.agent,
+      opts.numIdleProcesses,
+      opts.initializeProcessTimeout,
+      opts.shutdownProcessTimeout,
+    );
+
     this.#opts = opts;
     this.#httpServer = new HTTPServer(opts.host, opts.port);
   }
 
-  get id(): string {
-    return this.#id;
-  }
-
   async run() {
-    this.#logger.info('starting worker');
+    if (!this.#closed) {
+      throw new Error('worker is already running');
+    }
 
-    if (this.#opts.wsURL === '') throw new Error('--url is required, or set LIVEKIT_URL env var');
-    if (this.#opts.apiKey === '')
-      throw new Error('--api-key is required, or set LIVEKIT_API_KEY env var');
-    if (this.#opts.apiSecret === '')
-      throw new Error('--api-secret is required, or set LIVEKIT_API_SECRET env var');
+    this.#logger.info('starting worker');
+    this.#closed = false;
+    this.#procPool.start();
 
     const workerWS = async () => {
       let retries = 0;
+      this.#connecting = true;
+
       while (!this.#closed) {
+        const url = new URL(this.#opts.wsURL);
+        url.protocol = url.protocol.replace('http', 'ws');
         const token = new AccessToken(this.#opts.apiKey, this.#opts.apiSecret);
         token.addGrant({ agent: true });
         const jwt = await token.toJwt();
-
-        const url = new URL(this.#opts.wsURL);
-        url.protocol = url.protocol.replace('http', 'ws');
         this.#session = new WebSocket(url + 'agent', {
           headers: { authorization: 'Bearer ' + jwt },
         });
@@ -199,7 +228,9 @@ export class Worker {
             this.#session!.on('close', (code) => reject(`WebSocket returned ${code}`));
           });
 
-          this.runWS(this.#session!);
+          retries = 0;
+          this.#logger.debug('connected to LiveKit server');
+          this.runWS(this.#session);
           return;
         } catch (e) {
           if (this.#closed) return;
@@ -220,20 +251,77 @@ export class Worker {
     };
 
     await Promise.all([workerWS(), this.#httpServer.run()]);
+    this.#close.resolve();
   }
 
-  startProcess(job: Job, acceptData: AcceptData, raw: string) {
-    const proc = new JobProcess(job, acceptData, raw, this.#opts.wsURL);
-    this.#processes[job.id] = { proc, activeJob: new ActiveJob(job, acceptData) };
-    proc
-      .run()
-      .catch((e) => {
-        proc.logger.error(`error running job process ${proc.job.id}: ${e}`);
-      })
-      .finally(() => {
-        proc.clear();
-        delete this.#processes[job.id];
-      });
+  get id(): string {
+    return this.#id;
+  }
+
+  get activeJobs(): RunningJobInfo[] {
+    return this.#procPool.processes
+      .filter((proc) => proc.runningJob)
+      .map((proc) => proc.runningJob!);
+  }
+
+  async drain(timeout?: number) {
+    if (this.#draining) {
+      return;
+    }
+
+    this.#logger.info('draining worker');
+    this.#draining = true;
+
+    this.event.emit(
+      'worker_msg',
+      new WorkerMessage({
+        message: {
+          case: 'updateWorker',
+          value: {
+            status: WorkerStatus.WS_FULL,
+          },
+        },
+      }),
+    );
+
+    const joinJobs = async () => {
+      for (const proc of this.#procPool.processes) {
+        if (proc.runningJob) {
+          await proc.join();
+        }
+      }
+    };
+
+    const timer = setTimeout(() => {
+      throw new Error('timed out draining');
+    }, timeout);
+    if (timeout === undefined) clearTimeout(timer);
+    await joinJobs().then(() => {
+      clearTimeout(timer);
+    });
+  }
+
+  async simulateJob(roomName: string, participantIdentity?: string) {
+    const client = new RoomServiceClient(this.#opts.wsURL);
+    const room = await client.createRoom({ name: roomName });
+    let participant: ParticipantInfo | undefined = undefined;
+    if (participantIdentity) {
+      participant = await client.getParticipant(roomName, participantIdentity);
+    }
+
+    this.event!.emit(
+      'worker_msg',
+      new WorkerMessage({
+        message: {
+          case: 'simulateJob',
+          value: {
+            type: JobType.JT_PUBLISHER,
+            room,
+            participant,
+          },
+        },
+      }),
+    );
   }
 
   runWS(ws: WebSocket) {
@@ -241,12 +329,12 @@ export class Worker {
 
     const send = (msg: WorkerMessage) => {
       if (closingWS) {
-        this.#event.off('worker_msg', send);
+        this.event.off('worker_msg', send);
         return;
       }
       ws.send(msg.toBinary());
     };
-    this.#event.on('worker_msg', send);
+    this.event.on('worker_msg', send);
 
     ws.addEventListener('close', () => {
       closingWS = true;
@@ -262,16 +350,31 @@ export class Worker {
 
       const msg = new ServerMessage();
       msg.fromBinary(event.data as Uint8Array);
+
+      // register is the only valid first message, and it is only valid as the
+      // first message
+      if (this.#connecting && msg.message.case !== 'register') {
+        throw new Error('expected register response as first message');
+      }
+
       switch (msg.message.case) {
         case 'register': {
           this.#id = msg.message.value.workerId;
           log()
             .child({ id: this.id, server_info: msg.message.value.serverInfo })
             .info('registered worker');
+          this.event.emit(
+            'worker_registered',
+            msg.message.value.workerId,
+            msg.message.value.serverInfo!,
+          );
+          this.#connecting = false;
           break;
         }
         case 'availability': {
-          this.availability(msg.message.value);
+          const task = this.availability(msg.message.value);
+          this.#tasks.push(task);
+          task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
           break;
         }
         case 'assignment': {
@@ -279,10 +382,7 @@ export class Worker {
           if (job.id in this.#pending) {
             const task = this.#pending[job.id];
             delete this.#pending[job.id];
-            task.value.resolve({
-              asgn: msg.message.value,
-              raw: msg.toJsonString(),
-            });
+            task.resolve(msg.message.value);
           } else {
             log()
               .child({ job })
@@ -290,17 +390,23 @@ export class Worker {
           }
           break;
         }
+        case 'termination': {
+          const task = this.termination(msg.message.value);
+          this.#tasks.push(task);
+          task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
+          break;
+        }
       }
     });
 
-    this.#event.emit(
+    this.event.emit(
       'worker_msg',
       new WorkerMessage({
         message: {
           case: 'register',
           value: {
             type: this.#opts.workerType,
-            namespace: this.#opts.namespace,
+            agentName: this.#opts.agentName,
             allowedPermissions: new ParticipantPermission({
               canPublish: this.#opts.permissions.canPublish,
               canSubscribe: this.#opts.permissions.canSubscribe,
@@ -333,7 +439,7 @@ export class Worker {
         }
       }
 
-      this.#event.emit(
+      this.event.emit(
         'worker_msg',
         new WorkerMessage({
           message: {
@@ -345,71 +451,116 @@ export class Worker {
           },
         }),
       );
-    }, LOAD_INTERVAL);
+    }, UPDATE_LOAD_INTERVAL);
   }
 
   async availability(msg: AvailabilityRequest) {
-    const tx = new EventEmitter();
-    const req = new JobRequest(msg.job!, tx);
+    let answered = false;
 
-    tx.on('recv', async (av: AvailRes) => {
-      const msg = new WorkerMessage({
-        message: {
-          case: 'availability',
-          value: {
-            available: av.avail,
-            jobId: req.id,
-            participantIdentity: av.data?.identity,
-            participantName: av.data?.name,
-            participantMetadata: av.data?.metadata,
+    const onReject = async () => {
+      answered = true;
+      this.event.emit(
+        'worker_msg',
+        new WorkerMessage({
+          message: {
+            case: 'availability',
+            value: {
+              jobId: msg.job!.id,
+              available: false,
+            },
           },
-        },
-      });
+        }),
+      );
+    };
 
-      this.#pending[req.id] = { value: new PendingAssignment() };
-      this.#event.emit('worker_msg', msg);
-      if (!av.avail) return;
+    const onAccept = async (args: JobAcceptArguments) => {
+      answered = true;
 
+      this.event.emit(
+        'worker_msg',
+        new WorkerMessage({
+          message: {
+            case: 'availability',
+            value: {
+              jobId: msg.job!.id,
+              available: true,
+              participantIdentity: args.identity,
+              participantName: args.name,
+              participantMetadata: args.metadata,
+            },
+          },
+        }),
+      );
+
+      this.#pending[req.id] = new PendingAssignment();
       const timer = setTimeout(() => {
-        log().child({ req }).warn(`assignment for job ${req.id} timed out`);
+        this.#logger.child({ req }).warn(`assignment for job ${req.id} timed out`);
         return;
       }, ASSIGNMENT_TIMEOUT);
-      this.#pending[req.id].value.promise.then(({ asgn, raw }) => {
+      const asgn = await this.#pending[req.id].promise.then(async (asgn) => {
         clearTimeout(timer);
-        this.startProcess(asgn!.job!, av.data!, raw);
+        return asgn;
       });
-    });
 
-    try {
-      this.#opts.requestFunc(req);
-    } catch (e) {
-      log().child({ req }).error(`user request handler for job ${req.id} failed`);
-    } finally {
-      if (!req.answered) {
-        log().child({ req }).error(`no answer for job ${req.id}, automatically rejecting the job`);
-        this.#event.emit(
-          'worker_msg',
-          new WorkerMessage({
-            message: {
-              case: 'availability',
-              value: {
-                available: false,
-              },
-            },
-          }),
-        );
+      await this.#procPool.launchJob({
+        acceptArguments: args,
+        job: msg.job!,
+        url: asgn.url || this.#opts.wsURL,
+        token: asgn.token,
+      });
+    };
+
+    const req = new JobRequest(msg.job!, onReject, onAccept);
+    this.#logger
+      .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
+      .info('received job request');
+
+    const jobRequestTask = async () => {
+      try {
+        await this.#opts.requestFunc(req);
+      } catch (e) {
+        this.#logger
+          .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
+          .info('jobRequestFunc failed');
+        await onReject();
       }
+
+      if (!answered) {
+        this.#logger
+          .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
+          .info('no answer was given inside the jobRequestFunc, automatically rejecting the job');
+      }
+    };
+
+    const task = jobRequestTask();
+    this.#tasks.push(task);
+    task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
+  }
+
+  async termination(msg: JobTermination) {
+    const proc = this.#procPool.getByJobId(msg.jobId);
+    if (proc === null) {
+      // safe to ignore
+      return;
     }
+    await proc.close();
   }
 
   async close() {
-    if (this.#closed) return;
-    this.#closed = true;
-    this.#logger.debug('shutting down worker');
-    await this.#httpServer.close();
-    for await (const value of Object.values(this.#processes)) {
-      await value.proc.close();
+    if (this.#closed) {
+      await this.#close;
+      return;
     }
+
+    this.#logger.info('shutting down worker');
+
+    this.#closed = true;
+
+    await this.#procPool.close();
+    await this.#httpServer.close();
+    await Promise.allSettled(this.#tasks);
+
     this.#session?.close();
+    await this.#close;
   }
 }
