@@ -13,7 +13,7 @@ export let loggerOptions: LoggerOptions;
 let logger: Logger | undefined = undefined;
 export const log = () => {
   if (!logger) {
-    throw new Error('logger not initialized. did you forget to run initializeLogger()?');
+    throw new TypeError('logger not initialized. did you forget to run initializeLogger()?');
   }
   return logger;
 };
