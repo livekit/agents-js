@@ -431,9 +431,7 @@ export class Worker {
             delete this.#pending[job.id];
             task.resolve(msg.message.value);
           } else {
-            this.#logger
-              .child({ job })
-              .warn('received assignment for unknown job ' + job.id);
+            this.#logger.child({ job }).warn('received assignment for unknown job ' + job.id);
           }
           break;
         }

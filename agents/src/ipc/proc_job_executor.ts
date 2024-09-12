@@ -20,7 +20,7 @@ export class ProcJobExecutor extends JobExecutor {
   #pongTimeout?: ReturnType<typeof setTimeout>;
   #init = new Future();
   #join = new Future();
-  #logger = log().child({ runningJob: this.#runningJob })
+  #logger = log().child({ runningJob: this.#runningJob });
 
   constructor(agent: string, initializeTimeout: number, closeTimeout: number) {
     super();
