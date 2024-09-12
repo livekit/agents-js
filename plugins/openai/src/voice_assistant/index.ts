@@ -5,14 +5,19 @@
 import { AudioByteStream } from '@livekit/agents';
 import { findMicroTrackId } from '@livekit/agents';
 import { log } from '@livekit/agents';
-import type { AudioFrameEvent, RemoteAudioTrack, RemoteParticipant, Room } from '@livekit/rtc-node';
+import type {
+  AudioFrameEvent,
+  LocalTrackPublication,
+  RemoteAudioTrack,
+  RemoteParticipant,
+  Room,
+} from '@livekit/rtc-node';
 import {
   AudioFrame,
   AudioSource,
   AudioStream,
   AudioStreamEvent,
   LocalAudioTrack,
-  LocalTrackPublication,
   RoomEvent,
   TrackPublishOptions,
   TrackSource,
@@ -85,6 +90,12 @@ export class VoiceAssistant {
 
         this.linkParticipant(participant.identity);
       });
+      room.on(RoomEvent.TrackPublished, () => {
+        this.subscribeToMicrophone();
+      });
+      room.on(RoomEvent.TrackSubscribed, () => {
+        this.subscribeToMicrophone();
+      });
 
       this.room = room;
       this.participant = participant;
@@ -109,8 +120,13 @@ export class VoiceAssistant {
       const options = new TrackPublishOptions();
       options.source = TrackSource.SOURCE_MICROPHONE;
       this.agentPublication = (await room.localParticipant?.publishTrack(track, options)) || null;
+      if (!this.agentPublication) {
+        log().error('Failed to publish track');
+        reject(new Error('Failed to publish track'));
+        return;
+      }
 
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await this.agentPublication.waitForSubscription();
 
       this.ws = new WebSocket(proto.API_URL, {
         headers: {
@@ -138,6 +154,20 @@ export class VoiceAssistant {
       this.ws.onmessage = (message) => {
         this.handleServerEvent(JSON.parse(message.data as string));
       };
+    });
+  }
+
+  addUserMessage(text: string): void {
+    this.sendClientCommand({
+      event: proto.ClientEvent.ADD_ITEM,
+      type: 'message',
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: text,
+        },
+      ],
     });
   }
 

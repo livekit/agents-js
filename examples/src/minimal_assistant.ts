@@ -10,14 +10,14 @@ export default defineAgent({
 
     console.log('starting assistant example agent');
 
-    // FIXME: https://linear.app/livekit/issue/AGT-386/voice-assistant-doesnt-wait-correctly-before-listeningpublishing
-    setTimeout(() => {
-      const assistant = new VoiceAssistant({
-        ...defaultInferenceConfig,
-        system_message: 'You talk unprompted.',
-      });
-      assistant.start(ctx.room);
-    }, 1000);
+    const assistant = new VoiceAssistant({
+      ...defaultInferenceConfig,
+      system_message: 'You are a helpful assistant.',
+    });
+    
+    await assistant.start(ctx.room);
+
+    assistant.addUserMessage('Hello!');
   },
 });
 
