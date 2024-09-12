@@ -95,9 +95,6 @@ importers:
       pino-pretty:
         specifier: ^11.0.0
         version: 11.0.0
-      uuid:
-        specifier: ^10.0.0
-        version: 10.0.0
       ws:
         specifier: ^8.16.0
         version: 8.17.0
@@ -105,9 +102,6 @@ importers:
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@20.12.7)
-      '@types/uuid':
-        specifier: ^10.0.0
-        version: 10.0.0
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
@@ -748,9 +742,6 @@ packages:
 
   '@types/tapable@1.0.6':
     resolution: {integrity: sha512-W+bw9ds02rAQaMvaLYxAbJ6cvguW/iJXNT6lTssS1ps6QdrMKttqEAMEG/b5CR8TZl3/L7/lH0ZV5nNR1LXikA==}
-
-  '@types/uuid@10.0.0':
-    resolution: {integrity: sha512-7gqG38EyHgyP1S+7+xomFtL+ZNHcKv6DwNaCZmJmo1vgMugyF3TCnXVg4t1uk89mLNwnLtnY3TpOpCOyp1/xHQ==}
 
   '@types/ws@8.5.10':
     resolution: {integrity: sha512-vmQSUcfalpIq0R9q7uTo2lXs6eGIpt9wtnLdMv9LVpIjCA/+ufZRozlVoVelIYixx1ugCBKDhn89vnsEGOCx9A==}
@@ -2816,10 +2807,6 @@ packages:
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
 
-  uuid@10.0.0:
-    resolution: {integrity: sha512-8XkAphELsDnEGrDxUOHB3RGvXz6TeuYSGEZBOjtTtPm2lwhGBjLgOzLHB63IUWfBpNucQjND6d3AOudO+H3RWQ==}
-    hasBin: true
-
   validate-npm-package-license@3.0.4:
     resolution: {integrity: sha512-DpKm2Ui/xN7/HQKCtpZxoRWBhZ9Z0kqtygG8XCgNQ8ZlDnxuQmWhj566j8fN4Cu3/JmbhsDo7fcAJq4s9h27Ew==}
 
@@ -3658,8 +3645,6 @@ snapshots:
   '@types/semver@7.5.8': {}
 
   '@types/tapable@1.0.6': {}
-
-  '@types/uuid@10.0.0': {}
 
   '@types/ws@8.5.10':
     dependencies:
@@ -5952,8 +5937,6 @@ snapshots:
   uri-js@4.4.1:
     dependencies:
       punycode: 2.3.1
-
-  uuid@10.0.0: {}
 
   validate-npm-package-license@3.0.4:
     dependencies:
