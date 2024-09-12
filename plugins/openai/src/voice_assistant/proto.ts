@@ -2,49 +2,49 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 export enum Voice {
-  alloy = 'alloy',
-  shimmer = 'shimmer',
-  echo = 'echo',
+  ALLOY = 'alloy',
+  SHIMMER = 'shimmer',
+  ECHO = 'echo',
 }
 
 export enum TurnEndType {
-  serverDetection = 'server_detection',
-  clientDecision = 'client_decision',
+  SERVER_DETECTION = 'server_detection',
+  CLIENT_DECISION = 'client_decision',
 }
 
 export enum AudioFormat {
-  pcm16 = 'pcm16',
-  // g711_ulaw = 'g711-ulaw',
-  // g711_alaw = 'g711-alaw',
+  PCM16 = 'pcm16',
+  // G711_ULAW = 'g711-ulaw',
+  // G711_ALAW = 'g711-alaw',
 }
 
 export enum ServerEvent {
-  startSession = 'start_session',
-  error = 'error',
-  addItem = 'add_item',
-  addContent = 'add_content',
-  itemAdded = 'item_added',
-  turnFinished = 'turn_finished',
-  vadSpeechStarted = 'vad_speech_started',
-  vadSpeechStopped = 'vad_speech_stopped',
-  inputTranscribed = 'input_transcribed',
-  modelListening = 'model_listening',
+  START_SESSION = 'start_session',
+  ERROR = 'error',
+  ADD_ITEM = 'add_item',
+  ADD_CONTENT = 'add_content',
+  ITEM_ADDED = 'item_added',
+  TURN_FINISHED = 'turn_finished',
+  VAD_SPEECH_STARTED = 'vad_speech_started',
+  VAD_SPEECH_STOPPED = 'vad_speech_stopped',
+  INPUT_TRANSCRIBED = 'input_transcribed',
+  MODEL_LISTENING = 'model_listening',
 }
 
 export enum ClientEvent {
-  setInferenceConfig = 'set_inference_config',
-  addItem = 'add_item',
-  deleteItem = 'delete_item',
-  addUserAudio = 'add_user_audio',
-  commitPendingAudio = 'commit_pending_audio',
-  clientTurnFinished = 'client_turn_finished',
-  clientInterrupted = 'client_interrupted',
-  generate = 'generate',
-  createConversation = 'create_conversation',
-  deleteConversation = 'delete_conversation',
-  subscribeToUserAudio = 'subscribe_to_user_audio',
-  unsubscribeFromUserAudio = 'unsubscribe_from_user_audio',
-  truncateContent = 'truncate_content',
+  SET_INFERENCE_CONFIG = 'set_inference_config',
+  ADD_ITEM = 'add_item',
+  DELETE_ITEM = 'delete_item',
+  ADD_USER_AUDIO = 'add_user_audio',
+  COMMIT_PENDING_AUDIO = 'commit_pending_audio',
+  CLIENT_TURN_FINISHED = 'client_turn_finished',
+  CLIENT_INTERRUPTED = 'client_interrupted',
+  GENERATE = 'generate',
+  CREATE_CONVERSATION = 'create_conversation',
+  DELETE_CONVERSATION = 'delete_conversation',
+  SUBSCRIBE_TO_USER_AUDIO = 'subscribe_to_user_audio',
+  UNSUBSCRIBE_FROM_USER_AUDIO = 'unsubscribe_from_user_audio',
+  TRUNCATE_CONTENT = 'truncate_content',
 }
 
 export const API_URL = 'wss://api.openai.com/v1/realtime';

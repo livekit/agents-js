@@ -8,7 +8,7 @@ import type {
   TrackPublication,
 } from '@livekit/rtc-node';
 import { AudioFrame, TrackSource } from '@livekit/rtc-node';
-import { EventEmitter, once } from 'node:events';
+import { EventEmitter, once } from 'events';
 
 export type AudioBuffer = AudioFrame[] | AudioFrame;
 

@@ -21,13 +21,13 @@ import * as proto from './proto.js';
 
 const defaultInferenceConfig: proto.InferenceConfig = {
   system_message: 'You are a helpful assistant.',
-  voice: proto.Voice.alloy,
+  voice: proto.Voice.ALLOY,
   max_tokens: 2048,
   temperature: 0.8,
   disable_audio: false,
-  turn_end_type: proto.TurnEndType.serverDetection,
+  turn_end_type: proto.TurnEndType.SERVER_DETECTION,
   transcribe_input: true,
-  audio_format: proto.AudioFormat.pcm16,
+  audio_format: proto.AudioFormat.PCM16,
 };
 
 type ImplOptions = {
@@ -110,7 +110,7 @@ export class VoiceAssistant {
       this.ws.onopen = () => {
         this.connected = true;
         this.sendClientCommand({
-          event: proto.ClientEvent.setInferenceConfig,
+          event: proto.ClientEvent.SET_INFERENCE_CONFIG,
           ...this.options.inferenceConfig,
         });
       };
@@ -136,7 +136,7 @@ export class VoiceAssistant {
       return;
     }
 
-    if (command.event !== proto.ClientEvent.addUserAudio) {
+    if (command.event !== proto.ClientEvent.ADD_USER_AUDIO) {
       const truncatedDataPartial = command['data']
         ? { data: (command['data'] as string).slice(0, 30) + '…' }
         : {};
@@ -158,25 +158,25 @@ export class VoiceAssistant {
     });
 
     switch (event.event) {
-      case proto.ServerEvent.startSession:
+      case proto.ServerEvent.START_SESSION:
         break;
-      case proto.ServerEvent.addItem:
+      case proto.ServerEvent.ADD_ITEM:
         this.handleAddItem(event);
         break;
-      case proto.ServerEvent.addContent:
+      case proto.ServerEvent.ADD_CONTENT:
         this.handleAddContent(event);
         break;
-      case proto.ServerEvent.itemAdded:
+      case proto.ServerEvent.ITEM_ADDED:
         this.handleItemAdded(event);
         break;
-      case proto.ServerEvent.turnFinished:
+      case proto.ServerEvent.TURN_FINISHED:
         break;
-      case proto.ServerEvent.vadSpeechStarted:
+      case proto.ServerEvent.VAD_SPEECH_STARTED:
         this.handleVadSpeechStarted(event);
         break;
-      case proto.ServerEvent.vadSpeechStopped:
+      case proto.ServerEvent.VAD_SPEECH_STOPPED:
         break;
-      case proto.ServerEvent.inputTranscribed:
+      case proto.ServerEvent.INPUT_TRANSCRIBED:
         this.handleInputTranscribed(event);
         break;
       default:
@@ -303,7 +303,7 @@ export class VoiceAssistant {
         const audioData = ev.frame.data;
         for (const frame of bstream.write(audioData.buffer)) {
           this.sendClientCommand({
-            event: proto.ClientEvent.addUserAudio,
+            event: proto.ClientEvent.ADD_USER_AUDIO,
             data: Buffer.from(frame.data.buffer).toString('base64'),
           });
         }
