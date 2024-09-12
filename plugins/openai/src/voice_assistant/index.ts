@@ -65,7 +65,6 @@ export class VoiceAssistant {
   private agentPublication: LocalTrackPublication | null = null;
   private localTrackSid: string | null = null;
   private localSource: AudioSource | null = null;
-  private pendingMessages: Map<string, string> = new Map();
   private agentPlayout: AgentPlayout | null = null;
   private playingHandle: PlayoutHandle | null = null;
 
@@ -173,13 +172,11 @@ export class VoiceAssistant {
       case proto.ServerEvent.START_SESSION:
         break;
       case proto.ServerEvent.ADD_ITEM:
-        this.handleAddItem(event);
         break;
       case proto.ServerEvent.ADD_CONTENT:
         this.handleAddContent(event);
         break;
       case proto.ServerEvent.ITEM_ADDED:
-        this.handleItemAdded(event);
         break;
       case proto.ServerEvent.TURN_FINISHED:
         break;
@@ -224,29 +221,6 @@ export class VoiceAssistant {
         break;
       default:
         log().warn(`Unknown content event type: ${event.type}`);
-    }
-  }
-
-  private handleAddItem(event: Record<string, unknown>): void {
-    const itemId = event.id as string;
-    if (itemId && event.type === 'message') {
-      this.pendingMessages.set(itemId, '');
-    }
-  }
-
-  private handleItemAdded(event: Record<string, unknown>): void {
-    const itemId = event.id as string;
-    if (itemId && this.pendingMessages.has(itemId)) {
-      const text = this.pendingMessages.get(itemId) || '';
-      this.pendingMessages.delete(itemId);
-
-      const participantIdentity = this.room?.localParticipant?.identity;
-      const trackSid = this.getLocalTrackSid();
-      if (participantIdentity && trackSid) {
-        this.publishTranscription(participantIdentity, trackSid, text, true, itemId);
-      } else {
-        log().error('Participant or track not set');
-      }
     }
   }
 
