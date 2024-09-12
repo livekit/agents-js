@@ -407,7 +407,7 @@ export class Worker {
       switch (msg.message.case) {
         case 'register': {
           this.#id = msg.message.value.workerId;
-          log()
+          this.#logger
             .child({ id: this.id, server_info: msg.message.value.serverInfo })
             .info('registered worker');
           this.event.emit(
@@ -431,7 +431,7 @@ export class Worker {
             delete this.#pending[job.id];
             task.resolve(msg.message.value);
           } else {
-            log()
+            this.#logger
               .child({ job })
               .warn('received assignment for unknown job ' + job.id);
           }
@@ -480,9 +480,9 @@ export class Worker {
       if (oldStatus != currentStatus) {
         const extra = { load: currentLoad, loadThreshold: this.#opts.loadThreshold };
         if (isFull) {
-          log().child(extra).info('worker is at full capacity, marking as unavailable');
+          this.#logger.child(extra).info('worker is at full capacity, marking as unavailable');
         } else {
-          log().child(extra).info('worker is below capacity, marking as available');
+          this.#logger.child(extra).info('worker is below capacity, marking as available');
         }
       }
 

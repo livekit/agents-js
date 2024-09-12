@@ -59,7 +59,7 @@ const startJob = (
   const task = new Promise<void>(async () => {
     const unconnectedTimeout = setTimeout(() => {
       if (!(connect || shutdown)) {
-        log().warn(
+        logger.warn(
           'room not connect after job_entry was called after 10 seconds, ',
           'did you forget to call ctx.connect()?',
         );
