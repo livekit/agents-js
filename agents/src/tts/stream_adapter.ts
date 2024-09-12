@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { SentenceStream, SentenceTokenizer } from '../tokenize.js';
-import { ChunkedStream, SynthesisEvent, SynthesisEventType, SynthesizeStream, TTS } from './tts.js';
+import type { ChunkedStream } from './tts.js';
+import { SynthesisEvent, SynthesisEventType, SynthesizeStream, TTS } from './tts.js';
 
 export class StreamAdapterWrapper extends SynthesizeStream {
   #closed: boolean;

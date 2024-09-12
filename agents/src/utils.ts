@@ -8,6 +8,7 @@ import type {
   TrackPublication,
 } from '@livekit/rtc-node';
 import { AudioFrame, TrackSource } from '@livekit/rtc-node';
+import { EventEmitter, once } from 'node:events';
 
 export type AudioBuffer = AudioFrame[] | AudioFrame;
 
@@ -73,3 +74,81 @@ export const findMicroTrackId = (room: Room, identity: string): string => {
 
   return trackId;
 };
+
+/** @internal */
+export class Mutex {
+  #locking: Promise<void>;
+  #locks: number;
+  #limit: number;
+
+  constructor(limit = 1) {
+    this.#locking = Promise.resolve();
+    this.#locks = 0;
+    this.#limit = limit;
+  }
+
+  isLocked(): boolean {
+    return this.#locks >= this.#limit;
+  }
+
+  async lock(): Promise<() => void> {
+    this.#locks += 1;
+
+    let unlockNext: () => void;
+
+    const willLock = new Promise<void>(
+      (resolve) =>
+        (unlockNext = () => {
+          this.#locks -= 1;
+          resolve();
+        }),
+    );
+
+    const willUnlock = this.#locking.then(() => unlockNext);
+    this.#locking = this.#locking.then(() => willLock);
+    return willUnlock;
+  }
+}
+
+/** @internal */
+export class Queue<T> {
+  #items: T[] = [];
+  #limit?: number;
+  #events = new EventEmitter();
+
+  constructor(limit?: number) {
+    this.#limit = limit;
+  }
+
+  async get(): Promise<T> {
+    if (this.#items.length === 0) {
+      await once(this.#events, 'put');
+    }
+    const item = this.#items.shift()!;
+    this.#events.emit('get');
+    return item;
+  }
+
+  async put(item: T) {
+    if (this.#limit && this.#items.length >= this.#limit) {
+      await once(this.#events, 'get');
+    }
+    this.#items.push(item);
+    this.#events.emit('put');
+  }
+}
+
+/** @internal */
+export class Future extends Promise<void> {
+  constructor() {
+    super((resolve, reject: (_: Error) => void) => {
+      this.resolve = resolve;
+      this.reject = reject;
+    });
+  }
+
+  resolve = () => {};
+  reject = (_: Error) => {
+    _;
+  };
+}

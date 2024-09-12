@@ -2,8 +2,7 @@
   "compilerOptions": {
     "target": "ES2017",
     "module": "ES2022",
-    "moduleDetection": "force",
-    "moduleResolution": "Bundler",
+    "moduleResolution": "node",
     "declaration": true,
     "declarationMap": true,
     "allowJs": false,

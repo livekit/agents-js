@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'events';
-import { log } from './log.js';
+import { initializeLogger, log } from './log.js';
 import { version } from './version.js';
 import { Worker, type WorkerOptions } from './worker.js';
 
@@ -12,22 +12,31 @@ type CliArgs = {
   production: boolean;
   watch: boolean;
   event?: EventEmitter;
+  room?: string;
+  participantIdentity?: string;
 };
 
 const runWorker = async (args: CliArgs) => {
-  log.level = args.opts.logLevel;
+  initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
   const worker = new Worker(args.opts);
+
+  if (args.room) {
+    worker.event.once('worker_registered', () => {
+      log().info(`connecting to room ${args.room}`);
+      worker.simulateJob(args.room!, args.participantIdentity);
+    });
+  }
 
   process.on('SIGINT', async () => {
     await worker.close();
-    log.info('worker closed');
+    log().info('worker closed');
     process.exit(130); // SIGINT exit code
   });
 
   try {
     await worker.run();
   } catch {
-    log.fatal('worker failed');
+    log().fatal('worker failed');
     process.exit(1);
   }
 };
@@ -72,6 +81,42 @@ export const runApp = (opts: WorkerOptions) => {
         opts,
         production: true,
         watch: false,
+      });
+    });
+
+  program
+    .command('dev')
+    .description('Start the worker in development mode')
+    .action(() => {
+      const options = program.optsWithGlobals();
+      opts.wsURL = options.url || opts.wsURL;
+      opts.apiKey = options.apiKey || opts.apiKey;
+      opts.apiSecret = options.apiSecret || opts.apiSecret;
+      opts.logLevel = options.logLevel || opts.logLevel;
+      runWorker({
+        opts,
+        production: false,
+        watch: false,
+      });
+    });
+
+  program
+    .command('connect')
+    .description('Connect to a specific room')
+    .requiredOption('--room <string>', 'Room name to connect to')
+    .option('--participant-identity <string>', 'Participant identitiy to connect as')
+    .action((...[, command]) => {
+      const options = command.optsWithGlobals();
+      opts.wsURL = options.url || opts.wsURL;
+      opts.apiKey = options.apiKey || opts.apiKey;
+      opts.apiSecret = options.apiSecret || opts.apiSecret;
+      opts.logLevel = options.logLevel || opts.logLevel;
+      runWorker({
+        opts,
+        production: false,
+        watch: false,
+        room: options.room,
+        participantIdentity: options.participantIdentity,
       });
     });
 

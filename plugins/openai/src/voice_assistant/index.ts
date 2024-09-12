@@ -65,7 +65,7 @@ export class VoiceAssistant {
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise((resolve, reject) => {
       if (this.ws !== null) {
-        log.warn('VoiceAssistant already started');
+        log().warn('VoiceAssistant already started');
         resolve();
         return;
       }
@@ -132,7 +132,7 @@ export class VoiceAssistant {
 
   private sendClientCommand(command: Record<string, unknown>): void {
     if (!this.connected || !this.ws) {
-      log.error('WebSocket is not connected');
+      log().error('WebSocket is not connected');
       return;
     }
 
@@ -140,7 +140,7 @@ export class VoiceAssistant {
       const truncatedDataPartial = command['data']
         ? { data: (command['data'] as string).slice(0, 30) + '…' }
         : {};
-      log.debug('->', {
+      log().debug('->', {
         ...command,
         ...truncatedDataPartial,
       });
@@ -152,7 +152,7 @@ export class VoiceAssistant {
     const truncatedDataPartial = event['data']
       ? { data: (event['data'] as string).slice(0, 30) + '…' }
       : {};
-    log.debug('<-', {
+    log().debug('<-', {
       ...event,
       ...truncatedDataPartial,
     });
@@ -180,7 +180,7 @@ export class VoiceAssistant {
         this.handleInputTranscribed(event);
         break;
       default:
-        log.warn('Unknown server event:', event);
+        log().warn('Unknown server event:', event);
     }
   }
 
@@ -218,7 +218,7 @@ export class VoiceAssistant {
           if (participantIdentity && trackSid) {
             this.publishTranscription(participantIdentity, trackSid, newText, false, itemId);
           } else {
-            log.error('Participant or track not set');
+            log().error('Participant or track not set');
           }
         }
         break;
@@ -245,7 +245,7 @@ export class VoiceAssistant {
       if (participantIdentity && trackSid) {
         this.publishTranscription(participantIdentity, trackSid, text, true, itemId);
       } else {
-        log.error('Participant or track not set');
+        log().error('Participant or track not set');
       }
     }
   }
@@ -254,7 +254,7 @@ export class VoiceAssistant {
     const itemId = event.item_id as string;
     const transcription = event.transcript as string;
     if (!itemId || !transcription) {
-      log.error('Item ID or transcription not set');
+      log().error('Item ID or transcription not set');
       return;
     }
     const participantIdentity = this.linkedParticipant?.identity;
@@ -262,7 +262,7 @@ export class VoiceAssistant {
     if (participantIdentity && trackSid) {
       this.publishTranscription(participantIdentity, trackSid, transcription, true, itemId);
     } else {
-      log.error('Participant or track not set');
+      log().error('Participant or track not set');
     }
   }
 
@@ -273,19 +273,19 @@ export class VoiceAssistant {
     if (participantIdentity && trackSid && itemId) {
       this.publishTranscription(participantIdentity, trackSid, '', false, itemId);
     } else {
-      log.error('Participant or track or itemId not set');
+      log().error('Participant or track or itemId not set');
     }
   }
 
   private linkParticipant(participantIdentity: string): void {
     if (!this.room) {
-      log.error('Room is not set');
+      log().error('Room is not set');
       return;
     }
 
     this.linkedParticipant = this.room.remoteParticipants.get(participantIdentity) || null;
     if (!this.linkedParticipant) {
-      log.error(`Participant with identity ${participantIdentity} not found`);
+      log().error(`Participant with identity ${participantIdentity} not found`);
       return;
     }
     this.subscribeToMicrophone();
@@ -311,7 +311,7 @@ export class VoiceAssistant {
     };
 
     if (!this.linkedParticipant) {
-      log.error('Participant is not set');
+      log().error('Participant is not set');
       return;
     }
 
@@ -364,7 +364,7 @@ export class VoiceAssistant {
     id: string,
   ): void {
     if (!this.room?.localParticipant) {
-      log.error('Room or local participant not set');
+      log().error('Room or local participant not set');
       return;
     }
 
