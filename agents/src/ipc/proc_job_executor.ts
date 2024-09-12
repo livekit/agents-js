@@ -85,6 +85,7 @@ export class ProcJobExecutor extends JobExecutor {
           break;
         }
         case 'done': {
+          this.#closing = true;
           this.#proc!.off('message', listener);
           this.#join.resolve();
           break;
@@ -92,8 +93,9 @@ export class ProcJobExecutor extends JobExecutor {
       }
     };
     this.#proc!.on('message', listener);
-    this.#proc!.on('error', () => {
-      log().warn('job process exited unexpectedly');
+    this.#proc!.on('error', (err) => {
+      if (this.#closing) return;
+      log().child({ err }).warn('job process exited unexpectedly');
       clearTimeout(this.#pongTimeout);
       clearInterval(this.#pingInterval);
       this.#join.resolve();
