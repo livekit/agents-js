@@ -30,9 +30,9 @@ const runWorker = async (args: CliArgs) => {
   process.once('SIGINT', async () => {
     // allow C-c C-c for force interrupt
     process.once('SIGINT', () => {
-      log().info('worker closed forcefully')
+      log().info('worker closed forcefully');
       process.exit(130); // SIGINT exit code
-    })
+    });
     await worker.drain();
     await worker.close();
     log().info('worker closed');
