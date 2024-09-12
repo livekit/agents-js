@@ -10,14 +10,14 @@ export default defineAgent({
 
     console.log('starting assistant example agent');
 
-    // FIXME: for some reason the remoteParticipants are not being populated at connection time nor calling onParticipantConnected
+    // FIXME: https://linear.app/livekit/issue/AGT-386/voice-assistant-doesnt-wait-correctly-before-listeningpublishing
     setTimeout(() => {
       const assistant = new VoiceAssistant({
         ...defaultInferenceConfig,
         system_message: 'You talk unprompted.',
       });
       assistant.start(ctx.room);
-    }, 500);
+    }, 1000);
   },
 });
 

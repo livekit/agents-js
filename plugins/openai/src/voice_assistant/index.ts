@@ -12,12 +12,15 @@ import {
   AudioStream,
   AudioStreamEvent,
   LocalAudioTrack,
+  LocalTrackPublication,
   RoomEvent,
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
+import { AgentPlayout, PlayoutHandle } from './agent_playout.js';
 import * as proto from './proto.js';
+import { BasicTranscriptionForwarder } from './transcription_forwarder.js';
 
 export const defaultInferenceConfig: proto.InferenceConfig = {
   system_message: 'You are a helpful assistant.',
@@ -59,18 +62,22 @@ export class VoiceAssistant {
   private ws: WebSocket | null = null;
   private connected: boolean = false;
   private participant: RemoteParticipant | string | null = null;
-  private localTrack: LocalAudioTrack | null = null;
+  private agentPublication: LocalTrackPublication | null = null;
   private localTrackSid: string | null = null;
   private localSource: AudioSource | null = null;
   private pendingMessages: Map<string, string> = new Map();
+  private agentPlayout: AgentPlayout | null = null;
+  private playingHandle: PlayoutHandle | null = null;
 
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       if (this.ws !== null) {
         log().warn('VoiceAssistant already started');
         resolve();
         return;
       }
+
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
       room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
         if (!this.linkedParticipant) {
@@ -98,10 +105,13 @@ export class VoiceAssistant {
       }
 
       this.localSource = new AudioSource(proto.SAMPLE_RATE, proto.NUM_CHANNELS);
-      this.localTrack = LocalAudioTrack.createAudioTrack('assistant_voice', this.localSource);
+      this.agentPlayout = new AgentPlayout(this.localSource);
+      const track = LocalAudioTrack.createAudioTrack('assistant_voice', this.localSource);
       const options = new TrackPublishOptions();
       options.source = TrackSource.SOURCE_MICROPHONE;
-      room.localParticipant?.publishTrack(this.localTrack, options);
+      this.agentPublication = (await room.localParticipant?.publishTrack(track, options)) || null;
+
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
       this.ws = new WebSocket(proto.API_URL, {
         headers: {
@@ -182,50 +192,31 @@ export class VoiceAssistant {
         this.handleInputTranscribed(event);
         break;
       default:
-        log().warn('Unknown server event:', event);
+        log().warn(`Unknown server event: ${JSON.stringify(event)}`);
     }
   }
 
   private handleAddContent(event: Record<string, unknown>): void {
-    switch (event.type) {
-      case 'audio':
-        const data = Buffer.from(event.data as string, 'base64');
+    const trackSid = this.getLocalTrackSid();
+    if (!this.room || !this.room.localParticipant || !trackSid || !this.agentPlayout) {
+      log().error('Room or local participant not set');
+      return;
+    }
 
-        const serverFrame = new AudioFrame(
-          new Int16Array(data.buffer),
-          proto.SAMPLE_RATE,
-          proto.NUM_CHANNELS,
-          data.length / 2,
-        );
+    if (this.playingHandle === null || this.playingHandle.done) {
+      const trFwd = new BasicTranscriptionForwarder(
+        this.room as Room,
+        this.room?.localParticipant?.identity,
+        trackSid,
+      );
 
-        const bstream = new AudioByteStream(
-          proto.SAMPLE_RATE,
-          proto.NUM_CHANNELS,
-          proto.OUTPUT_PCM_FRAME_SIZE,
-        );
-
-        for (const frame of bstream.write(serverFrame.data.buffer)) {
-          this.localSource?.captureFrame(frame);
-        }
-        break;
-      case 'text':
-        const itemId = event.item_id as string;
-        if (itemId && this.pendingMessages.has(itemId)) {
-          const existingText = this.pendingMessages.get(itemId) || '';
-          const newText = existingText + (event.data as string);
-          this.pendingMessages.set(itemId, newText);
-
-          const participantIdentity = this.room?.localParticipant?.identity;
-          const trackSid = this.getLocalTrackSid();
-          if (participantIdentity && trackSid) {
-            this.publishTranscription(participantIdentity, trackSid, newText, false, itemId);
-          } else {
-            log().error('Participant or track not set');
-          }
-        }
-        break;
-      default:
-        break;
+      this.playingHandle = this.agentPlayout.play(event.item_id as string, trFwd);
+      switch (event.type) {
+        case 'audio':
+          this.playingHandle?.pushAudio(Buffer.from(event.data as string, 'base64'));
+        case 'text':
+          this.playingHandle?.pushText(event.data as string);
+      }
     }
   }
 
