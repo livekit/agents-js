@@ -15,6 +15,8 @@ import { initializeLogger, log } from '../log.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import type { IPCMessage } from './message.js';
 
+const ORPHANED_TIMEOUT = 15 * 1000;
+
 type StartArgs = {
   agentFile: string;
   // userArguments: unknown;
@@ -116,9 +118,16 @@ if (process.send) {
 
   let job: JobTask | undefined = undefined;
   const closeEvent = new EventEmitter();
+
+  const orphanedTimeout = setTimeout(() => {
+    logger.warn('process orphaned, shutting down');
+    process.exit();
+  }, ORPHANED_TIMEOUT);
+
   process.on('message', (msg: IPCMessage) => {
     switch (msg.case) {
       case 'pingRequest': {
+        orphanedTimeout.refresh();
         process.send!({
           case: 'pongResponse',
           value: { lastTimestamp: msg.value.timestamp, timestamp: Date.now() },

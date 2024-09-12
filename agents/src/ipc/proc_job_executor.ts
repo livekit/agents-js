@@ -64,6 +64,10 @@ export class ProcJobExecutor extends JobExecutor {
 
     this.#pongTimeout = setTimeout(() => {
       log().warn('job is unresponsive');
+      clearTimeout(this.#pongTimeout);
+      clearInterval(this.#pingInterval);
+      this.#proc!.kill();
+      this.#join.resolve();
     }, this.PING_TIMEOUT);
 
     const listener = (msg: IPCMessage) => {
@@ -88,6 +92,12 @@ export class ProcJobExecutor extends JobExecutor {
       }
     };
     this.#proc!.on('message', listener);
+    this.#proc!.on('error', () => {
+      log().warn('job process exited unexpectedly');
+      clearTimeout(this.#pongTimeout);
+      clearInterval(this.#pingInterval);
+      this.#join.resolve();
+    });
 
     await this.#join.await;
   }
