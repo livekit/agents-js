@@ -67,7 +67,7 @@ const startJob = (
 
     await once(closeEvent, 'close').then((close) => {
       logger.debug('shutting down');
-      process.send!({ case: 'exiting', reason: close[1] });
+      process.send!({ case: 'exiting', value: { reason: close[1] } });
     });
 
     await room.disconnect();

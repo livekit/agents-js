@@ -148,8 +148,8 @@ export class Future {
   get await() {
     return this.#await;
   }
-  resolve = () => {};
-  reject = (_: Error) => {
+  resolve() {}
+  reject(_: Error) {
     _;
-  };
+  }
 }

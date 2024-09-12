@@ -78,6 +78,7 @@ export class ProcJobExecutor extends JobExecutor {
         }
         case 'exiting': {
           log().child({ reason: msg.value.reason }).debug('job exiting');
+          break;
         }
         case 'done': {
           this.#proc!.off('message', listener);
@@ -120,6 +121,12 @@ export class ProcJobExecutor extends JobExecutor {
       return;
     }
     this.#closing = true;
+
+    if (!this.#runningJob) {
+      this.#proc!.kill();
+      this.#join.resolve();
+    }
+
     this.#proc!.send({ case: 'shutdownRequest' });
 
     const timer = setTimeout(() => {
