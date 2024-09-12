@@ -1,6 +1,6 @@
 import { AudioByteStream } from '@livekit/agents';
-import { AudioFrame, type AudioSource } from '@livekit/rtc-node';
 import { Queue } from '@livekit/agents';
+import { AudioFrame, type AudioSource } from '@livekit/rtc-node';
 import * as proto from './proto.js';
 import type { TranscriptionForwarder } from './transcription_forwarder';
 
