@@ -56,7 +56,7 @@ export class ProcJobExecutor extends JobExecutor {
   }
 
   async run() {
-    await this.#init;
+    await this.#init.await;
 
     this.#pingInterval = setInterval(() => {
       this.#proc!.send({ case: 'pingRequest', value: { timestamp: Date.now() } });
@@ -88,7 +88,7 @@ export class ProcJobExecutor extends JobExecutor {
     };
     this.#proc!.on('message', listener);
 
-    await this.#join;
+    await this.#join.await;
   }
 
   async join() {
@@ -96,7 +96,7 @@ export class ProcJobExecutor extends JobExecutor {
       throw new Error('runner not started');
     }
 
-    await this.#join;
+    await this.#join.await;
   }
 
   async initialize() {
@@ -125,7 +125,7 @@ export class ProcJobExecutor extends JobExecutor {
     const timer = setTimeout(() => {
       log().error('job shutdown is taking too much time');
     }, this.#opts.closeTimeout);
-    await this.#join.then(() => {
+    await this.#join.await.then(() => {
       clearTimeout(timer);
       clearTimeout(this.#pongTimeout);
       clearInterval(this.#pingInterval);

@@ -548,7 +548,7 @@ export class Worker {
 
   async close() {
     if (this.#closed) {
-      await this.#close;
+      await this.#close.await;
       return;
     }
 
@@ -561,6 +561,6 @@ export class Worker {
     await Promise.allSettled(this.#tasks);
 
     this.#session?.close();
-    await this.#close;
+    await this.#close.await;
   }
 }
