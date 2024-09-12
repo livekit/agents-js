@@ -151,10 +151,7 @@ export class VoiceAssistant {
       const truncatedDataPartial = command['data']
         ? { data: (command['data'] as string).slice(0, 30) + '…' }
         : {};
-      log().debug('->', {
-        ...command,
-        ...truncatedDataPartial,
-      });
+      log().debug(`-> ${JSON.stringify({ ...command, ...truncatedDataPartial })}`);
     }
     this.ws.send(JSON.stringify(command));
   }
@@ -163,10 +160,7 @@ export class VoiceAssistant {
     const truncatedDataPartial = event['data']
       ? { data: (event['data'] as string).slice(0, 30) + '…' }
       : {};
-    log().debug('<-', {
-      ...event,
-      ...truncatedDataPartial,
-    });
+    log().debug(`<- ${JSON.stringify({ ...event, ...truncatedDataPartial })}`);
 
     switch (event.event) {
       case proto.ServerEvent.START_SESSION:
