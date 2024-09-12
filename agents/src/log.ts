@@ -3,6 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Logger, pino } from 'pino';
 
+export type LoggerOptions = {
+  pretty: boolean;
+  level: string;
+};
+export let loggerOptions: LoggerOptions;
+
 let logger: Logger | undefined = undefined;
 export const log = () => {
   if (!logger) {
@@ -12,7 +18,8 @@ export const log = () => {
 };
 export default log;
 
-export const setLog = ({ pretty, level }: { pretty: boolean; level: string }) => {
+export const setLog = ({ pretty, level }: LoggerOptions) => {
+  loggerOptions = { pretty, level };
   logger = pino(
     pretty
       ? {

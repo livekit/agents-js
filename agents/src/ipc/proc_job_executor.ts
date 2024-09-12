@@ -4,7 +4,7 @@
 import type { ChildProcess } from 'child_process';
 import { once } from 'events';
 import type { RunningJobInfo } from '../job.js';
-import { log } from '../log.js';
+import { log, loggerOptions } from '../log.js';
 import type { ProcOpts } from './job_executor.js';
 import { JobExecutor } from './job_executor.js';
 import type { IPCMessage } from './message.js';
@@ -116,7 +116,7 @@ export class ProcJobExecutor extends JobExecutor {
       this.#initErr(err);
       throw err;
     }, this.#opts.initializeTimeout);
-    this.#proc!.send({ case: 'initializeRequest' });
+    this.#proc!.send({ case: 'initializeRequest', value: { loggerOptions } });
     await once(this.#proc!, 'message').then(([msg]: IPCMessage[]) => {
       clearTimeout(timer);
       if (msg.case !== 'initializeResponse') {

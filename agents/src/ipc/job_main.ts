@@ -10,7 +10,7 @@ import type { Agent } from '../generator.js';
 import type { RunningJobInfo } from '../job.js';
 import { JobContext } from '../job.js';
 import { JobProcess } from '../job.js';
-import { log } from '../log.js';
+import { log, setLog } from '../log.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import type { IPCMessage } from './message.js';
 
@@ -100,6 +100,7 @@ if (process.send) {
     if (msg.case !== 'initializeRequest') {
       throw new Error('first message must be InitializeRequest');
     }
+    setLog(msg.value.loggerOptions);
   });
   const proc = new JobProcess();
 
