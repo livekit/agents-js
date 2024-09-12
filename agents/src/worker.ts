@@ -31,6 +31,22 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
 
+/** Necessary credentials not provided and not found in an appropriate environmental variable. */
+export class MissingCredentialsError extends Error {
+  constructor(msg?: string) {
+    super(msg);
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/** Worker did not run as expected. */
+export class WorkerError extends Error {
+  constructor(msg?: string) {
+    super(msg);
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 /** @internal */
 export const defaultInitializeProcessFunc = (_: JobProcess) => _;
 const defaultRequestFunc = async (ctx: JobRequest) => {
@@ -199,16 +215,20 @@ export class Worker {
   #httpServer: HTTPServer;
   #logger = log().child({ version });
 
+  /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: WorkerOptions) {
     opts.wsURL = opts.wsURL || process.env.LIVEKIT_URL || '';
     opts.apiKey = opts.apiKey || process.env.LIVEKIT_API_KEY || '';
     opts.apiSecret = opts.apiSecret || process.env.LIVEKIT_API_SECRET || '';
 
-    if (opts.wsURL === '') throw new Error('--url is required, or set LIVEKIT_URL env var');
+    if (opts.wsURL === '')
+      throw new MissingCredentialsError('--url is required, or set LIVEKIT_URL env var');
     if (opts.apiKey === '')
-      throw new Error('--api-key is required, or set LIVEKIT_API_KEY env var');
+      throw new MissingCredentialsError('--api-key is required, or set LIVEKIT_API_KEY env var');
     if (opts.apiSecret === '')
-      throw new Error('--api-secret is required, or set LIVEKIT_API_SECRET env var');
+      throw new MissingCredentialsError(
+        '--api-secret is required, or set LIVEKIT_API_SECRET env var',
+      );
 
     this.#procPool = new ProcPool(
       opts.agent,
@@ -221,9 +241,10 @@ export class Worker {
     this.#httpServer = new HTTPServer(opts.host, opts.port);
   }
 
+  /* @throws {@link WorkerError} if worker failed to connect or already running */
   async run() {
     if (!this.#closed) {
-      throw new Error('worker is already running');
+      throw new WorkerError('worker is already running');
     }
 
     this.#logger.info('starting worker');
@@ -258,7 +279,9 @@ export class Worker {
         } catch (e) {
           if (this.#closed) return;
           if (retries >= this.#opts.maxRetry) {
-            throw new Error(`failed to connect to LiveKit server after ${retries} attempts: ${e}`);
+            throw new WorkerError(
+              `failed to connect to LiveKit server after ${retries} attempts: ${e}`,
+            );
           }
 
           retries++;
@@ -287,6 +310,7 @@ export class Worker {
       .map((proc) => proc.runningJob!);
   }
 
+  /* @throws {@link WorkerError} if worker did not drain in time */
   async drain(timeout?: number) {
     if (this.#draining) {
       return;
@@ -316,7 +340,7 @@ export class Worker {
     };
 
     const timer = setTimeout(() => {
-      throw new Error('timed out draining');
+      throw new WorkerError('timed out draining');
     }, timeout);
     if (timeout === undefined) clearTimeout(timer);
     await joinJobs().then(() => {
@@ -377,7 +401,7 @@ export class Worker {
       // register is the only valid first message, and it is only valid as the
       // first message
       if (this.#connecting && msg.message.case !== 'register') {
-        throw new Error('expected register response as first message');
+        throw new WorkerError('expected register response as first message');
       }
 
       switch (msg.message.case) {
