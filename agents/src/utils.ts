@@ -4,13 +4,10 @@
 import type {
   LocalParticipant,
   RemoteParticipant,
+  Room,
   TrackPublication,
-  Room
 } from '@livekit/rtc-node';
-import {
-  AudioFrame,
-  TrackSource
-} from '@livekit/rtc-node';
+import { AudioFrame, TrackSource } from '@livekit/rtc-node';
 
 export type AudioBuffer = AudioFrame[] | AudioFrame;
 

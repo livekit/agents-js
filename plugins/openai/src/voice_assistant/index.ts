@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // import { log } from '@livekit/agents';
 import { AudioByteStream } from '@livekit/agents';
+import { findMicroTrackId } from '@livekit/agents';
 import type { AudioFrameEvent, RemoteAudioTrack, RemoteParticipant, Room } from '@livekit/rtc-node';
 import {
   AudioFrame,
@@ -16,7 +17,6 @@ import {
 } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
 import * as proto from './proto.js';
-import { findMicroTrackId } from '@livekit/agents';
 
 const defaultInferenceConfig: proto.InferenceConfig = {
   system_message: 'You are a helpful assistant.',
@@ -212,29 +212,14 @@ export class VoiceAssistant {
           const newText = existingText + (event.data as string);
           this.pendingMessages.set(itemId, newText);
           console.log(this.pendingMessages);
-          const trackSid = this.getLocalTrackSid();
 
           const participantIdentity = this.room?.localParticipant?.identity;
-          if (!participantIdentity || !trackSid) {
+          const trackSid = this.getLocalTrackSid();
+          if (participantIdentity && trackSid) {
+            this.publishTranscription(participantIdentity, trackSid, newText, false, itemId);
+          } else {
             console.error('Participant or track not set');
-            return;
           }
-          console.log(participantIdentity, trackSid);
-
-          this.room?.localParticipant?.publishTranscription({
-            participantIdentity,
-            trackSid,
-            segments: [
-              {
-                text: newText,
-                final: false,
-                id: itemId,
-                startTime: 0,
-                endTime: 0,
-                language: '',
-              },
-            ],
-          });
         }
         break;
       default:
@@ -258,25 +243,11 @@ export class VoiceAssistant {
 
       const participantIdentity = this.room?.localParticipant?.identity;
       const trackSid = this.getLocalTrackSid();
-      if (!participantIdentity || !trackSid) {
+      if (participantIdentity && trackSid) {
+        this.publishTranscription(participantIdentity, trackSid, text, true, itemId);
+      } else {
         console.error('Participant or track not set');
-        return;
       }
-
-      this.room?.localParticipant?.publishTranscription({
-        participantIdentity,
-        trackSid,
-        segments: [
-          {
-            text,
-            final: true,
-            id: itemId,
-            startTime: 0,
-            endTime: 0,
-            language: '',
-          },
-        ],
-      });
     }
   }
 
@@ -289,48 +260,22 @@ export class VoiceAssistant {
     }
     const participantIdentity = this.linkedParticipant?.identity;
     const trackSid = this.subscribedTrack?.sid;
-    if (!participantIdentity || !trackSid) {
+    if (participantIdentity && trackSid) {
+      this.publishTranscription(participantIdentity, trackSid, transcription, true, itemId);
+    } else {
       console.error('Participant or track not set');
-      return;
     }
-    this.room?.localParticipant?.publishTranscription({
-      participantIdentity,
-      trackSid,
-      segments: [
-        {
-          text: transcription,
-          final: true,
-          id: itemId,
-          startTime: 0,
-          endTime: 0,
-          language: '',
-        },
-      ],
-    });
   }
 
   private handleVadSpeechStarted(event: Record<string, unknown>): void {
     const itemId = event.item_id as string;
     const participantIdentity = this.linkedParticipant?.identity;
     const trackSid = this.subscribedTrack?.sid;
-    if (!participantIdentity || !trackSid || !itemId) {
+    if (participantIdentity && trackSid && itemId) {
+      this.publishTranscription(participantIdentity, trackSid, '', false, itemId);
+    } else {
       console.error('Participant or track or itemId not set');
-      return;
     }
-    this.room?.localParticipant?.publishTranscription({
-      participantIdentity,
-      trackSid,
-      segments: [
-        {
-          text: '',
-          final: false,
-          id: itemId,
-          startTime: 0,
-          endTime: 0,
-          language: '',
-        },
-      ],
-    });
   }
 
   private linkParticipant(participantIdentity: string): void {
@@ -410,5 +355,33 @@ export class VoiceAssistant {
       this.localTrackSid = findMicroTrackId(this.room, this.room.localParticipant?.identity);
     }
     return this.localTrackSid;
+  }
+
+  private publishTranscription(
+    participantIdentity: string,
+    trackSid: string,
+    text: string,
+    isFinal: boolean,
+    id: string,
+  ): void {
+    if (!this.room?.localParticipant) {
+      console.error('Room or local participant not set');
+      return;
+    }
+
+    this.room.localParticipant.publishTranscription({
+      participantIdentity,
+      trackSid,
+      segments: [
+        {
+          text,
+          final: isFinal,
+          id,
+          startTime: 0,
+          endTime: 0,
+          language: '',
+        },
+      ],
+    });
   }
 }
