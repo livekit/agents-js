@@ -4,7 +4,7 @@
   "description": "ElevenLabs plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "author": "aoife cassidy <aoife@cassidy.sh>",
+  "author": "aoife cassidy <aoife@livekit.io>",
   "type": "module",
   "scripts": {
     "build": "tsc",

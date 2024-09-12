@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+
+/**
+ * LiveKit Agents is a framework for building realtime programmable participants that run on
+ * servers.
+ *
+ * @see {@link https://docs.livekit.io/agents/overview | LiveKit Agents documentation}
+ * @packageDocumentation
+ */
 import * as cli from './cli.js';
 import * as stt from './stt/index.js';
 import * as tts from './tts/index.js';

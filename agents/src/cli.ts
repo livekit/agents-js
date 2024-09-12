@@ -41,6 +41,17 @@ const runWorker = async (args: CliArgs) => {
   }
 };
 
+/**
+ * Exposes a CLI for creating a new worker, in development or production mode.
+ *
+ * @param opts - Options to launch the worker with
+ * @example
+ * ```
+ * if (process.argv[1] === fileURLToPath(import.meta.url)) {
+ *   cli.runApp(new WorkerOptions({ agent: import.meta.filename }));
+ * }
+ * ```
+ */
 export const runApp = (opts: WorkerOptions) => {
   const program = new Command()
     .name('agents')
@@ -121,19 +132,4 @@ export const runApp = (opts: WorkerOptions) => {
     });
 
   program.parse();
-};
-
-// like runApp but without calling `start' in the CLI.
-// useful for wrapped applications
-export const runHeadless = (opts: WorkerOptions) => {
-  opts.wsURL = process.env.LIVEKIT_URL || opts.wsURL;
-  opts.apiKey = process.env.LIVEKIT_API_KEY || opts.apiKey;
-  opts.apiSecret = process.env.LIVEKIT_API_SECRET || opts.apiSecret;
-  opts.logLevel = process.env.LOG_LEVEL || opts.logLevel;
-
-  runWorker({
-    opts,
-    production: true,
-    watch: false,
-  });
 };

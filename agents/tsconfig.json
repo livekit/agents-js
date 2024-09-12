@@ -10,6 +10,7 @@
   "typedocOptions": {
     "name": "agents",
     "entryPointStrategy": "resolve",
+    "readme": "none",
     "entryPoints": ["src/index.ts"]
   }
 }

@@ -12,6 +12,7 @@ import type {
 import { RoomEvent, TrackKind } from '@livekit/rtc-node';
 import { log } from './log.js';
 
+/** Which tracks, if any, should the agent automatically subscribe to? */
 export enum AutoSubscribe {
   SUBSCRIBE_ALL,
   SUBSCRIBE_NONE,
@@ -32,6 +33,15 @@ export type RunningJobInfo = {
   token: string;
 };
 
+/** Attempted to add a function callback, but the function already exists. */
+export class FunctionExistsError extends Error {
+  constructor(msg?: string) {
+    super(msg);
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/** The job and environment context as seen by the agent, accessible by the entrypoint function. */
 export class JobContext {
   #proc: JobProcess;
   #info: RunningJobInfo;
@@ -72,18 +82,31 @@ export class JobContext {
     return this.#info.job;
   }
 
+  /** @returns The room the agent was called into */
   get room(): Room {
     return this.#room;
   }
 
+  /** @returns The agent's participant if connected to the room, otherwise `undefined` */
   get agent(): LocalParticipant | undefined {
     return this.#room.localParticipant;
   }
 
+  /** Adds a promise to be awaited when {@link JobContext.shutdown | shutdown} is called. */
   addShutdownCallback(callback: () => Promise<void>) {
     this.shutdownCallbacks.push(callback);
   }
 
+  /**
+   * Connects the agent to the room.
+   *
+   * @remarks
+   * It is recommended to run this command as early in the function as possible, as executing it
+   * later may cause noticeable delay between user and agent joins.
+   *
+   * @see {@link https://github.com/livekit/node-sdks/tree/main/packages/livekit-rtc#readme |
+   * @livekit/rtc-node} for more information about the parameters.
+   */
   async connect(
     e2ee?: E2EEOptions,
     autoSubscribe: AutoSubscribe = AutoSubscribe.SUBSCRIBE_ALL,
@@ -115,10 +138,16 @@ export class JobContext {
     }
   }
 
+  /**
+   * Gracefully shuts down the job, and runs all shutdown promises.
+   *
+   * @param reason - Optional reason for shutdown
+   */
   shutdown(reason = '') {
     this.#onShutdown(reason);
   }
 
+  /** @internal */
   onParticipantConnected(p: RemoteParticipant) {
     for (const callback of this.#participantEntrypoints) {
       if (
@@ -136,9 +165,14 @@ export class JobContext {
     }
   }
 
+  /**
+   * Adds a promise to be awaited whenever a new participant joins the room.
+   *
+   * @throws {@link FunctionExistsError} if an entrypoint already exists
+   */
   addParticipantEntrypoint(callback: (job: JobContext, p: RemoteParticipant) => Promise<void>) {
     if (this.#participantEntrypoints.includes(callback)) {
-      throw new Error('entrypoints cannot be added more than once');
+      throw new FunctionExistsError('entrypoints cannot be added more than once');
     }
 
     this.#participantEntrypoints.push(callback);
@@ -158,11 +192,20 @@ export class JobProcess {
   }
 }
 
+/**
+ * A request sent by the server to spawn a new agent job.
+ *
+ * @remarks
+ * For most applications, this is best left to the default, which simply accepts the job and
+ * handles the logic inside the entrypoint function. This class is useful for vetting which
+ * requests should fill idle processes and which should be outright rejected.
+ */
 export class JobRequest {
   #job: proto.Job;
   #onReject: () => Promise<void>;
   #onAccept: (args: JobAcceptArguments) => Promise<void>;
 
+  /** @internal */
   constructor(
     job: proto.Job,
     onReject: () => Promise<void>,
@@ -173,30 +216,37 @@ export class JobRequest {
     this.#onAccept = onAccept;
   }
 
+  /** @returns The ID of the job, set by the LiveKit server */
   get id(): string {
     return this.#job.id;
   }
 
+  /** @see {@link https://www.npmjs.com/package/@livekit/protocol | @livekit/protocol} */
   get job(): proto.Job {
     return this.#job;
   }
 
+  /** @see {@link https://www.npmjs.com/package/@livekit/protocol | @livekit/protocol} */
   get room(): proto.Room | undefined {
     return this.#job.room;
   }
 
+  /** @see {@link https://www.npmjs.com/package/@livekit/protocol | @livekit/protocol} */
   get publisher(): proto.ParticipantInfo | undefined {
     return this.#job.participant;
   }
 
+  /** @returns The agent's name, as set in {@link WorkerOptions} */
   get agentName(): string {
     return this.#job.agentName;
   }
 
+  /** Rejects the job. */
   async reject() {
     await this.#onReject();
   }
 
+  /** Accepts the job, launching it on an idle child process. */
   async accept(name = '', identity = '', metadata = '') {
     if (identity === '') identity = 'agent-' + this.id;
 

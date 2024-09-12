@@ -31,11 +31,27 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
 
+/** Necessary credentials not provided and not found in an appropriate environmental variable. */
+export class MissingCredentialsError extends Error {
+  constructor(msg?: string) {
+    super(msg);
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/** Worker did not run as expected. */
+export class WorkerError extends Error {
+  constructor(msg?: string) {
+    super(msg);
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/** @internal */
 export const defaultInitializeProcessFunc = (_: JobProcess) => _;
 const defaultRequestFunc = async (ctx: JobRequest) => {
   await ctx.accept();
 };
-
 const defaultCpuLoad = (): number =>
   1 -
   os
@@ -46,6 +62,7 @@ const defaultCpuLoad = (): number =>
     ) /
     os.cpus().length;
 
+/** Participant permissions to pass to every agent spun up by this worker. */
 export class WorkerPermissions {
   canPublish: boolean;
   canSubscribe: boolean;
@@ -71,6 +88,15 @@ export class WorkerPermissions {
   }
 }
 
+/**
+ * Data class describing worker behaviour.
+ *
+ * @remarks
+ * The Agents framework provides sane worker defaults, and works out-of-the-box with no tweaking
+ * necessary. The only mandatory parameter is `agent`, which points to the entry function.
+ *
+ * This class is mostly useful in conjunction with {@link cli.runApp}.
+ */
 export class WorkerOptions {
   agent: string;
   requestFunc: (job: JobRequest) => Promise<void>;
@@ -90,6 +116,7 @@ export class WorkerOptions {
   port: number;
   logLevel: string;
 
+  /** @param options */
   constructor({
     agent,
     requestFunc = defaultRequestFunc,
@@ -109,7 +136,10 @@ export class WorkerOptions {
     port = 8081,
     logLevel = 'info',
   }: {
-    /** Path to a file that has Agent as a default export, dynamically imported later for entrypoint and prewarm functions */
+    /**
+     * Path to a file that has {@link Agent} as a default export, dynamically imported later for
+     * entrypoint and prewarm functions
+     */
     agent: string;
     requestFunc?: (job: JobRequest) => Promise<void>;
     /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
@@ -159,6 +189,15 @@ class PendingAssignment {
   }
 }
 
+/**
+ * Central orchestrator for all processes and job requests.
+ *
+ * @remarks
+ * For most usecases, Worker should not be initialized or handled directly; you should instead call
+ * for its creation through {@link cli.runApp}. This could, however, be useful in situations where
+ * you don't have access to a command line, such as a headless program, or one that uses Agents
+ * behind a wrapper.
+ */
 export class Worker {
   #opts: WorkerOptions;
   #procPool: ProcPool;
@@ -176,16 +215,20 @@ export class Worker {
   #httpServer: HTTPServer;
   #logger = log().child({ version });
 
+  /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: WorkerOptions) {
     opts.wsURL = opts.wsURL || process.env.LIVEKIT_URL || '';
     opts.apiKey = opts.apiKey || process.env.LIVEKIT_API_KEY || '';
     opts.apiSecret = opts.apiSecret || process.env.LIVEKIT_API_SECRET || '';
 
-    if (opts.wsURL === '') throw new Error('--url is required, or set LIVEKIT_URL env var');
+    if (opts.wsURL === '')
+      throw new MissingCredentialsError('--url is required, or set LIVEKIT_URL env var');
     if (opts.apiKey === '')
-      throw new Error('--api-key is required, or set LIVEKIT_API_KEY env var');
+      throw new MissingCredentialsError('--api-key is required, or set LIVEKIT_API_KEY env var');
     if (opts.apiSecret === '')
-      throw new Error('--api-secret is required, or set LIVEKIT_API_SECRET env var');
+      throw new MissingCredentialsError(
+        '--api-secret is required, or set LIVEKIT_API_SECRET env var',
+      );
 
     this.#procPool = new ProcPool(
       opts.agent,
@@ -198,9 +241,10 @@ export class Worker {
     this.#httpServer = new HTTPServer(opts.host, opts.port);
   }
 
+  /* @throws {@link WorkerError} if worker failed to connect or already running */
   async run() {
     if (!this.#closed) {
-      throw new Error('worker is already running');
+      throw new WorkerError('worker is already running');
     }
 
     this.#logger.info('starting worker');
@@ -230,12 +274,14 @@ export class Worker {
 
           retries = 0;
           this.#logger.debug('connected to LiveKit server');
-          this.runWS(this.#session);
+          this.#runWS(this.#session);
           return;
         } catch (e) {
           if (this.#closed) return;
           if (retries >= this.#opts.maxRetry) {
-            throw new Error(`failed to connect to LiveKit server after ${retries} attempts: ${e}`);
+            throw new WorkerError(
+              `failed to connect to LiveKit server after ${retries} attempts: ${e}`,
+            );
           }
 
           retries++;
@@ -264,6 +310,7 @@ export class Worker {
       .map((proc) => proc.runningJob!);
   }
 
+  /* @throws {@link WorkerError} if worker did not drain in time */
   async drain(timeout?: number) {
     if (this.#draining) {
       return;
@@ -293,7 +340,7 @@ export class Worker {
     };
 
     const timer = setTimeout(() => {
-      throw new Error('timed out draining');
+      throw new WorkerError('timed out draining');
     }, timeout);
     if (timeout === undefined) clearTimeout(timer);
     await joinJobs().then(() => {
@@ -324,7 +371,7 @@ export class Worker {
     );
   }
 
-  runWS(ws: WebSocket) {
+  #runWS(ws: WebSocket) {
     let closingWS = false;
 
     const send = (msg: WorkerMessage) => {
@@ -354,7 +401,7 @@ export class Worker {
       // register is the only valid first message, and it is only valid as the
       // first message
       if (this.#connecting && msg.message.case !== 'register') {
-        throw new Error('expected register response as first message');
+        throw new WorkerError('expected register response as first message');
       }
 
       switch (msg.message.case) {
@@ -372,7 +419,7 @@ export class Worker {
           break;
         }
         case 'availability': {
-          const task = this.availability(msg.message.value);
+          const task = this.#availability(msg.message.value);
           this.#tasks.push(task);
           task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
           break;
@@ -391,7 +438,7 @@ export class Worker {
           break;
         }
         case 'termination': {
-          const task = this.termination(msg.message.value);
+          const task = this.#termination(msg.message.value);
           this.#tasks.push(task);
           task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
           break;
@@ -454,7 +501,7 @@ export class Worker {
     }, UPDATE_LOAD_INTERVAL);
   }
 
-  async availability(msg: AvailabilityRequest) {
+  async #availability(msg: AvailabilityRequest) {
     let answered = false;
 
     const onReject = async () => {
@@ -537,7 +584,7 @@ export class Worker {
     task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
   }
 
-  async termination(msg: JobTermination) {
+  async #termination(msg: JobTermination) {
     const proc = this.#procPool.getByJobId(msg.jobId);
     if (proc === null) {
       // safe to ignore
