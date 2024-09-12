@@ -210,6 +210,7 @@ export class VoiceAssistant {
         this.room as Room,
         this.room?.localParticipant?.identity,
         trackSid,
+        event.item_id as string,
       );
 
       this.playingHandle = this.agentPlayout.play(event.item_id as string, trFwd);

@@ -13,11 +13,13 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
   private currentText: string = '';
   private currentDuration: number = 0;
   private readonly CHARS_PER_SECOND = 8;
+  private messageId: string;
 
-  constructor(room: Room, participantIdentity: string, trackSid: string) {
+  constructor(room: Room, participantIdentity: string, trackSid: string, messageId: string) {
     this.room = room;
     this.participantIdentity = participantIdentity;
     this.trackSid = trackSid;
+    this.messageId = messageId;
   }
 
   pushAudio(frame: AudioFrame): void {
@@ -41,7 +43,7 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
         {
           text: textToPublish,
           final: false,
-          id: Date.now().toString(),
+          id: this.messageId,
           startTime: BigInt(0),
           endTime: BigInt(Math.floor(this.currentDuration * 1000000000)),
           language: '',
