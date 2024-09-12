@@ -4,7 +4,7 @@
 import { ServerInfo } from '@livekit/protocol';
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'events';
-import { log, setLog } from './log.js';
+import { log, initializeLogger } from './log.js';
 import { version } from './version.js';
 import { Worker, type WorkerOptions } from './worker.js';
 
@@ -18,7 +18,7 @@ type CliArgs = {
 };
 
 const runWorker = async (args: CliArgs) => {
-  setLog({ pretty: !args.production, level: args.opts.logLevel });
+  initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
   const worker = new Worker(args.opts);
 
   if (args.room) {
