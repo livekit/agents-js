@@ -14,10 +14,10 @@ export default defineAgent({
       ...defaultInferenceConfig,
       system_message: 'You are a helpful assistant.',
     });
-    
+
     await assistant.start(ctx.room);
 
-    assistant.addUserMessage('Hello!');
+    assistant.addUserMessage('Hello! Can you share a long story?');
   },
 });
 

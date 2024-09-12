@@ -81,8 +81,6 @@ export class VoiceAssistant {
         return;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
       room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
         if (!this.linkedParticipant) {
           return;
@@ -140,6 +138,7 @@ export class VoiceAssistant {
           event: proto.ClientEvent.SET_INFERENCE_CONFIG,
           ...this.options.inferenceConfig,
         });
+        resolve();
       };
 
       this.ws.onerror = (error) => {
