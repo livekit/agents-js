@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'events';
-import { log, setLog } from './log.js';
+import { initializeLogger, log } from './log.js';
 import { version } from './version.js';
 import { Worker, type WorkerOptions } from './worker.js';
 
@@ -12,11 +12,20 @@ type CliArgs = {
   production: boolean;
   watch: boolean;
   event?: EventEmitter;
+  room?: string;
+  participantIdentity?: string;
 };
 
 const runWorker = async (args: CliArgs) => {
-  setLog({ pretty: !args.production, level: args.opts.logLevel });
+  initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
   const worker = new Worker(args.opts);
+
+  if (args.room) {
+    worker.event.once('worker_registered', () => {
+      log().info(`connecting to room ${args.room}`);
+      worker.simulateJob(args.room!, args.participantIdentity);
+    });
+  }
 
   process.on('SIGINT', async () => {
     await worker.close();
@@ -88,6 +97,26 @@ export const runApp = (opts: WorkerOptions) => {
         opts,
         production: false,
         watch: false,
+      });
+    });
+
+  program
+    .command('connect')
+    .description('Connect to a specific room')
+    .requiredOption('--room <string>', 'Room name to connect to')
+    .option('--participant-identity <string>', 'Participant identitiy to connect as')
+    .action((...[, command]) => {
+      const options = command.optsWithGlobals();
+      opts.wsURL = options.url || opts.wsURL;
+      opts.apiKey = options.apiKey || opts.apiKey;
+      opts.apiSecret = options.apiSecret || opts.apiSecret;
+      opts.logLevel = options.logLevel || opts.logLevel;
+      runWorker({
+        opts,
+        production: false,
+        watch: false,
+        room: options.room,
+        participantIdentity: options.participantIdentity,
       });
     });
 
