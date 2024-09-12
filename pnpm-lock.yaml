@@ -81,7 +81,7 @@ importers:
         specifier: ^1.21.0
         version: 1.21.0
       '@livekit/rtc-node':
-        specifier: 0.8.0
+        specifier: ^0.8.0
         version: 0.8.0
       commander:
         specifier: ^12.0.0
@@ -121,7 +121,7 @@ importers:
         specifier: workspace:*
         version: link:../plugins/openai
       '@livekit/rtc-node':
-        specifier: 0.8.0
+        specifier: ^0.8.0
         version: 0.8.0
     devDependencies:
       typescript:
@@ -156,7 +156,7 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: 0.8.0
+        specifier: ^0.8.0
         version: 0.8.0
       ws:
         specifier: ^8.16.0
