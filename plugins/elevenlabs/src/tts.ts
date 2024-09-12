@@ -202,7 +202,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         const delay = Math.min(retries * 5, 5);
         retries++;
 
-        log.warn(
+        log().warn(
           `failed to connect to ElevenLabs, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
         );
         await new Promise((resolve) => setTimeout(resolve, delay * 1000));
@@ -255,7 +255,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
   async close(wait: boolean) {
     if (wait) {
-      log.warn('wait is not yet supported for ElevenLabs TTS');
+      log().warn('wait is not yet supported for ElevenLabs TTS');
     }
 
     try {

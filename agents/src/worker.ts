@@ -152,7 +152,7 @@ export class Worker {
   #session: WebSocket | undefined = undefined;
   #closed = false;
   #httpServer: HTTPServer;
-  #logger = log.child({ version });
+  #logger = log().child({ version });
   #event = new EventEmitter();
   #pending: { [id: string]: { value: PendingAssignment } } = {};
   #processes: { [id: string]: { proc: JobProcess; activeJob: ActiveJob } } = {};
@@ -265,7 +265,7 @@ export class Worker {
       switch (msg.message.case) {
         case 'register': {
           this.#id = msg.message.value.workerId;
-          log
+          log()
             .child({ id: this.id, server_info: msg.message.value.serverInfo })
             .info('registered worker');
           break;
@@ -284,7 +284,9 @@ export class Worker {
               raw: msg.toJsonString(),
             });
           } else {
-            log.child({ job }).warn('received assignment for unknown job ' + job.id);
+            log()
+              .child({ job })
+              .warn('received assignment for unknown job ' + job.id);
           }
           break;
         }
@@ -325,9 +327,9 @@ export class Worker {
       if (oldStatus != currentStatus) {
         const extra = { load: currentLoad, loadThreshold: this.#opts.loadThreshold };
         if (isFull) {
-          log.child(extra).info('worker is at full capacity, marking as unavailable');
+          log().child(extra).info('worker is at full capacity, marking as unavailable');
         } else {
-          log.child(extra).info('worker is below capacity, marking as available');
+          log().child(extra).info('worker is below capacity, marking as available');
         }
       }
 
@@ -369,7 +371,7 @@ export class Worker {
       if (!av.avail) return;
 
       const timer = setTimeout(() => {
-        log.child({ req }).warn(`assignment for job ${req.id} timed out`);
+        log().child({ req }).warn(`assignment for job ${req.id} timed out`);
         return;
       }, ASSIGNMENT_TIMEOUT);
       this.#pending[req.id].value.promise.then(({ asgn, raw }) => {
@@ -381,10 +383,10 @@ export class Worker {
     try {
       this.#opts.requestFunc(req);
     } catch (e) {
-      log.child({ req }).error(`user request handler for job ${req.id} failed`);
+      log().child({ req }).error(`user request handler for job ${req.id} failed`);
     } finally {
       if (!req.answered) {
-        log.child({ req }).error(`no answer for job ${req.id}, automatically rejecting the job`);
+        log().child({ req }).error(`no answer for job ${req.id}, automatically rejecting the job`);
         this.#event.emit(
           'worker_msg',
           new WorkerMessage({

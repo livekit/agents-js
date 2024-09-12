@@ -23,7 +23,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
 export default defineAgent({
   entry: async (job: JobContext) => {
-    log.info('starting TTS example agent');
+    log().info('starting TTS example agent');
 
     const source = new AudioSource(24000, 1);
     const track = LocalAudioTrack.createAudioTrack('agent-mic', source);
@@ -32,7 +32,7 @@ export default defineAgent({
     await job.room.localParticipant?.publishTrack(track, options);
 
     const tts = new TTS();
-    log.info('speaking "Hello!"');
+    log().info('speaking "Hello!"');
     await tts
       .synthesize('Hello!')
       .then((output) => output.collect())
@@ -42,7 +42,7 @@ export default defineAgent({
 
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    log.info('speaking "Goodbye."');
+    log().info('speaking "Goodbye."');
     await tts
       .synthesize('Goodbye.')
       .then((output) => output.collect())
