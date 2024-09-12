@@ -5,16 +5,19 @@
 import { AudioByteStream } from '@livekit/agents';
 import { findMicroTrackId } from '@livekit/agents';
 import { log } from '@livekit/agents';
-import type { AudioFrameEvent, RemoteAudioTrack, RemoteParticipant, Room } from '@livekit/rtc-node';
+import type {
+  AudioFrameEvent,
+  LocalTrackPublication,
+  RemoteAudioTrack,
+  RemoteParticipant,
+  Room,
+} from '@livekit/rtc-node';
 import {
   AudioFrame,
   AudioSource,
   AudioStream,
   AudioStreamEvent,
   LocalAudioTrack,
-  LocalTrackPublication,
-  RemoteTrack,
-  RemoteTrackPublication,
   RoomEvent,
   TrackPublishOptions,
   TrackSource,
