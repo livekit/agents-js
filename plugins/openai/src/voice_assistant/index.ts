@@ -4,6 +4,7 @@
 // import { log } from '@livekit/agents';
 import { AudioByteStream } from '@livekit/agents';
 import { findMicroTrackId } from '@livekit/agents';
+import { log } from '@livekit/agents';
 import type { AudioFrameEvent, RemoteAudioTrack, RemoteParticipant, Room } from '@livekit/rtc-node';
 import {
   AudioFrame,
@@ -17,7 +18,6 @@ import {
 } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
 import * as proto from './proto.js';
-import { log } from '@livekit/agents';
 
 const defaultInferenceConfig: proto.InferenceConfig = {
   system_message: 'You are a helpful assistant.',
