@@ -5,7 +5,13 @@
 import { AudioByteStream } from '@livekit/agents';
 import { findMicroTrackId } from '@livekit/agents';
 import { log } from '@livekit/agents';
-import type { AudioFrameEvent, RemoteAudioTrack, RemoteParticipant, Room } from '@livekit/rtc-node';
+import type {
+  AudioFrameEvent,
+  LocalTrackPublication,
+  RemoteAudioTrack,
+  RemoteParticipant,
+  Room,
+} from '@livekit/rtc-node';
 import {
   AudioFrame,
   AudioSource,
@@ -59,13 +65,13 @@ export class VoiceAssistant {
   private ws: WebSocket | null = null;
   private connected: boolean = false;
   private participant: RemoteParticipant | string | null = null;
-  private localTrack: LocalAudioTrack | null = null;
+  private agentPublication: LocalTrackPublication | null = null;
   private localTrackSid: string | null = null;
   private localSource: AudioSource | null = null;
   private pendingMessages: Map<string, string> = new Map();
 
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       if (this.ws !== null) {
         log().warn('VoiceAssistant already started');
         resolve();
@@ -78,6 +84,12 @@ export class VoiceAssistant {
         }
 
         this.linkParticipant(participant.identity);
+      });
+      room.on(RoomEvent.TrackPublished, () => {
+        this.subscribeToMicrophone();
+      });
+      room.on(RoomEvent.TrackSubscribed, () => {
+        this.subscribeToMicrophone();
       });
 
       this.room = room;
@@ -98,10 +110,17 @@ export class VoiceAssistant {
       }
 
       this.localSource = new AudioSource(proto.SAMPLE_RATE, proto.NUM_CHANNELS);
-      this.localTrack = LocalAudioTrack.createAudioTrack('assistant_voice', this.localSource);
+      const track = LocalAudioTrack.createAudioTrack('assistant_voice', this.localSource);
       const options = new TrackPublishOptions();
       options.source = TrackSource.SOURCE_MICROPHONE;
-      room.localParticipant?.publishTrack(this.localTrack, options);
+      this.agentPublication = (await room.localParticipant?.publishTrack(track, options)) || null;
+      if (!this.agentPublication) {
+        log().error('Failed to publish track');
+        reject(new Error('Failed to publish track'));
+        return;
+      }
+
+      await this.agentPublication.waitForSubscription();
 
       this.ws = new WebSocket(proto.API_URL, {
         headers: {
@@ -142,10 +161,7 @@ export class VoiceAssistant {
       const truncatedDataPartial = command['data']
         ? { data: (command['data'] as string).slice(0, 30) + '…' }
         : {};
-      log().debug('->', {
-        ...command,
-        ...truncatedDataPartial,
-      });
+      log().debug(`-> ${JSON.stringify({ ...command, ...truncatedDataPartial })}`);
     }
     this.ws.send(JSON.stringify(command));
   }
@@ -154,11 +170,7 @@ export class VoiceAssistant {
     const truncatedDataPartial = event['data']
       ? { data: (event['data'] as string).slice(0, 30) + '…' }
       : {};
-    log().debug('<-', {
-      ...event,
-      ...truncatedDataPartial,
-    });
-
+    log().debug(`<- ${JSON.stringify({ ...event, ...truncatedDataPartial })}`);
     switch (event.event) {
       case proto.ServerEvent.START_SESSION:
         break;
@@ -182,7 +194,7 @@ export class VoiceAssistant {
         this.handleInputTranscribed(event);
         break;
       default:
-        log().warn('Unknown server event:', event);
+        log().warn(`Unknown server event: ${JSON.stringify(event)}`);
     }
   }
 
