@@ -3,17 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // import { log } from '@livekit/agents';
 import { AudioByteStream } from '@livekit/agents';
+import { findMicroTrackId } from '@livekit/agents';
 import { log } from '@livekit/agents';
+import type { AudioFrameEvent, RemoteAudioTrack, RemoteParticipant, Room } from '@livekit/rtc-node';
 import {
   AudioFrame,
-  AudioFrameEvent,
   AudioSource,
   AudioStream,
   AudioStreamEvent,
   LocalAudioTrack,
-  RemoteAudioTrack,
-  RemoteParticipant,
-  Room,
   RoomEvent,
   TrackPublishOptions,
   TrackSource,
@@ -60,7 +58,9 @@ export class VoiceAssistant {
   private connected: boolean = false;
   private participant: RemoteParticipant | string | null = null;
   private localTrack: LocalAudioTrack | null = null;
+  private localTrackSid: string | null = null;
   private localSource: AudioSource | null = null;
+  private pendingMessages: Map<string, string> = new Map();
 
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -96,7 +96,7 @@ export class VoiceAssistant {
       }
 
       this.localSource = new AudioSource(proto.SAMPLE_RATE, proto.NUM_CHANNELS);
-      this.localTrack = LocalAudioTrack.createAudioTrack('agent-mic', this.localSource);
+      this.localTrack = LocalAudioTrack.createAudioTrack('assistant_voice', this.localSource);
       const options = new TrackPublishOptions();
       options.source = TrackSource.SOURCE_MICROPHONE;
       room.localParticipant?.publishTrack(this.localTrack, options);
@@ -161,19 +161,23 @@ export class VoiceAssistant {
       case proto.ServerEvent.startSession:
         break;
       case proto.ServerEvent.addItem:
+        this.handleAddItem(event);
         break;
       case proto.ServerEvent.addContent:
         this.handleAddContent(event);
         break;
       case proto.ServerEvent.itemAdded:
+        this.handleItemAdded(event);
         break;
       case proto.ServerEvent.turnFinished:
         break;
       case proto.ServerEvent.vadSpeechStarted:
+        this.handleVadSpeechStarted(event);
         break;
       case proto.ServerEvent.vadSpeechStopped:
         break;
       case proto.ServerEvent.inputTranscribed:
+        this.handleInputTranscribed(event);
         break;
       default:
         log.warn('Unknown server event:', event);
@@ -202,8 +206,74 @@ export class VoiceAssistant {
           this.localSource?.captureFrame(frame);
         }
         break;
+      case 'text':
+        const itemId = event.item_id as string;
+        if (itemId && this.pendingMessages.has(itemId)) {
+          const existingText = this.pendingMessages.get(itemId) || '';
+          const newText = existingText + (event.data as string);
+          this.pendingMessages.set(itemId, newText);
+
+          const participantIdentity = this.room?.localParticipant?.identity;
+          const trackSid = this.getLocalTrackSid();
+          if (participantIdentity && trackSid) {
+            this.publishTranscription(participantIdentity, trackSid, newText, false, itemId);
+          } else {
+            log.error('Participant or track not set');
+          }
+        }
+        break;
       default:
         break;
+    }
+  }
+
+  private handleAddItem(event: Record<string, unknown>): void {
+    const itemId = event.id as string;
+    if (itemId && event.type === 'message') {
+      this.pendingMessages.set(itemId, '');
+    }
+  }
+
+  private handleItemAdded(event: Record<string, unknown>): void {
+    const itemId = event.id as string;
+    if (itemId && this.pendingMessages.has(itemId)) {
+      const text = this.pendingMessages.get(itemId) || '';
+      this.pendingMessages.delete(itemId);
+
+      const participantIdentity = this.room?.localParticipant?.identity;
+      const trackSid = this.getLocalTrackSid();
+      if (participantIdentity && trackSid) {
+        this.publishTranscription(participantIdentity, trackSid, text, true, itemId);
+      } else {
+        log.error('Participant or track not set');
+      }
+    }
+  }
+
+  private handleInputTranscribed(event: Record<string, unknown>): void {
+    const itemId = event.item_id as string;
+    const transcription = event.transcript as string;
+    if (!itemId || !transcription) {
+      log.error('Item ID or transcription not set');
+      return;
+    }
+    const participantIdentity = this.linkedParticipant?.identity;
+    const trackSid = this.subscribedTrack?.sid;
+    if (participantIdentity && trackSid) {
+      this.publishTranscription(participantIdentity, trackSid, transcription, true, itemId);
+    } else {
+      log.error('Participant or track not set');
+    }
+  }
+
+  private handleVadSpeechStarted(event: Record<string, unknown>): void {
+    const itemId = event.item_id as string;
+    const participantIdentity = this.linkedParticipant?.identity;
+    const trackSid = this.subscribedTrack?.sid;
+    if (participantIdentity && trackSid && itemId) {
+      this.publishTranscription(participantIdentity, trackSid, '', false, itemId);
+    } else {
+      log.error('Participant or track or itemId not set');
     }
   }
 
@@ -277,5 +347,40 @@ export class VoiceAssistant {
         };
       }
     }
+  }
+
+  private getLocalTrackSid(): string | null {
+    if (!this.localTrackSid && this.room && this.room.localParticipant) {
+      this.localTrackSid = findMicroTrackId(this.room, this.room.localParticipant?.identity);
+    }
+    return this.localTrackSid;
+  }
+
+  private publishTranscription(
+    participantIdentity: string,
+    trackSid: string,
+    text: string,
+    isFinal: boolean,
+    id: string,
+  ): void {
+    if (!this.room?.localParticipant) {
+      log.error('Room or local participant not set');
+      return;
+    }
+
+    this.room.localParticipant.publishTranscription({
+      participantIdentity,
+      trackSid,
+      segments: [
+        {
+          text,
+          final: isFinal,
+          id,
+          startTime: BigInt(0),
+          endTime: BigInt(0),
+          language: '',
+        },
+      ],
+    });
   }
 }
