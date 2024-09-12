@@ -3,16 +3,23 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Logger, pino } from 'pino';
 
+export type LoggerOptions = {
+  pretty: boolean;
+  level: string;
+};
+export let loggerOptions: LoggerOptions;
+
 let logger: Logger | undefined = undefined;
 export const log = () => {
   if (!logger) {
-    throw new Error('logger not initialized. did you forget to run setLog()?');
+    throw new Error('logger not initialized. did you forget to run initializeLogger()?');
   }
   return logger;
 };
 export default log;
 
-export const setLog = ({ pretty, level }: { pretty: boolean; level: string }) => {
+export const initializeLogger = ({ pretty, level }: LoggerOptions) => {
+  loggerOptions = { pretty, level };
   logger = pino(
     pretty
       ? {

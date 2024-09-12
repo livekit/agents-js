@@ -7,7 +7,6 @@ import { AudioSource, LocalAudioTrack, TrackPublishOptions, TrackSource } from '
 import { fileURLToPath } from 'url';
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  log().info('running app');
   cli.runApp(new WorkerOptions({ agent: import.meta.filename }));
 }
 

@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { JobAssignment, JobTermination, TrackSource } from '@livekit/protocol';
+import type {
+  JobAssignment,
+  JobTermination,
+  ParticipantInfo,
+  TrackSource,
+} from '@livekit/protocol';
 import {
   type AvailabilityRequest,
   JobType,
@@ -11,7 +16,7 @@ import {
   WorkerStatus,
 } from '@livekit/protocol';
 import { EventEmitter } from 'events';
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import os from 'os';
 import { WebSocket } from 'ws';
 import { HTTPServer } from './http_server.js';
@@ -169,7 +174,7 @@ export class Worker {
     this.#close = resolve;
   });
 
-  #event = new EventEmitter();
+  event = new EventEmitter();
   #session: WebSocket | undefined = undefined;
   #httpServer: HTTPServer;
   #logger = log().child({ version });
@@ -270,7 +275,7 @@ export class Worker {
     this.#logger.info('draining worker');
     this.#draining = true;
 
-    this.#event.emit(
+    this.event.emit(
       'worker_msg',
       new WorkerMessage({
         message: {
@@ -299,19 +304,40 @@ export class Worker {
     });
   }
 
-  // TODO(nbsp): simulate_job
+  async simulateJob(roomName: string, participantIdentity?: string) {
+    const client = new RoomServiceClient(this.#opts.wsURL);
+    const room = await client.createRoom({ name: roomName });
+    let participant: ParticipantInfo | undefined = undefined;
+    if (participantIdentity) {
+      participant = await client.getParticipant(roomName, participantIdentity);
+    }
+
+    this.event!.emit(
+      'worker_msg',
+      new WorkerMessage({
+        message: {
+          case: 'simulateJob',
+          value: {
+            type: JobType.JT_PUBLISHER,
+            room,
+            participant,
+          },
+        },
+      }),
+    );
+  }
 
   runWS(ws: WebSocket) {
     let closingWS = false;
 
     const send = (msg: WorkerMessage) => {
       if (closingWS) {
-        this.#event.off('worker_msg', send);
+        this.event.off('worker_msg', send);
         return;
       }
       ws.send(msg.toBinary());
     };
-    this.#event.on('worker_msg', send);
+    this.event.on('worker_msg', send);
 
     ws.addEventListener('close', () => {
       closingWS = true;
@@ -340,6 +366,11 @@ export class Worker {
           log()
             .child({ id: this.id, server_info: msg.message.value.serverInfo })
             .info('registered worker');
+          this.event.emit(
+            'worker_registered',
+            msg.message.value.workerId,
+            msg.message.value.serverInfo!,
+          );
           this.#connecting = false;
           break;
         }
@@ -371,7 +402,7 @@ export class Worker {
       }
     });
 
-    this.#event.emit(
+    this.event.emit(
       'worker_msg',
       new WorkerMessage({
         message: {
@@ -411,7 +442,7 @@ export class Worker {
         }
       }
 
-      this.#event.emit(
+      this.event.emit(
         'worker_msg',
         new WorkerMessage({
           message: {
@@ -431,7 +462,7 @@ export class Worker {
 
     const onReject = async () => {
       answered = true;
-      this.#event.emit(
+      this.event.emit(
         'worker_msg',
         new WorkerMessage({
           message: {
@@ -448,7 +479,7 @@ export class Worker {
     const onAccept = async (args: JobAcceptArguments) => {
       answered = true;
 
-      this.#event.emit(
+      this.event.emit(
         'worker_msg',
         new WorkerMessage({
           message: {
