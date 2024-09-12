@@ -32,7 +32,7 @@ export class JobProcess {
   constructor(job: Job, acceptData: AcceptData, raw: string, fallbackURL: string) {
     this.#job = job;
     this.args = { entry: acceptData.entry, raw, fallbackURL };
-    this.logger = log.child({ job_id: this.#job.id });
+    this.logger = log().child({ job_id: this.#job.id });
   }
 
   get job(): Job {
