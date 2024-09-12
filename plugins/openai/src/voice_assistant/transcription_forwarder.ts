@@ -1,6 +1,7 @@
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 
 export interface TranscriptionForwarder {
+  start(): void;
   pushAudio(frame: AudioFrame): void;
   pushText(text: string): void;
   markTextFinished(): void;
@@ -13,12 +14,13 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
   private participantIdentity: string;
   private trackSid: string;
   private currentText: string = '';
-  private currentDuration: number = 0;
+  private totalAudioDuration: number = 0;
+  private currentAudioTimestamp: number = 0;
   private readonly DEFAULT_CHARS_PER_SECOND = 2;
   private charsPerSecond: number = this.DEFAULT_CHARS_PER_SECOND;
   private messageId: string;
-  private publishQueue: Promise<void> = Promise.resolve();
-  private isPublishing: boolean = false;
+  private isRunning: boolean = false;
+  private readonly SLEEP_INTERVAL = 0.125;
 
   constructor(room: Room, participantIdentity: string, trackSid: string, messageId: string) {
     this.room = room;
@@ -26,10 +28,19 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     this.trackSid = trackSid;
     this.messageId = messageId;
   }
+  
+  start(): void {
+    if (!this.isRunning) {
+      this.isRunning = true;
+      this.startPublishingLoop().catch((error) => {
+        console.error('Error in publishing loop:', error);
+        this.isRunning = false;
+      });
+    }
+  }
 
   pushAudio(frame: AudioFrame): void {
-    this.currentDuration += frame.samplesPerChannel / frame.sampleRate;
-    this.queuePublishTranscription();
+    this.totalAudioDuration += frame.samplesPerChannel / frame.sampleRate;
   }
 
   pushText(text: string): void {
@@ -51,7 +62,7 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
 
   private adjustTimingIfBothFinished(): void {
     if (this.textFinished && this.audioFinished) {
-      const actualDuration = this.currentDuration;
+      const actualDuration = this.totalAudioDuration;
       if (actualDuration > 0 && this.currentText.length > 0) {
         this.charsPerSecond = this.currentText.length / actualDuration;
       }
@@ -59,20 +70,19 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     }
   }
 
-  private queuePublishTranscription(): void {
-    if (!this.isPublishing) {
-      this.isPublishing = true;
-      this.publishQueue = this.publishQueue.then(async () => {
-        await this.publishTranscription();
-        this.isPublishing = false;
-      });
+  private async startPublishingLoop(): Promise<void> {
+    this.isRunning = true;
+    while (this.isRunning) {
+      this.currentAudioTimestamp += this.SLEEP_INTERVAL;
+      await this.publishTranscription();
+      await new Promise((resolve) => setTimeout(resolve, this.SLEEP_INTERVAL * 1000));
     }
   }
 
   private async publishTranscription(): Promise<void> {
     const textToPublish = this.currentText.slice(
       0,
-      Math.floor(this.currentDuration * this.charsPerSecond),
+      Math.floor(this.currentAudioTimestamp * this.charsPerSecond),
     );
     await this.room.localParticipant?.publishTranscription({
       participantIdentity: this.participantIdentity,
@@ -83,7 +93,7 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
           final: false,
           id: this.messageId,
           startTime: BigInt(0),
-          endTime: BigInt(Math.floor(this.currentDuration * 1000000000)),
+          endTime: BigInt(0),
           language: '',
         },
       ],
@@ -91,15 +101,16 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
   }
 
   async close(): Promise<void> {
-    // Wait for any ongoing publish operations to complete
-    await this.publishQueue;
+    this.isRunning = false;
+    // Wait for the last iteration of the loop to complete
+    await new Promise((resolve) => setTimeout(resolve, this.SLEEP_INTERVAL));
 
     // Publish final transcription
-    this.publishTranscription();
+    await this.publishTranscription();
 
     // Publish any remaining text as final
     if (this.currentText.length > 0) {
-      this.room.localParticipant?.publishTranscription({
+      await this.room.localParticipant?.publishTranscription({
         participantIdentity: this.participantIdentity,
         trackSid: this.trackSid,
         segments: [
@@ -108,7 +119,7 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
             final: true,
             id: this.messageId,
             startTime: BigInt(0),
-            endTime: BigInt(Math.floor(this.currentDuration * 1000000000)),
+            endTime: BigInt(0),
             language: '',
           },
         ],

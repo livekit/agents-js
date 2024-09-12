@@ -81,7 +81,7 @@ export class AgentPlayout {
         const frame = await handle.playoutQueue.get();
         if (frame === null) break;
         if (firstFrame) {
-          //   handle.transcriptionFwd.segmentPlayoutStarted();
+          handle.transcriptionFwd.start();
           firstFrame = false;
         }
 
