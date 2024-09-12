@@ -212,14 +212,13 @@ export class VoiceAssistant {
           const existingText = this.pendingMessages.get(itemId) || '';
           const newText = existingText + (event.data as string);
           this.pendingMessages.set(itemId, newText);
-          console.log(this.pendingMessages);
 
           const participantIdentity = this.room?.localParticipant?.identity;
           const trackSid = this.getLocalTrackSid();
           if (participantIdentity && trackSid) {
             this.publishTranscription(participantIdentity, trackSid, newText, false, itemId);
           } else {
-            console.error('Participant or track not set');
+            log.error('Participant or track not set');
           }
         }
         break;
@@ -232,7 +231,6 @@ export class VoiceAssistant {
     const itemId = event.id as string;
     if (itemId && event.type === 'message') {
       this.pendingMessages.set(itemId, '');
-      console.log(this.pendingMessages, this.pendingMessages.has(itemId));
     }
   }
 
@@ -247,7 +245,7 @@ export class VoiceAssistant {
       if (participantIdentity && trackSid) {
         this.publishTranscription(participantIdentity, trackSid, text, true, itemId);
       } else {
-        console.error('Participant or track not set');
+        log.error('Participant or track not set');
       }
     }
   }
@@ -256,7 +254,7 @@ export class VoiceAssistant {
     const itemId = event.item_id as string;
     const transcription = event.transcript as string;
     if (!itemId || !transcription) {
-      console.error('Item ID or transcription not set');
+      log.error('Item ID or transcription not set');
       return;
     }
     const participantIdentity = this.linkedParticipant?.identity;
@@ -264,7 +262,7 @@ export class VoiceAssistant {
     if (participantIdentity && trackSid) {
       this.publishTranscription(participantIdentity, trackSid, transcription, true, itemId);
     } else {
-      console.error('Participant or track not set');
+      log.error('Participant or track not set');
     }
   }
 
@@ -275,7 +273,7 @@ export class VoiceAssistant {
     if (participantIdentity && trackSid && itemId) {
       this.publishTranscription(participantIdentity, trackSid, '', false, itemId);
     } else {
-      console.error('Participant or track or itemId not set');
+      log.error('Participant or track or itemId not set');
     }
   }
 
@@ -366,7 +364,7 @@ export class VoiceAssistant {
     id: string,
   ): void {
     if (!this.room?.localParticipant) {
-      console.error('Room or local participant not set');
+      log.error('Room or local participant not set');
       return;
     }
 
