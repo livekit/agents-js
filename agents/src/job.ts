@@ -168,8 +168,7 @@ export class JobContext {
   /**
    * Adds a promise to be awaited whenever a new participant joins the room.
    *
-   * @throws {@link FunctionExistsError}
-   * Thrown if an entrypoint already exists
+   * @throws {@link FunctionExistsError} if an entrypoint already exists
    */
   addParticipantEntrypoint(callback: (job: JobContext, p: RemoteParticipant) => Promise<void>) {
     if (this.#participantEntrypoints.includes(callback)) {
@@ -193,11 +192,20 @@ export class JobProcess {
   }
 }
 
+/**
+ * A request sent by the server to spawn a new agent job.
+ *
+ * @remarks
+ * For most applications, this is best left to the default, which simply accepts the job and
+ * handles the logic inside the entrypoint function. This class is useful for vetting which
+ * requests should fill idle processes and which should be outright rejected.
+ */
 export class JobRequest {
   #job: proto.Job;
   #onReject: () => Promise<void>;
   #onAccept: (args: JobAcceptArguments) => Promise<void>;
 
+  /** @internal */
   constructor(
     job: proto.Job,
     onReject: () => Promise<void>,
@@ -208,30 +216,37 @@ export class JobRequest {
     this.#onAccept = onAccept;
   }
 
+  /** @returns The ID of the job, set by the LiveKit server */
   get id(): string {
     return this.#job.id;
   }
 
+  /** @see {@link https://www.npmjs.com/package/@livekit/protocol | @livekit/protocol} */
   get job(): proto.Job {
     return this.#job;
   }
 
+  /** @see {@link https://www.npmjs.com/package/@livekit/protocol | @livekit/protocol} */
   get room(): proto.Room | undefined {
     return this.#job.room;
   }
 
+  /** @see {@link https://www.npmjs.com/package/@livekit/protocol | @livekit/protocol} */
   get publisher(): proto.ParticipantInfo | undefined {
     return this.#job.participant;
   }
 
+  /** @returns The agent's name, as set in {@link WorkerOptions} */
   get agentName(): string {
     return this.#job.agentName;
   }
 
+  /** Rejects the job. */
   async reject() {
     await this.#onReject();
   }
 
+  /** Accepts the job, launching it on an idle child process. */
   async accept(name = '', identity = '', metadata = '') {
     if (identity === '') identity = 'agent-' + this.id;
 

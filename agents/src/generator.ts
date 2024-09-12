@@ -3,12 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { JobContext, JobProcess } from './job.js';
 
-export type entryFunction = (ctx: JobContext) => Promise<void>;
-export type prewarmFunction = (proc: JobProcess) => unknown;
-
 export interface Agent {
-  entry: entryFunction;
-  prewarm?: prewarmFunction;
+  entry: (ctx: JobContext) => Promise<void>;
+  prewarm?: (proc: JobProcess) => unknown;
 }
 
 /**

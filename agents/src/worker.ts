@@ -31,11 +31,11 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
 
+/** @internal */
 export const defaultInitializeProcessFunc = (_: JobProcess) => _;
 const defaultRequestFunc = async (ctx: JobRequest) => {
   await ctx.accept();
 };
-
 const defaultCpuLoad = (): number =>
   1 -
   os
@@ -46,6 +46,7 @@ const defaultCpuLoad = (): number =>
     ) /
     os.cpus().length;
 
+/** Participant permissions to pass to every agent spun up by this worker. */
 export class WorkerPermissions {
   canPublish: boolean;
   canSubscribe: boolean;
@@ -71,6 +72,15 @@ export class WorkerPermissions {
   }
 }
 
+/**
+ * Data class describing worker behaviour.
+ *
+ * @remarks
+ * The Agents framework provides sane worker defaults, and works out-of-the-box with no tweaking
+ * necessary. The only mandatory parameter is `agent`, which points to the entry function.
+ *
+ * This class is mostly useful in conjunction with {@link cli.runApp}.
+ */
 export class WorkerOptions {
   agent: string;
   requestFunc: (job: JobRequest) => Promise<void>;
@@ -90,6 +100,7 @@ export class WorkerOptions {
   port: number;
   logLevel: string;
 
+  /** @param options */
   constructor({
     agent,
     requestFunc = defaultRequestFunc,
@@ -109,7 +120,10 @@ export class WorkerOptions {
     port = 8081,
     logLevel = 'info',
   }: {
-    /** Path to a file that has Agent as a default export, dynamically imported later for entrypoint and prewarm functions */
+    /**
+     * Path to a file that has {@link Agent} as a default export, dynamically imported later for
+     * entrypoint and prewarm functions
+     */
     agent: string;
     requestFunc?: (job: JobRequest) => Promise<void>;
     /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
@@ -159,6 +173,15 @@ class PendingAssignment {
   }
 }
 
+/**
+ * Central orchestrator for all processes and job requests.
+ *
+ * @remarks
+ * For most usecases, Worker should not be initialized or handled directly; you should instead call
+ * for its creation through {@link cli.runApp}. This could, however, be useful in situations where
+ * you don't have access to a command line, such as a headless program, or one that uses Agents
+ * behind a wrapper.
+ */
 export class Worker {
   #opts: WorkerOptions;
   #procPool: ProcPool;
@@ -230,7 +253,7 @@ export class Worker {
 
           retries = 0;
           this.#logger.debug('connected to LiveKit server');
-          this.runWS(this.#session);
+          this.#runWS(this.#session);
           return;
         } catch (e) {
           if (this.#closed) return;
@@ -324,7 +347,7 @@ export class Worker {
     );
   }
 
-  runWS(ws: WebSocket) {
+  #runWS(ws: WebSocket) {
     let closingWS = false;
 
     const send = (msg: WorkerMessage) => {
@@ -372,7 +395,7 @@ export class Worker {
           break;
         }
         case 'availability': {
-          const task = this.availability(msg.message.value);
+          const task = this.#availability(msg.message.value);
           this.#tasks.push(task);
           task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
           break;
@@ -391,7 +414,7 @@ export class Worker {
           break;
         }
         case 'termination': {
-          const task = this.termination(msg.message.value);
+          const task = this.#termination(msg.message.value);
           this.#tasks.push(task);
           task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
           break;
@@ -454,7 +477,7 @@ export class Worker {
     }, UPDATE_LOAD_INTERVAL);
   }
 
-  async availability(msg: AvailabilityRequest) {
+  async #availability(msg: AvailabilityRequest) {
     let answered = false;
 
     const onReject = async () => {
@@ -537,7 +560,7 @@ export class Worker {
     task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
   }
 
-  async termination(msg: JobTermination) {
+  async #termination(msg: JobTermination) {
     const proc = this.#procPool.getByJobId(msg.jobId);
     if (proc === null) {
       // safe to ignore

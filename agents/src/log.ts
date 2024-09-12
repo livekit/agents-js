@@ -4,21 +4,27 @@
 import type { Logger } from 'pino';
 import { pino } from 'pino';
 
+/** @internal */
 export type LoggerOptions = {
   pretty: boolean;
   level?: string;
 };
+
+/** @internal */
 export let loggerOptions: LoggerOptions;
 
+/** @internal */
 let logger: Logger | undefined = undefined;
+
+/** @internal */
 export const log = () => {
   if (!logger) {
     throw new TypeError('logger not initialized. did you forget to run initializeLogger()?');
   }
   return logger;
 };
-export default log;
 
+/** @internal */
 export const initializeLogger = ({ pretty, level }: LoggerOptions) => {
   loggerOptions = { pretty, level };
   logger = pino(
