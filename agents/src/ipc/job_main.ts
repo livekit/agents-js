@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Room } from '@livekit/rtc-node';
+import { Room, RoomEvent } from '@livekit/rtc-node';
 import type { ChildProcess } from 'child_process';
 import { fork } from 'child_process';
 import { EventEmitter, once } from 'events';
@@ -38,7 +38,7 @@ const startJob = (
   let shutdown = false;
 
   const room = new Room();
-  room.on('disconnected', () => {
+  room.on(RoomEvent.Disconnected, () => {
     closeEvent.emit('close', false);
   });
 
