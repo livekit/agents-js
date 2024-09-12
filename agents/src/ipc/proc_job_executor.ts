@@ -74,7 +74,7 @@ export class ProcJobExecutor extends JobExecutor {
     }, this.PING_INTERVAL);
 
     this.#pongTimeout = setTimeout(() => {
-      log.warn('job is unresponsive');
+      log().warn('job is unresponsive');
     }, this.PING_TIMEOUT);
 
     const listener = (msg: IPCMessage) => {
@@ -82,13 +82,13 @@ export class ProcJobExecutor extends JobExecutor {
         case 'pongResponse': {
           const delay = Date.now() - msg.value.timestamp;
           if (delay > this.HIGH_PING_THRESHOLD) {
-            log.child({ delay }).warn('job executor is unresponsive');
+            log().child({ delay }).warn('job executor is unresponsive');
           }
           this.#pongTimeout?.refresh();
           break;
         }
         case 'exiting': {
-          log.child({ reason: msg.value.reason }).debug('job exiting');
+          log().child({ reason: msg.value.reason }).debug('job exiting');
         }
         case 'done': {
           this.#proc!.off('message', listener);
@@ -134,7 +134,7 @@ export class ProcJobExecutor extends JobExecutor {
     this.#proc!.send({ case: 'shutdownRequest' });
 
     const timer = setTimeout(() => {
-      log.error('job shutdown is taking too much time');
+      log().error('job shutdown is taking too much time');
     }, this.#opts.closeTimeout);
     await this.#joinPromise.then(() => {
       clearTimeout(timer);

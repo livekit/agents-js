@@ -55,7 +55,7 @@ const startJob = (
   const task = new Promise<void>(async () => {
     const unconnectedTimeout = setTimeout(() => {
       if (!(connect || shutdown)) {
-        log.warn(
+        log().warn(
           'room not connect after job_entry was called after 10 seconds, ',
           'did you forget to call ctx.connect()?',
         );
@@ -73,7 +73,7 @@ const startJob = (
     for (const callback of ctx.shutdownCallbacks) {
       shutdownTasks.push(callback());
     }
-    await Promise.all(shutdownTasks).catch(() => log.error('error while shutting down the job'));
+    await Promise.all(shutdownTasks).catch(() => log().error('error while shutting down the job'));
 
     process.send!({ case: 'done' });
     process.exit();

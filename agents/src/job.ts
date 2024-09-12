@@ -125,7 +125,7 @@ export class JobContext {
         p.identity in this.#participantTasks &&
         this.#participantTasks[p.identity].callback == callback
       ) {
-        log.warn(
+        log().warn(
           'a participant has joined before a prior prticipant task matching the same identity has finished:',
           p.identity,
         );
