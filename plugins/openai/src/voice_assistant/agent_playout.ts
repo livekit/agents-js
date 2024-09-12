@@ -71,7 +71,11 @@ export class AgentPlayout {
     let firstFrame = true;
 
     try {
-      const audioStream = new AudioByteStream(proto.SAMPLE_RATE, proto.NUM_CHANNELS);
+      const bstream = new AudioByteStream(
+        proto.SAMPLE_RATE,
+        proto.NUM_CHANNELS,
+        proto.OUTPUT_PCM_FRAME_SIZE,
+      );
 
       handle.playoutQueue.on('frame', async (frame: AudioFrame) => {
         if (firstFrame) {
@@ -79,7 +83,7 @@ export class AgentPlayout {
           firstFrame = false;
         }
 
-        for (const f of audioStream.write(frame.data)) {
+        for (const f of bstream.write(frame.data.buffer)) {
           handle.audioSamples += f.samplesPerChannel;
           if (handle.interrupted) break;
 
@@ -92,7 +96,7 @@ export class AgentPlayout {
       });
 
       if (!handle.interrupted) {
-        for (const f of audioStream.flush()) {
+        for (const f of bstream.flush()) {
           await this.audioSource.captureFrame(f);
         }
       }

@@ -191,6 +191,8 @@ export class VoiceAssistant {
       case proto.ServerEvent.INPUT_TRANSCRIBED:
         this.handleInputTranscribed(event);
         break;
+      case proto.ServerEvent.MODEL_LISTENING:
+        break;
       default:
         log().warn(`Unknown server event: ${JSON.stringify(event)}`);
     }
@@ -211,12 +213,16 @@ export class VoiceAssistant {
       );
 
       this.playingHandle = this.agentPlayout.play(event.item_id as string, trFwd);
-      switch (event.type) {
-        case 'audio':
-          this.playingHandle?.pushAudio(Buffer.from(event.data as string, 'base64'));
-        case 'text':
-          this.playingHandle?.pushText(event.data as string);
-      }
+    }
+    switch (event.type) {
+      case 'audio':
+        this.playingHandle?.pushAudio(Buffer.from(event.data as string, 'base64'));
+        break;
+      case 'text':
+        this.playingHandle?.pushText(event.data as string);
+        break;
+      default:
+        log().warn(`Unknown content event type: ${event.type}`);
     }
   }
 
