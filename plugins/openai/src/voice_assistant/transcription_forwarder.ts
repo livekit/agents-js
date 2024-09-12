@@ -54,6 +54,25 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
 
   async close(): Promise<void> {
     // Publish final transcription
+    this.currentDuration = this.currentText.length / this.CHARS_PER_SECOND;
     this.publishTranscription();
+
+    // Publish any remaining text as final
+    if (this.currentText.length > 0) {
+      this.room.localParticipant?.publishTranscription({
+        participantIdentity: this.participantIdentity,
+        trackSid: this.trackSid,
+        segments: [
+          {
+            text: this.currentText,
+            final: true,
+            id: this.messageId,
+            startTime: BigInt(0),
+            endTime: BigInt(Math.floor(this.currentDuration * 1000000000)),
+            language: '',
+          },
+        ],
+      });
+    }
   }
 }
