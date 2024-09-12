@@ -33,7 +33,9 @@ const runWorker = async (args: CliArgs) => {
       log().info('worker closed forcefully');
       process.exit(130); // SIGINT exit code
     });
-    await worker.drain();
+    if (args.production) {
+      await worker.drain();
+    }
     await worker.close();
     log().info('worker closed');
     process.exit(130); // SIGINT exit code
