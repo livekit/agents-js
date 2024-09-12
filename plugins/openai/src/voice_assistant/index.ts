@@ -82,10 +82,12 @@ export class VoiceAssistant {
 
         this.linkParticipant(participant.identity);
       });
-      room.on(RoomEvent.TrackPublished, (track: RemoteTrackPublication) => {
+      room.on(RoomEvent.TrackPublished, () => {
+        console.log('track published');
         this.subscribeToMicrophone();
       });
-      room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
+      room.on(RoomEvent.TrackSubscribed, () => {
+        console.log('track subscribed');
         this.subscribeToMicrophone();
       });
 
