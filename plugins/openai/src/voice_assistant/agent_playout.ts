@@ -1,6 +1,6 @@
 import { AudioByteStream } from '@livekit/agents';
 import { AudioFrame, type AudioSource } from '@livekit/rtc-node';
-import { EventEmitter } from 'events';
+import { Queue } from '@livekit/agents';
 import * as proto from './proto.js';
 import type { TranscriptionForwarder } from './transcription_forwarder';
 
@@ -10,7 +10,7 @@ export class PlayoutHandle {
   audioSamples: number;
   done: boolean;
   interrupted: boolean;
-  playoutQueue: EventEmitter;
+  playoutQueue: Queue<AudioFrame | null>;
 
   constructor(messageId: string, transcriptionFwd: TranscriptionForwarder) {
     this.messageId = messageId;
@@ -18,7 +18,7 @@ export class PlayoutHandle {
     this.audioSamples = 0;
     this.done = false;
     this.interrupted = false;
-    this.playoutQueue = new EventEmitter();
+    this.playoutQueue = new Queue<AudioFrame | null>();
   }
 
   pushAudio(data: Uint8Array) {
@@ -29,7 +29,7 @@ export class PlayoutHandle {
       data.length / 2,
     );
     this.transcriptionFwd.pushAudio(frame);
-    this.playoutQueue.emit('frame', frame);
+    this.playoutQueue.put(frame);
   }
 
   pushText(text: string) {
@@ -39,7 +39,7 @@ export class PlayoutHandle {
   endInput() {
     // this.transcriptionFwd.markTextSegmentEnd();
     // this.transcriptionFwd.markAudioSegmentEnd();
-    this.playoutQueue.emit('end');
+    this.playoutQueue.put(null);
   }
 
   interrupt() {
@@ -77,7 +77,9 @@ export class AgentPlayout {
         proto.OUTPUT_PCM_FRAME_SIZE,
       );
 
-      handle.playoutQueue.on('frame', async (frame: AudioFrame) => {
+      while (true) {
+        const frame = await handle.playoutQueue.get();
+        if (frame === null) break;
         if (firstFrame) {
           //   handle.transcriptionFwd.segmentPlayoutStarted();
           firstFrame = false;
@@ -89,11 +91,7 @@ export class AgentPlayout {
 
           await this.audioSource.captureFrame(f);
         }
-      });
-
-      await new Promise<void>((resolve) => {
-        handle.playoutQueue.on('end', resolve);
-      });
+      }
 
       if (!handle.interrupted) {
         for (const f of bstream.flush()) {
