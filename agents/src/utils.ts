@@ -139,14 +139,15 @@ export class Queue<T> {
 }
 
 /** @internal */
-export class Future extends Promise<void> {
-  constructor() {
-    super((resolve, reject: (_: Error) => void) => {
-      this.resolve = resolve;
-      this.reject = reject;
-    });
-  }
+export class Future {
+  #await = new Promise<void>((resolve, reject: (_: Error) => void) => {
+    this.resolve = resolve;
+    this.reject = reject;
+  });
 
+  get await() {
+    return this.#await;
+  }
   resolve = () => {};
   reject = (_: Error) => {
     _;

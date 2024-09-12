@@ -5,6 +5,7 @@ import { Room, RoomEvent } from '@livekit/rtc-node';
 import type { ChildProcess } from 'child_process';
 import { fork } from 'child_process';
 import { EventEmitter, once } from 'events';
+import { Logger } from 'pino';
 import { fileURLToPath } from 'url';
 import type { Agent } from '../generator.js';
 import type { RunningJobInfo } from '../job.js';
@@ -33,6 +34,7 @@ const startJob = (
   func: (ctx: JobContext) => Promise<void>,
   info: RunningJobInfo,
   closeEvent: EventEmitter,
+  logger: Logger,
 ): JobTask => {
   let connect = false;
   let shutdown = false;
@@ -64,16 +66,18 @@ const startJob = (
     func(ctx).finally(() => clearTimeout(unconnectedTimeout));
 
     await once(closeEvent, 'close').then((close) => {
+      logger.debug('shutting down');
       process.send!({ case: 'exiting', reason: close[1] });
     });
 
     await room.disconnect();
+    logger.debug('disconnected from room');
 
     const shutdownTasks = [];
     for (const callback of ctx.shutdownCallbacks) {
       shutdownTasks.push(callback());
     }
-    await Promise.all(shutdownTasks).catch(() => log().error('error while shutting down the job'));
+    await Promise.all(shutdownTasks).catch(() => logger.error('error while shutting down the job'));
 
     process.send!({ case: 'done' });
     process.exit();
@@ -103,10 +107,11 @@ if (process.send) {
     initializeLogger(msg.value.loggerOptions);
   });
   const proc = new JobProcess();
+  let logger = log().child({ pid: proc.pid });
 
-  log().child({ pid: proc.pid }).debug('initializing job runner');
+  logger.debug('initializing job runner');
   agent.prewarm(proc);
-  log().child({ pid: proc.pid }).debug('job runner initialized');
+  logger.debug('job runner initialized');
   process.send({ case: 'initializeResponse' });
 
   let job: JobTask | undefined = undefined;
@@ -125,7 +130,10 @@ if (process.send) {
           throw new Error('job task already running');
         }
 
-        job = startJob(proc, agent.entry, msg.value.runningJob, closeEvent);
+        logger = logger.child({ jobID: msg.value.runningJob.job.id });
+
+        job = startJob(proc, agent.entry, msg.value.runningJob, closeEvent, logger);
+        logger.debug('job started');
         break;
       }
       case 'shutdownRequest': {
