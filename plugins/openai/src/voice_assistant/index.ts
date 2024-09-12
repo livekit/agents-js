@@ -19,7 +19,7 @@ import {
 import { WebSocket } from 'ws';
 import * as proto from './proto.js';
 
-const defaultInferenceConfig: proto.InferenceConfig = {
+export const defaultInferenceConfig: proto.InferenceConfig = {
   system_message: 'You are a helpful assistant.',
   voice: proto.Voice.ALLOY,
   max_tokens: 2048,
@@ -42,9 +42,11 @@ export class VoiceAssistant {
   subscribedTrack: RemoteAudioTrack | null = null;
   readMicroTask: { promise: Promise<void>; cancel: () => void } | null = null;
 
-  constructor(apiKey?: string, inferenceConfig: proto.InferenceConfig = defaultInferenceConfig) {
-    apiKey = apiKey || process.env.OPENAI_API_KEY;
-    if (apiKey === undefined) {
+  constructor(
+    inferenceConfig: proto.InferenceConfig = defaultInferenceConfig,
+    apiKey: string = process.env.OPENAI_API_KEY || '',
+  ) {
+    if (!apiKey) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
 

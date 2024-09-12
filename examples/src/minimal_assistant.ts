@@ -2,14 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { type JobContext, WorkerOptions, cli, defineAgent } from '@livekit/agents';
-import { VoiceAssistant } from '@livekit/agents-plugin-openai';
+import { VoiceAssistant, defaultInferenceConfig } from '@livekit/agents-plugin-openai';
 
 export default defineAgent({
-  entry: async (job: JobContext) => {
-    console.log('starting assistant example agent');
+  entry: async (ctx: JobContext) => {
+    await ctx.connect();
 
-    const assistant = new VoiceAssistant();
-    assistant.start(job.room);
+    // FIXME: for some reason the remoteParticipants are not being populated at connection time nor calling onParticipantConnected
+    setTimeout(() => {
+      console.log('starting assistant example agent');
+
+      const assistant = new VoiceAssistant({
+        ...defaultInferenceConfig,
+        system_message: 'You talk unprompted.',
+      });
+      assistant.start(ctx.room);
+    }, 500);
   },
 });
 
