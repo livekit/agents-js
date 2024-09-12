@@ -179,6 +179,7 @@ export class VoiceAssistant {
       case proto.ServerEvent.ITEM_ADDED:
         break;
       case proto.ServerEvent.TURN_FINISHED:
+        this.handleTurnFinished(event);
         break;
       case proto.ServerEvent.VAD_SPEECH_STARTED:
         this.handleVadSpeechStarted(event);
@@ -248,6 +249,16 @@ export class VoiceAssistant {
       this.publishTranscription(participantIdentity, trackSid, '', false, itemId);
     } else {
       log().error('Participant or track or itemId not set');
+    }
+  }
+
+  private handleTurnFinished(event: Record<string, unknown>): void {
+    if (event.reason !== 'interrupt' && event.reason !== 'stop') {
+      log().warn(`assistant turn finished unexpectedly reason ${event.reason}`);
+    }
+
+    if (this.playingHandle !== null && !this.playingHandle.interrupted) {
+      this.playingHandle.endInput();
     }
   }
 
