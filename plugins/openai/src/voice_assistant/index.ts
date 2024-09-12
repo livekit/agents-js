@@ -83,11 +83,9 @@ export class VoiceAssistant {
         this.linkParticipant(participant.identity);
       });
       room.on(RoomEvent.TrackPublished, () => {
-        console.log('track published');
         this.subscribeToMicrophone();
       });
       room.on(RoomEvent.TrackSubscribed, () => {
-        console.log('track subscribed');
         this.subscribeToMicrophone();
       });
 
@@ -119,9 +117,7 @@ export class VoiceAssistant {
         return;
       }
 
-      // FIXME: uncomment waitForSubscription when node-sdks is updated to 0.8.1
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      // await this.agentPublication.waitForSubscription();
+      await this.agentPublication.waitForSubscription();
 
       this.ws = new WebSocket(proto.API_URL, {
         headers: {
