@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { ServerInfo } from '@livekit/protocol';
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'events';
 import { initializeLogger, log } from './log.js';

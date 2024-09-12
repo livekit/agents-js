@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Logger, pino } from 'pino';
+import type { Logger } from 'pino';
+import { pino } from 'pino';
 
 export type LoggerOptions = {
   pretty: boolean;

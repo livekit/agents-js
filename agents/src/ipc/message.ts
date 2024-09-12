@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { RunningJobInfo } from '../job.js';
-import { LoggerOptions } from '../log.js';
+import type { LoggerOptions } from '../log.js';
 
 export type IPCMessage =
   | {
