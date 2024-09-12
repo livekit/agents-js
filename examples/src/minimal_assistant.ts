@@ -8,10 +8,10 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     await ctx.connect();
 
+    console.log('starting assistant example agent');
+
     // FIXME: for some reason the remoteParticipants are not being populated at connection time nor calling onParticipantConnected
     setTimeout(() => {
-      console.log('starting assistant example agent');
-
       const assistant = new VoiceAssistant({
         ...defaultInferenceConfig,
         system_message: 'You talk unprompted.',
