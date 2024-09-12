@@ -68,7 +68,7 @@ export class VoiceAssistant {
   private localTrackSid: string | null = null;
   private localSource: AudioSource | null = null;
   private pendingMessages: Map<string, string> = new Map();
-  private logger: Logger = log();
+  private logger = log();
 
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise(async (resolve, reject) => {
