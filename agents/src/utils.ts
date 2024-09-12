@@ -104,3 +104,18 @@ export class Queue<T> {
     this.#events.emit('put');
   }
 }
+
+/** @internal */
+export class Future extends Promise<void> {
+  constructor() {
+    super((resolve, reject: (_: Error) => void) => {
+      this.resolve = resolve;
+      this.reject = reject;
+    });
+  }
+
+  resolve = () => {};
+  reject = (_: Error) => {
+    _;
+  };
+}

@@ -24,6 +24,7 @@ import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
 import { log } from './log.js';
+import { Future } from './utils.js';
 import { version } from './version.js';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -168,11 +169,7 @@ export class Worker {
   #connecting = false;
   #tasks: Promise<void>[] = [];
   #pending: { [id: string]: PendingAssignment } = {};
-
-  #close = () => {};
-  #closePromise = new Promise<void>((resolve) => {
-    this.#close = resolve;
-  });
+  #close = new Future();
 
   event = new EventEmitter();
   #session: WebSocket | undefined = undefined;
@@ -254,7 +251,7 @@ export class Worker {
     };
 
     await Promise.all([workerWS(), this.#httpServer.run()]);
-    this.#close();
+    this.#close.resolve();
   }
 
   get id(): string {
@@ -551,7 +548,7 @@ export class Worker {
 
   async close() {
     if (this.#closed) {
-      await this.#closePromise;
+      await this.#close;
       return;
     }
 
@@ -564,6 +561,6 @@ export class Worker {
     await Promise.allSettled(this.#tasks);
 
     this.#session?.close();
-    await this.#closePromise;
+    await this.#close;
   }
 }

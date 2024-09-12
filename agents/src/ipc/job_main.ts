@@ -10,7 +10,7 @@ import type { Agent } from '../generator.js';
 import type { RunningJobInfo } from '../job.js';
 import { JobContext } from '../job.js';
 import { JobProcess } from '../job.js';
-import { log, initializeLogger } from '../log.js';
+import { initializeLogger, log } from '../log.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import type { IPCMessage } from './message.js';
 

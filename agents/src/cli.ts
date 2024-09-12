@@ -4,7 +4,7 @@
 import { ServerInfo } from '@livekit/protocol';
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'events';
-import { log, initializeLogger } from './log.js';
+import { initializeLogger, log } from './log.js';
 import { version } from './version.js';
 import { Worker, type WorkerOptions } from './worker.js';
 

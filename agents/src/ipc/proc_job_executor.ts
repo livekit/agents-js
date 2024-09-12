@@ -5,6 +5,7 @@ import type { ChildProcess } from 'child_process';
 import { once } from 'events';
 import type { RunningJobInfo } from '../job.js';
 import { log, loggerOptions } from '../log.js';
+import { Future } from '../utils.js';
 import type { ProcOpts } from './job_executor.js';
 import { JobExecutor } from './job_executor.js';
 import type { IPCMessage } from './message.js';
@@ -17,20 +18,8 @@ export class ProcJobExecutor extends JobExecutor {
   #proc?: ChildProcess;
   #pingInterval?: ReturnType<typeof setInterval>;
   #pongTimeout?: ReturnType<typeof setTimeout>;
-
-  #init = () => {};
-  #initErr = (_: Error) => {
-    _;
-  };
-  #initPromise = new Promise<void>((resolve, reject) => {
-    this.#init = resolve;
-    this.#initErr = reject;
-  });
-
-  #join = () => {};
-  #joinPromise = new Promise<void>((resolve) => {
-    this.#join = resolve;
-  });
+  #init = new Future();
+  #join = new Future();
 
   constructor(agent: string, initializeTimeout: number, closeTimeout: number) {
     super();
@@ -67,7 +56,7 @@ export class ProcJobExecutor extends JobExecutor {
   }
 
   async run() {
-    await this.#initPromise;
+    await this.#init;
 
     this.#pingInterval = setInterval(() => {
       this.#proc!.send({ case: 'pingRequest', value: { timestamp: Date.now() } });
@@ -92,14 +81,14 @@ export class ProcJobExecutor extends JobExecutor {
         }
         case 'done': {
           this.#proc!.off('message', listener);
-          this.#join();
+          this.#join.resolve();
           break;
         }
       }
     };
     this.#proc!.on('message', listener);
 
-    await this.#joinPromise;
+    await this.#join;
   }
 
   async join() {
@@ -107,13 +96,13 @@ export class ProcJobExecutor extends JobExecutor {
       throw new Error('runner not started');
     }
 
-    await this.#joinPromise;
+    await this.#join;
   }
 
   async initialize() {
     const timer = setTimeout(() => {
       const err = new Error('runner initialization timed out');
-      this.#initErr(err);
+      this.#init.reject(err);
       throw err;
     }, this.#opts.initializeTimeout);
     this.#proc!.send({ case: 'initializeRequest', value: { loggerOptions } });
@@ -123,7 +112,7 @@ export class ProcJobExecutor extends JobExecutor {
         throw new Error('first message must be InitializeResponse');
       }
     });
-    this.#init();
+    this.#init.resolve();
   }
 
   async close() {
@@ -136,7 +125,7 @@ export class ProcJobExecutor extends JobExecutor {
     const timer = setTimeout(() => {
       log().error('job shutdown is taking too much time');
     }, this.#opts.closeTimeout);
-    await this.#joinPromise.then(() => {
+    await this.#join.then(() => {
       clearTimeout(timer);
       clearTimeout(this.#pongTimeout);
       clearInterval(this.#pingInterval);

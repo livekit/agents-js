@@ -5,7 +5,7 @@ import { Logger, pino } from 'pino';
 
 export type LoggerOptions = {
   pretty: boolean;
-  level: string;
+  level?: string;
 };
 export let loggerOptions: LoggerOptions;
 
@@ -32,5 +32,7 @@ export const initializeLogger = ({ pretty, level }: LoggerOptions) => {
         }
       : {},
   );
-  logger.level = level;
+  if (level) {
+    logger.level = level;
+  }
 };
