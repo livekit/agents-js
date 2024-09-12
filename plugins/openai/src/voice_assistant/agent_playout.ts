@@ -37,8 +37,8 @@ export class PlayoutHandle {
   }
 
   endInput() {
-    // this.transcriptionFwd.markTextSegmentEnd();
-    // this.transcriptionFwd.markAudioSegmentEnd();
+    this.transcriptionFwd.markAudioFinished();
+    this.transcriptionFwd.markTextFinished();
     this.playoutQueue.put(null);
   }
 
@@ -100,7 +100,7 @@ export class AgentPlayout {
       }
     } finally {
       if (!firstFrame && !handle.interrupted) {
-        // handle.transcriptionFwd.segmentPlayoutFinished();
+        handle.transcriptionFwd.markTextFinished();
       }
       await handle.transcriptionFwd.close();
       handle.done = true;
