@@ -20,6 +20,7 @@ export class ProcJobExecutor extends JobExecutor {
   #pongTimeout?: ReturnType<typeof setTimeout>;
   #init = new Future();
   #join = new Future();
+  #logger = log().child({ runningJob: this.#runningJob });
 
   constructor(agent: string, initializeTimeout: number, closeTimeout: number) {
     super();
@@ -63,7 +64,7 @@ export class ProcJobExecutor extends JobExecutor {
     }, this.PING_INTERVAL);
 
     this.#pongTimeout = setTimeout(() => {
-      log().warn('job is unresponsive');
+      this.#logger.warn('job is unresponsive');
       clearTimeout(this.#pongTimeout);
       clearInterval(this.#pingInterval);
       this.#proc!.kill();
@@ -75,13 +76,13 @@ export class ProcJobExecutor extends JobExecutor {
         case 'pongResponse': {
           const delay = Date.now() - msg.value.timestamp;
           if (delay > this.HIGH_PING_THRESHOLD) {
-            log().child({ delay }).warn('job executor is unresponsive');
+            this.#logger.child({ delay }).warn('job executor is unresponsive');
           }
           this.#pongTimeout?.refresh();
           break;
         }
         case 'exiting': {
-          log().child({ reason: msg.value.reason }).debug('job exiting');
+          this.#logger.child({ reason: msg.value.reason }).debug('job exiting');
           break;
         }
         case 'done': {
@@ -95,7 +96,7 @@ export class ProcJobExecutor extends JobExecutor {
     this.#proc!.on('message', listener);
     this.#proc!.on('error', (err) => {
       if (this.#closing) return;
-      log().child({ err }).warn('job process exited unexpectedly');
+      this.#logger.child({ err }).warn('job process exited unexpectedly');
       clearTimeout(this.#pongTimeout);
       clearInterval(this.#pingInterval);
       this.#join.resolve();
@@ -142,7 +143,7 @@ export class ProcJobExecutor extends JobExecutor {
     this.#proc!.send({ case: 'shutdownRequest' });
 
     const timer = setTimeout(() => {
-      log().error('job shutdown is taking too much time');
+      this.#logger.error('job shutdown is taking too much time');
     }, this.#opts.closeTimeout);
     await this.#join.await.then(() => {
       clearTimeout(timer);
