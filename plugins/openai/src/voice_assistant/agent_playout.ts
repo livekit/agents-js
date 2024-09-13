@@ -57,26 +57,25 @@ export class PlayoutHandle {
 
 export class AgentPlayout {
   private audioSource: AudioSource;
+  private currentPlayoutHandle: PlayoutHandle | null;
   private currentPlayoutTask: Promise<void> | null;
 
   constructor(audioSource: AudioSource) {
     this.audioSource = audioSource;
-    this.currentPlayoutTask = null;
+    this.currentPlayoutHandle = null;
   }
 
   play(messageId: string, transcriptionFwd: TranscriptionForwarder): PlayoutHandle {
-    const handle = new PlayoutHandle(messageId, transcriptionFwd);
-    this.currentPlayoutTask = this.playoutTask(this.currentPlayoutTask, handle);
-    return handle;
+    if (this.currentPlayoutHandle) {
+      this.currentPlayoutHandle.interrupt();
+    }
+    this.currentPlayoutHandle = new PlayoutHandle(messageId, transcriptionFwd);
+    this.currentPlayoutTask = this.playoutTask(this.currentPlayoutTask, this.currentPlayoutHandle);
+    return this.currentPlayoutHandle;
   }
 
   private async playoutTask(oldTask: Promise<void> | null, handle: PlayoutHandle): Promise<void> {
-    if (oldTask) {
-      await this.gracefullyCancel(oldTask);
-    }
-
     let firstFrame = true;
-
     try {
       const bstream = new AudioByteStream(
         proto.SAMPLE_RATE,
@@ -112,9 +111,5 @@ export class AgentPlayout {
       await handle.transcriptionFwd.close();
       handle.done = true;
     }
-  }
-
-  private async gracefullyCancel(task: Promise<void>): Promise<void> {
-    // Implementation of graceful cancellation
   }
 }
