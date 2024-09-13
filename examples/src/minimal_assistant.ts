@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type JobContext, WorkerOptions, cli, defineAgent } from '@livekit/agents';
 import { VoiceAssistant, defaultInferenceConfig } from '@livekit/agents-plugin-openai';
+import { z } from 'zod';
 
 export default defineAgent({
   entry: async (ctx: JobContext) => {
@@ -13,6 +14,21 @@ export default defineAgent({
     const assistant = new VoiceAssistant({
       ...defaultInferenceConfig,
       system_message: 'You talk unprompted.',
+      functions: {
+        weather: {
+          description: 'Get the weather in a location',
+          parameters: z.object({
+            location: z.string().describe('The location to get the weather for'),
+          }),
+          execute: async ({ location }) => ({
+            location,
+            temperature: await fetch(`https://wttr.in/${location}?format=%C+%t`).then((data) =>
+              data.text(),
+            ),
+            source: 'wttr.in',
+          }),
+        },
+      },
     });
     assistant.start(ctx.room);
   },
