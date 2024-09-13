@@ -21,7 +21,7 @@ import {
   TrackSource,
 } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import { AgentPlayout, PlayoutHandle } from './agent_playout.js';
+import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 import * as proto from './proto.js';
 import { BasicTranscriptionForwarder } from './transcription_forwarder.js';
 

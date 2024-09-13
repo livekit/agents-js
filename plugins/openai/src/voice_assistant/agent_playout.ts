@@ -63,6 +63,7 @@ export class AgentPlayout {
   constructor(audioSource: AudioSource) {
     this.audioSource = audioSource;
     this.currentPlayoutHandle = null;
+    this.currentPlayoutTask = null;
   }
 
   play(messageId: string, transcriptionFwd: TranscriptionForwarder): PlayoutHandle {
