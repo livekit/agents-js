@@ -10,6 +10,7 @@ import type {
   RtcConfiguration,
 } from '@livekit/rtc-node';
 import { RoomEvent, TrackKind } from '@livekit/rtc-node';
+import { Logger } from 'pino';
 import { log } from './log.js';
 
 /** Which tracks, if any, should the agent automatically subscribe to? */
@@ -57,6 +58,7 @@ export class JobContext {
       result: Promise<void>;
     };
   } = {};
+  #logger: Logger;
 
   constructor(
     proc: JobProcess,
@@ -72,6 +74,7 @@ export class JobContext {
     this.#onShutdown = onShutdown;
     this.onParticipantConnected = this.onParticipantConnected.bind(this);
     this.#room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
+    this.#logger = log().child({ info: this.#info });
   }
 
   get proc(): JobProcess {
@@ -154,7 +157,7 @@ export class JobContext {
         p.identity in this.#participantTasks &&
         this.#participantTasks[p.identity].callback == callback
       ) {
-        log().warn(
+        this.#logger.warn(
           'a participant has joined before a prior prticipant task matching the same identity has finished:',
           p.identity,
         );

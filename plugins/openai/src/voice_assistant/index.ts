@@ -70,11 +70,12 @@ export class VoiceAssistant {
   private localSource: AudioSource | null = null;
   private agentPlayout: AgentPlayout | null = null;
   private playingHandle: PlayoutHandle | null = null;
+  private logger = log();
 
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise(async (resolve, reject) => {
       if (this.ws !== null) {
-        log().warn('VoiceAssistant already started');
+        this.logger.warn('VoiceAssistant already started');
         resolve();
         return;
       }
@@ -117,7 +118,7 @@ export class VoiceAssistant {
       options.source = TrackSource.SOURCE_MICROPHONE;
       this.agentPublication = (await room.localParticipant?.publishTrack(track, options)) || null;
       if (!this.agentPublication) {
-        log().error('Failed to publish track');
+        this.logger.error('Failed to publish track');
         reject(new Error('Failed to publish track'));
         return;
       }
@@ -175,7 +176,7 @@ export class VoiceAssistant {
 
   private sendClientCommand(command: Record<string, unknown>): void {
     if (!this.connected || !this.ws) {
-      log().error('WebSocket is not connected');
+      this.logger.error('WebSocket is not connected');
       return;
     }
 
@@ -183,7 +184,7 @@ export class VoiceAssistant {
       const truncatedDataPartial = command['data']
         ? { data: (command['data'] as string).slice(0, 30) + '…' }
         : {};
-      log().debug(`-> ${JSON.stringify({ ...command, ...truncatedDataPartial })}`);
+      this.logger.debug(`-> ${JSON.stringify({ ...command, ...truncatedDataPartial })}`);
     }
     this.ws.send(JSON.stringify(command));
   }
@@ -192,7 +193,7 @@ export class VoiceAssistant {
     const truncatedDataPartial = event['data']
       ? { data: (event['data'] as string).slice(0, 30) + '…' }
       : {};
-    log().debug(`<- ${JSON.stringify({ ...event, ...truncatedDataPartial })}`);
+    this.logger.debug(`<- ${JSON.stringify({ ...event, ...truncatedDataPartial })}`);
 
     switch (event.event) {
       case proto.ServerEvent.START_SESSION:
@@ -219,7 +220,7 @@ export class VoiceAssistant {
         this.handleModelListening();
         break;
       default:
-        log().warn(`Unknown server event: ${JSON.stringify(event)}`);
+        this.logger.warn(`Unknown server event: ${JSON.stringify(event)}`);
     }
   }
 
@@ -248,7 +249,7 @@ export class VoiceAssistant {
         this.playingHandle?.pushText(event.data as string);
         break;
       default:
-        log().warn(`Unknown content event type: ${event.type}`);
+        this.logger.warn(`Unknown content event type: ${event.type}`);
     }
   }
 
@@ -256,7 +257,7 @@ export class VoiceAssistant {
     const itemId = event.item_id as string;
     const transcription = event.transcript as string;
     if (!itemId || transcription === undefined) {
-      log().error('Item ID or transcription not set');
+      this.logger.error('Item ID or transcription not set');
       return;
     }
     const participantIdentity = this.linkedParticipant?.identity;
@@ -264,7 +265,7 @@ export class VoiceAssistant {
     if (participantIdentity && trackSid) {
       this.publishTranscription(participantIdentity, trackSid, transcription, true, itemId);
     } else {
-      log().error('Participant or track not set');
+      this.logger.error('Participant or track not set');
     }
   }
 
@@ -288,7 +289,7 @@ export class VoiceAssistant {
     if (participantIdentity && trackSid && itemId) {
       this.publishTranscription(participantIdentity, trackSid, '', false, itemId);
     } else {
-      log().error('Participant or track or itemId not set');
+      this.logger.error('Participant or track or itemId not set');
     }
   }
 
@@ -304,13 +305,13 @@ export class VoiceAssistant {
 
   private linkParticipant(participantIdentity: string): void {
     if (!this.room) {
-      log().error('Room is not set');
+      this.logger.error('Room is not set');
       return;
     }
 
     this.linkedParticipant = this.room.remoteParticipants.get(participantIdentity) || null;
     if (!this.linkedParticipant) {
-      log().error(`Participant with identity ${participantIdentity} not found`);
+      this.logger.error(`Participant with identity ${participantIdentity} not found`);
       return;
     }
     this.subscribeToMicrophone();
@@ -336,7 +337,7 @@ export class VoiceAssistant {
     };
 
     if (!this.linkedParticipant) {
-      log().error('Participant is not set');
+      this.logger.error('Participant is not set');
       return;
     }
 
