@@ -23,7 +23,10 @@ export class AgentPlayout {
       this.#currentPlayoutHandle.interrupt();
     }
     this.#currentPlayoutHandle = new PlayoutHandle(messageId, transcriptionFwd);
-    this.#currentPlayoutTask = this.playoutTask(this.#currentPlayoutTask, this.#currentPlayoutHandle);
+    this.#currentPlayoutTask = this.playoutTask(
+      this.#currentPlayoutTask,
+      this.#currentPlayoutHandle,
+    );
     return this.#currentPlayoutHandle;
   }
 
