@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-// import { log } from '@livekit/agents';
 import { AudioByteStream } from '@livekit/agents';
 import { findMicroTrackId } from '@livekit/agents';
 import { log } from '@livekit/agents';
@@ -69,11 +68,12 @@ export class VoiceAssistant {
   private localTrackSid: string | null = null;
   private localSource: AudioSource | null = null;
   private pendingMessages: Map<string, string> = new Map();
+  private logger = log();
 
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise(async (resolve, reject) => {
       if (this.ws !== null) {
-        log().warn('VoiceAssistant already started');
+        this.logger.warn('VoiceAssistant already started');
         resolve();
         return;
       }
@@ -115,7 +115,7 @@ export class VoiceAssistant {
       options.source = TrackSource.SOURCE_MICROPHONE;
       this.agentPublication = (await room.localParticipant?.publishTrack(track, options)) || null;
       if (!this.agentPublication) {
-        log().error('Failed to publish track');
+        this.logger.error('Failed to publish track');
         reject(new Error('Failed to publish track'));
         return;
       }
@@ -153,7 +153,7 @@ export class VoiceAssistant {
 
   private sendClientCommand(command: Record<string, unknown>): void {
     if (!this.connected || !this.ws) {
-      log().error('WebSocket is not connected');
+      this.logger.error('WebSocket is not connected');
       return;
     }
 
@@ -161,7 +161,7 @@ export class VoiceAssistant {
       const truncatedDataPartial = command['data']
         ? { data: (command['data'] as string).slice(0, 30) + '…' }
         : {};
-      log().debug(`-> ${JSON.stringify({ ...command, ...truncatedDataPartial })}`);
+      this.logger.debug(`-> ${JSON.stringify({ ...command, ...truncatedDataPartial })}`);
     }
     this.ws.send(JSON.stringify(command));
   }
@@ -170,7 +170,7 @@ export class VoiceAssistant {
     const truncatedDataPartial = event['data']
       ? { data: (event['data'] as string).slice(0, 30) + '…' }
       : {};
-    log().debug(`<- ${JSON.stringify({ ...event, ...truncatedDataPartial })}`);
+    this.logger.debug(`<- ${JSON.stringify({ ...event, ...truncatedDataPartial })}`);
     switch (event.event) {
       case proto.ServerEvent.START_SESSION:
         break;
@@ -194,7 +194,7 @@ export class VoiceAssistant {
         this.handleInputTranscribed(event);
         break;
       default:
-        log().warn(`Unknown server event: ${JSON.stringify(event)}`);
+        this.logger.warn(`Unknown server event: ${JSON.stringify(event)}`);
     }
   }
 
@@ -232,7 +232,7 @@ export class VoiceAssistant {
           if (participantIdentity && trackSid) {
             this.publishTranscription(participantIdentity, trackSid, newText, false, itemId);
           } else {
-            log().error('Participant or track not set');
+            this.logger.error('Participant or track not set');
           }
         }
         break;
@@ -259,7 +259,7 @@ export class VoiceAssistant {
       if (participantIdentity && trackSid) {
         this.publishTranscription(participantIdentity, trackSid, text, true, itemId);
       } else {
-        log().error('Participant or track not set');
+        this.logger.error('Participant or track not set');
       }
     }
   }
@@ -268,7 +268,7 @@ export class VoiceAssistant {
     const itemId = event.item_id as string;
     const transcription = event.transcript as string;
     if (!itemId || !transcription) {
-      log().error('Item ID or transcription not set');
+      this.logger.error('Item ID or transcription not set');
       return;
     }
     const participantIdentity = this.linkedParticipant?.identity;
@@ -276,7 +276,7 @@ export class VoiceAssistant {
     if (participantIdentity && trackSid) {
       this.publishTranscription(participantIdentity, trackSid, transcription, true, itemId);
     } else {
-      log().error('Participant or track not set');
+      this.logger.error('Participant or track not set');
     }
   }
 
@@ -287,19 +287,19 @@ export class VoiceAssistant {
     if (participantIdentity && trackSid && itemId) {
       this.publishTranscription(participantIdentity, trackSid, '', false, itemId);
     } else {
-      log().error('Participant or track or itemId not set');
+      this.logger.error('Participant or track or itemId not set');
     }
   }
 
   private linkParticipant(participantIdentity: string): void {
     if (!this.room) {
-      log().error('Room is not set');
+      this.logger.error('Room is not set');
       return;
     }
 
     this.linkedParticipant = this.room.remoteParticipants.get(participantIdentity) || null;
     if (!this.linkedParticipant) {
-      log().error(`Participant with identity ${participantIdentity} not found`);
+      this.logger.error(`Participant with identity ${participantIdentity} not found`);
       return;
     }
     this.subscribeToMicrophone();
@@ -325,7 +325,7 @@ export class VoiceAssistant {
     };
 
     if (!this.linkedParticipant) {
-      log().error('Participant is not set');
+      this.logger.error('Participant is not set');
       return;
     }
 
