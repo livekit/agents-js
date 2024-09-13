@@ -50,20 +50,20 @@ export class VoiceAssistant {
   subscribedTrack: RemoteAudioTrack | null = null;
   readMicroTask: { promise: Promise<void>; cancel: () => void } | null = null;
 
-  constructor(
-    inferenceConfig: proto.InferenceConfig & {
-      functions?: llm.FunctionContext;
-    } = defaultInferenceConfig,
-    apiKey: string = process.env.OPENAI_API_KEY || '',
-  ) {
+  constructor({
+    inferenceConfig = defaultInferenceConfig,
+    functions = {},
+    apiKey = process.env.OPENAI_API_KEY || '',
+  }: {
+    inferenceConfig?: proto.InferenceConfig;
+    functions?: llm.FunctionContext;
+    apiKey?: string;
+  }) {
     if (!apiKey) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
 
-    const functions = inferenceConfig.functions || {};
-    delete inferenceConfig.functions;
     inferenceConfig.tools = tools(functions);
-
     this.options = {
       apiKey,
       inferenceConfig,
@@ -276,7 +276,7 @@ export class VoiceAssistant {
         });
         break;
       }
-      default: {
+      case 'message': {
         const itemId = event.id as string;
         if (itemId && this.pendingMessages.has(itemId)) {
           const text = this.pendingMessages.get(itemId) || '';

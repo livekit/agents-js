@@ -12,8 +12,10 @@ export default defineAgent({
     console.log('starting assistant example agent');
 
     const assistant = new VoiceAssistant({
-      ...defaultInferenceConfig,
-      system_message: 'You talk unprompted.',
+      inferenceConfig: {
+        ...defaultInferenceConfig,
+        system_message: 'You talk unprompted.',
+      },
       functions: {
         weather: {
           description: 'Get the weather in a location',
