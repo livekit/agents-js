@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { log } from '@livekit/agents';
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 
 export interface TranscriptionForwarder {
@@ -37,7 +38,7 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     if (!this.isRunning) {
       this.isRunning = true;
       this.startPublishingLoop().catch((error) => {
-        console.error('Error in publishing loop:', error);
+        log().error('Error in publishing loop:', error);
         this.isRunning = false;
       });
     }
@@ -81,7 +82,6 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     this.isRunning = true;
     let sleepInterval = this.computeSleepInterval();
     while (this.isRunning) {
-      //   console.warn('publishing transcription');
       this.currentAudioTimestamp += sleepInterval;
       await this.publishTranscription(false);
       sleepInterval = this.computeSleepInterval();
@@ -111,7 +111,6 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
   }
 
   async close(): Promise<void> {
-    console.error('closing transcription forwarder');
     this.isRunning = false;
 
     // Ensure the last partial transcription was published.
