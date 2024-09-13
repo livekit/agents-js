@@ -179,7 +179,8 @@ export class VoiceAssistant {
     maxLength: number = 30,
   ): Record<string, unknown> {
     if (command['data'] && typeof command['data'] === 'string') {
-      const truncatedData = command['data'].slice(0, maxLength) + (command['data'].length > maxLength ? '…' : '');
+      const truncatedData =
+        command['data'].slice(0, maxLength) + (command['data'].length > maxLength ? '…' : '');
       return { ...command, data: truncatedData };
     }
     return command;
