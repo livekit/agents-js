@@ -174,6 +174,14 @@ export class VoiceAssistant {
     }
   }
 
+  private loggableEvent(command: Record<string, unknown>, maxLength: number = 30): Record<string, unknown> {
+    if (command['data'] && typeof command['data'] === 'string') {
+      const truncatedData = command['data'].slice(0, maxLength) + (command['data'].length > maxLength ? '…' : '');
+      return { ...command, data: truncatedData };
+    }
+    return command;
+  }
+
   private sendClientCommand(command: Record<string, unknown>): void {
     if (!this.connected || !this.ws) {
       this.logger.error('WebSocket is not connected');
@@ -181,19 +189,14 @@ export class VoiceAssistant {
     }
 
     if (command.event !== proto.ClientEvent.ADD_USER_AUDIO) {
-      const truncatedDataPartial = command['data']
-        ? { data: (command['data'] as string).slice(0, 30) + '…' }
-        : {};
-      this.logger.debug(`-> ${JSON.stringify({ ...command, ...truncatedDataPartial })}`);
+      const truncatedCommand = ;
+      this.logger.debug(`-> ${JSON.stringify(this.loggableEvent(command))}`);
     }
     this.ws.send(JSON.stringify(command));
   }
 
   private handleServerEvent(event: Record<string, unknown>): void {
-    const truncatedDataPartial = event['data']
-      ? { data: (event['data'] as string).slice(0, 30) + '…' }
-      : {};
-    this.logger.debug(`<- ${JSON.stringify({ ...event, ...truncatedDataPartial })}`);
+    this.logger.debug(`<- ${JSON.stringify(this.loggableEvent(event))}`);
 
     switch (event.event) {
       case proto.ServerEvent.START_SESSION:
