@@ -6,6 +6,8 @@ import { z } from 'zod';
 // heavily inspired by Vercel AI's `tool()`:
 // https://github.com/vercel/ai/blob/3b0983b/packages/ai/core/tool/tool.ts
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 export type inferParameters<P extends z.ZodTypeAny> = z.infer<P>;
 
 export interface CallableFunction<P extends z.ZodTypeAny = any, R = any> {
@@ -47,7 +49,7 @@ export const oaiParams = (p: z.AnyZodObject) => {
     }
   }
 
-  const type: 'object' = 'object';
+  const type = 'object' as const;
   return {
     type,
     properties,

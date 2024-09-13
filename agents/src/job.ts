@@ -10,7 +10,7 @@ import type {
   RtcConfiguration,
 } from '@livekit/rtc-node';
 import { RoomEvent, TrackKind } from '@livekit/rtc-node';
-import { Logger } from 'pino';
+import type { Logger } from 'pino';
 import { log } from './log.js';
 
 /** Which tracks, if any, should the agent automatically subscribe to? */
