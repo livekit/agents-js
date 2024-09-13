@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 
 export interface TranscriptionForwarder {
@@ -78,7 +81,7 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     this.isRunning = true;
     let sleepInterval = this.computeSleepInterval();
     while (this.isRunning) {
-    //   console.warn('publishing transcription');
+      //   console.warn('publishing transcription');
       this.currentAudioTimestamp += sleepInterval;
       await this.publishTranscription(false);
       sleepInterval = this.computeSleepInterval();

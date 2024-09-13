@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import { AudioByteStream } from '@livekit/agents';
 import { Queue } from '@livekit/agents';
 import { AudioFrame, type AudioSource } from '@livekit/rtc-node';

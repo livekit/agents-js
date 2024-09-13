@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-// import { log } from '@livekit/agents';
 import { AudioByteStream } from '@livekit/agents';
 import { findMicroTrackId } from '@livekit/agents';
 import { log } from '@livekit/agents';
@@ -13,7 +12,6 @@ import type {
   Room,
 } from '@livekit/rtc-node';
 import {
-  AudioFrame,
   AudioSource,
   AudioStream,
   AudioStreamEvent,
