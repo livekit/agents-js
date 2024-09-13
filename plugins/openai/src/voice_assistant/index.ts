@@ -218,6 +218,7 @@ export class VoiceAssistant {
         this.handleInputTranscribed(event);
         break;
       case proto.ServerEvent.MODEL_LISTENING:
+        this.handleModelListening();
         break;
       default:
         log().warn(`Unknown server event: ${JSON.stringify(event)}`);
@@ -231,7 +232,7 @@ export class VoiceAssistant {
       return;
     }
 
-    if (this.playingHandle === null || this.playingHandle.done) {
+    if (!this.playingHandle || this.playingHandle.done) {
       const trFwd = new BasicTranscriptionForwarder(
         this.room as Room,
         this.room?.localParticipant?.identity,
@@ -256,7 +257,7 @@ export class VoiceAssistant {
   private handleInputTranscribed(event: Record<string, unknown>): void {
     const itemId = event.item_id as string;
     const transcription = event.transcript as string;
-    if (!itemId || !transcription) {
+    if (!itemId || transcription === undefined) {
       log().error('Item ID or transcription not set');
       return;
     }
@@ -266,6 +267,19 @@ export class VoiceAssistant {
       this.publishTranscription(participantIdentity, trackSid, transcription, true, itemId);
     } else {
       log().error('Participant or track not set');
+    }
+  }
+
+  private handleModelListening(): void {
+    if (this.playingHandle && !this.playingHandle.done) {
+      this.playingHandle.interrupt();
+      this.sendClientCommand({
+        event: proto.ClientEvent.TRUNCATE_CONTENT,
+        message_id: this.playingHandle.messageId,
+        index: 0, // ignored for now (see OAI docs)
+        text_chars: this.playingHandle.publishedTextChars(),
+        audio_samples: this.playingHandle.playedAudioSamples,
+      });
     }
   }
 
@@ -285,7 +299,7 @@ export class VoiceAssistant {
       log().warn(`assistant turn finished unexpectedly reason ${event.reason}`);
     }
 
-    if (this.playingHandle !== null && !this.playingHandle.interrupted) {
+    if (this.playingHandle && !this.playingHandle.interrupted) {
       this.playingHandle.endInput();
     }
   }

@@ -7,6 +7,7 @@ export interface TranscriptionForwarder {
   markTextFinished(): void;
   markAudioFinished(): void;
   close(): Promise<void>;
+  publishedChars: number;
 }
 
 export class BasicTranscriptionForwarder implements TranscriptionForwarder {
@@ -20,6 +21,7 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
   private charsPerSecond: number = this.DEFAULT_CHARS_PER_SECOND;
   private messageId: string;
   private isRunning: boolean = false;
+  publishedChars: number = 0;
 
   constructor(room: Room, participantIdentity: string, trackSid: string, messageId: string) {
     this.room = room;
@@ -27,7 +29,7 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     this.trackSid = trackSid;
     this.messageId = messageId;
   }
-  
+
   start(): void {
     if (!this.isRunning) {
       this.isRunning = true;
@@ -76,25 +78,26 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     this.isRunning = true;
     let sleepInterval = this.computeSleepInterval();
     while (this.isRunning) {
+    //   console.warn('publishing transcription');
       this.currentAudioTimestamp += sleepInterval;
-      await this.publishTranscription();
+      await this.publishTranscription(false);
       sleepInterval = this.computeSleepInterval();
-      await new Promise((resolve) => setTimeout(resolve, sleepInterval * 1000));
+      if (this.isRunning) {
+        await new Promise((resolve) => setTimeout(resolve, sleepInterval * 1000));
+      }
     }
   }
 
-  private async publishTranscription(): Promise<void> {
-    const textToPublish = this.currentText.slice(
-      0,
-      Math.floor(this.currentAudioTimestamp * this.charsPerSecond),
-    );
+  private async publishTranscription(final: boolean): Promise<void> {
+    this.publishedChars = Math.floor(this.currentAudioTimestamp * this.charsPerSecond);
+    const textToPublish = this.currentText.slice(0, this.publishedChars);
     await this.room.localParticipant?.publishTranscription({
       participantIdentity: this.participantIdentity,
       trackSid: this.trackSid,
       segments: [
         {
           text: textToPublish,
-          final: false,
+          final: final,
           id: this.messageId,
           startTime: BigInt(0),
           endTime: BigInt(0),
@@ -105,24 +108,13 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
   }
 
   async close(): Promise<void> {
+    console.error('closing transcription forwarder');
     this.isRunning = false;
-    
-    // Publish any remaining text as final
-    if (this.currentText.length > 0) {
-      await this.room.localParticipant?.publishTranscription({
-        participantIdentity: this.participantIdentity,
-        trackSid: this.trackSid,
-        segments: [
-          {
-            text: this.currentText,
-            final: true,
-            id: this.messageId,
-            startTime: BigInt(0),
-            endTime: BigInt(0),
-            language: '',
-          },
-        ],
-      });
-    }
+
+    // Ensure the last partial transcription was published.
+    await new Promise((resolve) => setTimeout(resolve, this.computeSleepInterval() * 1000));
+
+    // Publish whatever we had as final
+    await this.publishTranscription(true);
   }
 }

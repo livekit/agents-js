@@ -5,9 +5,9 @@ import * as proto from './proto.js';
 import type { TranscriptionForwarder } from './transcription_forwarder';
 
 export class PlayoutHandle {
-  private messageId: string;
+  messageId: string;
   transcriptionFwd: TranscriptionForwarder;
-  audioSamples: number;
+  playedAudioSamples: number;
   done: boolean;
   interrupted: boolean;
   playoutQueue: Queue<AudioFrame | null>;
@@ -15,7 +15,7 @@ export class PlayoutHandle {
   constructor(messageId: string, transcriptionFwd: TranscriptionForwarder) {
     this.messageId = messageId;
     this.transcriptionFwd = transcriptionFwd;
-    this.audioSamples = 0;
+    this.playedAudioSamples = 0;
     this.done = false;
     this.interrupted = false;
     this.playoutQueue = new Queue<AudioFrame | null>();
@@ -45,6 +45,10 @@ export class PlayoutHandle {
   interrupt() {
     if (this.done) return;
     this.interrupted = true;
+  }
+
+  publishedTextChars(): number {
+    return this.transcriptionFwd.publishedChars;
   }
 }
 
@@ -77,7 +81,7 @@ export class AgentPlayout {
         proto.OUTPUT_PCM_FRAME_SIZE,
       );
 
-      while (true) {
+      while (!handle.interrupted) {
         const frame = await handle.playoutQueue.get();
         if (frame === null) break;
         if (firstFrame) {
@@ -86,7 +90,7 @@ export class AgentPlayout {
         }
 
         for (const f of bstream.write(frame.data.buffer)) {
-          handle.audioSamples += f.samplesPerChannel;
+          handle.playedAudioSamples += f.samplesPerChannel;
           if (handle.interrupted) break;
 
           await this.audioSource.captureFrame(f);
