@@ -174,7 +174,10 @@ export class VoiceAssistant {
     }
   }
 
-  private loggableEvent(command: Record<string, unknown>, maxLength: number = 30): Record<string, unknown> {
+  private loggableEvent(
+    command: Record<string, unknown>,
+    maxLength: number = 30,
+  ): Record<string, unknown> {
     if (command['data'] && typeof command['data'] === 'string') {
       const truncatedData = command['data'].slice(0, maxLength) + (command['data'].length > maxLength ? '…' : '');
       return { ...command, data: truncatedData };
@@ -189,7 +192,6 @@ export class VoiceAssistant {
     }
 
     if (command.event !== proto.ClientEvent.ADD_USER_AUDIO) {
-      const truncatedCommand = ;
       this.logger.debug(`-> ${JSON.stringify(this.loggableEvent(command))}`);
     }
     this.ws.send(JSON.stringify(command));

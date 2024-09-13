@@ -17,7 +17,7 @@ export default defineAgent({
 
     await assistant.start(ctx.room);
 
-    assistant.addUserMessage('Hello! Can you share a long story?');
+    assistant.addUserMessage('Hello! Can you share a very short?');
   },
 });
 

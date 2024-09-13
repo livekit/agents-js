@@ -40,8 +40,8 @@ export class PlayoutHandle {
   }
 
   endInput() {
-    this.transcriptionFwd.markAudioFinished();
-    this.transcriptionFwd.markTextFinished();
+    this.transcriptionFwd.markAudioComplete();
+    this.transcriptionFwd.markTextComplete();
     this.playoutQueue.put(null);
   }
 
@@ -51,7 +51,7 @@ export class PlayoutHandle {
   }
 
   publishedTextChars(): number {
-    return this.transcriptionFwd.publishedChars;
+    return this.transcriptionFwd.currentCharacterIndex;
   }
 }
 
@@ -107,9 +107,9 @@ export class AgentPlayout {
       }
     } finally {
       if (!firstFrame && !handle.interrupted) {
-        handle.transcriptionFwd.markTextFinished();
+        handle.transcriptionFwd.markTextComplete();
       }
-      await handle.transcriptionFwd.close();
+      await handle.transcriptionFwd.close(handle.interrupted);
       handle.done = true;
     }
   }
