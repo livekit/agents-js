@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioByteStream } from '@livekit/agents';
 import { findMicroTrackId } from '@livekit/agents';
-import { log } from '@livekit/agents';
+import { llm, log } from '@livekit/agents';
 import type {
   AudioFrameEvent,
   LocalTrackPublication,
@@ -33,11 +33,14 @@ export const defaultInferenceConfig: proto.InferenceConfig = {
   turn_end_type: proto.TurnEndType.SERVER_DETECTION,
   transcribe_input: true,
   audio_format: proto.AudioFormat.PCM16,
+  tools: [],
+  tool_choice: proto.ToolChoice.AUTO,
 };
 
 type ImplOptions = {
   apiKey: string;
   inferenceConfig: proto.InferenceConfig;
+  functions: llm.FunctionContext;
 };
 
 export class VoiceAssistant {
@@ -47,17 +50,24 @@ export class VoiceAssistant {
   subscribedTrack: RemoteAudioTrack | null = null;
   readMicroTask: { promise: Promise<void>; cancel: () => void } | null = null;
 
-  constructor(
-    inferenceConfig: proto.InferenceConfig = defaultInferenceConfig,
-    apiKey: string = process.env.OPENAI_API_KEY || '',
-  ) {
+  constructor({
+    inferenceConfig = defaultInferenceConfig,
+    functions = {},
+    apiKey = process.env.OPENAI_API_KEY || '',
+  }: {
+    inferenceConfig?: proto.InferenceConfig;
+    functions?: llm.FunctionContext;
+    apiKey?: string;
+  }) {
     if (!apiKey) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
 
+    inferenceConfig.tools = tools(functions);
     this.options = {
       apiKey,
       inferenceConfig,
+      functions,
     };
   }
 
@@ -249,17 +259,38 @@ export class VoiceAssistant {
   }
 
   private handleItemAdded(event: Record<string, unknown>): void {
-    const itemId = event.id as string;
-    if (itemId && this.pendingMessages.has(itemId)) {
-      const text = this.pendingMessages.get(itemId) || '';
-      this.pendingMessages.delete(itemId);
+    switch (event.type) {
+      case 'tool_call': {
+        const name = event.name as string;
+        const args = event.arguments as object;
+        this.options.functions[name].execute(args).then((content) => {
+          this.sendClientCommand({
+            event: proto.ClientEvent.ADD_ITEM,
+            type: 'tool_response',
+            tool_call_id: event.tool_call_id as string,
+            content: JSON.stringify(content),
+          });
+          this.sendClientCommand({
+            event: proto.ClientEvent.CLIENT_TURN_FINISHED,
+          });
+        });
+        break;
+      }
+      case 'message': {
+        const itemId = event.id as string;
+        if (itemId && this.pendingMessages.has(itemId)) {
+          const text = this.pendingMessages.get(itemId) || '';
+          this.pendingMessages.delete(itemId);
 
-      const participantIdentity = this.room?.localParticipant?.identity;
-      const trackSid = this.getLocalTrackSid();
-      if (participantIdentity && trackSid) {
-        this.publishTranscription(participantIdentity, trackSid, text, true, itemId);
-      } else {
-        this.logger.error('Participant or track not set');
+          const participantIdentity = this.room?.localParticipant?.identity;
+          const trackSid = this.getLocalTrackSid();
+          if (participantIdentity && trackSid) {
+            this.publishTranscription(participantIdentity, trackSid, text, true, itemId);
+          } else {
+            this.logger.error('Participant or track not set');
+          }
+        }
+        break;
       }
     }
   }
@@ -398,3 +429,13 @@ export class VoiceAssistant {
     });
   }
 }
+
+const tools = (ctx: llm.FunctionContext): proto.Tool[] =>
+  Object.entries(ctx).map(([name, func]) => ({
+    type: 'function',
+    function: {
+      name,
+      description: func.description,
+      parameters: llm.oaiParams(func.parameters),
+    },
+  }));

@@ -10,6 +10,7 @@
  * @packageDocumentation
  */
 import * as cli from './cli.js';
+import * as llm from './llm/index.js';
 import * as stt from './stt/index.js';
 import * as tts from './tts/index.js';
 
@@ -24,4 +25,4 @@ export * from './generator.js';
 export * from './tokenize.js';
 export * from './audio.js';
 
-export { cli, stt, tts };
+export { cli, stt, tts, llm };

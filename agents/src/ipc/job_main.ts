@@ -5,7 +5,7 @@ import { Room, RoomEvent } from '@livekit/rtc-node';
 import type { ChildProcess } from 'child_process';
 import { fork } from 'child_process';
 import { EventEmitter, once } from 'events';
-import { Logger } from 'pino';
+import type { Logger } from 'pino';
 import { fileURLToPath } from 'url';
 import type { Agent } from '../generator.js';
 import type { RunningJobInfo } from '../job.js';
