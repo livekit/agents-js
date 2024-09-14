@@ -73,6 +73,7 @@ export class VoiceAssistant {
 
   private ws: WebSocket | null = null;
   private connected: boolean = false;
+  private thinking: boolean = false;
   private participant: RemoteParticipant | string | null = null;
   private agentPublication: LocalTrackPublication | null = null;
   private localTrackSid: string | null = null;
@@ -104,6 +105,7 @@ export class VoiceAssistant {
 
       this.room = room;
       this.participant = participant;
+      this.setState(proto.State.INITIALIZING);
 
       if (participant) {
         if (typeof participant === 'string') {
@@ -161,6 +163,16 @@ export class VoiceAssistant {
     });
   }
 
+  private setState(state: proto.State) {
+    // don't override thinking until done
+    if (this.thinking) return;
+    if (this.room?.isConnected) {
+      this.room.localParticipant!.setAttributes({
+        'voice_assistant.state': state,
+      });
+    }
+  }
+
   private sendClientCommand(command: Record<string, unknown>): void {
     if (!this.connected || !this.ws) {
       this.logger.error('WebSocket is not connected');
@@ -183,6 +195,7 @@ export class VoiceAssistant {
     this.logger.debug(`<- ${JSON.stringify({ ...event, ...truncatedDataPartial })}`);
     switch (event.event) {
       case proto.ServerEvent.START_SESSION:
+        this.setState(proto.State.LISTENING);
         break;
       case proto.ServerEvent.ADD_ITEM:
         this.handleAddItem(event);
@@ -194,6 +207,7 @@ export class VoiceAssistant {
         this.handleItemAdded(event);
         break;
       case proto.ServerEvent.TURN_FINISHED:
+        this.setState(proto.State.LISTENING);
         break;
       case proto.ServerEvent.VAD_SPEECH_STARTED:
         this.handleVadSpeechStarted(event);
@@ -254,7 +268,12 @@ export class VoiceAssistant {
   private handleAddItem(event: Record<string, unknown>): void {
     const itemId = event.id as string;
     if (itemId && event.type === 'message') {
+      this.setState(proto.State.SPEAKING);
       this.pendingMessages.set(itemId, '');
+    }
+    if (event.type === 'tool_call') {
+      this.setState(proto.State.THINKING);
+      this.thinking = true;
     }
   }
 
@@ -264,6 +283,7 @@ export class VoiceAssistant {
         const name = event.name as string;
         const args = event.arguments as object;
         this.options.functions[name].execute(args).then((content) => {
+          this.thinking = false;
           this.sendClientCommand({
             event: proto.ClientEvent.ADD_ITEM,
             type: 'tool_response',

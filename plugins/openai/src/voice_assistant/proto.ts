@@ -89,3 +89,10 @@ export type InferenceConfig = {
   tools: Tool[];
   tool_choice: ToolChoice;
 };
+
+export enum State {
+  INITIALIZING = 'initializing',
+  LISTENING = 'listening',
+  THINKING = 'thinking',
+  SPEAKING = 'speaking',
+}
