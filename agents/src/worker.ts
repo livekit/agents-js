@@ -52,15 +52,32 @@ export const defaultInitializeProcessFunc = (_: JobProcess) => _;
 const defaultRequestFunc = async (ctx: JobRequest) => {
   await ctx.accept();
 };
-const defaultCpuLoad = (): number =>
-  1 -
-  os
-    .cpus()
-    .reduce(
-      (acc, x) => acc + x.times.idle / Object.values(x.times).reduce((acc, x) => acc + x, 0),
-      0,
-    ) /
-    os.cpus().length;
+const defaultCpuLoad = async (): Promise<number> => {
+  return new Promise((resolve) => {
+    const cpus1 = os.cpus();
+
+    setTimeout(() => {
+      const cpus2 = os.cpus();
+
+      let idle = 0;
+      let total = 0;
+
+      for (let i = 0; i < cpus1.length; i++) {
+        const cpu1 = cpus1[i].times;
+        const cpu2 = cpus2[i].times;
+
+        idle += cpu2.idle - cpu1.idle;
+
+        const total1 = Object.values(cpu1).reduce((acc, i) => acc + i, 0);
+        const total2 = Object.values(cpu2).reduce((acc, i) => acc + i, 0);
+
+        total += total2 - total1;
+      }
+
+      resolve(+(1 - idle / total).toFixed(2));
+    }, UPDATE_LOAD_INTERVAL);
+  });
+};
 
 /** Participant permissions to pass to every agent spun up by this worker. */
 export class WorkerPermissions {
@@ -100,7 +117,7 @@ export class WorkerPermissions {
 export class WorkerOptions {
   agent: string;
   requestFunc: (job: JobRequest) => Promise<void>;
-  loadFunc: () => number;
+  loadFunc: () => Promise<number>;
   loadThreshold: number;
   numIdleProcesses: number;
   shutdownProcessTimeout: number;
@@ -143,7 +160,7 @@ export class WorkerOptions {
     agent: string;
     requestFunc?: (job: JobRequest) => Promise<void>;
     /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
-    loadFunc?: () => number;
+    loadFunc?: () => Promise<number>;
     /** When the load exceeds this threshold, the worker will be marked as unavailable. */
     loadThreshold?: number;
     numIdleProcesses?: number;
@@ -470,32 +487,33 @@ export class Worker {
       if (closingWS) clearInterval(loadMonitor);
 
       const oldStatus = currentStatus;
-      const currentLoad = this.#opts.loadFunc();
-      const isFull = currentLoad >= this.#opts.loadThreshold;
-      const currentlyAvailable = !isFull;
-      currentStatus = currentlyAvailable ? WorkerStatus.WS_AVAILABLE : WorkerStatus.WS_FULL;
+      this.#opts.loadFunc().then((currentLoad: number) => {
+        const isFull = currentLoad >= this.#opts.loadThreshold;
+        const currentlyAvailable = !isFull;
+        currentStatus = currentlyAvailable ? WorkerStatus.WS_AVAILABLE : WorkerStatus.WS_FULL;
 
-      if (oldStatus != currentStatus) {
-        const extra = { load: currentLoad, loadThreshold: this.#opts.loadThreshold };
-        if (isFull) {
-          this.#logger.child(extra).info('worker is at full capacity, marking as unavailable');
-        } else {
-          this.#logger.child(extra).info('worker is below capacity, marking as available');
+        if (oldStatus != currentStatus) {
+          const extra = { load: currentLoad, loadThreshold: this.#opts.loadThreshold };
+          if (isFull) {
+            this.#logger.child(extra).info('worker is at full capacity, marking as unavailable');
+          } else {
+            this.#logger.child(extra).info('worker is below capacity, marking as available');
+          }
         }
-      }
 
-      this.event.emit(
-        'worker_msg',
-        new WorkerMessage({
-          message: {
-            case: 'updateWorker',
-            value: {
-              load: currentLoad,
-              status: currentStatus,
+        this.event.emit(
+          'worker_msg',
+          new WorkerMessage({
+            message: {
+              case: 'updateWorker',
+              value: {
+                load: currentLoad,
+                status: currentStatus,
+              },
             },
-          },
-        }),
-      );
+          }),
+        );
+      });
     }, UPDATE_LOAD_INTERVAL);
   }
 
