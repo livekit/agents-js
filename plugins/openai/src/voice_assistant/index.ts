@@ -81,6 +81,10 @@ export class VoiceAssistant {
   private pendingMessages: Map<string, string> = new Map();
   private logger = log();
 
+  private speechLeftMs: number | null = null;
+  private speechStarted: number = 0;
+  private speechTimeout: ReturnType<typeof setTimeout> | undefined = undefined;
+
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise(async (resolve, reject) => {
       if (this.ws !== null) {
@@ -207,7 +211,6 @@ export class VoiceAssistant {
         this.handleItemAdded(event);
         break;
       case proto.ServerEvent.TURN_FINISHED:
-        this.setState(proto.State.LISTENING);
         break;
       case proto.ServerEvent.VAD_SPEECH_STARTED:
         this.handleVadSpeechStarted(event);
@@ -233,6 +236,18 @@ export class VoiceAssistant {
           proto.NUM_CHANNELS,
           data.length / 2,
         );
+
+        if (this.speechLeftMs) {
+          clearTimeout(this.speechTimeout);
+          this.speechLeftMs -= Date.now() - this.speechStarted;
+          this.speechLeftMs += (serverFrame.data.length / proto.SAMPLE_RATE) * 1000;
+        } else {
+          this.speechLeftMs = (serverFrame.data.length / proto.SAMPLE_RATE) * 1000;
+        }
+        this.speechStarted = Date.now();
+        this.speechTimeout = setTimeout(() => {
+          this.setState(proto.State.LISTENING);
+        }, this.speechLeftMs);
 
         const bstream = new AudioByteStream(
           proto.SAMPLE_RATE,
@@ -268,6 +283,7 @@ export class VoiceAssistant {
   private handleAddItem(event: Record<string, unknown>): void {
     const itemId = event.id as string;
     if (itemId && event.type === 'message') {
+      this.speechLeftMs = 0;
       this.setState(proto.State.SPEAKING);
       this.pendingMessages.set(itemId, '');
     }
