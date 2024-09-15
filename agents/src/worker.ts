@@ -473,6 +473,7 @@ export class Worker {
               canPublish: this.#opts.permissions.canPublish,
               canSubscribe: this.#opts.permissions.canSubscribe,
               canPublishData: this.#opts.permissions.canPublishData,
+              canUpdateMetadata: this.#opts.permissions.canUpdateMetadata,
               hidden: this.#opts.permissions.hidden,
               agent: true,
             }),
