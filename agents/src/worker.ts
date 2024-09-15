@@ -349,11 +349,14 @@ export class Worker {
     );
 
     const joinJobs = async () => {
-      for (const proc of this.#procPool.processes) {
-        if (proc.runningJob) {
-          await proc.join();
-        }
-      }
+      return Promise.all(
+        this.#procPool.processes.map((proc) => {
+          if (!proc.runningJob) {
+            proc.close();
+          }
+          return proc.join();
+        }),
+      );
     };
 
     const timer = setTimeout(() => {
