@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "^0.7.0",
+    "@livekit/rtc-node": "^0.8.1",
     "ws": "^8.16.0"
   }
 }
