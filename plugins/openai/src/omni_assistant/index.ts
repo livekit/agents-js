@@ -430,7 +430,10 @@ export class OmniAssistant {
       this.logger.error(`Participant with identity ${participantIdentity} not found`);
       return;
     }
-    this.subscribeToMicrophone();
+
+    this.room.on(RoomEvent.TrackPublished, () => {
+      this.subscribeToMicrophone();
+    });
   }
 
   private subscribeToMicrophone(): void {
