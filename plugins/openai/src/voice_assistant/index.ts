@@ -84,10 +84,6 @@ export class VoiceAssistant {
   private playingHandle: PlayoutHandle | null = null;
   private logger = log();
 
-  private speechLeftMs: number | null = null;
-  private speechStarted: number = 0;
-  private speechTimeout: ReturnType<typeof setTimeout> | undefined = undefined;
-
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise(async (resolve, reject) => {
       if (this.ws !== null) {
@@ -194,10 +190,14 @@ export class VoiceAssistant {
   private setState(state: proto.State) {
     // don't override thinking until done
     if (this.thinking) return;
-    if (this.room?.isConnected) {
-      this.room.localParticipant!.setAttributes({
-        'voice_assistant.state': state,
-      });
+    if (this.room?.isConnected && this.room.localParticipant) {
+      const currentState = this.room.localParticipant.attributes['voice_assistant.state'];
+      if (currentState !== state) {
+        this.room.localParticipant!.setAttributes({
+          'voice_assistant.state': state,
+        });
+        this.logger.debug(`voice_assistant.state updated from ${currentState} to ${state}`);
+      }
     }
   }
 
@@ -275,31 +275,14 @@ export class VoiceAssistant {
         event.item_id as string,
       );
 
+      this.setState(proto.State.SPEAKING);
       this.playingHandle = this.agentPlayout.play(event.item_id as string, trFwd);
+      this.playingHandle.on('complete', () => {
+        this.setState(proto.State.LISTENING);
+      });
     }
     switch (event.type) {
       case 'audio':
-        const data = Buffer.from(event.data as string, 'base64');
-
-        const serverFrame = new AudioFrame(
-          new Int16Array(data.buffer),
-          proto.SAMPLE_RATE,
-          proto.NUM_CHANNELS,
-          data.length / 2,
-        );
-
-        if (this.speechLeftMs) {
-          clearTimeout(this.speechTimeout);
-          this.speechLeftMs -= Date.now() - this.speechStarted;
-          this.speechLeftMs += (serverFrame.data.length / proto.SAMPLE_RATE) * 1000;
-        } else {
-          this.speechLeftMs = (serverFrame.data.length / proto.SAMPLE_RATE) * 1000;
-        }
-        this.speechStarted = Date.now();
-        this.speechTimeout = setTimeout(() => {
-          this.setState(proto.State.LISTENING);
-        }, this.speechLeftMs);
-
         this.playingHandle?.pushAudio(Buffer.from(event.data as string, 'base64'));
         break;
       case 'text':
@@ -312,11 +295,6 @@ export class VoiceAssistant {
   }
 
   private handleAddItem(event: Record<string, unknown>): void {
-    const itemId = event.id as string;
-    if (itemId && event.type === 'message') {
-      this.speechLeftMs = 0;
-      this.setState(proto.State.SPEAKING);
-    }
     if (event.type === 'tool_call') {
       this.setState(proto.State.THINKING);
       this.thinking = true;

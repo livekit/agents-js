@@ -4,6 +4,7 @@
 import { AudioByteStream } from '@livekit/agents';
 import { Queue } from '@livekit/agents';
 import { AudioFrame, type AudioSource } from '@livekit/rtc-node';
+import { EventEmitter } from 'events';
 import * as proto from './proto.js';
 import type { TranscriptionForwarder } from './transcription_forwarder';
 
@@ -65,12 +66,12 @@ export class AgentPlayout {
         handle.transcriptionFwd.markTextComplete();
       }
       await handle.transcriptionFwd.close(handle.interrupted);
-      handle.done = true;
+      handle.complete();
     }
   }
 }
 
-export class PlayoutHandle {
+export class PlayoutHandle extends EventEmitter {
   messageId: string;
   transcriptionFwd: TranscriptionForwarder;
   playedAudioSamples: number;
@@ -79,6 +80,7 @@ export class PlayoutHandle {
   playoutQueue: Queue<AudioFrame | null>;
 
   constructor(messageId: string, transcriptionFwd: TranscriptionForwarder) {
+    super();
     this.messageId = messageId;
     this.transcriptionFwd = transcriptionFwd;
     this.playedAudioSamples = 0;
@@ -115,5 +117,11 @@ export class PlayoutHandle {
 
   publishedTextChars(): number {
     return this.transcriptionFwd.currentCharacterIndex;
+  }
+
+  complete() {
+    if (this.done) return;
+    this.done = true;
+    this.emit('complete', this.interrupted);
   }
 }
