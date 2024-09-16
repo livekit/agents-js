@@ -73,12 +73,17 @@ export class VoiceAssistant {
 
   private ws: WebSocket | null = null;
   private connected: boolean = false;
+  private thinking: boolean = false;
   private participant: RemoteParticipant | string | null = null;
   private agentPublication: LocalTrackPublication | null = null;
   private localTrackSid: string | null = null;
   private localSource: AudioSource | null = null;
   private pendingMessages: Map<string, string> = new Map();
   private logger = log();
+
+  private speechLeftMs: number | null = null;
+  private speechStarted: number = 0;
+  private speechTimeout: ReturnType<typeof setTimeout> | undefined = undefined;
 
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise(async (resolve, reject) => {
@@ -104,6 +109,7 @@ export class VoiceAssistant {
 
       this.room = room;
       this.participant = participant;
+      this.setState(proto.State.INITIALIZING);
 
       if (participant) {
         if (typeof participant === 'string') {
@@ -161,6 +167,16 @@ export class VoiceAssistant {
     });
   }
 
+  private setState(state: proto.State) {
+    // don't override thinking until done
+    if (this.thinking) return;
+    if (this.room?.isConnected) {
+      this.room.localParticipant!.setAttributes({
+        'voice_assistant.state': state,
+      });
+    }
+  }
+
   private sendClientCommand(command: proto.ClientEvent): void {
     if (!this.connected || !this.ws) {
       this.logger.error('WebSocket is not connected');
@@ -181,6 +197,7 @@ export class VoiceAssistant {
     this.logger.debug(`<- ${JSON.stringify({ ...event, ...truncatedDataPartial })}`);
     switch (event.event) {
       case proto.ServerEventType.START_SESSION:
+        this.setState(proto.State.LISTENING);
         break;
       case proto.ServerEventType.ADD_ITEM:
         this.handleAddItem(event);
@@ -219,6 +236,18 @@ export class VoiceAssistant {
           data.length / 2,
         );
 
+        if (this.speechLeftMs) {
+          clearTimeout(this.speechTimeout);
+          this.speechLeftMs -= Date.now() - this.speechStarted;
+          this.speechLeftMs += (serverFrame.data.length / proto.SAMPLE_RATE) * 1000;
+        } else {
+          this.speechLeftMs = (serverFrame.data.length / proto.SAMPLE_RATE) * 1000;
+        }
+        this.speechStarted = Date.now();
+        this.speechTimeout = setTimeout(() => {
+          this.setState(proto.State.LISTENING);
+        }, this.speechLeftMs);
+
         const bstream = new AudioByteStream(
           proto.SAMPLE_RATE,
           proto.NUM_CHANNELS,
@@ -254,7 +283,13 @@ export class VoiceAssistant {
     if (event.event !== proto.ServerEventType.ADD_ITEM) return;
     const itemId = event.id as string;
     if (itemId && event.type === 'message') {
+      this.speechLeftMs = 0;
+      this.setState(proto.State.SPEAKING);
       this.pendingMessages.set(itemId, '');
+    }
+    if (event.type === 'tool_call') {
+      this.setState(proto.State.THINKING);
+      this.thinking = true;
     }
   }
 
@@ -263,6 +298,7 @@ export class VoiceAssistant {
     switch (event.type) {
       case 'tool_call': {
         this.options.functions[event.name].execute(event.arguments).then((content) => {
+          this.thinking = false;
           this.sendClientCommand({
             event: proto.ClientEventType.ADD_ITEM,
             type: 'tool_response',

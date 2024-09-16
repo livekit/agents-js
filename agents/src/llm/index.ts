@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
-  CallableFunction,
+  type CallableFunction,
   type FunctionContext,
   type inferParameters,
   oaiParams,
