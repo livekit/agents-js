@@ -190,6 +190,7 @@ export class VoiceAssistant {
       });
     }
   }
+
   private setState(state: proto.State) {
     // don't override thinking until done
     if (this.thinking) return;
@@ -232,11 +233,13 @@ export class VoiceAssistant {
         this.setState(proto.State.LISTENING);
         break;
       case proto.ServerEvent.ADD_ITEM:
+        this.handleAddItem(event);
         break;
       case proto.ServerEvent.ADD_CONTENT:
         this.handleAddContent(event);
         break;
       case proto.ServerEvent.ITEM_ADDED:
+        this.handleItemAdded(event);
         break;
       case proto.ServerEvent.TURN_FINISHED:
         this.handleTurnFinished(event);
