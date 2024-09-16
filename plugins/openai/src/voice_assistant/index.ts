@@ -201,6 +201,8 @@ export class VoiceAssistant {
     }
   }
 
+  /// Truncates the data field of the event to the specified maxLength to avoid overwhelming logs
+  /// with large amounts of base64 audio data.
   private loggableEvent(
     event: proto.ClientEvent | proto.ServerEvent,
     maxLength: number = 30,
@@ -212,7 +214,6 @@ export class VoiceAssistant {
       }
     }
 
-    // Apply truncation to the converted event
     if (untypedEvent.data && typeof untypedEvent.data === 'string') {
       const truncatedData =
         untypedEvent.data.slice(0, maxLength) + (untypedEvent.data.length > maxLength ? '…' : '');
