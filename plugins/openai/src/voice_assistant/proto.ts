@@ -118,20 +118,32 @@ export type ClientEvent =
       event: ClientEventType.ADD_ITEM;
       // id, previous_id, conversation_label are unused by us
     } & (
-      | {
+      | ({
           type: 'message';
-          role: 'user' | 'assistant' | 'system';
-          content: [
-            | {
-                type: 'text';
-                text: string;
-              }
-            | {
-                type: 'audio';
-                audio: string; // base64 encoded buffer
-              },
-          ];
-        }
+        } & (
+          | {
+              role: 'user' | 'assistant' | 'system';
+              content: [
+                | {
+                    type: 'text';
+                    text: string;
+                  }
+                | {
+                    type: 'audio';
+                    audio: string; // base64 encoded buffer
+                  },
+              ];
+            }
+          | {
+              role: 'assistant' | 'system';
+              content: [
+                {
+                  type: 'text';
+                  text: string;
+                },
+              ];
+            }
+        ))
       | {
           type: 'tool_response';
           tool_call_id: string;
