@@ -14,7 +14,7 @@ export default defineAgent({
     const assistant = new VoiceAssistant({
       inferenceConfig: {
         ...defaultInferenceConfig,
-        system_message: 'You talk unprompted.',
+        system_message: 'You are a helpful assistant.',
       },
       functions: {
         weather: {
@@ -32,7 +32,10 @@ export default defineAgent({
         },
       },
     });
-    assistant.start(ctx.room);
+
+    await assistant.start(ctx.room);
+
+    assistant.addUserMessage('Hello! Can you share a very short story?');
   },
 });
 

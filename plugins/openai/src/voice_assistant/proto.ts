@@ -88,6 +88,10 @@ export type ServerEvent =
       event: ServerEventType.INPUT_TRANSCRIBED;
       item_id: string;
       transcript: string;
+    }
+  | {
+      event: ServerEventType.MODEL_LISTENING;
+      item_id: string;
     };
 
 export enum ClientEventType {
@@ -116,21 +120,28 @@ export type ClientEvent =
     } & (
       | ({
           type: 'message';
-          role: 'user' | 'assistant' | 'system';
         } & (
           | {
-              role: 'assistant' | 'system' | 'user';
-              content: {
-                type: 'text';
-                text: string;
-              };
+              role: 'user' | 'assistant' | 'system';
+              content: [
+                | {
+                    type: 'text';
+                    text: string;
+                  }
+                | {
+                    type: 'audio';
+                    audio: string; // base64 encoded buffer
+                  },
+              ];
             }
           | {
-              role: 'user';
-              content: {
-                type: 'audio';
-                audio: 'string'; // base64 encoded buffer
-              };
+              role: 'assistant' | 'system';
+              content: [
+                {
+                  type: 'text';
+                  text: string;
+                },
+              ];
             }
         ))
       | {

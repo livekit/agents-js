@@ -12,7 +12,6 @@ import type {
   Room,
 } from '@livekit/rtc-node';
 import {
-  AudioFrame,
   AudioSource,
   AudioStream,
   AudioStreamEvent,
@@ -22,7 +21,9 @@ import {
   TrackSource,
 } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
+import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 import * as proto from './proto.js';
+import { BasicTranscriptionForwarder } from './transcription_forwarder.js';
 
 export const defaultInferenceConfig: proto.InferenceConfig = {
   system_message: 'You are a helpful assistant.',
@@ -78,12 +79,9 @@ export class VoiceAssistant {
   private agentPublication: LocalTrackPublication | null = null;
   private localTrackSid: string | null = null;
   private localSource: AudioSource | null = null;
-  private pendingMessages: Map<string, string> = new Map();
+  private agentPlayout: AgentPlayout | null = null;
+  private playingHandle: PlayoutHandle | null = null;
   private logger = log();
-
-  private speechLeftMs: number | null = null;
-  private speechStarted: number = 0;
-  private speechTimeout: ReturnType<typeof setTimeout> | undefined = undefined;
 
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise(async (resolve, reject) => {
@@ -126,6 +124,7 @@ export class VoiceAssistant {
       }
 
       this.localSource = new AudioSource(proto.SAMPLE_RATE, proto.NUM_CHANNELS);
+      this.agentPlayout = new AgentPlayout(this.localSource);
       const track = LocalAudioTrack.createAudioTrack('assistant_voice', this.localSource);
       const options = new TrackPublishOptions();
       options.source = TrackSource.SOURCE_MICROPHONE;
@@ -150,6 +149,7 @@ export class VoiceAssistant {
           event: proto.ClientEventType.SET_INFERENCE_CONFIG,
           ...this.options.inferenceConfig,
         });
+        resolve();
       };
 
       this.ws.onerror = (error) => {
@@ -167,14 +167,58 @@ export class VoiceAssistant {
     });
   }
 
+  addUserMessage(text: string, generate: boolean = true): void {
+    this.sendClientCommand({
+      event: proto.ClientEventType.ADD_ITEM,
+      type: 'message',
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: text,
+        },
+      ],
+    });
+    if (generate) {
+      this.sendClientCommand({
+        event: proto.ClientEventType.GENERATE,
+      });
+    }
+  }
+
   private setState(state: proto.State) {
     // don't override thinking until done
     if (this.thinking) return;
-    if (this.room?.isConnected) {
-      this.room.localParticipant!.setAttributes({
-        'voice_assistant.state': state,
-      });
+    if (this.room?.isConnected && this.room.localParticipant) {
+      const currentState = this.room.localParticipant.attributes['voice_assistant.state'];
+      if (currentState !== state) {
+        this.room.localParticipant!.setAttributes({
+          'voice_assistant.state': state,
+        });
+        this.logger.debug(`voice_assistant.state updated from ${currentState} to ${state}`);
+      }
     }
+  }
+
+  /// Truncates the data field of the event to the specified maxLength to avoid overwhelming logs
+  /// with large amounts of base64 audio data.
+  private loggableEvent(
+    event: proto.ClientEvent | proto.ServerEvent,
+    maxLength: number = 30,
+  ): Record<string, unknown> {
+    const untypedEvent: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(event)) {
+      if (value !== undefined) {
+        untypedEvent[key] = value;
+      }
+    }
+
+    if (untypedEvent.data && typeof untypedEvent.data === 'string') {
+      const truncatedData =
+        untypedEvent.data.slice(0, maxLength) + (untypedEvent.data.length > maxLength ? '…' : '');
+      return { ...untypedEvent, data: truncatedData };
+    }
+    return untypedEvent;
   }
 
   private sendClientCommand(command: proto.ClientEvent): void {
@@ -184,17 +228,14 @@ export class VoiceAssistant {
     }
 
     if (command.event !== proto.ClientEventType.ADD_USER_AUDIO) {
-      this.logger.debug(`-> ${JSON.stringify({ ...command })}`);
+      this.logger.debug(`-> ${JSON.stringify(this.loggableEvent(command))}`);
     }
     this.ws.send(JSON.stringify(command));
   }
 
   private handleServerEvent(event: proto.ServerEvent): void {
-    const truncatedDataPartial =
-      event.event === proto.ServerEventType.ADD_CONTENT
-        ? { data: event.data.slice(0, 30) + '…' }
-        : {};
-    this.logger.debug(`<- ${JSON.stringify({ ...event, ...truncatedDataPartial })}`);
+    this.logger.debug(`<- ${JSON.stringify(this.loggableEvent(event))}`);
+
     switch (event.event) {
       case proto.ServerEventType.START_SESSION:
         this.setState(proto.State.LISTENING);
@@ -209,6 +250,7 @@ export class VoiceAssistant {
         this.handleItemAdded(event);
         break;
       case proto.ServerEventType.TURN_FINISHED:
+        this.handleTurnFinished(event);
         break;
       case proto.ServerEventType.VAD_SPEECH_STARTED:
         this.handleVadSpeechStarted(event);
@@ -218,6 +260,9 @@ export class VoiceAssistant {
       case proto.ServerEventType.INPUT_TRANSCRIBED:
         this.handleInputTranscribed(event);
         break;
+      case proto.ServerEventType.MODEL_LISTENING:
+        this.handleModelListening();
+        break;
       default:
         this.logger.warn(`Unknown server event: ${JSON.stringify(event)}`);
     }
@@ -225,68 +270,42 @@ export class VoiceAssistant {
 
   private handleAddContent(event: proto.ServerEvent): void {
     if (event.event !== proto.ServerEventType.ADD_CONTENT) return;
+
+    const trackSid = this.getLocalTrackSid();
+    if (!this.room || !this.room.localParticipant || !trackSid || !this.agentPlayout) {
+      log().error('Room or local participant not set');
+      return;
+    }
+
+    if (!this.playingHandle || this.playingHandle.done) {
+      const trFwd = new BasicTranscriptionForwarder(
+        this.room as Room,
+        this.room?.localParticipant?.identity,
+        trackSid,
+        event.item_id,
+      );
+
+      this.setState(proto.State.SPEAKING);
+      this.playingHandle = this.agentPlayout.play(event.item_id as string, trFwd);
+      this.playingHandle.on('complete', () => {
+        this.setState(proto.State.LISTENING);
+      });
+    }
     switch (event.type) {
       case 'audio':
-        const data = Buffer.from(event.data as string, 'base64');
-
-        const serverFrame = new AudioFrame(
-          new Int16Array(data.buffer),
-          proto.SAMPLE_RATE,
-          proto.NUM_CHANNELS,
-          data.length / 2,
-        );
-
-        if (this.speechLeftMs) {
-          clearTimeout(this.speechTimeout);
-          this.speechLeftMs -= Date.now() - this.speechStarted;
-          this.speechLeftMs += (serverFrame.data.length / proto.SAMPLE_RATE) * 1000;
-        } else {
-          this.speechLeftMs = (serverFrame.data.length / proto.SAMPLE_RATE) * 1000;
-        }
-        this.speechStarted = Date.now();
-        this.speechTimeout = setTimeout(() => {
-          this.setState(proto.State.LISTENING);
-        }, this.speechLeftMs);
-
-        const bstream = new AudioByteStream(
-          proto.SAMPLE_RATE,
-          proto.NUM_CHANNELS,
-          proto.OUTPUT_PCM_FRAME_SIZE,
-        );
-
-        for (const frame of bstream.write(serverFrame.data.buffer)) {
-          this.localSource?.captureFrame(frame);
-        }
+        this.playingHandle?.pushAudio(Buffer.from(event.data as string, 'base64'));
         break;
       case 'text':
-        const itemId = event.item_id as string;
-        if (itemId && this.pendingMessages.has(itemId)) {
-          const existingText = this.pendingMessages.get(itemId) || '';
-          const newText = existingText + (event.data as string);
-          this.pendingMessages.set(itemId, newText);
-
-          const participantIdentity = this.room?.localParticipant?.identity;
-          const trackSid = this.getLocalTrackSid();
-          if (participantIdentity && trackSid) {
-            this.publishTranscription(participantIdentity, trackSid, newText, false, itemId);
-          } else {
-            this.logger.error('Participant or track not set');
-          }
-        }
+        this.playingHandle?.pushText(event.data as string);
         break;
       default:
+        this.logger.warn(`Unknown content event type: ${event.type}`);
         break;
     }
   }
 
   private handleAddItem(event: proto.ServerEvent): void {
     if (event.event !== proto.ServerEventType.ADD_ITEM) return;
-    const itemId = event.id as string;
-    if (itemId && event.type === 'message') {
-      this.speechLeftMs = 0;
-      this.setState(proto.State.SPEAKING);
-      this.pendingMessages.set(itemId, '');
-    }
     if (event.type === 'tool_call') {
       this.setState(proto.State.THINKING);
       this.thinking = true;
@@ -312,19 +331,6 @@ export class VoiceAssistant {
         break;
       }
       case 'message': {
-        const itemId = event.id as string;
-        if (itemId && this.pendingMessages.has(itemId)) {
-          const text = this.pendingMessages.get(itemId) || '';
-          this.pendingMessages.delete(itemId);
-
-          const participantIdentity = this.room?.localParticipant?.identity;
-          const trackSid = this.getLocalTrackSid();
-          if (participantIdentity && trackSid) {
-            this.publishTranscription(participantIdentity, trackSid, text, true, itemId);
-          } else {
-            this.logger.error('Participant or track not set');
-          }
-        }
         break;
       }
     }
@@ -334,7 +340,7 @@ export class VoiceAssistant {
     if (event.event !== proto.ServerEventType.INPUT_TRANSCRIBED) return;
     const itemId = event.item_id as string;
     const transcription = event.transcript as string;
-    if (!itemId || !transcription) {
+    if (!itemId || transcription === undefined) {
       this.logger.error('Item ID or transcription not set');
       return;
     }
@@ -347,15 +353,38 @@ export class VoiceAssistant {
     }
   }
 
+  private handleModelListening(): void {
+    if (this.playingHandle && !this.playingHandle.done) {
+      this.playingHandle.interrupt();
+      this.sendClientCommand({
+        event: proto.ClientEventType.TRUNCATE_CONTENT,
+        message_id: this.playingHandle.messageId,
+        index: 0, // ignored for now (see OAI docs)
+        text_chars: this.playingHandle.publishedTextChars(),
+        audio_samples: this.playingHandle.playedAudioSamples,
+      });
+    }
+  }
+
   private handleVadSpeechStarted(event: proto.ServerEvent): void {
     if (event.event !== proto.ServerEventType.VAD_SPEECH_STARTED) return;
-    const itemId = event.item_id as string;
+    const itemId = event.item_id;
     const participantIdentity = this.linkedParticipant?.identity;
     const trackSid = this.subscribedTrack?.sid;
     if (participantIdentity && trackSid && itemId) {
       this.publishTranscription(participantIdentity, trackSid, '', false, itemId);
     } else {
       this.logger.error('Participant or track or itemId not set');
+    }
+  }
+
+  private handleTurnFinished(event: Record<string, unknown>): void {
+    if (event.reason !== 'interrupt' && event.reason !== 'stop') {
+      log().warn(`assistant turn finished unexpectedly reason ${event.reason}`);
+    }
+
+    if (this.playingHandle && !this.playingHandle.interrupted) {
+      this.playingHandle.endInput();
     }
   }
 
