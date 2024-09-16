@@ -16,7 +16,7 @@ importers:
         version: 0.0.4
       '@rushstack/heft':
         specifier: ^0.66.0
-        version: 0.66.9(@types/node@20.12.7)
+        version: 0.66.9(@types/node@22.5.5)
       '@trivago/prettier-plugin-sort-imports':
         specifier: ^4.3.0
         version: 4.3.0(prettier@3.2.5)
@@ -73,7 +73,7 @@ importers:
         version: 5.4.5
       vitest:
         specifier: ^1.6.0
-        version: 1.6.0(@types/node@20.12.7)
+        version: 1.6.0(@types/node@22.5.5)
 
   agents:
     dependencies:
@@ -98,10 +98,16 @@ importers:
       ws:
         specifier: ^8.16.0
         version: 8.17.0
+      zod:
+        specifier: ^3.23.8
+        version: 3.23.8
     devDependencies:
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@20.12.7)
+        version: 7.43.7(@types/node@22.5.5)
+      '@types/node':
+        specifier: ^22.5.5
+        version: 22.5.5
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
@@ -123,6 +129,9 @@ importers:
       '@livekit/rtc-node':
         specifier: ^0.8.1
         version: 0.8.1
+      zod:
+        specifier: ^3.23.8
+        version: 3.23.8
     devDependencies:
       typescript:
         specifier: ^5.0.0
@@ -134,15 +143,15 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.7.0
-        version: 0.7.0
+        specifier: ^0.8.1
+        version: 0.8.1
       ws:
         specifier: ^8.16.0
         version: 8.17.0
     devDependencies:
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@20.12.7)
+        version: 7.43.7(@types/node@22.5.5)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
@@ -164,7 +173,7 @@ importers:
     devDependencies:
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@20.12.7)
+        version: 7.43.7(@types/node@22.5.5)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
@@ -499,22 +508,10 @@ packages:
   '@livekit/protocol@1.21.0':
     resolution: {integrity: sha512-3TohFPNZy1axTuoDLU6mA1rwuP4VawgehvX52OoLJnU+fNQYfmMJqz8k7NSh79jG5I8Og77YYhT905Omrhli2A==}
 
-  '@livekit/rtc-node-darwin-arm64@0.7.0':
-    resolution: {integrity: sha512-74R3POrGWZxRiHHCUhboI/mGCctzDjNS9uucbr+GgfFLAviAXs0ltC19Y08lWiFx1YBMF/mV2pLNF/fj+/Opaw==}
-    engines: {node: '>= 10'}
-    cpu: [arm64]
-    os: [darwin]
-
   '@livekit/rtc-node-darwin-arm64@0.8.1':
     resolution: {integrity: sha512-8gbNHmtmBV2h3HFfva50lxTPDZAA+8M4hztOP5PBftZqeTkovApsVbTZUGoVNRV2bkNlnndNUJHF4OaiZPEmHw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
-    os: [darwin]
-
-  '@livekit/rtc-node-darwin-x64@0.7.0':
-    resolution: {integrity: sha512-tj3TymM4aBCWaaJHasQXKJZvIjYmTQ34hg1vBlY+fBrx9F10JBAhYZeWpx/tf37p41R6wSnnDrWXW9RnQJivbA==}
-    engines: {node: '>= 10'}
-    cpu: [x64]
     os: [darwin]
 
   '@livekit/rtc-node-darwin-x64@0.8.1':
@@ -523,22 +520,10 @@ packages:
     cpu: [x64]
     os: [darwin]
 
-  '@livekit/rtc-node-linux-arm64-gnu@0.7.0':
-    resolution: {integrity: sha512-PAuaWujIY623lTfVbRFd+tPPOZfzIIseVJDs1IOivUM00uGqlC1SHbbrONp5vR+gSez1TDLyN8MyVy2FopuZRA==}
-    engines: {node: '>= 10'}
-    cpu: [arm64]
-    os: [linux]
-
   '@livekit/rtc-node-linux-arm64-gnu@0.8.1':
     resolution: {integrity: sha512-QWgtfsX/uxi4bb9dJVQe3mT6trLRIzRtVOeYlxJll7xNxPvepFqmz8Y695ZxpDNvAkhiwYAemVfd+JJOIqav/A==}
     engines: {node: '>= 10'}
     cpu: [arm64]
-    os: [linux]
-
-  '@livekit/rtc-node-linux-x64-gnu@0.7.0':
-    resolution: {integrity: sha512-056F2dUJJvzR/s5hPCcSe4pUTx0OX3WPg1qHkB575fjSSY05TcKNeNwVWRMs76EBkwiodKtmccLYLKFJ6rQ7Dw==}
-    engines: {node: '>= 10'}
-    cpu: [x64]
     os: [linux]
 
   '@livekit/rtc-node-linux-x64-gnu@0.8.1':
@@ -547,21 +532,11 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@livekit/rtc-node-win32-x64-msvc@0.7.0':
-    resolution: {integrity: sha512-vUP/LUTnxHyg3z2Qgc1+YnfuAa+VLqCouWMkgoew5SBSu1+npCn93Q06SSU2Dov3/uw9i5XjHOq9XJjffVWgIQ==}
-    engines: {node: '>= 10'}
-    cpu: [x64]
-    os: [win32]
-
   '@livekit/rtc-node-win32-x64-msvc@0.8.1':
     resolution: {integrity: sha512-1sV4/OY7MdlTrZx2y0HIg57c4lGhMURVqxIWYu8LLDnk8DDPcxWVUMCDbUTYzhOcyxZbQaa5vWiv6s+95xM3yA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
-
-  '@livekit/rtc-node@0.7.0':
-    resolution: {integrity: sha512-ITRv6CCfjGC/K7aI3AZnNBD3eQnHPguL0q8SmH52quebwNn1BYW+IZAzoIa4VCNnOlrfCdrGT1DCmZQz61nn0w==}
-    engines: {node: '>= 18'}
 
   '@livekit/rtc-node@0.8.1':
     resolution: {integrity: sha512-gY2EkDsQ3IFamq2uOVQuteK0GJi4/rlcXO2/XGAnbPPeaIEpv65gbE4nZw/EvU2NCT0dnlyYLoTKLrqcGBq12g==}
@@ -761,8 +736,8 @@ packages:
   '@types/node@12.20.55':
     resolution: {integrity: sha512-J8xLz7q2OFulZ2cyGTLE1TbbZcjpno7FaN6zdJNrgAdrJ+DZzh/uFR6YrTb4C+nXakvud8Q4+rbhoIWlYQbUFQ==}
 
-  '@types/node@20.12.7':
-    resolution: {integrity: sha512-wq0cICSkRLVaf3UGLMGItu/PtdY7oaXaI/RVU+xliKVOtRna3PRY57ZDfztpDL0n11vfymMUnXv8QwYCO7L1wg==}
+  '@types/node@22.5.5':
+    resolution: {integrity: sha512-Xjs4y5UPO/CLdzpgR6GirZJx36yScjh73+2NlLlkFRSoQN8B0DpfXPdZGnvVmLRLOsqDpOfTNv7D9trgGhmOIA==}
 
   '@types/normalize-package-data@2.4.4':
     resolution: {integrity: sha512-37i+OaWTh9qeK4LSHPsyRC7NahnGotNuZvjLSgcPzblpHB3rrCJxAOgI5gCdKm7coonsaX1Of0ILiTcnZjbfxA==}
@@ -2827,8 +2802,8 @@ packages:
   unbox-primitive@1.0.2:
     resolution: {integrity: sha512-61pPlCD9h51VoreyJ0BReideM3MDKMKnh6+V9L08331ipq6Q8OFXZYiqP6n/tbHx4s5I9uRhcye6BrbkizkBDw==}
 
-  undici-types@5.26.5:
-    resolution: {integrity: sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA==}
+  undici-types@6.19.8:
+    resolution: {integrity: sha512-ve2KP6f/JnbPBFyobGHuerC9g1FYGn/F8n1LWTwNxCEzd6IfqTwUQcNXgEtmmQ6DlRrC1hrSrBnCZPokRrDHjw==}
 
   universalify@0.1.2:
     resolution: {integrity: sha512-rBJeI5CXAlmy1pV+617WB9J63U6XcazHHF2f2dbJix4XzpUF0RS3Zbj0FGIOCAva5P/d/GBOYaACQ1w+0azUkg==}
@@ -3029,6 +3004,9 @@ packages:
     resolution: {integrity: sha512-D7eujBWkLa3p2sIpJA0d1pr7es+a7m0vFAnZLlCEKq/Ij2k0MLi9Br2UPxoxdYystm5K1yeBGzub0FlYUEWj2Q==}
     engines: {node: '>=8.0.0'}
     hasBin: true
+
+  zod@3.23.8:
+    resolution: {integrity: sha512-XBx9AXhXktjUqnepgTiE5flcKIYWi/rme0Eaj+5Y0lftuGBq+jyRu/md4WnuxqgP1ubdpNCsYEYPxrzVHD8d6g==}
 
 snapshots:
 
@@ -3421,46 +3399,20 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 1.9.0
 
-  '@livekit/rtc-node-darwin-arm64@0.7.0':
-    optional: true
-
   '@livekit/rtc-node-darwin-arm64@0.8.1':
-    optional: true
-
-  '@livekit/rtc-node-darwin-x64@0.7.0':
     optional: true
 
   '@livekit/rtc-node-darwin-x64@0.8.1':
     optional: true
 
-  '@livekit/rtc-node-linux-arm64-gnu@0.7.0':
-    optional: true
-
   '@livekit/rtc-node-linux-arm64-gnu@0.8.1':
-    optional: true
-
-  '@livekit/rtc-node-linux-x64-gnu@0.7.0':
     optional: true
 
   '@livekit/rtc-node-linux-x64-gnu@0.8.1':
     optional: true
 
-  '@livekit/rtc-node-win32-x64-msvc@0.7.0':
-    optional: true
-
   '@livekit/rtc-node-win32-x64-msvc@0.8.1':
     optional: true
-
-  '@livekit/rtc-node@0.7.0':
-    dependencies:
-      '@bufbuild/protobuf': 1.9.0
-      typed-emitter: 2.1.0
-    optionalDependencies:
-      '@livekit/rtc-node-darwin-arm64': 0.7.0
-      '@livekit/rtc-node-darwin-x64': 0.7.0
-      '@livekit/rtc-node-linux-arm64-gnu': 0.7.0
-      '@livekit/rtc-node-linux-x64-gnu': 0.7.0
-      '@livekit/rtc-node-win32-x64-msvc': 0.7.0
 
   '@livekit/rtc-node@0.8.1':
     dependencies:
@@ -3489,23 +3441,23 @@ snapshots:
       globby: 11.1.0
       read-yaml-file: 1.1.0
 
-  '@microsoft/api-extractor-model@7.28.17(@types/node@20.12.7)':
+  '@microsoft/api-extractor-model@7.28.17(@types/node@22.5.5)':
     dependencies:
       '@microsoft/tsdoc': 0.14.2
       '@microsoft/tsdoc-config': 0.16.2
-      '@rushstack/node-core-library': 4.3.0(@types/node@20.12.7)
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.5.5)
     transitivePeerDependencies:
       - '@types/node'
 
-  '@microsoft/api-extractor@7.43.7(@types/node@20.12.7)':
+  '@microsoft/api-extractor@7.43.7(@types/node@22.5.5)':
     dependencies:
-      '@microsoft/api-extractor-model': 7.28.17(@types/node@20.12.7)
+      '@microsoft/api-extractor-model': 7.28.17(@types/node@22.5.5)
       '@microsoft/tsdoc': 0.14.2
       '@microsoft/tsdoc-config': 0.16.2
-      '@rushstack/node-core-library': 4.3.0(@types/node@20.12.7)
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.5.5)
       '@rushstack/rig-package': 0.5.2
-      '@rushstack/terminal': 0.11.0(@types/node@20.12.7)
-      '@rushstack/ts-command-line': 4.21.0(@types/node@20.12.7)
+      '@rushstack/terminal': 0.11.0(@types/node@22.5.5)
+      '@rushstack/ts-command-line': 4.21.0(@types/node@22.5.5)
       lodash: 4.17.21
       minimatch: 3.0.8
       resolve: 1.22.8
@@ -3595,23 +3547,23 @@ snapshots:
 
   '@rushstack/eslint-patch@1.10.3': {}
 
-  '@rushstack/heft-config-file@0.14.19(@types/node@20.12.7)':
+  '@rushstack/heft-config-file@0.14.19(@types/node@22.5.5)':
     dependencies:
-      '@rushstack/node-core-library': 4.3.0(@types/node@20.12.7)
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.5.5)
       '@rushstack/rig-package': 0.5.2
-      '@rushstack/terminal': 0.11.0(@types/node@20.12.7)
+      '@rushstack/terminal': 0.11.0(@types/node@22.5.5)
       jsonpath-plus: 4.0.0
     transitivePeerDependencies:
       - '@types/node'
 
-  '@rushstack/heft@0.66.9(@types/node@20.12.7)':
+  '@rushstack/heft@0.66.9(@types/node@22.5.5)':
     dependencies:
-      '@rushstack/heft-config-file': 0.14.19(@types/node@20.12.7)
-      '@rushstack/node-core-library': 4.3.0(@types/node@20.12.7)
-      '@rushstack/operation-graph': 0.2.19(@types/node@20.12.7)
+      '@rushstack/heft-config-file': 0.14.19(@types/node@22.5.5)
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.5.5)
+      '@rushstack/operation-graph': 0.2.19(@types/node@22.5.5)
       '@rushstack/rig-package': 0.5.2
-      '@rushstack/terminal': 0.11.0(@types/node@20.12.7)
-      '@rushstack/ts-command-line': 4.21.0(@types/node@20.12.7)
+      '@rushstack/terminal': 0.11.0(@types/node@22.5.5)
+      '@rushstack/ts-command-line': 4.21.0(@types/node@22.5.5)
       '@types/tapable': 1.0.6
       fast-glob: 3.3.2
       git-repo-info: 2.1.1
@@ -3622,7 +3574,7 @@ snapshots:
     transitivePeerDependencies:
       - '@types/node'
 
-  '@rushstack/node-core-library@4.3.0(@types/node@20.12.7)':
+  '@rushstack/node-core-library@4.3.0(@types/node@22.5.5)':
     dependencies:
       fs-extra: 7.0.1
       import-lazy: 4.0.0
@@ -3631,30 +3583,30 @@ snapshots:
       semver: 7.5.4
       z-schema: 5.0.5
     optionalDependencies:
-      '@types/node': 20.12.7
+      '@types/node': 22.5.5
 
-  '@rushstack/operation-graph@0.2.19(@types/node@20.12.7)':
+  '@rushstack/operation-graph@0.2.19(@types/node@22.5.5)':
     dependencies:
-      '@rushstack/node-core-library': 4.3.0(@types/node@20.12.7)
-      '@rushstack/terminal': 0.11.0(@types/node@20.12.7)
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.5.5)
+      '@rushstack/terminal': 0.11.0(@types/node@22.5.5)
     optionalDependencies:
-      '@types/node': 20.12.7
+      '@types/node': 22.5.5
 
   '@rushstack/rig-package@0.5.2':
     dependencies:
       resolve: 1.22.8
       strip-json-comments: 3.1.1
 
-  '@rushstack/terminal@0.11.0(@types/node@20.12.7)':
+  '@rushstack/terminal@0.11.0(@types/node@22.5.5)':
     dependencies:
-      '@rushstack/node-core-library': 4.3.0(@types/node@20.12.7)
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.5.5)
       supports-color: 8.1.1
     optionalDependencies:
-      '@types/node': 20.12.7
+      '@types/node': 22.5.5
 
-  '@rushstack/ts-command-line@4.21.0(@types/node@20.12.7)':
+  '@rushstack/ts-command-line@4.21.0(@types/node@22.5.5)':
     dependencies:
-      '@rushstack/terminal': 0.11.0(@types/node@20.12.7)
+      '@rushstack/terminal': 0.11.0(@types/node@22.5.5)
       '@types/argparse': 1.0.38
       argparse: 1.0.10
       string-argv: 0.3.2
@@ -3687,9 +3639,9 @@ snapshots:
 
   '@types/node@12.20.55': {}
 
-  '@types/node@20.12.7':
+  '@types/node@22.5.5':
     dependencies:
-      undici-types: 5.26.5
+      undici-types: 6.19.8
 
   '@types/normalize-package-data@2.4.4': {}
 
@@ -3699,7 +3651,7 @@ snapshots:
 
   '@types/ws@8.5.10':
     dependencies:
-      '@types/node': 20.12.7
+      '@types/node': 22.5.5
 
   '@typescript-eslint/eslint-plugin@6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint@8.57.0)(typescript@5.4.5)':
     dependencies:
@@ -5981,7 +5933,7 @@ snapshots:
       has-symbols: 1.0.3
       which-boxed-primitive: 1.0.2
 
-  undici-types@5.26.5: {}
+  undici-types@6.19.8: {}
 
   universalify@0.1.2: {}
 
@@ -5996,13 +5948,13 @@ snapshots:
 
   validator@13.12.0: {}
 
-  vite-node@1.6.0(@types/node@20.12.7):
+  vite-node@1.6.0(@types/node@22.5.5):
     dependencies:
       cac: 6.7.14
       debug: 4.3.4
       pathe: 1.1.2
       picocolors: 1.0.1
-      vite: 5.2.11(@types/node@20.12.7)
+      vite: 5.2.11(@types/node@22.5.5)
     transitivePeerDependencies:
       - '@types/node'
       - less
@@ -6013,16 +5965,16 @@ snapshots:
       - supports-color
       - terser
 
-  vite@5.2.11(@types/node@20.12.7):
+  vite@5.2.11(@types/node@22.5.5):
     dependencies:
       esbuild: 0.20.2
       postcss: 8.4.38
       rollup: 4.17.2
     optionalDependencies:
-      '@types/node': 20.12.7
+      '@types/node': 22.5.5
       fsevents: 2.3.3
 
-  vitest@1.6.0(@types/node@20.12.7):
+  vitest@1.6.0(@types/node@22.5.5):
     dependencies:
       '@vitest/expect': 1.6.0
       '@vitest/runner': 1.6.0
@@ -6041,11 +5993,11 @@ snapshots:
       strip-literal: 2.1.0
       tinybench: 2.8.0
       tinypool: 0.8.4
-      vite: 5.2.11(@types/node@20.12.7)
-      vite-node: 1.6.0(@types/node@20.12.7)
+      vite: 5.2.11(@types/node@22.5.5)
+      vite-node: 1.6.0(@types/node@22.5.5)
       why-is-node-running: 2.2.2
     optionalDependencies:
-      '@types/node': 20.12.7
+      '@types/node': 22.5.5
     transitivePeerDependencies:
       - less
       - lightningcss
@@ -6207,3 +6159,5 @@ snapshots:
       validator: 13.12.0
     optionalDependencies:
       commander: 9.5.0
+
+  zod@3.23.8: {}

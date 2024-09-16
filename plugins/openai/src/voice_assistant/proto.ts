@@ -47,6 +47,29 @@ export enum ClientEvent {
   TRUNCATE_CONTENT = 'truncate_content',
 }
 
+export enum ToolChoice {
+  AUTO = 'auto',
+  NONE = 'none',
+  REQUIRED = 'required',
+}
+
+export interface Tool {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: 'object';
+      properties: {
+        [prop: string]: {
+          [prop: string]: any;
+        };
+      };
+      required_properties: string[];
+    };
+  };
+}
+
 export const API_URL = 'wss://api.openai.com/v1/realtime';
 export const SAMPLE_RATE = 24000;
 export const NUM_CHANNELS = 1;
@@ -63,5 +86,13 @@ export type InferenceConfig = {
   turn_end_type: TurnEndType;
   transcribe_input: boolean;
   audio_format: AudioFormat;
-  // TODO: tools and tool_choice
+  tools: Tool[];
+  tool_choice: ToolChoice;
 };
+
+export enum State {
+  INITIALIZING = 'initializing',
+  LISTENING = 'listening',
+  THINKING = 'thinking',
+  SPEAKING = 'speaking',
+}

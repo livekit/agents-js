@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioByteStream } from '@livekit/agents';
 import { findMicroTrackId } from '@livekit/agents';
-import { log } from '@livekit/agents';
+import { llm, log } from '@livekit/agents';
 import type {
   AudioFrameEvent,
   LocalTrackPublication,
@@ -12,6 +12,7 @@ import type {
   Room,
 } from '@livekit/rtc-node';
 import {
+  AudioFrame,
   AudioSource,
   AudioStream,
   AudioStreamEvent,
@@ -34,11 +35,14 @@ export const defaultInferenceConfig: proto.InferenceConfig = {
   turn_end_type: proto.TurnEndType.SERVER_DETECTION,
   transcribe_input: true,
   audio_format: proto.AudioFormat.PCM16,
+  tools: [],
+  tool_choice: proto.ToolChoice.AUTO,
 };
 
 type ImplOptions = {
   apiKey: string;
   inferenceConfig: proto.InferenceConfig;
+  functions: llm.FunctionContext;
 };
 
 export class VoiceAssistant {
@@ -48,22 +52,30 @@ export class VoiceAssistant {
   subscribedTrack: RemoteAudioTrack | null = null;
   readMicroTask: { promise: Promise<void>; cancel: () => void } | null = null;
 
-  constructor(
-    inferenceConfig: proto.InferenceConfig = defaultInferenceConfig,
-    apiKey: string = process.env.OPENAI_API_KEY || '',
-  ) {
+  constructor({
+    inferenceConfig = defaultInferenceConfig,
+    functions = {},
+    apiKey = process.env.OPENAI_API_KEY || '',
+  }: {
+    inferenceConfig?: proto.InferenceConfig;
+    functions?: llm.FunctionContext;
+    apiKey?: string;
+  }) {
     if (!apiKey) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
 
+    inferenceConfig.tools = tools(functions);
     this.options = {
       apiKey,
       inferenceConfig,
+      functions,
     };
   }
 
   private ws: WebSocket | null = null;
   private connected: boolean = false;
+  private thinking: boolean = false;
   private participant: RemoteParticipant | string | null = null;
   private agentPublication: LocalTrackPublication | null = null;
   private localTrackSid: string | null = null;
@@ -71,6 +83,10 @@ export class VoiceAssistant {
   private agentPlayout: AgentPlayout | null = null;
   private playingHandle: PlayoutHandle | null = null;
   private logger = log();
+
+  private speechLeftMs: number | null = null;
+  private speechStarted: number = 0;
+  private speechTimeout: ReturnType<typeof setTimeout> | undefined = undefined;
 
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise(async (resolve, reject) => {
@@ -96,6 +112,7 @@ export class VoiceAssistant {
 
       this.room = room;
       this.participant = participant;
+      this.setState(proto.State.INITIALIZING);
 
       if (participant) {
         if (typeof participant === 'string') {
@@ -173,6 +190,15 @@ export class VoiceAssistant {
       });
     }
   }
+  private setState(state: proto.State) {
+    // don't override thinking until done
+    if (this.thinking) return;
+    if (this.room?.isConnected) {
+      this.room.localParticipant!.setAttributes({
+        'voice_assistant.state': state,
+      });
+    }
+  }
 
   private loggableEvent(
     command: Record<string, unknown>,
@@ -203,6 +229,7 @@ export class VoiceAssistant {
 
     switch (event.event) {
       case proto.ServerEvent.START_SESSION:
+        this.setState(proto.State.LISTENING);
         break;
       case proto.ServerEvent.ADD_ITEM:
         break;
@@ -249,6 +276,27 @@ export class VoiceAssistant {
     }
     switch (event.type) {
       case 'audio':
+        const data = Buffer.from(event.data as string, 'base64');
+
+        const serverFrame = new AudioFrame(
+          new Int16Array(data.buffer),
+          proto.SAMPLE_RATE,
+          proto.NUM_CHANNELS,
+          data.length / 2,
+        );
+
+        if (this.speechLeftMs) {
+          clearTimeout(this.speechTimeout);
+          this.speechLeftMs -= Date.now() - this.speechStarted;
+          this.speechLeftMs += (serverFrame.data.length / proto.SAMPLE_RATE) * 1000;
+        } else {
+          this.speechLeftMs = (serverFrame.data.length / proto.SAMPLE_RATE) * 1000;
+        }
+        this.speechStarted = Date.now();
+        this.speechTimeout = setTimeout(() => {
+          this.setState(proto.State.LISTENING);
+        }, this.speechLeftMs);
+
         this.playingHandle?.pushAudio(Buffer.from(event.data as string, 'base64'));
         break;
       case 'text':
@@ -256,6 +304,44 @@ export class VoiceAssistant {
         break;
       default:
         this.logger.warn(`Unknown content event type: ${event.type}`);
+        break;
+    }
+  }
+
+  private handleAddItem(event: Record<string, unknown>): void {
+    const itemId = event.id as string;
+    if (itemId && event.type === 'message') {
+      this.speechLeftMs = 0;
+      this.setState(proto.State.SPEAKING);
+    }
+    if (event.type === 'tool_call') {
+      this.setState(proto.State.THINKING);
+      this.thinking = true;
+    }
+  }
+
+  private handleItemAdded(event: Record<string, unknown>): void {
+    switch (event.type) {
+      case 'tool_call': {
+        const name = event.name as string;
+        const args = event.arguments as object;
+        this.options.functions[name].execute(args).then((content) => {
+          this.thinking = false;
+          this.sendClientCommand({
+            event: proto.ClientEvent.ADD_ITEM,
+            type: 'tool_response',
+            tool_call_id: event.tool_call_id as string,
+            content: JSON.stringify(content),
+          });
+          this.sendClientCommand({
+            event: proto.ClientEvent.CLIENT_TURN_FINISHED,
+          });
+        });
+        break;
+      }
+      case 'message': {
+        break;
+      }
     }
   }
 
@@ -416,3 +502,13 @@ export class VoiceAssistant {
     });
   }
 }
+
+const tools = (ctx: llm.FunctionContext): proto.Tool[] =>
+  Object.entries(ctx).map(([name, func]) => ({
+    type: 'function',
+    function: {
+      name,
+      description: func.description,
+      parameters: llm.oaiParams(func.parameters),
+    },
+  }));
