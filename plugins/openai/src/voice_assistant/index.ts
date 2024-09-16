@@ -147,7 +147,7 @@ export class VoiceAssistant {
       this.ws.onopen = () => {
         this.connected = true;
         this.sendClientCommand({
-          event: proto.ClientEvent.SET_INFERENCE_CONFIG,
+          event: proto.ClientEventType.SET_INFERENCE_CONFIG,
           ...this.options.inferenceConfig,
         });
         resolve();
@@ -170,7 +170,7 @@ export class VoiceAssistant {
 
   addUserMessage(text: string, generate: boolean = true): void {
     this.sendClientCommand({
-      event: proto.ClientEvent.ADD_ITEM,
+      event: proto.ClientEventType.ADD_ITEM,
       type: 'message',
       role: 'user',
       content: [
@@ -182,7 +182,7 @@ export class VoiceAssistant {
     });
     if (generate) {
       this.sendClientCommand({
-        event: proto.ClientEvent.GENERATE,
+        event: proto.ClientEventType.GENERATE,
       });
     }
   }
@@ -202,57 +202,65 @@ export class VoiceAssistant {
   }
 
   private loggableEvent(
-    command: Record<string, unknown>,
+    event: proto.ClientEvent | proto.ServerEvent,
     maxLength: number = 30,
   ): Record<string, unknown> {
-    if (command['data'] && typeof command['data'] === 'string') {
-      const truncatedData =
-        command['data'].slice(0, maxLength) + (command['data'].length > maxLength ? '…' : '');
-      return { ...command, data: truncatedData };
+    const untypedEvent: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(event)) {
+      if (value !== undefined) {
+        untypedEvent[key] = value;
+      }
     }
-    return command;
+
+    // Apply truncation to the converted event
+    if (untypedEvent.data && typeof untypedEvent.data === 'string') {
+      const truncatedData =
+        untypedEvent.data.slice(0, maxLength) + (untypedEvent.data.length > maxLength ? '…' : '');
+      return { ...untypedEvent, data: truncatedData };
+    }
+    return untypedEvent;
   }
 
-  private sendClientCommand(command: Record<string, unknown>): void {
+  private sendClientCommand(command: proto.ClientEvent): void {
     if (!this.connected || !this.ws) {
       this.logger.error('WebSocket is not connected');
       return;
     }
 
-    if (command.event !== proto.ClientEvent.ADD_USER_AUDIO) {
+    if (command.event !== proto.ClientEventType.ADD_USER_AUDIO) {
       this.logger.debug(`-> ${JSON.stringify(this.loggableEvent(command))}`);
     }
     this.ws.send(JSON.stringify(command));
   }
 
-  private handleServerEvent(event: Record<string, unknown>): void {
+  private handleServerEvent(event: proto.ServerEvent): void {
     this.logger.debug(`<- ${JSON.stringify(this.loggableEvent(event))}`);
 
     switch (event.event) {
-      case proto.ServerEvent.START_SESSION:
+      case proto.ServerEventType.START_SESSION:
         this.setState(proto.State.LISTENING);
         break;
-      case proto.ServerEvent.ADD_ITEM:
+      case proto.ServerEventType.ADD_ITEM:
         this.handleAddItem(event);
         break;
-      case proto.ServerEvent.ADD_CONTENT:
+      case proto.ServerEventType.ADD_CONTENT:
         this.handleAddContent(event);
         break;
-      case proto.ServerEvent.ITEM_ADDED:
+      case proto.ServerEventType.ITEM_ADDED:
         this.handleItemAdded(event);
         break;
-      case proto.ServerEvent.TURN_FINISHED:
+      case proto.ServerEventType.TURN_FINISHED:
         this.handleTurnFinished(event);
         break;
-      case proto.ServerEvent.VAD_SPEECH_STARTED:
+      case proto.ServerEventType.VAD_SPEECH_STARTED:
         this.handleVadSpeechStarted(event);
         break;
-      case proto.ServerEvent.VAD_SPEECH_STOPPED:
+      case proto.ServerEventType.VAD_SPEECH_STOPPED:
         break;
-      case proto.ServerEvent.INPUT_TRANSCRIBED:
+      case proto.ServerEventType.INPUT_TRANSCRIBED:
         this.handleInputTranscribed(event);
         break;
-      case proto.ServerEvent.MODEL_LISTENING:
+      case proto.ServerEventType.MODEL_LISTENING:
         this.handleModelListening();
         break;
       default:
@@ -260,7 +268,9 @@ export class VoiceAssistant {
     }
   }
 
-  private handleAddContent(event: Record<string, unknown>): void {
+  private handleAddContent(event: proto.ServerEvent): void {
+    if (event.event !== proto.ServerEventType.ADD_CONTENT) return;
+
     const trackSid = this.getLocalTrackSid();
     if (!this.room || !this.room.localParticipant || !trackSid || !this.agentPlayout) {
       log().error('Room or local participant not set');
@@ -272,7 +282,7 @@ export class VoiceAssistant {
         this.room as Room,
         this.room?.localParticipant?.identity,
         trackSid,
-        event.item_id as string,
+        event.item_id,
       );
 
       this.setState(proto.State.SPEAKING);
@@ -294,28 +304,28 @@ export class VoiceAssistant {
     }
   }
 
-  private handleAddItem(event: Record<string, unknown>): void {
+  private handleAddItem(event: proto.ServerEvent): void {
+    if (event.event !== proto.ServerEventType.ADD_ITEM) return;
     if (event.type === 'tool_call') {
       this.setState(proto.State.THINKING);
       this.thinking = true;
     }
   }
 
-  private handleItemAdded(event: Record<string, unknown>): void {
+  private handleItemAdded(event: proto.ServerEvent): void {
+    if (event.event !== proto.ServerEventType.ITEM_ADDED) return;
     switch (event.type) {
       case 'tool_call': {
-        const name = event.name as string;
-        const args = event.arguments as object;
-        this.options.functions[name].execute(args).then((content) => {
+        this.options.functions[event.name].execute(event.arguments).then((content) => {
           this.thinking = false;
           this.sendClientCommand({
-            event: proto.ClientEvent.ADD_ITEM,
+            event: proto.ClientEventType.ADD_ITEM,
             type: 'tool_response',
             tool_call_id: event.tool_call_id as string,
             content: JSON.stringify(content),
           });
           this.sendClientCommand({
-            event: proto.ClientEvent.CLIENT_TURN_FINISHED,
+            event: proto.ClientEventType.CLIENT_TURN_FINISHED,
           });
         });
         break;
@@ -326,7 +336,8 @@ export class VoiceAssistant {
     }
   }
 
-  private handleInputTranscribed(event: Record<string, unknown>): void {
+  private handleInputTranscribed(event: proto.ServerEvent): void {
+    if (event.event !== proto.ServerEventType.INPUT_TRANSCRIBED) return;
     const itemId = event.item_id as string;
     const transcription = event.transcript as string;
     if (!itemId || transcription === undefined) {
@@ -346,7 +357,7 @@ export class VoiceAssistant {
     if (this.playingHandle && !this.playingHandle.done) {
       this.playingHandle.interrupt();
       this.sendClientCommand({
-        event: proto.ClientEvent.TRUNCATE_CONTENT,
+        event: proto.ClientEventType.TRUNCATE_CONTENT,
         message_id: this.playingHandle.messageId,
         index: 0, // ignored for now (see OAI docs)
         text_chars: this.playingHandle.publishedTextChars(),
@@ -355,8 +366,9 @@ export class VoiceAssistant {
     }
   }
 
-  private handleVadSpeechStarted(event: Record<string, unknown>): void {
-    const itemId = event.item_id as string;
+  private handleVadSpeechStarted(event: proto.ServerEvent): void {
+    if (event.event !== proto.ServerEventType.VAD_SPEECH_STARTED) return;
+    const itemId = event.item_id;
     const participantIdentity = this.linkedParticipant?.identity;
     const trackSid = this.subscribedTrack?.sid;
     if (participantIdentity && trackSid && itemId) {
@@ -402,7 +414,7 @@ export class VoiceAssistant {
         const audioData = ev.frame.data;
         for (const frame of bstream.write(audioData.buffer)) {
           this.sendClientCommand({
-            event: proto.ClientEvent.ADD_USER_AUDIO,
+            event: proto.ClientEventType.ADD_USER_AUDIO,
             data: Buffer.from(frame.data.buffer).toString('base64'),
           });
         }
