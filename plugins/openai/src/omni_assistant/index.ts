@@ -431,9 +431,13 @@ export class OmniAssistant {
       return;
     }
 
-    this.room.on(RoomEvent.TrackPublished, () => {
+    if (this.linkedParticipant.trackPublications.size > 0) {
       this.subscribeToMicrophone();
-    });
+    } else {
+      this.room.on(RoomEvent.TrackPublished, () => {
+        this.subscribeToMicrophone();
+      });
+    }
   }
 
   private subscribeToMicrophone(): void {
