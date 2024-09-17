@@ -255,7 +255,7 @@ export class VoiceAssistant {
         this.handleGenerationFinished(event);
         break;
       case proto.ServerEventType.GENERATION_CANCELED:
-        this.handleGenerationCanceled(event);
+        this.handleGenerationCanceled();
         break;
       case proto.ServerEventType.VAD_SPEECH_STARTED:
         this.handleVadSpeechStarted(event);
@@ -377,7 +377,7 @@ export class VoiceAssistant {
     }
   }
 
-  private handleGenerationCanceled(event: Record<string, unknown>): void {
+  private handleGenerationCanceled(): void {
     if (this.playingHandle && !this.playingHandle.done) {
       this.playingHandle.interrupt();
       this.sendClientCommand({
