@@ -21,14 +21,15 @@ export enum AudioFormat {
 export enum ServerEventType {
   START_SESSION = 'start_session',
   ERROR = 'error',
-  ADD_ITEM = 'add_item',
+  ADD_MESSAGE = 'add_message',
   ADD_CONTENT = 'add_content',
-  ITEM_ADDED = 'item_added',
-  TURN_FINISHED = 'turn_finished',
+  MESSAGE_ADDED = 'message_added',
   VAD_SPEECH_STARTED = 'vad_speech_started',
   VAD_SPEECH_STOPPED = 'vad_speech_stopped',
   INPUT_TRANSCRIBED = 'input_transcribed',
-  MODEL_LISTENING = 'model_listening',
+  GENERATION_CANCELED = 'generation_canceled',
+  SEND_STATE = 'send_state',
+  GENERATION_FINISHED = 'generation_finished',
 }
 
 export type ServerEvent =
@@ -43,41 +44,60 @@ export type ServerEvent =
       error: string;
     }
   | ({
-      event: ServerEventType.ADD_ITEM;
-      id: string;
+      event: ServerEventType.ADD_MESSAGE;
       previous_id: string;
       conversation_label: string;
-    } & (
-      | {
-          type: 'message';
-        }
-      | { type: 'tool_call'; tool_call_id: string; name: string }
-    ))
+      role: 'user' | 'assistant' | 'system' | 'tool';
+      message:
+        | {
+            type: 'text';
+            text: string;
+          }
+        | {
+            type: 'tool_call';
+            name: string;
+            arguments: Map<string, string>;
+            tool_call_id: 'string';
+          };
+    } & {
+      role: 'user' | 'tool';
+      message: {
+        type: 'audio';
+        audio: 'audio';
+      };
+    })
   | {
       event: ServerEventType.ADD_CONTENT;
       item_id: string;
       type: 'text' | 'audio' | 'tool_call_arguments';
       data: string; // text or base64 audio or JSON stringified object
     }
-  | ({
-      event: ServerEventType.ITEM_ADDED;
+  | {
+      event: ServerEventType.MESSAGE_ADDED;
       id: string;
       previous_id: string;
       conversation_label: string;
-    } & (
-      | { type: 'message' }
-      | {
-          type: 'tool_call';
-          name: string;
-          tool_call_id: string;
-          arguments: string; // JSON stringified object
-        }
-    ))
+      content: {
+        type: 'tool_call';
+        name: string;
+        tool_call_id: string;
+        arguments: string; // JSON stringified object
+      }[];
+    }
   | {
-      event: ServerEventType.TURN_FINISHED;
+      event: ServerEventType.GENERATION_FINISHED;
       reason: 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
       conversation_label: string;
-      item_ids: string[];
+      message_ids: string[];
+    }
+  | {
+      event: ServerEventType.SEND_STATE;
+      session_id: string;
+      input_audio_format: 'pcm16' | 'g711-ulaw' | 'g711-alaw';
+      vad_active: boolean;
+      audio_buffer: string;
+      conversations: any; // TODO(nbsp): get this
+      session_config: SessionConfig;
     }
   | {
       event: ServerEventType.VAD_SPEECH_STARTED | ServerEventType.VAD_SPEECH_STOPPED;
@@ -90,30 +110,32 @@ export type ServerEvent =
       transcript: string;
     }
   | {
-      event: ServerEventType.MODEL_LISTENING;
+      event: ServerEventType.GENERATION_CANCELED;
       item_id: string;
     };
 
 export enum ClientEventType {
-  SET_INFERENCE_CONFIG = 'set_inference_config',
+  UPDATE_SESSION_CONFIG = 'update_session_config',
+  UPDATE_CONVERSATION_CONFIG = 'update_conversation_config',
   ADD_ITEM = 'add_item',
   DELETE_ITEM = 'delete_item',
   ADD_USER_AUDIO = 'add_user_audio',
-  COMMIT_PENDING_AUDIO = 'commit_pending_audio',
-  CLIENT_TURN_FINISHED = 'client_turn_finished',
-  CLIENT_INTERRUPTED = 'client_interrupted',
+  COMMIT_USER_AUDIO = 'commit_user_audio',
+  CANCEL_GENERATION = 'cancel_generation',
   GENERATE = 'generate',
   CREATE_CONVERSATION = 'create_conversation',
   DELETE_CONVERSATION = 'delete_conversation',
-  SUBSCRIBE_TO_USER_AUDIO = 'subscribe_to_user_audio',
-  UNSUBSCRIBE_FROM_USER_AUDIO = 'unsubscribe_from_user_audio',
   TRUNCATE_CONTENT = 'truncate_content',
+  REQUEST_STATE = 'request_state',
 }
 
 export type ClientEvent =
   | ({
-      event: ClientEventType.SET_INFERENCE_CONFIG;
-    } & InferenceConfig)
+      event: ClientEventType.UPDATE_SESSION_CONFIG;
+    } & SessionConfig)
+  | ({
+      event: ClientEventType.UPDATE_CONVERSATION_CONFIG;
+    } & ConversationConfig)
   | ({
       event: ClientEventType.ADD_ITEM;
       // id, previous_id, conversation_label are unused by us
@@ -165,10 +187,7 @@ export type ClientEvent =
       data: string; // base64 encoded buffer
     }
   | {
-      event:
-        | ClientEventType.COMMIT_PENDING_AUDIO
-        | ClientEventType.CLIENT_TURN_FINISHED
-        | ClientEventType.CLIENT_INTERRUPTED;
+      event: ClientEventType.COMMIT_USER_AUDIO | ClientEventType.CANCEL_GENERATION;
     }
   | {
       event: ClientEventType.GENERATE;
@@ -178,8 +197,7 @@ export type ClientEvent =
       event:
         | ClientEventType.CREATE_CONVERSATION
         | ClientEventType.DELETE_CONVERSATION
-        | ClientEventType.SUBSCRIBE_TO_USER_AUDIO
-        | ClientEventType.UNSUBSCRIBE_FROM_USER_AUDIO;
+        | ClientEventType.REQUEST_STATE;
       label: string;
     }
   | {
@@ -220,17 +238,29 @@ export const NUM_CHANNELS = 1;
 export const INPUT_PCM_FRAME_SIZE = 2400; // 100ms
 export const OUTPUT_PCM_FRAME_SIZE = 1200; // 50ms
 
-export type InferenceConfig = {
+export type SessionConfig = {
+  turn_detection: 'disabled' | 'server_vad';
+  input_audio_format: 'pcm16' | 'g711-ulaw' | 'g711-alaw';
+  transcribe_input: boolean;
+  vad: {
+    threshold: number; // 0..1 inclusive, default 0.5
+    prefix_padding_ms: number; // default 0.5
+    silence_duration_ms: number; // default 200
+  };
+};
+
+export type ConversationConfig = {
   system_message: string;
   voice: Voice;
-  max_tokens: number;
-  temperature: number;
-  disable_audio: boolean;
-  turn_end_type: TurnEndType;
-  transcribe_input: boolean;
-  audio_format: AudioFormat;
+  subscribe_to_user_audio: boolean;
+  output_audio_format: 'pcm16' | 'g711-ulaw' | 'g711-alaw';
   tools: Tool[];
   tool_choice: ToolChoice;
+  temperature: number; // 0.6..1.2 inclusive, default 0.8
+  max_tokens: number; // 1..4096, default 2048;
+  disable_audio: number;
+  transcribe_input: boolean;
+  conversation_label: string; // default "default"
 };
 
 export enum State {
