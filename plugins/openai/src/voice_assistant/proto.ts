@@ -21,14 +21,14 @@ export enum AudioFormat {
 export enum ServerEventType {
   START_SESSION = 'start_session',
   ERROR = 'error',
-  ADD_ITEM = 'add_item',
+  ADD_MESSAGE = 'add_message',
   ADD_CONTENT = 'add_content',
-  ITEM_ADDED = 'item_added',
-  TURN_FINISHED = 'turn_finished',
+  MESSAGE_ADDED = 'message_added',
+  GENERATION_FINISHED = 'generation_finished',
+  GENERATION_CANCELED = 'generation_canceled',
   VAD_SPEECH_STARTED = 'vad_speech_started',
   VAD_SPEECH_STOPPED = 'vad_speech_stopped',
   INPUT_TRANSCRIBED = 'input_transcribed',
-  MODEL_LISTENING = 'model_listening',
 }
 
 export type ServerEvent =
@@ -43,7 +43,7 @@ export type ServerEvent =
       error: string;
     }
   | ({
-      event: ServerEventType.ADD_ITEM;
+      event: ServerEventType.ADD_MESSAGE;
       id: string;
       previous_id: string;
       conversation_label: string;
@@ -55,12 +55,12 @@ export type ServerEvent =
     ))
   | {
       event: ServerEventType.ADD_CONTENT;
-      item_id: string;
+      message_id: string;
       type: 'text' | 'audio' | 'tool_call_arguments';
       data: string; // text or base64 audio or JSON stringified object
     }
   | ({
-      event: ServerEventType.ITEM_ADDED;
+      event: ServerEventType.MESSAGE_ADDED;
       id: string;
       previous_id: string;
       conversation_label: string;
@@ -74,30 +74,29 @@ export type ServerEvent =
         }
     ))
   | {
-      event: ServerEventType.TURN_FINISHED;
-      reason: 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
+      event: ServerEventType.GENERATION_FINISHED;
+      reason: 'stop' | 'max_tokens' | 'content_filter' | 'interrupt'; // FIXME: not sure these are all right
       conversation_label: string;
-      item_ids: string[];
+      message_ids: string[];
+    }
+  | {
+      event: ServerEventType.GENERATION_CANCELED;
     }
   | {
       event: ServerEventType.VAD_SPEECH_STARTED | ServerEventType.VAD_SPEECH_STOPPED;
       sample_index: number;
-      item_id: string;
+      message_id: string;
     }
   | {
       event: ServerEventType.INPUT_TRANSCRIBED;
-      item_id: string;
+      message_id: string;
       transcript: string;
-    }
-  | {
-      event: ServerEventType.MODEL_LISTENING;
-      item_id: string;
     };
 
 export enum ClientEventType {
-  SET_INFERENCE_CONFIG = 'set_inference_config',
-  ADD_ITEM = 'add_item',
-  DELETE_ITEM = 'delete_item',
+  UPDATE_SESSION_CONFIG = 'update_session_config',
+  ADD_MESSAGE = 'add_message',
+  DELETE_MESSAGE = 'delete_message',
   ADD_USER_AUDIO = 'add_user_audio',
   COMMIT_PENDING_AUDIO = 'commit_pending_audio',
   CLIENT_TURN_FINISHED = 'client_turn_finished',
@@ -112,38 +111,38 @@ export enum ClientEventType {
 
 export type ClientEvent =
   | ({
-      event: ClientEventType.SET_INFERENCE_CONFIG;
+      event: ClientEventType.UPDATE_SESSION_CONFIG;
     } & InferenceConfig)
   | ({
-      event: ClientEventType.ADD_ITEM;
+      event: ClientEventType.ADD_MESSAGE;
       // id, previous_id, conversation_label are unused by us
     } & (
-      | ({
+      | {
           type: 'message';
-        } & (
-          | {
-              role: 'user' | 'assistant' | 'system';
-              content: [
-                | {
+          message:
+            | {
+                role: 'user' | 'assistant' | 'system';
+                content: [
+                  {
                     type: 'text';
                     text: string;
-                  }
-                | {
-                    type: 'audio';
-                    audio: string; // base64 encoded buffer
                   },
-              ];
-            }
-          | {
-              role: 'assistant' | 'system';
-              content: [
-                {
-                  type: 'text';
-                  text: string;
-                },
-              ];
-            }
-        ))
+                ];
+              }
+            | {
+                role: 'user';
+                content: [
+                  | {
+                      type: 'text';
+                      text: string;
+                    }
+                  | {
+                      type: 'audio';
+                      audio: string; // base64 encoded buffer
+                    },
+                ];
+              };
+        }
       | {
           type: 'tool_response';
           tool_call_id: string;
@@ -156,7 +155,7 @@ export type ClientEvent =
         }
     ))
   | {
-      event: ClientEventType.DELETE_ITEM;
+      event: ClientEventType.DELETE_MESSAGE;
       id: string;
       conversation_label?: string; // defaults to 'default'
     }
