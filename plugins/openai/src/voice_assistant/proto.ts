@@ -43,32 +43,33 @@ export type ServerEvent =
       event: ServerEventType.ERROR;
       error: string;
     }
-  | ({
+  | {
       event: ServerEventType.ADD_MESSAGE;
       previous_id: string;
       conversation_label: string;
-      role: 'user' | 'assistant' | 'system' | 'tool';
-      message:
-        | {
-            type: 'text';
-            text: string;
-          }
-        | {
-            type: 'tool_call';
-            name: string;
-            arguments: Map<string, string>;
-            tool_call_id: 'string';
-          };
-    } & {
-      role: 'user' | 'tool';
       message: {
-        type: 'audio';
-        audio: 'audio';
+        role: 'assistant';
+        content: [
+          | {
+              type: 'text';
+              text: string;
+            }
+          | {
+              type: 'audio';
+              audio: string;
+            }
+          | {
+              type: 'tool_call';
+              name: string;
+              arguments: string;
+              tool_call_id: string;
+            },
+        ];
       };
-    })
+    }
   | {
       event: ServerEventType.ADD_CONTENT;
-      item_id: string;
+      message_id: string;
       type: 'text' | 'audio' | 'tool_call_arguments';
       data: string; // text or base64 audio or JSON stringified object
     }
@@ -77,12 +78,16 @@ export type ServerEvent =
       id: string;
       previous_id: string;
       conversation_label: string;
-      content: {
-        type: 'tool_call';
-        name: string;
-        tool_call_id: string;
-        arguments: string; // JSON stringified object
-      }[];
+      content:
+        | [
+            {
+              type: 'tool_call';
+              name: string;
+              tool_call_id: string;
+              arguments: string; // JSON stringified object
+            },
+          ]
+        | null;
     }
   | {
       event: ServerEventType.GENERATION_FINISHED;
@@ -93,14 +98,17 @@ export type ServerEvent =
   | {
       event: ServerEventType.SEND_STATE;
       session_id: string;
-      input_audio_format: 'pcm16' | 'g711-ulaw' | 'g711-alaw';
+      input_audio_format: AudioFormat;
       vad_active: boolean;
       audio_buffer: string;
       conversations: any; // TODO(nbsp): get this
       session_config: SessionConfig;
     }
   | {
-      event: ServerEventType.VAD_SPEECH_STARTED | ServerEventType.VAD_SPEECH_STOPPED;
+      event:
+        | ServerEventType.VAD_SPEECH_STARTED
+        | ServerEventType.VAD_SPEECH_STOPPED
+        | ServerEventType.GENERATION_CANCELED;
       sample_index: number;
       item_id: string;
     }
@@ -108,17 +116,13 @@ export type ServerEvent =
       event: ServerEventType.INPUT_TRANSCRIBED;
       item_id: string;
       transcript: string;
-    }
-  | {
-      event: ServerEventType.GENERATION_CANCELED;
-      item_id: string;
     };
 
 export enum ClientEventType {
   UPDATE_SESSION_CONFIG = 'update_session_config',
   UPDATE_CONVERSATION_CONFIG = 'update_conversation_config',
-  ADD_ITEM = 'add_item',
-  DELETE_ITEM = 'delete_item',
+  ADD_MESSAGE = 'add_message',
+  DELETE_MESSAGE = 'delete_message',
   ADD_USER_AUDIO = 'add_user_audio',
   COMMIT_USER_AUDIO = 'commit_user_audio',
   CANCEL_GENERATION = 'cancel_generation',
@@ -136,49 +140,50 @@ export type ClientEvent =
   | ({
       event: ClientEventType.UPDATE_CONVERSATION_CONFIG;
     } & ConversationConfig)
-  | ({
-      event: ClientEventType.ADD_ITEM;
+  | {
+      event: ClientEventType.ADD_MESSAGE;
       // id, previous_id, conversation_label are unused by us
-    } & (
-      | ({
-          type: 'message';
-        } & (
-          | {
-              role: 'user' | 'assistant' | 'system';
-              content: [
-                | {
-                    type: 'text';
-                    text: string;
-                  }
-                | {
-                    type: 'audio';
-                    audio: string; // base64 encoded buffer
-                  },
-              ];
-            }
-          | {
-              role: 'assistant' | 'system';
-              content: [
-                {
+      message:
+        | {
+            role: 'user' | 'assistant' | 'system' | 'tool';
+            // XXX(nbsp): tool_call_id is only valid- but required- when role=tool.
+            // for brevity it's set to optional here.
+            tool_call_id?: string;
+            content: [
+              | {
                   type: 'text';
                   text: string;
+                }
+              | {
+                  type: 'tool_call';
+                  name: string;
+                  arguments: string;
+                  tool_call_id: string;
                 },
-              ];
-            }
-        ))
-      | {
-          type: 'tool_response';
-          tool_call_id: string;
-          content: string;
-        }
-      | {
-          type: 'tool_call';
-          name: 'string';
-          arguments: Record<string, Record<string, unknown>>;
-        }
-    ))
+            ];
+          }
+        | {
+            role: 'user' | 'tool';
+            content: [
+              | {
+                  type: 'text';
+                  text: string;
+                }
+              | {
+                  type: 'tool_call';
+                  name: string;
+                  arguments: string;
+                  tool_call_id: string;
+                }
+              | {
+                  type: 'audio';
+                  audio: string; // base64 encoded buffer
+                },
+            ];
+          };
+    }
   | {
-      event: ClientEventType.DELETE_ITEM;
+      event: ClientEventType.DELETE_MESSAGE;
       id: string;
       conversation_label?: string; // defaults to 'default'
     }
@@ -238,30 +243,30 @@ export const NUM_CHANNELS = 1;
 export const INPUT_PCM_FRAME_SIZE = 2400; // 100ms
 export const OUTPUT_PCM_FRAME_SIZE = 1200; // 50ms
 
-export type SessionConfig = {
+export type SessionConfig = Partial<{
   turn_detection: 'disabled' | 'server_vad';
-  input_audio_format: 'pcm16' | 'g711-ulaw' | 'g711-alaw';
+  input_audio_format: AudioFormat;
   transcribe_input: boolean;
-  vad: {
+  vad: Partial<{
     threshold: number; // 0..1 inclusive, default 0.5
     prefix_padding_ms: number; // default 0.5
     silence_duration_ms: number; // default 200
-  };
-};
+  }>;
+}>;
 
-export type ConversationConfig = {
+export type ConversationConfig = Partial<{
   system_message: string;
   voice: Voice;
   subscribe_to_user_audio: boolean;
-  output_audio_format: 'pcm16' | 'g711-ulaw' | 'g711-alaw';
+  output_audio_format: AudioFormat;
   tools: Tool[];
   tool_choice: ToolChoice;
   temperature: number; // 0.6..1.2 inclusive, default 0.8
   max_tokens: number; // 1..4096, default 2048;
-  disable_audio: number;
+  disable_audio: boolean;
   transcribe_input: boolean;
   conversation_label: string; // default "default"
-};
+}>;
 
 export enum State {
   INITIALIZING = 'initializing',

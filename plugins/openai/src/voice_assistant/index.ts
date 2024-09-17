@@ -25,22 +25,34 @@ import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 import * as proto from './proto.js';
 import { BasicTranscriptionForwarder } from './transcription_forwarder.js';
 
-export const defaultInferenceConfig: proto.InferenceConfig = {
+export const defaultSessionConfig: proto.SessionConfig = {
+  turn_detection: 'server_vad',
+  input_audio_format: proto.AudioFormat.PCM16,
+  transcribe_input: true,
+  vad: {
+    threshold: 0.5,
+    prefix_padding_ms: 500,
+    silence_duration_ms: 500,
+  },
+};
+
+export const defaultConversationConfig: proto.ConversationConfig = {
   system_message: 'You are a helpful assistant.',
   voice: proto.Voice.ALLOY,
-  max_tokens: 2048,
-  temperature: 0.8,
-  disable_audio: false,
-  turn_end_type: proto.TurnEndType.SERVER_DETECTION,
-  transcribe_input: true,
-  audio_format: proto.AudioFormat.PCM16,
+  subscribe_to_user_audio: true,
+  output_audio_format: proto.AudioFormat.PCM16,
   tools: [],
   tool_choice: proto.ToolChoice.AUTO,
+  temperature: 0.8,
+  max_tokens: 2048,
+  disable_audio: false,
+  transcribe_input: true,
 };
 
 type ImplOptions = {
   apiKey: string;
-  inferenceConfig: proto.InferenceConfig;
+  sessionConfig: proto.SessionConfig;
+  conversationConfig: proto.ConversationConfig;
   functions: llm.FunctionContext;
 };
 
@@ -52,11 +64,13 @@ export class VoiceAssistant {
   readMicroTask: { promise: Promise<void>; cancel: () => void } | null = null;
 
   constructor({
-    inferenceConfig = defaultInferenceConfig,
+    sessionConfig = defaultSessionConfig,
+    conversationConfig = defaultConversationConfig,
     functions = {},
     apiKey = process.env.OPENAI_API_KEY || '',
   }: {
-    inferenceConfig?: proto.InferenceConfig;
+    sessionConfig?: proto.SessionConfig;
+    conversationConfig?: proto.ConversationConfig;
     functions?: llm.FunctionContext;
     apiKey?: string;
   }) {
@@ -64,10 +78,11 @@ export class VoiceAssistant {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
 
-    inferenceConfig.tools = tools(functions);
+    conversationConfig.tools = tools(functions);
     this.options = {
       apiKey,
-      inferenceConfig,
+      sessionConfig,
+      conversationConfig,
       functions,
     };
   }
@@ -146,8 +161,12 @@ export class VoiceAssistant {
       this.ws.onopen = () => {
         this.connected = true;
         this.sendClientCommand({
-          event: proto.ClientEventType.SET_INFERENCE_CONFIG,
-          ...this.options.inferenceConfig,
+          event: proto.ClientEventType.UPDATE_SESSION_CONFIG,
+          ...this.options.sessionConfig,
+        });
+        this.sendClientCommand({
+          event: proto.ClientEventType.UPDATE_CONVERSATION_CONFIG,
+          ...this.options.conversationConfig,
         });
         resolve();
       };
@@ -169,15 +188,16 @@ export class VoiceAssistant {
 
   addUserMessage(text: string, generate: boolean = true): void {
     this.sendClientCommand({
-      event: proto.ClientEventType.ADD_ITEM,
-      type: 'message',
-      role: 'user',
-      content: [
-        {
-          type: 'text',
-          text: text,
-        },
-      ],
+      event: proto.ClientEventType.ADD_MESSAGE,
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: text,
+          },
+        ],
+      },
     });
     if (generate) {
       this.sendClientCommand({
@@ -240,17 +260,14 @@ export class VoiceAssistant {
       case proto.ServerEventType.START_SESSION:
         this.setState(proto.State.LISTENING);
         break;
-      case proto.ServerEventType.ADD_ITEM:
-        this.handleAddItem(event);
+      case proto.ServerEventType.ADD_MESSAGE:
+        // this.handleAddMessage(event); // see handleAddMessage comment
         break;
       case proto.ServerEventType.ADD_CONTENT:
         this.handleAddContent(event);
         break;
-      case proto.ServerEventType.ITEM_ADDED:
-        this.handleItemAdded(event);
-        break;
-      case proto.ServerEventType.TURN_FINISHED:
-        this.handleTurnFinished(event);
+      case proto.ServerEventType.MESSAGE_ADDED:
+        this.handleMessageAdded(event);
         break;
       case proto.ServerEventType.VAD_SPEECH_STARTED:
         this.handleVadSpeechStarted(event);
@@ -260,8 +277,11 @@ export class VoiceAssistant {
       case proto.ServerEventType.INPUT_TRANSCRIBED:
         this.handleInputTranscribed(event);
         break;
-      case proto.ServerEventType.MODEL_LISTENING:
+      case proto.ServerEventType.GENERATION_CANCELED:
         this.handleModelListening();
+        break;
+      case proto.ServerEventType.GENERATION_FINISHED:
+        this.handleGenerationFinished(event);
         break;
       default:
         this.logger.warn(`Unknown server event: ${JSON.stringify(event)}`);
@@ -279,24 +299,24 @@ export class VoiceAssistant {
 
     if (!this.playingHandle || this.playingHandle.done) {
       const trFwd = new BasicTranscriptionForwarder(
-        this.room as Room,
+        this.room,
         this.room?.localParticipant?.identity,
         trackSid,
-        event.item_id,
+        event.message_id,
       );
 
       this.setState(proto.State.SPEAKING);
-      this.playingHandle = this.agentPlayout.play(event.item_id as string, trFwd);
+      this.playingHandle = this.agentPlayout.play(event.message_id, trFwd);
       this.playingHandle.on('complete', () => {
         this.setState(proto.State.LISTENING);
       });
     }
     switch (event.type) {
       case 'audio':
-        this.playingHandle?.pushAudio(Buffer.from(event.data as string, 'base64'));
+        this.playingHandle?.pushAudio(Buffer.from(event.data, 'base64'));
         break;
       case 'text':
-        this.playingHandle?.pushText(event.data as string);
+        this.playingHandle?.pushText(event.data);
         break;
       default:
         this.logger.warn(`Unknown content event type: ${event.type}`);
@@ -304,42 +324,42 @@ export class VoiceAssistant {
     }
   }
 
-  private handleAddItem(event: proto.ServerEvent): void {
-    if (event.event !== proto.ServerEventType.ADD_ITEM) return;
-    if (event.type === 'tool_call') {
-      this.setState(proto.State.THINKING);
-      this.thinking = true;
-    }
-  }
+  // XXX(nbsp): we use this event to determine which state to send, which breaks
+  // when more than one tool call can be processed at once. this needs to be rethought entirely.
+  //
+  // private handleAddMessage(event: proto.ServerEvent): void {
+  //   if (event.event !== proto.ServerEventType.ADD_MESSAGE) return;
+  //   if (event.message.content.type === 'tool_call') {
+  //     this.setState(proto.State.THINKING);
+  //     this.thinking = true;
+  //   }
+  // }
 
-  private handleItemAdded(event: proto.ServerEvent): void {
-    if (event.event !== proto.ServerEventType.ITEM_ADDED) return;
-    switch (event.type) {
-      case 'tool_call': {
-        this.options.functions[event.name].execute(event.arguments).then((content) => {
-          this.thinking = false;
-          this.sendClientCommand({
-            event: proto.ClientEventType.ADD_ITEM,
-            type: 'tool_response',
-            tool_call_id: event.tool_call_id as string,
-            content: JSON.stringify(content),
-          });
-          this.sendClientCommand({
-            event: proto.ClientEventType.CLIENT_TURN_FINISHED,
-          });
+  private handleMessageAdded(event: proto.ServerEvent): void {
+    if (event.event !== proto.ServerEventType.MESSAGE_ADDED) return;
+    for (const toolCall of event.content || []) {
+      this.options.functions[toolCall.name].execute(toolCall.arguments).then((content) => {
+        this.thinking = false;
+        this.sendClientCommand({
+          event: proto.ClientEventType.ADD_MESSAGE,
+          message: {
+            role: 'tool',
+            tool_call_id: toolCall.tool_call_id,
+            content,
+          },
         });
-        break;
-      }
-      case 'message': {
-        break;
-      }
+        this.sendClientCommand({
+          event: proto.ClientEventType.GENERATE,
+        });
+      });
+      break;
     }
   }
 
   private handleInputTranscribed(event: proto.ServerEvent): void {
     if (event.event !== proto.ServerEventType.INPUT_TRANSCRIBED) return;
-    const itemId = event.item_id as string;
-    const transcription = event.transcript as string;
+    const itemId = event.item_id;
+    const transcription = event.transcript;
     if (!itemId || transcription === undefined) {
       this.logger.error('Item ID or transcription not set');
       return;
@@ -356,6 +376,7 @@ export class VoiceAssistant {
   private handleModelListening(): void {
     if (this.playingHandle && !this.playingHandle.done) {
       this.playingHandle.interrupt();
+      console.log('========', this.playingHandle.messageId);
       this.sendClientCommand({
         event: proto.ClientEventType.TRUNCATE_CONTENT,
         message_id: this.playingHandle.messageId,
@@ -363,6 +384,17 @@ export class VoiceAssistant {
         text_chars: this.playingHandle.publishedTextChars(),
         audio_samples: this.playingHandle.playedAudioSamples,
       });
+    }
+  }
+
+  private handleGenerationFinished(event: proto.ServerEvent): void {
+    if (event.event !== proto.ServerEventType.GENERATION_FINISHED) return;
+    if (event.reason !== 'interrupt' && event.reason !== 'stop') {
+      log().warn(`assistant turn finished unexpectedly reason ${event.reason}`);
+    }
+
+    if (this.playingHandle && !this.playingHandle.interrupted) {
+      this.playingHandle.endInput();
     }
   }
 
@@ -375,16 +407,6 @@ export class VoiceAssistant {
       this.publishTranscription(participantIdentity, trackSid, '', false, itemId);
     } else {
       this.logger.error('Participant or track or itemId not set');
-    }
-  }
-
-  private handleTurnFinished(event: Record<string, unknown>): void {
-    if (event.reason !== 'interrupt' && event.reason !== 'stop') {
-      log().warn(`assistant turn finished unexpectedly reason ${event.reason}`);
-    }
-
-    if (this.playingHandle && !this.playingHandle.interrupted) {
-      this.playingHandle.endInput();
     }
   }
 
@@ -438,7 +460,7 @@ export class VoiceAssistant {
       const track = publication.track;
 
       if (track && track !== this.subscribedTrack) {
-        this.subscribedTrack = track as RemoteAudioTrack;
+        this.subscribedTrack = track!;
         if (this.readMicroTask) {
           this.readMicroTask.cancel();
         }
