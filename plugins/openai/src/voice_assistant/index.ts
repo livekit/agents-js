@@ -146,7 +146,7 @@ export class VoiceAssistant {
       this.ws.onopen = () => {
         this.connected = true;
         this.sendClientCommand({
-          event: proto.ClientEventType.UPDATE_SESSION_CONFIG,
+          event: proto.ClientEventType.SET_INFERENCE_CONFIG,
           ...this.options.inferenceConfig,
         });
         resolve();
@@ -169,17 +169,15 @@ export class VoiceAssistant {
 
   addUserMessage(text: string, generate: boolean = true): void {
     this.sendClientCommand({
-      event: proto.ClientEventType.ADD_MESSAGE,
+      event: proto.ClientEventType.ADD_ITEM,
       type: 'message',
-      message: {
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: text,
-          },
-        ],
-      },
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: text,
+        },
+      ],
     });
     if (generate) {
       this.sendClientCommand({
@@ -242,20 +240,17 @@ export class VoiceAssistant {
       case proto.ServerEventType.START_SESSION:
         this.setState(proto.State.LISTENING);
         break;
-      case proto.ServerEventType.ADD_MESSAGE:
-        this.handleAddMessage(event);
+      case proto.ServerEventType.ADD_ITEM:
+        this.handleAddItem(event);
         break;
       case proto.ServerEventType.ADD_CONTENT:
         this.handleAddContent(event);
         break;
-      case proto.ServerEventType.MESSAGE_ADDED:
-        this.handleMessageAdded(event);
+      case proto.ServerEventType.ITEM_ADDED:
+        this.handleItemAdded(event);
         break;
-      case proto.ServerEventType.GENERATION_FINISHED:
-        this.handleGenerationFinished(event);
-        break;
-      case proto.ServerEventType.GENERATION_CANCELED:
-        this.handleGenerationCanceled();
+      case proto.ServerEventType.TURN_FINISHED:
+        this.handleTurnFinished(event);
         break;
       case proto.ServerEventType.VAD_SPEECH_STARTED:
         this.handleVadSpeechStarted(event);
@@ -264,6 +259,9 @@ export class VoiceAssistant {
         break;
       case proto.ServerEventType.INPUT_TRANSCRIBED:
         this.handleInputTranscribed(event);
+        break;
+      case proto.ServerEventType.MODEL_LISTENING:
+        this.handleModelListening();
         break;
       default:
         this.logger.warn(`Unknown server event: ${JSON.stringify(event)}`);
@@ -284,11 +282,11 @@ export class VoiceAssistant {
         this.room as Room,
         this.room?.localParticipant?.identity,
         trackSid,
-        event.message_id,
+        event.item_id,
       );
 
       this.setState(proto.State.SPEAKING);
-      this.playingHandle = this.agentPlayout.play(event.message_id as string, trFwd);
+      this.playingHandle = this.agentPlayout.play(event.item_id as string, trFwd);
       this.playingHandle.on('complete', () => {
         this.setState(proto.State.LISTENING);
       });
@@ -306,22 +304,22 @@ export class VoiceAssistant {
     }
   }
 
-  private handleAddMessage(event: proto.ServerEvent): void {
-    if (event.event !== proto.ServerEventType.ADD_MESSAGE) return;
+  private handleAddItem(event: proto.ServerEvent): void {
+    if (event.event !== proto.ServerEventType.ADD_ITEM) return;
     if (event.type === 'tool_call') {
       this.setState(proto.State.THINKING);
       this.thinking = true;
     }
   }
 
-  private handleMessageAdded(event: proto.ServerEvent): void {
-    if (event.event !== proto.ServerEventType.MESSAGE_ADDED) return;
+  private handleItemAdded(event: proto.ServerEvent): void {
+    if (event.event !== proto.ServerEventType.ITEM_ADDED) return;
     switch (event.type) {
       case 'tool_call': {
         this.options.functions[event.name].execute(event.arguments).then((content) => {
           this.thinking = false;
           this.sendClientCommand({
-            event: proto.ClientEventType.ADD_MESSAGE,
+            event: proto.ClientEventType.ADD_ITEM,
             type: 'tool_response',
             tool_call_id: event.tool_call_id as string,
             content: JSON.stringify(content),
@@ -340,7 +338,7 @@ export class VoiceAssistant {
 
   private handleInputTranscribed(event: proto.ServerEvent): void {
     if (event.event !== proto.ServerEventType.INPUT_TRANSCRIBED) return;
-    const itemId = event.message_id as string;
+    const itemId = event.item_id as string;
     const transcription = event.transcript as string;
     if (!itemId || transcription === undefined) {
       this.logger.error('Item ID or transcription not set');
@@ -355,29 +353,7 @@ export class VoiceAssistant {
     }
   }
 
-  private handleVadSpeechStarted(event: proto.ServerEvent): void {
-    if (event.event !== proto.ServerEventType.VAD_SPEECH_STARTED) return;
-    const itemId = event.message_id;
-    const participantIdentity = this.linkedParticipant?.identity;
-    const trackSid = this.subscribedTrack?.sid;
-    if (participantIdentity && trackSid && itemId) {
-      this.publishTranscription(participantIdentity, trackSid, '', false, itemId);
-    } else {
-      this.logger.error('Participant or track or itemId not set');
-    }
-  }
-
-  private handleGenerationFinished(event: Record<string, unknown>): void {
-    if (event.reason !== 'interrupt' && event.reason !== 'stop') {
-      log().warn(`assistant turn finished unexpectedly reason ${event.reason}`);
-    }
-
-    if (this.playingHandle && !this.playingHandle.interrupted) {
-      this.playingHandle.endInput();
-    }
-  }
-
-  private handleGenerationCanceled(): void {
+  private handleModelListening(): void {
     if (this.playingHandle && !this.playingHandle.done) {
       this.playingHandle.interrupt();
       this.sendClientCommand({
@@ -387,6 +363,28 @@ export class VoiceAssistant {
         text_chars: this.playingHandle.publishedTextChars(),
         audio_samples: this.playingHandle.playedAudioSamples,
       });
+    }
+  }
+
+  private handleVadSpeechStarted(event: proto.ServerEvent): void {
+    if (event.event !== proto.ServerEventType.VAD_SPEECH_STARTED) return;
+    const itemId = event.item_id;
+    const participantIdentity = this.linkedParticipant?.identity;
+    const trackSid = this.subscribedTrack?.sid;
+    if (participantIdentity && trackSid && itemId) {
+      this.publishTranscription(participantIdentity, trackSid, '', false, itemId);
+    } else {
+      this.logger.error('Participant or track or itemId not set');
+    }
+  }
+
+  private handleTurnFinished(event: Record<string, unknown>): void {
+    if (event.reason !== 'interrupt' && event.reason !== 'stop') {
+      log().warn(`assistant turn finished unexpectedly reason ${event.reason}`);
+    }
+
+    if (this.playingHandle && !this.playingHandle.interrupted) {
+      this.playingHandle.endInput();
     }
   }
 
