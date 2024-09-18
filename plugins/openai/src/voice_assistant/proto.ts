@@ -70,7 +70,7 @@ export type ServerEvent =
   | {
       event: ServerEventType.ADD_CONTENT;
       message_id: string;
-      type: 'text' | 'audio' | 'tool_call_arguments';
+      type: 'text' | 'audio' | 'tool_call';
       data: string; // text or base64 audio or JSON stringified object
     }
   | {
