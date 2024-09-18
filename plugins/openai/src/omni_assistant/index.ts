@@ -125,30 +125,9 @@ export class OmniAssistant {
 
         this.linkParticipant(participant.identity);
       });
-      room.on(RoomEvent.TrackPublished, () => {
-        this.subscribeToMicrophone();
-      });
-      room.on(RoomEvent.TrackSubscribed, () => {
-        this.subscribeToMicrophone();
-      });
-
       this.room = room;
       this.participant = participant;
       this.setState(proto.State.INITIALIZING);
-
-      if (participant) {
-        if (typeof participant === 'string') {
-          this.linkParticipant(participant);
-        } else {
-          this.linkParticipant(participant.identity);
-        }
-      } else {
-        // No participant specified, try to find the first participant in the room
-        for (const participant of room.remoteParticipants.values()) {
-          this.linkParticipant(participant.identity);
-          break;
-        }
-      }
 
       this.localSource = new AudioSource(proto.SAMPLE_RATE, proto.NUM_CHANNELS);
       this.agentPlayout = new AgentPlayout(this.localSource);
@@ -163,6 +142,20 @@ export class OmniAssistant {
       }
 
       await this.agentPublication.waitForSubscription();
+
+      if (participant) {
+        if (typeof participant === 'string') {
+          this.linkParticipant(participant);
+        } else {
+          this.linkParticipant(participant.identity);
+        }
+      } else {
+        // No participant specified, try to find the first participant in the room
+        for (const participant of room.remoteParticipants.values()) {
+          this.linkParticipant(participant.identity);
+          break;
+        }
+      }
 
       this.ws = new WebSocket(proto.API_URL, {
         headers: {
@@ -436,7 +429,14 @@ export class OmniAssistant {
       this.logger.error(`Participant with identity ${participantIdentity} not found`);
       return;
     }
-    this.subscribeToMicrophone();
+
+    if (this.linkedParticipant.trackPublications.size > 0) {
+      this.subscribeToMicrophone();
+    } else {
+      this.room.on(RoomEvent.TrackPublished, () => {
+        this.subscribeToMicrophone();
+      });
+    }
   }
 
   private subscribeToMicrophone(): void {
