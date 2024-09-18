@@ -50,7 +50,7 @@ First, a few concepts:
 - **Plugin**: A library class that performs a specific task, *e.g.* speech-to-text, from a specific
   provider. An agent can compose multiple plugins together to perform more complex tasks.
 
-Your index file for an agent is built of two parts:
+Your main file for an agent is built of two parts:
 
 - The boilerplate code that runs when you run this file, creating a new worker to orchestrate jobs
 - The code that is exported when this file is imported into Agents, to be ran on all jobs (which
