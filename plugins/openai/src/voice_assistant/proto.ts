@@ -24,11 +24,12 @@ export enum ServerEventType {
   ADD_MESSAGE = 'add_message',
   ADD_CONTENT = 'add_content',
   MESSAGE_ADDED = 'message_added',
-  GENERATION_FINISHED = 'generation_finished',
-  GENERATION_CANCELED = 'generation_canceled',
   VAD_SPEECH_STARTED = 'vad_speech_started',
   VAD_SPEECH_STOPPED = 'vad_speech_stopped',
   INPUT_TRANSCRIBED = 'input_transcribed',
+  GENERATION_CANCELED = 'generation_canceled',
+  SEND_STATE = 'send_state',
+  GENERATION_FINISHED = 'generation_finished',
 }
 
 export type ServerEvent =
@@ -42,118 +43,149 @@ export type ServerEvent =
       event: ServerEventType.ERROR;
       error: string;
     }
-  | ({
+  | {
       event: ServerEventType.ADD_MESSAGE;
-      id: string;
       previous_id: string;
       conversation_label: string;
-    } & (
-      | {
-          type: 'message';
-        }
-      | { type: 'tool_call'; tool_call_id: string; name: string }
-    ))
+      message: {
+        role: 'assistant';
+        content: (
+          | {
+              type: 'text';
+              text: string;
+            }
+          | {
+              type: 'audio';
+              audio: string;
+            }
+          | {
+              type: 'tool_call';
+              name: string;
+              arguments: string;
+              tool_call_id: string;
+            }
+        )[];
+      };
+    }
   | {
       event: ServerEventType.ADD_CONTENT;
       message_id: string;
       type: 'text' | 'audio' | 'tool_call_arguments';
       data: string; // text or base64 audio or JSON stringified object
     }
-  | ({
+  | {
       event: ServerEventType.MESSAGE_ADDED;
       id: string;
       previous_id: string;
       conversation_label: string;
-    } & (
-      | { type: 'message' }
-      | {
-          type: 'tool_call';
-          name: string;
-          tool_call_id: string;
-          arguments: string; // JSON stringified object
-        }
-    ))
+      content:
+        | {
+            type: 'tool_call';
+            name: string;
+            tool_call_id: string;
+            arguments: string; // JSON stringified object
+          }[]
+        | null;
+    }
   | {
       event: ServerEventType.GENERATION_FINISHED;
-      reason: 'stop' | 'max_tokens' | 'content_filter' | 'interrupt'; // FIXME: not sure these are all right
+      reason: 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
       conversation_label: string;
       message_ids: string[];
     }
   | {
-      event: ServerEventType.GENERATION_CANCELED;
+      event: ServerEventType.SEND_STATE;
+      session_id: string;
+      input_audio_format: AudioFormat;
+      vad_active: boolean;
+      audio_buffer: string;
+      conversations: any; // TODO(nbsp): get this
+      session_config: SessionConfig;
     }
   | {
-      event: ServerEventType.VAD_SPEECH_STARTED | ServerEventType.VAD_SPEECH_STOPPED;
+      event:
+        | ServerEventType.VAD_SPEECH_STARTED
+        | ServerEventType.VAD_SPEECH_STOPPED
+        | ServerEventType.GENERATION_CANCELED;
       sample_index: number;
-      message_id: string;
+      item_id: string;
     }
   | {
       event: ServerEventType.INPUT_TRANSCRIBED;
-      message_id: string;
+      item_id: string;
       transcript: string;
     };
 
 export enum ClientEventType {
   UPDATE_SESSION_CONFIG = 'update_session_config',
+  UPDATE_CONVERSATION_CONFIG = 'update_conversation_config',
   ADD_MESSAGE = 'add_message',
   DELETE_MESSAGE = 'delete_message',
   ADD_USER_AUDIO = 'add_user_audio',
-  COMMIT_PENDING_AUDIO = 'commit_pending_audio',
-  CLIENT_TURN_FINISHED = 'client_turn_finished',
-  CLIENT_INTERRUPTED = 'client_interrupted',
+  COMMIT_USER_AUDIO = 'commit_user_audio',
+  CANCEL_GENERATION = 'cancel_generation',
   GENERATE = 'generate',
   CREATE_CONVERSATION = 'create_conversation',
   DELETE_CONVERSATION = 'delete_conversation',
-  SUBSCRIBE_TO_USER_AUDIO = 'subscribe_to_user_audio',
-  UNSUBSCRIBE_FROM_USER_AUDIO = 'unsubscribe_from_user_audio',
   TRUNCATE_CONTENT = 'truncate_content',
+  REQUEST_STATE = 'request_state',
 }
 
 export type ClientEvent =
   | ({
       event: ClientEventType.UPDATE_SESSION_CONFIG;
-    } & InferenceConfig)
+    } & SessionConfig)
   | ({
+      event: ClientEventType.UPDATE_CONVERSATION_CONFIG;
+    } & ConversationConfig)
+  | {
       event: ClientEventType.ADD_MESSAGE;
       // id, previous_id, conversation_label are unused by us
-    } & (
-      | {
-          type: 'message';
-          message:
-            | {
-                role: 'user' | 'assistant' | 'system';
-                content: [
-                  {
+      message: (
+        | {
+            role: 'tool';
+            tool_call_id: string;
+          }
+        | {
+            role: 'user' | 'assistant' | 'system';
+          }
+      ) &
+        (
+          | {
+              content: (
+                | {
                     type: 'text';
                     text: string;
-                  },
-                ];
-              }
-            | {
-                role: 'user';
-                content: [
-                  | {
-                      type: 'text';
-                      text: string;
-                    }
-                  | {
-                      type: 'audio';
-                      audio: string; // base64 encoded buffer
-                    },
-                ];
-              };
-        }
-      | {
-          type: 'tool_response';
-          tool_call_id: string;
-          content: string;
-        }
-      | {
-          type: 'tool_call';
-          name: 'string';
-          arguments: Record<string, Record<string, unknown>>;
-        }
-    ))
+                  }
+                | {
+                    type: 'tool_call';
+                    name: string;
+                    arguments: string;
+                    tool_call_id: string;
+                  }
+              )[];
+            }
+          | {
+              role: 'user' | 'tool';
+              content: (
+                | {
+                    type: 'text';
+                    text: string;
+                  }
+                | {
+                    type: 'tool_call';
+                    name: string;
+                    arguments: string;
+                    tool_call_id: string;
+                  }
+                | {
+                    type: 'audio';
+                    audio: string; // base64 encoded buffer
+                  }
+              )[];
+            }
+        );
+    }
   | {
       event: ClientEventType.DELETE_MESSAGE;
       id: string;
@@ -164,10 +196,7 @@ export type ClientEvent =
       data: string; // base64 encoded buffer
     }
   | {
-      event:
-        | ClientEventType.COMMIT_PENDING_AUDIO
-        | ClientEventType.CLIENT_TURN_FINISHED
-        | ClientEventType.CLIENT_INTERRUPTED;
+      event: ClientEventType.COMMIT_USER_AUDIO | ClientEventType.CANCEL_GENERATION;
     }
   | {
       event: ClientEventType.GENERATE;
@@ -177,8 +206,7 @@ export type ClientEvent =
       event:
         | ClientEventType.CREATE_CONVERSATION
         | ClientEventType.DELETE_CONVERSATION
-        | ClientEventType.SUBSCRIBE_TO_USER_AUDIO
-        | ClientEventType.UNSUBSCRIBE_FROM_USER_AUDIO;
+        | ClientEventType.REQUEST_STATE;
       label: string;
     }
   | {
@@ -219,18 +247,30 @@ export const NUM_CHANNELS = 1;
 export const INPUT_PCM_FRAME_SIZE = 2400; // 100ms
 export const OUTPUT_PCM_FRAME_SIZE = 1200; // 50ms
 
-export type InferenceConfig = {
+export type SessionConfig = Partial<{
+  turn_detection: 'disabled' | 'server_vad';
+  input_audio_format: AudioFormat;
+  transcribe_input: boolean;
+  vad: Partial<{
+    threshold: number; // 0..1 inclusive, default 0.5
+    prefix_padding_ms: number; // default 300
+    silence_duration_ms: number; // default 200
+  }>;
+}>;
+
+export type ConversationConfig = Partial<{
   system_message: string;
   voice: Voice;
-  max_tokens: number;
-  temperature: number;
-  disable_audio: boolean;
-  turn_end_type: TurnEndType;
-  transcribe_input: boolean;
-  audio_format: AudioFormat;
+  subscribe_to_user_audio: boolean;
+  output_audio_format: AudioFormat;
   tools: Tool[];
   tool_choice: ToolChoice;
-};
+  temperature: number; // 0.6..1.2 inclusive, default 0.8
+  max_tokens: number; // 1..4096, default 2048;
+  disable_audio: boolean;
+  transcribe_input: boolean;
+  conversation_label: string; // default "default"
+}>;
 
 export enum State {
   INITIALIZING = 'initializing',
