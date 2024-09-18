@@ -376,7 +376,6 @@ export class VoiceAssistant {
   private handleModelListening(): void {
     if (this.playingHandle && !this.playingHandle.done) {
       this.playingHandle.interrupt();
-      console.log('========', this.playingHandle.messageId);
       this.sendClientCommand({
         event: proto.ClientEventType.TRUNCATE_CONTENT,
         message_id: this.playingHandle.messageId,

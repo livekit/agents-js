@@ -49,7 +49,7 @@ export type ServerEvent =
       conversation_label: string;
       message: {
         role: 'assistant';
-        content: [
+        content: (
           | {
               type: 'text';
               text: string;
@@ -63,8 +63,8 @@ export type ServerEvent =
               name: string;
               arguments: string;
               tool_call_id: string;
-            },
-        ];
+            }
+        )[];
       };
     }
   | {
@@ -79,14 +79,12 @@ export type ServerEvent =
       previous_id: string;
       conversation_label: string;
       content:
-        | [
-            {
-              type: 'tool_call';
-              name: string;
-              tool_call_id: string;
-              arguments: string; // JSON stringified object
-            },
-          ]
+        | {
+            type: 'tool_call';
+            name: string;
+            tool_call_id: string;
+            arguments: string; // JSON stringified object
+          }[]
         | null;
     }
   | {
@@ -143,44 +141,50 @@ export type ClientEvent =
   | {
       event: ClientEventType.ADD_MESSAGE;
       // id, previous_id, conversation_label are unused by us
-      message:
+      message: (
         | {
-            role: 'user' | 'assistant' | 'system' | 'tool';
-            // XXX(nbsp): tool_call_id is only valid- but required- when role=tool.
-            // for brevity it's set to optional here.
-            tool_call_id?: string;
-            content: [
-              | {
-                  type: 'text';
-                  text: string;
-                }
-              | {
-                  type: 'tool_call';
-                  name: string;
-                  arguments: string;
-                  tool_call_id: string;
-                },
-            ];
+            role: 'tool';
+            tool_call_id: string;
           }
         | {
-            role: 'user' | 'tool';
-            content: [
-              | {
-                  type: 'text';
-                  text: string;
-                }
-              | {
-                  type: 'tool_call';
-                  name: string;
-                  arguments: string;
-                  tool_call_id: string;
-                }
-              | {
-                  type: 'audio';
-                  audio: string; // base64 encoded buffer
-                },
-            ];
-          };
+            role: 'user' | 'assistant' | 'system';
+          }
+      ) &
+        (
+          | {
+              content: (
+                | {
+                    type: 'text';
+                    text: string;
+                  }
+                | {
+                    type: 'tool_call';
+                    name: string;
+                    arguments: string;
+                    tool_call_id: string;
+                  }
+              )[];
+            }
+          | {
+              role: 'user' | 'tool';
+              content: (
+                | {
+                    type: 'text';
+                    text: string;
+                  }
+                | {
+                    type: 'tool_call';
+                    name: string;
+                    arguments: string;
+                    tool_call_id: string;
+                  }
+                | {
+                    type: 'audio';
+                    audio: string; // base64 encoded buffer
+                  }
+              )[];
+            }
+        );
     }
   | {
       event: ClientEventType.DELETE_MESSAGE;
