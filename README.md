@@ -14,8 +14,8 @@ The Agent Framework is designed for building realtime, programmable participants
 servers. Use it to create conversational, multi-modal voice agents that can see, hear, and
 understand.
 
-This is a Node.js port of the [LiveKit Agents framework](https://livekit.io/agents), originally
-written in Python.
+This is a Node.js distribution of the [LiveKit Agents framework](https://livekit.io/agents),
+originally written in Python.
 <!--END_DESCRIPTION-->
 
 > [!NOTE]
