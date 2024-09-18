@@ -224,12 +224,14 @@ export class VoiceAssistant {
   }
 
   private sendClientCommand(command: proto.ClientEvent): void {
+    const isAudio = command.event === proto.ClientEventType.ADD_USER_AUDIO;
+
     if (!this.connected || !this.ws) {
-      this.logger.error('WebSocket is not connected');
+      if (!isAudio) this.logger.error('WebSocket is not connected');
       return;
     }
 
-    if (command.event !== proto.ClientEventType.ADD_USER_AUDIO) {
+    if (!isAudio) {
       this.logger.debug(`-> ${JSON.stringify(this.loggableEvent(command))}`);
     }
     this.ws.send(JSON.stringify(command));
