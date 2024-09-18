@@ -108,11 +108,11 @@ export type ServerEvent =
         | ServerEventType.VAD_SPEECH_STOPPED
         | ServerEventType.GENERATION_CANCELED;
       sample_index: number;
-      item_id: string;
+      message_id: string;
     }
   | {
       event: ServerEventType.INPUT_TRANSCRIBED;
-      item_id: string;
+      message_id: string;
       transcript: string;
     };
 

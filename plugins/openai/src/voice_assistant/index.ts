@@ -348,16 +348,16 @@ export class VoiceAssistant {
 
   private handleInputTranscribed(event: proto.ServerEvent): void {
     if (event.event !== proto.ServerEventType.INPUT_TRANSCRIBED) return;
-    const itemId = event.item_id;
+    const messageId = event.message_id;
     const transcription = event.transcript;
-    if (!itemId || transcription === undefined) {
-      this.logger.error('Item ID or transcription not set');
+    if (!messageId || transcription === undefined) {
+      this.logger.error('Message ID or transcription not set');
       return;
     }
     const participantIdentity = this.linkedParticipant?.identity;
     const trackSid = this.subscribedTrack?.sid;
     if (participantIdentity && trackSid) {
-      this.publishTranscription(participantIdentity, trackSid, transcription, true, itemId);
+      this.publishTranscription(participantIdentity, trackSid, transcription, true, messageId);
     } else {
       this.logger.error('Participant or track not set');
     }
@@ -389,11 +389,11 @@ export class VoiceAssistant {
 
   private handleVadSpeechStarted(event: proto.ServerEvent): void {
     if (event.event !== proto.ServerEventType.VAD_SPEECH_STARTED) return;
-    const itemId = event.item_id;
+    const messageId = event.message_id;
     const participantIdentity = this.linkedParticipant?.identity;
     const trackSid = this.subscribedTrack?.sid;
-    if (participantIdentity && trackSid && itemId) {
-      this.publishTranscription(participantIdentity, trackSid, '', false, itemId);
+    if (participantIdentity && trackSid && messageId) {
+      this.publishTranscription(participantIdentity, trackSid, '', false, messageId);
     } else {
       this.logger.error('Participant or track or itemId not set');
     }
