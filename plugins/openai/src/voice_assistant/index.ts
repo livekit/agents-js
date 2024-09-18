@@ -56,7 +56,7 @@ type ImplOptions = {
   functions: llm.FunctionContext;
 };
 
-export class VoiceAssistant {
+export class OmniAssistant {
   options: ImplOptions;
   room: Room | null = null;
   linkedParticipant: RemoteParticipant | null = null;
@@ -97,6 +97,18 @@ export class VoiceAssistant {
   private agentPlayout: AgentPlayout | null = null;
   private playingHandle: PlayoutHandle | null = null;
   private logger = log();
+
+  get funcCtx(): llm.FunctionContext {
+    return this.options.functions;
+  }
+  set funcCtx(ctx: llm.FunctionContext) {
+    this.options.functions = ctx;
+    this.options.conversationConfig.tools = tools(ctx);
+    this.sendClientCommand({
+      event: proto.ClientEventType.UPDATE_CONVERSATION_CONFIG,
+      ...this.options.conversationConfig,
+    });
+  }
 
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise(async (resolve, reject) => {
