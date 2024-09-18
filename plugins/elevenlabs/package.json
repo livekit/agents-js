@@ -1,0 +1,25 @@
+{
+  "name": "@livekit/agents-plugin-elevenlabs",
+  "version": "0.1.0",
+  "description": "ElevenLabs plugin for LiveKit Node Agents",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "author": "aoife cassidy <aoife@livekit.io>",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint -f unix \"src/**/*.{ts,js}\"",
+    "api:check": "api-extractor run --typescript-compiler-folder ../../node_modules/typescript",
+    "api:update": "api-extractor run --local --typescript-compiler-folder ../../node_modules/typescript --verbose"
+  },
+  "devDependencies": {
+    "@microsoft/api-extractor": "^7.35.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@livekit/agents": "workspace:*",
+    "@livekit/rtc-node": "^0.8.1",
+    "ws": "^8.16.0"
+  }
+}

@@ -120,6 +120,9 @@ importers:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../agents
+      '@livekit/agents-plugin-elevenlabs':
+        specifier: workspace:*
+        version: link:../plugins/elevenlabs
       '@livekit/agents-plugin-openai':
         specifier: workspace:*
         version: link:../plugins/openai
@@ -130,6 +133,28 @@ importers:
         specifier: ^3.23.8
         version: 3.23.8
     devDependencies:
+      typescript:
+        specifier: ^5.0.0
+        version: 5.4.5
+
+  plugins/elevenlabs:
+    dependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/rtc-node':
+        specifier: ^0.8.1
+        version: 0.8.1
+      ws:
+        specifier: ^8.16.0
+        version: 8.17.0
+    devDependencies:
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@22.5.5)
+      '@types/ws':
+        specifier: ^8.5.10
+        version: 8.5.10
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
