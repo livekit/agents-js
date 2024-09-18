@@ -319,6 +319,8 @@ export class VoiceAssistant {
       case 'text':
         this.playingHandle?.pushText(event.data);
         break;
+      case 'tool_call':
+        break;
       default:
         this.logger.warn(`Unknown content event type: ${event.type}`);
         break;
@@ -335,7 +337,12 @@ export class VoiceAssistant {
           message: {
             role: 'tool',
             tool_call_id: toolCall.tool_call_id,
-            content,
+            content: [
+              {
+                type: 'text',
+                text: content,
+              },
+            ],
           },
         });
         this.sendClientCommand({
