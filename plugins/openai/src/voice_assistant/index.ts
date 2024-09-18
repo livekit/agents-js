@@ -31,8 +31,8 @@ export const defaultSessionConfig: proto.SessionConfig = {
   transcribe_input: true,
   vad: {
     threshold: 0.5,
-    prefix_padding_ms: 500,
-    silence_duration_ms: 500,
+    prefix_padding_ms: 300,
+    silence_duration_ms: 200,
   },
 };
 
@@ -261,7 +261,6 @@ export class VoiceAssistant {
         this.setState(proto.State.LISTENING);
         break;
       case proto.ServerEventType.ADD_MESSAGE:
-        // this.handleAddMessage(event); // see handleAddMessage comment
         break;
       case proto.ServerEventType.ADD_CONTENT:
         this.handleAddContent(event);
@@ -278,7 +277,7 @@ export class VoiceAssistant {
         this.handleInputTranscribed(event);
         break;
       case proto.ServerEventType.GENERATION_CANCELED:
-        this.handleModelListening();
+        this.handleGenerationCanceled();
         break;
       case proto.ServerEventType.GENERATION_FINISHED:
         this.handleGenerationFinished(event);
@@ -324,17 +323,6 @@ export class VoiceAssistant {
     }
   }
 
-  // XXX(nbsp): we use this event to determine which state to send, which breaks
-  // when more than one tool call can be processed at once. this needs to be rethought entirely.
-  //
-  // private handleAddMessage(event: proto.ServerEvent): void {
-  //   if (event.event !== proto.ServerEventType.ADD_MESSAGE) return;
-  //   if (event.message.content.type === 'tool_call') {
-  //     this.setState(proto.State.THINKING);
-  //     this.thinking = true;
-  //   }
-  // }
-
   private handleMessageAdded(event: proto.ServerEvent): void {
     if (event.event !== proto.ServerEventType.MESSAGE_ADDED) return;
     for (const toolCall of event.content || []) {
@@ -373,7 +361,7 @@ export class VoiceAssistant {
     }
   }
 
-  private handleModelListening(): void {
+  private handleGenerationCanceled(): void {
     if (this.playingHandle && !this.playingHandle.done) {
       this.playingHandle.interrupt();
       this.sendClientCommand({

@@ -253,7 +253,7 @@ export type SessionConfig = Partial<{
   transcribe_input: boolean;
   vad: Partial<{
     threshold: number; // 0..1 inclusive, default 0.5
-    prefix_padding_ms: number; // default 0.5
+    prefix_padding_ms: number; // default 300
     silence_duration_ms: number; // default 200
   }>;
 }>;
