@@ -129,7 +129,6 @@ export class OmniAssistant {
       this.participant = participant;
       this.setState(proto.State.INITIALIZING);
 
-
       this.localSource = new AudioSource(proto.SAMPLE_RATE, proto.NUM_CHANNELS);
       this.agentPlayout = new AgentPlayout(this.localSource);
       const track = LocalAudioTrack.createAudioTrack('assistant_voice', this.localSource);
