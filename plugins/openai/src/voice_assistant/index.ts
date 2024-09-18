@@ -198,6 +198,13 @@ export class OmniAssistant {
     });
   }
 
+  // user-initiated close
+  close() {
+    if (!this.connected || !this.ws) return;
+    this.logger.debug('stopping assistant');
+    this.ws.close();
+  }
+
   addUserMessage(text: string, generate: boolean = true): void {
     this.sendClientCommand({
       event: proto.ClientEventType.ADD_MESSAGE,
