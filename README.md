@@ -4,26 +4,133 @@ SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Agents Framework for NodeJS
+<!--BEGIN_BANNER_IMAGE--><!--END_BANNER_IMAGE-->
 
-This is a Node port of the [LiveKit Agents framework](https://livekit.io/agents), originally written in Python.
+# LiveKit Agents for Node.js
+
+<!--BEGIN_DESCRIPTION-->
+
+The Agent Framework is designed for building realtime, programmable participants that run on
+servers. Use it to create conversational, multi-modal voice agents that can see, hear, and
+understand.
+
+This is a Node.js distribution of the [LiveKit Agents framework](https://livekit.io/agents),
+originally written in Python.
+<!--END_DESCRIPTION-->
+
+> [!NOTE]
+> This SDK is in Developer Preview. During this period, you may encounter bugs, and the APIs may
+> change. Currently, only the OpenAI Realtime voice assistant is available as a plugin.
+>
+> We welcome and appreciate any feedback or contributions. You can create issues here or chat live
+> with us in the [LiveKit Community Slack](https://livekit.io/join-slack).
+
+## Installation
+
+To install the core Agents library:
+
+```bash
+pnpm install @livekit/agents
+```
+
+To install the OpenAI plugin, for optional support for realtime voice assistants:
+
+```bash
+pnpm install @livekit/agents-plugin-openai
+```
 
 ## Usage
 
-The wiki includes a [guide](https://github.com/livekit/agents-js/wiki/Getting-started) on setting up Node Agents and writing a small program using the framework.
+First, a few concepts:
 
-## Building
+- **Agent**: A function that defines the workflow of a programmable, server-side participant. This
+  is your application code.
+- **Worker**: A container process responsible for managing job queuing with LiveKit server. Each
+  worker is capable of running multiple agents simultaneously.
+- **Plugin**: A library class that performs a specific task, *e.g.* speech-to-text, from a specific
+  provider. An agent can compose multiple plugins together to perform more complex tasks.
 
-This project depends on [`@livekit/rtc-node`](https://npmjs.com/package/@livekit/rtc-node), which itself depends on `libstdc++` version 6 being in PATH.
+Your main file for an agent is built of two parts:
 
-Install the project dependencies and run the build script:
-```sh
-$ pnpm install
-$ cd agents
-$ pnpm build
+- The boilerplate code that runs when you run this file, creating a new worker to orchestrate jobs
+- The code that is exported when this file is imported into Agents, to be ran on all jobs (which
+  includes your entrypoint function, and an optional prewarm function)
+
+Refer to the [minimal voice assistant](/examples/src/minimal_assistant.ts) example to understand
+how to build a simple voice assistant with function calling using OpenAI's model.
+
+## Running
+
+The framework exposes a CLI interface to run your agent. To get started, you'll need the following
+environment variables set:
+
+- `LIVEKIT_URL`
+- `LIVEKIT_API_KEY`
+- `LIVEKIT_API_SECRET`
+- `OPENAI_API_KEY`
+
+The following command will start the worker and wait for users to connect to your LiveKit server:
+
+```bash
+node my_agent.js start
 ```
 
-Your output will be in the `dist/` directory.
+To run the worker in dev mode (outputting colourful pretty-printed debug logs), run it using `dev`:
+
+```bash
+node my_agent.js dev
+```
+
+### Using playground for your agent UI
+
+To ease the process of building and testing an agent, we've developed a versatile web frontend
+called "playground". You can use or modify this app to suit your specific requirements. It can also
+serve as a starting point for a completely custom agent application.
+
+- [Hosted playground](https://agents-playground.livekit.io)
+- [Source code](https://github.com/livekit/agents-playground)
+- [Playground docs](https://docs.livekit.io/agents/playground)
+
+### Joining a specific room
+
+To join a LiveKit room that's already active, you can use the `connect` command:
+
+```bash
+bash my_agent.ts connect --room <my-room>
+```
+
+### FAQ
+
+#### What happens when I run my agent?
+
+When you follow the steps above to run your agent, a worker is started that opens an authenticated
+WebSocket connection to a LiveKit server instance(defined by your `LIVEKIT_URL` and authenticated
+with an access token).
+
+No agents are actually running at this point. Instead, the worker is waiting for LiveKit server to
+give it a job.
+
+When a room is created, the server notifies one of the registered workers about a new job.
+The notified worker can decide whether or not to accept it. If the worker accepts the job, the
+worker will instantiate your agent as a participant and have it join the room where it can start
+subscribing to tracks. A worker can manage multiple agent instances simultaneously.
+
+If a notified worker rejects the job or does not accept within a predetermined timeout period, the
+server will route the job request to another available worker.
+
+#### What happens when I SIGTERM a worker?
+
+The orchestration system was designed for production use cases. Unlike the typical web server, an
+agent is a stateful program, so it's important that a worker isn't terminated while active sessions
+are ongoing.
+
+When calling SIGTERM on a worker, the worker will signal to LiveKit server that it no longer wants
+additional jobs. It will also auto-reject any new job requests that get through before the server
+signal is received. The worker will remain alive while it manages any agents connected to rooms.
 
 ## License
-This project is licensed under `Apache-2.0`, and is [REUSE-3.2](https://reuse.software) compliant. Refer to [the license](LICENSES/Apache-2.0.txt) for details.
+
+This project is licensed under `Apache-2.0`, and is [REUSE-3.2](https://reuse.software) compliant.
+Refer to [the license](LICENSES/Apache-2.0.txt) for details.
+
+<!--BEGIN_REPO_NAV--><!---END_REPO_NAV-->
