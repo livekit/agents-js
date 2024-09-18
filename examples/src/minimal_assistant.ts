@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { type JobContext, WorkerOptions, cli, defineAgent } from '@livekit/agents';
-import { VoiceAssistant, defaultConversationConfig } from '@livekit/agents-plugin-openai';
+import { OmniAssistant, defaultConversationConfig } from '@livekit/agents-plugin-openai';
 import { z } from 'zod';
 
 export default defineAgent({
@@ -11,7 +11,7 @@ export default defineAgent({
 
     console.log('starting assistant example agent');
 
-    const assistant = new VoiceAssistant({
+    const assistant = new OmniAssistant({
       conversationConfig: {
         ...defaultConversationConfig,
         system_message: 'You are a helpful assistant.',
