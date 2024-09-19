@@ -25,6 +25,7 @@ import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 import * as proto from './proto.js';
 import { BasicTranscriptionForwarder } from './transcription_forwarder.js';
 
+/** @hidden */
 export const defaultSessionConfig: proto.SessionConfig = {
   turn_detection: 'server_vad',
   input_audio_format: proto.AudioFormat.PCM16,
@@ -36,6 +37,7 @@ export const defaultSessionConfig: proto.SessionConfig = {
   },
 };
 
+/** @hidden */
 export const defaultConversationConfig: proto.ConversationConfig = {
   system_message: 'You are a helpful assistant.',
   voice: proto.Voice.ALLOY,
