@@ -369,7 +369,7 @@ export class Worker {
   }
 
   async simulateJob(roomName: string, participantIdentity?: string) {
-    const client = new RoomServiceClient(this.#opts.wsURL);
+    const client = new RoomServiceClient(this.#opts.wsURL, this.#opts.apiKey, this.#opts.apiSecret);
     const room = await client.createRoom({ name: roomName });
     let participant: ParticipantInfo | undefined = undefined;
     if (participantIdentity) {
