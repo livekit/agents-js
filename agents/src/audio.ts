@@ -4,6 +4,7 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import { log } from './log.js';
 
+/** AudioByteStream translates between LiveKit AudioFrame packets and raw byte data. */
 export class AudioByteStream {
   private sampleRate: number;
   private numChannels: number;
