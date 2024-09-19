@@ -1,6 +1,5 @@
 ---
 "@livekit/agents": minor
-"@livekit/agents-plugin-elevenlabs": minor
 "livekit-agents-examples": minor
 ---
 
