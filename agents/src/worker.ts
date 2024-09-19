@@ -237,7 +237,7 @@ export class Worker {
     opts.wsURL = opts.wsURL || process.env.LIVEKIT_URL || '';
     opts.apiKey = opts.apiKey || process.env.LIVEKIT_API_KEY || '';
     opts.apiSecret = opts.apiSecret || process.env.LIVEKIT_API_SECRET || '';
-
+    
     if (opts.wsURL === '')
       throw new MissingCredentialsError('--url is required, or set LIVEKIT_URL env var');
     if (opts.apiKey === '')
@@ -369,7 +369,7 @@ export class Worker {
   }
 
   async simulateJob(roomName: string, participantIdentity?: string) {
-    const client = new RoomServiceClient(this.#opts.wsURL);
+    const client = new RoomServiceClient(this.#opts.wsURL, this.#opts.apiKey, this.#opts.apiSecret);
     const room = await client.createRoom({ name: roomName });
     let participant: ParticipantInfo | undefined = undefined;
     if (participantIdentity) {
