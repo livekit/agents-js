@@ -58,6 +58,7 @@ type ImplOptions = {
   functions: llm.FunctionContext;
 };
 
+/** @alpha */
 export class OmniAssistant {
   options: ImplOptions;
   room: Room | null = null;
