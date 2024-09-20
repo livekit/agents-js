@@ -123,7 +123,7 @@ export const runApp = (opts: WorkerOptions) => {
     .command('connect')
     .description('Connect to a specific room')
     .requiredOption('--room <string>', 'Room name to connect to')
-    .option('--participant-identity <string>', 'Participant identitiy to connect as')
+    .option('--participant-identity <string>', 'Identity of user to listen to')
     .action((...[, command]) => {
       const options = command.optsWithGlobals();
       opts.wsURL = options.url || opts.wsURL;
