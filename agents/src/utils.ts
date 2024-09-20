@@ -116,7 +116,8 @@ export class Mutex {
 
 /** @internal */
 export class Queue<T> {
-  #items: T[] = [];
+  /** @internal */
+  items: T[] = [];
   #limit?: number;
   #events = new EventEmitter();
 
@@ -125,19 +126,19 @@ export class Queue<T> {
   }
 
   async get(): Promise<T> {
-    if (this.#items.length === 0) {
+    if (this.items.length === 0) {
       await once(this.#events, 'put');
     }
-    const item = this.#items.shift()!;
+    const item = this.items.shift()!;
     this.#events.emit('get');
     return item;
   }
 
   async put(item: T) {
-    if (this.#limit && this.#items.length >= this.#limit) {
+    if (this.#limit && this.items.length >= this.#limit) {
       await once(this.#events, 'get');
     }
-    this.#items.push(item);
+    this.items.push(item);
     this.#events.emit('put');
   }
 }
