@@ -373,7 +373,14 @@ export class Worker {
     const room = await client.createRoom({ name: roomName });
     let participant: ParticipantInfo | undefined = undefined;
     if (participantIdentity) {
-      participant = await client.getParticipant(roomName, participantIdentity);
+      try {
+        participant = await client.getParticipant(roomName, participantIdentity);
+      } catch (e) {
+        this.#logger.fatal(
+          `participant with identity ${participantIdentity} not found in room ${roomName}`,
+        );
+        throw e;
+      }
     }
 
     this.event!.emit(
