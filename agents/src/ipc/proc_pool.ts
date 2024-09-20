@@ -102,6 +102,7 @@ export class ProcPool {
     }
     this.closed = true;
     this.controller.abort();
+    this.warmedProcQueue.items.forEach((e) => e.close());
     this.executors.forEach((e) => e.close());
     await Promise.allSettled(this.tasks);
   }
