@@ -85,7 +85,16 @@ export const runApp = (opts: WorkerOptions) => {
       new Option('--api-secret <string>', "LiveKit server or Cloud project's API secret")
         .makeOptionMandatory(true)
         .env('LIVEKIT_API_SECRET'),
-    );
+    )
+    .action(() => {
+      if (
+        // do not run CLI if origin file is agents/ipc/job_main.js
+        process.argv[1] !== new URL('ipc/job_main.js', import.meta.url).pathname ||
+        process.argv.length < 3
+      ) {
+        program.help();
+      }
+    });
 
   program
     .command('start')
