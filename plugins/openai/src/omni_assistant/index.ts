@@ -291,7 +291,7 @@ export class OmniAssistant {
         break;
       case 'conversation.item.created':
         break;
-      case 'response.text.delta':
+      case 'response.audio_transcript.delta':
       case 'response.audio.delta':
         this.handleAddContent(event);
         break;
@@ -318,7 +318,7 @@ export class OmniAssistant {
   }
 
   private handleAddContent(
-    event: proto.ResponseTextDeltaEvent | proto.ResponseAudioDeltaEvent,
+    event: proto.ResponseAudioDeltaEvent | proto.ResponseAudioTranscriptDeltaEvent,
   ): void {
     const trackSid = this.getLocalTrackSid();
     if (!this.room || !this.room.localParticipant || !trackSid || !this.agentPlayout) {
@@ -342,7 +342,7 @@ export class OmniAssistant {
     }
     if (event.type === 'response.audio.delta') {
       this.playingHandle?.pushAudio(Buffer.from(event.delta, 'base64'));
-    } else if (event.type === 'response.text.delta') {
+    } else if (event.type === 'response.audio_transcript.delta') {
       this.playingHandle?.pushText(event.delta);
     }
   }
