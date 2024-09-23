@@ -161,11 +161,6 @@ export class OmniAssistant {
 
       this.ws.onopen = () => {
         this.connected = true;
-        this.sendClientCommand({
-          type: 'session.update',
-          session: this.options.sessionConfig,
-        });
-        resolve();
       };
 
       this.ws.onerror = (error) => {
@@ -178,7 +173,16 @@ export class OmniAssistant {
       };
 
       this.ws.onmessage = (message) => {
-        this.handleServerEvent(JSON.parse(message.data as string));
+        const event = JSON.parse(message.data as string);
+        this.handleServerEvent(event);
+
+        if (event.type === 'session.created') {
+          this.sendClientCommand({
+            type: 'session.update',
+            session: this.options.sessionConfig,
+          });
+          resolve(); // Resolve the promise here after session is created and config is sent
+        }
       };
     });
   }
@@ -207,7 +211,9 @@ export class OmniAssistant {
     if (generate) {
       this.sendClientCommand({
         type: 'response.create',
-        response: {},
+        response: {
+          // modalities: ['text', 'audio'],
+        },
       });
     }
   }
