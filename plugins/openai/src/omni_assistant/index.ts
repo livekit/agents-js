@@ -221,12 +221,12 @@ export class OmniAssistant {
     // don't override thinking until done
     if (this.thinking) return;
     if (this.room?.isConnected && this.room.localParticipant) {
-      const currentState = this.room.localParticipant.attributes['voice_assistant.state'];
+      const currentState = this.room.localParticipant.attributes['lk.agent.state'];
       if (currentState !== state) {
         this.room.localParticipant!.setAttributes({
-          'voice_assistant.state': state,
+          'lk.agent.state': state,
         });
-        this.logger.debug(`voice_assistant.state updated from ${currentState} to ${state}`);
+        this.logger.debug(`lk.agent.state updated from ${currentState} to ${state}`);
       }
     }
   }
