@@ -26,7 +26,7 @@ import * as proto from './proto.js';
 import { BasicTranscriptionForwarder } from './transcription_forwarder.js';
 
 /** @hidden */
-export const defaultSessionConfig: Partial<proto.RealtimeSession> = {
+export const defaultSessionConfig: Partial<proto.SessionResource> = {
   turn_detection: {
     type: 'server_vad',
     threshold: 0.5,
@@ -34,19 +34,27 @@ export const defaultSessionConfig: Partial<proto.RealtimeSession> = {
     silence_duration_ms: 200,
   },
   input_audio_format: 'pcm16',
+  input_audio_transcription: {
+    model: 'whisper-1',
+  },
+};
+
+/** @hidden */
+export const defaultConversationConfig: proto.ResponseCreateEvent['response'] = {
+  modalities: ['text', 'audio'],
+  instructions: 'You are a helpful assistant.',
+  voice: 'alloy',
   output_audio_format: 'pcm16',
-  input_audio_transcription: { model: 'whisper-1' },
   tools: [],
   tool_choice: 'auto',
   temperature: 0.8,
   max_output_tokens: 2048,
-  modalities: ['text', 'audio'],
-  voice: 'alloy',
 };
 
 type ImplOptions = {
   apiKey: string;
-  sessionConfig: Partial<proto.RealtimeSession>;
+  sessionConfig: Partial<proto.SessionResource>;
+  conversationConfig: proto.ResponseCreateEvent['response'];
   functions: llm.FunctionContext;
 };
 
@@ -60,10 +68,12 @@ export class OmniAssistant {
 
   constructor({
     sessionConfig = defaultSessionConfig,
+    conversationConfig = defaultConversationConfig,
     functions = {},
     apiKey = process.env.OPENAI_API_KEY || '',
   }: {
-    sessionConfig?: Partial<proto.RealtimeSession>;
+    sessionConfig?: Partial<proto.SessionResource>;
+    conversationConfig?: proto.ResponseCreateEvent['response'];
     functions?: llm.FunctionContext;
     apiKey?: string;
   }) {
@@ -71,10 +81,11 @@ export class OmniAssistant {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
 
-    sessionConfig.tools = tools(functions);
+    conversationConfig.tools = tools(functions);
     this.options = {
       apiKey,
       sessionConfig,
+      conversationConfig,
       functions,
     };
   }
@@ -95,10 +106,10 @@ export class OmniAssistant {
   }
   set funcCtx(ctx: llm.FunctionContext) {
     this.options.functions = ctx;
-    this.options.sessionConfig.tools = tools(ctx);
+    this.options.conversationConfig.tools = tools(ctx);
     this.sendClientCommand({
-      type: 'session.update',
-      session: this.options.sessionConfig,
+      type: 'response.create',
+      response: this.options.conversationConfig,
     });
   }
 
@@ -162,6 +173,10 @@ export class OmniAssistant {
           type: 'session.update',
           session: this.options.sessionConfig,
         });
+        this.sendClientCommand({
+          type: 'response.create',
+          response: this.options.conversationConfig,
+        });
         resolve();
       };
 
@@ -195,7 +210,7 @@ export class OmniAssistant {
         role: 'user',
         content: [
           {
-            type: 'text',
+            type: 'input_text',
             text: text,
           },
         ],
@@ -265,27 +280,135 @@ export class OmniAssistant {
       case 'session.created':
         this.setState(proto.State.LISTENING);
         break;
-      case 'conversation.created':
-        // Handle conversation created event if needed
+      case 'conversation.item.created':
         break;
-      case 'response.created':
+      case 'response.text.delta':
+      case 'response.audio.delta':
+        this.handleAddContent(event);
+        break;
+      case 'conversation.item.created':
+        this.handleMessageAdded(event);
+        break;
+      case 'input_audio_buffer.speech_started':
+        this.handleVadSpeechStarted(event);
+        break;
+      // case 'input_audio_transcription.stopped':
+      //   break;
+      case 'conversation.item.input_audio_transcription.completed':
+        this.handleInputTranscribed(event);
+        break;
+      // case 'response.canceled':
+      //   this.handleGenerationCanceled();
+      //   break;
       case 'response.done':
-        this.handleResponseEvent(event);
+        this.handleGenerationFinished(event);
         break;
       default:
         this.logger.warn(`Unknown server event: ${JSON.stringify(event)}`);
     }
   }
 
-  private handleResponseEvent(event: proto.ResponseCreatedEvent | proto.ResponseDoneEvent): void {
-    if (event.response.status === 'cancelled' || event.response.status === 'failed') {
+  private handleAddContent(
+    event: proto.ResponseTextDeltaEvent | proto.ResponseAudioDeltaEvent,
+  ): void {
+    const trackSid = this.getLocalTrackSid();
+    if (!this.room || !this.room.localParticipant || !trackSid || !this.agentPlayout) {
+      log().error('Room or local participant not set');
+      return;
+    }
+
+    if (!this.playingHandle || this.playingHandle.done) {
+      const trFwd = new BasicTranscriptionForwarder(
+        this.room,
+        this.room?.localParticipant?.identity,
+        trackSid,
+        event.response_id,
+      );
+
+      this.setState(proto.State.SPEAKING);
+      this.playingHandle = this.agentPlayout.play(event.response_id, trFwd);
+      this.playingHandle.on('complete', () => {
+        this.setState(proto.State.LISTENING);
+      });
+    }
+    if (event.type === 'response.audio.delta') {
+      this.playingHandle?.pushAudio(Buffer.from(event.delta, 'base64'));
+    } else if (event.type === 'response.text.delta') {
+      this.playingHandle?.pushText(event.delta);
+    }
+  }
+
+  private handleMessageAdded(event: proto.ConversationItemCreatedEvent): void {
+    if (event.item.type === 'function_call') {
+      const toolCall = event.item;
+      this.options.functions[toolCall.name].execute(toolCall.arguments).then((content) => {
+        this.thinking = false;
+        this.sendClientCommand({
+          type: 'conversation.item.create',
+          item: {
+            type: 'function_call_output',
+            call_id: toolCall.call_id,
+            output: content,
+          },
+        });
+        this.sendClientCommand({
+          type: 'response.create',
+          response: {},
+        });
+      });
+    }
+  }
+
+  private handleInputTranscribed(
+    event: proto.ConversationItemInputAudioTranscriptionCompletedEvent,
+  ): void {
+    const messageId = event.item_id;
+    const transcription = event.transcript;
+    if (!messageId || transcription === undefined) {
+      this.logger.error('Message ID or transcription not set');
+      return;
+    }
+    const participantIdentity = this.linkedParticipant?.identity;
+    const trackSid = this.subscribedTrack?.sid;
+    if (participantIdentity && trackSid) {
+      this.publishTranscription(participantIdentity, trackSid, transcription, true, messageId);
+    } else {
+      this.logger.error('Participant or track not set');
+    }
+  }
+
+  private handleGenerationFinished(event: proto.ResponseDoneEvent): void {
+    if (
+      event.response.status === 'incomplete' &&
+      event.response.status_details?.type === 'incomplete' &&
+      event.response.status_details?.reason === 'interruption'
+    ) {
       if (this.playingHandle && !this.playingHandle.done) {
         this.playingHandle.interrupt();
+        this.sendClientCommand({
+          type: 'conversation.item.truncate',
+          item_id: this.playingHandle.messageId,
+          content_index: 0, // ignored for now (see OAI docs)
+          audio_end_ms: (this.playingHandle.playedAudioSamples * 1000) / proto.SAMPLE_RATE,
+        });
       }
-    } else if (event.response.status === 'completed') {
-      if (this.playingHandle && !this.playingHandle.interrupted) {
-        this.playingHandle.endInput();
-      }
+    } else if (event.response.status !== 'completed') {
+      log().warn(`assistant turn finished unexpectedly reason ${event.response.status}`);
+    }
+
+    if (this.playingHandle && !this.playingHandle.interrupted) {
+      this.playingHandle.endInput();
+    }
+  }
+
+  private handleVadSpeechStarted(event: proto.InputAudioBufferSpeechStartedEvent): void {
+    const messageId = event.item_id;
+    const participantIdentity = this.linkedParticipant?.identity;
+    const trackSid = this.subscribedTrack?.sid;
+    if (participantIdentity && trackSid && messageId) {
+      this.publishTranscription(participantIdentity, trackSid, '', false, messageId);
+    } else {
+      this.logger.error('Participant or track or itemId not set');
     }
   }
 
@@ -406,8 +529,8 @@ export class OmniAssistant {
 
 const tools = (ctx: llm.FunctionContext): proto.Tool[] =>
   Object.entries(ctx).map(([name, func]) => ({
-    type: 'function',
     name,
     description: func.description,
     parameters: llm.oaiParams(func.parameters),
+    type: 'function',
   }));
