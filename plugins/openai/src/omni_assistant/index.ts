@@ -37,10 +37,6 @@ export const defaultSessionConfig: Partial<proto.SessionResource> = {
   input_audio_transcription: {
     model: 'whisper-1',
   },
-};
-
-/** @hidden */
-export const defaultConversationConfig: proto.ResponseCreateEvent['response'] = {
   modalities: ['text', 'audio'],
   instructions: 'You are a helpful assistant.',
   voice: 'alloy',
@@ -48,13 +44,12 @@ export const defaultConversationConfig: proto.ResponseCreateEvent['response'] = 
   tools: [],
   tool_choice: 'auto',
   temperature: 0.8,
-  max_output_tokens: 2048,
+  // max_output_tokens: 2048,
 };
 
 type ImplOptions = {
   apiKey: string;
   sessionConfig: Partial<proto.SessionResource>;
-  conversationConfig: proto.ResponseCreateEvent['response'];
   functions: llm.FunctionContext;
 };
 
@@ -68,12 +63,10 @@ export class OmniAssistant {
 
   constructor({
     sessionConfig = defaultSessionConfig,
-    conversationConfig = defaultConversationConfig,
     functions = {},
     apiKey = process.env.OPENAI_API_KEY || '',
   }: {
     sessionConfig?: Partial<proto.SessionResource>;
-    conversationConfig?: proto.ResponseCreateEvent['response'];
     functions?: llm.FunctionContext;
     apiKey?: string;
   }) {
@@ -81,11 +74,10 @@ export class OmniAssistant {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
 
-    conversationConfig.tools = tools(functions);
+    sessionConfig.tools = tools(functions);
     this.options = {
       apiKey,
       sessionConfig,
-      conversationConfig,
       functions,
     };
   }
@@ -106,10 +98,10 @@ export class OmniAssistant {
   }
   set funcCtx(ctx: llm.FunctionContext) {
     this.options.functions = ctx;
-    this.options.conversationConfig.tools = tools(ctx);
+    this.options.sessionConfig.tools = tools(ctx);
     this.sendClientCommand({
-      type: 'response.create',
-      response: this.options.conversationConfig,
+      type: 'session.update',
+      session: this.options.sessionConfig,
     });
   }
 
@@ -173,10 +165,6 @@ export class OmniAssistant {
           type: 'session.update',
           session: this.options.sessionConfig,
         });
-        this.sendClientCommand({
-          type: 'response.create',
-          response: this.options.conversationConfig,
-        });
         resolve();
       };
 
@@ -204,13 +192,13 @@ export class OmniAssistant {
 
   addUserMessage(text: string, generate: boolean = true): void {
     this.sendClientCommand({
-      type: 'conversation.item.create',
+      type: 'item.create',
       item: {
         type: 'message',
         role: 'user',
         content: [
           {
-            type: 'input_text',
+            type: 'text',
             text: text,
           },
         ],
@@ -353,7 +341,7 @@ export class OmniAssistant {
       this.options.functions[toolCall.name].execute(toolCall.arguments).then((content) => {
         this.thinking = false;
         this.sendClientCommand({
-          type: 'conversation.item.create',
+          type: 'item.create',
           item: {
             type: 'function_call_output',
             call_id: toolCall.call_id,
@@ -395,7 +383,7 @@ export class OmniAssistant {
       if (this.playingHandle && !this.playingHandle.done) {
         this.playingHandle.interrupt();
         this.sendClientCommand({
-          type: 'conversation.item.truncate',
+          type: 'item.truncate',
           item_id: this.playingHandle.messageId,
           content_index: 0, // ignored for now (see OAI docs)
           audio_end_ms: (this.playingHandle.playedAudioSamples * 1000) / proto.SAMPLE_RATE,

@@ -15,7 +15,7 @@ export type JsonSchema = {
 
 // Content Part Types
 export interface InputTextContent {
-  type: 'input_text';
+  type: 'text';
   text: string;
 }
 
@@ -110,7 +110,7 @@ export interface SessionResource {
   tools: Array<Tool>;
   tool_choice: 'auto' | 'none' | 'required'; // default: "auto"
   temperature: number; // default: 0.8
-  max_output_tokens: number | null; // default: null (infinite)
+  // max_output_tokens: number | null; // FIXME: currently rejected by OpenAI and fails the whole update
 }
 
 // Conversation Resource
@@ -201,7 +201,7 @@ export interface InputAudioBufferClearEvent {
 
 export interface ConversationItemCreateEvent {
   event_id?: string;
-  type: 'conversation.item.create';
+  type: 'item.create';
   item:
     | {
         type: 'message';
@@ -227,7 +227,7 @@ export interface ConversationItemCreateEvent {
 
 export interface ConversationItemTruncateEvent {
   event_id?: string;
-  type: 'conversation.item.truncate';
+  type: 'item.truncate';
   item_id: string;
   content_index: number;
   audio_end_ms: number;
@@ -235,7 +235,7 @@ export interface ConversationItemTruncateEvent {
 
 export interface ConversationItemDeleteEvent {
   event_id?: string;
-  type: 'conversation.item.delete';
+  type: 'item.delete';
   item_id: string;
 }
 
@@ -360,7 +360,7 @@ export interface ConversationItemInputAudioTranscriptionFailedEvent {
 
 export interface ConversationItemTruncatedEvent {
   event_id: string;
-  type: 'conversation.item.truncated';
+  type: 'item.truncated';
   item_id: string;
   content_index: number;
   audio_end_ms: number;
@@ -368,7 +368,7 @@ export interface ConversationItemTruncatedEvent {
 
 export interface ConversationItemDeletedEvent {
   event_id: string;
-  type: 'conversation.item.deleted';
+  type: 'item.deleted';
   item_id: string;
 }
 
