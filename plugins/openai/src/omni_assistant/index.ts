@@ -289,13 +289,13 @@ export class OmniAssistant {
       case 'session.created':
         this.setState(proto.State.LISTENING);
         break;
-      case 'conversation.item.created':
+      case 'item.created':
         break;
       case 'response.audio_transcript.delta':
       case 'response.audio.delta':
         this.handleAddContent(event);
         break;
-      case 'conversation.item.created':
+      case 'item.created':
         this.handleMessageAdded(event);
         break;
       case 'input_audio_buffer.speech_started':
@@ -303,7 +303,7 @@ export class OmniAssistant {
         break;
       // case 'input_audio_transcription.stopped':
       //   break;
-      case 'conversation.item.input_audio_transcription.completed':
+      case 'item.input_audio_transcription.completed':
         this.handleInputTranscribed(event);
         break;
       // case 'response.canceled':
@@ -514,6 +514,14 @@ export class OmniAssistant {
     isFinal: boolean,
     id: string,
   ): void {
+    // Log all parameters
+    log().info('Publishing transcription', {
+      participantIdentity,
+      trackSid,
+      text,
+      isFinal,
+      id,
+    });
     if (!this.room?.localParticipant) {
       log().error('Room or local participant not set');
       return;

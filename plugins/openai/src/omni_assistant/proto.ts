@@ -333,13 +333,13 @@ export interface InputAudioBufferSpeechStoppedEvent {
 
 export interface ConversationItemCreatedEvent {
   event_id: string;
-  type: 'conversation.item.created';
+  type: 'item.created';
   item: ItemResource;
 }
 
 export interface ConversationItemInputAudioTranscriptionCompletedEvent {
   event_id: string;
-  type: 'conversation.item.input_audio_transcription.completed';
+  type: 'item.input_audio_transcription.completed';
   item_id: string;
   content_index: number;
   transcript: string;
@@ -347,7 +347,7 @@ export interface ConversationItemInputAudioTranscriptionCompletedEvent {
 
 export interface ConversationItemInputAudioTranscriptionFailedEvent {
   event_id: string;
-  type: 'conversation.item.input_audio_transcription.failed';
+  type: 'item.input_audio_transcription.failed';
   item_id: string;
   content_index: number;
   error: {
