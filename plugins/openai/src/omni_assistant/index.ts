@@ -210,9 +210,7 @@ export class OmniAssistant {
     if (generate) {
       this.sendClientCommand({
         type: 'response.create',
-        response: {
-          // modalities: ['text', 'audio'],
-        },
+        response: {},
       });
     }
   }
