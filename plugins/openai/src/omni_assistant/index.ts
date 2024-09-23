@@ -181,13 +181,12 @@ export class OmniAssistant {
             type: 'session.update',
             session: this.options.sessionConfig,
           });
-          resolve(); // Resolve the promise here after session is created and config is sent
+          resolve();
         }
       };
     });
   }
 
-  // user-initiated close
   close() {
     if (!this.connected || !this.ws) return;
     this.logger.debug('stopping assistant');
