@@ -12,6 +12,7 @@
     "format:check": "prettier --check \"**/src/**/*.{ts,tsx,md,json}\"",
     "format:write": "prettier --write \"**/src/**/*.{ts,tsx,md,json}\"",
     "lint": "turbo lint",
+    "lint:fix": "turbo lint -- --fix",
     "test": "vitest run",
     "test:watch": "vitest",
     "doc": "typedoc"
