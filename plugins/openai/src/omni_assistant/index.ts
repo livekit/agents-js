@@ -256,6 +256,15 @@ export class OmniAssistant {
         untypedEvent.audio.slice(0, maxLength) + (untypedEvent.audio.length > maxLength ? '…' : '');
       return { ...untypedEvent, audio: truncatedData };
     }
+    if (
+      untypedEvent.delta &&
+      typeof untypedEvent.delta === 'string' &&
+      event.type === 'response.audio.delta'
+    ) {
+      const truncatedDelta =
+        untypedEvent.delta.slice(0, maxLength) + (untypedEvent.delta.length > maxLength ? '…' : '');
+      return { ...untypedEvent, delta: truncatedDelta };
+    }
     return untypedEvent;
   }
 
