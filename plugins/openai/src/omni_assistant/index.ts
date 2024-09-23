@@ -26,35 +26,30 @@ import * as proto from './proto.js';
 import { BasicTranscriptionForwarder } from './transcription_forwarder.js';
 
 /** @hidden */
-export const defaultSessionConfig: proto.SessionConfig = {
-  turn_detection: 'server_vad',
-  input_audio_format: proto.AudioFormat.PCM16,
-  transcribe_input: true,
-  vad: {
+export const defaultSessionConfig: Partial<proto.SessionResource> = {
+  turn_detection: {
+    type: 'server_vad',
     threshold: 0.5,
     prefix_padding_ms: 300,
     silence_duration_ms: 200,
   },
-};
-
-/** @hidden */
-export const defaultConversationConfig: proto.ConversationConfig = {
-  system_message: 'You are a helpful assistant.',
-  voice: proto.Voice.ALLOY,
-  subscribe_to_user_audio: true,
-  output_audio_format: proto.AudioFormat.PCM16,
+  input_audio_format: 'pcm16',
+  input_audio_transcription: {
+    model: 'whisper-1',
+  },
+  modalities: ['text', 'audio'],
+  instructions: 'You are a helpful assistant.',
+  voice: 'alloy',
+  output_audio_format: 'pcm16',
   tools: [],
-  tool_choice: proto.ToolChoice.AUTO,
+  tool_choice: 'auto',
   temperature: 0.8,
-  max_tokens: 2048,
-  disable_audio: false,
-  transcribe_input: true,
+  // max_output_tokens: 2048,
 };
 
 type ImplOptions = {
   apiKey: string;
-  sessionConfig: proto.SessionConfig;
-  conversationConfig: proto.ConversationConfig;
+  sessionConfig: Partial<proto.SessionResource>;
   functions: llm.FunctionContext;
 };
 
@@ -68,12 +63,10 @@ export class OmniAssistant {
 
   constructor({
     sessionConfig = defaultSessionConfig,
-    conversationConfig = defaultConversationConfig,
     functions = {},
     apiKey = process.env.OPENAI_API_KEY || '',
   }: {
-    sessionConfig?: proto.SessionConfig;
-    conversationConfig?: proto.ConversationConfig;
+    sessionConfig?: Partial<proto.SessionResource>;
     functions?: llm.FunctionContext;
     apiKey?: string;
   }) {
@@ -81,11 +74,10 @@ export class OmniAssistant {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
 
-    conversationConfig.tools = tools(functions);
+    sessionConfig.tools = tools(functions);
     this.options = {
       apiKey,
       sessionConfig,
-      conversationConfig,
       functions,
     };
   }
@@ -106,10 +98,10 @@ export class OmniAssistant {
   }
   set funcCtx(ctx: llm.FunctionContext) {
     this.options.functions = ctx;
-    this.options.conversationConfig.tools = tools(ctx);
+    this.options.sessionConfig.tools = tools(ctx);
     this.sendClientCommand({
-      event: proto.ClientEventType.UPDATE_CONVERSATION_CONFIG,
-      ...this.options.conversationConfig,
+      type: 'session.update',
+      session: this.options.sessionConfig,
     });
   }
 
@@ -163,20 +155,12 @@ export class OmniAssistant {
       this.ws = new WebSocket(proto.API_URL, {
         headers: {
           Authorization: `Bearer ${this.options.apiKey}`,
+          'OpenAI-Beta': 'realtime=v1',
         },
       });
 
       this.ws.onopen = () => {
         this.connected = true;
-        this.sendClientCommand({
-          event: proto.ClientEventType.UPDATE_SESSION_CONFIG,
-          ...this.options.sessionConfig,
-        });
-        this.sendClientCommand({
-          event: proto.ClientEventType.UPDATE_CONVERSATION_CONFIG,
-          ...this.options.conversationConfig,
-        });
-        resolve();
       };
 
       this.ws.onerror = (error) => {
@@ -189,12 +173,20 @@ export class OmniAssistant {
       };
 
       this.ws.onmessage = (message) => {
-        this.handleServerEvent(JSON.parse(message.data as string));
+        const event = JSON.parse(message.data as string);
+        this.handleServerEvent(event);
+
+        if (event.type === 'session.created') {
+          this.sendClientCommand({
+            type: 'session.update',
+            session: this.options.sessionConfig,
+          });
+          resolve();
+        }
       };
     });
   }
 
-  // user-initiated close
   close() {
     if (!this.connected || !this.ws) return;
     this.logger.debug('stopping assistant');
@@ -203,8 +195,9 @@ export class OmniAssistant {
 
   addUserMessage(text: string, generate: boolean = true): void {
     this.sendClientCommand({
-      event: proto.ClientEventType.ADD_MESSAGE,
-      message: {
+      type: 'item.create',
+      item: {
+        type: 'message',
         role: 'user',
         content: [
           {
@@ -216,7 +209,8 @@ export class OmniAssistant {
     });
     if (generate) {
       this.sendClientCommand({
-        event: proto.ClientEventType.GENERATE,
+        type: 'response.create',
+        response: {},
       });
     }
   }
@@ -225,12 +219,12 @@ export class OmniAssistant {
     // don't override thinking until done
     if (this.thinking) return;
     if (this.room?.isConnected && this.room.localParticipant) {
-      const currentState = this.room.localParticipant.attributes['voice_assistant.state'];
+      const currentState = this.room.localParticipant.attributes['lk.agent.state'];
       if (currentState !== state) {
         this.room.localParticipant!.setAttributes({
-          'voice_assistant.state': state,
+          'lk.agent.state': state,
         });
-        this.logger.debug(`voice_assistant.state updated from ${currentState} to ${state}`);
+        this.logger.debug(`lk.agent.state updated from ${currentState} to ${state}`);
       }
     }
   }
@@ -248,16 +242,25 @@ export class OmniAssistant {
       }
     }
 
-    if (untypedEvent.data && typeof untypedEvent.data === 'string') {
+    if (untypedEvent.audio && typeof untypedEvent.audio === 'string') {
       const truncatedData =
-        untypedEvent.data.slice(0, maxLength) + (untypedEvent.data.length > maxLength ? '…' : '');
-      return { ...untypedEvent, data: truncatedData };
+        untypedEvent.audio.slice(0, maxLength) + (untypedEvent.audio.length > maxLength ? '…' : '');
+      return { ...untypedEvent, audio: truncatedData };
+    }
+    if (
+      untypedEvent.delta &&
+      typeof untypedEvent.delta === 'string' &&
+      event.type === 'response.audio.delta'
+    ) {
+      const truncatedDelta =
+        untypedEvent.delta.slice(0, maxLength) + (untypedEvent.delta.length > maxLength ? '…' : '');
+      return { ...untypedEvent, delta: truncatedDelta };
     }
     return untypedEvent;
   }
 
   private sendClientCommand(command: proto.ClientEvent): void {
-    const isAudio = command.event === proto.ClientEventType.ADD_USER_AUDIO;
+    const isAudio = command.type === 'input_audio_buffer.append';
 
     if (!this.connected || !this.ws) {
       if (!isAudio) this.logger.error('WebSocket is not connected');
@@ -273,30 +276,31 @@ export class OmniAssistant {
   private handleServerEvent(event: proto.ServerEvent): void {
     this.logger.debug(`<- ${JSON.stringify(this.loggableEvent(event))}`);
 
-    switch (event.event) {
-      case proto.ServerEventType.START_SESSION:
+    switch (event.type) {
+      case 'session.created':
         this.setState(proto.State.LISTENING);
         break;
-      case proto.ServerEventType.ADD_MESSAGE:
+      case 'item.created':
         break;
-      case proto.ServerEventType.ADD_CONTENT:
+      case 'response.audio_transcript.delta':
+      case 'response.audio.delta':
         this.handleAddContent(event);
         break;
-      case proto.ServerEventType.MESSAGE_ADDED:
+      case 'item.created':
         this.handleMessageAdded(event);
         break;
-      case proto.ServerEventType.VAD_SPEECH_STARTED:
+      case 'input_audio_buffer.speech_started':
         this.handleVadSpeechStarted(event);
         break;
-      case proto.ServerEventType.VAD_SPEECH_STOPPED:
-        break;
-      case proto.ServerEventType.INPUT_TRANSCRIBED:
+      // case 'input_audio_transcription.stopped':
+      //   break;
+      case 'item.input_audio_transcription.completed':
         this.handleInputTranscribed(event);
         break;
-      case proto.ServerEventType.GENERATION_CANCELED:
-        this.handleGenerationCanceled();
-        break;
-      case proto.ServerEventType.GENERATION_FINISHED:
+      // case 'response.canceled':
+      //   this.handleGenerationCanceled();
+      //   break;
+      case 'response.done':
         this.handleGenerationFinished(event);
         break;
       default:
@@ -304,9 +308,9 @@ export class OmniAssistant {
     }
   }
 
-  private handleAddContent(event: proto.ServerEvent): void {
-    if (event.event !== proto.ServerEventType.ADD_CONTENT) return;
-
+  private handleAddContent(
+    event: proto.ResponseAudioDeltaEvent | proto.ResponseAudioTranscriptDeltaEvent,
+  ): void {
     const trackSid = this.getLocalTrackSid();
     if (!this.room || !this.room.localParticipant || !trackSid || !this.agentPlayout) {
       log().error('Room or local participant not set');
@@ -318,59 +322,47 @@ export class OmniAssistant {
         this.room,
         this.room?.localParticipant?.identity,
         trackSid,
-        event.message_id,
+        event.response_id,
       );
 
       this.setState(proto.State.SPEAKING);
-      this.playingHandle = this.agentPlayout.play(event.message_id, trFwd);
+      this.playingHandle = this.agentPlayout.play(event.response_id, trFwd);
       this.playingHandle.on('complete', () => {
         this.setState(proto.State.LISTENING);
       });
     }
-    switch (event.type) {
-      case 'audio':
-        this.playingHandle?.pushAudio(Buffer.from(event.data, 'base64'));
-        break;
-      case 'text':
-        this.playingHandle?.pushText(event.data);
-        break;
-      case 'tool_call':
-        break;
-      default:
-        this.logger.warn(`Unknown content event type: ${event.type}`);
-        break;
+    if (event.type === 'response.audio.delta') {
+      this.playingHandle?.pushAudio(Buffer.from(event.delta, 'base64'));
+    } else if (event.type === 'response.audio_transcript.delta') {
+      this.playingHandle?.pushText(event.delta);
     }
   }
 
-  private handleMessageAdded(event: proto.ServerEvent): void {
-    if (event.event !== proto.ServerEventType.MESSAGE_ADDED) return;
-    for (const toolCall of event.content || []) {
+  private handleMessageAdded(event: proto.ConversationItemCreatedEvent): void {
+    if (event.item.type === 'function_call') {
+      const toolCall = event.item;
       this.options.functions[toolCall.name].execute(toolCall.arguments).then((content) => {
         this.thinking = false;
         this.sendClientCommand({
-          event: proto.ClientEventType.ADD_MESSAGE,
-          message: {
-            role: 'tool',
-            tool_call_id: toolCall.tool_call_id,
-            content: [
-              {
-                type: 'text',
-                text: content,
-              },
-            ],
+          type: 'item.create',
+          item: {
+            type: 'function_call_output',
+            call_id: toolCall.call_id,
+            output: content,
           },
         });
         this.sendClientCommand({
-          event: proto.ClientEventType.GENERATE,
+          type: 'response.create',
+          response: {},
         });
       });
-      break;
     }
   }
 
-  private handleInputTranscribed(event: proto.ServerEvent): void {
-    if (event.event !== proto.ServerEventType.INPUT_TRANSCRIBED) return;
-    const messageId = event.message_id;
+  private handleInputTranscribed(
+    event: proto.ConversationItemInputAudioTranscriptionCompletedEvent,
+  ): void {
+    const messageId = event.item_id;
     const transcription = event.transcript;
     if (!messageId || transcription === undefined) {
       this.logger.error('Message ID or transcription not set');
@@ -385,23 +377,23 @@ export class OmniAssistant {
     }
   }
 
-  private handleGenerationCanceled(): void {
-    if (this.playingHandle && !this.playingHandle.done) {
-      this.playingHandle.interrupt();
-      this.sendClientCommand({
-        event: proto.ClientEventType.TRUNCATE_CONTENT,
-        message_id: this.playingHandle.messageId,
-        index: 0, // ignored for now (see OAI docs)
-        text_chars: this.playingHandle.publishedTextChars(),
-        audio_samples: this.playingHandle.playedAudioSamples,
-      });
-    }
-  }
-
-  private handleGenerationFinished(event: proto.ServerEvent): void {
-    if (event.event !== proto.ServerEventType.GENERATION_FINISHED) return;
-    if (event.reason !== 'interrupt' && event.reason !== 'stop') {
-      log().warn(`assistant turn finished unexpectedly reason ${event.reason}`);
+  private handleGenerationFinished(event: proto.ResponseDoneEvent): void {
+    if (
+      event.response.status === 'incomplete' &&
+      event.response.status_details?.type === 'incomplete' &&
+      event.response.status_details?.reason === 'interruption'
+    ) {
+      if (this.playingHandle && !this.playingHandle.done) {
+        this.playingHandle.interrupt();
+        this.sendClientCommand({
+          type: 'item.truncate',
+          item_id: this.playingHandle.messageId,
+          content_index: 0, // ignored for now (see OAI docs)
+          audio_end_ms: (this.playingHandle.playedAudioSamples * 1000) / proto.SAMPLE_RATE,
+        });
+      }
+    } else if (event.response.status !== 'completed') {
+      log().warn(`assistant turn finished unexpectedly reason ${event.response.status}`);
     }
 
     if (this.playingHandle && !this.playingHandle.interrupted) {
@@ -409,9 +401,8 @@ export class OmniAssistant {
     }
   }
 
-  private handleVadSpeechStarted(event: proto.ServerEvent): void {
-    if (event.event !== proto.ServerEventType.VAD_SPEECH_STARTED) return;
-    const messageId = event.message_id;
+  private handleVadSpeechStarted(event: proto.InputAudioBufferSpeechStartedEvent): void {
+    const messageId = event.item_id;
     const participantIdentity = this.linkedParticipant?.identity;
     const trackSid = this.subscribedTrack?.sid;
     if (participantIdentity && trackSid && messageId) {
@@ -454,8 +445,8 @@ export class OmniAssistant {
         const audioData = ev.frame.data;
         for (const frame of bstream.write(audioData.buffer)) {
           this.sendClientCommand({
-            event: proto.ClientEventType.ADD_USER_AUDIO,
-            data: Buffer.from(frame.data.buffer).toString('base64'),
+            type: 'input_audio_buffer.append',
+            audio: Buffer.from(frame.data.buffer).toString('base64'),
           });
         }
       });
@@ -514,6 +505,14 @@ export class OmniAssistant {
     isFinal: boolean,
     id: string,
   ): void {
+    // Log all parameters
+    log().info('Publishing transcription', {
+      participantIdentity,
+      trackSid,
+      text,
+      isFinal,
+      id,
+    });
     if (!this.room?.localParticipant) {
       log().error('Room or local participant not set');
       return;
@@ -538,10 +537,8 @@ export class OmniAssistant {
 
 const tools = (ctx: llm.FunctionContext): proto.Tool[] =>
   Object.entries(ctx).map(([name, func]) => ({
+    name,
+    description: func.description,
+    parameters: llm.oaiParams(func.parameters),
     type: 'function',
-    function: {
-      name,
-      description: func.description,
-      parameters: llm.oaiParams(func.parameters),
-    },
   }));

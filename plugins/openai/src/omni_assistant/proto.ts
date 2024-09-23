@@ -1,276 +1,546 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-export enum Voice {
-  ALLOY = 'alloy',
-  SHIMMER = 'shimmer',
-  ECHO = 'echo',
+// Basic Types
+export type AudioBase64Bytes = string; // Base64 encoded audio data
+export type JsonSchema = {
+  type: 'object';
+  properties: {
+    [prop: string]: {
+      [prop: string]: any;
+    };
+  };
+  required_properties: string[];
+};
+
+// Content Part Types
+export interface InputTextContent {
+  type: 'text';
+  text: string;
 }
 
-export enum TurnEndType {
-  SERVER_DETECTION = 'server_detection',
-  CLIENT_DECISION = 'client_decision',
+export interface InputAudioContent {
+  type: 'input_audio';
+  // 'audio' field is excluded when rendered
+  // audio: AudioBase64Bytes;
+  transcript: string | null;
 }
 
-export enum AudioFormat {
-  PCM16 = 'pcm16',
-  // G711_ULAW = 'g711-ulaw',
-  // G711_ALAW = 'g711-alaw',
+export interface TextContent {
+  type: 'text';
+  text: string;
 }
 
-export enum ServerEventType {
-  START_SESSION = 'start_session',
-  ERROR = 'error',
-  ADD_MESSAGE = 'add_message',
-  ADD_CONTENT = 'add_content',
-  MESSAGE_ADDED = 'message_added',
-  VAD_SPEECH_STARTED = 'vad_speech_started',
-  VAD_SPEECH_STOPPED = 'vad_speech_stopped',
-  INPUT_TRANSCRIBED = 'input_transcribed',
-  GENERATION_CANCELED = 'generation_canceled',
-  SEND_STATE = 'send_state',
-  GENERATION_FINISHED = 'generation_finished',
+export interface AudioContent {
+  type: 'audio';
+  // 'audio' field is excluded when rendered
+  // audio: AudioBase64Bytes;
+  transcript: string;
 }
 
-export type ServerEvent =
+export type ContentPart = InputTextContent | InputAudioContent | TextContent | AudioContent;
+
+// Item Resource Types
+export interface BaseItem {
+  id: string;
+  object: 'realtime.item';
+  previous_item_id: string | null;
+  type: string;
+}
+
+export interface SystemMessageItem extends BaseItem {
+  type: 'message';
+  role: 'system';
+  content: [InputTextContent];
+}
+
+export interface UserMessageItem extends BaseItem {
+  type: 'message';
+  role: 'user';
+  content: [InputTextContent | InputAudioContent];
+}
+
+export interface AssistantMessageItem extends BaseItem {
+  type: 'message';
+  role: 'assistant';
+  content: [TextContent | AudioContent];
+}
+
+export interface FunctionCallItem extends BaseItem {
+  type: 'function_call';
+  call_id: string;
+  name: string;
+  arguments: string;
+}
+
+export interface FunctionCallOutputItem extends BaseItem {
+  type: 'function_call_output';
+  call_id: string;
+  output: string;
+}
+
+export type ItemResource =
+  | SystemMessageItem
+  | UserMessageItem
+  | AssistantMessageItem
+  | FunctionCallItem
+  | FunctionCallOutputItem;
+
+// Session Resource
+export interface SessionResource {
+  id: string;
+  object: 'realtime.session';
+  model: string;
+  modalities: ['text', 'audio'] | ['text']; // default: ["text", "audio"]
+  instructions: string | null; // default: null
+  voice: 'alloy' | 'shimmer' | 'echo'; // default: "alloy"
+  input_audio_format: 'pcm16' | 'g711_ulaw' | 'g711_alaw'; // default: "pcm16"
+  output_audio_format: 'pcm16' | 'g711_ulaw' | 'g711_alaw'; // default: "pcm16"
+  input_audio_transcription: null | {
+    model: 'whisper-1';
+  }; // default: null
+  turn_detection:
+    | {
+        type: 'server_vad';
+        threshold: number; // 0.0 to 1.0, default: 0.5
+        prefix_padding_ms: number; // default: 300
+        silence_duration_ms: number; // default: 200
+      }
+    | 'none';
+  tools: Array<Tool>;
+  tool_choice: 'auto' | 'none' | 'required'; // default: "auto"
+  temperature: number; // default: 0.8
+  // max_output_tokens: number | null; // FIXME: currently rejected by OpenAI and fails the whole update
+}
+
+// Conversation Resource
+export interface ConversationResource {
+  id: string;
+  object: 'realtime.conversation';
+}
+
+// Response Resource
+export type ResponseStatus = 'in_progress' | 'completed' | 'incomplete' | 'cancelled' | 'failed';
+
+export type ResponseStatusDetails =
+  | null
   | {
-      event: ServerEventType.START_SESSION;
-      session_id: string;
-      model: string;
-      system_fingerprint: string;
+      type: 'incomplete';
+      reason: 'interruption' | 'max_output_tokens' | 'content_filter';
     }
   | {
-      event: ServerEventType.ERROR;
-      error: string;
-    }
-  | {
-      event: ServerEventType.ADD_MESSAGE;
-      previous_id: string;
-      conversation_label: string;
-      message: {
-        role: 'assistant';
-        content: (
-          | {
-              type: 'text';
-              text: string;
-            }
-          | {
-              type: 'audio';
-              audio: string;
-            }
-          | {
-              type: 'tool_call';
-              name: string;
-              arguments: string;
-              tool_call_id: string;
-            }
-        )[];
+      type: 'failed';
+      error: null | {
+        code: 'server_error' | 'rate_limit_exceeded' | string;
+        message: string;
       };
-    }
-  | {
-      event: ServerEventType.ADD_CONTENT;
-      message_id: string;
-      type: 'text' | 'audio' | 'tool_call';
-      data: string; // text or base64 audio or JSON stringified object
-    }
-  | {
-      event: ServerEventType.MESSAGE_ADDED;
-      id: string;
-      previous_id: string;
-      conversation_label: string;
-      content:
-        | {
-            type: 'tool_call';
-            name: string;
-            tool_call_id: string;
-            arguments: string; // JSON stringified object
-          }[]
-        | null;
-    }
-  | {
-      event: ServerEventType.GENERATION_FINISHED;
-      reason: 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
-      conversation_label: string;
-      message_ids: string[];
-    }
-  | {
-      event: ServerEventType.SEND_STATE;
-      session_id: string;
-      input_audio_format: AudioFormat;
-      vad_active: boolean;
-      audio_buffer: string;
-      conversations: any; // TODO(nbsp): get this
-      session_config: SessionConfig;
-    }
-  | {
-      event:
-        | ServerEventType.VAD_SPEECH_STARTED
-        | ServerEventType.VAD_SPEECH_STOPPED
-        | ServerEventType.GENERATION_CANCELED;
-      sample_index: number;
-      message_id: string;
-    }
-  | {
-      event: ServerEventType.INPUT_TRANSCRIBED;
-      message_id: string;
-      transcript: string;
     };
 
-export enum ClientEventType {
-  UPDATE_SESSION_CONFIG = 'update_session_config',
-  UPDATE_CONVERSATION_CONFIG = 'update_conversation_config',
-  ADD_MESSAGE = 'add_message',
-  DELETE_MESSAGE = 'delete_message',
-  ADD_USER_AUDIO = 'add_user_audio',
-  COMMIT_USER_AUDIO = 'commit_user_audio',
-  CANCEL_GENERATION = 'cancel_generation',
-  GENERATE = 'generate',
-  CREATE_CONVERSATION = 'create_conversation',
-  DELETE_CONVERSATION = 'delete_conversation',
-  TRUNCATE_CONTENT = 'truncate_content',
-  REQUEST_STATE = 'request_state',
+export interface ResponseResource {
+  id: string;
+  object: 'realtime.response';
+  status: ResponseStatus;
+  status_details: ResponseStatusDetails;
+  output: ItemResource[];
+  usage: null | {
+    total_tokens: number;
+    input_tokens: number;
+    output_tokens: number;
+  };
+}
+
+// Client Events
+export interface SessionUpdateEvent {
+  event_id?: string;
+  type: 'session.update';
+  session: Partial<{
+    modalities: ['text', 'audio'] | ['text'];
+    instructions: string | null;
+    voice: 'alloy' | 'shimmer' | 'echo' | null;
+    input_audio_format: 'pcm16' | 'g711_ulaw' | 'g711_alaw' | null;
+    output_audio_format: 'pcm16' | 'g711_ulaw' | 'g711_alaw' | null;
+    input_audio_transcription: null | {
+      model: 'whisper-1';
+    };
+    turn_detection:
+      | null
+      | {
+          type: 'server_vad';
+          threshold?: number | null;
+          prefix_padding_ms?: number | null;
+          silence_duration_ms?: number | null;
+        }
+      | 'none';
+    tools: Array<{
+      type: 'function';
+      name: string;
+      description: string | null;
+      parameters: JsonSchema;
+    }> | null;
+    tool_choice: 'auto' | 'none' | 'required' | null;
+    temperature: number | null;
+    max_output_tokens: number | null;
+  }>;
+}
+
+export interface InputAudioBufferAppendEvent {
+  event_id?: string;
+  type: 'input_audio_buffer.append';
+  audio: AudioBase64Bytes;
+}
+
+export interface InputAudioBufferCommitEvent {
+  event_id?: string;
+  type: 'input_audio_buffer.commit';
+}
+
+export interface InputAudioBufferClearEvent {
+  event_id?: string;
+  type: 'input_audio_buffer.clear';
+}
+
+export interface ConversationItemCreateEvent {
+  event_id?: string;
+  type: 'item.create';
+  item:
+    | {
+        type: 'message';
+        role: 'user';
+        content: [InputTextContent | InputAudioContent];
+      }
+    | {
+        type: 'message';
+        role: 'assistant';
+        content: [TextContent];
+      }
+    | {
+        type: 'message';
+        role: 'system';
+        content: [InputTextContent];
+      }
+    | {
+        type: 'function_call_output';
+        call_id: string;
+        output: string;
+      };
+}
+
+export interface ConversationItemTruncateEvent {
+  event_id?: string;
+  type: 'item.truncate';
+  item_id: string;
+  content_index: number;
+  audio_end_ms: number;
+}
+
+export interface ConversationItemDeleteEvent {
+  event_id?: string;
+  type: 'item.delete';
+  item_id: string;
+}
+
+export interface ResponseCreateEvent {
+  event_id?: string;
+  type: 'response.create';
+  response: Partial<{
+    modalities: ['text', 'audio'] | ['text'] | null;
+    instructions: string | null;
+    voice: 'alloy' | 'shimmer' | 'echo' | null;
+    output_audio_format: 'pcm16' | 'g711_ulaw' | 'g711_alaw' | null;
+    tools: Array<{
+      type: 'function';
+      name: string;
+      description: string | null;
+      parameters: JsonSchema;
+    }> | null;
+    tool_choice: 'auto' | 'none' | 'required' | null;
+    temperature: number | null;
+    max_output_tokens: number | null;
+  }>;
+}
+
+export interface ResponseCancelEvent {
+  event_id?: string;
+  type: 'response.cancel';
 }
 
 export type ClientEvent =
-  | ({
-      event: ClientEventType.UPDATE_SESSION_CONFIG;
-    } & SessionConfig)
-  | ({
-      event: ClientEventType.UPDATE_CONVERSATION_CONFIG;
-    } & ConversationConfig)
-  | {
-      event: ClientEventType.ADD_MESSAGE;
-      // id, previous_id, conversation_label are unused by us
-      message: (
-        | {
-            role: 'tool';
-            tool_call_id: string;
-          }
-        | {
-            role: 'user' | 'assistant' | 'system';
-          }
-      ) &
-        (
-          | {
-              content: (
-                | {
-                    type: 'text';
-                    text: string;
-                  }
-                | {
-                    type: 'tool_call';
-                    name: string;
-                    arguments: string;
-                    tool_call_id: string;
-                  }
-              )[];
-            }
-          | {
-              role: 'user' | 'tool';
-              content: (
-                | {
-                    type: 'text';
-                    text: string;
-                  }
-                | {
-                    type: 'tool_call';
-                    name: string;
-                    arguments: string;
-                    tool_call_id: string;
-                  }
-                | {
-                    type: 'audio';
-                    audio: string; // base64 encoded buffer
-                  }
-              )[];
-            }
-        );
-    }
-  | {
-      event: ClientEventType.DELETE_MESSAGE;
-      id: string;
-      conversation_label?: string; // defaults to 'default'
-    }
-  | {
-      event: ClientEventType.ADD_USER_AUDIO;
-      data: string; // base64 encoded buffer
-    }
-  | {
-      event: ClientEventType.COMMIT_USER_AUDIO | ClientEventType.CANCEL_GENERATION;
-    }
-  | {
-      event: ClientEventType.GENERATE;
-      conversation_label?: string; // defaults to 'default'
-    }
-  | {
-      event:
-        | ClientEventType.CREATE_CONVERSATION
-        | ClientEventType.DELETE_CONVERSATION
-        | ClientEventType.REQUEST_STATE;
-      label: string;
-    }
-  | {
-      event: ClientEventType.TRUNCATE_CONTENT;
-      message_id: string;
-      index: number; // integer, ignored
-      text_chars?: number; // integer
-      audio_samples?: number; // integer
-    };
+  | SessionUpdateEvent
+  | InputAudioBufferAppendEvent
+  | InputAudioBufferCommitEvent
+  | InputAudioBufferClearEvent
+  | ConversationItemCreateEvent
+  | ConversationItemTruncateEvent
+  | ConversationItemDeleteEvent
+  | ResponseCreateEvent
+  | ResponseCancelEvent;
 
-export enum ToolChoice {
-  AUTO = 'auto',
-  NONE = 'none',
-  REQUIRED = 'required',
+// Server Events
+export interface ErrorEvent {
+  event_id: string;
+  type: 'error';
+  error: {
+    type: 'invalid_request_error' | 'server_error' | string;
+    code: string | null;
+    message: string;
+    param: string | null;
+    event_id: string | null;
+  };
 }
+
+export interface SessionCreatedEvent {
+  event_id: string;
+  type: 'session.created';
+  session: SessionResource;
+}
+
+export interface SessionUpdatedEvent {
+  event_id: string;
+  type: 'session.updated';
+  session: SessionResource;
+}
+
+export interface ConversationCreatedEvent {
+  event_id: string;
+  type: 'conversation.created';
+  conversation: ConversationResource;
+}
+
+export interface InputAudioBufferCommittedEvent {
+  event_id: string;
+  type: 'input_audio_buffer.committed';
+  item_id: string;
+}
+
+export interface InputAudioBufferClearedEvent {
+  event_id: string;
+  type: 'input_audio_buffer.cleared';
+}
+
+export interface InputAudioBufferSpeechStartedEvent {
+  event_id: string;
+  type: 'input_audio_buffer.speech_started';
+  audio_start_ms: number;
+  item_id: string;
+}
+
+export interface InputAudioBufferSpeechStoppedEvent {
+  event_id: string;
+  type: 'input_audio_buffer.speech_stopped';
+  audio_end_ms: number;
+  item_id: string;
+}
+
+export interface ConversationItemCreatedEvent {
+  event_id: string;
+  type: 'item.created';
+  item: ItemResource;
+}
+
+export interface ConversationItemInputAudioTranscriptionCompletedEvent {
+  event_id: string;
+  type: 'item.input_audio_transcription.completed';
+  item_id: string;
+  content_index: number;
+  transcript: string;
+}
+
+export interface ConversationItemInputAudioTranscriptionFailedEvent {
+  event_id: string;
+  type: 'item.input_audio_transcription.failed';
+  item_id: string;
+  content_index: number;
+  error: {
+    type: string;
+    code: string | null;
+    message: string;
+    param: null;
+  };
+}
+
+export interface ConversationItemTruncatedEvent {
+  event_id: string;
+  type: 'item.truncated';
+  item_id: string;
+  content_index: number;
+  audio_end_ms: number;
+}
+
+export interface ConversationItemDeletedEvent {
+  event_id: string;
+  type: 'item.deleted';
+  item_id: string;
+}
+
+export interface ResponseCreatedEvent {
+  event_id: string;
+  type: 'response.created';
+  response: ResponseResource;
+}
+
+export interface ResponseDoneEvent {
+  event_id: string;
+  type: 'response.done';
+  response: ResponseResource;
+}
+
+export interface ResponseOutputAddedEvent {
+  event_id: string;
+  type: 'response.output.added';
+  response_id: string;
+  output_index: number;
+  item: ItemResource;
+}
+
+export interface ResponseOutputDoneEvent {
+  event_id: string;
+  type: 'response.output.done';
+  response_id: string;
+  output_index: number;
+  item: ItemResource;
+}
+
+export interface ResponseContentAddedEvent {
+  event_id: string;
+  type: 'response.content.added';
+  response_id: string;
+  output_index: number;
+  content_index: number;
+  part: ContentPart;
+}
+
+export interface ResponseContentDoneEvent {
+  event_id: string;
+  type: 'response.content.done';
+  response_id: string;
+  output_index: number;
+  content_index: number;
+  part: ContentPart;
+}
+
+export interface ResponseTextDeltaEvent {
+  event_id: string;
+  type: 'response.text.delta';
+  response_id: string;
+  output_index: number;
+  content_index: number;
+  delta: string;
+}
+
+export interface ResponseTextDoneEvent {
+  event_id: string;
+  type: 'response.text.done';
+  response_id: string;
+  output_index: number;
+  content_index: number;
+  text: string;
+}
+
+export interface ResponseAudioTranscriptDeltaEvent {
+  event_id: string;
+  type: 'response.audio_transcript.delta';
+  response_id: string;
+  output_index: number;
+  content_index: number;
+  delta: string;
+}
+
+export interface ResponseAudioTranscriptDoneEvent {
+  event_id: string;
+  type: 'response.audio_transcript.done';
+  response_id: string;
+  output_index: number;
+  content_index: number;
+  transcript: string;
+}
+
+export interface ResponseAudioDeltaEvent {
+  event_id: string;
+  type: 'response.audio.delta';
+  response_id: string;
+  output_index: number;
+  content_index: number;
+  delta: AudioBase64Bytes;
+}
+
+export interface ResponseAudioDoneEvent {
+  event_id: string;
+  type: 'response.audio.done';
+  response_id: string;
+  output_index: number;
+  content_index: number;
+  // 'audio' field is excluded from rendering
+}
+
+export interface ResponseFunctionCallArgumentsDeltaEvent {
+  event_id: string;
+  type: 'response.function_call_arguments.delta';
+  response_id: string;
+  output_index: number;
+  delta: string;
+}
+
+export interface ResponseFunctionCallArgumentsDoneEvent {
+  event_id: string;
+  type: 'response.function_call_arguments.done';
+  response_id: string;
+  output_index: number;
+  arguments: string;
+}
+
+export interface RateLimitsUpdatedEvent {
+  event_id: string;
+  type: 'rate_limits.updated';
+  rate_limits: Array<{
+    name: 'requests' | 'tokens' | 'input_tokens' | 'output_tokens';
+    limit: number;
+    remaining: number;
+    reset_seconds: number;
+  }>;
+}
+
+export type ServerEvent =
+  | ErrorEvent
+  | SessionCreatedEvent
+  | SessionUpdatedEvent
+  | ConversationCreatedEvent
+  | InputAudioBufferCommittedEvent
+  | InputAudioBufferClearedEvent
+  | InputAudioBufferSpeechStartedEvent
+  | InputAudioBufferSpeechStoppedEvent
+  | ConversationItemCreatedEvent
+  | ConversationItemInputAudioTranscriptionCompletedEvent
+  | ConversationItemInputAudioTranscriptionFailedEvent
+  | ConversationItemTruncatedEvent
+  | ConversationItemDeletedEvent
+  | ResponseCreatedEvent
+  | ResponseDoneEvent
+  | ResponseOutputAddedEvent
+  | ResponseOutputDoneEvent
+  | ResponseContentAddedEvent
+  | ResponseContentDoneEvent
+  | ResponseTextDeltaEvent
+  | ResponseTextDoneEvent
+  | ResponseAudioTranscriptDeltaEvent
+  | ResponseAudioTranscriptDoneEvent
+  | ResponseAudioDeltaEvent
+  | ResponseAudioDoneEvent
+  | ResponseFunctionCallArgumentsDeltaEvent
+  | ResponseFunctionCallArgumentsDoneEvent
+  | RateLimitsUpdatedEvent;
 
 export interface Tool {
   type: 'function';
-  function: {
-    name: string;
-    description: string;
-    parameters: {
-      type: 'object';
-      properties: {
-        [prop: string]: {
-          [prop: string]: any;
-        };
-      };
-      required_properties: string[];
-    };
-  };
+  name: string;
+  description: string | null;
+  parameters: JsonSchema;
 }
 
 export const API_URL = 'wss://api.openai.com/v1/realtime';
 export const SAMPLE_RATE = 24000;
 export const NUM_CHANNELS = 1;
-
 export const INPUT_PCM_FRAME_SIZE = 2400; // 100ms
 export const OUTPUT_PCM_FRAME_SIZE = 1200; // 50ms
-
-export type SessionConfig = Partial<{
-  turn_detection: 'disabled' | 'server_vad';
-  input_audio_format: AudioFormat;
-  transcribe_input: boolean;
-  vad: Partial<{
-    threshold: number; // 0..1 inclusive, default 0.5
-    prefix_padding_ms: number; // default 300
-    silence_duration_ms: number; // default 200
-  }>;
-}>;
-
-export type ConversationConfig = Partial<{
-  system_message: string;
-  voice: Voice;
-  subscribe_to_user_audio: boolean;
-  output_audio_format: AudioFormat;
-  tools: Tool[];
-  tool_choice: ToolChoice;
-  temperature: number; // 0.6..1.2 inclusive, default 0.8
-  max_tokens: number; // 1..4096, default 2048;
-  disable_audio: boolean;
-  transcribe_input: boolean;
-  conversation_label: string; // default "default"
-}>;
 
 export enum State {
   INITIALIZING = 'initializing',
