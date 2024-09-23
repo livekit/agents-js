@@ -239,12 +239,16 @@ export class Worker {
     opts.apiSecret = opts.apiSecret || process.env.LIVEKIT_API_SECRET || '';
 
     if (opts.wsURL === '')
-      throw new MissingCredentialsError('--url is required, or set LIVEKIT_URL env var');
+      throw new MissingCredentialsError(
+        'URL is required: Set LIVEKIT_URL, run with --url, or pass wsURL in WorkerOptions',
+      );
     if (opts.apiKey === '')
-      throw new MissingCredentialsError('--api-key is required, or set LIVEKIT_API_KEY env var');
+      throw new MissingCredentialsError(
+        'API Key is required: Set LIVEKIT_API_KEY, run with --api-key, or pass apiKey in WorkerOptions',
+      );
     if (opts.apiSecret === '')
       throw new MissingCredentialsError(
-        '--api-secret is required, or set LIVEKIT_API_SECRET env var',
+        'API Secret is required: Set LIVEKIT_API_SECRET, run with --api-secret, or pass apiSecret in WorkerOptions',
       );
 
     this.#procPool = new ProcPool(
