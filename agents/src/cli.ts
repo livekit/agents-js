@@ -73,17 +73,14 @@ export const runApp = (opts: WorkerOptions) => {
     )
     .addOption(
       new Option('--url <string>', 'LiveKit server or Cloud project websocket URL')
-        .makeOptionMandatory(true)
         .env('LIVEKIT_URL'),
     )
     .addOption(
       new Option('--api-key <string>', "LiveKit server or Cloud project's API key")
-        .makeOptionMandatory(true)
         .env('LIVEKIT_API_KEY'),
     )
     .addOption(
       new Option('--api-secret <string>', "LiveKit server or Cloud project's API secret")
-        .makeOptionMandatory(true)
         .env('LIVEKIT_API_SECRET'),
     )
     .action(() => {
