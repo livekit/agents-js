@@ -195,7 +195,7 @@ export class OmniAssistant {
 
   addUserMessage(text: string, generate: boolean = true): void {
     this.sendClientCommand({
-      type: 'item.create',
+      type: 'conversation.item.create',
       item: {
         type: 'message',
         role: 'user',
@@ -280,13 +280,13 @@ export class OmniAssistant {
       case 'session.created':
         this.setState(proto.State.LISTENING);
         break;
-      case 'item.created':
+      case 'conversation.item.created':
         break;
       case 'response.audio_transcript.delta':
       case 'response.audio.delta':
         this.handleAddContent(event);
         break;
-      case 'item.created':
+      case 'conversation.item.created':
         this.handleMessageAdded(event);
         break;
       case 'input_audio_buffer.speech_started':
@@ -294,7 +294,7 @@ export class OmniAssistant {
         break;
       // case 'input_audio_transcription.stopped':
       //   break;
-      case 'item.input_audio_transcription.completed':
+      case 'conversation.item.input_audio_transcription.completed':
         this.handleInputTranscribed(event);
         break;
       // case 'response.canceled':
@@ -344,7 +344,7 @@ export class OmniAssistant {
       this.options.functions[toolCall.name].execute(toolCall.arguments).then((content) => {
         this.thinking = false;
         this.sendClientCommand({
-          type: 'item.create',
+          type: 'conversation.item.create',
           item: {
             type: 'function_call_output',
             call_id: toolCall.call_id,
@@ -379,14 +379,14 @@ export class OmniAssistant {
 
   private handleGenerationFinished(event: proto.ResponseDoneEvent): void {
     if (
-      event.response.status === 'incomplete' &&
-      event.response.status_details?.type === 'incomplete' &&
-      event.response.status_details?.reason === 'interruption'
+      event.response.status === 'cancelled' &&
+      event.response.status_details?.type === 'cancelled' &&
+      event.response.status_details?.reason === 'turn_detected'
     ) {
       if (this.playingHandle && !this.playingHandle.done) {
         this.playingHandle.interrupt();
         this.sendClientCommand({
-          type: 'item.truncate',
+          type: 'conversation.item.truncate',
           item_id: this.playingHandle.messageId,
           content_index: 0, // ignored for now (see OAI docs)
           audio_end_ms: (this.playingHandle.playedAudioSamples * 1000) / proto.SAMPLE_RATE,

@@ -126,7 +126,7 @@ export type ResponseStatusDetails =
   | null
   | {
       type: 'incomplete';
-      reason: 'interruption' | 'max_output_tokens' | 'content_filter';
+      reason: 'max_output_tokens' | 'content_filter';
     }
   | {
       type: 'failed';
@@ -134,6 +134,10 @@ export type ResponseStatusDetails =
         code: 'server_error' | 'rate_limit_exceeded' | string;
         message: string;
       };
+    }
+  | {
+      type: 'cancelled';
+      reason: 'turn_detected' | 'client_cancelled';
     };
 
 export interface ResponseResource {
@@ -201,7 +205,7 @@ export interface InputAudioBufferClearEvent {
 
 export interface ConversationItemCreateEvent {
   event_id?: string;
-  type: 'item.create';
+  type: 'conversation.item.create';
   item:
     | {
         type: 'message';
@@ -227,7 +231,7 @@ export interface ConversationItemCreateEvent {
 
 export interface ConversationItemTruncateEvent {
   event_id?: string;
-  type: 'item.truncate';
+  type: 'conversation.item.truncate';
   item_id: string;
   content_index: number;
   audio_end_ms: number;
@@ -235,7 +239,7 @@ export interface ConversationItemTruncateEvent {
 
 export interface ConversationItemDeleteEvent {
   event_id?: string;
-  type: 'item.delete';
+  type: 'conversation.item.delete';
   item_id: string;
 }
 
@@ -333,13 +337,13 @@ export interface InputAudioBufferSpeechStoppedEvent {
 
 export interface ConversationItemCreatedEvent {
   event_id: string;
-  type: 'item.created';
+  type: 'conversation.item.created';
   item: ItemResource;
 }
 
 export interface ConversationItemInputAudioTranscriptionCompletedEvent {
   event_id: string;
-  type: 'item.input_audio_transcription.completed';
+  type: 'conversation.item.input_audio_transcription.completed';
   item_id: string;
   content_index: number;
   transcript: string;
@@ -347,7 +351,7 @@ export interface ConversationItemInputAudioTranscriptionCompletedEvent {
 
 export interface ConversationItemInputAudioTranscriptionFailedEvent {
   event_id: string;
-  type: 'item.input_audio_transcription.failed';
+  type: 'conversation.item.input_audio_transcription.failed';
   item_id: string;
   content_index: number;
   error: {
@@ -360,7 +364,7 @@ export interface ConversationItemInputAudioTranscriptionFailedEvent {
 
 export interface ConversationItemTruncatedEvent {
   event_id: string;
-  type: 'item.truncated';
+  type: 'conversation.item.truncated';
   item_id: string;
   content_index: number;
   audio_end_ms: number;
@@ -368,7 +372,7 @@ export interface ConversationItemTruncatedEvent {
 
 export interface ConversationItemDeletedEvent {
   event_id: string;
-  type: 'item.deleted';
+  type: 'conversation.item.deleted';
   item_id: string;
 }
 
