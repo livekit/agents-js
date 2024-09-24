@@ -5,7 +5,7 @@ import { Command, Option } from 'commander';
 import type { EventEmitter } from 'events';
 import { initializeLogger, log } from './log.js';
 import { version } from './version.js';
-import { Worker, type WorkerOptions } from './worker.js';
+import { Worker, WorkerOptions } from './worker.js';
 
 type CliArgs = {
   opts: WorkerOptions;
@@ -18,7 +18,10 @@ type CliArgs = {
 
 const runWorker = async (args: CliArgs) => {
   initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
-  const worker = new Worker(args.opts);
+
+  // though `production` is defined in WorkerOptions, it will always be overriddden by CLI.
+  const { production: _, ...opts } = args.opts; // eslint-disable-line @typescript-eslint/no-unused-vars
+  const worker = new Worker(new WorkerOptions({ production: args.production, ...opts }));
 
   if (args.room) {
     worker.event.once('worker_registered', () => {
@@ -115,6 +118,12 @@ export const runApp = (opts: WorkerOptions) => {
   program
     .command('dev')
     .description('Start the worker in development mode')
+    .addOption(
+      new Option('--log-level <level>', 'Set the logging level')
+        .choices(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
+        .default('debug')
+        .env('LOG_LEVEL'),
+    )
     .action(() => {
       const options = program.optsWithGlobals();
       opts.wsURL = options.url || opts.wsURL;
@@ -133,6 +142,12 @@ export const runApp = (opts: WorkerOptions) => {
     .description('Connect to a specific room')
     .requiredOption('--room <string>', 'Room name to connect to')
     .option('--participant-identity <string>', 'Identity of user to listen to')
+    .addOption(
+      new Option('--log-level <level>', 'Set the logging level')
+        .choices(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
+        .default('debug')
+        .env('LOG_LEVEL'),
+    )
     .action((...[, command]) => {
       const options = command.optsWithGlobals();
       opts.wsURL = options.url || opts.wsURL;
