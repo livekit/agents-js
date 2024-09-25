@@ -36,4 +36,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new WorkerOptions({ import_meta: import.meta }));
+cli.runApp(new WorkerOptions({ self_import: import.meta }));
