@@ -135,7 +135,7 @@ export class WorkerOptions {
 
   /** @param options */
   constructor({
-    agent,
+    agent = undefined,
     requestFunc = defaultRequestFunc,
     loadFunc = defaultCpuLoad,
     loadThreshold = 0.65,
@@ -152,12 +152,15 @@ export class WorkerOptions {
     host = 'localhost',
     port = 8081,
     logLevel = 'info',
+    import_meta = undefined,
   }: {
     /**
      * Path to a file that has {@link Agent} as a default export, dynamically imported later for
      * entrypoint and prewarm functions
+     * 
+     * If using the current file, pass `import_meta: import.meta` instead.
      */
-    agent: string;
+    agent?: string;
     requestFunc?: (job: JobRequest) => Promise<void>;
     /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
     loadFunc?: () => Promise<number>;
@@ -176,8 +179,18 @@ export class WorkerOptions {
     host?: string;
     port?: number;
     logLevel?: string;
+    import_meta?: ImportMeta;
   }) {
-    this.agent = agent;
+    if (!agent && import_meta) {
+      const filename = import_meta.url ? new URL(import_meta.url).pathname : import_meta.filename;
+      this.agent = filename;
+    } else {
+      this.agent = agent ?? '';
+    }
+
+    if (!this.agent) {
+      throw new Error('No Agent file provided');
+    }
     this.requestFunc = requestFunc;
     this.loadFunc = loadFunc;
     this.loadThreshold = loadThreshold;
