@@ -96,7 +96,7 @@ serve as a starting point for a completely custom agent application.
 To join a LiveKit room that's already active, you can use the `connect` command:
 
 ```bash
-bash my_agent.ts connect --room <my-room>
+node my_agent.ts connect --room <my-room>
 ```
 
 ### FAQ

@@ -5,8 +5,8 @@
   "scripts": {
     "build": "tsc",
     "lint": "eslint -f unix \"src/**/*.ts\"",
-    "minimal:21": "tsc && npx -p node@21.1.0 node dist/minimal_assistant.js dev",
-    "minimal:20": "tsc && npx -p node@20.11.0 node dist/minimal_assistant.js dev"
+    "minimal": "node dist/minimal_assistant.js dev"
+    
   },
   "devDependencies": {
     "typescript": "^5.0.0"
