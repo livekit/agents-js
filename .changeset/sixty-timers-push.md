@@ -1,5 +1,4 @@
 ---
-"@livekit/agents": minor
 "livekit-agents-examples": minor
 ---
 
