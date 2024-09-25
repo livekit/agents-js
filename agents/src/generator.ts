@@ -9,6 +9,20 @@ export interface Agent {
   prewarm?: (proc: JobProcess) => unknown;
 }
 
+/** Helper to check if an object is an agent before running it.
+ *
+ * @internal
+*/
+export function isAgent(obj: unknown): obj is Agent {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'entry' in obj &&
+    typeof (obj as Agent).entry === 'function' &&
+    (('prewarm' in obj && typeof (obj as Agent).prewarm === 'function') || !('prewarm' in obj))
+  );
+}
+
 /**
  * Helper to define an agent according to the required interface.
  * @example A basic agent with entry and prewarm functions

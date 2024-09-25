@@ -7,7 +7,7 @@ import { fork } from 'child_process';
 import { EventEmitter, once } from 'events';
 import type { Logger } from 'pino';
 import { fileURLToPath } from 'url';
-import type { Agent } from '../generator.js';
+import { type Agent, isAgent } from '../generator.js';
 import type { RunningJobInfo } from '../job.js';
 import { JobContext } from '../job.js';
 import { JobProcess } from '../job.js';
@@ -93,7 +93,14 @@ if (process.send) {
   //   [0] `node'
   //   [1] import.meta.filename
   //   [2] import.meta.filename of function containing entry file
-  const agent: Agent = await import(process.argv[2]).then((agent) => agent.default);
+  const moduleFile = process.argv[2];
+  const agent: Agent = await import(moduleFile).then((module) => {
+    const agent = module.default;
+    if (agent === undefined || !isAgent(agent)) {
+      throw new Error(`Unable to load agent: Missing or invalid default export in ${moduleFile}`);
+    }
+    return agent;
+  });
   if (!agent.prewarm) {
     agent.prewarm = defaultInitializeProcessFunc;
   }
