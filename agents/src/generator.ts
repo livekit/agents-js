@@ -12,7 +12,7 @@ export interface Agent {
 /** Helper to check if an object is an agent before running it.
  *
  * @internal
-*/
+ */
 export function isAgent(obj: unknown): obj is Agent {
   return (
     typeof obj === 'object' &&
