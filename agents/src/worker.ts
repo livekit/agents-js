@@ -178,6 +178,9 @@ export class WorkerOptions {
     logLevel?: string;
   }) {
     this.agent = agent;
+    if (!this.agent) {
+      throw new Error('No Agent file was passed to the worker');
+    }
     this.requestFunc = requestFunc;
     this.loadFunc = loadFunc;
     this.loadThreshold = loadThreshold;

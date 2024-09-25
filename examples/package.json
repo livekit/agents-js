@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "lint": "eslint -f unix \"src/**/*.ts\""
+    "lint": "eslint -f unix \"src/**/*.ts\"",
+    "minimal": "node dist/minimal_assistant.js dev"
   },
   "devDependencies": {
     "typescript": "^5.0.0"
@@ -14,6 +15,5 @@
     "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/rtc-node": "^0.8.1",
     "zod": "^3.23.8"
-  },
-  "version": null
+  }
 }
