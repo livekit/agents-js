@@ -158,7 +158,7 @@ export class WorkerOptions {
      * Path to a file that has {@link Agent} as a default export, dynamically imported later for
      * entrypoint and prewarm functions
      * 
-     * If using the current file, pass `auto_import: import.meta` instead.
+     * If using the current file, pass `self_import: import.meta` instead.
      */
     agent_file?: string;
     requestFunc?: (job: JobRequest) => Promise<void>;
@@ -180,7 +180,7 @@ export class WorkerOptions {
     port?: number;
     logLevel?: string;
     /**
-     * Pass auto_import: import.meta to use your agent file automatically.
+     * Pass `self_import: import.meta` to use your agent file automatically.
      */
     self_import?: ImportMeta;
   }) {
