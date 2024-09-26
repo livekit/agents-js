@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { log } from '@livekit/agents';
 import type { AudioFrame, Room } from '@livekit/rtc-node';
+import { log } from './log.js';
 
 export interface TranscriptionForwarder {
   start(): void;

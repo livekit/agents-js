@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream } from '@livekit/agents';
-import { Queue } from '@livekit/agents';
 import { AudioFrame, type AudioSource } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
-import * as proto from './proto.js';
-import type { TranscriptionForwarder } from './transcription_forwarder';
+import { AudioByteStream } from '../audio.js';
+import type { TranscriptionForwarder } from '../transcription.js';
+import { Queue } from '../utils.js';
+
+export const SAMPLE_RATE = 24000;
+export const NUM_CHANNELS = 1;
+export const INPUT_PCM_FRAME_SIZE = 2400; // 100ms
+export const OUTPUT_PCM_FRAME_SIZE = 1200; // 50ms
 
 export class AgentPlayout {
   #audioSource: AudioSource;
@@ -34,11 +38,7 @@ export class AgentPlayout {
   private async playoutTask(oldTask: Promise<void> | null, handle: PlayoutHandle): Promise<void> {
     let firstFrame = true;
     try {
-      const bstream = new AudioByteStream(
-        proto.SAMPLE_RATE,
-        proto.NUM_CHANNELS,
-        proto.OUTPUT_PCM_FRAME_SIZE,
-      );
+      const bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, OUTPUT_PCM_FRAME_SIZE);
 
       while (!handle.interrupted) {
         const frame = await handle.playoutQueue.get();
@@ -92,8 +92,8 @@ export class PlayoutHandle extends EventEmitter {
   pushAudio(data: Uint8Array) {
     const frame = new AudioFrame(
       new Int16Array(data.buffer),
-      proto.SAMPLE_RATE,
-      proto.NUM_CHANNELS,
+      SAMPLE_RATE,
+      NUM_CHANNELS,
       data.length / 2,
     );
     this.transcriptionFwd.pushAudio(frame);
