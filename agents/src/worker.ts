@@ -31,6 +31,32 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
 
+class Default {
+  static loadThreshold(production: boolean): number {
+    if (production) {
+      return 0.65;
+    } else {
+      return Infinity;
+    }
+  }
+
+  static numIdleProcesses(production: boolean): number {
+    if (production) {
+      return 3;
+    } else {
+      return 0;
+    }
+  }
+
+  static port(production: boolean): number {
+    if (production) {
+      return 8081;
+    } else {
+      return 0;
+    }
+  }
+}
+
 /** Necessary credentials not provided and not found in an appropriate environmental variable. */
 export class MissingCredentialsError extends Error {
   constructor(msg?: string) {
@@ -132,14 +158,15 @@ export class WorkerOptions {
   host: string;
   port: number;
   logLevel: string;
+  production: boolean;
 
   /** @param options */
   constructor({
     agent,
     requestFunc = defaultRequestFunc,
     loadFunc = defaultCpuLoad,
-    loadThreshold = 0.65,
-    numIdleProcesses = 3,
+    loadThreshold = undefined,
+    numIdleProcesses = undefined,
     shutdownProcessTimeout = 60 * 1000,
     initializeProcessTimeout = 10 * 1000,
     permissions = new WorkerPermissions(),
@@ -150,8 +177,9 @@ export class WorkerOptions {
     apiKey = undefined,
     apiSecret = undefined,
     host = 'localhost',
-    port = 8081,
+    port = undefined,
     logLevel = 'info',
+    production = false,
   }: {
     /**
      * Path to a file that has {@link Agent} as a default export, dynamically imported later for
@@ -176,6 +204,7 @@ export class WorkerOptions {
     host?: string;
     port?: number;
     logLevel?: string;
+    production?: boolean;
   }) {
     this.agent = agent;
     if (!this.agent) {
@@ -183,8 +212,8 @@ export class WorkerOptions {
     }
     this.requestFunc = requestFunc;
     this.loadFunc = loadFunc;
-    this.loadThreshold = loadThreshold;
-    this.numIdleProcesses = numIdleProcesses;
+    this.loadThreshold = loadThreshold || Default.loadThreshold(production);
+    this.numIdleProcesses = numIdleProcesses || Default.numIdleProcesses(production);
     this.shutdownProcessTimeout = shutdownProcessTimeout;
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
@@ -195,8 +224,9 @@ export class WorkerOptions {
     this.apiKey = apiKey;
     this.apiSecret = apiSecret;
     this.host = host;
-    this.port = port;
+    this.port = port || Default.port(production);
     this.logLevel = logLevel;
+    this.production = production;
   }
 }
 
