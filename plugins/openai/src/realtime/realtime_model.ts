@@ -4,10 +4,10 @@
 import { Queue } from '@livekit/agents';
 import { llm, log } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
+import { ifError } from 'assert';
 import { EventEmitter, once } from 'events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
-import { ifError } from 'assert';
 
 export enum OmniAssistantEvents {
   Error,
