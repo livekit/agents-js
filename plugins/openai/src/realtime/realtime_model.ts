@@ -339,7 +339,7 @@ export class RealtimeSession extends EventEmitter {
   }
 
   queueMsg(command: api_proto.ClientEvent): void {
-    const isAudio = command.type === 'input_audio_buffer.append';
+    const isAudio = command.type === api_proto.ClientEventType.InputAudioBufferAppend;
 
     if (!this.#ws) {
       if (!isAudio) this.#logger.error('WebSocket is not connected');
