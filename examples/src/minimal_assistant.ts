@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type JobContext, WorkerOptions, cli, defineAgent } from '@livekit/agents';
 import { OmniAssistant, defaultSessionConfig } from '@livekit/agents-plugin-openai';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 export default defineAgent({
@@ -36,4 +37,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new WorkerOptions({ agent: import.meta.filename }));
+cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
