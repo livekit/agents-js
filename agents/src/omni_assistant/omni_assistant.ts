@@ -1,9 +1,9 @@
 // livekit-agents/livekit/agents/omni_assistant/omni_assistant.ts
-import { RemoteParticipant, Room } from '@livekit/rtc-node';
+import type { RemoteParticipant, Room } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
-import { FunctionContext } from '../llm';
+import type { FunctionContext } from '../llm';
 // import { SentenceTokenizer, WordTokenizer } from '../tokenize';
-import { VAD } from '../vad';
+import type { VAD } from '../vad';
 
 export type EventTypes =
   | 'user_started_speaking'
@@ -15,9 +15,9 @@ export interface AssistantTranscriptionOptions {
   userTranscription: boolean;
   agentTranscription: boolean;
   agentTranscriptionSpeed: number;
-//   sentenceTokenizer: SentenceTokenizer;
-//   wordTokenizer: WordTokenizer;
-//   hyphenateWord: (word: string) => string[];
+  //   sentenceTokenizer: SentenceTokenizer;
+  //   wordTokenizer: WordTokenizer;
+  //   hyphenateWord: (word: string) => string[];
 }
 
 export interface S2SModel {

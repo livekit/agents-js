@@ -4,7 +4,7 @@
 import { AudioByteStream } from '@livekit/agents';
 import { findMicroTrackId } from '@livekit/agents';
 import { llm, log } from '@livekit/agents';
-import { BasicTranscriptionForwarder, AgentPlayout, type PlayoutHandle } from '@livekit/agents';
+import { AgentPlayout, BasicTranscriptionForwarder, type PlayoutHandle } from '@livekit/agents';
 import type {
   AudioFrameEvent,
   LocalTrackPublication,
