@@ -1,52 +1,57 @@
-// # livekit-agents/livekit/agents/omni_assistant/omni_assistant.py
+// livekit-agents/livekit/agents/omni_assistant/omni_assistant.ts
+import { RemoteParticipant, Room } from '@livekit/rtc-node';
+import { EventEmitter } from 'events';
+import { ChatContext, FunctionContext } from '../llm';
+import { SentenceTokenizer, WordTokenizer } from '../tokenize';
+import { VAD } from '../vad';
 
-// from typing import Literal, Protocol
+type EventTypes =
+  | 'user_started_speaking'
+  | 'user_stopped_speaking'
+  | 'agent_started_speaking'
+  | 'agent_stopped_speaking';
 
-// EventTypes = Literal[
-//     "user_started_speaking",
-//     "user_stopped_speaking",
-//     "agent_started_speaking",
-//     "agent_stopped_speaking",
-// ]
+interface AssistantTranscriptionOptions {
+  userTranscription: boolean;
+  agentTranscription: boolean;
+  agentTranscriptionSpeed: number;
+  sentenceTokenizer: SentenceTokenizer;
+  wordTokenizer: WordTokenizer;
+  hyphenateWord: (word: string) => string[];
+}
 
-// class AssistantTranscriptionOptions:
-//     # Public attributes
-//     user_transcription: bool
-//     agent_transcription: bool
-//     agent_transcription_speed: float
-//     sentence_tokenizer: tokenize.SentenceTokenizer
-//     word_tokenizer: tokenize.WordTokenizer
-//     hyphenate_word: Callable[[str], list[str]]
+interface S2SModel {
+  // Protocol interface, no methods defined
+}
 
-// class S2SModel(Protocol):
-//     # Protocol class, no methods defined
+class OmniAssistant extends EventEmitter {
+  constructor(
+    model: S2SModel,
+    vad?: VAD,
+    chatCtx?: ChatContext,
+    fncCtx?: FunctionContext,
+    transcription: AssistantTranscriptionOptions = {} as AssistantTranscriptionOptions,
+    loop?: any, // TODO: Define proper type for loop
+  ) {
+    super();
+    // TODO: Implement constructor
+  }
 
-// class OmniAssistant(utils.EventEmitter[EventTypes]):
-//     def __init__(
-//         self,
-//         *,
-//         model: S2SModel,
-//         vad: vad.VAD | None = None,
-//         chat_ctx: llm.ChatContext | None = None,
-//         fnc_ctx: llm.FunctionContext | None = None,
-//         transcription: AssistantTranscriptionOptions = AssistantTranscriptionOptions(),
-//         loop: asyncio.AbstractEventLoop | None = None,
-//     ) -> None:
-//         # Constructor
+  get vad(): VAD | null {
+    // TODO: Implement getter for vad property
+    return null;
+  }
 
-//     @property
-//     def vad(self) -> vad.VAD | None:
-//         # Getter for vad property
+  get fncCtx(): FunctionContext | null {
+    // TODO: Implement getter for fncCtx property
+    return null;
+  }
 
-//     @property
-//     def fnc_ctx(self) -> llm.FunctionContext | None:
-//         # Getter for fnc_ctx property
+  set fncCtx(value: FunctionContext | null) {
+    // TODO: Implement setter for fncCtx property
+  }
 
-//     @fnc_ctx.setter
-//     def fnc_ctx(self, value: llm.FunctionContext | None) -> None:
-//         # Setter for fnc_ctx property
-
-//     def start(
-//         self, room: rtc.Room, participant: rtc.RemoteParticipant | str | None = None
-//     ) -> None:
-//         # Public method to start the assistant
+  start(room: Room, participant?: RemoteParticipant | string): void {
+    // TODO: Implement public method to start the assistant
+  }
+}
