@@ -23,11 +23,15 @@ export class AgentPlayout {
     this.#currentPlayoutTask = null;
   }
 
-  play(messageId: string, transcriptionFwd: TranscriptionForwarder): PlayoutHandle {
+  play(
+    messageId: string,
+    transcriptionFwd: TranscriptionForwarder,
+    playoutQueue: Queue<AudioFrame | null>,
+  ): PlayoutHandle {
     if (this.#currentPlayoutHandle) {
       this.#currentPlayoutHandle.interrupt();
     }
-    this.#currentPlayoutHandle = new PlayoutHandle(messageId, transcriptionFwd);
+    this.#currentPlayoutHandle = new PlayoutHandle(messageId, transcriptionFwd, playoutQueue);
     this.#currentPlayoutTask = this.playoutTask(
       this.#currentPlayoutTask,
       this.#currentPlayoutHandle,
@@ -79,30 +83,34 @@ export class PlayoutHandle extends EventEmitter {
   interrupted: boolean;
   playoutQueue: Queue<AudioFrame | null>;
 
-  constructor(messageId: string, transcriptionFwd: TranscriptionForwarder) {
+  constructor(
+    messageId: string,
+    transcriptionFwd: TranscriptionForwarder,
+    playoutQueue: Queue<AudioFrame | null>,
+  ) {
     super();
     this.messageId = messageId;
     this.transcriptionFwd = transcriptionFwd;
     this.playedAudioSamples = 0;
     this.done = false;
     this.interrupted = false;
-    this.playoutQueue = new Queue<AudioFrame | null>();
+    this.playoutQueue = playoutQueue;
   }
 
-  pushAudio(data: Uint8Array) {
-    const frame = new AudioFrame(
-      new Int16Array(data.buffer),
-      SAMPLE_RATE,
-      NUM_CHANNELS,
-      data.length / 2,
-    );
-    this.transcriptionFwd.pushAudio(frame);
-    this.playoutQueue.put(frame);
-  }
+  // pushAudio(data: Uint8Array) {
+  //   const frame = new AudioFrame(
+  //     new Int16Array(data.buffer),
+  //     SAMPLE_RATE,
+  //     NUM_CHANNELS,
+  //     data.length / 2,
+  //   );
+  //   this.transcriptionFwd.pushAudio(frame);
+  //   this.playoutQueue.put(frame);
+  // }
 
-  pushText(text: string) {
-    this.transcriptionFwd.pushText(text);
-  }
+  // pushText(text: string) {
+  //   this.transcriptionFwd.pushText(text);
+  // }
 
   endInput() {
     this.transcriptionFwd.markAudioComplete();

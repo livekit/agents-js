@@ -120,19 +120,19 @@ export interface BaseItem {
 
 export interface SystemMessageItem extends BaseItem {
   type: 'message';
-  role: 'system';
+  role: Role.SYSTEM;
   content: InputTextContent;
 }
 
 export interface UserMessageItem extends BaseItem {
   type: 'message';
-  role: 'user';
+  role: Role.USER;
   content: (InputTextContent | InputAudioContent)[];
 }
 
 export interface AssistantMessageItem extends BaseItem {
   type: 'message';
-  role: 'assistant';
+  role: Role.ASSISTANT;
   content: (TextContent | AudioContent)[];
 }
 
@@ -443,30 +443,31 @@ export interface ResponseDoneEvent extends BaseServerEvent {
   response: ResponseResource;
 }
 
-export interface ResponseOutputAddedEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseOutputAdded;
+export interface ResponseOutputItemAddedEvent extends BaseServerEvent {
+  type: ServerEventType.ResponseOutputItemAdded;
   response_id: string;
   output_index: number;
   item: ItemResource;
 }
 
-export interface ResponseOutputDoneEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseOutputDone;
+export interface ResponseOutputItemDoneEvent extends BaseServerEvent {
+  type: ServerEventType.ResponseOutputItemDone;
   response_id: string;
   output_index: number;
   item: ItemResource;
 }
 
-export interface ResponseContentAddedEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseContentAdded;
+export interface ResponseContentPartAddedEvent extends BaseServerEvent {
+  type: ServerEventType.ResponseContentPartAdded;
   response_id: string;
+  item_id: string;
   output_index: number;
   content_index: number;
   part: ContentPart;
 }
 
-export interface ResponseContentDoneEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseContentDone;
+export interface ResponseContentPartDoneEvent extends BaseServerEvent {
+  type: ServerEventType.ResponseContentPartDone;
   response_id: string;
   output_index: number;
   content_index: number;
@@ -561,10 +562,10 @@ export enum ServerEventType {
   ConversationItemDeleted = 'conversation.item.deleted',
   ResponseCreated = 'response.created',
   ResponseDone = 'response.done',
-  ResponseOutputAdded = 'response.output.added',
-  ResponseOutputDone = 'response.output.done',
-  ResponseContentAdded = 'response.content.added',
-  ResponseContentDone = 'response.content.done',
+  ResponseOutputItemAdded = 'response.output_item.added',
+  ResponseOutputItemDone = 'response.output_item.done',
+  ResponseContentPartAdded = 'response.content_part.added',
+  ResponseContentPartDone = 'response.content_part.done',
   ResponseTextDelta = 'response.text.delta',
   ResponseTextDone = 'response.text.done',
   ResponseAudioTranscriptDelta = 'response.audio_transcript.delta',
@@ -592,10 +593,10 @@ export type ServerEvent =
   | ConversationItemDeletedEvent
   | ResponseCreatedEvent
   | ResponseDoneEvent
-  | ResponseOutputAddedEvent
-  | ResponseOutputDoneEvent
-  | ResponseContentAddedEvent
-  | ResponseContentDoneEvent
+  | ResponseOutputItemAddedEvent
+  | ResponseOutputItemDoneEvent
+  | ResponseContentPartAddedEvent
+  | ResponseContentPartDoneEvent
   | ResponseTextDeltaEvent
   | ResponseTextDoneEvent
   | ResponseAudioTranscriptDeltaEvent

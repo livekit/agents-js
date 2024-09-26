@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { Queue } from '@livekit/agents';
+import { Queue } from '@livekit/agents';
 import { llm, log } from '@livekit/agents';
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter, once } from 'events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
+import { ifError } from 'assert';
 
 export enum OmniAssistantEvents {
   Error,
@@ -91,7 +92,7 @@ export interface RealtimeContent {
   /** Stream of text content */
   textStream: Queue<string>;
   /** Stream of audio content */
-  AudioStream: Queue<AudioFrame>;
+  audioStream: Queue<AudioFrame>;
   /** Pending tool calls */
   toolCalls: RealtimeToolCall[];
 }
@@ -191,6 +192,12 @@ class Response {
       type: api_proto.ClientEventType.ResponseCancel,
     });
   }
+}
+
+interface ContentPtr {
+  response_id: string;
+  output_index: number;
+  content_index: number;
 }
 
 export class RealtimeModel {
@@ -341,7 +348,7 @@ export class RealtimeSession extends EventEmitter {
   queueMsg(command: api_proto.ClientEvent): void {
     const isAudio = command.type === api_proto.ClientEventType.InputAudioBufferAppend;
 
-    if (!this.#ws) {
+    if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) {
       if (!isAudio) this.#logger.error('WebSocket is not connected');
       return;
     }
@@ -495,36 +502,37 @@ export class RealtimeSession extends EventEmitter {
           case api_proto.ServerEventType.ConversationItemDeleted:
             break;
           case api_proto.ServerEventType.ResponseCreated:
-            // TODO: Emit response_created event
+            this.handleResponseCreated(event);
             break;
           case api_proto.ServerEventType.ResponseDone:
-            // TODO: Emit response_done event
-            this.handleGenerationFinished(event);
+            this.handleResponseDone(event);
             break;
-          case api_proto.ServerEventType.ResponseOutputAdded:
-            // TODO: Emit response_output_added event
+          case api_proto.ServerEventType.ResponseOutputItemAdded:
+            this.handleResponseOutputItemAdded(event);
             break;
-          case api_proto.ServerEventType.ResponseOutputDone:
+          case api_proto.ServerEventType.ResponseOutputItemDone:
             // TODO: Emit response_output_done event
             break;
-          case api_proto.ServerEventType.ResponseContentAdded:
-            // TODO: Emit response_content_added event
+          case api_proto.ServerEventType.ResponseContentPartAdded:
+            this.handleResponseContentPartAdded(event);
             break;
-          case api_proto.ServerEventType.ResponseContentDone:
-            // TODO: Emit response_content_done event
+          case api_proto.ServerEventType.ResponseContentPartDone:
+            this.handleResponseContentPartDone(event);
             break;
           case api_proto.ServerEventType.ResponseTextDelta:
           case api_proto.ServerEventType.ResponseTextDone:
             break;
           case api_proto.ServerEventType.ResponseAudioTranscriptDelta:
-            this.handleAddContent(event);
+            this.handleResponseAudioTranscriptDelta(event);
             break;
           case api_proto.ServerEventType.ResponseAudioTranscriptDone:
             break;
           case api_proto.ServerEventType.ResponseAudioDelta:
-            this.handleAddContent(event);
+            this.handleResponseAudioDelta(event);
             break;
           case api_proto.ServerEventType.ResponseAudioDone:
+            this.handleResponseAudioDone(event);
+            break;
           case api_proto.ServerEventType.ResponseFunctionCallArgumentsDelta:
           case api_proto.ServerEventType.ResponseFunctionCallArgumentsDone:
           case api_proto.ServerEventType.RateLimitsUpdated:
@@ -547,15 +555,49 @@ export class RealtimeSession extends EventEmitter {
     throw new Error('Not implemented');
   }
 
-  private handleAddContent(
-    event: api_proto.ResponseAudioDeltaEvent | api_proto.ResponseAudioTranscriptDeltaEvent,
+  private handleResponseCreated(responseCreated: api_proto.ResponseCreatedEvent): void {
+    const response = responseCreated.response;
+    const donePromise = new Promise<void>((resolve) => {
+      this.once('response_done', () => resolve());
+    });
+    const newResponse: RealtimeResponse = {
+      id: response.id,
+      status: response.status,
+      output: [],
+      donePromise: () => donePromise,
+    };
+    console.log('ResponseCreated', newResponse.id);
+    this.#pendingResponses[newResponse.id] = newResponse;
+    this.emit('response_created', newResponse);
+  }
+
+  private handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
+    const content = this.getContent(event);
+    const data = Buffer.from(event.delta, 'base64');
+    const audio = new AudioFrame(
+      new Int16Array(data.buffer),
+      api_proto.SAMPLE_RATE,
+      api_proto.NUM_CHANNELS,
+      data.length / 2,
+    );
+    content.audio.push(audio);
+
+    content.audioStream.put(audio);
+  }
+
+  private handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
+    const content = this.getContent(event);
+    this.emit('response_content_done', content);
+  }
+
+  private handleResponseAudioTranscriptDelta(
+    event: api_proto.ResponseAudioTranscriptDeltaEvent,
   ): void {
     // const trackSid = this.getLocalTrackSid();
     // if (!this.room || !this.room.localParticipant || !trackSid || !this.agentPlayout) {
     //   log().error('Room or local participant not set');
     //   return;
     // }
-
     // if (!this.playingHandle || this.playingHandle.done) {
     //   const trFwd = new BasicTranscriptionForwarder(
     //     this.room,
@@ -563,7 +605,6 @@ export class RealtimeSession extends EventEmitter {
     //     trackSid,
     //     event.response_id,
     //   );
-
     //   this.setState(proto.State.SPEAKING);
     //   this.playingHandle = this.agentPlayout.play(event.response_id, trFwd);
     //   this.playingHandle.on('complete', () => {
@@ -575,6 +616,68 @@ export class RealtimeSession extends EventEmitter {
     // } else if (event.type === 'response.audio_transcript.delta') {
     //   this.playingHandle?.pushText(event.delta);
     // }
+  }
+
+  private handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
+    const responseId = event.response_id;
+    console.log('ResponseContentPartAdded', responseId);
+    const response = this.#pendingResponses[responseId];
+    const outputIndex = event.output_index;
+    const output = response.output[outputIndex];
+
+    const textCh = new Queue<string>();
+    const audioCh = new Queue<AudioFrame>();
+
+    const newContent: RealtimeContent = {
+      responseId: responseId,
+      itemId: event.item_id,
+      outputIndex: outputIndex,
+      contentIndex: event.content_index,
+      text: '',
+      audio: [],
+      textStream: textCh,
+      audioStream: audioCh,
+      toolCalls: [],
+    };
+    output.content.push(newContent);
+    this.emit('response_content_added', newContent);
+  }
+
+  private handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
+    const responseId = event.response_id;
+    const response = this.#pendingResponses[responseId];
+    const itemData = event.item;
+
+    if (itemData.type !== 'message' && itemData.type !== 'function_call') {
+      throw new Error(`Unexpected item type: ${itemData.type}`);
+    }
+
+    let role: api_proto.Role;
+    if (itemData.type === 'function_call') {
+      role = api_proto.Role.ASSISTANT; // function_call doesn't have a role field, defaulting it to assistant
+    } else {
+      role = itemData.role;
+    }
+
+    const newOutput: RealtimeOutput = {
+      responseId: responseId,
+      itemId: itemData.id,
+      outputIndex: event.output_index,
+      type: itemData.type,
+      role: role,
+      content: [],
+      donePromise: () =>
+        new Promise<void>((resolve) => {
+          this.once('response_output_done', (output: RealtimeOutput) => {
+            if (output.itemId === itemData.id) {
+              resolve();
+            }
+          });
+        }),
+    };
+    response.output.push(newOutput);
+    console.log('ResponseOutputItemAdded', newOutput.itemId);
+    this.emit('response_output_added', newOutput);
   }
 
   private handleMessageAdded(event: api_proto.ConversationItemCreatedEvent): void {
@@ -616,29 +719,41 @@ export class RealtimeSession extends EventEmitter {
     // }
   }
 
-  private handleGenerationFinished(event: api_proto.ResponseDoneEvent): void {
-    // if (
-    //   event.response.status === 'cancelled' &&
-    //   event.response.status_details?.type === 'cancelled' &&
-    //   event.response.status_details?.reason === 'turn_detected'
-    // ) {
-    //   if (this.playingHandle && !this.playingHandle.done) {
-    //     this.playingHandle.interrupt();
-    //     this.sendClientCommand({
-    //       type: proto.ClientEventType.ConversationItemTruncate,
-    //       item_id: this.playingHandle.messageId,
-    //       content_index: 0, // ignored for now (see OAI docs)
-    //       audio_end_ms: (this.playingHandle.playedAudioSamples * 1000) / proto.SAMPLE_RATE,
-    //     });
-    //   }
-    // } else if (event.response.status !== 'completed') {
-    //   log().warn(`assistant turn finished unexpectedly reason ${event.response.status}`);
-    // }
-
-    // if (this.playingHandle && !this.playingHandle.interrupted) {
-    //   this.playingHandle.endInput();
-    // }
+  private handleResponseDone(event: api_proto.ResponseDoneEvent): void {
+    const responseData = event.response;
+    const responseId = responseData.id;
+    const response = this.#pendingResponses[responseId];
+    response.donePromise();
+    this.emit('response_done', response);
   }
+
+  private handleResponseAudioDone(event: api_proto.ResponseAudioDoneEvent): void {
+    // const content = this.getContent(event);
+    // content.audioStream.close(); TODO
+  }
+
+  // private handleGenerationFinished(event: api_proto.ResponseDoneEvent): void {
+  // if (
+  //   event.response.status === 'cancelled' &&
+  //   event.response.status_details?.type === 'cancelled' &&
+  //   event.response.status_details?.reason === 'turn_detected'
+  // ) {
+  //   if (this.playingHandle && !this.playingHandle.done) {
+  //     this.playingHandle.interrupt();
+  //     this.sendClientCommand({
+  //       type: proto.ClientEventType.ConversationItemTruncate,
+  //       item_id: this.playingHandle.messageId,
+  //       content_index: 0, // ignored for now (see OAI docs)
+  //       audio_end_ms: (this.playingHandle.playedAudioSamples * 1000) / proto.SAMPLE_RATE,
+  //     });
+  //   }
+  // } else if (event.response.status !== 'completed') {
+  //   log().warn(`assistant turn finished unexpectedly reason ${event.response.status}`);
+  // }
+  // if (this.playingHandle && !this.playingHandle.interrupted) {
+  //   this.playingHandle.endInput();
+  // }
+  // }
 
   private handleVadSpeechStarted(event: api_proto.InputAudioBufferSpeechStartedEvent): void {
     // const messageId = event.item_id;
@@ -649,6 +764,13 @@ export class RealtimeSession extends EventEmitter {
     // } else {
     //   this.logger.error('Participant or track or itemId not set');
     // }
+  }
+
+  private getContent(ptr: ContentPtr): RealtimeContent {
+    const response = this.#pendingResponses[ptr.response_id];
+    const output = response.output[ptr.output_index];
+    const content = output.content[ptr.content_index];
+    return content;
   }
 }
 

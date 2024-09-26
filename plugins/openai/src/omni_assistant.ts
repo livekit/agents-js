@@ -4,7 +4,7 @@
 import { AudioByteStream } from '@livekit/agents';
 import { findMicroTrackId } from '@livekit/agents';
 import { type llm, log } from '@livekit/agents';
-import { AgentPlayout, type PlayoutHandle } from '@livekit/agents';
+import { AgentPlayout, BasicTranscriptionForwarder, type PlayoutHandle } from '@livekit/agents';
 import type {
   AudioFrameEvent,
   LocalTrackPublication,
@@ -22,7 +22,7 @@ import {
   TrackSource,
 } from '@livekit/rtc-node';
 import * as api_proto from './realtime/api_proto.js';
-import { RealtimeModel, RealtimeSession } from './realtime/realtime_model.js';
+import { RealtimeContent, RealtimeModel, RealtimeSession } from './realtime/realtime_model.js';
 
 type ImplOptions = {
   // functions: llm.FunctionContext;
@@ -118,8 +118,19 @@ export class OmniAssistant {
         }
       }
 
-      // TODO: don't hardcode options
       this.session = this.model.session({});
+
+      this.session.on('response_content_added', (message: RealtimeContent) => {
+        const trFwd = new BasicTranscriptionForwarder(
+          this.room!,
+          this.room!.localParticipant!.identity,
+          this.getLocalTrackSid()!,
+          message.responseId,
+        );
+
+        this.playingHandle =
+          this.agentPlayout?.play(message.responseId, trFwd ?? null, message.audioStream) ?? null;
+      });
     });
   }
 
