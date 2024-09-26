@@ -2,6 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+export const SAMPLE_RATE = 24000;
+export const NUM_CHANNELS = 1;
+export const INPUT_PCM_FRAME_SIZE = 2400; // 100ms
+export const OUTPUT_PCM_FRAME_SIZE = 1200; // 50ms
+
 export const API_URL = 'wss://api.openai.com/v1/realtime';
 
 export enum Voice {
