@@ -4,6 +4,7 @@
 import { AudioByteStream } from '@livekit/agents';
 import { findMicroTrackId } from '@livekit/agents';
 import { llm, log } from '@livekit/agents';
+import { BasicTranscriptionForwarder } from '@livekit/agents';
 import type {
   AudioFrameEvent,
   LocalTrackPublication,
@@ -23,7 +24,6 @@ import {
 import { WebSocket } from 'ws';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 import * as proto from './proto.js';
-import { BasicTranscriptionForwarder } from './transcription_forwarder.js';
 
 /** @hidden */
 export const defaultSessionConfig: Partial<proto.SessionResource> = {
