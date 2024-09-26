@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'http';
+import { log } from './log.js';
 
 const healthCheck = async (res: ServerResponse) => {
   res.writeHead(200);
@@ -31,6 +32,10 @@ export class HTTPServer {
     return new Promise((resolve, reject) => {
       this.app.listen(this.port, this.host, (err?: Error) => {
         if (err) reject(err);
+        const address = this.app.address();
+        if (typeof address! !== 'string') {
+          log().info(`Server is listening on port ${address!.port}`);
+        }
         resolve();
       });
     });
