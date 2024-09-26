@@ -125,3 +125,35 @@ export class PlayoutHandle extends EventEmitter {
     this.emit('complete', this.interrupted);
   }
 }
+
+
+
+
+// # livekit-agents/livekit/agents/omni_assistant/agent_playout.py
+
+// class PlayoutHandle:
+//     def __init__(self, *, audio_source: rtc.AudioSource, item_id: str, content_index: int, transcription_fwd: transcription.TTSSegmentsForwarder) -> None
+    
+//     @property
+//     def item_id(self) -> str
+    
+//     @property
+//     def audio_samples(self) -> int
+    
+//     @property
+//     def text_chars(self) -> int
+    
+//     @property
+//     def content_index(self) -> int
+    
+//     @property
+//     def interrupted(self) -> bool
+    
+//     def done(self) -> bool
+    
+//     def interrupt(self) -> None
+
+// class AgentPlayout:
+//     def __init__(self, *, audio_source: rtc.AudioSource) -> None
+    
+//     def play(self, *, item_id: str, content_index: int, transcription_fwd: transcription.TTSSegmentsForwarder, text_stream: AsyncIterable[str], audio_stream: AsyncIterable[rtc.AudioFrame]) -> PlayoutHandle

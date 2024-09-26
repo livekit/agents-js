@@ -22,7 +22,7 @@ import {
   TrackSource,
 } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import * as proto from '../realtime/proto.js';
+import * as proto from '../realtime/api_proto.js';
 
 /** @hidden */
 export const defaultSessionConfig: Partial<proto.SessionResource> = {

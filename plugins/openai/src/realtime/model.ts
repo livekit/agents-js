@@ -6,7 +6,7 @@ import { llm, log } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter, once } from 'events';
 import { WebSocket } from 'ws';
-import * as proto from './proto.js';
+import * as proto from './api_proto.js';
 
 export enum OmniAssistantEvents {
   Error,
