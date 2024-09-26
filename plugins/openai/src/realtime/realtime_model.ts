@@ -66,7 +66,7 @@ export interface RealtimeOutput {
   /** Index of the output */
   outputIndex: number;
   /** Role of the message */
-  role: 'user' | 'assistant' | 'system';
+  role: proto.Role;
   /** Type of the output */
   type: 'message' | 'function_call';
   /** List of content */
@@ -139,8 +139,10 @@ class ConversationItem {
     this.#session = session;
   }
 
-  // TODO(nbsp): add ChatMessage to llm
-  // create()
+  // create(message: llm.ChatMessage, previousItemId?: string) {
+  //   // TODO: Implement create method
+  //   throw new Error('Not implemented');
+  // }
 
   truncate(itemId: string, contentIndex: number, audioEnd: number) {
     this.#session.queueMsg({
@@ -289,6 +291,11 @@ export class RealtimeModel {
     const newSession = new RealtimeSession(funcCtx, opts);
     this.#sessions.push(newSession);
     return newSession;
+  }
+
+  async close(): Promise<void> {
+    // TODO: Implement close method
+    throw new Error('Not implemented');
   }
 }
 
@@ -456,24 +463,51 @@ export class RealtimeSession extends EventEmitter {
         const event: proto.ServerEvent = JSON.parse(message.data as string);
         switch (event.type) {
           case proto.ServerEventType.Error:
+            // TODO: Emit error event
+            break;
           case proto.ServerEventType.SessionCreated:
           case proto.ServerEventType.SessionUpdated:
           case proto.ServerEventType.ConversationCreated:
           case proto.ServerEventType.InputAudioBufferCommitted:
+            // TODO: Emit input_speech_committed event
+            break;
           case proto.ServerEventType.InputAudioBufferCleared:
+            break;
           case proto.ServerEventType.InputAudioBufferSpeechStarted:
+            // TODO: Emit input_speech_started event
+            break;
           case proto.ServerEventType.InputAudioBufferSpeechStopped:
+            // TODO: Emit input_speech_stopped event
+            break;
           case proto.ServerEventType.ConversationItemCreated:
+            break;
           case proto.ServerEventType.ConversationItemInputAudioTranscriptionCompleted:
+            // TODO: Emit input_speech_transcription_completed event
+            break;
           case proto.ServerEventType.ConversationItemInputAudioTranscriptionFailed:
+            // TODO: Emit input_speech_transcription_failed event
+            break;
           case proto.ServerEventType.ConversationItemTruncated:
           case proto.ServerEventType.ConversationItemDeleted:
+            break;
           case proto.ServerEventType.ResponseCreated:
+            // TODO: Emit response_created event
+            break;
           case proto.ServerEventType.ResponseDone:
+            // TODO: Emit response_done event
+            break;
           case proto.ServerEventType.ResponseOutputAdded:
+            // TODO: Emit response_output_added event
+            break;
           case proto.ServerEventType.ResponseOutputDone:
+            // TODO: Emit response_output_done event
+            break;
           case proto.ServerEventType.ResponseContentAdded:
+            // TODO: Emit response_content_added event
+            break;
           case proto.ServerEventType.ResponseContentDone:
+            // TODO: Emit response_content_done event
+            break;
           case proto.ServerEventType.ResponseTextDelta:
           case proto.ServerEventType.ResponseTextDone:
           case proto.ServerEventType.ResponseAudioTranscriptDelta:
@@ -483,6 +517,7 @@ export class RealtimeSession extends EventEmitter {
           case proto.ServerEventType.ResponseFunctionCallArgumentsDelta:
           case proto.ServerEventType.ResponseFunctionCallArgumentsDone:
           case proto.ServerEventType.RateLimitsUpdated:
+            break;
         }
       };
 
@@ -495,95 +530,20 @@ export class RealtimeSession extends EventEmitter {
       };
     });
   }
+
+  async close(): Promise<void> {
+    // TODO: Implement close method
+    throw new Error('Not implemented');
+  }
 }
 
+// TODO: implement for event emitting
+// interface InputTranscriptionCompleted {
+//   itemId: string;
+//   transcript: string;
+// }
 
-
-
-// # livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/realtime/realtime_model.py
-
-// class RealtimeModel:
-//     def __init__(self, ...)
-//     def session(self, ...) -> RealtimeSession
-//     async def aclose(self) -> None
-
-// class RealtimeSession(utils.EventEmitter[EventTypes]):
-//     class InputAudioBuffer:
-//         def append(self, frame: rtc.AudioFrame) -> None
-//         def clear(self) -> None
-//         def commit(self) -> None
-
-//     class ConversationItem:
-//         def create(self, message: llm.ChatMessage, previous_item_id: str | None = None) -> None
-//         def truncate(self, *, item_id: str, content_index: int, audio_end_ms: int) -> None
-//         def delete(self, *, item_id: str) -> None
-
-//     class Conversation:
-//         @property
-//         def item(self) -> RealtimeSession.ConversationItem
-
-//     class Response:
-//         def create(self) -> None
-//         def cancel(self) -> None
-
-//     def __init__(self, ...)
-//     async def aclose(self) -> None
-//     @property
-//     def chat_ctx(self) -> llm.ChatContext
-//     @property
-//     def fnc_ctx(self) -> llm.FunctionContext | None
-//     @fnc_ctx.setter
-//     def fnc_ctx(self, fnc_ctx: llm.FunctionContext | None) -> None
-//     @property
-//     def default_conversation(self) -> Conversation
-//     @property
-//     def input_audio_buffer(self) -> InputAudioBuffer
-//     @property
-//     def response(self) -> Response
-//     def session_update(self, ...) -> None
-
-// # Dataclasses
-// @dataclass
-// class InputTranscriptionCompleted:
-//     item_id: str
-//     transcript: str
-
-// @dataclass
-// class InputTranscriptionFailed:
-//     item_id: str
-//     message: str
-
-// @dataclass
-// class RealtimeResponse:
-//     id: str
-//     status: api_proto.ResponseStatus
-//     output: list[RealtimeOutput]
-//     done_fut: asyncio.Future[None]
-
-// @dataclass
-// class RealtimeOutput:
-//     response_id: str
-//     item_id: str
-//     output_index: int
-//     role: api_proto.Role
-//     type: Literal["message", "function_call"]
-//     content: list[RealtimeContent]
-//     done_fut: asyncio.Future[None]
-
-// @dataclass
-// class RealtimeToolCall:
-//     name: str
-//     arguments: str
-//     tool_call_id: str
-
-// @dataclass
-// class RealtimeContent:
-//     response_id: str
-//     item_id: str
-//     output_index: int
-//     content_index: int
-//     text: str
-//     audio: list[rtc.AudioFrame]
-//     text_stream: AsyncIterable[str]
-//     audio_stream: AsyncIterable[rtc.AudioFrame]
-//     tool_calls: list[RealtimeToolCall]
+// interface InputTranscriptionFailed {
+//   itemId: string;
+//   message: string;
+// }
