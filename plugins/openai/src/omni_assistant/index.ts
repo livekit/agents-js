@@ -33,16 +33,16 @@ export const defaultSessionConfig: Partial<proto.SessionResource> = {
     prefix_padding_ms: 300,
     silence_duration_ms: 200,
   },
-  input_audio_format: 'pcm16',
+  input_audio_format: proto.AudioFormat.PCM16,
   input_audio_transcription: {
     model: 'whisper-1',
   },
   modalities: ['text', 'audio'],
   instructions: 'You are a helpful assistant.',
-  voice: 'alloy',
-  output_audio_format: 'pcm16',
+  voice: proto.Voice.ALLOY,
+  output_audio_format: proto.AudioFormat.PCM16,
   tools: [],
-  tool_choice: 'auto',
+  tool_choice: proto.ToolChoice.AUTO,
   temperature: 0.8,
   // max_output_tokens: 2048,
 };
@@ -100,7 +100,7 @@ export class OmniAssistant {
     this.options.functions = ctx;
     this.options.sessionConfig.tools = tools(ctx);
     this.sendClientCommand({
-      type: 'session.update',
+      type: proto.ClientEventType.SessionUpdate,
       session: this.options.sessionConfig,
     });
   }
@@ -178,7 +178,7 @@ export class OmniAssistant {
 
         if (event.type === 'session.created') {
           this.sendClientCommand({
-            type: 'session.update',
+            type: proto.ClientEventType.SessionUpdate,
             session: this.options.sessionConfig,
           });
           resolve();
@@ -195,7 +195,7 @@ export class OmniAssistant {
 
   addUserMessage(text: string, generate: boolean = true): void {
     this.sendClientCommand({
-      type: 'conversation.item.create',
+      type: proto.ClientEventType.ConversationItemCreate,
       item: {
         type: 'message',
         role: 'user',
@@ -209,7 +209,7 @@ export class OmniAssistant {
     });
     if (generate) {
       this.sendClientCommand({
-        type: 'response.create',
+        type: proto.ClientEventType.ResponseCreate,
         response: {},
       });
     }
@@ -344,7 +344,7 @@ export class OmniAssistant {
       this.options.functions[toolCall.name].execute(toolCall.arguments).then((content) => {
         this.thinking = false;
         this.sendClientCommand({
-          type: 'conversation.item.create',
+          type: proto.ClientEventType.ConversationItemCreate,
           item: {
             type: 'function_call_output',
             call_id: toolCall.call_id,
@@ -352,7 +352,7 @@ export class OmniAssistant {
           },
         });
         this.sendClientCommand({
-          type: 'response.create',
+          type: proto.ClientEventType.ResponseCreate,
           response: {},
         });
       });
@@ -386,7 +386,7 @@ export class OmniAssistant {
       if (this.playingHandle && !this.playingHandle.done) {
         this.playingHandle.interrupt();
         this.sendClientCommand({
-          type: 'conversation.item.truncate',
+          type: proto.ClientEventType.ConversationItemTruncate,
           item_id: this.playingHandle.messageId,
           content_index: 0, // ignored for now (see OAI docs)
           audio_end_ms: (this.playingHandle.playedAudioSamples * 1000) / proto.SAMPLE_RATE,
@@ -445,7 +445,7 @@ export class OmniAssistant {
         const audioData = ev.frame.data;
         for (const frame of bstream.write(audioData.buffer)) {
           this.sendClientCommand({
-            type: 'input_audio_buffer.append',
+            type: proto.ClientEventType.InputAudioBufferAppend,
             audio: Buffer.from(frame.data.buffer).toString('base64'),
           });
         }
