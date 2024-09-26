@@ -511,7 +511,7 @@ export class RealtimeSession extends EventEmitter {
             this.handleResponseOutputItemAdded(event);
             break;
           case api_proto.ServerEventType.ResponseOutputItemDone:
-            // TODO: Emit response_output_done event
+            this.handleResponseOutputItemDone(event);
             break;
           case api_proto.ServerEventType.ResponseContentPartAdded:
             this.handleResponseContentPartAdded(event);
@@ -566,7 +566,6 @@ export class RealtimeSession extends EventEmitter {
       output: [],
       donePromise: () => donePromise,
     };
-    console.log('ResponseCreated', newResponse.id);
     this.#pendingResponses[newResponse.id] = newResponse;
     this.emit('response_created', newResponse);
   }
@@ -620,7 +619,6 @@ export class RealtimeSession extends EventEmitter {
 
   private handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
     const responseId = event.response_id;
-    console.log('ResponseContentPartAdded', responseId);
     const response = this.#pendingResponses[responseId];
     const outputIndex = event.output_index;
     const output = response.output[outputIndex];
@@ -676,7 +674,6 @@ export class RealtimeSession extends EventEmitter {
         }),
     };
     response.output.push(newOutput);
-    console.log('ResponseOutputItemAdded', newOutput.itemId);
     this.emit('response_output_added', newOutput);
   }
 
@@ -725,6 +722,42 @@ export class RealtimeSession extends EventEmitter {
     const response = this.#pendingResponses[responseId];
     response.donePromise();
     this.emit('response_done', response);
+  }
+
+  private handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
+    const responseId = event.response_id;
+    const response = this.#pendingResponses[responseId];
+    const outputIndex = event.output_index;
+    const output = response.output[outputIndex];
+
+    // if (output.type === "function_call") {
+    //   if (!this.#funcCtx) {
+    //     this.#logger.error(
+    //       "function call received but no funcCtx is available"
+    //     );
+    //     return;
+    //   }
+
+    //   // parse the arguments and call the function inside the fnc_ctx
+    //   const item = event.item;
+    //   if (item.type !== "function_call") {
+    //     throw new Error("Expected function_call item");
+    //   }
+
+    //   const funcCallInfo = this.#oai_api.createAiFunctionInfo(
+    //     this.#funcCtx,
+    //     item.call_id,
+    //     item.name,
+    //     item.arguments
+    //   );
+
+    //   this.#fnc_tasks.createTask(
+    //     this.#runFncTask(fnc_call_info, output.item_id)
+    //   );
+    // }
+
+    output.donePromise();
+    this.emit('response_output_done', output);
   }
 
   private handleResponseAudioDone(event: api_proto.ResponseAudioDoneEvent): void {
