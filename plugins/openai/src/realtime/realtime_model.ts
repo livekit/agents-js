@@ -212,17 +212,17 @@ export class RealtimeModel {
     apiKey = process.env.OPENAI_API_KEY || '',
     baseURL = api_proto.API_URL,
   }: {
-    modalities: ['text', 'audio'] | ['text'];
+    modalities?: ['text', 'audio'] | ['text'];
     instructions?: string;
-    voice: api_proto.Voice;
-    inputAudioFormat: api_proto.AudioFormat;
-    outputAudioFormat: api_proto.AudioFormat;
-    inputAudioTranscription: { model: 'whisper-1' };
-    turnDetection: api_proto.TurnDetectionType;
-    temperature: number;
-    maxOutputTokens: number;
-    apiKey: string;
-    baseURL: string;
+    voice?: api_proto.Voice;
+    inputAudioFormat?: api_proto.AudioFormat;
+    outputAudioFormat?: api_proto.AudioFormat;
+    inputAudioTranscription?: { model: 'whisper-1' };
+    turnDetection?: api_proto.TurnDetectionType;
+    temperature?: number;
+    maxOutputTokens?: number;
+    apiKey?: string;
+    baseURL?: string;
   }) {
     if (apiKey === '') {
       throw new Error(
@@ -263,16 +263,16 @@ export class RealtimeModel {
     temperature = this.#defaultOpts.temperature,
     maxOutputTokens = this.#defaultOpts.maxOutputTokens,
   }: {
-    funcCtx: llm.FunctionContext;
-    modalities: ['text', 'audio'] | ['text'];
+    funcCtx?: llm.FunctionContext;
+    modalities?: ['text', 'audio'] | ['text'];
     instructions?: string;
-    voice: api_proto.Voice;
-    inputAudioFormat: api_proto.AudioFormat;
-    outputAudioFormat: api_proto.AudioFormat;
+    voice?: api_proto.Voice;
+    inputAudioFormat?: api_proto.AudioFormat;
+    outputAudioFormat?: api_proto.AudioFormat;
     inputAudioTranscription?: { model: 'whisper-1' };
-    turnDetection: api_proto.TurnDetectionType;
-    temperature: number;
-    maxOutputTokens: number;
+    turnDetection?: api_proto.TurnDetectionType;
+    temperature?: number;
+    maxOutputTokens?: number;
   }): RealtimeSession {
     const opts: ModelOptions = {
       modalities,
@@ -461,6 +461,7 @@ export class RealtimeSession extends EventEmitter {
 
       this.#ws.onmessage = (message) => {
         const event: api_proto.ServerEvent = JSON.parse(message.data as string);
+        this.#logger.debug(`<- ${JSON.stringify(this.#loggableEvent(event))}`);
         switch (event.type) {
           case api_proto.ServerEventType.Error:
             // TODO: Emit error event
@@ -475,14 +476,17 @@ export class RealtimeSession extends EventEmitter {
             break;
           case api_proto.ServerEventType.InputAudioBufferSpeechStarted:
             // TODO: Emit input_speech_started event
+            this.handleVadSpeechStarted(event);
             break;
           case api_proto.ServerEventType.InputAudioBufferSpeechStopped:
             // TODO: Emit input_speech_stopped event
             break;
           case api_proto.ServerEventType.ConversationItemCreated:
+            this.handleMessageAdded(event);
             break;
           case api_proto.ServerEventType.ConversationItemInputAudioTranscriptionCompleted:
             // TODO: Emit input_speech_transcription_completed event
+            this.handleInputTranscribed(event);
             break;
           case api_proto.ServerEventType.ConversationItemInputAudioTranscriptionFailed:
             // TODO: Emit input_speech_transcription_failed event
@@ -495,6 +499,7 @@ export class RealtimeSession extends EventEmitter {
             break;
           case api_proto.ServerEventType.ResponseDone:
             // TODO: Emit response_done event
+            this.handleGenerationFinished(event);
             break;
           case api_proto.ServerEventType.ResponseOutputAdded:
             // TODO: Emit response_output_added event
@@ -510,9 +515,15 @@ export class RealtimeSession extends EventEmitter {
             break;
           case api_proto.ServerEventType.ResponseTextDelta:
           case api_proto.ServerEventType.ResponseTextDone:
+            break;
           case api_proto.ServerEventType.ResponseAudioTranscriptDelta:
+            this.handleAddContent(event);
+            break;
           case api_proto.ServerEventType.ResponseAudioTranscriptDone:
+            break;
           case api_proto.ServerEventType.ResponseAudioDelta:
+            this.handleAddContent(event);
+            break;
           case api_proto.ServerEventType.ResponseAudioDone:
           case api_proto.ServerEventType.ResponseFunctionCallArgumentsDelta:
           case api_proto.ServerEventType.ResponseFunctionCallArgumentsDone:
@@ -534,6 +545,110 @@ export class RealtimeSession extends EventEmitter {
   async close(): Promise<void> {
     // TODO: Implement close method
     throw new Error('Not implemented');
+  }
+
+  private handleAddContent(
+    event: api_proto.ResponseAudioDeltaEvent | api_proto.ResponseAudioTranscriptDeltaEvent,
+  ): void {
+    // const trackSid = this.getLocalTrackSid();
+    // if (!this.room || !this.room.localParticipant || !trackSid || !this.agentPlayout) {
+    //   log().error('Room or local participant not set');
+    //   return;
+    // }
+
+    // if (!this.playingHandle || this.playingHandle.done) {
+    //   const trFwd = new BasicTranscriptionForwarder(
+    //     this.room,
+    //     this.room?.localParticipant?.identity,
+    //     trackSid,
+    //     event.response_id,
+    //   );
+
+    //   this.setState(proto.State.SPEAKING);
+    //   this.playingHandle = this.agentPlayout.play(event.response_id, trFwd);
+    //   this.playingHandle.on('complete', () => {
+    //     this.setState(proto.State.LISTENING);
+    //   });
+    // }
+    // if (event.type === 'response.audio.delta') {
+    //   this.playingHandle?.pushAudio(Buffer.from(event.delta, 'base64'));
+    // } else if (event.type === 'response.audio_transcript.delta') {
+    //   this.playingHandle?.pushText(event.delta);
+    // }
+  }
+
+  private handleMessageAdded(event: api_proto.ConversationItemCreatedEvent): void {
+    // if (event.item.type === 'function_call') {
+    //   const toolCall = event.item;
+    //   this.options.functions[toolCall.name].execute(toolCall.arguments).then((content) => {
+    //     this.thinking = false;
+    //     this.sendClientCommand({
+    //       type: proto.ClientEventType.ConversationItemCreate,
+    //       item: {
+    //         type: 'function_call_output',
+    //         call_id: toolCall.call_id,
+    //         output: content,
+    //       },
+    //     });
+    //     this.sendClientCommand({
+    //       type: proto.ClientEventType.ResponseCreate,
+    //       response: {},
+    //     });
+    //   });
+    // }
+  }
+
+  private handleInputTranscribed(
+    event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
+  ): void {
+    // const messageId = event.item_id;
+    // const transcription = event.transcript;
+    // if (!messageId || transcription === undefined) {
+    //   this.logger.error('Message ID or transcription not set');
+    //   return;
+    // }
+    // const participantIdentity = this.linkedParticipant?.identity;
+    // const trackSid = this.subscribedTrack?.sid;
+    // if (participantIdentity && trackSid) {
+    //   this.publishTranscription(participantIdentity, trackSid, transcription, true, messageId);
+    // } else {
+    //   this.logger.error('Participant or track not set');
+    // }
+  }
+
+  private handleGenerationFinished(event: api_proto.ResponseDoneEvent): void {
+    // if (
+    //   event.response.status === 'cancelled' &&
+    //   event.response.status_details?.type === 'cancelled' &&
+    //   event.response.status_details?.reason === 'turn_detected'
+    // ) {
+    //   if (this.playingHandle && !this.playingHandle.done) {
+    //     this.playingHandle.interrupt();
+    //     this.sendClientCommand({
+    //       type: proto.ClientEventType.ConversationItemTruncate,
+    //       item_id: this.playingHandle.messageId,
+    //       content_index: 0, // ignored for now (see OAI docs)
+    //       audio_end_ms: (this.playingHandle.playedAudioSamples * 1000) / proto.SAMPLE_RATE,
+    //     });
+    //   }
+    // } else if (event.response.status !== 'completed') {
+    //   log().warn(`assistant turn finished unexpectedly reason ${event.response.status}`);
+    // }
+
+    // if (this.playingHandle && !this.playingHandle.interrupted) {
+    //   this.playingHandle.endInput();
+    // }
+  }
+
+  private handleVadSpeechStarted(event: api_proto.InputAudioBufferSpeechStartedEvent): void {
+    // const messageId = event.item_id;
+    // const participantIdentity = this.linkedParticipant?.identity;
+    // const trackSid = this.subscribedTrack?.sid;
+    // if (participantIdentity && trackSid && messageId) {
+    //   this.publishTranscription(participantIdentity, trackSid, '', false, messageId);
+    // } else {
+    //   this.logger.error('Participant or track or itemId not set');
+    // }
   }
 }
 
