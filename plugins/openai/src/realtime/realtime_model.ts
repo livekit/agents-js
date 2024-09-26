@@ -6,7 +6,7 @@ import { llm, log } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter, once } from 'events';
 import { WebSocket } from 'ws';
-import * as proto from './api_proto.js';
+import * as api_proto from './api_proto.js';
 
 export enum OmniAssistantEvents {
   Error,
@@ -27,9 +27,9 @@ export enum OmniAssistantEvents {
 interface ModelOptions {
   modalities: ['text', 'audio'] | ['text'];
   instructions?: string;
-  voice: proto.Voice;
-  inputAudioFormat: proto.AudioFormat;
-  outputAudioFormat: proto.AudioFormat;
+  voice: api_proto.Voice;
+  inputAudioFormat: api_proto.AudioFormat;
+  outputAudioFormat: api_proto.AudioFormat;
   inputAudioTranscription?: {
     model: 'whisper-1';
   };
@@ -51,7 +51,7 @@ export interface RealtimeResponse {
   /** ID of the message */
   id: string;
   /** Status of the response */
-  status: proto.ResponseStatus;
+  status: api_proto.ResponseStatus;
   /** List of outputs */
   output: RealtimeOutput[];
   /** Promise that will be executed when the response is completed */
@@ -66,7 +66,7 @@ export interface RealtimeOutput {
   /** Index of the output */
   outputIndex: number;
   /** Role of the message */
-  role: proto.Role;
+  role: api_proto.Role;
   /** Type of the output */
   type: 'message' | 'function_call';
   /** List of content */
@@ -114,20 +114,20 @@ class InputAudioBuffer {
 
   append(frame: AudioFrame) {
     this.#session.queueMsg({
-      type: proto.ClientEventType.InputAudioBufferAppend,
+      type: api_proto.ClientEventType.InputAudioBufferAppend,
       audio: Buffer.from(frame.data).toString('base64'),
     });
   }
 
   clear() {
     this.#session.queueMsg({
-      type: proto.ClientEventType.InputAudioBufferClear,
+      type: api_proto.ClientEventType.InputAudioBufferClear,
     });
   }
 
   commit() {
     this.#session.queueMsg({
-      type: proto.ClientEventType.InputAudioBufferCommit,
+      type: api_proto.ClientEventType.InputAudioBufferCommit,
     });
   }
 }
@@ -146,7 +146,7 @@ class ConversationItem {
 
   truncate(itemId: string, contentIndex: number, audioEnd: number) {
     this.#session.queueMsg({
-      type: proto.ClientEventType.ConversationItemTruncate,
+      type: api_proto.ClientEventType.ConversationItemTruncate,
       item_id: itemId,
       content_index: contentIndex,
       audio_end_ms: audioEnd,
@@ -155,7 +155,7 @@ class ConversationItem {
 
   delete(itemId: string) {
     this.#session.queueMsg({
-      type: proto.ClientEventType.ConversationItemDelete,
+      type: api_proto.ClientEventType.ConversationItemDelete,
       item_id: itemId,
     });
   }
@@ -182,13 +182,13 @@ class Response {
 
   create() {
     this.#session.queueMsg({
-      type: proto.ClientEventType.ResponseCreate,
+      type: api_proto.ClientEventType.ResponseCreate,
     });
   }
 
   cancel() {
     this.#session.queueMsg({
-      type: proto.ClientEventType.ResponseCancel,
+      type: api_proto.ClientEventType.ResponseCancel,
     });
   }
 }
@@ -202,23 +202,23 @@ export class RealtimeModel {
   constructor({
     modalities = ['text', 'audio'],
     instructions = undefined,
-    voice = proto.Voice.ALLOY,
-    inputAudioFormat = proto.AudioFormat.PCM16,
-    outputAudioFormat = proto.AudioFormat.PCM16,
+    voice = api_proto.Voice.ALLOY,
+    inputAudioFormat = api_proto.AudioFormat.PCM16,
+    outputAudioFormat = api_proto.AudioFormat.PCM16,
     inputAudioTranscription = { model: 'whisper-1' },
     turnDetection = { type: 'server_vad' },
     temperature = 0.8,
     maxOutputTokens = 2048,
     apiKey = process.env.OPENAI_API_KEY || '',
-    baseURL = proto.API_URL,
+    baseURL = api_proto.API_URL,
   }: {
     modalities: ['text', 'audio'] | ['text'];
     instructions?: string;
-    voice: proto.Voice;
-    inputAudioFormat: proto.AudioFormat;
-    outputAudioFormat: proto.AudioFormat;
+    voice: api_proto.Voice;
+    inputAudioFormat: api_proto.AudioFormat;
+    outputAudioFormat: api_proto.AudioFormat;
     inputAudioTranscription: { model: 'whisper-1' };
-    turnDetection: proto.TurnDetectionType;
+    turnDetection: api_proto.TurnDetectionType;
     temperature: number;
     maxOutputTokens: number;
     apiKey: string;
@@ -266,11 +266,11 @@ export class RealtimeModel {
     funcCtx: llm.FunctionContext;
     modalities: ['text', 'audio'] | ['text'];
     instructions?: string;
-    voice: proto.Voice;
-    inputAudioFormat: proto.AudioFormat;
-    outputAudioFormat: proto.AudioFormat;
+    voice: api_proto.Voice;
+    inputAudioFormat: api_proto.AudioFormat;
+    outputAudioFormat: api_proto.AudioFormat;
     inputAudioTranscription?: { model: 'whisper-1' };
-    turnDetection: proto.TurnDetectionType;
+    turnDetection: api_proto.TurnDetectionType;
     temperature: number;
     maxOutputTokens: number;
   }): RealtimeSession {
@@ -338,7 +338,7 @@ export class RealtimeSession extends EventEmitter {
     return new Response(this);
   }
 
-  queueMsg(command: proto.ClientEvent): void {
+  queueMsg(command: api_proto.ClientEvent): void {
     const isAudio = command.type === 'input_audio_buffer.append';
 
     if (!this.#ws) {
@@ -355,7 +355,7 @@ export class RealtimeSession extends EventEmitter {
   /// Truncates the data field of the event to the specified maxLength to avoid overwhelming logs
   /// with large amounts of base64 audio data.
   #loggableEvent(
-    event: proto.ClientEvent | proto.ServerEvent,
+    event: api_proto.ClientEvent | api_proto.ServerEvent,
     maxLength: number = 30,
   ): Record<string, unknown> {
     const untypedEvent: Record<string, unknown> = {};
@@ -392,18 +392,18 @@ export class RealtimeSession extends EventEmitter {
     turnDetection = this.#opts.turnDetection,
     temperature = this.#opts.temperature,
     maxOutputTokens = this.#opts.maxOutputTokens,
-    toolChoice = proto.ToolChoice.AUTO,
+    toolChoice = api_proto.ToolChoice.AUTO,
   }: {
     modalities: ['text', 'audio'] | ['text'];
     instructions?: string;
-    voice: proto.Voice;
-    inputAudioFormat: proto.AudioFormat;
-    outputAudioFormat: proto.AudioFormat;
+    voice: api_proto.Voice;
+    inputAudioFormat: api_proto.AudioFormat;
+    outputAudioFormat: api_proto.AudioFormat;
     inputAudioTranscription?: { model: 'whisper-1' };
-    turnDetection: proto.TurnDetectionType;
+    turnDetection: api_proto.TurnDetectionType;
     temperature: number;
     maxOutputTokens: number;
-    toolChoice: proto.ToolChoice;
+    toolChoice: api_proto.ToolChoice;
   }) {
     this.#opts = {
       modalities,
@@ -426,7 +426,7 @@ export class RealtimeSession extends EventEmitter {
       parameters: llm.oaiParams(func.parameters),
     }));
     this.queueMsg({
-      type: proto.ClientEventType.SessionUpdate,
+      type: api_proto.ClientEventType.SessionUpdate,
       session: {
         modalities: this.#opts.modalities,
         instructions: this.#opts.instructions,
@@ -445,7 +445,7 @@ export class RealtimeSession extends EventEmitter {
 
   #start(): Promise<void> {
     return new Promise(async (resolve, reject) => {
-      this.#ws = new WebSocket(proto.API_URL, {
+      this.#ws = new WebSocket(api_proto.API_URL, {
         headers: {
           Authorization: `Bearer ${this.#opts.apiKey}`,
           'OpenAI-Beta': 'realtime=v1',
@@ -460,63 +460,63 @@ export class RealtimeSession extends EventEmitter {
       this.#closing = false;
 
       this.#ws.onmessage = (message) => {
-        const event: proto.ServerEvent = JSON.parse(message.data as string);
+        const event: api_proto.ServerEvent = JSON.parse(message.data as string);
         switch (event.type) {
-          case proto.ServerEventType.Error:
+          case api_proto.ServerEventType.Error:
             // TODO: Emit error event
             break;
-          case proto.ServerEventType.SessionCreated:
-          case proto.ServerEventType.SessionUpdated:
-          case proto.ServerEventType.ConversationCreated:
-          case proto.ServerEventType.InputAudioBufferCommitted:
+          case api_proto.ServerEventType.SessionCreated:
+          case api_proto.ServerEventType.SessionUpdated:
+          case api_proto.ServerEventType.ConversationCreated:
+          case api_proto.ServerEventType.InputAudioBufferCommitted:
             // TODO: Emit input_speech_committed event
             break;
-          case proto.ServerEventType.InputAudioBufferCleared:
+          case api_proto.ServerEventType.InputAudioBufferCleared:
             break;
-          case proto.ServerEventType.InputAudioBufferSpeechStarted:
+          case api_proto.ServerEventType.InputAudioBufferSpeechStarted:
             // TODO: Emit input_speech_started event
             break;
-          case proto.ServerEventType.InputAudioBufferSpeechStopped:
+          case api_proto.ServerEventType.InputAudioBufferSpeechStopped:
             // TODO: Emit input_speech_stopped event
             break;
-          case proto.ServerEventType.ConversationItemCreated:
+          case api_proto.ServerEventType.ConversationItemCreated:
             break;
-          case proto.ServerEventType.ConversationItemInputAudioTranscriptionCompleted:
+          case api_proto.ServerEventType.ConversationItemInputAudioTranscriptionCompleted:
             // TODO: Emit input_speech_transcription_completed event
             break;
-          case proto.ServerEventType.ConversationItemInputAudioTranscriptionFailed:
+          case api_proto.ServerEventType.ConversationItemInputAudioTranscriptionFailed:
             // TODO: Emit input_speech_transcription_failed event
             break;
-          case proto.ServerEventType.ConversationItemTruncated:
-          case proto.ServerEventType.ConversationItemDeleted:
+          case api_proto.ServerEventType.ConversationItemTruncated:
+          case api_proto.ServerEventType.ConversationItemDeleted:
             break;
-          case proto.ServerEventType.ResponseCreated:
+          case api_proto.ServerEventType.ResponseCreated:
             // TODO: Emit response_created event
             break;
-          case proto.ServerEventType.ResponseDone:
+          case api_proto.ServerEventType.ResponseDone:
             // TODO: Emit response_done event
             break;
-          case proto.ServerEventType.ResponseOutputAdded:
+          case api_proto.ServerEventType.ResponseOutputAdded:
             // TODO: Emit response_output_added event
             break;
-          case proto.ServerEventType.ResponseOutputDone:
+          case api_proto.ServerEventType.ResponseOutputDone:
             // TODO: Emit response_output_done event
             break;
-          case proto.ServerEventType.ResponseContentAdded:
+          case api_proto.ServerEventType.ResponseContentAdded:
             // TODO: Emit response_content_added event
             break;
-          case proto.ServerEventType.ResponseContentDone:
+          case api_proto.ServerEventType.ResponseContentDone:
             // TODO: Emit response_content_done event
             break;
-          case proto.ServerEventType.ResponseTextDelta:
-          case proto.ServerEventType.ResponseTextDone:
-          case proto.ServerEventType.ResponseAudioTranscriptDelta:
-          case proto.ServerEventType.ResponseAudioTranscriptDone:
-          case proto.ServerEventType.ResponseAudioDelta:
-          case proto.ServerEventType.ResponseAudioDone:
-          case proto.ServerEventType.ResponseFunctionCallArgumentsDelta:
-          case proto.ServerEventType.ResponseFunctionCallArgumentsDone:
-          case proto.ServerEventType.RateLimitsUpdated:
+          case api_proto.ServerEventType.ResponseTextDelta:
+          case api_proto.ServerEventType.ResponseTextDone:
+          case api_proto.ServerEventType.ResponseAudioTranscriptDelta:
+          case api_proto.ServerEventType.ResponseAudioTranscriptDone:
+          case api_proto.ServerEventType.ResponseAudioDelta:
+          case api_proto.ServerEventType.ResponseAudioDone:
+          case api_proto.ServerEventType.ResponseFunctionCallArgumentsDelta:
+          case api_proto.ServerEventType.ResponseFunctionCallArgumentsDone:
+          case api_proto.ServerEventType.RateLimitsUpdated:
             break;
         }
       };

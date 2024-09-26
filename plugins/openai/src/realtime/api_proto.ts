@@ -21,6 +21,29 @@ export enum AudioFormat {
   // G711_ALAW = 'g711-alaw',
 }
 
+export enum Role {
+  SYSTEM = 'system',
+  ASSISTANT = 'assistant',
+  USER = 'user',
+  TOOL = 'tool',
+}
+
+export enum GenerationFinishedReason {
+  STOP = 'stop',
+  MAX_TOKENS = 'max_tokens',
+  CONTENT_FILTER = 'content_filter',
+  INTERRUPT = 'interrupt',
+}
+
+export enum InputTranscriptionModel {
+  WHISPER_1 = 'whisper-1',
+}
+
+export enum Modality {
+  TEXT = 'text',
+  AUDIO = 'audio',
+}
+
 export interface Tool {
   type: 'function';
   name: string;

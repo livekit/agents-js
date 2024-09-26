@@ -1,37 +1,36 @@
 // livekit-agents/livekit/agents/omni_assistant/omni_assistant.ts
 import { RemoteParticipant, Room } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
-import { ChatContext, FunctionContext } from '../llm';
-import { SentenceTokenizer, WordTokenizer } from '../tokenize';
+import { FunctionContext } from '../llm';
+// import { SentenceTokenizer, WordTokenizer } from '../tokenize';
 import { VAD } from '../vad';
 
-type EventTypes =
+export type EventTypes =
   | 'user_started_speaking'
   | 'user_stopped_speaking'
   | 'agent_started_speaking'
   | 'agent_stopped_speaking';
 
-interface AssistantTranscriptionOptions {
+export interface AssistantTranscriptionOptions {
   userTranscription: boolean;
   agentTranscription: boolean;
   agentTranscriptionSpeed: number;
-  sentenceTokenizer: SentenceTokenizer;
-  wordTokenizer: WordTokenizer;
-  hyphenateWord: (word: string) => string[];
+//   sentenceTokenizer: SentenceTokenizer;
+//   wordTokenizer: WordTokenizer;
+//   hyphenateWord: (word: string) => string[];
 }
 
-interface S2SModel {
+export interface S2SModel {
   // Protocol interface, no methods defined
 }
 
-class OmniAssistant extends EventEmitter {
+export class OmniAssistant extends EventEmitter {
   constructor(
     model: S2SModel,
     vad?: VAD,
-    chatCtx?: ChatContext,
+    // chatCtx?: ChatContext,
     fncCtx?: FunctionContext,
     transcription: AssistantTranscriptionOptions = {} as AssistantTranscriptionOptions,
-    loop?: any, // TODO: Define proper type for loop
   ) {
     super();
     // TODO: Implement constructor
