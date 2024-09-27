@@ -12,8 +12,8 @@ import type {
   Room,
 } from '@livekit/rtc-node';
 import {
-  AudioSource,
   AudioFrame,
+  AudioSource,
   AudioStream,
   LocalAudioTrack,
   RoomEvent,
