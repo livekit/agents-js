@@ -143,7 +143,7 @@ export class MultimodalAgent {
         }
       }
 
-      this.#session = this.model.session({});
+      this.#session = this.model.session({ fncCtx: this.#fncCtx });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('response_content_added', (message: any) => {
