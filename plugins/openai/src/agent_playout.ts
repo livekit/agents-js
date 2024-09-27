@@ -81,8 +81,7 @@ export class AgentPlayout {
 
       handle.transcriptionFwd.markAudioComplete();
 
-      // TODO
-      // await this.#audioSource.waitForPlayout();
+      await this.#audioSource.waitForPlayout();
     };
 
     const readTextTaskPromise = playTextStream();
@@ -96,8 +95,7 @@ export class AgentPlayout {
       //   captureTaskPromise.cancel();
       // }
 
-      // TODO: this is wrong, we need to get the actual duration from the audio source
-      handle.totalPlayedTime = handle.pushedDuration /* - this.#audioSource.queuedDuration*/;
+      handle.totalPlayedTime = handle.pushedDuration - this.#audioSource.queuedDuration;
 
       // TODO: handle errors
       // if (handle.interrupted || captureTaskPromise.error) {
@@ -209,8 +207,7 @@ export class PlayoutHandle extends EventEmitter {
       return Math.floor(this.totalPlayedTime * 24000);
     }
 
-    // TODO: this is wrong, we need to get the actual duration from the audio source
-    return Math.floor(this.pushedDuration /* - this.#audioSource.queuedDuration*/ * 24000);
+    return Math.floor(this.pushedDuration - this.#audioSource.queuedDuration * 24000);
   }
 
   get textChars(): number {
