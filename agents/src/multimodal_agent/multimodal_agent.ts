@@ -21,7 +21,7 @@ import {
 } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
-import * as openai from '@livekit/agents-plugin-openai';
+// import * as openai from '@livekit/agents-plugin-openai';
 
 type ImplOptions = {
   // functions: llm.FunctionContext;
