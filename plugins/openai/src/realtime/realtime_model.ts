@@ -116,6 +116,10 @@ export interface InputTranscriptionFailed {
   message: string;
 }
 
+export interface InputSpeechCommitted {
+  itemId: string;
+}
+
 class InputAudioBuffer {
   #session: RealtimeSession;
 
@@ -602,7 +606,9 @@ export class RealtimeSession extends EventEmitter {
   private handleConversationCreated(event: api_proto.ConversationCreatedEvent): void {}
 
   private handleInputAudioBufferCommitted(event: api_proto.InputAudioBufferCommittedEvent): void {
-    this.emit(EventTypes.InputSpeechCommitted);
+    this.emit(EventTypes.InputSpeechCommitted, {
+      itemId: event.item_id,
+    });
   }
 
   private handleInputAudioBufferCleared(event: api_proto.InputAudioBufferClearedEvent): void {}
@@ -750,8 +756,8 @@ export class RealtimeSession extends EventEmitter {
     const outputIndex = event.output_index;
     const output = response.output[outputIndex];
 
-    const textStream = new Queue<string | null>();
-    const audioStream = new Queue<AudioFrame | null>();
+    const textStream = new Queue<string>();
+    const audioStream = new Queue<AudioFrame>();
 
     const newContent: RealtimeContent = {
       responseId: responseId,

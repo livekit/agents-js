@@ -73,61 +73,78 @@ export class AgentPlayout {
 }
 
 export class PlayoutHandle extends EventEmitter {
-  messageId: string;
-  transcriptionFwd: TranscriptionForwarder;
-  playedAudioSamples: number;
-  done: boolean;
-  interrupted: boolean;
-  playoutQueue: Queue<AudioFrame | null>;
+  #audioSource: AudioSource;
+  #itemId: string;
+  #contentIndex: number;
+  #transcriptionFwd: TranscriptionForwarder;
+  #done: boolean;
+  #donePromise: Promise<void>;
+  #intPromise: Promise<void>;
+  #interrupted: boolean;
+  #pushedDuration: number;
+  #totalPlayedTime: number | undefined; // Set when playout is done
 
   constructor(
-    messageId: string,
+    audioSource: AudioSource,
+    itemId: string,
+    contentIndex: number,
     transcriptionFwd: TranscriptionForwarder,
-    playoutQueue: Queue<AudioFrame | null>,
   ) {
     super();
-    this.messageId = messageId;
-    this.transcriptionFwd = transcriptionFwd;
-    this.playedAudioSamples = 0;
-    this.done = false;
-    this.interrupted = false;
-    this.playoutQueue = playoutQueue;
+    this.#audioSource = audioSource;
+    this.#itemId = itemId;
+    this.#contentIndex = contentIndex;
+    this.#transcriptionFwd = transcriptionFwd;
+    this.#done = false;
+    this.#donePromise = new Promise((resolve) => {
+      this.once('done', () => {
+        this.#done = true;
+        resolve();
+      });
+    });
+    this.#intPromise = new Promise((resolve) => {
+      this.once('interrupt', () => {
+        this.#interrupted = true;
+        resolve();
+      });
+    });
+    this.#interrupted = false;
+    this.#pushedDuration = 0;
+    this.#totalPlayedTime = undefined;
   }
 
-  // pushAudio(data: Uint8Array) {
-  //   const frame = new AudioFrame(
-  //     new Int16Array(data.buffer),
-  //     SAMPLE_RATE,
-  //     NUM_CHANNELS,
-  //     data.length / 2,
-  //   );
-  //   this.transcriptionFwd.pushAudio(frame);
-  //   this.playoutQueue.put(frame);
-  // }
+  get itemId(): string {
+    return this.#itemId;
+  }
 
-  // pushText(text: string) {
-  //   this.transcriptionFwd.pushText(text);
-  // }
+  get audioSamples(): number {
+    if (this.#totalPlayedTime !== undefined) {
+      return Math.floor(this.#totalPlayedTime * 24000);
+    }
 
-  endInput() {
-    this.transcriptionFwd.markAudioComplete();
-    this.transcriptionFwd.markTextComplete();
-    this.playoutQueue.put(null);
+    // TODO: this is wrong, we need to get the actual duration from the audio source
+    return Math.floor((this.#pushedDuration/* - this.#audioSource.queuedDuration*/) * 24000);
+  }
+
+  get textChars(): number {
+    return this.#transcriptionFwd.currentCharacterIndex; // TODO: length of played text
+  }
+
+  get contentIndex(): number {
+    return this.#contentIndex;
+  }
+
+  get interrupted(): boolean {
+    return this.#interrupted;
+  }
+
+  done() {
+    return this.#done || this.#interrupted;
   }
 
   interrupt() {
-    if (this.done) return;
-    this.interrupted = true;
-  }
-
-  publishedTextChars(): number {
-    return this.transcriptionFwd.currentCharacterIndex;
-  }
-
-  complete() {
-    if (this.done) return;
-    this.done = true;
-    this.emit('complete', this.interrupted);
+    if (this.#done) return;
+    this.emit('interrupt');
   }
 }
 

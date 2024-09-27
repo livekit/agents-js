@@ -23,7 +23,7 @@ import {
 } from '@livekit/rtc-node';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 import * as api_proto from './realtime/api_proto.js';
-import type { RealtimeContent, RealtimeModel, RealtimeSession } from './realtime/realtime_model.js';
+import type { RealtimeContent, RealtimeModel, RealtimeSession, InputSpeechCommitted, InputTranscriptionCompleted, InputTranscriptionFailed } from './realtime/realtime_model.js';
 
 type ImplOptions = {
   // functions: llm.FunctionContext;
@@ -61,6 +61,7 @@ export class OmniAssistant {
   private playingHandle: PlayoutHandle | null = null;
   private logger = log();
   private session: RealtimeSession | null = null;
+
   // get funcCtx(): llm.FunctionContext {
   //   return this.options.functions;
   // }
@@ -121,7 +122,7 @@ export class OmniAssistant {
 
       this.session = this.model.session({});
 
-      this.session.on('response_content_added', (message: RealtimeContent) => {
+      this.session.on(EventTypes.ResponseContentAdded, (message: RealtimeContent) => {
         const trFwd = new BasicTranscriptionForwarder(
           this.room!,
           this.room!.localParticipant!.identity,
@@ -130,37 +131,47 @@ export class OmniAssistant {
         );
 
         this.playingHandle =
-          this.agentPlayout?.play(message.responseId, trFwd ?? null, message.audioStream) ?? null;
+          this.agentPlayout?.play(message.responseId, trFwd ?? null, message.audioStream, message.textStream) ?? null;
+      });
+  
+
+      this.session.on(EventTypes.InputSpeechCommitted, (ev: InputSpeechCommitted) => {
+        const participantIdentity = this.linkedParticipant?.identity;
+        const trackSid = this.subscribedTrack?.sid;
+        if (participantIdentity && trackSid) {
+          this.publishTranscription(participantIdentity, trackSid, '', true, ev.itemId);
+        } else {
+          this.logger.error('Participant or track not set');
+        }
+      });
+
+      this.session.on(EventTypes.InputSpeechTranscriptionCompleted, (ev: InputTranscriptionCompleted) => {
+        const transcription = ev.transcript;  
+        const participantIdentity = this.linkedParticipant?.identity;
+        const trackSid = this.subscribedTrack?.sid;
+        if (participantIdentity && trackSid) {
+          this.publishTranscription(participantIdentity, trackSid, transcription, true, ev.itemId);
+        } else {
+          this.logger.error('Participant or track not set');
+        }
+      });
+
+      this.session.on(EventTypes.InputSpeechStarted, () => {
+        if (this.playingHandle && !this.playingHandle.done) {
+          this.playingHandle.interrupt();
+
+          this.session!.defaultConversation.item.truncate(
+            this.playingHandle.itemId,
+            this.playingHandle.contentIndex,
+            Math.floor(this.playingHandle.audioSamples / 24000 * 1000)
+          );
+
+          this.playingHandle = null;
+        }
       });
     });
   }
 
-  // transcription completed
-  // InputTranscriptionCompleted
-  // const messageId = event.item_id;
-    // const transcription = event.transcript;
-    // if (!messageId || transcription === undefined) {
-    //   this.logger.error('Message ID or transcription not set');
-    //   return;
-    // }
-    // const participantIdentity = this.linkedParticipant?.identity;
-    // const trackSid = this.subscribedTrack?.sid;
-    // if (participantIdentity && trackSid) {
-    //   this.publishTranscription(participantIdentity, trackSid, transcription, true, messageId);
-    // } else {
-    //   this.logger.error('Participant or track not set');
-    // }
-
-
-  // speech started
-  // const messageId = event.item_id;
-    // const participantIdentity = this.linkedParticipant?.identity;
-    // const trackSid = this.subscribedTrack?.sid;
-    // if (participantIdentity && trackSid && messageId) {
-    //   this.publishTranscription(participantIdentity, trackSid, '', false, messageId);
-    // } else {
-    //   this.logger.error('Participant or track or itemId not set');
-    // }
 
   // close() {
   //   if (!this.connected || !this.ws) return;
@@ -263,6 +274,7 @@ export class OmniAssistant {
 
       if (track && track !== this.subscribedTrack) {
         this.subscribedTrack = track!;
+
         if (this.readMicroTask) {
           this.readMicroTask.cancel();
         }
