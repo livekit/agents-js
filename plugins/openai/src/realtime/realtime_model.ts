@@ -471,35 +471,43 @@ export class RealtimeSession extends EventEmitter {
         this.#logger.debug(`<- ${JSON.stringify(this.#loggableEvent(event))}`);
         switch (event.type) {
           case api_proto.ServerEventType.Error:
-            // TODO: Emit error event
+            this.handleError(event);
             break;
           case api_proto.ServerEventType.SessionCreated:
+            this.handleSessionCreated(event);
+            break;
           case api_proto.ServerEventType.SessionUpdated:
+            this.handleSessionUpdated(event);
+            break;
           case api_proto.ServerEventType.ConversationCreated:
+            this.handleConversationCreated(event);
+            break;
           case api_proto.ServerEventType.InputAudioBufferCommitted:
-            // TODO: Emit input_speech_committed event
+            this.handleInputAudioBufferCommitted(event);
             break;
           case api_proto.ServerEventType.InputAudioBufferCleared:
+            this.handleInputAudioBufferCleared(event);
             break;
           case api_proto.ServerEventType.InputAudioBufferSpeechStarted:
-            // TODO: Emit input_speech_started event
-            this.handleVadSpeechStarted(event);
+            this.handleInputAudioBufferSpeechStarted(event);
             break;
           case api_proto.ServerEventType.InputAudioBufferSpeechStopped:
-            // TODO: Emit input_speech_stopped event
+            this.handleInputAudioBufferSpeechStopped(event);
             break;
           case api_proto.ServerEventType.ConversationItemCreated:
-            this.handleMessageAdded(event);
+            this.handleConversationItemCreated(event);
             break;
           case api_proto.ServerEventType.ConversationItemInputAudioTranscriptionCompleted:
-            // TODO: Emit input_speech_transcription_completed event
-            this.handleInputTranscribed(event);
+            this.handleConversationItemInputAudioTranscriptionCompleted(event);
             break;
           case api_proto.ServerEventType.ConversationItemInputAudioTranscriptionFailed:
-            // TODO: Emit input_speech_transcription_failed event
+            this.handleConversationItemInputAudioTranscriptionFailed(event);
             break;
           case api_proto.ServerEventType.ConversationItemTruncated:
+            this.handleConversationItemTruncated(event);
+            break;
           case api_proto.ServerEventType.ConversationItemDeleted:
+            this.handleConversationItemDeleted(event);
             break;
           case api_proto.ServerEventType.ResponseCreated:
             this.handleResponseCreated(event);
@@ -520,12 +528,16 @@ export class RealtimeSession extends EventEmitter {
             this.handleResponseContentPartDone(event);
             break;
           case api_proto.ServerEventType.ResponseTextDelta:
+            this.handleResponseTextDelta(event);
+            break;
           case api_proto.ServerEventType.ResponseTextDone:
+            this.handleResponseTextDone(event);
             break;
           case api_proto.ServerEventType.ResponseAudioTranscriptDelta:
             this.handleResponseAudioTranscriptDelta(event);
             break;
           case api_proto.ServerEventType.ResponseAudioTranscriptDone:
+            this.handleResponseAudioTranscriptDone(event);
             break;
           case api_proto.ServerEventType.ResponseAudioDelta:
             this.handleResponseAudioDelta(event);
@@ -534,8 +546,13 @@ export class RealtimeSession extends EventEmitter {
             this.handleResponseAudioDone(event);
             break;
           case api_proto.ServerEventType.ResponseFunctionCallArgumentsDelta:
+            this.handleResponseFunctionCallArgumentsDelta(event);
+            break;
           case api_proto.ServerEventType.ResponseFunctionCallArgumentsDone:
+            this.handleResponseFunctionCallArgumentsDone(event);
+            break;
           case api_proto.ServerEventType.RateLimitsUpdated:
+            this.handleRateLimitsUpdated(event);
             break;
         }
       };
@@ -555,6 +572,109 @@ export class RealtimeSession extends EventEmitter {
     throw new Error('Not implemented');
   }
 
+  private getContent(ptr: ContentPtr): RealtimeContent {
+    const response = this.#pendingResponses[ptr.response_id];
+    const output = response.output[ptr.output_index];
+    const content = output.content[ptr.content_index];
+    return content;
+  }
+
+  private handleError(event: api_proto.ErrorEvent): void {
+    // TODO: Implement error handling
+  }
+
+  private handleSessionCreated(event: api_proto.SessionCreatedEvent): void {
+    // TODO: Implement session created handling
+  }
+
+  private handleSessionUpdated(event: api_proto.SessionUpdatedEvent): void {
+    // TODO: Implement session updated handling
+  }
+
+  private handleConversationCreated(event: api_proto.ConversationCreatedEvent): void {
+    // TODO: Implement conversation created handling
+  }
+
+  private handleInputAudioBufferCommitted(event: api_proto.InputAudioBufferCommittedEvent): void {
+    // TODO: Implement input audio buffer committed handling
+  }
+
+  private handleInputAudioBufferCleared(event: api_proto.InputAudioBufferClearedEvent): void {
+    // TODO: Implement input audio buffer cleared handling
+  }
+
+  private handleInputAudioBufferSpeechStarted(
+    event: api_proto.InputAudioBufferSpeechStartedEvent,
+  ): void {
+    // const messageId = event.item_id;
+    // const participantIdentity = this.linkedParticipant?.identity;
+    // const trackSid = this.subscribedTrack?.sid;
+    // if (participantIdentity && trackSid && messageId) {
+    //   this.publishTranscription(participantIdentity, trackSid, '', false, messageId);
+    // } else {
+    //   this.logger.error('Participant or track or itemId not set');
+    // }
+  }
+
+  private handleInputAudioBufferSpeechStopped(
+    event: api_proto.InputAudioBufferSpeechStoppedEvent,
+  ): void {
+    // TODO: Implement input audio buffer speech stopped handling
+  }
+
+  private handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void {
+    // if (event.item.type === 'function_call') {
+    //   const toolCall = event.item;
+    //   this.options.functions[toolCall.name].execute(toolCall.arguments).then((content) => {
+    //     this.thinking = false;
+    //     this.sendClientCommand({
+    //       type: proto.ClientEventType.ConversationItemCreate,
+    //       item: {
+    //         type: 'function_call_output',
+    //         call_id: toolCall.call_id,
+    //         output: content,
+    //       },
+    //     });
+    //     this.sendClientCommand({
+    //       type: proto.ClientEventType.ResponseCreate,
+    //       response: {},
+    //     });
+    //   });
+    // }
+  }
+
+  private handleConversationItemInputAudioTranscriptionCompleted(
+    event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
+  ): void {
+    // const messageId = event.item_id;
+    // const transcription = event.transcript;
+    // if (!messageId || transcription === undefined) {
+    //   this.logger.error('Message ID or transcription not set');
+    //   return;
+    // }
+    // const participantIdentity = this.linkedParticipant?.identity;
+    // const trackSid = this.subscribedTrack?.sid;
+    // if (participantIdentity && trackSid) {
+    //   this.publishTranscription(participantIdentity, trackSid, transcription, true, messageId);
+    // } else {
+    //   this.logger.error('Participant or track not set');
+    // }
+  }
+
+  private handleConversationItemInputAudioTranscriptionFailed(
+    event: api_proto.ConversationItemInputAudioTranscriptionFailedEvent,
+  ): void {
+    // TODO: Implement conversation item input audio transcription failed handling
+  }
+
+  private handleConversationItemTruncated(event: api_proto.ConversationItemTruncatedEvent): void {
+    // TODO: Implement conversation item truncated handling
+  }
+
+  private handleConversationItemDeleted(event: api_proto.ConversationItemDeletedEvent): void {
+    // TODO: Implement conversation item deleted handling
+  }
+
   private handleResponseCreated(responseCreated: api_proto.ResponseCreatedEvent): void {
     const response = responseCreated.response;
     const donePromise = new Promise<void>((resolve) => {
@@ -570,75 +690,12 @@ export class RealtimeSession extends EventEmitter {
     this.emit(EventTypes.ResponseCreated, newResponse);
   }
 
-  private handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
-    const content = this.getContent(event);
-    const data = Buffer.from(event.delta, 'base64');
-    const audio = new AudioFrame(
-      new Int16Array(data.buffer),
-      api_proto.SAMPLE_RATE,
-      api_proto.NUM_CHANNELS,
-      data.length / 2,
-    );
-    content.audio.push(audio);
-
-    content.audioStream.put(audio);
-  }
-
-  private handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
-    const content = this.getContent(event);
-    this.emit(EventTypes.ResponseContentDone, content);
-  }
-
-  private handleResponseAudioTranscriptDelta(
-    event: api_proto.ResponseAudioTranscriptDeltaEvent,
-  ): void {
-    // const trackSid = this.getLocalTrackSid();
-    // if (!this.room || !this.room.localParticipant || !trackSid || !this.agentPlayout) {
-    //   log().error('Room or local participant not set');
-    //   return;
-    // }
-    // if (!this.playingHandle || this.playingHandle.done) {
-    //   const trFwd = new BasicTranscriptionForwarder(
-    //     this.room,
-    //     this.room?.localParticipant?.identity,
-    //     trackSid,
-    //     event.response_id,
-    //   );
-    //   this.setState(proto.State.SPEAKING);
-    //   this.playingHandle = this.agentPlayout.play(event.response_id, trFwd);
-    //   this.playingHandle.on('complete', () => {
-    //     this.setState(proto.State.LISTENING);
-    //   });
-    // }
-    // if (event.type === 'response.audio.delta') {
-    //   this.playingHandle?.pushAudio(Buffer.from(event.delta, 'base64'));
-    // } else if (event.type === 'response.audio_transcript.delta') {
-    //   this.playingHandle?.pushText(event.delta);
-    // }
-  }
-
-  private handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
-    const responseId = event.response_id;
+  private handleResponseDone(event: api_proto.ResponseDoneEvent): void {
+    const responseData = event.response;
+    const responseId = responseData.id;
     const response = this.#pendingResponses[responseId];
-    const outputIndex = event.output_index;
-    const output = response.output[outputIndex];
-
-    const textCh = new Queue<string>();
-    const audioCh = new Queue<AudioFrame>();
-
-    const newContent: RealtimeContent = {
-      responseId: responseId,
-      itemId: event.item_id,
-      outputIndex: outputIndex,
-      contentIndex: event.content_index,
-      text: '',
-      audio: [],
-      textStream: textCh,
-      audioStream: audioCh,
-      toolCalls: [],
-    };
-    output.content.push(newContent);
-    this.emit(EventTypes.ResponseContentAdded, newContent);
+    response.donePromise();
+    this.emit(EventTypes.ResponseDone, response);
   }
 
   private handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
@@ -677,53 +734,6 @@ export class RealtimeSession extends EventEmitter {
     this.emit(EventTypes.ResponseOutputAdded, newOutput);
   }
 
-  private handleMessageAdded(event: api_proto.ConversationItemCreatedEvent): void {
-    // if (event.item.type === 'function_call') {
-    //   const toolCall = event.item;
-    //   this.options.functions[toolCall.name].execute(toolCall.arguments).then((content) => {
-    //     this.thinking = false;
-    //     this.sendClientCommand({
-    //       type: proto.ClientEventType.ConversationItemCreate,
-    //       item: {
-    //         type: 'function_call_output',
-    //         call_id: toolCall.call_id,
-    //         output: content,
-    //       },
-    //     });
-    //     this.sendClientCommand({
-    //       type: proto.ClientEventType.ResponseCreate,
-    //       response: {},
-    //     });
-    //   });
-    // }
-  }
-
-  private handleInputTranscribed(
-    event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
-  ): void {
-    // const messageId = event.item_id;
-    // const transcription = event.transcript;
-    // if (!messageId || transcription === undefined) {
-    //   this.logger.error('Message ID or transcription not set');
-    //   return;
-    // }
-    // const participantIdentity = this.linkedParticipant?.identity;
-    // const trackSid = this.subscribedTrack?.sid;
-    // if (participantIdentity && trackSid) {
-    //   this.publishTranscription(participantIdentity, trackSid, transcription, true, messageId);
-    // } else {
-    //   this.logger.error('Participant or track not set');
-    // }
-  }
-
-  private handleResponseDone(event: api_proto.ResponseDoneEvent): void {
-    const responseData = event.response;
-    const responseId = responseData.id;
-    const response = this.#pendingResponses[responseId];
-    response.donePromise();
-    this.emit(EventTypes.ResponseDone, response);
-  }
-
   private handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
     const responseId = event.response_id;
     const response = this.#pendingResponses[responseId];
@@ -760,50 +770,77 @@ export class RealtimeSession extends EventEmitter {
     this.emit(EventTypes.ResponseOutputDone, output);
   }
 
+  private handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
+    const responseId = event.response_id;
+    const response = this.#pendingResponses[responseId];
+    const outputIndex = event.output_index;
+    const output = response.output[outputIndex];
+
+    const textCh = new Queue<string>();
+    const audioCh = new Queue<AudioFrame>();
+
+    const newContent: RealtimeContent = {
+      responseId: responseId,
+      itemId: event.item_id,
+      outputIndex: outputIndex,
+      contentIndex: event.content_index,
+      text: '',
+      audio: [],
+      textStream: textCh,
+      audioStream: audioCh,
+      toolCalls: [],
+    };
+    output.content.push(newContent);
+    this.emit(EventTypes.ResponseContentAdded, newContent);
+  }
+
+  private handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
+    const content = this.getContent(event);
+    this.emit(EventTypes.ResponseContentDone, content);
+  }
+
+  private handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
+    // TODO: Implement response text delta handling
+  }
+
+  private handleResponseTextDone(event: api_proto.ResponseTextDoneEvent): void {
+    // TODO: Implement response text done handling
+  }
+
+  private handleResponseAudioTranscriptDelta(
+    event: api_proto.ResponseAudioTranscriptDeltaEvent,
+  ): void {
+    // TODO: Implement response audio transcript delta handling
+  }
+
+  private handleResponseAudioTranscriptDone(
+    event: api_proto.ResponseAudioTranscriptDoneEvent,
+  ): void {
+    // TODO: Implement response audio transcript done handling
+  }
+
+  private handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
+    // TODO: Implement response audio delta handling
+  }
+
   private handleResponseAudioDone(event: api_proto.ResponseAudioDoneEvent): void {
-    // const content = this.getContent(event);
-    // content.audioStream.close(); TODO
+    // TODO: Implement response audio done handling
   }
 
-  // private handleGenerationFinished(event: api_proto.ResponseDoneEvent): void {
-  // if (
-  //   event.response.status === 'cancelled' &&
-  //   event.response.status_details?.type === 'cancelled' &&
-  //   event.response.status_details?.reason === 'turn_detected'
-  // ) {
-  //   if (this.playingHandle && !this.playingHandle.done) {
-  //     this.playingHandle.interrupt();
-  //     this.sendClientCommand({
-  //       type: proto.ClientEventType.ConversationItemTruncate,
-  //       item_id: this.playingHandle.messageId,
-  //       content_index: 0, // ignored for now (see OAI docs)
-  //       audio_end_ms: (this.playingHandle.playedAudioSamples * 1000) / proto.SAMPLE_RATE,
-  //     });
-  //   }
-  // } else if (event.response.status !== 'completed') {
-  //   log().warn(`assistant turn finished unexpectedly reason ${event.response.status}`);
-  // }
-  // if (this.playingHandle && !this.playingHandle.interrupted) {
-  //   this.playingHandle.endInput();
-  // }
-  // }
-
-  private handleVadSpeechStarted(event: api_proto.InputAudioBufferSpeechStartedEvent): void {
-    // const messageId = event.item_id;
-    // const participantIdentity = this.linkedParticipant?.identity;
-    // const trackSid = this.subscribedTrack?.sid;
-    // if (participantIdentity && trackSid && messageId) {
-    //   this.publishTranscription(participantIdentity, trackSid, '', false, messageId);
-    // } else {
-    //   this.logger.error('Participant or track or itemId not set');
-    // }
+  private handleResponseFunctionCallArgumentsDelta(
+    event: api_proto.ResponseFunctionCallArgumentsDeltaEvent,
+  ): void {
+    // TODO: Implement response function call arguments delta handling
   }
 
-  private getContent(ptr: ContentPtr): RealtimeContent {
-    const response = this.#pendingResponses[ptr.response_id];
-    const output = response.output[ptr.output_index];
-    const content = output.content[ptr.content_index];
-    return content;
+  private handleResponseFunctionCallArgumentsDone(
+    event: api_proto.ResponseFunctionCallArgumentsDoneEvent,
+  ): void {
+    // TODO: Implement response function call arguments done handling
+  }
+
+  private handleRateLimitsUpdated(event: api_proto.RateLimitsUpdatedEvent): void {
+    // TODO: Implement rate limits updated handling
   }
 }
 
