@@ -18,7 +18,13 @@ export type InputTranscriptionModel = 'whisper-1';
 export type Modality = 'text' | 'audio';
 export type ToolChoice = 'auto' | 'none' | 'required' | string;
 export type State = 'initializing' | 'listening' | 'thinking' | 'speaking' | string;
-export type ResponseStatus = 'in_progress' | 'completed' | 'incomplete' | 'cancelled' | 'failed' | string;
+export type ResponseStatus =
+  | 'in_progress'
+  | 'completed'
+  | 'incomplete'
+  | 'cancelled'
+  | 'failed'
+  | string;
 export type ClientEventType =
   | 'session.update'
   | 'input_audio_buffer.append'
