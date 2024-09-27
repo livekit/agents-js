@@ -27,8 +27,8 @@ type ImplOptions = {
   // functions: llm.FunctionContext;
 };
 
-/** @alpha */
-export class OmniAssistant {
+/** @beta */
+export class MultimodalAgent {
   model: openai.realtime.RealtimeModel;
   options: ImplOptions;
   room: Room | null = null;
@@ -75,7 +75,7 @@ export class OmniAssistant {
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise(async (resolve, reject) => {
       if (this.started) {
-        this.logger.warn('OmniAssistant already started');
+        this.logger.warn('MultimodalAgent already started');
         resolve(); // TODO: throw error?
         return;
       }

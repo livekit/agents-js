@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, WorkerOptions, cli, defineAgent, multimodal_agent } from '@livekit/agents';
+import { type JobContext, WorkerOptions, cli, defineAgent, multimodal } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
 import { fileURLToPath } from 'node:url';
 
@@ -30,11 +30,11 @@ export default defineAgent({
     //   },
     // });
 
-    const assistant = new multimodal_agent.OmniAssistant({
+    const agent = new multimodal.MultimodalAgent({
       model,
     });
 
-    await assistant.start(ctx.room);
+    await agent.start(ctx.room);
 
     // assistant.addUserMessage('Hello! Can you share a very short story?');
   },
