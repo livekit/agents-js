@@ -173,7 +173,7 @@ export interface SessionResource {
   tools: Tool[];
   tool_choice: ToolChoice; // default: "auto"
   temperature: number; // default: 0.8
-  // max_output_tokens: number | null; // FIXME: currently rejected by OpenAI and fails the whole update
+  max_response_output_tokens: number | null;
 }
 
 // Conversation Resource
@@ -249,7 +249,7 @@ export interface SessionUpdateEvent extends BaseClientEvent {
     tools: Tool[];
     tool_choice: ToolChoice;
     temperature: number;
-    max_output_tokens: number;
+    max_response_output_tokens: number;
   }>;
 }
 
@@ -313,7 +313,7 @@ export interface ResponseCreateEvent extends BaseClientEvent {
     tools?: Tool[];
     tool_choice: ToolChoice;
     temperature: number;
-    max_output_tokens: number;
+    max_response_output_tokens: number;
   }>;
 }
 

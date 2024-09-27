@@ -43,7 +43,7 @@ interface ModelOptions {
       }
     | 'none';
   temperature: number;
-  maxOutputTokens: number;
+  maxResponseOutputTokens: number;
   apiKey: string;
   baseURL: string;
 }
@@ -229,7 +229,7 @@ export class RealtimeModel {
     inputAudioTranscription = { model: 'whisper-1' },
     turnDetection = { type: 'server_vad' },
     temperature = 0.8,
-    maxOutputTokens = 2048,
+    maxResponseOutputTokens = 2048,
     apiKey = process.env.OPENAI_API_KEY || '',
     baseURL = api_proto.API_URL,
   }: {
@@ -241,7 +241,7 @@ export class RealtimeModel {
     inputAudioTranscription?: { model: 'whisper-1' };
     turnDetection?: api_proto.TurnDetectionType;
     temperature?: number;
-    maxOutputTokens?: number;
+    maxResponseOutputTokens?: number;
     apiKey?: string;
     baseURL?: string;
   }) {
@@ -262,7 +262,7 @@ export class RealtimeModel {
       inputAudioTranscription,
       turnDetection,
       temperature,
-      maxOutputTokens,
+      maxResponseOutputTokens,
       apiKey,
       baseURL,
     };
@@ -282,7 +282,7 @@ export class RealtimeModel {
     inputAudioTranscription = this.#defaultOpts.inputAudioTranscription,
     turnDetection = this.#defaultOpts.turnDetection,
     temperature = this.#defaultOpts.temperature,
-    maxOutputTokens = this.#defaultOpts.maxOutputTokens,
+    maxResponseOutputTokens = this.#defaultOpts.maxResponseOutputTokens,
   }: {
     funcCtx?: llm.FunctionContext;
     modalities?: ['text', 'audio'] | ['text'];
@@ -293,7 +293,7 @@ export class RealtimeModel {
     inputAudioTranscription?: { model: 'whisper-1' };
     turnDetection?: api_proto.TurnDetectionType;
     temperature?: number;
-    maxOutputTokens?: number;
+    maxResponseOutputTokens?: number;
   }): RealtimeSession {
     const opts: ModelOptions = {
       modalities,
@@ -304,7 +304,7 @@ export class RealtimeModel {
       inputAudioTranscription,
       turnDetection,
       temperature,
-      maxOutputTokens,
+      maxResponseOutputTokens,
       apiKey: this.#defaultOpts.apiKey,
       baseURL: this.#defaultOpts.baseURL,
     };
@@ -329,6 +329,7 @@ export class RealtimeSession extends EventEmitter {
   #logger = log();
   #task: Promise<void>;
   #closing = true;
+  #sendQueue = new Queue<api_proto.ClientEvent>();
 
   constructor(funcCtx: llm.FunctionContext, opts: ModelOptions) {
     super();
@@ -337,6 +338,19 @@ export class RealtimeSession extends EventEmitter {
     this.#opts = opts;
 
     this.#task = this.#start();
+
+    this.sessionUpdate({
+      modalities: this.#opts.modalities,
+      instructions: this.#opts.instructions,
+      voice: this.#opts.voice,
+      inputAudioFormat: this.#opts.inputAudioFormat,
+      outputAudioFormat: this.#opts.outputAudioFormat,
+      inputAudioTranscription: this.#opts.inputAudioTranscription,
+      turnDetection: this.#opts.turnDetection,
+      temperature: this.#opts.temperature,
+      maxResponseOutputTokens: this.#opts.maxResponseOutputTokens,
+      toolChoice: api_proto.ToolChoice.AUTO,
+    });
   }
 
   get funcCtx(): llm.FunctionContext {
@@ -360,17 +374,7 @@ export class RealtimeSession extends EventEmitter {
   }
 
   queueMsg(command: api_proto.ClientEvent): void {
-    const isAudio = command.type === api_proto.ClientEventType.InputAudioBufferAppend;
-
-    if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) {
-      if (!isAudio) this.#logger.error('WebSocket is not connected');
-      return;
-    }
-
-    if (!isAudio) {
-      this.#logger.debug(`-> ${JSON.stringify(this.#loggableEvent(command))}`);
-    }
-    this.#ws.send(JSON.stringify(command));
+    this.#sendQueue.put(command);
   }
 
   /// Truncates the data field of the event to the specified maxLength to avoid overwhelming logs
@@ -412,7 +416,7 @@ export class RealtimeSession extends EventEmitter {
     inputAudioTranscription = this.#opts.inputAudioTranscription,
     turnDetection = this.#opts.turnDetection,
     temperature = this.#opts.temperature,
-    maxOutputTokens = this.#opts.maxOutputTokens,
+    maxResponseOutputTokens = this.#opts.maxResponseOutputTokens,
     toolChoice = api_proto.ToolChoice.AUTO,
   }: {
     modalities: ['text', 'audio'] | ['text'];
@@ -423,7 +427,7 @@ export class RealtimeSession extends EventEmitter {
     inputAudioTranscription?: { model: 'whisper-1' };
     turnDetection: api_proto.TurnDetectionType;
     temperature: number;
-    maxOutputTokens: number;
+    maxResponseOutputTokens: number;
     toolChoice: api_proto.ToolChoice;
   }) {
     this.#opts = {
@@ -435,7 +439,7 @@ export class RealtimeSession extends EventEmitter {
       inputAudioTranscription,
       turnDetection,
       temperature,
-      maxOutputTokens,
+      maxResponseOutputTokens,
       apiKey: this.#opts.apiKey,
       baseURL: this.#opts.baseURL,
     };
@@ -446,6 +450,7 @@ export class RealtimeSession extends EventEmitter {
       description: func.description,
       parameters: llm.oaiParams(func.parameters),
     }));
+
     this.queueMsg({
       type: api_proto.ClientEventType.SessionUpdate,
       session: {
@@ -457,7 +462,7 @@ export class RealtimeSession extends EventEmitter {
         input_audio_transcription: this.#opts.inputAudioTranscription,
         turn_detection: this.#opts.turnDetection,
         temperature: this.#opts.temperature,
-        max_output_tokens: this.#opts.maxOutputTokens,
+        max_response_output_tokens: this.#opts.maxResponseOutputTokens,
         tools,
         tool_choice: toolChoice,
       },
@@ -570,6 +575,22 @@ export class RealtimeSession extends EventEmitter {
             break;
         }
       };
+
+      const sendTask = async () => {
+        while (this.#ws && !this.#closing && this.#ws.readyState === WebSocket.OPEN) {
+          try {
+            const event = await this.#sendQueue.get();
+            if (event.type !== api_proto.ClientEventType.InputAudioBufferAppend) {
+              this.#logger.debug(`-> ${JSON.stringify(this.#loggableEvent(event))}`);
+            }
+            this.#ws.send(JSON.stringify(event));
+          } catch (error) {
+            this.#logger.error('Error sending event:', error);
+          }
+        }
+      };
+
+      sendTask();
 
       this.#ws.onclose = () => {
         if (!this.#closing) {
