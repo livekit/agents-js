@@ -2,13 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Queue } from '@livekit/agents';
-import { llm, log } from '@livekit/agents';
+import { llm, log, multimodal } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
-import { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter, once } from 'events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
-import * as realtime from '@livekit/agents';
 
 interface ModelOptions {
   modalities: ['text', 'audio'] | ['text'];
@@ -33,21 +31,6 @@ interface ModelOptions {
   apiKey: string;
   baseURL: string;
 }
-
-export type RealtimeCallbacks = {
-  error: () => void;
-  input_speech_committed: (event: InputSpeechCommitted) => void;
-  input_speech_started: () => void;
-  input_speech_stopped: () => void;
-  input_speech_transcription_completed: (event: InputSpeechTranscriptionCompleted) => void;
-  input_speech_transcription_failed: (event: InputSpeechTranscriptionFailed) => void;
-  response_content_added: (content: RealtimeContent) => void;
-  response_content_done: (content: RealtimeContent) => void;
-  response_created: (response: RealtimeResponse) => void;
-  response_done: (response: RealtimeResponse) => void;
-  response_output_added: (output: RealtimeOutput) => void;
-  response_output_done: (output: RealtimeOutput) => void;
-};
 
 export interface RealtimeResponse {
   /** ID of the message */
@@ -215,7 +198,7 @@ interface ContentPtr {
   content_index: number;
 }
 
-export class RealtimeModel {
+export class RealtimeModel extends multimodal.RealtimeModel {
   #defaultOpts: ModelOptions;
   #sessions: RealtimeSession[] = [];
 
@@ -246,6 +229,8 @@ export class RealtimeModel {
     apiKey?: string;
     baseURL?: string;
   }) {
+    super();
+
     if (apiKey === '') {
       throw new Error(
         'OpenAI API key is required, either using the argument or by setting the OPENAI_API_KEY environmental variable',
@@ -321,7 +306,7 @@ export class RealtimeModel {
   }
 }
 
-export class RealtimeSession extends (EventEmitter as new () => TypedEmitter<RealtimeCallbacks>) {
+export class RealtimeSession extends multimodal.RealtimeSession {
   #funcCtx: llm.FunctionContext;
   #opts: ModelOptions;
   #pendingResponses: { [id: string]: RealtimeResponse } = {};

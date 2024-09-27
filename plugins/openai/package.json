@@ -21,7 +21,6 @@
   },
   "dependencies": {
     "@livekit/rtc-node": "^0.9.0",
-    "@livekit/typed-emitter": "^3.0.0",
     "ws": "^8.16.0"
   },
   "peerDependencies": {

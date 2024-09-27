@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import * as realtime from './realtime.js';
 import type {
   LocalTrackPublication,
   RemoteAudioTrack,
@@ -16,6 +15,7 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
+import { EventEmitter } from 'events';
 import { AudioByteStream } from '../audio.js';
 import type * as llm from '../llm/index.js';
 import { log } from '../log.js';
@@ -27,9 +27,27 @@ type ImplOptions = {
   // functions: llm.FunctionContext;
 };
 
+/**
+ * @internal
+ * @beta
+ */
+export abstract class RealtimeSession extends EventEmitter {
+  abstract queueMsg(msg: any): void;
+  abstract defaultConversation: any;
+}
+
+/**
+ * @internal
+ * @beta
+ */
+export abstract class RealtimeModel {
+  abstract session(options: any): RealtimeSession;
+  abstract close(): Promise<void>;
+}
+
 /** @beta */
 export class MultimodalAgent {
-  model: realtime.RealtimeModel;
+  model: RealtimeModel;
   options: ImplOptions;
   room: Room | null = null;
   linkedParticipant: RemoteParticipant | null = null;
@@ -40,7 +58,7 @@ export class MultimodalAgent {
     model,
     // functions = {},
   }: {
-    model: realtime.RealtimeModel;
+    model: RealtimeModel;
     functions?: llm.FunctionContext;
   }) {
     this.model = model;
@@ -58,7 +76,7 @@ export class MultimodalAgent {
   private agentPlayout: AgentPlayout | null = null;
   private playingHandle: PlayoutHandle | undefined = undefined;
   private logger = log();
-  private session: realtime.RealtimeSession | null = null;
+  private session: RealtimeSession | null = null;
 
   // get funcCtx(): llm.FunctionContext {
   //   return this.options.functions;
@@ -121,7 +139,7 @@ export class MultimodalAgent {
 
       this.session = this.model.session({});
 
-      this.session.on('response_content_added', (message: realtime.RealtimeContent) => {
+      this.session.on('response_content_added', (message: any) => {
         const trFwd = new BasicTranscriptionForwarder(
           this.room!,
           this.room!.localParticipant!.identity,
@@ -138,7 +156,7 @@ export class MultimodalAgent {
         );
       });
 
-      this.session.on('input_speech_committed', (ev: realtime.InputSpeechCommitted) => {
+      this.session.on('input_speech_committed', (ev: any) => {
         const participantIdentity = this.linkedParticipant?.identity;
         const trackSid = this.subscribedTrack?.sid;
         if (participantIdentity && trackSid) {
@@ -148,25 +166,16 @@ export class MultimodalAgent {
         }
       });
 
-      this.session.on(
-        'input_speech_transcription_completed',
-        (ev: realtime.InputSpeechTranscriptionCompleted) => {
-          const transcription = ev.transcript;
-          const participantIdentity = this.linkedParticipant?.identity;
-          const trackSid = this.subscribedTrack?.sid;
-          if (participantIdentity && trackSid) {
-            this.publishTranscription(
-              participantIdentity,
-              trackSid,
-              transcription,
-              true,
-              ev.itemId,
-            );
-          } else {
-            this.logger.error('Participant or track not set');
-          }
-        },
-      );
+      this.session.on('input_speech_transcription_completed', (ev: any) => {
+        const transcription = ev.transcript;
+        const participantIdentity = this.linkedParticipant?.identity;
+        const trackSid = this.subscribedTrack?.sid;
+        if (participantIdentity && trackSid) {
+          this.publishTranscription(participantIdentity, trackSid, transcription, true, ev.itemId);
+        } else {
+          this.logger.error('Participant or track not set');
+        }
+      });
 
       this.session.on('input_speech_started', () => {
         if (this.playingHandle && !this.playingHandle.done) {
