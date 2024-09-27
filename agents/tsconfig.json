@@ -12,5 +12,6 @@
     "entryPointStrategy": "resolve",
     "readme": "none",
     "entryPoints": ["src/index.ts"]
-  }
+  },
+  "exclude": ["dist", "node_modules"]
 }
