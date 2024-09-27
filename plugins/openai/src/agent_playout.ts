@@ -7,8 +7,8 @@ import type { Queue } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { type AudioSource } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
-import { NUM_CHANNELS, OUTPUT_PCM_FRAME_SIZE, SAMPLE_RATE } from './realtime/api_proto.js';
 import { text } from 'stream/consumers';
+import { NUM_CHANNELS, OUTPUT_PCM_FRAME_SIZE, SAMPLE_RATE } from './realtime/api_proto.js';
 
 export class AgentPlayout {
   #audioSource: AudioSource;
@@ -16,7 +16,7 @@ export class AgentPlayout {
 
   constructor(audioSource: AudioSource) {
     this.#audioSource = audioSource;
-    this.#playoutTask = null;
+    this.#playoutPromise = null;
   }
 
   play(
@@ -27,23 +27,23 @@ export class AgentPlayout {
     audioStream: Queue<AudioFrame | null>,
   ): PlayoutHandle {
     const handle = new PlayoutHandle(this.#audioSource, itemId, contentIndex, transcriptionFwd);
-    this.#playoutPromise = this.playoutTask(
-      this.#playoutPromise,
-      handle,
-      textStream,
-      audioStream
-    );
+    this.#playoutPromise = this.playoutTask(this.#playoutPromise, handle, textStream, audioStream);
     return handle;
   }
 
-  private async playoutTask(oldPromise: Promise<void> | null, handle: PlayoutHandle, textStream: Queue<string | null>, audioStream: Queue<AudioFrame | null>): Promise<void> {
+  private async playoutTask(
+    oldPromise: Promise<void> | null,
+    handle: PlayoutHandle,
+    textStream: Queue<string | null>,
+    audioStream: Queue<AudioFrame | null>,
+  ): Promise<void> {
     if (oldPromise) {
       // TODO: cancel old task
       // oldPromise.cancel();
     }
 
     let firstFrame = true;
-    
+
     const playTextStream = async () => {
       while (true) {
         const text = await textStream.get();
@@ -60,7 +60,7 @@ export class AgentPlayout {
       while (true) {
         const frame = await audioStream.get();
         if (frame === null) break;
-        
+
         if (firstFrame) {
           handle.transcriptionFwd.start();
           firstFrame = false;
@@ -81,7 +81,8 @@ export class AgentPlayout {
 
       handle.transcriptionFwd.markAudioComplete();
 
-      await this.#audioSource.waitForPlayout();
+      // TODO
+      // await this.#audioSource.waitForPlayout();
     };
 
     const readTextTaskPromise = playTextStream();
@@ -95,7 +96,8 @@ export class AgentPlayout {
       //   captureTaskPromise.cancel();
       // }
 
-      handle.totalPlayedTime = handle.pushedDuration - this.#audioSource.queuedDuration;
+      // TODO: this is wrong, we need to get the actual duration from the audio source
+      handle.totalPlayedTime = handle.pushedDuration /* - this.#audioSource.queuedDuration*/;
 
       // TODO: handle errors
       // if (handle.interrupted || captureTaskPromise.error) {
@@ -114,8 +116,6 @@ export class AgentPlayout {
       handle.emit('done');
       await handle.transcriptionFwd.close(handle.interrupted);
     }
-
-
 
     // let firstFrame = true;
     // try {
@@ -210,7 +210,7 @@ export class PlayoutHandle extends EventEmitter {
     }
 
     // TODO: this is wrong, we need to get the actual duration from the audio source
-    return Math.floor((this.pushedDuration - this.#audioSource.queuedDuration) * 24000);
+    return Math.floor(this.pushedDuration /* - this.#audioSource.queuedDuration*/ * 24000);
   }
 
   get textChars(): number {

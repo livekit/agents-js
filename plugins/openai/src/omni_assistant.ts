@@ -23,7 +23,15 @@ import {
 } from '@livekit/rtc-node';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 import * as api_proto from './realtime/api_proto.js';
-import type { RealtimeContent, RealtimeModel, RealtimeSession, InputSpeechCommitted, InputTranscriptionCompleted, InputTranscriptionFailed } from './realtime/realtime_model.js';
+import type {
+  InputSpeechCommitted,
+  InputTranscriptionCompleted,
+  InputTranscriptionFailed,
+  RealtimeContent,
+  RealtimeModel,
+  RealtimeSession,
+} from './realtime/realtime_model.js';
+import { EventTypes } from './realtime/realtime_model.js';
 
 type ImplOptions = {
   // functions: llm.FunctionContext;
@@ -58,7 +66,7 @@ export class OmniAssistant {
   private localTrackSid: string | null = null;
   private localSource: AudioSource | null = null;
   private agentPlayout: AgentPlayout | null = null;
-  private playingHandle: PlayoutHandle | null = null;
+  private playingHandle: PlayoutHandle | undefined = undefined;
   private logger = log();
   private session: RealtimeSession | null = null;
 
@@ -130,10 +138,14 @@ export class OmniAssistant {
           message.responseId,
         );
 
-        this.playingHandle =
-          this.agentPlayout?.play(message.responseId, trFwd ?? null, message.audioStream, message.textStream) ?? null;
+        this.playingHandle = this.agentPlayout?.play(
+          message.itemId,
+          message.contentIndex,
+          trFwd,
+          message.textStream,
+          message.audioStream,
+        );
       });
-  
 
       this.session.on(EventTypes.InputSpeechCommitted, (ev: InputSpeechCommitted) => {
         const participantIdentity = this.linkedParticipant?.identity;
@@ -145,16 +157,25 @@ export class OmniAssistant {
         }
       });
 
-      this.session.on(EventTypes.InputSpeechTranscriptionCompleted, (ev: InputTranscriptionCompleted) => {
-        const transcription = ev.transcript;  
-        const participantIdentity = this.linkedParticipant?.identity;
-        const trackSid = this.subscribedTrack?.sid;
-        if (participantIdentity && trackSid) {
-          this.publishTranscription(participantIdentity, trackSid, transcription, true, ev.itemId);
-        } else {
-          this.logger.error('Participant or track not set');
-        }
-      });
+      this.session.on(
+        EventTypes.InputSpeechTranscriptionCompleted,
+        (ev: InputTranscriptionCompleted) => {
+          const transcription = ev.transcript;
+          const participantIdentity = this.linkedParticipant?.identity;
+          const trackSid = this.subscribedTrack?.sid;
+          if (participantIdentity && trackSid) {
+            this.publishTranscription(
+              participantIdentity,
+              trackSid,
+              transcription,
+              true,
+              ev.itemId,
+            );
+          } else {
+            this.logger.error('Participant or track not set');
+          }
+        },
+      );
 
       this.session.on(EventTypes.InputSpeechStarted, () => {
         if (this.playingHandle && !this.playingHandle.done) {
@@ -163,15 +184,14 @@ export class OmniAssistant {
           this.session!.defaultConversation.item.truncate(
             this.playingHandle.itemId,
             this.playingHandle.contentIndex,
-            Math.floor(this.playingHandle.audioSamples / 24000 * 1000)
+            Math.floor((this.playingHandle.audioSamples / 24000) * 1000),
           );
 
-          this.playingHandle = null;
+          this.playingHandle = undefined;
         }
       });
     });
   }
-
 
   // close() {
   //   if (!this.connected || !this.ws) return;
