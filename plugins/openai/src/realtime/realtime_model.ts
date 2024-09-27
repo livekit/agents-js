@@ -130,7 +130,7 @@ class InputAudioBuffer {
   append(frame: AudioFrame) {
     this.#session.queueMsg({
       type: api_proto.ClientEventType.InputAudioBufferAppend,
-      audio: Buffer.from(frame.data).toString('base64'),
+      audio: Buffer.from(frame.data.buffer).toString('base64'),
     });
   }
 
