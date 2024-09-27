@@ -9,40 +9,57 @@ export const OUTPUT_PCM_FRAME_SIZE = 1200; // 50ms
 
 export const API_URL = 'wss://api.openai.com/v1/realtime';
 
-export enum Voice {
-  ALLOY = 'alloy',
-  SHIMMER = 'shimmer',
-  ECHO = 'echo',
-}
+export type Model = 'gpt-4o-realtime-preview-2024-10-01' | string;
+export type Voice = 'alloy' | 'shimmer' | 'echo' | string;
+export type AudioFormat = 'pcm16'; // TODO: 'g711-ulaw' | 'g711-alaw'
+export type Role = 'system' | 'assistant' | 'user' | 'tool';
+export type GenerationFinishedReason = 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
+export type InputTranscriptionModel = 'whisper-1';
+export type Modality = 'text' | 'audio';
+export type ToolChoice = 'auto' | 'none' | 'required' | string;
+export type State = 'initializing' | 'listening' | 'thinking' | 'speaking' | string;
+export type ResponseStatus = 'in_progress' | 'completed' | 'incomplete' | 'cancelled' | 'failed' | string;
+export type ClientEventType =
+  | 'session.update'
+  | 'input_audio_buffer.append'
+  | 'input_audio_buffer.commit'
+  | 'input_audio_buffer.clear'
+  | 'conversation.item.create'
+  | 'conversation.item.truncate'
+  | 'conversation.item.delete'
+  | 'response.create'
+  | 'response.cancel';
+export type ServerEventType =
+  | 'error'
+  | 'session.created'
+  | 'session.updated'
+  | 'conversation.created'
+  | 'input_audio_buffer.committed'
+  | 'input_audio_buffer.cleared'
+  | 'input_audio_buffer.speech_started'
+  | 'input_audio_buffer.speech_stopped'
+  | 'conversation.item.created'
+  | 'conversation.item.input_audio_transcription.completed'
+  | 'conversation.item.input_audio_transcription.failed'
+  | 'conversation.item.truncated'
+  | 'conversation.item.deleted'
+  | 'response.created'
+  | 'response.done'
+  | 'response.output_item.added'
+  | 'response.output_item.done'
+  | 'response.content_part.added'
+  | 'response.content_part.done'
+  | 'response.text.delta'
+  | 'response.text.done'
+  | 'response.audio_transcript.delta'
+  | 'response.audio_transcript.done'
+  | 'response.audio.delta'
+  | 'response.audio.done'
+  | 'response.function_call_arguments.delta'
+  | 'response.function_call_arguments.done'
+  | 'rate_limits.updated';
 
-export enum AudioFormat {
-  PCM16 = 'pcm16',
-  // G711_ULAW = 'g711-ulaw',
-  // G711_ALAW = 'g711-alaw',
-}
-
-export enum Role {
-  SYSTEM = 'system',
-  ASSISTANT = 'assistant',
-  USER = 'user',
-  TOOL = 'tool',
-}
-
-export enum GenerationFinishedReason {
-  STOP = 'stop',
-  MAX_TOKENS = 'max_tokens',
-  CONTENT_FILTER = 'content_filter',
-  INTERRUPT = 'interrupt',
-}
-
-export enum InputTranscriptionModel {
-  WHISPER_1 = 'whisper-1',
-}
-
-export enum Modality {
-  TEXT = 'text',
-  AUDIO = 'audio',
-}
+export type AudioBase64Bytes = string;
 
 export interface Tool {
   type: 'function';
@@ -67,21 +84,6 @@ export type TurnDetectionType =
       silence_duration_ms?: number; // default: 200
     }
   | 'none';
-
-export enum ToolChoice {
-  AUTO = 'auto',
-  NONE = 'none',
-  REQUIRED = 'required',
-}
-
-export enum State {
-  INITIALIZING = 'initializing',
-  LISTENING = 'listening',
-  THINKING = 'thinking',
-  SPEAKING = 'speaking',
-}
-
-export type AudioBase64Bytes = string;
 
 // Content Part Types
 export interface InputTextContent {
@@ -120,19 +122,19 @@ export interface BaseItem {
 
 export interface SystemMessageItem extends BaseItem {
   type: 'message';
-  role: Role.SYSTEM;
+  role: 'system';
   content: InputTextContent;
 }
 
 export interface UserMessageItem extends BaseItem {
   type: 'message';
-  role: Role.USER;
+  role: 'user';
   content: (InputTextContent | InputAudioContent)[];
 }
 
 export interface AssistantMessageItem extends BaseItem {
   type: 'message';
-  role: Role.ASSISTANT;
+  role: 'assistant';
   content: (TextContent | AudioContent)[];
 }
 
@@ -182,30 +184,21 @@ export interface ConversationResource {
   object: 'realtime.conversation';
 }
 
-// Response Resource
-export enum ResponseStatus {
-  IN_PROGRESS = 'in_progress',
-  COMPLETED = 'completed',
-  INCOMPLETE = 'incomplete',
-  CANCELLED = 'cancelled',
-  FAILED = 'failed',
-}
-
 export type ResponseStatusDetails =
   | {
-      type: ResponseStatus.INCOMPLETE;
-      reason: 'max_output_tokens' | 'content_filter';
+      type: 'incomplete';
+      reason: 'max_output_tokens' | 'content_filter' | string;
     }
   | {
-      type: ResponseStatus.FAILED;
+      type: 'failed';
       error?: {
         code: 'server_error' | 'rate_limit_exceeded' | string;
         message: string;
       };
     }
   | {
-      type: ResponseStatus.CANCELLED;
-      reason: 'turn_detected' | 'client_cancelled';
+      type: 'cancelled';
+      reason: 'turn_detected' | 'client_cancelled' | string;
     };
 
 export interface ResponseResource {
@@ -228,7 +221,7 @@ interface BaseClientEvent {
 }
 
 export interface SessionUpdateEvent extends BaseClientEvent {
-  type: ClientEventType.SessionUpdate;
+  type: 'session.update';
   session: Partial<{
     modalities: ['text', 'audio'] | ['text'];
     instructions: string;
@@ -254,20 +247,20 @@ export interface SessionUpdateEvent extends BaseClientEvent {
 }
 
 export interface InputAudioBufferAppendEvent extends BaseClientEvent {
-  type: ClientEventType.InputAudioBufferAppend;
+  type: 'input_audio_buffer.append';
   audio: AudioBase64Bytes;
 }
 
 export interface InputAudioBufferCommitEvent extends BaseClientEvent {
-  type: ClientEventType.InputAudioBufferCommit;
+  type: 'input_audio_buffer.commit';
 }
 
 export interface InputAudioBufferClearEvent extends BaseClientEvent {
-  type: ClientEventType.InputAudioBufferClear;
+  type: 'input_audio_buffer.clear';
 }
 
 export interface ConversationItemCreateEvent extends BaseClientEvent {
-  type: ClientEventType.ConversationItemCreate;
+  type: 'conversation.item.create';
   item:
     | {
         type: 'message';
@@ -292,19 +285,19 @@ export interface ConversationItemCreateEvent extends BaseClientEvent {
 }
 
 export interface ConversationItemTruncateEvent extends BaseClientEvent {
-  type: ClientEventType.ConversationItemTruncate;
+  type: 'conversation.item.truncate';
   item_id: string;
   content_index: number;
   audio_end_ms: number;
 }
 
 export interface ConversationItemDeleteEvent extends BaseClientEvent {
-  type: ClientEventType.ConversationItemDelete;
+  type: 'conversation.item.delete';
   item_id: string;
 }
 
 export interface ResponseCreateEvent extends BaseClientEvent {
-  type: ClientEventType.ResponseCreate;
+  type: 'response.create';
   response?: Partial<{
     modalities: ['text', 'audio'] | ['text'];
     instructions: string;
@@ -318,19 +311,7 @@ export interface ResponseCreateEvent extends BaseClientEvent {
 }
 
 export interface ResponseCancelEvent extends BaseClientEvent {
-  type: ClientEventType.ResponseCancel;
-}
-
-export enum ClientEventType {
-  SessionUpdate = 'session.update',
-  InputAudioBufferAppend = 'input_audio_buffer.append',
-  InputAudioBufferCommit = 'input_audio_buffer.commit',
-  InputAudioBufferClear = 'input_audio_buffer.clear',
-  ConversationItemCreate = 'conversation.item.create',
-  ConversationItemTruncate = 'conversation.item.truncate',
-  ConversationItemDelete = 'conversation.item.delete',
-  ResponseCreate = 'response.create',
-  ResponseCancel = 'response.cancel',
+  type: 'response.cancel';
 }
 
 export type ClientEvent =
@@ -344,14 +325,13 @@ export type ClientEvent =
   | ResponseCreateEvent
   | ResponseCancelEvent;
 
-// Server Events
 interface BaseServerEvent {
   event_id: string;
   type: ServerEventType;
 }
 
 export interface ErrorEvent extends BaseServerEvent {
-  type: ServerEventType.Error;
+  type: 'error';
   error: {
     type: 'invalid_request_error' | 'server_error' | string;
     code?: string;
@@ -362,55 +342,55 @@ export interface ErrorEvent extends BaseServerEvent {
 }
 
 export interface SessionCreatedEvent extends BaseServerEvent {
-  type: ServerEventType.SessionCreated;
+  type: 'session.created';
   session: SessionResource;
 }
 
 export interface SessionUpdatedEvent extends BaseServerEvent {
-  type: ServerEventType.SessionUpdated;
+  type: 'session.updated';
   session: SessionResource;
 }
 
 export interface ConversationCreatedEvent extends BaseServerEvent {
-  type: ServerEventType.ConversationCreated;
+  type: 'conversation.created';
   conversation: ConversationResource;
 }
 
 export interface InputAudioBufferCommittedEvent extends BaseServerEvent {
-  type: ServerEventType.InputAudioBufferCommitted;
+  type: 'input_audio_buffer.committed';
   item_id: string;
 }
 
 export interface InputAudioBufferClearedEvent extends BaseServerEvent {
-  type: ServerEventType.InputAudioBufferCleared;
+  type: 'input_audio_buffer.cleared';
 }
 
 export interface InputAudioBufferSpeechStartedEvent extends BaseServerEvent {
-  type: ServerEventType.InputAudioBufferSpeechStarted;
+  type: 'input_audio_buffer.speech_started';
   audio_start_ms: number;
   item_id: string;
 }
 
 export interface InputAudioBufferSpeechStoppedEvent extends BaseServerEvent {
-  type: ServerEventType.InputAudioBufferSpeechStopped;
+  type: 'input_audio_buffer.speech_stopped';
   audio_end_ms: number;
   item_id: string;
 }
 
 export interface ConversationItemCreatedEvent extends BaseServerEvent {
-  type: ServerEventType.ConversationItemCreated;
+  type: 'conversation.item.created';
   item: ItemResource;
 }
 
 export interface ConversationItemInputAudioTranscriptionCompletedEvent extends BaseServerEvent {
-  type: ServerEventType.ConversationItemInputAudioTranscriptionCompleted;
+  type: 'conversation.item.input_audio_transcription.completed';
   item_id: string;
   content_index: number;
   transcript: string;
 }
 
 export interface ConversationItemInputAudioTranscriptionFailedEvent extends BaseServerEvent {
-  type: ServerEventType.ConversationItemInputAudioTranscriptionFailed;
+  type: 'conversation.item.input_audio_transcription.failed';
   item_id: string;
   content_index: number;
   error: {
@@ -422,43 +402,43 @@ export interface ConversationItemInputAudioTranscriptionFailedEvent extends Base
 }
 
 export interface ConversationItemTruncatedEvent extends BaseServerEvent {
-  type: ServerEventType.ConversationItemTruncated;
+  type: 'conversation.item.truncated';
   item_id: string;
   content_index: number;
   audio_end_ms: number;
 }
 
 export interface ConversationItemDeletedEvent extends BaseServerEvent {
-  type: ServerEventType.ConversationItemDeleted;
+  type: 'conversation.item.deleted';
   item_id: string;
 }
 
 export interface ResponseCreatedEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseCreated;
+  type: 'response.created';
   response: ResponseResource;
 }
 
 export interface ResponseDoneEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseDone;
+  type: 'response.done';
   response: ResponseResource;
 }
 
 export interface ResponseOutputItemAddedEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseOutputItemAdded;
+  type: 'response.output_item.added';
   response_id: string;
   output_index: number;
   item: ItemResource;
 }
 
 export interface ResponseOutputItemDoneEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseOutputItemDone;
+  type: 'response.output_item.done';
   response_id: string;
   output_index: number;
   item: ItemResource;
 }
 
 export interface ResponseContentPartAddedEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseContentPartAdded;
+  type: 'response.content_part.added';
   response_id: string;
   item_id: string;
   output_index: number;
@@ -467,7 +447,7 @@ export interface ResponseContentPartAddedEvent extends BaseServerEvent {
 }
 
 export interface ResponseContentPartDoneEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseContentPartDone;
+  type: 'response.content_part.done';
   response_id: string;
   output_index: number;
   content_index: number;
@@ -475,7 +455,7 @@ export interface ResponseContentPartDoneEvent extends BaseServerEvent {
 }
 
 export interface ResponseTextDeltaEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseTextDelta;
+  type: 'response.text.delta';
   response_id: string;
   output_index: number;
   content_index: number;
@@ -483,7 +463,7 @@ export interface ResponseTextDeltaEvent extends BaseServerEvent {
 }
 
 export interface ResponseTextDoneEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseTextDone;
+  type: 'response.text.done';
   response_id: string;
   output_index: number;
   content_index: number;
@@ -491,7 +471,7 @@ export interface ResponseTextDoneEvent extends BaseServerEvent {
 }
 
 export interface ResponseAudioTranscriptDeltaEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseAudioTranscriptDelta;
+  type: 'response.audio_transcript.delta';
   response_id: string;
   output_index: number;
   content_index: number;
@@ -499,7 +479,7 @@ export interface ResponseAudioTranscriptDeltaEvent extends BaseServerEvent {
 }
 
 export interface ResponseAudioTranscriptDoneEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseAudioTranscriptDone;
+  type: 'response.audio_transcript.done';
   response_id: string;
   output_index: number;
   content_index: number;
@@ -507,7 +487,7 @@ export interface ResponseAudioTranscriptDoneEvent extends BaseServerEvent {
 }
 
 export interface ResponseAudioDeltaEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseAudioDelta;
+  type: 'response.audio.delta';
   response_id: string;
   output_index: number;
   content_index: number;
@@ -515,66 +495,34 @@ export interface ResponseAudioDeltaEvent extends BaseServerEvent {
 }
 
 export interface ResponseAudioDoneEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseAudioDone;
+  type: 'response.audio.done';
   response_id: string;
   output_index: number;
   content_index: number;
-  // 'audio' field is excluded from rendering
 }
 
 export interface ResponseFunctionCallArgumentsDeltaEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseFunctionCallArgumentsDelta;
+  type: 'response.function_call_arguments.delta';
   response_id: string;
   output_index: number;
   delta: string;
 }
 
 export interface ResponseFunctionCallArgumentsDoneEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseFunctionCallArgumentsDone;
+  type: 'response.function_call_arguments.done';
   response_id: string;
   output_index: number;
   arguments: string;
 }
 
 export interface RateLimitsUpdatedEvent extends BaseServerEvent {
-  type: ServerEventType.RateLimitsUpdated;
+  type: 'rate_limits.updated';
   rate_limits: {
-    name: 'requests' | 'tokens' | 'input_tokens' | 'output_tokens';
+    name: 'requests' | 'tokens' | 'input_tokens' | 'output_tokens' | string;
     limit: number;
     remaining: number;
     reset_seconds: number;
   }[];
-}
-
-export enum ServerEventType {
-  Error = 'error',
-  SessionCreated = 'session.created',
-  SessionUpdated = 'session.updated',
-  ConversationCreated = 'conversation.created',
-  InputAudioBufferCommitted = 'input_audio_buffer.committed',
-  InputAudioBufferCleared = 'input_audio_buffer.cleared',
-  InputAudioBufferSpeechStarted = 'input_audio_buffer.speech_started',
-  InputAudioBufferSpeechStopped = 'input_audio_buffer.speech_stopped',
-  ConversationItemCreated = 'conversation.item.created',
-  ConversationItemInputAudioTranscriptionCompleted = 'conversation.item.input_audio_transcription.completed',
-  ConversationItemInputAudioTranscriptionFailed = 'conversation.item.input_audio_transcription.failed',
-  ConversationItemTruncated = 'conversation.item.truncated',
-  ConversationItemDeleted = 'conversation.item.deleted',
-  ResponseCreated = 'response.created',
-  ResponseDone = 'response.done',
-  ResponseOutputItemAdded = 'response.output_item.added',
-  ResponseOutputItemDone = 'response.output_item.done',
-  ResponseContentPartAdded = 'response.content_part.added',
-  ResponseContentPartDone = 'response.content_part.done',
-  ResponseTextDelta = 'response.text.delta',
-  ResponseTextDone = 'response.text.done',
-  ResponseAudioTranscriptDelta = 'response.audio_transcript.delta',
-  ResponseAudioTranscriptDone = 'response.audio_transcript.done',
-  ResponseAudioDelta = 'response.audio.delta',
-  ResponseAudioDone = 'response.audio.done',
-  ResponseFunctionCallArgumentsDelta = 'response.function_call_arguments.delta',
-  ResponseFunctionCallArgumentsDone = 'response.function_call_arguments.done',
-  RateLimitsUpdated = 'response.rate_limits.updated',
 }
 
 export type ServerEvent =

@@ -267,7 +267,7 @@ export class OmniAssistant {
         const audioData = frame.data;
         for (const frame of bstream.write(audioData.buffer)) {
           this.model.sessions[0].queueMsg({
-            type: api_proto.ClientEventType.InputAudioBufferAppend,
+            type: 'input_audio_buffer.append',
             audio: Buffer.from(frame.data.buffer).toString('base64'),
           });
         }

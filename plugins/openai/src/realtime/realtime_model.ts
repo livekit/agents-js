@@ -44,6 +44,7 @@ interface ModelOptions {
     | 'none';
   temperature: number;
   maxResponseOutputTokens: number;
+  model: api_proto.Model;
   apiKey: string;
   baseURL: string;
 }
@@ -129,20 +130,20 @@ class InputAudioBuffer {
 
   append(frame: AudioFrame) {
     this.#session.queueMsg({
-      type: api_proto.ClientEventType.InputAudioBufferAppend,
+      type: 'input_audio_buffer.append',
       audio: Buffer.from(frame.data.buffer).toString('base64'),
     });
   }
 
   clear() {
     this.#session.queueMsg({
-      type: api_proto.ClientEventType.InputAudioBufferClear,
+      type: 'input_audio_buffer.clear',
     });
   }
 
   commit() {
     this.#session.queueMsg({
-      type: api_proto.ClientEventType.InputAudioBufferCommit,
+      type: 'input_audio_buffer.commit',
     });
   }
 }
@@ -161,7 +162,7 @@ class ConversationItem {
 
   truncate(itemId: string, contentIndex: number, audioEnd: number) {
     this.#session.queueMsg({
-      type: api_proto.ClientEventType.ConversationItemTruncate,
+      type: 'conversation.item.truncate',
       item_id: itemId,
       content_index: contentIndex,
       audio_end_ms: audioEnd,
@@ -170,7 +171,7 @@ class ConversationItem {
 
   delete(itemId: string) {
     this.#session.queueMsg({
-      type: api_proto.ClientEventType.ConversationItemDelete,
+      type: 'conversation.item.delete',
       item_id: itemId,
     });
   }
@@ -197,13 +198,13 @@ class Response {
 
   create() {
     this.#session.queueMsg({
-      type: api_proto.ClientEventType.ResponseCreate,
+      type: 'response.create',
     });
   }
 
   cancel() {
     this.#session.queueMsg({
-      type: api_proto.ClientEventType.ResponseCancel,
+      type: 'response.cancel',
     });
   }
 }
@@ -215,21 +216,20 @@ interface ContentPtr {
 }
 
 export class RealtimeModel {
-  #baseURL: string;
-  #apiKey: string;
   #defaultOpts: ModelOptions;
   #sessions: RealtimeSession[] = [];
 
   constructor({
     modalities = ['text', 'audio'],
     instructions = undefined,
-    voice = api_proto.Voice.ALLOY,
-    inputAudioFormat = api_proto.AudioFormat.PCM16,
-    outputAudioFormat = api_proto.AudioFormat.PCM16,
+    voice = 'alloy',
+    inputAudioFormat = 'pcm16',
+    outputAudioFormat = 'pcm16',
     inputAudioTranscription = { model: 'whisper-1' },
     turnDetection = { type: 'server_vad' },
     temperature = 0.8,
     maxResponseOutputTokens = 2048,
+    model = 'gpt-4o-realtime-preview-2024-10-01',
     apiKey = process.env.OPENAI_API_KEY || '',
     baseURL = api_proto.API_URL,
   }: {
@@ -242,6 +242,7 @@ export class RealtimeModel {
     turnDetection?: api_proto.TurnDetectionType;
     temperature?: number;
     maxResponseOutputTokens?: number;
+    model?: api_proto.Model;
     apiKey?: string;
     baseURL?: string;
   }) {
@@ -251,8 +252,6 @@ export class RealtimeModel {
       );
     }
 
-    this.#apiKey = apiKey;
-    this.#baseURL = baseURL;
     this.#defaultOpts = {
       modalities,
       instructions,
@@ -263,6 +262,7 @@ export class RealtimeModel {
       turnDetection,
       temperature,
       maxResponseOutputTokens,
+      model,
       apiKey,
       baseURL,
     };
@@ -305,6 +305,7 @@ export class RealtimeModel {
       turnDetection,
       temperature,
       maxResponseOutputTokens,
+      model: this.#defaultOpts.model,
       apiKey: this.#defaultOpts.apiKey,
       baseURL: this.#defaultOpts.baseURL,
     };
@@ -349,7 +350,7 @@ export class RealtimeSession extends EventEmitter {
       turnDetection: this.#opts.turnDetection,
       temperature: this.#opts.temperature,
       maxResponseOutputTokens: this.#opts.maxResponseOutputTokens,
-      toolChoice: api_proto.ToolChoice.AUTO,
+      toolChoice: 'auto',
     });
   }
 
@@ -417,7 +418,7 @@ export class RealtimeSession extends EventEmitter {
     turnDetection = this.#opts.turnDetection,
     temperature = this.#opts.temperature,
     maxResponseOutputTokens = this.#opts.maxResponseOutputTokens,
-    toolChoice = api_proto.ToolChoice.AUTO,
+    toolChoice = 'auto',
   }: {
     modalities: ['text', 'audio'] | ['text'];
     instructions?: string;
@@ -440,6 +441,7 @@ export class RealtimeSession extends EventEmitter {
       turnDetection,
       temperature,
       maxResponseOutputTokens,
+      model: this.#opts.model,
       apiKey: this.#opts.apiKey,
       baseURL: this.#opts.baseURL,
     };
@@ -452,7 +454,7 @@ export class RealtimeSession extends EventEmitter {
     }));
 
     this.queueMsg({
-      type: api_proto.ClientEventType.SessionUpdate,
+      type: 'session.update',
       session: {
         modalities: this.#opts.modalities,
         instructions: this.#opts.instructions,
@@ -471,7 +473,7 @@ export class RealtimeSession extends EventEmitter {
 
   #start(): Promise<void> {
     return new Promise(async (resolve, reject) => {
-      this.#ws = new WebSocket(api_proto.API_URL, {
+      this.#ws = new WebSocket(`${this.#opts.baseURL}?model=gpt-4-turbo-preview`, {
         headers: {
           Authorization: `Bearer ${this.#opts.apiKey}`,
           'OpenAI-Beta': 'realtime=v1',
@@ -489,88 +491,88 @@ export class RealtimeSession extends EventEmitter {
         const event: api_proto.ServerEvent = JSON.parse(message.data as string);
         this.#logger.debug(`<- ${JSON.stringify(this.#loggableEvent(event))}`);
         switch (event.type) {
-          case api_proto.ServerEventType.Error:
+          case 'error':
             this.handleError(event);
             break;
-          case api_proto.ServerEventType.SessionCreated:
+          case 'session.created':
             this.handleSessionCreated(event);
             break;
-          case api_proto.ServerEventType.SessionUpdated:
+          case 'session.updated':
             this.handleSessionUpdated(event);
             break;
-          case api_proto.ServerEventType.ConversationCreated:
+          case 'conversation.created':
             this.handleConversationCreated(event);
             break;
-          case api_proto.ServerEventType.InputAudioBufferCommitted:
+          case 'input_audio_buffer.committed':
             this.handleInputAudioBufferCommitted(event);
             break;
-          case api_proto.ServerEventType.InputAudioBufferCleared:
+          case 'input_audio_buffer.cleared':
             this.handleInputAudioBufferCleared(event);
             break;
-          case api_proto.ServerEventType.InputAudioBufferSpeechStarted:
+          case 'input_audio_buffer.speech_started':
             this.handleInputAudioBufferSpeechStarted(event);
             break;
-          case api_proto.ServerEventType.InputAudioBufferSpeechStopped:
+          case 'input_audio_buffer.speech_stopped':
             this.handleInputAudioBufferSpeechStopped(event);
             break;
-          case api_proto.ServerEventType.ConversationItemCreated:
+          case 'conversation.item.created':
             this.handleConversationItemCreated(event);
             break;
-          case api_proto.ServerEventType.ConversationItemInputAudioTranscriptionCompleted:
+          case 'conversation.item.input_audio_transcription.completed':
             this.handleConversationItemInputAudioTranscriptionCompleted(event);
             break;
-          case api_proto.ServerEventType.ConversationItemInputAudioTranscriptionFailed:
+          case 'conversation.item.input_audio_transcription.failed':
             this.handleConversationItemInputAudioTranscriptionFailed(event);
             break;
-          case api_proto.ServerEventType.ConversationItemTruncated:
+          case 'conversation.item.truncated':
             this.handleConversationItemTruncated(event);
             break;
-          case api_proto.ServerEventType.ConversationItemDeleted:
+          case 'conversation.item.deleted':
             this.handleConversationItemDeleted(event);
             break;
-          case api_proto.ServerEventType.ResponseCreated:
+          case 'response.created':
             this.handleResponseCreated(event);
             break;
-          case api_proto.ServerEventType.ResponseDone:
+          case 'response.done':
             this.handleResponseDone(event);
             break;
-          case api_proto.ServerEventType.ResponseOutputItemAdded:
+          case 'response.output_item.added':
             this.handleResponseOutputItemAdded(event);
             break;
-          case api_proto.ServerEventType.ResponseOutputItemDone:
+          case 'response.output_item.done':
             this.handleResponseOutputItemDone(event);
             break;
-          case api_proto.ServerEventType.ResponseContentPartAdded:
+          case 'response.content_part.added':
             this.handleResponseContentPartAdded(event);
             break;
-          case api_proto.ServerEventType.ResponseContentPartDone:
+          case 'response.content_part.done':
             this.handleResponseContentPartDone(event);
             break;
-          case api_proto.ServerEventType.ResponseTextDelta:
+          case 'response.text.delta':
             this.handleResponseTextDelta(event);
             break;
-          case api_proto.ServerEventType.ResponseTextDone:
+          case 'response.text.done':
             this.handleResponseTextDone(event);
             break;
-          case api_proto.ServerEventType.ResponseAudioTranscriptDelta:
+          case 'response.audio_transcript.delta':
             this.handleResponseAudioTranscriptDelta(event);
             break;
-          case api_proto.ServerEventType.ResponseAudioTranscriptDone:
+          case 'response.audio_transcript.done':
             this.handleResponseAudioTranscriptDone(event);
             break;
-          case api_proto.ServerEventType.ResponseAudioDelta:
+          case 'response.audio.delta':
             this.handleResponseAudioDelta(event);
             break;
-          case api_proto.ServerEventType.ResponseAudioDone:
+          case 'response.audio.done':
             this.handleResponseAudioDone(event);
             break;
-          case api_proto.ServerEventType.ResponseFunctionCallArgumentsDelta:
+          case 'response.function_call_arguments.delta':
             this.handleResponseFunctionCallArgumentsDelta(event);
             break;
-          case api_proto.ServerEventType.ResponseFunctionCallArgumentsDone:
+          case 'response.function_call_arguments.done':
             this.handleResponseFunctionCallArgumentsDone(event);
             break;
-          case api_proto.ServerEventType.RateLimitsUpdated:
+          case 'rate_limits.updated':
             this.handleRateLimitsUpdated(event);
             break;
         }
@@ -580,7 +582,7 @@ export class RealtimeSession extends EventEmitter {
         while (this.#ws && !this.#closing && this.#ws.readyState === WebSocket.OPEN) {
           try {
             const event = await this.#sendQueue.get();
-            if (event.type !== api_proto.ClientEventType.InputAudioBufferAppend) {
+            if (event.type !== 'input_audio_buffer.append') {
               this.#logger.debug(`-> ${JSON.stringify(this.#loggableEvent(event))}`);
             }
             this.#ws.send(JSON.stringify(event));
@@ -615,7 +617,7 @@ export class RealtimeSession extends EventEmitter {
   }
 
   private handleError(event: api_proto.ErrorEvent): void {
-    this.#logger.error('OpenAI S2S error %s', event.error);
+    this.#logger.error(`OpenAI S2S error ${event.error}`);
   }
 
   private handleSessionCreated(event: api_proto.SessionCreatedEvent): void {
@@ -662,7 +664,7 @@ export class RealtimeSession extends EventEmitter {
     event: api_proto.ConversationItemInputAudioTranscriptionFailedEvent,
   ): void {
     const error = event.error;
-    this.#logger.error('OAI S2S failed to transcribe input audio: %s', error.message);
+    this.#logger.error(`OAI S2S failed to transcribe input audio: ${error.message}`);
     this.emit(EventTypes.InputSpeechTranscriptionFailed, {
       itemId: event.item_id,
       message: error.message,
@@ -707,7 +709,7 @@ export class RealtimeSession extends EventEmitter {
 
     let role: api_proto.Role;
     if (itemData.type === 'function_call') {
-      role = api_proto.Role.ASSISTANT; // function_call doesn't have a role field, defaulting it to assistant
+      role = 'assistant'; // function_call doesn't have a role field, defaulting it to assistant
     } else {
       role = itemData.role;
     }
