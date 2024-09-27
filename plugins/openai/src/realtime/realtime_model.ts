@@ -199,6 +199,11 @@ interface ContentPtr {
 }
 
 export class RealtimeModel extends multimodal.RealtimeModel {
+  sampleRate = api_proto.SAMPLE_RATE;
+  numChannels = api_proto.NUM_CHANNELS;
+  inFrameSize = api_proto.IN_FRAME_SIZE;
+  outFrameSize = api_proto.OUT_FRAME_SIZE;
+
   #defaultOpts: ModelOptions;
   #sessions: RealtimeSession[] = [];
 

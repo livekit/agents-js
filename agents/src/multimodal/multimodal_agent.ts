@@ -21,7 +21,7 @@ import type * as llm from '../llm/index.js';
 import { log } from '../log.js';
 import { BasicTranscriptionForwarder } from '../transcription.js';
 import { findMicroTrackId } from '../utils.js';
-import { AgentPlayout, type PlayoutHandle, proto } from './agent_playout.js';
+import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 
 type ImplOptions = {
   // functions: llm.FunctionContext;
@@ -46,6 +46,10 @@ export abstract class RealtimeModel {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   abstract session(options: any): RealtimeSession; // openai.realtime.ModelOptions
   abstract close(): Promise<void>;
+  abstract sampleRate: number;
+  abstract numChannels: number;
+  abstract inFrameSize: number;
+  abstract outFrameSize: number;
 }
 
 /** @beta */
@@ -113,7 +117,13 @@ export class MultimodalAgent {
       this.participant = participant;
 
       this.localSource = new AudioSource(24000, 1);
-      this.agentPlayout = new AgentPlayout(this.localSource);
+      this.agentPlayout = new AgentPlayout(
+        this.localSource,
+        this.model.sampleRate,
+        this.model.numChannels,
+        this.model.inFrameSize,
+        this.model.outFrameSize,
+      );
       const track = LocalAudioTrack.createAudioTrack('assistant_voice', this.localSource);
       const options = new TrackPublishOptions();
       options.source = TrackSource.SOURCE_MICROPHONE;
@@ -268,9 +278,9 @@ export class MultimodalAgent {
   private subscribeToMicrophone(): void {
     const readAudioStreamTask = async (audioStream: AudioStream) => {
       const bstream = new AudioByteStream(
-        proto.SAMPLE_RATE,
-        proto.NUM_CHANNELS,
-        proto.INPUT_PCM_FRAME_SIZE,
+        this.model.sampleRate,
+        this.model.numChannels,
+        this.model.inFrameSize,
       );
 
       for await (const frame of audioStream) {
@@ -311,10 +321,11 @@ export class MultimodalAgent {
         this.readMicroTask = {
           promise: new Promise<void>((resolve, reject) => {
             cancel = () => {
-              // Cleanup logic here
               reject(new Error('Task cancelled'));
             };
-            readAudioStreamTask(new AudioStream(track, proto.SAMPLE_RATE, proto.NUM_CHANNELS))
+            readAudioStreamTask(
+              new AudioStream(track, this.model.sampleRate, this.model.numChannels),
+            )
               .then(resolve)
               .catch(reject);
           }),

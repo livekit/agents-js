@@ -8,20 +8,28 @@ import { AudioByteStream } from '../audio.js';
 import type { TranscriptionForwarder } from '../transcription.js';
 import type { Queue } from '../utils.js';
 
-export const proto = {
-  SAMPLE_RATE: 24000,
-  NUM_CHANNELS: 1,
-  INPUT_PCM_FRAME_SIZE: 2400, // 100ms
-  OUTPUT_PCM_FRAME_SIZE: 1200, // 50ms
-};
+export const proto = {};
 
 export class AgentPlayout {
   #audioSource: AudioSource;
   #playoutPromise: Promise<void> | null;
-
-  constructor(audioSource: AudioSource) {
+  #sampleRate: number;
+  #numChannels: number;
+  #inFrameSize: number;
+  #outFrameSize: number;
+  constructor(
+    audioSource: AudioSource,
+    sampleRate: number,
+    numChannels: number,
+    inFrameSize: number,
+    outFrameSize: number,
+  ) {
     this.#audioSource = audioSource;
     this.#playoutPromise = null;
+    this.#sampleRate = sampleRate;
+    this.#numChannels = numChannels;
+    this.#inFrameSize = inFrameSize;
+    this.#outFrameSize = outFrameSize;
   }
 
   play(
@@ -31,7 +39,7 @@ export class AgentPlayout {
     textStream: Queue<string | null>,
     audioStream: Queue<AudioFrame | null>,
   ): PlayoutHandle {
-    const handle = new PlayoutHandle(this.#audioSource, itemId, contentIndex, transcriptionFwd);
+    const handle = new PlayoutHandle(this.#audioSource, this.#sampleRate, itemId, contentIndex, transcriptionFwd);
     this.#playoutPromise = this.playoutTask(this.#playoutPromise, handle, textStream, audioStream);
     return handle;
   }
@@ -59,8 +67,8 @@ export class AgentPlayout {
     };
 
     const captureTask = async () => {
-      const samplesPerChannel = proto.OUTPUT_PCM_FRAME_SIZE;
-      const bstream = new AudioByteStream(proto.SAMPLE_RATE, proto.NUM_CHANNELS, samplesPerChannel);
+      const samplesPerChannel = this.#outFrameSize;
+      const bstream = new AudioByteStream(this.#sampleRate, this.#numChannels, samplesPerChannel);
 
       while (true) {
         const frame = await audioStream.get();
@@ -125,6 +133,7 @@ export class AgentPlayout {
 
 export class PlayoutHandle extends EventEmitter {
   #audioSource: AudioSource;
+  #sampleRate: number;
   #itemId: string;
   #contentIndex: number;
   /** @internal */
@@ -143,12 +152,14 @@ export class PlayoutHandle extends EventEmitter {
 
   constructor(
     audioSource: AudioSource,
+    sampleRate: number,
     itemId: string,
     contentIndex: number,
     transcriptionFwd: TranscriptionForwarder,
   ) {
     super();
     this.#audioSource = audioSource;
+    this.#sampleRate = sampleRate;
     this.#itemId = itemId;
     this.#contentIndex = contentIndex;
     this.transcriptionFwd = transcriptionFwd;
@@ -177,10 +188,10 @@ export class PlayoutHandle extends EventEmitter {
 
   get audioSamples(): number {
     if (this.totalPlayedTime !== undefined) {
-      return Math.floor(this.totalPlayedTime * proto.SAMPLE_RATE);
+      return Math.floor(this.totalPlayedTime * this.#sampleRate);
     }
 
-    return Math.floor(this.pushedDuration - this.#audioSource.queuedDuration * proto.SAMPLE_RATE);
+    return Math.floor(this.pushedDuration - this.#audioSource.queuedDuration * this.#sampleRate);
   }
 
   get textChars(): number {
