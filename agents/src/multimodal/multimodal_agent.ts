@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type * as openai from '@livekit/agents-plugin-openai';
+import * as realtime from './realtime.js';
 import type {
   LocalTrackPublication,
   RemoteAudioTrack,
@@ -29,7 +29,7 @@ type ImplOptions = {
 
 /** @beta */
 export class MultimodalAgent {
-  model: openai.realtime.RealtimeModel;
+  model: realtime.RealtimeModel;
   options: ImplOptions;
   room: Room | null = null;
   linkedParticipant: RemoteParticipant | null = null;
@@ -40,7 +40,7 @@ export class MultimodalAgent {
     model,
     // functions = {},
   }: {
-    model: openai.realtime.RealtimeModel;
+    model: realtime.RealtimeModel;
     functions?: llm.FunctionContext;
   }) {
     this.model = model;
@@ -58,7 +58,7 @@ export class MultimodalAgent {
   private agentPlayout: AgentPlayout | null = null;
   private playingHandle: PlayoutHandle | undefined = undefined;
   private logger = log();
-  private session: openai.realtime.RealtimeSession | null = null;
+  private session: realtime.RealtimeSession | null = null;
 
   // get funcCtx(): llm.FunctionContext {
   //   return this.options.functions;
@@ -121,7 +121,7 @@ export class MultimodalAgent {
 
       this.session = this.model.session({});
 
-      this.session.on('response_content_added', (message: openai.realtime.RealtimeContent) => {
+      this.session.on('response_content_added', (message: realtime.RealtimeContent) => {
         const trFwd = new BasicTranscriptionForwarder(
           this.room!,
           this.room!.localParticipant!.identity,
@@ -138,7 +138,7 @@ export class MultimodalAgent {
         );
       });
 
-      this.session.on('input_speech_committed', (ev: openai.realtime.InputSpeechCommitted) => {
+      this.session.on('input_speech_committed', (ev: realtime.InputSpeechCommitted) => {
         const participantIdentity = this.linkedParticipant?.identity;
         const trackSid = this.subscribedTrack?.sid;
         if (participantIdentity && trackSid) {
@@ -150,7 +150,7 @@ export class MultimodalAgent {
 
       this.session.on(
         'input_speech_transcription_completed',
-        (ev: openai.realtime.InputSpeechTranscriptionCompleted) => {
+        (ev: realtime.InputSpeechTranscriptionCompleted) => {
           const transcription = ev.transcript;
           const participantIdentity = this.linkedParticipant?.identity;
           const trackSid = this.subscribedTrack?.sid;
