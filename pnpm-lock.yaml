@@ -81,8 +81,8 @@ importers:
         specifier: ^1.21.0
         version: 1.21.0
       '@livekit/rtc-node':
-        specifier: ^0.8.1
-        version: 0.8.1
+        specifier: ^0.9.0
+        version: 0.9.0
       commander:
         specifier: ^12.0.0
         version: 12.0.0
@@ -124,8 +124,8 @@ importers:
         specifier: workspace:*
         version: link:../plugins/openai
       '@livekit/rtc-node':
-        specifier: ^0.8.1
-        version: 0.8.1
+        specifier: ^0.9.0
+        version: 0.9.0
       zod:
         specifier: ^3.23.8
         version: 3.23.8
@@ -140,8 +140,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.8.1
-        version: 0.8.1
+        specifier: ^0.9.0
+        version: 0.9.0
       ws:
         specifier: ^8.16.0
         version: 8.17.0
@@ -483,39 +483,42 @@ packages:
   '@livekit/protocol@1.21.0':
     resolution: {integrity: sha512-3TohFPNZy1axTuoDLU6mA1rwuP4VawgehvX52OoLJnU+fNQYfmMJqz8k7NSh79jG5I8Og77YYhT905Omrhli2A==}
 
-  '@livekit/rtc-node-darwin-arm64@0.8.1':
-    resolution: {integrity: sha512-8gbNHmtmBV2h3HFfva50lxTPDZAA+8M4hztOP5PBftZqeTkovApsVbTZUGoVNRV2bkNlnndNUJHF4OaiZPEmHw==}
+  '@livekit/rtc-node-darwin-arm64@0.9.0':
+    resolution: {integrity: sha512-tZJ53W5/OBDbUVThDmonLtx7Rwd4TyC9rPVpUtb+r4OPKnQ6WMpTMqkrgXCO6u7KCl6Ol4vxXlPIHODcUOXaGw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
 
-  '@livekit/rtc-node-darwin-x64@0.8.1':
-    resolution: {integrity: sha512-NPDXfC78uByvlSqmILXp09IRbwIoxuN6tpdtaKCobPYLow/M3NJ2nJESBMnmVhqcDNFYfhza+twmfbTu5lOBXg==}
+  '@livekit/rtc-node-darwin-x64@0.9.0':
+    resolution: {integrity: sha512-O3oU1fftW4dLbNIrvDr6KcFCQm0c4K6PX5JYy50KSmqpCWCMbFeMOsdEaA+y/5lX58E5r1xVQ/Y6H19GDf1C7A==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
 
-  '@livekit/rtc-node-linux-arm64-gnu@0.8.1':
-    resolution: {integrity: sha512-QWgtfsX/uxi4bb9dJVQe3mT6trLRIzRtVOeYlxJll7xNxPvepFqmz8Y695ZxpDNvAkhiwYAemVfd+JJOIqav/A==}
+  '@livekit/rtc-node-linux-arm64-gnu@0.9.0':
+    resolution: {integrity: sha512-RSJEJ7Yz20Bcd0zpsHCtLwkJaz/iVldhvdTbsX5SwZ61cZUeQwJzhWF8+q2i2KiSvGcr5KAywrekTW1dNDj/pQ==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
 
-  '@livekit/rtc-node-linux-x64-gnu@0.8.1':
-    resolution: {integrity: sha512-f9Mks0HQxAtYejss2i0rPSQ0Js0lN9TmqKd6X+BgBIRgMi7Xf/z8Xu91aDpknJoRA7Zw6Yowwwnuo6oy/bZhgw==}
+  '@livekit/rtc-node-linux-x64-gnu@0.9.0':
+    resolution: {integrity: sha512-CS93WNGGb3n7xVMxv++rgOk017AADsqYF7enz4d5QUbTJmowY5o3CGLsFA52Fe8x/YVXSezb85wE9mPTXmo/IA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@livekit/rtc-node-win32-x64-msvc@0.8.1':
-    resolution: {integrity: sha512-1sV4/OY7MdlTrZx2y0HIg57c4lGhMURVqxIWYu8LLDnk8DDPcxWVUMCDbUTYzhOcyxZbQaa5vWiv6s+95xM3yA==}
+  '@livekit/rtc-node-win32-x64-msvc@0.9.0':
+    resolution: {integrity: sha512-7E9teGVOkXC3XM/wNhbjAPuoPwzI4luAvTnwzAbQNpvP2FVDOuGfZTSjq39pr+zOqsVm7+pQ3u2ftYlrWO/F1Q==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
 
-  '@livekit/rtc-node@0.8.1':
-    resolution: {integrity: sha512-gY2EkDsQ3IFamq2uOVQuteK0GJi4/rlcXO2/XGAnbPPeaIEpv65gbE4nZw/EvU2NCT0dnlyYLoTKLrqcGBq12g==}
+  '@livekit/rtc-node@0.9.0':
+    resolution: {integrity: sha512-T2e9YQVyoM37ClNq71wpCpkcAAWGYMSKA0VJpxwjVyOUtVjuRf37HAClZoKVJ1PoG5xw2aWegVlFvw8LY+wkqw==}
     engines: {node: '>= 18'}
+
+  '@livekit/typed-emitter@3.0.0':
+    resolution: {integrity: sha512-9bl0k4MgBPZu3Qu3R3xy12rmbW17e3bE9yf4YY85gJIQ3ezLEj/uzpKHWBsLaDoL5Mozz8QCgggwIBudYQWeQg==}
 
   '@manypkg/find-root@1.1.0':
     resolution: {integrity: sha512-mki5uBvhHzO8kYYix/WRy2WX8S3B5wdVSc9D6KcU5lQNglP2yt58/VfLuAK49glRXChosY8ap2oJ1qgma3GUVA==}
@@ -2387,9 +2390,6 @@ packages:
   run-parallel@1.2.0:
     resolution: {integrity: sha512-5l4VyZR86LZ/lDxZTR6jqL8AFE2S0IFLMP26AbjsLVADxHdhB/c0GUsH+y39UfCi3dzz8OlQuPmnaJOMoDHQBA==}
 
-  rxjs@7.8.1:
-    resolution: {integrity: sha512-AA3TVj+0A2iuIoQkWEK/tqFjBq2j+6PO6Y0zJcvzLAFhEFIO3HL0vls9hWLncZbAAbK0mar7oZ4V079I/qPMxg==}
-
   safe-array-concat@1.1.2:
     resolution: {integrity: sha512-vj6RsCsWBCf19jIeHEfkRMw8DPiBb+DMXklQ/1SGDHOMlHdPUkZXFQ2YdplS23zESTijAcurb1aSgJA3AgMu1Q==}
     engines: {node: '>=0.4'}
@@ -2750,9 +2750,6 @@ packages:
   typed-array-length@1.0.6:
     resolution: {integrity: sha512-/OxDN6OtAk5KBpGb28T+HZc2M+ADtvRxXrKKbUwtsLgdoxgX13hyy7ek6bFRl5+aBs2yZzB0c4CnQfAtVypW/g==}
     engines: {node: '>= 0.4'}
-
-  typed-emitter@2.1.0:
-    resolution: {integrity: sha512-g/KzbYKbH5C2vPkaXGu8DJlHrGKHLsM25Zg9WuC9pMGfuvT+X25tZQWo5fK1BjBm8+UrVE9LDCvaY0CQk+fXDA==}
 
   typedoc@0.25.13:
     resolution: {integrity: sha512-pQqiwiJ+Z4pigfOnnysObszLiU3mVLWAExSPf+Mu06G/qsc3wzbuM56SZQvONhHLncLUhYzOVkjFFpFfL5AzhQ==}
@@ -3374,31 +3371,33 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 1.9.0
 
-  '@livekit/rtc-node-darwin-arm64@0.8.1':
+  '@livekit/rtc-node-darwin-arm64@0.9.0':
     optional: true
 
-  '@livekit/rtc-node-darwin-x64@0.8.1':
+  '@livekit/rtc-node-darwin-x64@0.9.0':
     optional: true
 
-  '@livekit/rtc-node-linux-arm64-gnu@0.8.1':
+  '@livekit/rtc-node-linux-arm64-gnu@0.9.0':
     optional: true
 
-  '@livekit/rtc-node-linux-x64-gnu@0.8.1':
+  '@livekit/rtc-node-linux-x64-gnu@0.9.0':
     optional: true
 
-  '@livekit/rtc-node-win32-x64-msvc@0.8.1':
+  '@livekit/rtc-node-win32-x64-msvc@0.9.0':
     optional: true
 
-  '@livekit/rtc-node@0.8.1':
+  '@livekit/rtc-node@0.9.0':
     dependencies:
       '@bufbuild/protobuf': 1.9.0
-      typed-emitter: 2.1.0
+      '@livekit/typed-emitter': 3.0.0
     optionalDependencies:
-      '@livekit/rtc-node-darwin-arm64': 0.8.1
-      '@livekit/rtc-node-darwin-x64': 0.8.1
-      '@livekit/rtc-node-linux-arm64-gnu': 0.8.1
-      '@livekit/rtc-node-linux-x64-gnu': 0.8.1
-      '@livekit/rtc-node-win32-x64-msvc': 0.8.1
+      '@livekit/rtc-node-darwin-arm64': 0.9.0
+      '@livekit/rtc-node-darwin-x64': 0.9.0
+      '@livekit/rtc-node-linux-arm64-gnu': 0.9.0
+      '@livekit/rtc-node-linux-x64-gnu': 0.9.0
+      '@livekit/rtc-node-win32-x64-msvc': 0.9.0
+
+  '@livekit/typed-emitter@3.0.0': {}
 
   '@manypkg/find-root@1.1.0':
     dependencies:
@@ -5518,11 +5517,6 @@ snapshots:
     dependencies:
       queue-microtask: 1.2.3
 
-  rxjs@7.8.1:
-    dependencies:
-      tslib: 2.6.2
-    optional: true
-
   safe-array-concat@1.1.2:
     dependencies:
       call-bind: 1.0.7
@@ -5882,10 +5876,6 @@ snapshots:
       has-proto: 1.0.3
       is-typed-array: 1.1.13
       possible-typed-array-names: 1.0.0
-
-  typed-emitter@2.1.0:
-    optionalDependencies:
-      rxjs: 7.8.1
 
   typedoc@0.25.13(typescript@5.4.5):
     dependencies:
