@@ -4,7 +4,8 @@
 import { type JobContext, WorkerOptions, cli, defineAgent } from '@livekit/agents';
 import { OmniAssistant, RealtimeModel } from '@livekit/agents-plugin-openai';
 import { fileURLToPath } from 'node:url';
-import { z } from 'zod';
+
+// import { z } from 'zod';
 
 export default defineAgent({
   entry: async (ctx: JobContext) => {

@@ -4,7 +4,7 @@
 import { AudioByteStream } from '@livekit/agents';
 import { findMicroTrackId } from '@livekit/agents';
 import { type llm, log } from '@livekit/agents';
-import { AgentPlayout, BasicTranscriptionForwarder, type PlayoutHandle } from '@livekit/agents';
+import { BasicTranscriptionForwarder } from '@livekit/agents';
 import type {
   AudioFrameEvent,
   LocalTrackPublication,
@@ -21,8 +21,9 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
+import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 import * as api_proto from './realtime/api_proto.js';
-import { RealtimeContent, RealtimeModel, RealtimeSession } from './realtime/realtime_model.js';
+import type { RealtimeContent, RealtimeModel, RealtimeSession } from './realtime/realtime_model.js';
 
 type ImplOptions = {
   // functions: llm.FunctionContext;

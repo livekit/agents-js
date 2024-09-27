@@ -1,16 +1,13 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame, type AudioSource } from '@livekit/rtc-node';
+import { AudioByteStream } from '@livekit/agents';
+import type { TranscriptionForwarder } from '@livekit/agents';
+import type { Queue } from '@livekit/agents';
+import type { AudioFrame } from '@livekit/rtc-node';
+import { type AudioSource } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
-import { AudioByteStream } from '../audio.js';
-import type { TranscriptionForwarder } from '../transcription.js';
-import { Queue } from '../utils.js';
-
-export const SAMPLE_RATE = 24000;
-export const NUM_CHANNELS = 1;
-export const INPUT_PCM_FRAME_SIZE = 2400; // 100ms
-export const OUTPUT_PCM_FRAME_SIZE = 1200; // 50ms
+import { NUM_CHANNELS, OUTPUT_PCM_FRAME_SIZE, SAMPLE_RATE } from './realtime/api_proto.js';
 
 export class AgentPlayout {
   #audioSource: AudioSource;
