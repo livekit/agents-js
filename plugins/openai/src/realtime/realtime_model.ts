@@ -90,9 +90,9 @@ export interface RealtimeContent {
   /** Accumulated audio content */
   audio: AudioFrame[];
   /** Stream of text content */
-  textStream: Queue<string>;
+  textStream: Queue<string | null>;
   /** Stream of audio content */
-  audioStream: Queue<AudioFrame>;
+  audioStream: Queue<AudioFrame | null>;
   /** Pending tool calls */
   toolCalls: RealtimeToolCall[];
 }
@@ -750,8 +750,8 @@ export class RealtimeSession extends EventEmitter {
     const outputIndex = event.output_index;
     const output = response.output[outputIndex];
 
-    const textCh = new Queue<string>();
-    const audioCh = new Queue<AudioFrame>();
+    const textStream = new Queue<string | null>();
+    const audioStream = new Queue<AudioFrame | null>();
 
     const newContent: RealtimeContent = {
       responseId: responseId,
@@ -760,8 +760,8 @@ export class RealtimeSession extends EventEmitter {
       contentIndex: event.content_index,
       text: '',
       audio: [],
-      textStream: textCh,
-      audioStream: audioCh,
+      textStream: textStream,
+      audioStream: audioStream,
       toolCalls: [],
     };
     output.content.push(newContent);
@@ -782,11 +782,7 @@ export class RealtimeSession extends EventEmitter {
   private handleResponseAudioTranscriptDelta(
     event: api_proto.ResponseAudioTranscriptDeltaEvent,
   ): void {
-    const content = this.getContent({
-      response_id: event.response_id,
-      output_index: event.output_index,
-      content_index: event.content_index,
-    });
+    const content = this.getContent(event);
     const transcript = event.delta;
     content.text += transcript;
 
@@ -796,12 +792,8 @@ export class RealtimeSession extends EventEmitter {
   private handleResponseAudioTranscriptDone(
     event: api_proto.ResponseAudioTranscriptDoneEvent,
   ): void {
-    // const content = this.getContent({
-    //   response_id: event.response_id,
-    //   output_index: event.output_index,
-    //   content_index: event.content_index,
-    // });
-    // content.textStream.close(); // TODO: implement close
+    const content = this.getContent(event);
+    content.textStream.put(null);
   }
 
   private handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
@@ -819,8 +811,8 @@ export class RealtimeSession extends EventEmitter {
   }
 
   private handleResponseAudioDone(event: api_proto.ResponseAudioDoneEvent): void {
-    // const content = this.getContent(event);
-    // content.audioStream.close(); TODO: implement close
+    const content = this.getContent(event);
+    content.audioStream.put(null);
   }
 
   private handleResponseFunctionCallArgumentsDelta(
