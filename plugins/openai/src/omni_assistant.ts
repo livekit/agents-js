@@ -12,7 +12,6 @@ import type {
   Room,
 } from '@livekit/rtc-node';
 import {
-  AudioFrame,
   AudioSource,
   AudioStream,
   LocalAudioTrack,
@@ -25,7 +24,6 @@ import * as api_proto from './realtime/api_proto.js';
 import type {
   InputSpeechCommitted,
   InputTranscriptionCompleted,
-  InputTranscriptionFailed,
   RealtimeContent,
   RealtimeModel,
   RealtimeSession,

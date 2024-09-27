@@ -7,7 +7,6 @@ import type { Queue } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { type AudioSource } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
-import { text } from 'stream/consumers';
 import { NUM_CHANNELS, OUTPUT_PCM_FRAME_SIZE, SAMPLE_RATE } from './realtime/api_proto.js';
 
 export class AgentPlayout {
@@ -84,6 +83,7 @@ export class AgentPlayout {
       await this.#audioSource.waitForPlayout();
     };
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const readTextTaskPromise = playTextStream();
     const captureTaskPromise = captureTask();
 

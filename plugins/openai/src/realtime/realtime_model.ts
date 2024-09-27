@@ -4,7 +4,6 @@
 import { Queue } from '@livekit/agents';
 import { llm, log } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
-import { ifError } from 'assert';
 import { EventEmitter, once } from 'events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
@@ -624,8 +623,10 @@ export class RealtimeSession extends EventEmitter {
     this.#sessionId = event.session.id;
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private handleSessionUpdated(event: api_proto.SessionUpdatedEvent): void {}
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private handleConversationCreated(event: api_proto.ConversationCreatedEvent): void {}
 
   private handleInputAudioBufferCommitted(event: api_proto.InputAudioBufferCommittedEvent): void {
@@ -634,20 +635,24 @@ export class RealtimeSession extends EventEmitter {
     });
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private handleInputAudioBufferCleared(event: api_proto.InputAudioBufferClearedEvent): void {}
 
   private handleInputAudioBufferSpeechStarted(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.InputAudioBufferSpeechStartedEvent,
   ): void {
     this.emit(EventTypes.InputSpeechStarted);
   }
 
   private handleInputAudioBufferSpeechStopped(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.InputAudioBufferSpeechStoppedEvent,
   ): void {
     this.emit(EventTypes.InputSpeechStopped);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void {}
 
   private handleConversationItemInputAudioTranscriptionCompleted(
@@ -671,8 +676,10 @@ export class RealtimeSession extends EventEmitter {
     });
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private handleConversationItemTruncated(event: api_proto.ConversationItemTruncatedEvent): void {}
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private handleConversationItemDeleted(event: api_proto.ConversationItemDeletedEvent): void {}
 
   private handleResponseCreated(responseCreated: api_proto.ResponseCreatedEvent): void {
@@ -800,8 +807,10 @@ export class RealtimeSession extends EventEmitter {
     this.emit(EventTypes.ResponseContentDone, content);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {}
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private handleResponseTextDone(event: api_proto.ResponseTextDoneEvent): void {}
 
   private handleResponseAudioTranscriptDelta(
@@ -841,13 +850,16 @@ export class RealtimeSession extends EventEmitter {
   }
 
   private handleResponseFunctionCallArgumentsDelta(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.ResponseFunctionCallArgumentsDeltaEvent,
   ): void {}
 
   private handleResponseFunctionCallArgumentsDone(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.ResponseFunctionCallArgumentsDoneEvent,
   ): void {}
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private handleRateLimitsUpdated(event: api_proto.RateLimitsUpdatedEvent): void {}
 }
 
