@@ -4,10 +4,10 @@
 import { Queue } from '@livekit/agents';
 import { llm, log } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
-import { WebSocket } from 'ws';
-import * as api_proto from './api_proto.js';
 import { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter, once } from 'events';
+import { WebSocket } from 'ws';
+import * as api_proto from './api_proto.js';
 
 interface ModelOptions {
   modalities: ['text', 'audio'] | ['text'];
@@ -330,7 +330,7 @@ export class RealtimeSession extends (EventEmitter as new () => TypedEmitter<Rea
   #task: Promise<void>;
   #closing = true;
   #sendQueue = new Queue<api_proto.ClientEvent>();
-  
+
   constructor(funcCtx: llm.FunctionContext, opts: ModelOptions) {
     super();
 

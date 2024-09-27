@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream } from '../audio.js';
-import type { TranscriptionForwarder } from '../transcription.js';
-import type { Queue } from '../utils.js';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { type AudioSource } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
+import { AudioByteStream } from '../audio.js';
+import type { TranscriptionForwarder } from '../transcription.js';
+import type { Queue } from '../utils.js';
 
 export const proto = {
   SAMPLE_RATE: 24000,

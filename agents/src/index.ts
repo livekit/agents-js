@@ -11,9 +11,9 @@
  */
 import * as cli from './cli.js';
 import * as llm from './llm/index.js';
+import * as multimodal from './multimodal/index.js';
 import * as stt from './stt/index.js';
 import * as tts from './tts/index.js';
-import * as multimodal from './multimodal/index.js';
 
 export * from './vad.js';
 export * from './plugin.js';

@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream } from '../audio.js';
-import { findMicroTrackId } from '../utils.js';
-import type * as llm from '../llm/index.js';
-import { log } from '../log.js';
-import { BasicTranscriptionForwarder } from '../transcription.js';
+import type * as openai from '@livekit/agents-plugin-openai';
 import type {
   LocalTrackPublication,
   RemoteAudioTrack,
@@ -20,8 +16,12 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
+import { AudioByteStream } from '../audio.js';
+import type * as llm from '../llm/index.js';
+import { log } from '../log.js';
+import { BasicTranscriptionForwarder } from '../transcription.js';
+import { findMicroTrackId } from '../utils.js';
 import { AgentPlayout, type PlayoutHandle, proto } from './agent_playout.js';
-import type * as openai from '@livekit/agents-plugin-openai';
 
 type ImplOptions = {
   // functions: llm.FunctionContext;
@@ -87,7 +87,7 @@ export class MultimodalAgent {
 
         this.linkParticipant(participant.identity);
       });
-      
+
       this.room = room;
       this.participant = participant;
 
@@ -182,7 +182,7 @@ export class MultimodalAgent {
         }
       });
     });
-}
+  }
 
   // close() {
   //   if (!this.connected || !this.ws) return;
@@ -249,7 +249,11 @@ export class MultimodalAgent {
 
   private subscribeToMicrophone(): void {
     const readAudioStreamTask = async (audioStream: AudioStream) => {
-      const bstream = new AudioByteStream(proto.SAMPLE_RATE, proto.NUM_CHANNELS, proto.INPUT_PCM_FRAME_SIZE);
+      const bstream = new AudioByteStream(
+        proto.SAMPLE_RATE,
+        proto.NUM_CHANNELS,
+        proto.INPUT_PCM_FRAME_SIZE,
+      );
 
       for await (const frame of audioStream) {
         const audioData = frame.data;
@@ -292,9 +296,7 @@ export class MultimodalAgent {
               // Cleanup logic here
               reject(new Error('Task cancelled'));
             };
-            readAudioStreamTask(
-              new AudioStream(track, proto.SAMPLE_RATE, proto.NUM_CHANNELS),
-            )
+            readAudioStreamTask(new AudioStream(track, proto.SAMPLE_RATE, proto.NUM_CHANNELS))
               .then(resolve)
               .catch(reject);
           }),
