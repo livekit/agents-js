@@ -648,11 +648,9 @@ export class RealtimeSession extends EventEmitter {
     });
   }
 
-  private handleConversationItemTruncated(event: api_proto.ConversationItemTruncatedEvent): void {
-  }
+  private handleConversationItemTruncated(event: api_proto.ConversationItemTruncatedEvent): void {}
 
-  private handleConversationItemDeleted(event: api_proto.ConversationItemDeletedEvent): void {
-  }
+  private handleConversationItemDeleted(event: api_proto.ConversationItemDeletedEvent): void {}
 
   private handleResponseCreated(responseCreated: api_proto.ResponseCreatedEvent): void {
     const response = responseCreated.response;
@@ -779,11 +777,9 @@ export class RealtimeSession extends EventEmitter {
     this.emit(EventTypes.ResponseContentDone, content);
   }
 
-  private handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
-  }
+  private handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {}
 
-  private handleResponseTextDone(event: api_proto.ResponseTextDoneEvent): void {
-  }
+  private handleResponseTextDone(event: api_proto.ResponseTextDoneEvent): void {}
 
   private handleResponseAudioTranscriptDelta(
     event: api_proto.ResponseAudioTranscriptDeltaEvent,
@@ -823,16 +819,13 @@ export class RealtimeSession extends EventEmitter {
 
   private handleResponseFunctionCallArgumentsDelta(
     event: api_proto.ResponseFunctionCallArgumentsDeltaEvent,
-  ): void {
-  }
+  ): void {}
 
   private handleResponseFunctionCallArgumentsDone(
     event: api_proto.ResponseFunctionCallArgumentsDoneEvent,
-  ): void {
-  }
+  ): void {}
 
-  private handleRateLimitsUpdated(event: api_proto.RateLimitsUpdatedEvent): void {
-  }
+  private handleRateLimitsUpdated(event: api_proto.RateLimitsUpdatedEvent): void {}
 }
 
 // TODO function init
