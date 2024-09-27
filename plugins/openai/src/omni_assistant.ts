@@ -135,6 +135,33 @@ export class OmniAssistant {
     });
   }
 
+  // transcription completed
+  // InputTranscriptionCompleted
+  // const messageId = event.item_id;
+    // const transcription = event.transcript;
+    // if (!messageId || transcription === undefined) {
+    //   this.logger.error('Message ID or transcription not set');
+    //   return;
+    // }
+    // const participantIdentity = this.linkedParticipant?.identity;
+    // const trackSid = this.subscribedTrack?.sid;
+    // if (participantIdentity && trackSid) {
+    //   this.publishTranscription(participantIdentity, trackSid, transcription, true, messageId);
+    // } else {
+    //   this.logger.error('Participant or track not set');
+    // }
+
+
+  // speech started
+  // const messageId = event.item_id;
+    // const participantIdentity = this.linkedParticipant?.identity;
+    // const trackSid = this.subscribedTrack?.sid;
+    // if (participantIdentity && trackSid && messageId) {
+    //   this.publishTranscription(participantIdentity, trackSid, '', false, messageId);
+    // } else {
+    //   this.logger.error('Participant or track or itemId not set');
+    // }
+
   // close() {
   //   if (!this.connected || !this.ws) return;
   //   this.logger.debug('stopping assistant');

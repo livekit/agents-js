@@ -106,6 +106,16 @@ export interface RealtimeToolCall {
   toolCallID: string;
 }
 
+export interface InputTranscriptionCompleted {
+  itemId: string;
+  transcript: string;
+}
+
+export interface InputTranscriptionFailed {
+  itemId: string;
+  message: string;
+}
+
 class InputAudioBuffer {
   #session: RealtimeSession;
 
@@ -580,99 +590,62 @@ export class RealtimeSession extends EventEmitter {
   }
 
   private handleError(event: api_proto.ErrorEvent): void {
-    // TODO: Implement error handling
+    this.#logger.error('OpenAI S2S error %s', event.error);
   }
 
   private handleSessionCreated(event: api_proto.SessionCreatedEvent): void {
-    // TODO: Implement session created handling
+    this.#sessionId = event.session.id;
   }
 
-  private handleSessionUpdated(event: api_proto.SessionUpdatedEvent): void {
-    // TODO: Implement session updated handling
-  }
+  private handleSessionUpdated(event: api_proto.SessionUpdatedEvent): void {}
 
-  private handleConversationCreated(event: api_proto.ConversationCreatedEvent): void {
-    // TODO: Implement conversation created handling
-  }
+  private handleConversationCreated(event: api_proto.ConversationCreatedEvent): void {}
 
   private handleInputAudioBufferCommitted(event: api_proto.InputAudioBufferCommittedEvent): void {
-    // TODO: Implement input audio buffer committed handling
+    this.emit(EventTypes.InputSpeechCommitted);
   }
 
-  private handleInputAudioBufferCleared(event: api_proto.InputAudioBufferClearedEvent): void {
-    // TODO: Implement input audio buffer cleared handling
-  }
+  private handleInputAudioBufferCleared(event: api_proto.InputAudioBufferClearedEvent): void {}
 
   private handleInputAudioBufferSpeechStarted(
     event: api_proto.InputAudioBufferSpeechStartedEvent,
   ): void {
-    // const messageId = event.item_id;
-    // const participantIdentity = this.linkedParticipant?.identity;
-    // const trackSid = this.subscribedTrack?.sid;
-    // if (participantIdentity && trackSid && messageId) {
-    //   this.publishTranscription(participantIdentity, trackSid, '', false, messageId);
-    // } else {
-    //   this.logger.error('Participant or track or itemId not set');
-    // }
+    this.emit(EventTypes.InputSpeechStarted);
   }
 
   private handleInputAudioBufferSpeechStopped(
     event: api_proto.InputAudioBufferSpeechStoppedEvent,
   ): void {
-    // TODO: Implement input audio buffer speech stopped handling
+    this.emit(EventTypes.InputSpeechStopped);
   }
 
-  private handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void {
-    // if (event.item.type === 'function_call') {
-    //   const toolCall = event.item;
-    //   this.options.functions[toolCall.name].execute(toolCall.arguments).then((content) => {
-    //     this.thinking = false;
-    //     this.sendClientCommand({
-    //       type: proto.ClientEventType.ConversationItemCreate,
-    //       item: {
-    //         type: 'function_call_output',
-    //         call_id: toolCall.call_id,
-    //         output: content,
-    //       },
-    //     });
-    //     this.sendClientCommand({
-    //       type: proto.ClientEventType.ResponseCreate,
-    //       response: {},
-    //     });
-    //   });
-    // }
-  }
+  private handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void {}
 
   private handleConversationItemInputAudioTranscriptionCompleted(
     event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
   ): void {
-    // const messageId = event.item_id;
-    // const transcription = event.transcript;
-    // if (!messageId || transcription === undefined) {
-    //   this.logger.error('Message ID or transcription not set');
-    //   return;
-    // }
-    // const participantIdentity = this.linkedParticipant?.identity;
-    // const trackSid = this.subscribedTrack?.sid;
-    // if (participantIdentity && trackSid) {
-    //   this.publishTranscription(participantIdentity, trackSid, transcription, true, messageId);
-    // } else {
-    //   this.logger.error('Participant or track not set');
-    // }
+    const transcript = event.transcript;
+    this.emit(EventTypes.InputSpeechTranscriptionCompleted, {
+      itemId: event.item_id,
+      transcript: transcript,
+    });
   }
 
   private handleConversationItemInputAudioTranscriptionFailed(
     event: api_proto.ConversationItemInputAudioTranscriptionFailedEvent,
   ): void {
-    // TODO: Implement conversation item input audio transcription failed handling
+    const error = event.error;
+    this.#logger.error('OAI S2S failed to transcribe input audio: %s', error.message);
+    this.emit(EventTypes.InputSpeechTranscriptionFailed, {
+      itemId: event.item_id,
+      message: error.message,
+    });
   }
 
   private handleConversationItemTruncated(event: api_proto.ConversationItemTruncatedEvent): void {
-    // TODO: Implement conversation item truncated handling
   }
 
   private handleConversationItemDeleted(event: api_proto.ConversationItemDeletedEvent): void {
-    // TODO: Implement conversation item deleted handling
   }
 
   private handleResponseCreated(responseCreated: api_proto.ResponseCreatedEvent): void {
@@ -740,6 +713,7 @@ export class RealtimeSession extends EventEmitter {
     const outputIndex = event.output_index;
     const output = response.output[outputIndex];
 
+    // TODO: finish implementing
     // if (output.type === "function_call") {
     //   if (!this.#funcCtx) {
     //     this.#logger.error(
@@ -800,57 +774,85 @@ export class RealtimeSession extends EventEmitter {
   }
 
   private handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
-    // TODO: Implement response text delta handling
   }
 
   private handleResponseTextDone(event: api_proto.ResponseTextDoneEvent): void {
-    // TODO: Implement response text done handling
   }
 
   private handleResponseAudioTranscriptDelta(
     event: api_proto.ResponseAudioTranscriptDeltaEvent,
   ): void {
-    // TODO: Implement response audio transcript delta handling
+    const content = this.getContent({
+      response_id: event.response_id,
+      output_index: event.output_index,
+      content_index: event.content_index,
+    });
+    const transcript = event.delta;
+    content.text += transcript;
+
+    content.textStream.put(transcript);
   }
 
   private handleResponseAudioTranscriptDone(
     event: api_proto.ResponseAudioTranscriptDoneEvent,
   ): void {
-    // TODO: Implement response audio transcript done handling
+    // const content = this.getContent({
+    //   response_id: event.response_id,
+    //   output_index: event.output_index,
+    //   content_index: event.content_index,
+    // });
+    // content.textStream.close(); // TODO: implement close
   }
 
   private handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
-    // TODO: Implement response audio delta handling
+    const content = this.getContent(event);
+    const data = Buffer.from(event.delta, 'base64');
+    const audio = new AudioFrame(
+      new Int16Array(data.buffer),
+      api_proto.SAMPLE_RATE,
+      api_proto.NUM_CHANNELS,
+      data.length / 2,
+    );
+    content.audio.push(audio);
+
+    content.audioStream.put(audio);
   }
 
   private handleResponseAudioDone(event: api_proto.ResponseAudioDoneEvent): void {
-    // TODO: Implement response audio done handling
+    // const content = this.getContent(event);
+    // content.audioStream.close(); TODO: implement close
   }
 
   private handleResponseFunctionCallArgumentsDelta(
     event: api_proto.ResponseFunctionCallArgumentsDeltaEvent,
   ): void {
-    // TODO: Implement response function call arguments delta handling
   }
 
   private handleResponseFunctionCallArgumentsDone(
     event: api_proto.ResponseFunctionCallArgumentsDoneEvent,
   ): void {
-    // TODO: Implement response function call arguments done handling
   }
 
   private handleRateLimitsUpdated(event: api_proto.RateLimitsUpdatedEvent): void {
-    // TODO: Implement rate limits updated handling
   }
 }
 
-// TODO: implement for event emitting
-// interface InputTranscriptionCompleted {
-//   itemId: string;
-//   transcript: string;
-// }
-
-// interface InputTranscriptionFailed {
-//   itemId: string;
-//   message: string;
+// TODO function init
+// if (event.item.type === 'function_call') {
+//   const toolCall = event.item;
+//   this.options.functions[toolCall.name].execute(toolCall.arguments).then((content) => {
+//     this.thinking = false;
+//     this.sendClientCommand({
+//       type: proto.ClientEventType.ConversationItemCreate,
+//       item: {
+//         type: 'function_call_output',
+//         call_id: toolCall.call_id,
+//         output: content,
+//       },
+//     });
+//     this.sendClientCommand({
+//       type: proto.ClientEventType.ResponseCreate,
+//       response: {},
+//     });
+//   });
 // }
