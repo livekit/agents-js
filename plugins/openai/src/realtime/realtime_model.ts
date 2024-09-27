@@ -463,7 +463,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   #start(): Promise<void> {
     return new Promise(async (resolve, reject) => {
-      this.#ws = new WebSocket(`${this.#opts.baseURL}?model=gpt-4-turbo-preview`, {
+      this.#ws = new WebSocket(`${this.#opts.baseURL}?model=${this.#opts.model}`, {
         headers: {
           Authorization: `Bearer ${this.#opts.apiKey}`,
           'OpenAI-Beta': 'realtime=v1',

@@ -17,7 +17,8 @@
     "lint:fix": "turbo lint -- --fix",
     "test": "vitest run",
     "test:watch": "vitest",
-    "doc": "typedoc"
+    "doc": "typedoc",
+    "examples:minimal": "pnpm exec tsx examples/src/minimal_assistant.ts"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.1",

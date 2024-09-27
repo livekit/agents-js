@@ -7,7 +7,7 @@
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",
-    "minimal": "node dist/minimal_assistant.js dev"
+    "minimal": "pnpm exec tsx src/minimal_assistant.ts"
   },
   "devDependencies": {
     "typescript": "^5.0.0"
