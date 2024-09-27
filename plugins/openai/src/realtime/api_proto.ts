@@ -21,6 +21,29 @@ export enum AudioFormat {
   // G711_ALAW = 'g711-alaw',
 }
 
+export enum Role {
+  SYSTEM = 'system',
+  ASSISTANT = 'assistant',
+  USER = 'user',
+  TOOL = 'tool',
+}
+
+export enum GenerationFinishedReason {
+  STOP = 'stop',
+  MAX_TOKENS = 'max_tokens',
+  CONTENT_FILTER = 'content_filter',
+  INTERRUPT = 'interrupt',
+}
+
+export enum InputTranscriptionModel {
+  WHISPER_1 = 'whisper-1',
+}
+
+export enum Modality {
+  TEXT = 'text',
+  AUDIO = 'audio',
+}
+
 export interface Tool {
   type: 'function';
   name: string;
@@ -97,19 +120,19 @@ export interface BaseItem {
 
 export interface SystemMessageItem extends BaseItem {
   type: 'message';
-  role: 'system';
+  role: Role.SYSTEM;
   content: InputTextContent;
 }
 
 export interface UserMessageItem extends BaseItem {
   type: 'message';
-  role: 'user';
+  role: Role.USER;
   content: (InputTextContent | InputAudioContent)[];
 }
 
 export interface AssistantMessageItem extends BaseItem {
   type: 'message';
-  role: 'assistant';
+  role: Role.ASSISTANT;
   content: (TextContent | AudioContent)[];
 }
 
@@ -150,7 +173,7 @@ export interface SessionResource {
   tools: Tool[];
   tool_choice: ToolChoice; // default: "auto"
   temperature: number; // default: 0.8
-  // max_output_tokens: number | null; // FIXME: currently rejected by OpenAI and fails the whole update
+  max_response_output_tokens: number | null;
 }
 
 // Conversation Resource
@@ -226,7 +249,7 @@ export interface SessionUpdateEvent extends BaseClientEvent {
     tools: Tool[];
     tool_choice: ToolChoice;
     temperature: number;
-    max_output_tokens: number;
+    max_response_output_tokens: number;
   }>;
 }
 
@@ -290,7 +313,7 @@ export interface ResponseCreateEvent extends BaseClientEvent {
     tools?: Tool[];
     tool_choice: ToolChoice;
     temperature: number;
-    max_output_tokens: number;
+    max_response_output_tokens: number;
   }>;
 }
 
@@ -420,30 +443,31 @@ export interface ResponseDoneEvent extends BaseServerEvent {
   response: ResponseResource;
 }
 
-export interface ResponseOutputAddedEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseOutputAdded;
+export interface ResponseOutputItemAddedEvent extends BaseServerEvent {
+  type: ServerEventType.ResponseOutputItemAdded;
   response_id: string;
   output_index: number;
   item: ItemResource;
 }
 
-export interface ResponseOutputDoneEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseOutputDone;
+export interface ResponseOutputItemDoneEvent extends BaseServerEvent {
+  type: ServerEventType.ResponseOutputItemDone;
   response_id: string;
   output_index: number;
   item: ItemResource;
 }
 
-export interface ResponseContentAddedEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseContentAdded;
+export interface ResponseContentPartAddedEvent extends BaseServerEvent {
+  type: ServerEventType.ResponseContentPartAdded;
   response_id: string;
+  item_id: string;
   output_index: number;
   content_index: number;
   part: ContentPart;
 }
 
-export interface ResponseContentDoneEvent extends BaseServerEvent {
-  type: ServerEventType.ResponseContentDone;
+export interface ResponseContentPartDoneEvent extends BaseServerEvent {
+  type: ServerEventType.ResponseContentPartDone;
   response_id: string;
   output_index: number;
   content_index: number;
@@ -538,10 +562,10 @@ export enum ServerEventType {
   ConversationItemDeleted = 'conversation.item.deleted',
   ResponseCreated = 'response.created',
   ResponseDone = 'response.done',
-  ResponseOutputAdded = 'response.output.added',
-  ResponseOutputDone = 'response.output.done',
-  ResponseContentAdded = 'response.content.added',
-  ResponseContentDone = 'response.content.done',
+  ResponseOutputItemAdded = 'response.output_item.added',
+  ResponseOutputItemDone = 'response.output_item.done',
+  ResponseContentPartAdded = 'response.content_part.added',
+  ResponseContentPartDone = 'response.content_part.done',
   ResponseTextDelta = 'response.text.delta',
   ResponseTextDone = 'response.text.done',
   ResponseAudioTranscriptDelta = 'response.audio_transcript.delta',
@@ -569,10 +593,10 @@ export type ServerEvent =
   | ConversationItemDeletedEvent
   | ResponseCreatedEvent
   | ResponseDoneEvent
-  | ResponseOutputAddedEvent
-  | ResponseOutputDoneEvent
-  | ResponseContentAddedEvent
-  | ResponseContentDoneEvent
+  | ResponseOutputItemAddedEvent
+  | ResponseOutputItemDoneEvent
+  | ResponseContentPartAddedEvent
+  | ResponseContentPartDoneEvent
   | ResponseTextDeltaEvent
   | ResponseTextDoneEvent
   | ResponseAudioTranscriptDeltaEvent
