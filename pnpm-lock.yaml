@@ -139,6 +139,9 @@ importers:
 
   plugins/openai:
     dependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
       '@livekit/rtc-node':
         specifier: ^0.9.0
         version: 0.9.0
@@ -149,9 +152,6 @@ importers:
         specifier: ^8.16.0
         version: 8.17.0
     devDependencies:
-      '@livekit/agents':
-        specifier: workspace:*
-        version: link:../../agents
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)

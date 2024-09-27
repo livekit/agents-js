@@ -19,7 +19,7 @@
     "@types/node": "^22.5.5",
     "@types/ws": "^8.5.10",
     "typescript": "^5.0.0",
-    "@types/livekit-agents-plugin-openai": "workspace:*"
+    "@livekit/agents-plugin-openai": "workspace:*"
   },
   "dependencies": {
     "@livekit/protocol": "^1.21.0",
