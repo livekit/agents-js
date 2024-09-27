@@ -54,8 +54,8 @@ export class AgentPlayout {
     };
 
     const captureTask = async () => {
-      const samplesPerChannel = 1200;
-      const bstream = new AudioByteStream(24000, 1, samplesPerChannel);
+      const samplesPerChannel = OUTPUT_PCM_FRAME_SIZE;
+      const bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, samplesPerChannel);
 
       while (true) {
         const frame = await audioStream.get();
@@ -171,10 +171,10 @@ export class PlayoutHandle extends EventEmitter {
 
   get audioSamples(): number {
     if (this.totalPlayedTime !== undefined) {
-      return Math.floor(this.totalPlayedTime * 24000);
+      return Math.floor(this.totalPlayedTime * SAMPLE_RATE);
     }
 
-    return Math.floor(this.pushedDuration - this.#audioSource.queuedDuration * 24000);
+    return Math.floor(this.pushedDuration - this.#audioSource.queuedDuration * SAMPLE_RATE);
   }
 
   get textChars(): number {
