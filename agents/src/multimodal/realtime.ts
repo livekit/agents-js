@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { Queue } from '../utils.js';
 import { AudioFrame } from '@livekit/rtc-node';
 
+/** @internal */
 export interface RealtimeContent {
   responseId: string;
   itemId: string;
@@ -14,6 +15,7 @@ export interface RealtimeContent {
   toolCalls: RealtimeToolCall[];
 }
 
+/** @internal */
 export interface RealtimeOutput {
   responseId: string;
   itemId: string;
@@ -24,6 +26,7 @@ export interface RealtimeOutput {
   donePromise: () => Promise<void>;
 }
 
+/** @internal */
 export interface RealtimeResponse {
   id: string;
   status: string;
@@ -31,19 +34,23 @@ export interface RealtimeResponse {
   donePromise: () => Promise<void>;
 }
 
+/** @internal */
 export interface RealtimeToolCall {
   // Define properties for tool calls if needed
 }
 
+/** @internal */
 export interface InputSpeechCommitted {
   itemId: string;
 }
 
+/** @internal */
 export interface InputSpeechTranscriptionCompleted {
   itemId: string;
   transcript: string;
 }
 
+/** @internal */
 export abstract class RealtimeSession extends EventEmitter {
   abstract queueMsg(msg: any): void;
   abstract defaultConversation: {
@@ -53,6 +60,7 @@ export abstract class RealtimeSession extends EventEmitter {
   };
 }
 
+/** @internal */
 export abstract class RealtimeModel {
   abstract session(options: any): RealtimeSession;
   abstract close(): Promise<void>;

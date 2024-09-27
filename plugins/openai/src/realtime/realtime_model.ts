@@ -8,6 +8,7 @@ import { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter, once } from 'events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
+import * as realtime from '@livekit/agents';
 
 interface ModelOptions {
   modalities: ['text', 'audio'] | ['text'];
