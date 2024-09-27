@@ -6,7 +6,6 @@ import { findMicroTrackId } from '@livekit/agents';
 import { type llm, log } from '@livekit/agents';
 import { BasicTranscriptionForwarder } from '@livekit/agents';
 import type {
-  AudioFrameEvent,
   LocalTrackPublication,
   RemoteAudioTrack,
   RemoteParticipant,
@@ -14,8 +13,8 @@ import type {
 } from '@livekit/rtc-node';
 import {
   AudioSource,
+  AudioFrame,
   AudioStream,
-  AudioStreamEvent,
   LocalAudioTrack,
   RoomEvent,
   TrackPublishOptions,
@@ -264,16 +263,15 @@ export class OmniAssistant {
         api_proto.INPUT_PCM_FRAME_SIZE,
       );
 
-      audioStream.on(AudioStreamEvent.FrameReceived, (ev: AudioFrameEvent) => {
-        const audioData = ev.frame.data;
+      for await (const frame of audioStream) {
+        const audioData = frame.data;
         for (const frame of bstream.write(audioData.buffer)) {
           this.model.sessions[0].queueMsg({
-            // TODO: improve this
             type: api_proto.ClientEventType.InputAudioBufferAppend,
             audio: Buffer.from(frame.data.buffer).toString('base64'),
           });
         }
-      });
+      }
     };
 
     if (!this.linkedParticipant) {
