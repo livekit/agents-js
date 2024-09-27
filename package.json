@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm --filter=@livekit/agents-plugin-openai --filter=@livekit/agents --filter=examples run build",
-    "clean": "pnpm --filter=@livekit/agents-plugin-openai --filter=@livekit/agents --filter=examples run clean",
-    "clean:build": "pnpm --filter=@livekit/agents-plugin-openai --filter=@livekit/agents --filter=examples run clean:build",
+    "build": "pnpm --filter=@livekit/agents --filter=@livekit/agents-plugin-openai --filter=livekit-agents-examples run build",
+    "clean": "pnpm --filter=@livekit/agents --filter=@livekit/agents-plugin-openai --filter=livekit-agents-examples run clean",
+    "clean:build": "pnpm --filter=@livekit/agents --filter=@livekit/agents-plugin-openai --filter=livekit-agents-examples run clean:build",
     "build:agents": "turbo run build --filter=@livekit/agents...",
     "build:plugins": "turbo run build --filter=@livekit/agents-plugin-*...",
     "ci:publish": "pnpm build && changeset publish",
