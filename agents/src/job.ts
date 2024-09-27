@@ -9,7 +9,7 @@ import type {
   Room,
   RtcConfiguration,
 } from '@livekit/rtc-node';
-import { RoomEvent, TrackKind } from '@livekit/rtc-node';
+import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import type { Logger } from 'pino';
 import { log } from './log.js';
 
@@ -98,6 +98,22 @@ export class JobContext {
   /** Adds a promise to be awaited when {@link JobContext.shutdown | shutdown} is called. */
   addShutdownCallback(callback: () => Promise<void>) {
     this.shutdownCallbacks.push(callback);
+  }
+
+  async waitForParticipant(identity?: string): Promise<RemoteParticipant> {
+    if (!this.#room.isConnected) {
+      throw new Error('room is not connected');
+    }
+
+    for (const p of this.#room.remoteParticipants.values()) {
+      if (p.identity === identity && p.info.kind != ParticipantKind.AGENT) {
+        return p;
+      }
+    }
+
+    return new Promise((resolve) => {
+      this.#room.once(RoomEvent.ParticipantConnected, resolve);
+    });
   }
 
   /**
