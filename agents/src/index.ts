@@ -24,5 +24,6 @@ export * from './log.js';
 export * from './generator.js';
 export * from './tokenize.js';
 export * from './audio.js';
+export * from './transcription.js';
 
 export { cli, stt, tts, llm };
