@@ -9,20 +9,20 @@ import { EventEmitter, once } from 'events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
-export enum OmniAssistantEvents {
-  Error,
-  InputSpeechCommitted,
-  InputSpeechStarted,
-  InputSpeechStopped,
-  InputSpeechTranscriptionCompleted,
-  InputSpeechTranscriptionFailed,
-  ResponseContentAdded,
-  ResponseContentDone,
-  ResponseCreated,
-  ResponseDone,
-  ResponseOutputAdded,
-  ResponseOutputDone,
-  StartSession,
+export enum EventTypes {
+  Error = 'error',
+  InputSpeechCommitted = 'input_speech_committed',
+  InputSpeechStarted = 'input_speech_started',
+  InputSpeechStopped = 'input_speech_stopped',
+  InputSpeechTranscriptionCompleted = 'input_speech_transcription_completed',
+  InputSpeechTranscriptionFailed = 'input_speech_transcription_failed',
+  ResponseContentAdded = 'response_content_added',
+  ResponseContentDone = 'response_content_done',
+  ResponseCreated = 'response_created',
+  ResponseDone = 'response_done',
+  ResponseOutputAdded = 'response_output_added',
+  ResponseOutputDone = 'response_output_done',
+  StartSession = 'start_session',
 }
 
 interface ModelOptions {
@@ -567,7 +567,7 @@ export class RealtimeSession extends EventEmitter {
       donePromise: () => donePromise,
     };
     this.#pendingResponses[newResponse.id] = newResponse;
-    this.emit('response_created', newResponse);
+    this.emit(EventTypes.ResponseCreated, newResponse);
   }
 
   private handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
@@ -586,7 +586,7 @@ export class RealtimeSession extends EventEmitter {
 
   private handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
     const content = this.getContent(event);
-    this.emit('response_content_done', content);
+    this.emit(EventTypes.ResponseContentDone, content);
   }
 
   private handleResponseAudioTranscriptDelta(
@@ -638,7 +638,7 @@ export class RealtimeSession extends EventEmitter {
       toolCalls: [],
     };
     output.content.push(newContent);
-    this.emit('response_content_added', newContent);
+    this.emit(EventTypes.ResponseContentAdded, newContent);
   }
 
   private handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
@@ -674,7 +674,7 @@ export class RealtimeSession extends EventEmitter {
         }),
     };
     response.output.push(newOutput);
-    this.emit('response_output_added', newOutput);
+    this.emit(EventTypes.ResponseOutputAdded, newOutput);
   }
 
   private handleMessageAdded(event: api_proto.ConversationItemCreatedEvent): void {
@@ -721,7 +721,7 @@ export class RealtimeSession extends EventEmitter {
     const responseId = responseData.id;
     const response = this.#pendingResponses[responseId];
     response.donePromise();
-    this.emit('response_done', response);
+    this.emit(EventTypes.ResponseDone, response);
   }
 
   private handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
@@ -757,7 +757,7 @@ export class RealtimeSession extends EventEmitter {
     // }
 
     output.donePromise();
-    this.emit('response_output_done', output);
+    this.emit(EventTypes.ResponseOutputDone, output);
   }
 
   private handleResponseAudioDone(event: api_proto.ResponseAudioDoneEvent): void {
