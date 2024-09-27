@@ -8,67 +8,147 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { type AudioSource } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { NUM_CHANNELS, OUTPUT_PCM_FRAME_SIZE, SAMPLE_RATE } from './realtime/api_proto.js';
+import { text } from 'stream/consumers';
 
 export class AgentPlayout {
   #audioSource: AudioSource;
-  #currentPlayoutHandle: PlayoutHandle | null;
-  #currentPlayoutTask: Promise<void> | null;
+  #playoutPromise: Promise<void> | null;
 
   constructor(audioSource: AudioSource) {
     this.#audioSource = audioSource;
-    this.#currentPlayoutHandle = null;
-    this.#currentPlayoutTask = null;
+    this.#playoutTask = null;
   }
 
   play(
-    messageId: string,
+    itemId: string,
+    contentIndex: number,
     transcriptionFwd: TranscriptionForwarder,
-    playoutQueue: Queue<AudioFrame | null>,
+    textStream: Queue<string | null>,
+    audioStream: Queue<AudioFrame | null>,
   ): PlayoutHandle {
-    if (this.#currentPlayoutHandle) {
-      this.#currentPlayoutHandle.interrupt();
-    }
-    this.#currentPlayoutHandle = new PlayoutHandle(messageId, transcriptionFwd, playoutQueue);
-    this.#currentPlayoutTask = this.playoutTask(
-      this.#currentPlayoutTask,
-      this.#currentPlayoutHandle,
+    const handle = new PlayoutHandle(this.#audioSource, itemId, contentIndex, transcriptionFwd);
+    this.#playoutPromise = this.playoutTask(
+      this.#playoutPromise,
+      handle,
+      textStream,
+      audioStream
     );
-    return this.#currentPlayoutHandle;
+    return handle;
   }
 
-  private async playoutTask(oldTask: Promise<void> | null, handle: PlayoutHandle): Promise<void> {
-    let firstFrame = true;
-    try {
-      const bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, OUTPUT_PCM_FRAME_SIZE);
+  private async playoutTask(oldPromise: Promise<void> | null, handle: PlayoutHandle, textStream: Queue<string | null>, audioStream: Queue<AudioFrame | null>): Promise<void> {
+    if (oldPromise) {
+      // TODO: cancel old task
+      // oldPromise.cancel();
+    }
 
-      while (!handle.interrupted) {
-        const frame = await handle.playoutQueue.get();
+    let firstFrame = true;
+    
+    const playTextStream = async () => {
+      while (true) {
+        const text = await textStream.get();
+        if (text === null) break;
+        handle.transcriptionFwd.pushText(text);
+      }
+      handle.transcriptionFwd.markTextComplete();
+    };
+
+    const captureTask = async () => {
+      const samplesPerChannel = 1200;
+      const bstream = new AudioByteStream(24000, 1, samplesPerChannel);
+
+      while (true) {
+        const frame = await audioStream.get();
         if (frame === null) break;
+        
         if (firstFrame) {
           handle.transcriptionFwd.start();
           firstFrame = false;
         }
 
-        for (const f of bstream.write(frame.data.buffer)) {
-          handle.playedAudioSamples += f.samplesPerChannel;
-          if (handle.interrupted) break;
+        handle.transcriptionFwd.pushAudio(frame);
 
+        for (const f of bstream.write(frame.data)) {
+          handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
           await this.#audioSource.captureFrame(f);
         }
       }
 
-      if (!handle.interrupted) {
-        for (const f of bstream.flush()) {
-          await this.#audioSource.captureFrame(f);
-        }
+      for (const f of bstream.flush()) {
+        handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
+        await this.#audioSource.captureFrame(f);
       }
+
+      handle.transcriptionFwd.markAudioComplete();
+
+      await this.#audioSource.waitForPlayout();
+    };
+
+    const readTextTaskPromise = playTextStream();
+    const captureTaskPromise = captureTask();
+
+    try {
+      await Promise.race([captureTaskPromise, handle.intPromise]);
     } finally {
+      // TODO: cancel tasks
+      // if (!captureTaskPromise.isCancelled) {
+      //   captureTaskPromise.cancel();
+      // }
+
+      handle.totalPlayedTime = handle.pushedDuration - this.#audioSource.queuedDuration;
+
+      // TODO: handle errors
+      // if (handle.interrupted || captureTaskPromise.error) {
+      //   this.#audioSource.clearQueue(); // make sure to remove any queued frames
+      // }
+
+      // TODO: cancel tasks
+      // if (!readTextTask.isCancelled) {
+      //   readTextTask.cancel();
+      // }
+
       if (!firstFrame && !handle.interrupted) {
         handle.transcriptionFwd.markTextComplete();
       }
+
+      handle.emit('done');
       await handle.transcriptionFwd.close(handle.interrupted);
-      handle.complete();
     }
+
+
+
+    // let firstFrame = true;
+    // try {
+    //   const bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, OUTPUT_PCM_FRAME_SIZE);
+
+    //   while (!handle.interrupted) {
+    //     const frame = await handle.playoutQueue.get();
+    //     if (frame === null) break;
+    //     if (firstFrame) {
+    //       handle.transcriptionFwd.start();
+    //       firstFrame = false;
+    //     }
+
+    //     for (const f of bstream.write(frame.data.buffer)) {
+    //       handle.playedAudioSamples += f.samplesPerChannel;
+    //       if (handle.interrupted) break;
+
+    //       await this.#audioSource.captureFrame(f);
+    //     }
+    //   }
+
+    //   if (!handle.interrupted) {
+    //     for (const f of bstream.flush()) {
+    //       await this.#audioSource.captureFrame(f);
+    //     }
+    //   }
+    // } finally {
+    //   if (!firstFrame && !handle.interrupted) {
+    //     handle.transcriptionFwd.markTextComplete();
+    //   }
+    //   await handle.transcriptionFwd.close(handle.interrupted);
+    //   handle.complete();
+    // }
   }
 }
 
@@ -76,13 +156,19 @@ export class PlayoutHandle extends EventEmitter {
   #audioSource: AudioSource;
   #itemId: string;
   #contentIndex: number;
-  #transcriptionFwd: TranscriptionForwarder;
-  #done: boolean;
-  #donePromise: Promise<void>;
-  #intPromise: Promise<void>;
+  /** @internal */
+  transcriptionFwd: TranscriptionForwarder;
+  #donePromiseResolved: boolean;
+  /** @internal */
+  donePromise: Promise<void>;
+  #intPromiseResolved: boolean;
+  /** @internal */
+  intPromise: Promise<void>;
   #interrupted: boolean;
-  #pushedDuration: number;
-  #totalPlayedTime: number | undefined; // Set when playout is done
+  /** @internal */
+  pushedDuration: number;
+  /** @internal */
+  totalPlayedTime: number | undefined; // Set when playout is done
 
   constructor(
     audioSource: AudioSource,
@@ -94,23 +180,24 @@ export class PlayoutHandle extends EventEmitter {
     this.#audioSource = audioSource;
     this.#itemId = itemId;
     this.#contentIndex = contentIndex;
-    this.#transcriptionFwd = transcriptionFwd;
-    this.#done = false;
-    this.#donePromise = new Promise((resolve) => {
+    this.transcriptionFwd = transcriptionFwd;
+    this.#donePromiseResolved = false;
+    this.donePromise = new Promise((resolve) => {
       this.once('done', () => {
-        this.#done = true;
+        this.#donePromiseResolved = true;
         resolve();
       });
     });
-    this.#intPromise = new Promise((resolve) => {
+    this.#intPromiseResolved = false;
+    this.intPromise = new Promise((resolve) => {
       this.once('interrupt', () => {
-        this.#interrupted = true;
+        this.#intPromiseResolved = true;
         resolve();
       });
     });
     this.#interrupted = false;
-    this.#pushedDuration = 0;
-    this.#totalPlayedTime = undefined;
+    this.pushedDuration = 0;
+    this.totalPlayedTime = undefined;
   }
 
   get itemId(): string {
@@ -118,16 +205,16 @@ export class PlayoutHandle extends EventEmitter {
   }
 
   get audioSamples(): number {
-    if (this.#totalPlayedTime !== undefined) {
-      return Math.floor(this.#totalPlayedTime * 24000);
+    if (this.totalPlayedTime !== undefined) {
+      return Math.floor(this.totalPlayedTime * 24000);
     }
 
     // TODO: this is wrong, we need to get the actual duration from the audio source
-    return Math.floor((this.#pushedDuration/* - this.#audioSource.queuedDuration*/) * 24000);
+    return Math.floor((this.pushedDuration - this.#audioSource.queuedDuration) * 24000);
   }
 
   get textChars(): number {
-    return this.#transcriptionFwd.currentCharacterIndex; // TODO: length of played text
+    return this.transcriptionFwd.currentCharacterIndex; // TODO: length of played text
   }
 
   get contentIndex(): number {
@@ -138,12 +225,13 @@ export class PlayoutHandle extends EventEmitter {
     return this.#interrupted;
   }
 
-  done() {
-    return this.#done || this.#interrupted;
+  get done(): boolean {
+    return this.#donePromiseResolved || this.#interrupted;
   }
 
   interrupt() {
-    if (this.#done) return;
+    if (this.#donePromiseResolved) return;
+    this.#interrupted = true;
     this.emit('interrupt');
   }
 }
