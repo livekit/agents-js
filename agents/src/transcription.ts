@@ -37,7 +37,7 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
   start(): void {
     if (!this.#isRunning) {
       this.#isRunning = true;
-      this.startPublishingLoop().catch((error) => {
+      this.#startPublishingLoop().catch((error) => {
         log().error('Error in publishing loop:', error);
         this.#isRunning = false;
       });
@@ -52,21 +52,21 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     this.#currentText += text;
   }
 
-  private textIsComplete: boolean = false;
-  private audioIsComplete: boolean = false;
+  #textIsComplete: boolean = false;
+  #audioIsComplete: boolean = false;
 
   markTextComplete(): void {
-    this.textIsComplete = true;
-    this.adjustTimingIfBothFinished();
+    this.#textIsComplete = true;
+    this.#adjustTimingIfBothFinished();
   }
 
   markAudioComplete(): void {
-    this.audioIsComplete = true;
-    this.adjustTimingIfBothFinished();
+    this.#audioIsComplete = true;
+    this.#adjustTimingIfBothFinished();
   }
 
-  private adjustTimingIfBothFinished(): void {
-    if (this.textIsComplete && this.audioIsComplete) {
+  #adjustTimingIfBothFinished(): void {
+    if (this.#textIsComplete && this.#audioIsComplete) {
       const actualDuration = this.#totalAudioDuration;
       if (actualDuration > 0 && this.#currentText.length > 0) {
         this.#charsPerSecond = this.#currentText.length / actualDuration;
@@ -74,21 +74,21 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     }
   }
 
-  private computeSleepInterval(): number {
+  #computeSleepInterval(): number {
     return Math.min(Math.max(1 / this.#charsPerSecond, 0.0625), 0.5);
   }
 
-  private async startPublishingLoop(): Promise<void> {
+  async #startPublishingLoop(): Promise<void> {
     this.#isRunning = true;
-    let sleepInterval = this.computeSleepInterval();
+    let sleepInterval = this.#computeSleepInterval();
     let isComplete = false;
     while (this.#isRunning && !isComplete) {
       this.#currentPlayoutTime += sleepInterval;
       this.currentCharacterIndex = Math.floor(this.#currentPlayoutTime * this.#charsPerSecond);
-      isComplete = this.textIsComplete && this.currentCharacterIndex >= this.#currentText.length;
-      await this.publishTranscription(false);
+      isComplete = this.#textIsComplete && this.currentCharacterIndex >= this.#currentText.length;
+      await this.#publishTranscription(false);
       if (this.#isRunning && !isComplete) {
-        sleepInterval = this.computeSleepInterval();
+        sleepInterval = this.#computeSleepInterval();
         await new Promise((resolve) => setTimeout(resolve, sleepInterval * 1000));
       }
     }
@@ -98,7 +98,7 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     }
   }
 
-  private async publishTranscription(final: boolean): Promise<void> {
+  async #publishTranscription(final: boolean): Promise<void> {
     const textToPublish = this.#currentText.slice(0, this.currentCharacterIndex);
     await this.#room.localParticipant?.publishTranscription({
       participantIdentity: this.#participantIdentity,
@@ -123,6 +123,6 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     if (!interrupt) {
       this.currentCharacterIndex = this.#currentText.length;
     }
-    await this.publishTranscription(true);
+    await this.#publishTranscription(true);
   }
 }

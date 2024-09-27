@@ -75,15 +75,15 @@ export class MultimodalAgent {
     };
   }
 
-  private started: boolean = false;
-  private participant: RemoteParticipant | string | null = null;
-  private agentPublication: LocalTrackPublication | null = null;
-  private localTrackSid: string | null = null;
-  private localSource: AudioSource | null = null;
-  private agentPlayout: AgentPlayout | null = null;
-  private playingHandle: PlayoutHandle | undefined = undefined;
-  private logger = log();
-  private session: RealtimeSession | null = null;
+  #started: boolean = false;
+  #participant: RemoteParticipant | string | null = null;
+  #agentPublication: LocalTrackPublication | null = null;
+  #localTrackSid: string | null = null;
+  #localSource: AudioSource | null = null;
+  #agentPlayout: AgentPlayout | null = null;
+  #playingHandle: PlayoutHandle | undefined = undefined;
+  #logger = log();
+  #session: RealtimeSession | null = null;
 
   // get funcCtx(): llm.FunctionContext {
   //   return this.options.functions;
@@ -99,8 +99,8 @@ export class MultimodalAgent {
 
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise(async (resolve, reject) => {
-      if (this.started) {
-        this.logger.warn('MultimodalAgent already started');
+      if (this.#started) {
+        this.#logger.warn('MultimodalAgent already started');
         resolve(); // TODO: throw error?
         return;
       }
@@ -110,59 +110,59 @@ export class MultimodalAgent {
           return;
         }
 
-        this.linkParticipant(participant.identity);
+        this.#linkParticipant(participant.identity);
       });
 
       this.room = room;
-      this.participant = participant;
+      this.#participant = participant;
 
-      this.localSource = new AudioSource(24000, 1);
-      this.agentPlayout = new AgentPlayout(
-        this.localSource,
+      this.#localSource = new AudioSource(24000, 1);
+      this.#agentPlayout = new AgentPlayout(
+        this.#localSource,
         this.model.sampleRate,
         this.model.numChannels,
         this.model.inFrameSize,
         this.model.outFrameSize,
       );
-      const track = LocalAudioTrack.createAudioTrack('assistant_voice', this.localSource);
+      const track = LocalAudioTrack.createAudioTrack('assistant_voice', this.#localSource);
       const options = new TrackPublishOptions();
       options.source = TrackSource.SOURCE_MICROPHONE;
-      this.agentPublication = (await room.localParticipant?.publishTrack(track, options)) || null;
-      if (!this.agentPublication) {
-        this.logger.error('Failed to publish track');
+      this.#agentPublication = (await room.localParticipant?.publishTrack(track, options)) || null;
+      if (!this.#agentPublication) {
+        this.#logger.error('Failed to publish track');
         reject(new Error('Failed to publish track'));
         return;
       }
 
-      await this.agentPublication.waitForSubscription();
+      await this.#agentPublication.waitForSubscription();
 
       if (participant) {
         if (typeof participant === 'string') {
-          this.linkParticipant(participant);
+          this.#linkParticipant(participant);
         } else {
-          this.linkParticipant(participant.identity);
+          this.#linkParticipant(participant.identity);
         }
       } else {
         // No participant specified, try to find the first participant in the room
         for (const participant of room.remoteParticipants.values()) {
-          this.linkParticipant(participant.identity);
+          this.#linkParticipant(participant.identity);
           break;
         }
       }
 
-      this.session = this.model.session({});
+      this.#session = this.model.session({});
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.session.on('response_content_added', (message: any) => {
+      this.#session.on('response_content_added', (message: any) => {
         // openai.realtime.RealtimeContent
         const trFwd = new BasicTranscriptionForwarder(
           this.room!,
           this.room!.localParticipant!.identity,
-          this.getLocalTrackSid()!,
+          this.#getLocalTrackSid()!,
           message.responseId,
         );
 
-        this.playingHandle = this.agentPlayout?.play(
+        this.#playingHandle = this.#agentPlayout?.play(
           message.itemId,
           message.contentIndex,
           trFwd,
@@ -172,41 +172,41 @@ export class MultimodalAgent {
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.session.on('input_speech_committed', (ev: any) => {
+      this.#session.on('input_speech_committed', (ev: any) => {
         // openai.realtime.InputSpeechCommittedEvent
         const participantIdentity = this.linkedParticipant?.identity;
         const trackSid = this.subscribedTrack?.sid;
         if (participantIdentity && trackSid) {
-          this.publishTranscription(participantIdentity, trackSid, '', true, ev.itemId);
+          this.#publishTranscription(participantIdentity, trackSid, '', true, ev.itemId);
         } else {
-          this.logger.error('Participant or track not set');
+          this.#logger.error('Participant or track not set');
         }
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.session.on('input_speech_transcription_completed', (ev: any) => {
+      this.#session.on('input_speech_transcription_completed', (ev: any) => {
         // openai.realtime.InputSpeechTranscriptionCompletedEvent
         const transcription = ev.transcript;
         const participantIdentity = this.linkedParticipant?.identity;
         const trackSid = this.subscribedTrack?.sid;
         if (participantIdentity && trackSid) {
-          this.publishTranscription(participantIdentity, trackSid, transcription, true, ev.itemId);
+          this.#publishTranscription(participantIdentity, trackSid, transcription, true, ev.itemId);
         } else {
-          this.logger.error('Participant or track not set');
+          this.#logger.error('Participant or track not set');
         }
       });
 
-      this.session.on('input_speech_started', () => {
-        if (this.playingHandle && !this.playingHandle.done) {
-          this.playingHandle.interrupt();
+      this.#session.on('input_speech_started', () => {
+        if (this.#playingHandle && !this.#playingHandle.done) {
+          this.#playingHandle.interrupt();
 
-          this.session!.defaultConversation.item.truncate(
-            this.playingHandle.itemId,
-            this.playingHandle.contentIndex,
-            Math.floor((this.playingHandle.audioSamples / 24000) * 1000),
+          this.#session!.defaultConversation.item.truncate(
+            this.#playingHandle.itemId,
+            this.#playingHandle.contentIndex,
+            Math.floor((this.#playingHandle.audioSamples / 24000) * 1000),
           );
 
-          this.playingHandle = undefined;
+          this.#playingHandle = undefined;
         }
       });
     });
@@ -254,28 +254,28 @@ export class MultimodalAgent {
   //   }
   // }
 
-  private linkParticipant(participantIdentity: string): void {
+  #linkParticipant(participantIdentity: string): void {
     if (!this.room) {
-      this.logger.error('Room is not set');
+      this.#logger.error('Room is not set');
       return;
     }
 
     this.linkedParticipant = this.room.remoteParticipants.get(participantIdentity) || null;
     if (!this.linkedParticipant) {
-      this.logger.error(`Participant with identity ${participantIdentity} not found`);
+      this.#logger.error(`Participant with identity ${participantIdentity} not found`);
       return;
     }
 
     if (this.linkedParticipant.trackPublications.size > 0) {
-      this.subscribeToMicrophone();
+      this.#subscribeToMicrophone();
     } else {
       this.room.on(RoomEvent.TrackPublished, () => {
-        this.subscribeToMicrophone();
+        this.#subscribeToMicrophone();
       });
     }
   }
 
-  private subscribeToMicrophone(): void {
+  #subscribeToMicrophone(): void {
     const readAudioStreamTask = async (audioStream: AudioStream) => {
       const bstream = new AudioByteStream(
         this.model.sampleRate,
@@ -286,7 +286,7 @@ export class MultimodalAgent {
       for await (const frame of audioStream) {
         const audioData = frame.data;
         for (const frame of bstream.write(audioData.buffer)) {
-          this.session!.queueMsg({
+          this.#session!.queueMsg({
             type: 'input_audio_buffer.append',
             audio: Buffer.from(frame.data.buffer).toString('base64'),
           });
@@ -295,7 +295,7 @@ export class MultimodalAgent {
     };
 
     if (!this.linkedParticipant) {
-      this.logger.error('Participant is not set');
+      this.#logger.error('Participant is not set');
       return;
     }
 
@@ -335,25 +335,25 @@ export class MultimodalAgent {
     }
   }
 
-  private getLocalTrackSid(): string | null {
-    if (!this.localTrackSid && this.room && this.room.localParticipant) {
-      this.localTrackSid = findMicroTrackId(this.room, this.room.localParticipant?.identity);
+  #getLocalTrackSid(): string | null {
+    if (!this.#localTrackSid && this.room && this.room.localParticipant) {
+      this.#localTrackSid = findMicroTrackId(this.room, this.room.localParticipant?.identity);
     }
-    return this.localTrackSid;
+    return this.#localTrackSid;
   }
 
-  private publishTranscription(
+  #publishTranscription(
     participantIdentity: string,
     trackSid: string,
     text: string,
     isFinal: boolean,
     id: string,
   ): void {
-    this.logger.info(
+    this.#logger.info(
       `Publishing transcription ${participantIdentity} ${trackSid} ${text} ${isFinal} ${id}`,
     );
     if (!this.room?.localParticipant) {
-      this.logger.error('Room or local participant not set');
+      this.#logger.error('Room or local participant not set');
       return;
     }
 

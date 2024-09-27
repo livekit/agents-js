@@ -482,88 +482,88 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         this.#logger.debug(`<- ${JSON.stringify(this.#loggableEvent(event))}`);
         switch (event.type) {
           case 'error':
-            this.handleError(event);
+            this.#handleError(event);
             break;
           case 'session.created':
-            this.handleSessionCreated(event);
+            this.#handleSessionCreated(event);
             break;
           case 'session.updated':
-            this.handleSessionUpdated(event);
+            this.#handleSessionUpdated(event);
             break;
           case 'conversation.created':
-            this.handleConversationCreated(event);
+            this.#handleConversationCreated(event);
             break;
           case 'input_audio_buffer.committed':
-            this.handleInputAudioBufferCommitted(event);
+            this.#handleInputAudioBufferCommitted(event);
             break;
           case 'input_audio_buffer.cleared':
-            this.handleInputAudioBufferCleared(event);
+            this.#handleInputAudioBufferCleared(event);
             break;
           case 'input_audio_buffer.speech_started':
-            this.handleInputAudioBufferSpeechStarted(event);
+            this.#handleInputAudioBufferSpeechStarted(event);
             break;
           case 'input_audio_buffer.speech_stopped':
-            this.handleInputAudioBufferSpeechStopped(event);
+            this.#handleInputAudioBufferSpeechStopped(event);
             break;
           case 'conversation.item.created':
-            this.handleConversationItemCreated(event);
+            this.#handleConversationItemCreated(event);
             break;
           case 'conversation.item.input_audio_transcription.completed':
-            this.handleConversationItemInputAudioTranscriptionCompleted(event);
+            this.#handleConversationItemInputAudioTranscriptionCompleted(event);
             break;
           case 'conversation.item.input_audio_transcription.failed':
-            this.handleConversationItemInputAudioTranscriptionFailed(event);
+            this.#handleConversationItemInputAudioTranscriptionFailed(event);
             break;
           case 'conversation.item.truncated':
-            this.handleConversationItemTruncated(event);
+            this.#handleConversationItemTruncated(event);
             break;
           case 'conversation.item.deleted':
-            this.handleConversationItemDeleted(event);
+            this.#handleConversationItemDeleted(event);
             break;
           case 'response.created':
-            this.handleResponseCreated(event);
+            this.#handleResponseCreated(event);
             break;
           case 'response.done':
-            this.handleResponseDone(event);
+            this.#handleResponseDone(event);
             break;
           case 'response.output_item.added':
-            this.handleResponseOutputItemAdded(event);
+            this.#handleResponseOutputItemAdded(event);
             break;
           case 'response.output_item.done':
-            this.handleResponseOutputItemDone(event);
+            this.#handleResponseOutputItemDone(event);
             break;
           case 'response.content_part.added':
-            this.handleResponseContentPartAdded(event);
+            this.#handleResponseContentPartAdded(event);
             break;
           case 'response.content_part.done':
-            this.handleResponseContentPartDone(event);
+            this.#handleResponseContentPartDone(event);
             break;
           case 'response.text.delta':
-            this.handleResponseTextDelta(event);
+            this.#handleResponseTextDelta(event);
             break;
           case 'response.text.done':
-            this.handleResponseTextDone(event);
+            this.#handleResponseTextDone(event);
             break;
           case 'response.audio_transcript.delta':
-            this.handleResponseAudioTranscriptDelta(event);
+            this.#handleResponseAudioTranscriptDelta(event);
             break;
           case 'response.audio_transcript.done':
-            this.handleResponseAudioTranscriptDone(event);
+            this.#handleResponseAudioTranscriptDone(event);
             break;
           case 'response.audio.delta':
-            this.handleResponseAudioDelta(event);
+            this.#handleResponseAudioDelta(event);
             break;
           case 'response.audio.done':
-            this.handleResponseAudioDone(event);
+            this.#handleResponseAudioDone(event);
             break;
           case 'response.function_call_arguments.delta':
-            this.handleResponseFunctionCallArgumentsDelta(event);
+            this.#handleResponseFunctionCallArgumentsDelta(event);
             break;
           case 'response.function_call_arguments.done':
-            this.handleResponseFunctionCallArgumentsDone(event);
+            this.#handleResponseFunctionCallArgumentsDone(event);
             break;
           case 'rate_limits.updated':
-            this.handleRateLimitsUpdated(event);
+            this.#handleRateLimitsUpdated(event);
             break;
         }
       };
@@ -599,44 +599,44 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     throw new Error('Not implemented');
   }
 
-  private getContent(ptr: ContentPtr): RealtimeContent {
+  #getContent(ptr: ContentPtr): RealtimeContent {
     const response = this.#pendingResponses[ptr.response_id];
     const output = response.output[ptr.output_index];
     const content = output.content[ptr.content_index];
     return content;
   }
 
-  private handleError(event: api_proto.ErrorEvent): void {
+  #handleError(event: api_proto.ErrorEvent): void {
     this.#logger.error(`OpenAI S2S error ${event.error}`);
   }
 
-  private handleSessionCreated(event: api_proto.SessionCreatedEvent): void {
+  #handleSessionCreated(event: api_proto.SessionCreatedEvent): void {
     this.#sessionId = event.session.id;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleSessionUpdated(event: api_proto.SessionUpdatedEvent): void {}
+  #handleSessionUpdated(event: api_proto.SessionUpdatedEvent): void {}
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleConversationCreated(event: api_proto.ConversationCreatedEvent): void {}
+  #handleConversationCreated(event: api_proto.ConversationCreatedEvent): void {}
 
-  private handleInputAudioBufferCommitted(event: api_proto.InputAudioBufferCommittedEvent): void {
+  #handleInputAudioBufferCommitted(event: api_proto.InputAudioBufferCommittedEvent): void {
     this.emit('input_speech_committed', {
       itemId: event.item_id,
     });
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleInputAudioBufferCleared(event: api_proto.InputAudioBufferClearedEvent): void {}
+  #handleInputAudioBufferCleared(event: api_proto.InputAudioBufferClearedEvent): void {}
 
-  private handleInputAudioBufferSpeechStarted(
+  #handleInputAudioBufferSpeechStarted(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.InputAudioBufferSpeechStartedEvent,
   ): void {
     this.emit('input_speech_started');
   }
 
-  private handleInputAudioBufferSpeechStopped(
+  #handleInputAudioBufferSpeechStopped(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.InputAudioBufferSpeechStoppedEvent,
   ): void {
@@ -644,9 +644,9 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void {}
+  #handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void {}
 
-  private handleConversationItemInputAudioTranscriptionCompleted(
+  #handleConversationItemInputAudioTranscriptionCompleted(
     event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
   ): void {
     const transcript = event.transcript;
@@ -656,7 +656,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     });
   }
 
-  private handleConversationItemInputAudioTranscriptionFailed(
+  #handleConversationItemInputAudioTranscriptionFailed(
     event: api_proto.ConversationItemInputAudioTranscriptionFailedEvent,
   ): void {
     const error = event.error;
@@ -668,12 +668,12 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleConversationItemTruncated(event: api_proto.ConversationItemTruncatedEvent): void {}
+  #handleConversationItemTruncated(event: api_proto.ConversationItemTruncatedEvent): void {}
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleConversationItemDeleted(event: api_proto.ConversationItemDeletedEvent): void {}
+  #handleConversationItemDeleted(event: api_proto.ConversationItemDeletedEvent): void {}
 
-  private handleResponseCreated(responseCreated: api_proto.ResponseCreatedEvent): void {
+  #handleResponseCreated(responseCreated: api_proto.ResponseCreatedEvent): void {
     const response = responseCreated.response;
     const donePromise = new Promise<void>((resolve) => {
       this.once('response_done', () => resolve());
@@ -688,7 +688,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     this.emit('response_created', newResponse);
   }
 
-  private handleResponseDone(event: api_proto.ResponseDoneEvent): void {
+  #handleResponseDone(event: api_proto.ResponseDoneEvent): void {
     const responseData = event.response;
     const responseId = responseData.id;
     const response = this.#pendingResponses[responseId];
@@ -696,7 +696,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     this.emit('response_done', response);
   }
 
-  private handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
+  #handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
     const responseId = event.response_id;
     const response = this.#pendingResponses[responseId];
     const itemData = event.item;
@@ -732,7 +732,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     this.emit('response_output_added', newOutput);
   }
 
-  private handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
+  #handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
     const responseId = event.response_id;
     const response = this.#pendingResponses[responseId];
     const outputIndex = event.output_index;
@@ -769,7 +769,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     this.emit('response_output_done', output);
   }
 
-  private handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
+  #handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
     const responseId = event.response_id;
     const response = this.#pendingResponses[responseId];
     const outputIndex = event.output_index;
@@ -793,36 +793,32 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     this.emit('response_content_added', newContent);
   }
 
-  private handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
-    const content = this.getContent(event);
+  #handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
+    const content = this.#getContent(event);
     this.emit('response_content_done', content);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {}
+  #handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {}
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleResponseTextDone(event: api_proto.ResponseTextDoneEvent): void {}
+  #handleResponseTextDone(event: api_proto.ResponseTextDoneEvent): void {}
 
-  private handleResponseAudioTranscriptDelta(
-    event: api_proto.ResponseAudioTranscriptDeltaEvent,
-  ): void {
-    const content = this.getContent(event);
+  #handleResponseAudioTranscriptDelta(event: api_proto.ResponseAudioTranscriptDeltaEvent): void {
+    const content = this.#getContent(event);
     const transcript = event.delta;
     content.text += transcript;
 
     content.textStream.put(transcript);
   }
 
-  private handleResponseAudioTranscriptDone(
-    event: api_proto.ResponseAudioTranscriptDoneEvent,
-  ): void {
-    const content = this.getContent(event);
+  #handleResponseAudioTranscriptDone(event: api_proto.ResponseAudioTranscriptDoneEvent): void {
+    const content = this.#getContent(event);
     content.textStream.put(null);
   }
 
-  private handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
-    const content = this.getContent(event);
+  #handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
+    const content = this.#getContent(event);
     const data = Buffer.from(event.delta, 'base64');
     const audio = new AudioFrame(
       new Int16Array(data.buffer),
@@ -835,23 +831,23 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     content.audioStream.put(audio);
   }
 
-  private handleResponseAudioDone(event: api_proto.ResponseAudioDoneEvent): void {
-    const content = this.getContent(event);
+  #handleResponseAudioDone(event: api_proto.ResponseAudioDoneEvent): void {
+    const content = this.#getContent(event);
     content.audioStream.put(null);
   }
 
-  private handleResponseFunctionCallArgumentsDelta(
+  #handleResponseFunctionCallArgumentsDelta(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.ResponseFunctionCallArgumentsDeltaEvent,
   ): void {}
 
-  private handleResponseFunctionCallArgumentsDone(
+  #handleResponseFunctionCallArgumentsDone(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.ResponseFunctionCallArgumentsDoneEvent,
   ): void {}
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleRateLimitsUpdated(event: api_proto.RateLimitsUpdatedEvent): void {}
+  #handleRateLimitsUpdated(event: api_proto.RateLimitsUpdatedEvent): void {}
 }
 
 // TODO function init

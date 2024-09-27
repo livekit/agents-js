@@ -39,12 +39,18 @@ export class AgentPlayout {
     textStream: Queue<string | null>,
     audioStream: Queue<AudioFrame | null>,
   ): PlayoutHandle {
-    const handle = new PlayoutHandle(this.#audioSource, this.#sampleRate, itemId, contentIndex, transcriptionFwd);
-    this.#playoutPromise = this.playoutTask(this.#playoutPromise, handle, textStream, audioStream);
+    const handle = new PlayoutHandle(
+      this.#audioSource,
+      this.#sampleRate,
+      itemId,
+      contentIndex,
+      transcriptionFwd,
+    );
+    this.#playoutPromise = this.#playoutTask(this.#playoutPromise, handle, textStream, audioStream);
     return handle;
   }
 
-  private async playoutTask(
+  async #playoutTask(
     oldPromise: Promise<void> | null,
     handle: PlayoutHandle,
     textStream: Queue<string | null>,
