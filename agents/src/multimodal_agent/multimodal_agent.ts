@@ -19,16 +19,9 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
+import { EventEmitter } from 'events';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
-import * as api_proto from './realtime/api_proto.js';
-import type {
-  InputSpeechCommitted,
-  InputTranscriptionCompleted,
-  RealtimeContent,
-  RealtimeModel,
-  RealtimeSession,
-} from './realtime/realtime_model.js';
-import { EventTypes } from './realtime/realtime_model.js';
+import * as openai from '@livekit/agents-plugin-openai';
 
 type ImplOptions = {
   // functions: llm.FunctionContext;
@@ -36,7 +29,7 @@ type ImplOptions = {
 
 /** @alpha */
 export class OmniAssistant {
-  model: RealtimeModel;
+  model: openai.realtime.RealtimeModel;
   options: ImplOptions;
   room: Room | null = null;
   linkedParticipant: RemoteParticipant | null = null;
@@ -47,7 +40,7 @@ export class OmniAssistant {
     model,
     // functions = {},
   }: {
-    model: RealtimeModel;
+    model: openai.realtime.RealtimeModel;
     functions?: llm.FunctionContext;
   }) {
     this.model = model;
@@ -65,7 +58,7 @@ export class OmniAssistant {
   private agentPlayout: AgentPlayout | null = null;
   private playingHandle: PlayoutHandle | undefined = undefined;
   private logger = log();
-  private session: RealtimeSession | null = null;
+  private session: openai.realtime.RealtimeSession | null = null;
 
   // get funcCtx(): llm.FunctionContext {
   //   return this.options.functions;
@@ -94,10 +87,11 @@ export class OmniAssistant {
 
         this.linkParticipant(participant.identity);
       });
+      
       this.room = room;
       this.participant = participant;
 
-      this.localSource = new AudioSource(api_proto.SAMPLE_RATE, api_proto.NUM_CHANNELS);
+      this.localSource = new AudioSource(24000, 1);
       this.agentPlayout = new AgentPlayout(this.localSource);
       const track = LocalAudioTrack.createAudioTrack('assistant_voice', this.localSource);
       const options = new TrackPublishOptions();
@@ -127,7 +121,7 @@ export class OmniAssistant {
 
       this.session = this.model.session({});
 
-      this.session.on(EventTypes.ResponseContentAdded, (message: RealtimeContent) => {
+      this.session.on('response_content_added', (message: openai.realtime.RealtimeContent) => {
         const trFwd = new BasicTranscriptionForwarder(
           this.room!,
           this.room!.localParticipant!.identity,
@@ -144,7 +138,7 @@ export class OmniAssistant {
         );
       });
 
-      this.session.on(EventTypes.InputSpeechCommitted, (ev: InputSpeechCommitted) => {
+      this.session.on('input_speech_committed', (ev: openai.realtime.InputSpeechCommitted) => {
         const participantIdentity = this.linkedParticipant?.identity;
         const trackSid = this.subscribedTrack?.sid;
         if (participantIdentity && trackSid) {
@@ -155,8 +149,8 @@ export class OmniAssistant {
       });
 
       this.session.on(
-        EventTypes.InputSpeechTranscriptionCompleted,
-        (ev: InputTranscriptionCompleted) => {
+        'input_speech_transcription_completed',
+        (ev: openai.realtime.InputTranscriptionCompleted) => {
           const transcription = ev.transcript;
           const participantIdentity = this.linkedParticipant?.identity;
           const trackSid = this.subscribedTrack?.sid;
@@ -174,7 +168,7 @@ export class OmniAssistant {
         },
       );
 
-      this.session.on(EventTypes.InputSpeechStarted, () => {
+      this.session.on('input_speech_started', () => {
         if (this.playingHandle && !this.playingHandle.done) {
           this.playingHandle.interrupt();
 
@@ -188,7 +182,7 @@ export class OmniAssistant {
         }
       });
     });
-  }
+}
 
   // close() {
   //   if (!this.connected || !this.ws) return;
@@ -255,16 +249,12 @@ export class OmniAssistant {
 
   private subscribeToMicrophone(): void {
     const readAudioStreamTask = async (audioStream: AudioStream) => {
-      const bstream = new AudioByteStream(
-        api_proto.SAMPLE_RATE,
-        api_proto.NUM_CHANNELS,
-        api_proto.INPUT_PCM_FRAME_SIZE,
-      );
+      const bstream = new AudioByteStream(openai.realtime.SAMPLE_RATE, openai.realtime.NUM_CHANNELS, openai.realtime.INPUT_PCM_FRAME_SIZE);
 
       for await (const frame of audioStream) {
         const audioData = frame.data;
         for (const frame of bstream.write(audioData.buffer)) {
-          this.model.sessions[0].queueMsg({
+          this.session!.queueMsg({
             type: 'input_audio_buffer.append',
             audio: Buffer.from(frame.data.buffer).toString('base64'),
           });
@@ -303,7 +293,7 @@ export class OmniAssistant {
               reject(new Error('Task cancelled'));
             };
             readAudioStreamTask(
-              new AudioStream(track, api_proto.SAMPLE_RATE, api_proto.NUM_CHANNELS),
+              new AudioStream(track, openai.realtime.SAMPLE_RATE, openai.realtime.NUM_CHANNELS),
             )
               .then(resolve)
               .catch(reject);

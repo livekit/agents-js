@@ -4,25 +4,10 @@
 import { Queue } from '@livekit/agents';
 import { llm, log } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
-import { EventEmitter, once } from 'events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
-
-export enum EventTypes {
-  Error = 'error',
-  InputSpeechCommitted = 'input_speech_committed',
-  InputSpeechStarted = 'input_speech_started',
-  InputSpeechStopped = 'input_speech_stopped',
-  InputSpeechTranscriptionCompleted = 'input_speech_transcription_completed',
-  InputSpeechTranscriptionFailed = 'input_speech_transcription_failed',
-  ResponseContentAdded = 'response_content_added',
-  ResponseContentDone = 'response_content_done',
-  ResponseCreated = 'response_created',
-  ResponseDone = 'response_done',
-  ResponseOutputAdded = 'response_output_added',
-  ResponseOutputDone = 'response_output_done',
-  StartSession = 'start_session',
-}
+import { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { EventEmitter, once } from 'events';
 
 interface ModelOptions {
   modalities: ['text', 'audio'] | ['text'];
@@ -47,6 +32,21 @@ interface ModelOptions {
   apiKey: string;
   baseURL: string;
 }
+
+export type RealtimeCallbacks = {
+  error: () => void;
+  input_speech_committed: (event: InputSpeechCommitted) => void;
+  input_speech_started: () => void;
+  input_speech_stopped: () => void;
+  input_speech_transcription_completed: (event: InputSpeechTranscriptionCompleted) => void;
+  input_speech_transcription_failed: (event: InputSpeechTranscriptionFailed) => void;
+  response_content_added: (content: RealtimeContent) => void;
+  response_content_done: (content: RealtimeContent) => void;
+  response_created: (response: RealtimeResponse) => void;
+  response_done: (response: RealtimeResponse) => void;
+  response_output_added: (output: RealtimeOutput) => void;
+  response_output_done: (output: RealtimeOutput) => void;
+};
 
 export interface RealtimeResponse {
   /** ID of the message */
@@ -106,12 +106,12 @@ export interface RealtimeToolCall {
   toolCallID: string;
 }
 
-export interface InputTranscriptionCompleted {
+export interface InputSpeechTranscriptionCompleted {
   itemId: string;
   transcript: string;
 }
 
-export interface InputTranscriptionFailed {
+export interface InputSpeechTranscriptionFailed {
   itemId: string;
   message: string;
 }
@@ -320,7 +320,7 @@ export class RealtimeModel {
   }
 }
 
-export class RealtimeSession extends EventEmitter {
+export class RealtimeSession extends (EventEmitter as new () => TypedEmitter<RealtimeCallbacks>) {
   #funcCtx: llm.FunctionContext;
   #opts: ModelOptions;
   #pendingResponses: { [id: string]: RealtimeResponse } = {};
@@ -330,7 +330,7 @@ export class RealtimeSession extends EventEmitter {
   #task: Promise<void>;
   #closing = true;
   #sendQueue = new Queue<api_proto.ClientEvent>();
-
+  
   constructor(funcCtx: llm.FunctionContext, opts: ModelOptions) {
     super();
 
@@ -630,7 +630,7 @@ export class RealtimeSession extends EventEmitter {
   private handleConversationCreated(event: api_proto.ConversationCreatedEvent): void {}
 
   private handleInputAudioBufferCommitted(event: api_proto.InputAudioBufferCommittedEvent): void {
-    this.emit(EventTypes.InputSpeechCommitted, {
+    this.emit('input_speech_committed', {
       itemId: event.item_id,
     });
   }
@@ -642,14 +642,14 @@ export class RealtimeSession extends EventEmitter {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.InputAudioBufferSpeechStartedEvent,
   ): void {
-    this.emit(EventTypes.InputSpeechStarted);
+    this.emit('input_speech_started');
   }
 
   private handleInputAudioBufferSpeechStopped(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.InputAudioBufferSpeechStoppedEvent,
   ): void {
-    this.emit(EventTypes.InputSpeechStopped);
+    this.emit('input_speech_stopped');
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -659,7 +659,7 @@ export class RealtimeSession extends EventEmitter {
     event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
   ): void {
     const transcript = event.transcript;
-    this.emit(EventTypes.InputSpeechTranscriptionCompleted, {
+    this.emit('input_speech_transcription_completed', {
       itemId: event.item_id,
       transcript: transcript,
     });
@@ -670,7 +670,7 @@ export class RealtimeSession extends EventEmitter {
   ): void {
     const error = event.error;
     this.#logger.error(`OAI S2S failed to transcribe input audio: ${error.message}`);
-    this.emit(EventTypes.InputSpeechTranscriptionFailed, {
+    this.emit('input_speech_transcription_failed', {
       itemId: event.item_id,
       message: error.message,
     });
@@ -694,7 +694,7 @@ export class RealtimeSession extends EventEmitter {
       donePromise: () => donePromise,
     };
     this.#pendingResponses[newResponse.id] = newResponse;
-    this.emit(EventTypes.ResponseCreated, newResponse);
+    this.emit('response_created', newResponse);
   }
 
   private handleResponseDone(event: api_proto.ResponseDoneEvent): void {
@@ -702,7 +702,7 @@ export class RealtimeSession extends EventEmitter {
     const responseId = responseData.id;
     const response = this.#pendingResponses[responseId];
     response.donePromise();
-    this.emit(EventTypes.ResponseDone, response);
+    this.emit('response_done', response);
   }
 
   private handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
@@ -738,7 +738,7 @@ export class RealtimeSession extends EventEmitter {
         }),
     };
     response.output.push(newOutput);
-    this.emit(EventTypes.ResponseOutputAdded, newOutput);
+    this.emit('response_output_added', newOutput);
   }
 
   private handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
@@ -775,7 +775,7 @@ export class RealtimeSession extends EventEmitter {
     // }
 
     output.donePromise();
-    this.emit(EventTypes.ResponseOutputDone, output);
+    this.emit('response_output_done', output);
   }
 
   private handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
@@ -799,12 +799,12 @@ export class RealtimeSession extends EventEmitter {
       toolCalls: [],
     };
     output.content.push(newContent);
-    this.emit(EventTypes.ResponseContentAdded, newContent);
+    this.emit('response_content_added', newContent);
   }
 
   private handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
     const content = this.getContent(event);
-    this.emit(EventTypes.ResponseContentDone, content);
+    this.emit('response_content_done', content);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

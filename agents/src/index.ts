@@ -13,6 +13,7 @@ import * as cli from './cli.js';
 import * as llm from './llm/index.js';
 import * as stt from './stt/index.js';
 import * as tts from './tts/index.js';
+import * as multimodal_agent from './multimodal_agent/index.js';
 
 export * from './vad.js';
 export * from './plugin.js';
@@ -26,4 +27,4 @@ export * from './tokenize.js';
 export * from './audio.js';
 export * from './transcription.js';
 
-export { cli, stt, tts, llm };
+export { cli, stt, tts, llm, multimodal_agent };

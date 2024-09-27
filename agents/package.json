@@ -27,5 +27,8 @@
     "pino-pretty": "^11.0.0",
     "ws": "^8.16.0",
     "zod": "^3.23.8"
+  },
+  "peerDependencies": {
+    "@livekit/agents-plugin-openai": "workspace:*"
   }
 }

@@ -77,6 +77,9 @@ importers:
 
   agents:
     dependencies:
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../plugins/openai
       '@livekit/protocol':
         specifier: ^1.21.0
         version: 1.21.0
@@ -142,6 +145,9 @@ importers:
       '@livekit/rtc-node':
         specifier: ^0.9.0
         version: 0.9.0
+      '@livekit/typed-emitter':
+        specifier: ^3.0.0
+        version: 3.0.0
       ws:
         specifier: ^8.16.0
         version: 8.17.0
