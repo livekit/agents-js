@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream } from '@livekit/agents';
-import { findMicroTrackId } from '@livekit/agents';
-import { type llm, log } from '@livekit/agents';
-import { BasicTranscriptionForwarder } from '@livekit/agents';
+import { AudioByteStream } from '../audio.js';
+import { findMicroTrackId } from '../utils.js';
+import type * as llm from '../llm/index.js';
+import { log } from '../log.js';
+import { BasicTranscriptionForwarder } from '../transcription.js';
 import type {
   LocalTrackPublication,
   RemoteAudioTrack,
@@ -19,9 +20,8 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
-import { EventEmitter } from 'events';
-import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
-// import * as openai from '@livekit/agents-plugin-openai';
+import { AgentPlayout, type PlayoutHandle, proto } from './agent_playout.js';
+import type * as openai from '@livekit/agents-plugin-openai';
 
 type ImplOptions = {
   // functions: llm.FunctionContext;
@@ -150,7 +150,7 @@ export class OmniAssistant {
 
       this.session.on(
         'input_speech_transcription_completed',
-        (ev: openai.realtime.InputTranscriptionCompleted) => {
+        (ev: openai.realtime.InputSpeechTranscriptionCompleted) => {
           const transcription = ev.transcript;
           const participantIdentity = this.linkedParticipant?.identity;
           const trackSid = this.subscribedTrack?.sid;
@@ -249,7 +249,7 @@ export class OmniAssistant {
 
   private subscribeToMicrophone(): void {
     const readAudioStreamTask = async (audioStream: AudioStream) => {
-      const bstream = new AudioByteStream(openai.realtime.SAMPLE_RATE, openai.realtime.NUM_CHANNELS, openai.realtime.INPUT_PCM_FRAME_SIZE);
+      const bstream = new AudioByteStream(proto.SAMPLE_RATE, proto.NUM_CHANNELS, proto.INPUT_PCM_FRAME_SIZE);
 
       for await (const frame of audioStream) {
         const audioData = frame.data;
@@ -293,7 +293,7 @@ export class OmniAssistant {
               reject(new Error('Task cancelled'));
             };
             readAudioStreamTask(
-              new AudioStream(track, openai.realtime.SAMPLE_RATE, openai.realtime.NUM_CHANNELS),
+              new AudioStream(track, proto.SAMPLE_RATE, proto.NUM_CHANNELS),
             )
               .then(resolve)
               .catch(reject);

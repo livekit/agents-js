@@ -7,7 +7,13 @@ import type { Queue } from '../utils.js';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { type AudioSource } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
-import * as openai from '@livekit/agents-plugin-openai';
+
+export const proto = {
+  SAMPLE_RATE: 24000,
+  NUM_CHANNELS: 1,
+  INPUT_PCM_FRAME_SIZE: 2400, // 100ms
+  OUTPUT_PCM_FRAME_SIZE: 1200, // 50ms
+};
 
 export class AgentPlayout {
   #audioSource: AudioSource;
@@ -53,8 +59,8 @@ export class AgentPlayout {
     };
 
     const captureTask = async () => {
-      const samplesPerChannel = OUTPUT_PCM_FRAME_SIZE;
-      const bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, samplesPerChannel);
+      const samplesPerChannel = proto.OUTPUT_PCM_FRAME_SIZE;
+      const bstream = new AudioByteStream(proto.SAMPLE_RATE, proto.NUM_CHANNELS, samplesPerChannel);
 
       while (true) {
         const frame = await audioStream.get();
@@ -171,10 +177,10 @@ export class PlayoutHandle extends EventEmitter {
 
   get audioSamples(): number {
     if (this.totalPlayedTime !== undefined) {
-      return Math.floor(this.totalPlayedTime * SAMPLE_RATE);
+      return Math.floor(this.totalPlayedTime * proto.SAMPLE_RATE);
     }
 
-    return Math.floor(this.pushedDuration - this.#audioSource.queuedDuration * SAMPLE_RATE);
+    return Math.floor(this.pushedDuration - this.#audioSource.queuedDuration * proto.SAMPLE_RATE);
   }
 
   get textChars(): number {
