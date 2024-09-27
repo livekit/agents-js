@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@livekit/protocol": "^1.21.0",
-    "@livekit/rtc-node": "^0.8.1",
+    "@livekit/rtc-node": "^0.9.0",
     "commander": "^12.0.0",
     "livekit-server-sdk": "^2.6.1",
     "pino": "^8.19.0",
