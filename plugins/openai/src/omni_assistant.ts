@@ -330,13 +330,9 @@ export class OmniAssistant {
     isFinal: boolean,
     id: string,
   ): void {
-    this.logger.info('Publishing transcription', {
-      participantIdentity,
-      trackSid,
-      text,
-      isFinal,
-      id,
-    });
+    this.logger.info(
+      `Publishing transcription ${participantIdentity} ${trackSid} ${text} ${isFinal} ${id}`,
+    );
     if (!this.room?.localParticipant) {
       this.logger.error('Room or local participant not set');
       return;
