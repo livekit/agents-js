@@ -32,8 +32,10 @@ type ImplOptions = {
  * @beta
  */
 export abstract class RealtimeSession extends EventEmitter {
-  abstract queueMsg(msg: any): void;
-  abstract defaultConversation: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  abstract queueMsg(msg: any): void; // openai.realtime.api_proto.ClientEvent
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  abstract defaultConversation: any; // openai.realtime.Conversation
 }
 
 /**
@@ -41,7 +43,8 @@ export abstract class RealtimeSession extends EventEmitter {
  * @beta
  */
 export abstract class RealtimeModel {
-  abstract session(options: any): RealtimeSession;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  abstract session(options: any): RealtimeSession; // openai.realtime.ModelOptions
   abstract close(): Promise<void>;
 }
 
@@ -139,7 +142,9 @@ export class MultimodalAgent {
 
       this.session = this.model.session({});
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.session.on('response_content_added', (message: any) => {
+        // openai.realtime.RealtimeContent
         const trFwd = new BasicTranscriptionForwarder(
           this.room!,
           this.room!.localParticipant!.identity,
@@ -156,7 +161,9 @@ export class MultimodalAgent {
         );
       });
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.session.on('input_speech_committed', (ev: any) => {
+        // openai.realtime.InputSpeechCommittedEvent
         const participantIdentity = this.linkedParticipant?.identity;
         const trackSid = this.subscribedTrack?.sid;
         if (participantIdentity && trackSid) {
@@ -166,7 +173,9 @@ export class MultimodalAgent {
         }
       });
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.session.on('input_speech_transcription_completed', (ev: any) => {
+        // openai.realtime.InputSpeechTranscriptionCompletedEvent
         const transcription = ev.transcript;
         const participantIdentity = this.linkedParticipant?.identity;
         const trackSid = this.subscribedTrack?.sid;

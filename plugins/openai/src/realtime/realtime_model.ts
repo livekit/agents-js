@@ -4,7 +4,7 @@
 import { Queue } from '@livekit/agents';
 import { llm, log, multimodal } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
-import { EventEmitter, once } from 'events';
+import { once } from 'events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
