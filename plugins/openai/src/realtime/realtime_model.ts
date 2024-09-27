@@ -263,7 +263,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
   }
 
   session({
-    funcCtx = {},
+    fncCtx,
     modalities = this.#defaultOpts.modalities,
     instructions = this.#defaultOpts.instructions,
     voice = this.#defaultOpts.voice,
@@ -274,7 +274,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     temperature = this.#defaultOpts.temperature,
     maxResponseOutputTokens = this.#defaultOpts.maxResponseOutputTokens,
   }: {
-    funcCtx?: llm.FunctionContext;
+    fncCtx?: llm.FunctionContext;
     modalities?: ['text', 'audio'] | ['text'];
     instructions?: string;
     voice?: api_proto.Voice;
@@ -300,7 +300,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       baseURL: this.#defaultOpts.baseURL,
     };
 
-    const newSession = new RealtimeSession(funcCtx, opts);
+    const newSession = new RealtimeSession(opts, fncCtx);
     this.#sessions.push(newSession);
     return newSession;
   }
@@ -312,7 +312,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
 }
 
 export class RealtimeSession extends multimodal.RealtimeSession {
-  #funcCtx: llm.FunctionContext;
+  #fncCtx: llm.FunctionContext | undefined = undefined;
   #opts: ModelOptions;
   #pendingResponses: { [id: string]: RealtimeResponse } = {};
   #sessionId = 'not-connected';
@@ -322,11 +322,11 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   #closing = true;
   #sendQueue = new Queue<api_proto.ClientEvent>();
 
-  constructor(funcCtx: llm.FunctionContext, opts: ModelOptions) {
+  constructor(opts: ModelOptions, fncCtx?: llm.FunctionContext | undefined) {
     super();
 
-    this.#funcCtx = funcCtx;
     this.#opts = opts;
+    this.#fncCtx = fncCtx;
 
     this.#task = this.#start();
 
@@ -344,12 +344,12 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     });
   }
 
-  get funcCtx(): llm.FunctionContext {
-    return this.#funcCtx;
+  get fncCtx(): llm.FunctionContext | undefined {
+    return this.#fncCtx;
   }
 
-  set funcCtx(ctx: llm.FunctionContext) {
-    this.#funcCtx = ctx;
+  set fncCtx(ctx: llm.FunctionContext | undefined) {
+    this.#fncCtx = ctx;
   }
 
   get defaultConversation(): Conversation {
@@ -436,12 +436,14 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       baseURL: this.#opts.baseURL,
     };
 
-    const tools = Object.entries(this.#funcCtx).map(([name, func]) => ({
-      type: 'function' as const,
-      name,
-      description: func.description,
-      parameters: llm.oaiParams(func.parameters),
-    }));
+    const tools = this.#fncCtx
+      ? Object.entries(this.#fncCtx).map(([name, func]) => ({
+          type: 'function' as const,
+          name,
+          description: func.description,
+          parameters: llm.oaiParams(func.parameters),
+        }))
+      : [];
 
     this.queueMsg({
       type: 'session.update',

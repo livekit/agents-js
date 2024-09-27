@@ -4,8 +4,7 @@
 import { type JobContext, WorkerOptions, cli, defineAgent, multimodal } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
 import { fileURLToPath } from 'node:url';
-
-// import { z } from 'zod';
+import { z } from 'zod';
 
 export default defineAgent({
   entry: async (ctx: JobContext) => {
@@ -16,22 +15,21 @@ export default defineAgent({
     const model = new openai.realtime.RealtimeModel({
       instructions: 'You are a helpful assistant.',
     });
-    //   functions: {
-    //     weather: {
-    //       description: 'Get the weather in a location',
-    //       parameters: z.object({
-    //         location: z.string().describe('The location to get the weather for'),
-    //       }),
-    //       execute: async ({ location }) =>
-    //         await fetch(`https://wttr.in/${location}?format=%C+%t`)
-    //           .then((data) => data.text())
-    //           .then((data) => `The weather in ${location} right now is ${data}.`),
-    //     },
-    //   },
-    // });
 
     const agent = new multimodal.MultimodalAgent({
       model,
+      fncCtx: {
+        weather: {
+          description: 'Get the weather in a location',
+          parameters: z.object({
+            location: z.string().describe('The location to get the weather for'),
+          }),
+          execute: async ({ location }) =>
+            await fetch(`https://wttr.in/${location}?format=%C+%t`)
+              .then((data) => data.text())
+              .then((data) => `The weather in ${location} right now is ${data}.`),
+        },
+      },
     });
 
     await agent.start(ctx.room);

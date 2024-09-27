@@ -23,10 +23,6 @@ import { BasicTranscriptionForwarder } from '../transcription.js';
 import { findMicroTrackId } from '../utils.js';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 
-type ImplOptions = {
-  // functions: llm.FunctionContext;
-};
-
 /**
  * @internal
  * @beta
@@ -36,6 +32,7 @@ export abstract class RealtimeSession extends EventEmitter {
   abstract queueMsg(msg: any): void; // openai.realtime.api_proto.ClientEvent
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   abstract defaultConversation: any; // openai.realtime.Conversation
+  abstract fncCtx: llm.FunctionContext | undefined;
 }
 
 /**
@@ -55,7 +52,6 @@ export abstract class RealtimeModel {
 /** @beta */
 export class MultimodalAgent {
   model: RealtimeModel;
-  options: ImplOptions;
   room: Room | null = null;
   linkedParticipant: RemoteParticipant | null = null;
   subscribedTrack: RemoteAudioTrack | null = null;
@@ -63,16 +59,13 @@ export class MultimodalAgent {
 
   constructor({
     model,
-    // functions = {},
+    fncCtx,
   }: {
     model: RealtimeModel;
-    functions?: llm.FunctionContext;
+    fncCtx?: llm.FunctionContext | undefined;
   }) {
     this.model = model;
-
-    this.options = {
-      // functions,
-    };
+    this.#fncCtx = fncCtx;
   }
 
   #started: boolean = false;
@@ -84,18 +77,18 @@ export class MultimodalAgent {
   #playingHandle: PlayoutHandle | undefined = undefined;
   #logger = log();
   #session: RealtimeSession | null = null;
+  #fncCtx: llm.FunctionContext | undefined = undefined;
 
-  // get funcCtx(): llm.FunctionContext {
-  //   return this.options.functions;
-  // }
-  // set funcCtx(ctx: llm.FunctionContext) {
-  //   this.options.functions = ctx;
-  //   this.options.sessionConfig.tools = tools(ctx);
-  //   this.sendClientCommand({
-  //     type: proto.ClientEventType.SessionUpdate,
-  //     session: this.options.sessionConfig,
-  //   });
-  // }
+  get fncCtx(): llm.FunctionContext | undefined {
+    return this.#fncCtx!;
+  }
+
+  set fncCtx(ctx: llm.FunctionContext | undefined) {
+    this.#fncCtx = ctx;
+    if (this.#session) {
+      this.#session.fncCtx = ctx;
+    }
+  }
 
   start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
     return new Promise(async (resolve, reject) => {
