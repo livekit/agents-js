@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, WorkerOptions, cli, defineAgent } from '@livekit/agents';
-import { OmniAssistant, RealtimeModel } from '@livekit/agents-plugin-openai';
+import { type JobContext, WorkerOptions, cli, defineAgent, multimodal_agent } from '@livekit/agents';
+import * as openai from '@livekit/agents-plugin-openai';
 import { fileURLToPath } from 'node:url';
 
 // import { z } from 'zod';
@@ -13,7 +13,7 @@ export default defineAgent({
 
     console.log('starting assistant example agent');
 
-    const model = new RealtimeModel({
+    const model = new openai.realtime.RealtimeModel({
       instructions: 'You are a helpful assistant.',
     });
     //   functions: {
@@ -30,7 +30,7 @@ export default defineAgent({
     //   },
     // });
 
-    const assistant = new OmniAssistant({
+    const assistant = new multimodal_agent.OmniAssistant({
       model,
     });
 
