@@ -1,10 +1,10 @@
 {
   "name": "@livekit/agents",
   "version": "0.2.0",
-  "description": "LiveKit Node Agents",
+  "description": "LiveKit Agents - Node.js",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "author": "aoife cassidy <aoife@livekit.io>",
+  "author": "LiveKit",
   "type": "module",
   "scripts": {
     "build": "tsc",
