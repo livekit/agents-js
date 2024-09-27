@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "clean": "rm -rf dist",
+    "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",
     "minimal": "node dist/minimal_assistant.js dev"
   },

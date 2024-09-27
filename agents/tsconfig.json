@@ -6,7 +6,6 @@
     "rootDir": "./src",
     "declarationDir": "./dist",
     "outDir": "./dist",
-    "types": ["@livekit/agents-plugin-openai"]
   },
   "typedocOptions": {
     "name": "agents",
