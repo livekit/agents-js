@@ -68,7 +68,7 @@ export class AgentPlayout {
 
         handle.transcriptionFwd.pushAudio(frame);
 
-        for (const f of bstream.write(frame.data)) {
+        for (const f of bstream.write(frame.data.buffer)) {
           handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
           await this.#audioSource.captureFrame(f);
         }
