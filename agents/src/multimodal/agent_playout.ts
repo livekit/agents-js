@@ -61,7 +61,7 @@ export class PlayoutHandle extends EventEmitter {
   }
 
   get textChars(): number {
-    return this.transcriptionFwd.currentCharacterIndex; // TODO: length of played text
+    return this.transcriptionFwd.currentCharacterIndex;
   }
 
   get contentIndex(): number {
