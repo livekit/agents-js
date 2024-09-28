@@ -195,7 +195,6 @@ export class CancellablePromise<T> {
         (cancelFn) => {
           cancel = () => {
             this.#isCancelled = true;
-            this.#error = new Error('Promise cancelled');
             cancelFn();
           };
         }

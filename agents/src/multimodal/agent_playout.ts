@@ -133,9 +133,6 @@ export class AgentPlayout {
       let cancelled = false;
       onCancel(() => {
         cancelled = true;
-        if (oldTask) {
-          oldTask.cancel();
-        }
       });
 
       (async () => {
@@ -146,7 +143,7 @@ export class AgentPlayout {
 
           let firstFrame = true;
 
-          const playTextStream = () =>
+          const readText = () =>
             new CancellablePromise<void>((resolveText, rejectText, onCancelText) => {
               let cancelledText = false;
               onCancelText(() => {
@@ -157,11 +154,12 @@ export class AgentPlayout {
                 try {
                   while (!cancelledText && !cancelled) {
                     const text = await textStream.get();
-                    if (text === null) break;
+                    if (text === null) {
+                      handle.transcriptionFwd.markTextComplete();
+                      break;
+                    }
+
                     handle.transcriptionFwd.pushText(text);
-                  }
-                  if (!cancelledText && !cancelled) {
-                    handle.transcriptionFwd.markTextComplete();
                   }
                   resolveText();
                 } catch (error) {
@@ -188,7 +186,17 @@ export class AgentPlayout {
 
                   while (!cancelledCapture && !cancelled) {
                     const frame = await audioStream.get();
-                    if (frame === null) break;
+                    if (frame === null) {
+                      for (const f of bstream.flush()) {
+                        handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
+                        await this.#audioSource.captureFrame(f);
+                      }
+
+                      handle.transcriptionFwd.markAudioComplete();
+
+                      await this.#audioSource.waitForPlayout();
+                      break;
+                    }
 
                     if (firstFrame) {
                       handle.transcriptionFwd.start();
@@ -203,17 +211,6 @@ export class AgentPlayout {
                     }
                   }
 
-                  if (!cancelledCapture && !cancelled) {
-                    for (const f of bstream.flush()) {
-                      handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
-                      await this.#audioSource.captureFrame(f);
-                    }
-
-                    handle.transcriptionFwd.markAudioComplete();
-
-                    await this.#audioSource.waitForPlayout();
-                  }
-
                   resolveCapture();
                 } catch (error) {
                   rejectCapture(error);
@@ -221,7 +218,7 @@ export class AgentPlayout {
               })();
             });
 
-          const playTextTask = playTextStream();
+          const readTextTask = readText();
           const captureTask = capture();
 
           try {
@@ -232,13 +229,13 @@ export class AgentPlayout {
             }
 
             handle.totalPlayedTime = handle.pushedDuration - this.#audioSource.queuedDuration;
-
+            
             if (handle.interrupted || captureTask.error) {
               this.#audioSource.clearQueue(); // make sure to remove any queued frames
             }
 
-            if (!playTextTask.isCancelled) {
-              await gracefullyCancel(playTextTask);
+            if (!readTextTask.isCancelled) {
+              await gracefullyCancel(readTextTask);
             }
 
             if (!firstFrame && !handle.interrupted) {
@@ -257,4 +254,3 @@ export class AgentPlayout {
     });
   }
 }
-
