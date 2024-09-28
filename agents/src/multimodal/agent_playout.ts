@@ -6,7 +6,7 @@ import { type AudioSource } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { AudioByteStream } from '../audio.js';
 import type { TranscriptionForwarder } from '../transcription.js';
-import { CancellablePromise, Future, type AsyncIterableQueue, gracefullyCancel } from '../utils.js';
+import { type AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 
 export const proto = {};
 
@@ -200,7 +200,7 @@ export class AgentPlayout {
 
                   if (!cancelledCapture && !cancelled) {
                     for (const f of bstream.flush()) {
-                    handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
+                      handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
                       await this.#audioSource.captureFrame(f);
                     }
 
