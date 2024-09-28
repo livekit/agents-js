@@ -26,7 +26,7 @@ interface ModelOptions {
       }
     | 'none';
   temperature: number;
-  maxResponseOutputTokens: number;
+  maxResponseOutputTokens?: number;
   model: api_proto.Model;
   apiKey: string;
   baseURL: string;
@@ -219,7 +219,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     inputAudioTranscription = { model: 'whisper-1' },
     turnDetection = { type: 'server_vad' },
     temperature = 0.8,
-    maxResponseOutputTokens = 2048,
+    maxResponseOutputTokens = undefined,
     model = 'gpt-4o-realtime-preview-2024-10-01',
     apiKey = process.env.OPENAI_API_KEY || '',
     baseURL = api_proto.API_URL,
@@ -415,14 +415,14 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   }: {
     modalities: ['text', 'audio'] | ['text'];
     instructions?: string;
-    voice: api_proto.Voice;
-    inputAudioFormat: api_proto.AudioFormat;
-    outputAudioFormat: api_proto.AudioFormat;
+    voice?: api_proto.Voice;
+    inputAudioFormat?: api_proto.AudioFormat;
+    outputAudioFormat?: api_proto.AudioFormat;
     inputAudioTranscription?: { model: 'whisper-1' };
-    turnDetection: api_proto.TurnDetectionType;
-    temperature: number;
-    maxResponseOutputTokens: number;
-    toolChoice: api_proto.ToolChoice;
+    turnDetection?: api_proto.TurnDetectionType;
+    temperature?: number;
+    maxResponseOutputTokens?: number;
+    toolChoice?: api_proto.ToolChoice;
   }) {
     this.#opts = {
       modalities,

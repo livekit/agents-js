@@ -7,15 +7,18 @@
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",
-    "minimal": "pnpm exec tsx src/minimal_assistant.ts"
+    "minimal": "pnpm exec tsx src/minimal_assistant.ts",
+    "playground": "pnpm exec tsx src/playground_agent.ts"
   },
   "devDependencies": {
+    "@types/uuid": "^10.0.0",
     "typescript": "^5.0.0"
   },
   "dependencies": {
     "@livekit/agents": "workspace:*",
     "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/rtc-node": "^0.9.0",
+    "uuid": "^10.0.0",
     "zod": "^3.23.8"
   }
 }

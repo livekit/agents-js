@@ -18,7 +18,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "doc": "typedoc",
-    "examples:minimal": "pnpm exec tsx examples/src/minimal_assistant.ts"
+    "examples:minimal": "pnpm exec tsx examples/src/minimal_assistant.ts",
+    "examples:playground": "pnpm exec tsx examples/src/playground_agent.ts"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.1",
