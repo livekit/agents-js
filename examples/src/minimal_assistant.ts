@@ -38,7 +38,7 @@ export default defineAgent({
     session.defaultConversation.item.create({
       type: 'message',
       role: 'user',
-      content: [{ type: 'input_text', text: 'Hello! Can you share a very short story?' }],
+      content: [{ type: 'input_text', text: 'Say "How can I help you today?"' }],
     });
     session.response.create();
   },
