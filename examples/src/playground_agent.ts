@@ -96,12 +96,10 @@ async function runMultimodalAgent(ctx: JobContext, participant: RemoteParticipan
       if (changedParticipant !== participant) {
         return;
       }
-      console.log('participantAttributesChanged', changedAttributes, changedParticipant);
       const newConfig = parseSessionConfig({
         ...changedParticipant.attributes,
         ...changedAttributes,
       });
-      console.log(`participant attributes changed: ${JSON.stringify(newConfig)}`);
 
       session.sessionUpdate({
         instructions: newConfig.instructions,
