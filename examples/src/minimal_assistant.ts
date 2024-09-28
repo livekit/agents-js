@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, WorkerOptions, cli, defineAgent } from '@livekit/agents';
-import { OmniAssistant, RealtimeModel } from '@livekit/agents-plugin-openai';
+import { type JobContext, WorkerOptions, cli, defineAgent, multimodal } from '@livekit/agents';
+import * as openai from '@livekit/agents-plugin-openai';
 import { fileURLToPath } from 'node:url';
-
-// import { z } from 'zod';
+import { z } from 'zod';
 
 export default defineAgent({
   entry: async (ctx: JobContext) => {
@@ -13,30 +12,35 @@ export default defineAgent({
 
     console.log('starting assistant example agent');
 
-    const model = new RealtimeModel({
+    const model = new openai.realtime.RealtimeModel({
       instructions: 'You are a helpful assistant.',
     });
-    //   functions: {
-    //     weather: {
-    //       description: 'Get the weather in a location',
-    //       parameters: z.object({
-    //         location: z.string().describe('The location to get the weather for'),
-    //       }),
-    //       execute: async ({ location }) =>
-    //         await fetch(`https://wttr.in/${location}?format=%C+%t`)
-    //           .then((data) => data.text())
-    //           .then((data) => `The weather in ${location} right now is ${data}.`),
-    //     },
-    //   },
-    // });
 
-    const assistant = new OmniAssistant({
+    const agent = new multimodal.MultimodalAgent({
       model,
+      fncCtx: {
+        weather: {
+          description: 'Get the weather in a location',
+          parameters: z.object({
+            location: z.string().describe('The location to get the weather for'),
+          }),
+          execute: async ({ location }) => {
+            console.debug(`executing weather function for ${location}`);
+            return await fetch(`https://wttr.in/${location}?format=%C+%t`)
+              .then((data) => data.text())
+              .then((data) => `The weather in ${location} right now is ${data}.`);
+          },
+        },
+      },
     });
 
-    await assistant.start(ctx.room);
-
-    // assistant.addUserMessage('Hello! Can you share a very short story?');
+    const session = (await agent.start(ctx.room)) as openai.realtime.RealtimeSession;
+    session.defaultConversation.item.create({
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'Say "How can I help you today?"' }],
+    });
+    session.response.create();
   },
 });
 

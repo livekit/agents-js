@@ -1,28 +1,12 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Queue } from '@livekit/agents';
-import { llm, log } from '@livekit/agents';
+import { AsyncIterableQueue, Future, Queue } from '@livekit/agents';
+import { llm, log, multimodal } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
-import { EventEmitter, once } from 'events';
+import { once } from 'events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
-
-export enum EventTypes {
-  Error = 'error',
-  InputSpeechCommitted = 'input_speech_committed',
-  InputSpeechStarted = 'input_speech_started',
-  InputSpeechStopped = 'input_speech_stopped',
-  InputSpeechTranscriptionCompleted = 'input_speech_transcription_completed',
-  InputSpeechTranscriptionFailed = 'input_speech_transcription_failed',
-  ResponseContentAdded = 'response_content_added',
-  ResponseContentDone = 'response_content_done',
-  ResponseCreated = 'response_created',
-  ResponseDone = 'response_done',
-  ResponseOutputAdded = 'response_output_added',
-  ResponseOutputDone = 'response_output_done',
-  StartSession = 'start_session',
-}
 
 interface ModelOptions {
   modalities: ['text', 'audio'] | ['text'];
@@ -30,90 +14,62 @@ interface ModelOptions {
   voice: api_proto.Voice;
   inputAudioFormat: api_proto.AudioFormat;
   outputAudioFormat: api_proto.AudioFormat;
-  inputAudioTranscription?: {
-    model: 'whisper-1';
-  };
-  turnDetection:
-    | {
-        type: 'server_vad';
-        threshold?: number;
-        prefix_padding_ms?: number;
-        silence_duration_ms?: number;
-      }
-    | 'none';
+  inputAudioTranscription?: api_proto.InputAudioTranscription;
+  turnDetection: api_proto.TurnDetectionType;
   temperature: number;
-  maxResponseOutputTokens: number;
+  maxResponseOutputTokens?: number;
   model: api_proto.Model;
   apiKey: string;
   baseURL: string;
 }
 
 export interface RealtimeResponse {
-  /** ID of the message */
   id: string;
-  /** Status of the response */
   status: api_proto.ResponseStatus;
-  /** List of outputs */
   output: RealtimeOutput[];
-  /** Promise that will be executed when the response is completed */
-  donePromise: () => Promise<void>;
+  doneFut: Future;
 }
 
 export interface RealtimeOutput {
-  /** ID of the response */
   responseId: string;
-  /** ID of the item */
   itemId: string;
-  /** Index of the output */
   outputIndex: number;
-  /** Role of the message */
   role: api_proto.Role;
-  /** Type of the output */
   type: 'message' | 'function_call';
-  /** List of content */
   content: RealtimeContent[];
-  /** Promise that will be executed when the response is completed */
-  donePromise: () => Promise<void>;
+  doneFut: Future;
 }
 
 export interface RealtimeContent {
-  /** ID of the response */
   responseId: string;
-  /** ID of the item */
   itemId: string;
-  /** Index of the output */
   outputIndex: number;
-  /** Index of the content */
   contentIndex: number;
-  /** Accumulated text content */
   text: string;
-  /** Accumulated audio content */
   audio: AudioFrame[];
-  /** Stream of text content */
-  textStream: Queue<string | null>;
-  /** Stream of audio content */
-  audioStream: Queue<AudioFrame | null>;
-  /** Pending tool calls */
+  textStream: AsyncIterableQueue<string>;
+  audioStream: AsyncIterableQueue<AudioFrame>;
   toolCalls: RealtimeToolCall[];
 }
 
 export interface RealtimeToolCall {
-  /** Name of the function */
   name: string;
-  /** Accumulated arguments */
   arguments: string;
-  /** ID of the tool call */
   toolCallID: string;
 }
 
-export interface InputTranscriptionCompleted {
+export interface InputSpeechTranscriptionCompleted {
   itemId: string;
   transcript: string;
 }
 
-export interface InputTranscriptionFailed {
+export interface InputSpeechTranscriptionFailed {
   itemId: string;
   message: string;
+}
+
+export interface InputSpeechStarted {
+  itemId: string;
 }
 
 export interface InputSpeechCommitted {
@@ -154,11 +110,6 @@ class ConversationItem {
     this.#session = session;
   }
 
-  // create(message: llm.ChatMessage, previousItemId?: string) {
-  //   // TODO: Implement create method
-  //   throw new Error('Not implemented');
-  // }
-
   truncate(itemId: string, contentIndex: number, audioEnd: number) {
     this.#session.queueMsg({
       type: 'conversation.item.truncate',
@@ -172,6 +123,14 @@ class ConversationItem {
     this.#session.queueMsg({
       type: 'conversation.item.delete',
       item_id: itemId,
+    });
+  }
+
+  create(item: api_proto.ConversationItemCreateContent, previousItemId?: string): void {
+    this.#session.queueMsg({
+      type: 'conversation.item.create',
+      item,
+      previous_item_id: previousItemId,
     });
   }
 }
@@ -214,7 +173,12 @@ interface ContentPtr {
   content_index: number;
 }
 
-export class RealtimeModel {
+export class RealtimeModel extends multimodal.RealtimeModel {
+  sampleRate = api_proto.SAMPLE_RATE;
+  numChannels = api_proto.NUM_CHANNELS;
+  inFrameSize = api_proto.IN_FRAME_SIZE;
+  outFrameSize = api_proto.OUT_FRAME_SIZE;
+
   #defaultOpts: ModelOptions;
   #sessions: RealtimeSession[] = [];
 
@@ -227,7 +191,7 @@ export class RealtimeModel {
     inputAudioTranscription = { model: 'whisper-1' },
     turnDetection = { type: 'server_vad' },
     temperature = 0.8,
-    maxResponseOutputTokens = 2048,
+    maxResponseOutputTokens = undefined,
     model = 'gpt-4o-realtime-preview-2024-10-01',
     apiKey = process.env.OPENAI_API_KEY || '',
     baseURL = api_proto.API_URL,
@@ -237,7 +201,7 @@ export class RealtimeModel {
     voice?: api_proto.Voice;
     inputAudioFormat?: api_proto.AudioFormat;
     outputAudioFormat?: api_proto.AudioFormat;
-    inputAudioTranscription?: { model: 'whisper-1' };
+    inputAudioTranscription?: api_proto.InputAudioTranscription;
     turnDetection?: api_proto.TurnDetectionType;
     temperature?: number;
     maxResponseOutputTokens?: number;
@@ -245,6 +209,8 @@ export class RealtimeModel {
     apiKey?: string;
     baseURL?: string;
   }) {
+    super();
+
     if (apiKey === '') {
       throw new Error(
         'OpenAI API key is required, either using the argument or by setting the OPENAI_API_KEY environmental variable',
@@ -272,7 +238,7 @@ export class RealtimeModel {
   }
 
   session({
-    funcCtx = {},
+    fncCtx,
     modalities = this.#defaultOpts.modalities,
     instructions = this.#defaultOpts.instructions,
     voice = this.#defaultOpts.voice,
@@ -283,13 +249,13 @@ export class RealtimeModel {
     temperature = this.#defaultOpts.temperature,
     maxResponseOutputTokens = this.#defaultOpts.maxResponseOutputTokens,
   }: {
-    funcCtx?: llm.FunctionContext;
+    fncCtx?: llm.FunctionContext;
     modalities?: ['text', 'audio'] | ['text'];
     instructions?: string;
     voice?: api_proto.Voice;
     inputAudioFormat?: api_proto.AudioFormat;
     outputAudioFormat?: api_proto.AudioFormat;
-    inputAudioTranscription?: { model: 'whisper-1' };
+    inputAudioTranscription?: api_proto.InputAudioTranscription;
     turnDetection?: api_proto.TurnDetectionType;
     temperature?: number;
     maxResponseOutputTokens?: number;
@@ -309,7 +275,7 @@ export class RealtimeModel {
       baseURL: this.#defaultOpts.baseURL,
     };
 
-    const newSession = new RealtimeSession(funcCtx, opts);
+    const newSession = new RealtimeSession(opts, fncCtx);
     this.#sessions.push(newSession);
     return newSession;
   }
@@ -320,8 +286,8 @@ export class RealtimeModel {
   }
 }
 
-export class RealtimeSession extends EventEmitter {
-  #funcCtx: llm.FunctionContext;
+export class RealtimeSession extends multimodal.RealtimeSession {
+  #fncCtx: llm.FunctionContext | undefined = undefined;
   #opts: ModelOptions;
   #pendingResponses: { [id: string]: RealtimeResponse } = {};
   #sessionId = 'not-connected';
@@ -331,11 +297,11 @@ export class RealtimeSession extends EventEmitter {
   #closing = true;
   #sendQueue = new Queue<api_proto.ClientEvent>();
 
-  constructor(funcCtx: llm.FunctionContext, opts: ModelOptions) {
+  constructor(opts: ModelOptions, fncCtx?: llm.FunctionContext | undefined) {
     super();
 
-    this.#funcCtx = funcCtx;
     this.#opts = opts;
+    this.#fncCtx = fncCtx;
 
     this.#task = this.#start();
 
@@ -353,12 +319,12 @@ export class RealtimeSession extends EventEmitter {
     });
   }
 
-  get funcCtx(): llm.FunctionContext {
-    return this.#funcCtx;
+  get fncCtx(): llm.FunctionContext | undefined {
+    return this.#fncCtx;
   }
 
-  set funcCtx(ctx: llm.FunctionContext) {
-    this.#funcCtx = ctx;
+  set fncCtx(ctx: llm.FunctionContext | undefined) {
+    this.#fncCtx = ctx;
   }
 
   get defaultConversation(): Conversation {
@@ -421,14 +387,14 @@ export class RealtimeSession extends EventEmitter {
   }: {
     modalities: ['text', 'audio'] | ['text'];
     instructions?: string;
-    voice: api_proto.Voice;
-    inputAudioFormat: api_proto.AudioFormat;
-    outputAudioFormat: api_proto.AudioFormat;
-    inputAudioTranscription?: { model: 'whisper-1' };
-    turnDetection: api_proto.TurnDetectionType;
-    temperature: number;
-    maxResponseOutputTokens: number;
-    toolChoice: api_proto.ToolChoice;
+    voice?: api_proto.Voice;
+    inputAudioFormat?: api_proto.AudioFormat;
+    outputAudioFormat?: api_proto.AudioFormat;
+    inputAudioTranscription?: api_proto.InputAudioTranscription;
+    turnDetection?: api_proto.TurnDetectionType;
+    temperature?: number;
+    maxResponseOutputTokens?: number;
+    toolChoice?: api_proto.ToolChoice;
   }) {
     this.#opts = {
       modalities,
@@ -445,12 +411,14 @@ export class RealtimeSession extends EventEmitter {
       baseURL: this.#opts.baseURL,
     };
 
-    const tools = Object.entries(this.#funcCtx).map(([name, func]) => ({
-      type: 'function' as const,
-      name,
-      description: func.description,
-      parameters: llm.oaiParams(func.parameters),
-    }));
+    const tools = this.#fncCtx
+      ? Object.entries(this.#fncCtx).map(([name, func]) => ({
+          type: 'function' as const,
+          name,
+          description: func.description,
+          parameters: llm.oaiParams(func.parameters),
+        }))
+      : [];
 
     this.queueMsg({
       type: 'session.update',
@@ -472,7 +440,7 @@ export class RealtimeSession extends EventEmitter {
 
   #start(): Promise<void> {
     return new Promise(async (resolve, reject) => {
-      this.#ws = new WebSocket(`${this.#opts.baseURL}?model=gpt-4-turbo-preview`, {
+      this.#ws = new WebSocket(`${this.#opts.baseURL}?model=${this.#opts.model}`, {
         headers: {
           Authorization: `Bearer ${this.#opts.apiKey}`,
           'OpenAI-Beta': 'realtime=v1',
@@ -491,88 +459,88 @@ export class RealtimeSession extends EventEmitter {
         this.#logger.debug(`<- ${JSON.stringify(this.#loggableEvent(event))}`);
         switch (event.type) {
           case 'error':
-            this.handleError(event);
+            this.#handleError(event);
             break;
           case 'session.created':
-            this.handleSessionCreated(event);
+            this.#handleSessionCreated(event);
             break;
           case 'session.updated':
-            this.handleSessionUpdated(event);
+            this.#handleSessionUpdated(event);
             break;
           case 'conversation.created':
-            this.handleConversationCreated(event);
+            this.#handleConversationCreated(event);
             break;
           case 'input_audio_buffer.committed':
-            this.handleInputAudioBufferCommitted(event);
+            this.#handleInputAudioBufferCommitted(event);
             break;
           case 'input_audio_buffer.cleared':
-            this.handleInputAudioBufferCleared(event);
+            this.#handleInputAudioBufferCleared(event);
             break;
           case 'input_audio_buffer.speech_started':
-            this.handleInputAudioBufferSpeechStarted(event);
+            this.#handleInputAudioBufferSpeechStarted(event);
             break;
           case 'input_audio_buffer.speech_stopped':
-            this.handleInputAudioBufferSpeechStopped(event);
+            this.#handleInputAudioBufferSpeechStopped(event);
             break;
           case 'conversation.item.created':
-            this.handleConversationItemCreated(event);
+            this.#handleConversationItemCreated(event);
             break;
           case 'conversation.item.input_audio_transcription.completed':
-            this.handleConversationItemInputAudioTranscriptionCompleted(event);
+            this.#handleConversationItemInputAudioTranscriptionCompleted(event);
             break;
           case 'conversation.item.input_audio_transcription.failed':
-            this.handleConversationItemInputAudioTranscriptionFailed(event);
+            this.#handleConversationItemInputAudioTranscriptionFailed(event);
             break;
           case 'conversation.item.truncated':
-            this.handleConversationItemTruncated(event);
+            this.#handleConversationItemTruncated(event);
             break;
           case 'conversation.item.deleted':
-            this.handleConversationItemDeleted(event);
+            this.#handleConversationItemDeleted(event);
             break;
           case 'response.created':
-            this.handleResponseCreated(event);
+            this.#handleResponseCreated(event);
             break;
           case 'response.done':
-            this.handleResponseDone(event);
+            this.#handleResponseDone(event);
             break;
           case 'response.output_item.added':
-            this.handleResponseOutputItemAdded(event);
+            this.#handleResponseOutputItemAdded(event);
             break;
           case 'response.output_item.done':
-            this.handleResponseOutputItemDone(event);
+            this.#handleResponseOutputItemDone(event);
             break;
           case 'response.content_part.added':
-            this.handleResponseContentPartAdded(event);
+            this.#handleResponseContentPartAdded(event);
             break;
           case 'response.content_part.done':
-            this.handleResponseContentPartDone(event);
+            this.#handleResponseContentPartDone(event);
             break;
           case 'response.text.delta':
-            this.handleResponseTextDelta(event);
+            this.#handleResponseTextDelta(event);
             break;
           case 'response.text.done':
-            this.handleResponseTextDone(event);
+            this.#handleResponseTextDone(event);
             break;
           case 'response.audio_transcript.delta':
-            this.handleResponseAudioTranscriptDelta(event);
+            this.#handleResponseAudioTranscriptDelta(event);
             break;
           case 'response.audio_transcript.done':
-            this.handleResponseAudioTranscriptDone(event);
+            this.#handleResponseAudioTranscriptDone(event);
             break;
           case 'response.audio.delta':
-            this.handleResponseAudioDelta(event);
+            this.#handleResponseAudioDelta(event);
             break;
           case 'response.audio.done':
-            this.handleResponseAudioDone(event);
+            this.#handleResponseAudioDone(event);
             break;
           case 'response.function_call_arguments.delta':
-            this.handleResponseFunctionCallArgumentsDelta(event);
+            this.#handleResponseFunctionCallArgumentsDelta(event);
             break;
           case 'response.function_call_arguments.done':
-            this.handleResponseFunctionCallArgumentsDone(event);
+            this.#handleResponseFunctionCallArgumentsDone(event);
             break;
           case 'rate_limits.updated':
-            this.handleRateLimitsUpdated(event);
+            this.#handleRateLimitsUpdated(event);
             break;
         }
       };
@@ -595,7 +563,7 @@ export class RealtimeSession extends EventEmitter {
 
       this.#ws.onclose = () => {
         if (!this.#closing) {
-          reject('OpenAI S2S connection closed unexpectedly');
+          reject('OpenAI Realtime connection closed unexpectedly');
         }
         this.#ws = null;
         resolve();
@@ -608,104 +576,104 @@ export class RealtimeSession extends EventEmitter {
     throw new Error('Not implemented');
   }
 
-  private getContent(ptr: ContentPtr): RealtimeContent {
+  #getContent(ptr: ContentPtr): RealtimeContent {
     const response = this.#pendingResponses[ptr.response_id];
     const output = response.output[ptr.output_index];
     const content = output.content[ptr.content_index];
     return content;
   }
 
-  private handleError(event: api_proto.ErrorEvent): void {
-    this.#logger.error(`OpenAI S2S error ${event.error}`);
+  #handleError(event: api_proto.ErrorEvent): void {
+    this.#logger.error(`OpenAI Realtime error ${JSON.stringify(event.error)}`);
   }
 
-  private handleSessionCreated(event: api_proto.SessionCreatedEvent): void {
+  #handleSessionCreated(event: api_proto.SessionCreatedEvent): void {
     this.#sessionId = event.session.id;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleSessionUpdated(event: api_proto.SessionUpdatedEvent): void {}
+  #handleSessionUpdated(event: api_proto.SessionUpdatedEvent): void {}
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleConversationCreated(event: api_proto.ConversationCreatedEvent): void {}
+  #handleConversationCreated(event: api_proto.ConversationCreatedEvent): void {}
 
-  private handleInputAudioBufferCommitted(event: api_proto.InputAudioBufferCommittedEvent): void {
-    this.emit(EventTypes.InputSpeechCommitted, {
+  #handleInputAudioBufferCommitted(event: api_proto.InputAudioBufferCommittedEvent): void {
+    this.emit('input_speech_committed', {
       itemId: event.item_id,
-    });
+    } as InputSpeechCommitted);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleInputAudioBufferCleared(event: api_proto.InputAudioBufferClearedEvent): void {}
+  #handleInputAudioBufferCleared(event: api_proto.InputAudioBufferClearedEvent): void {}
 
-  private handleInputAudioBufferSpeechStarted(
+  #handleInputAudioBufferSpeechStarted(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.InputAudioBufferSpeechStartedEvent,
   ): void {
-    this.emit(EventTypes.InputSpeechStarted);
+    this.emit('input_speech_started', {
+      itemId: event.item_id,
+    } as InputSpeechStarted);
   }
 
-  private handleInputAudioBufferSpeechStopped(
+  #handleInputAudioBufferSpeechStopped(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.InputAudioBufferSpeechStoppedEvent,
   ): void {
-    this.emit(EventTypes.InputSpeechStopped);
+    this.emit('input_speech_stopped');
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void {}
+  #handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void {}
 
-  private handleConversationItemInputAudioTranscriptionCompleted(
+  #handleConversationItemInputAudioTranscriptionCompleted(
     event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
   ): void {
     const transcript = event.transcript;
-    this.emit(EventTypes.InputSpeechTranscriptionCompleted, {
+    this.emit('input_speech_transcription_completed', {
       itemId: event.item_id,
       transcript: transcript,
-    });
+    } as InputSpeechTranscriptionCompleted);
   }
 
-  private handleConversationItemInputAudioTranscriptionFailed(
+  #handleConversationItemInputAudioTranscriptionFailed(
     event: api_proto.ConversationItemInputAudioTranscriptionFailedEvent,
   ): void {
     const error = event.error;
-    this.#logger.error(`OAI S2S failed to transcribe input audio: ${error.message}`);
-    this.emit(EventTypes.InputSpeechTranscriptionFailed, {
+    this.#logger.error(`OpenAI Realtime failed to transcribe input audio: ${error.message}`);
+    this.emit('input_speech_transcription_failed', {
       itemId: event.item_id,
       message: error.message,
-    });
+    } as InputSpeechTranscriptionFailed);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleConversationItemTruncated(event: api_proto.ConversationItemTruncatedEvent): void {}
+  #handleConversationItemTruncated(event: api_proto.ConversationItemTruncatedEvent): void {}
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleConversationItemDeleted(event: api_proto.ConversationItemDeletedEvent): void {}
+  #handleConversationItemDeleted(event: api_proto.ConversationItemDeletedEvent): void {}
 
-  private handleResponseCreated(responseCreated: api_proto.ResponseCreatedEvent): void {
+  #handleResponseCreated(responseCreated: api_proto.ResponseCreatedEvent): void {
     const response = responseCreated.response;
-    const donePromise = new Promise<void>((resolve) => {
-      this.once('response_done', () => resolve());
-    });
+    const doneFut = new Future();
     const newResponse: RealtimeResponse = {
       id: response.id,
       status: response.status,
       output: [],
-      donePromise: () => donePromise,
+      doneFut: doneFut,
     };
     this.#pendingResponses[newResponse.id] = newResponse;
-    this.emit(EventTypes.ResponseCreated, newResponse);
+    this.emit('response_created', newResponse);
   }
 
-  private handleResponseDone(event: api_proto.ResponseDoneEvent): void {
+  #handleResponseDone(event: api_proto.ResponseDoneEvent): void {
     const responseData = event.response;
     const responseId = responseData.id;
     const response = this.#pendingResponses[responseId];
-    response.donePromise();
-    this.emit(EventTypes.ResponseDone, response);
+    response.doneFut.resolve();
+    this.emit('response_done', response);
   }
 
-  private handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
+  #handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
     const responseId = event.response_id;
     const response = this.#pendingResponses[responseId];
     const itemData = event.item;
@@ -728,64 +696,78 @@ export class RealtimeSession extends EventEmitter {
       type: itemData.type,
       role: role,
       content: [],
-      donePromise: () =>
-        new Promise<void>((resolve) => {
-          this.once('response_output_done', (output: RealtimeOutput) => {
-            if (output.itemId === itemData.id) {
-              resolve();
-            }
-          });
-        }),
+      doneFut: new Future(),
     };
     response.output.push(newOutput);
-    this.emit(EventTypes.ResponseOutputAdded, newOutput);
+    this.emit('response_output_added', newOutput);
   }
 
-  private handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
+  #handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
     const responseId = event.response_id;
     const response = this.#pendingResponses[responseId];
     const outputIndex = event.output_index;
     const output = response.output[outputIndex];
 
-    // TODO: finish implementing
-    // if (output.type === "function_call") {
-    //   if (!this.#funcCtx) {
-    //     this.#logger.error(
-    //       "function call received but no funcCtx is available"
-    //     );
-    //     return;
-    //   }
+    if (output.type === 'function_call') {
+      if (!this.#fncCtx) {
+        this.#logger.error('function call received but no fncCtx is available');
+        return;
+      }
 
-    //   // parse the arguments and call the function inside the fnc_ctx
-    //   const item = event.item;
-    //   if (item.type !== "function_call") {
-    //     throw new Error("Expected function_call item");
-    //   }
+      // parse the arguments and call the function inside the fnc_ctx
+      const item = event.item;
+      if (item.type !== 'function_call') {
+        throw new Error('Expected function_call item');
+      }
 
-    //   const funcCallInfo = this.#oai_api.createAiFunctionInfo(
-    //     this.#funcCtx,
-    //     item.call_id,
-    //     item.name,
-    //     item.arguments
-    //   );
+      this.emit('function_call_started', {
+        callId: item.call_id,
+      });
 
-    //   this.#fnc_tasks.createTask(
-    //     this.#runFncTask(fnc_call_info, output.item_id)
-    //   );
-    // }
+      const parsedArgs = JSON.parse(item.arguments);
 
-    output.donePromise();
-    this.emit(EventTypes.ResponseOutputDone, output);
+      this.#logger.debug(
+        `[Function Call ${item.call_id}] Executing ${item.name} with arguments ${parsedArgs}`,
+      );
+
+      this.#fncCtx[item.name].execute(parsedArgs).then(
+        (content) => {
+          this.#logger.debug(`[Function Call ${item.call_id}] ${item.name} returned ${content}`);
+          this.emit('function_call_completed', {
+            callId: item.call_id,
+          });
+          this.defaultConversation.item.create(
+            {
+              type: 'function_call_output',
+              call_id: item.call_id,
+              output: content,
+            },
+            output.itemId,
+          );
+          this.response.create();
+        },
+        (error) => {
+          this.#logger.error(`[Function Call ${item.call_id}] ${item.name} failed with ${error}`);
+          // TODO: send it back up as failed?
+          this.emit('function_call_failed', {
+            callId: item.call_id,
+          });
+        },
+      );
+    }
+
+    output.doneFut.resolve();
+    this.emit('response_output_done', output);
   }
 
-  private handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
+  #handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
     const responseId = event.response_id;
     const response = this.#pendingResponses[responseId];
     const outputIndex = event.output_index;
     const output = response.output[outputIndex];
 
-    const textStream = new Queue<string>();
-    const audioStream = new Queue<AudioFrame>();
+    const textStream = new AsyncIterableQueue<string>();
+    const audioStream = new AsyncIterableQueue<AudioFrame>();
 
     const newContent: RealtimeContent = {
       responseId: responseId,
@@ -799,39 +781,35 @@ export class RealtimeSession extends EventEmitter {
       toolCalls: [],
     };
     output.content.push(newContent);
-    this.emit(EventTypes.ResponseContentAdded, newContent);
+    this.emit('response_content_added', newContent);
   }
 
-  private handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
-    const content = this.getContent(event);
-    this.emit(EventTypes.ResponseContentDone, content);
+  #handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
+    const content = this.#getContent(event);
+    this.emit('response_content_done', content);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {}
+  #handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {}
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleResponseTextDone(event: api_proto.ResponseTextDoneEvent): void {}
+  #handleResponseTextDone(event: api_proto.ResponseTextDoneEvent): void {}
 
-  private handleResponseAudioTranscriptDelta(
-    event: api_proto.ResponseAudioTranscriptDeltaEvent,
-  ): void {
-    const content = this.getContent(event);
+  #handleResponseAudioTranscriptDelta(event: api_proto.ResponseAudioTranscriptDeltaEvent): void {
+    const content = this.#getContent(event);
     const transcript = event.delta;
     content.text += transcript;
 
     content.textStream.put(transcript);
   }
 
-  private handleResponseAudioTranscriptDone(
-    event: api_proto.ResponseAudioTranscriptDoneEvent,
-  ): void {
-    const content = this.getContent(event);
-    content.textStream.put(null);
+  #handleResponseAudioTranscriptDone(event: api_proto.ResponseAudioTranscriptDoneEvent): void {
+    const content = this.#getContent(event);
+    content.textStream.close();
   }
 
-  private handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
-    const content = this.getContent(event);
+  #handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
+    const content = this.#getContent(event);
     const data = Buffer.from(event.delta, 'base64');
     const audio = new AudioFrame(
       new Int16Array(data.buffer),
@@ -844,41 +822,21 @@ export class RealtimeSession extends EventEmitter {
     content.audioStream.put(audio);
   }
 
-  private handleResponseAudioDone(event: api_proto.ResponseAudioDoneEvent): void {
-    const content = this.getContent(event);
-    content.audioStream.put(null);
+  #handleResponseAudioDone(event: api_proto.ResponseAudioDoneEvent): void {
+    const content = this.#getContent(event);
+    content.audioStream.close();
   }
 
-  private handleResponseFunctionCallArgumentsDelta(
+  #handleResponseFunctionCallArgumentsDelta(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.ResponseFunctionCallArgumentsDeltaEvent,
   ): void {}
 
-  private handleResponseFunctionCallArgumentsDone(
+  #handleResponseFunctionCallArgumentsDone(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.ResponseFunctionCallArgumentsDoneEvent,
   ): void {}
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private handleRateLimitsUpdated(event: api_proto.RateLimitsUpdatedEvent): void {}
+  #handleRateLimitsUpdated(event: api_proto.RateLimitsUpdatedEvent): void {}
 }
-
-// TODO function init
-// if (event.item.type === 'function_call') {
-//   const toolCall = event.item;
-//   this.options.functions[toolCall.name].execute(toolCall.arguments).then((content) => {
-//     this.thinking = false;
-//     this.sendClientCommand({
-//       type: proto.ClientEventType.ConversationItemCreate,
-//       item: {
-//         type: 'function_call_output',
-//         call_id: toolCall.call_id,
-//         output: content,
-//       },
-//     });
-//     this.sendClientCommand({
-//       type: proto.ClientEventType.ResponseCreate,
-//       response: {},
-//     });
-//   });
-// }

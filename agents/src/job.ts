@@ -105,14 +105,18 @@ export class JobContext {
       throw new Error('room is not connected');
     }
 
+    console.log(this.#room.remoteParticipants.values());
+
     for (const p of this.#room.remoteParticipants.values()) {
-      if (p.identity === identity && p.info.kind != ParticipantKind.AGENT) {
+      if ((!identity || p.identity === identity) && p.info.kind != ParticipantKind.AGENT) {
         return p;
       }
     }
 
     return new Promise((resolve) => {
-      this.#room.once(RoomEvent.ParticipantConnected, resolve);
+      this.#room.once(RoomEvent.ParticipantConnected, () => {
+        resolve(this.#room.remoteParticipants.values().next().value);
+      });
     });
   }
 

@@ -11,6 +11,7 @@
  */
 import * as cli from './cli.js';
 import * as llm from './llm/index.js';
+import * as multimodal from './multimodal/index.js';
 import * as stt from './stt/index.js';
 import * as tts from './tts/index.js';
 
@@ -26,4 +27,4 @@ export * from './tokenize.js';
 export * from './audio.js';
 export * from './transcription.js';
 
-export { cli, stt, tts, llm };
+export { cli, stt, tts, llm, multimodal };
