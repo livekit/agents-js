@@ -6,10 +6,9 @@ import * as openai from '@livekit/agents-plugin-openai';
 import type {
   LocalParticipant,
   Participant,
-  RemoteParticipant,
   TrackPublication,
 } from '@livekit/rtc-node';
-import { RemoteTrackPublication, TrackSource } from '@livekit/rtc-node';
+import { RemoteParticipant, TrackSource } from '@livekit/rtc-node';
 import { fileURLToPath } from 'node:url';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -98,6 +97,10 @@ async function runMultimodalAgent(ctx: JobContext, participant: RemoteParticipan
   ctx.room.on(
     'participantAttributesChanged',
     (changedAttributes: Record<string, string>, participant: Participant) => {
+      if (!(participant instanceof RemoteParticipant)) {
+        return;
+      }
+      console.log('participantAttributesChanged', changedAttributes, participant);
       const newConfig = parseSessionConfig({ ...participant.attributes, ...changedAttributes });
       console.log(`participant attributes changed: ${JSON.stringify(newConfig)}`);
 
