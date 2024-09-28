@@ -240,3 +240,15 @@ export class CancellablePromise<T> {
     });
   }
 }
+
+/** @internal */
+export async function gracefullyCancel<T>(promise: CancellablePromise<T>): Promise<void> {
+  if (!promise.isCancelled) {
+    promise.cancel();
+  }
+  try {
+    await promise;
+  } catch (error) {
+    // Ignore the error, as it's expected due to cancellation
+  }
+}

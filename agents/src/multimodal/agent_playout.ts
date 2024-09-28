@@ -6,7 +6,7 @@ import { type AudioSource } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { AudioByteStream } from '../audio.js';
 import type { TranscriptionForwarder } from '../transcription.js';
-import { CancellablePromise, Future, type Queue } from '../utils.js';
+import { CancellablePromise, Future, type Queue, gracefullyCancel } from '../utils.js';
 
 export const proto = {};
 
@@ -141,8 +141,7 @@ export class AgentPlayout {
       (async () => {
         try {
           if (oldTask) {
-            // TODO: wait for graceful shutdown
-            oldTask.cancel();
+            await gracefullyCancel(oldTask);
           }
 
           let firstFrame = true;
@@ -229,7 +228,7 @@ export class AgentPlayout {
             await Promise.race([captureTask, handle.intFut.await]);
           } finally {
             if (!captureTask.isCancelled) {
-              captureTask.cancel();
+              await gracefullyCancel(captureTask);
             }
 
             handle.totalPlayedTime = handle.pushedDuration - this.#audioSource.queuedDuration;
@@ -239,7 +238,7 @@ export class AgentPlayout {
             }
 
             if (!playTextTask.isCancelled) {
-              playTextTask.cancel();
+              await gracefullyCancel(playTextTask);
             }
 
             if (!firstFrame && !handle.interrupted) {
