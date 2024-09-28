@@ -48,6 +48,8 @@ export abstract class RealtimeModel {
   abstract outFrameSize: number;
 }
 
+export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
+
 /** @beta */
 export class MultimodalAgent {
   model: RealtimeModel;
@@ -77,6 +79,9 @@ export class MultimodalAgent {
   #logger = log();
   #session: RealtimeSession | null = null;
   #fncCtx: llm.FunctionContext | undefined = undefined;
+
+  #pendingFunctionCalls: Set<string> = new Set();
+  #speaking: boolean = false;
 
   get fncCtx(): llm.FunctionContext | undefined {
     return this.#fncCtx!;
@@ -111,7 +116,7 @@ export class MultimodalAgent {
       this.room = room;
       this.#participant = participant;
 
-      this.#localSource = new AudioSource(24000, 1);
+      this.#localSource = new AudioSource(this.model.sampleRate, this.model.numChannels);
       this.#agentPlayout = new AgentPlayout(
         this.#localSource,
         this.model.sampleRate,
@@ -209,46 +214,11 @@ export class MultimodalAgent {
     });
   }
 
+  // TODO
   // close() {
   //   if (!this.connected || !this.ws) return;
   //   this.logger.debug('stopping assistant');
   //   this.ws.close();
-  // }
-
-  // addUserMessage(text: string, generate: boolean = true): void {
-  //   this.sendClientCommand({
-  //     type: proto.ClientEventType.ConversationItemCreate,
-  //     item: {
-  //       type: 'message',
-  //       role: 'user',
-  //       content: [
-  //         {
-  //           type: 'text',
-  //           text: text,
-  //         },
-  //       ],
-  //     },
-  //   });
-  //   if (generate) {
-  //     this.sendClientCommand({
-  //       type: proto.ClientEventType.ResponseCreate,
-  //       response: {},
-  //     });
-  //   }
-  // }
-
-  // private setState(state: proto.State) {
-  //   // don't override thinking until done
-  //   if (this.thinking) return;
-  //   if (this.room?.isConnected && this.room.localParticipant) {
-  //     const currentState = this.room.localParticipant.attributes['lk.agent.state'];
-  //     if (currentState !== state) {
-  //       this.room.localParticipant!.setAttributes({
-  //         'lk.agent.state': state,
-  //       });
-  //       this.logger.debug(`lk.agent.state updated from ${currentState} to ${state}`);
-  //     }
-  //   }
   // }
 
   #linkParticipant(participantIdentity: string): void {
@@ -365,5 +335,37 @@ export class MultimodalAgent {
         },
       ],
     });
+  }
+
+  #updateState() {
+    let newState: AgentState = 'listening';
+    if (this.#pendingFunctionCalls.size > 0) {
+      newState = 'thinking';
+    } else if (this.#speaking) {
+      newState = 'speaking';
+    }
+    this.#setState(newState);
+  }
+
+  set pendingFunctionCalls(calls: Set<string>) {
+    this.#pendingFunctionCalls = calls;
+    this.#updateState();
+  }
+
+  set speaking(isSpeaking: boolean) {
+    this.#speaking = isSpeaking;
+    this.#updateState();
+  }
+
+  #setState(state: AgentState) {
+    if (this.room?.isConnected && this.room.localParticipant) {
+      const currentState = this.room.localParticipant.attributes['lk.agent.state'];
+      if (currentState !== state) {
+        this.room.localParticipant!.setAttributes({
+          'lk.agent.state': state,
+        });
+        this.#logger.debug(`lk.agent.state updated from ${currentState} to ${state}`);
+      }
+    }
   }
 }
