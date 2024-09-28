@@ -92,17 +92,14 @@ export type TurnDetectionType =
     }
   | 'none';
 
-// Content Part Types
 export interface InputTextContent {
-  type: 'text';
+  type: 'input_text';
   text: string;
 }
 
 export interface InputAudioContent {
   type: 'input_audio';
-  // 'audio' field is excluded when rendered
-  // audio: AudioBase64Bytes;
-  transcript?: string;
+  audio: AudioBase64Bytes;
 }
 
 export interface TextContent {
@@ -112,34 +109,36 @@ export interface TextContent {
 
 export interface AudioContent {
   type: 'audio';
-  // 'audio' field is excluded when rendered
-  // audio: AudioBase64Bytes;
+  audio: AudioBase64Bytes;
   transcript: string;
 }
 
-export type ContentPart = InputTextContent | InputAudioContent | TextContent | AudioContent;
+export type Content = InputTextContent | InputAudioContent | TextContent | AudioContent;
+export type ContentPart = {
+  type: 'text' | 'audio';
+  audio?: AudioBase64Bytes;
+  transcript?: string;
+};
 
-// Item Resource Types
 export interface BaseItem {
   id: string;
   object: 'realtime.item';
-  previous_item_id?: string;
   type: string;
 }
 
-export interface SystemMessageItem extends BaseItem {
+export interface SystemItem extends BaseItem {
   type: 'message';
   role: 'system';
   content: InputTextContent;
 }
 
-export interface UserMessageItem extends BaseItem {
+export interface UserItem extends BaseItem {
   type: 'message';
   role: 'user';
   content: (InputTextContent | InputAudioContent)[];
 }
 
-export interface AssistantMessageItem extends BaseItem {
+export interface AssistantItem extends BaseItem {
   type: 'message';
   role: 'assistant';
   content: (TextContent | AudioContent)[];
@@ -159,9 +158,9 @@ export interface FunctionCallOutputItem extends BaseItem {
 }
 
 export type ItemResource =
-  | SystemMessageItem
-  | UserMessageItem
-  | AssistantMessageItem
+  | SystemItem
+  | UserItem
+  | AssistantItem
   | FunctionCallItem
   | FunctionCallOutputItem;
 
@@ -266,29 +265,40 @@ export interface InputAudioBufferClearEvent extends BaseClientEvent {
   type: 'input_audio_buffer.clear';
 }
 
+export interface UserItemCreate {
+  type: 'message';
+  role: 'user';
+  content: (InputTextContent | InputAudioContent)[];
+}
+
+export interface AssistantItemCreate {
+  type: 'message';
+  role: 'assistant';
+  content: TextContent[];
+}
+
+export interface SystemItemCreate {
+  type: 'message';
+  role: 'system';
+  content: InputTextContent[];
+}
+
+export interface FunctionCallOutputItemCreate {
+  type: 'function_call_output';
+  call_id: string;
+  output: string;
+}
+
+export type ConversationItemCreateContent =
+  | UserItemCreate
+  | AssistantItemCreate
+  | SystemItemCreate
+  | FunctionCallOutputItemCreate;
+
 export interface ConversationItemCreateEvent extends BaseClientEvent {
   type: 'conversation.item.create';
-  item:
-    | {
-        type: 'message';
-        role: 'user';
-        content: (InputTextContent | InputAudioContent)[];
-      }
-    | {
-        type: 'message';
-        role: 'assistant';
-        content: TextContent[];
-      }
-    | {
-        type: 'message';
-        role: 'system';
-        content: InputTextContent[];
-      }
-    | {
-        type: 'function_call_output';
-        call_id: string;
-        output: string;
-      };
+  previous_item_id?: string;
+  item: ConversationItemCreateContent;
 }
 
 export interface ConversationItemTruncateEvent extends BaseClientEvent {

@@ -138,11 +138,6 @@ class ConversationItem {
     this.#session = session;
   }
 
-  // create(message: llm.ChatMessage, previousItemId?: string) {
-  //   // TODO: Implement create method
-  //   throw new Error('Not implemented');
-  // }
-
   truncate(itemId: string, contentIndex: number, audioEnd: number) {
     this.#session.queueMsg({
       type: 'conversation.item.truncate',
@@ -156,6 +151,14 @@ class ConversationItem {
     this.#session.queueMsg({
       type: 'conversation.item.delete',
       item_id: itemId,
+    });
+  }
+
+  create(item: api_proto.ConversationItemCreateContent, previousItemId?: string): void {
+    this.#session.queueMsg({
+      type: 'conversation.item.create',
+      item,
+      previous_item_id: previousItemId,
     });
   }
 }
@@ -740,32 +743,36 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const outputIndex = event.output_index;
     const output = response.output[outputIndex];
 
-    // TODO: finish implementing
-    // if (output.type === "function_call") {
-    //   if (!this.#funcCtx) {
-    //     this.#logger.error(
-    //       "function call received but no funcCtx is available"
-    //     );
-    //     return;
-    //   }
+    if (output.type === 'function_call') {
+      if (!this.#fncCtx) {
+        this.#logger.error('function call received but no fncCtx is available');
+        return;
+      }
 
-    //   // parse the arguments and call the function inside the fnc_ctx
-    //   const item = event.item;
-    //   if (item.type !== "function_call") {
-    //     throw new Error("Expected function_call item");
-    //   }
+      // parse the arguments and call the function inside the fnc_ctx
+      const item = event.item;
+      if (item.type !== 'function_call') {
+        throw new Error('Expected function_call item');
+      }
 
-    //   const funcCallInfo = this.#oai_api.createAiFunctionInfo(
-    //     this.#funcCtx,
-    //     item.call_id,
-    //     item.name,
-    //     item.arguments
-    //   );
+      this.#logger
+        .child({
+          function: item.name,
+        })
+        .debug('executing ai function');
 
-    //   this.#fnc_tasks.createTask(
-    //     this.#runFncTask(fnc_call_info, output.item_id)
-    //   );
-    // }
+      this.#fncCtx[item.name].execute(item.arguments).then((content) => {
+        this.defaultConversation.item.create(
+          {
+            type: 'function_call_output',
+            call_id: item.call_id,
+            output: content,
+          },
+          output.itemId,
+        );
+        this.response.create();
+      });
+    }
 
     output.donePromise();
     this.emit('response_output_done', output);
@@ -851,23 +858,3 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   #handleRateLimitsUpdated(event: api_proto.RateLimitsUpdatedEvent): void {}
 }
-
-// TODO function init
-// if (event.item.type === 'function_call') {
-//   const toolCall = event.item;
-//   this.options.functions[toolCall.name].execute(toolCall.arguments).then((content) => {
-//     this.thinking = false;
-//     this.sendClientCommand({
-//       type: proto.ClientEventType.ConversationItemCreate,
-//       item: {
-//         type: 'function_call_output',
-//         call_id: toolCall.call_id,
-//         output: content,
-//       },
-//     });
-//     this.sendClientCommand({
-//       type: proto.ClientEventType.ResponseCreate,
-//       response: {},
-//     });
-//   });
-// }
