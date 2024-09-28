@@ -17,7 +17,7 @@ import {
 } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { AudioByteStream } from '../audio.js';
-import * as llm from '../llm/index.js';
+import type * as llm from '../llm/index.js';
 import { log } from '../log.js';
 import { BasicTranscriptionForwarder } from '../transcription.js';
 import { findMicroTrackId } from '../utils.js';
@@ -30,6 +30,7 @@ import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 export abstract class RealtimeSession extends EventEmitter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   abstract defaultConversation: any; // openai.realtime.Conversation
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   abstract inputAudioBuffer: any; // openai.realtime.InputAudioBuffer
   abstract fncCtx: llm.FunctionContext | undefined;
 }
