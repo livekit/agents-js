@@ -34,9 +34,13 @@ export default defineAgent({
       },
     });
 
-    await agent.start(ctx.room);
-
-    // assistant.addUserMessage('Hello! Can you share a very short story?');
+    const session = (await agent.start(ctx.room)) as openai.realtime.RealtimeSession;
+    session.defaultConversation.item.create({
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'Hello! Can you share a very short story?' }],
+    });
+    session.response.create();
   },
 });
 

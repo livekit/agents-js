@@ -90,11 +90,11 @@ export class MultimodalAgent {
     }
   }
 
-  start(room: Room, participant: RemoteParticipant | string | null = null): Promise<void> {
+  start(room: Room, participant: RemoteParticipant | string | null = null): Promise<RealtimeSession> {
     return new Promise(async (resolve, reject) => {
       if (this.#started) {
         this.#logger.warn('MultimodalAgent already started');
-        resolve(); // TODO: throw error?
+        resolve(this.#session!); // TODO: throw error?
         return;
       }
 
@@ -202,6 +202,8 @@ export class MultimodalAgent {
           this.#playingHandle = undefined;
         }
       });
+
+      resolve(this.#session!);
     });
   }
 
