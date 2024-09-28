@@ -217,7 +217,7 @@ export class MultimodalAgent {
         const participantIdentity = this.linkedParticipant?.identity;
         const trackSid = this.subscribedTrack?.sid;
         if (participantIdentity && trackSid) {
-          this.#publishTranscription(participantIdentity, trackSid, '', true, ev.itemId);
+          this.#publishTranscription(participantIdentity, trackSid, '…', false, ev.itemId);
         } else {
           this.#logger.error('Participant or track not set');
         }
@@ -236,7 +236,7 @@ export class MultimodalAgent {
         }
       });
 
-      this.#session.on('input_speech_started', () => {
+      this.#session.on('input_speech_started', (ev: any) => {
         if (this.#playingHandle && !this.#playingHandle.done) {
           this.#playingHandle.interrupt();
 
@@ -247,6 +247,12 @@ export class MultimodalAgent {
           );
 
           this.#playingHandle = undefined;
+        }
+
+        const participantIdentity = this.linkedParticipant?.identity;
+        const trackSid = this.subscribedTrack?.sid;
+        if (participantIdentity && trackSid) {
+          this.#publishTranscription(participantIdentity, trackSid, '…', false, ev.itemId);
         }
       });
 
@@ -371,7 +377,7 @@ export class MultimodalAgent {
     isFinal: boolean,
     id: string,
   ): void {
-    this.#logger.info(
+    this.#logger.debug(
       `Publishing transcription ${participantIdentity} ${trackSid} ${text} ${isFinal} ${id}`,
     );
     if (!this.room?.localParticipant) {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Queue } from '@livekit/agents';
+import { Queue, Future } from '@livekit/agents';
 import { llm, log, multimodal } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'events';
@@ -14,79 +14,47 @@ interface ModelOptions {
   voice: api_proto.Voice;
   inputAudioFormat: api_proto.AudioFormat;
   outputAudioFormat: api_proto.AudioFormat;
-  inputAudioTranscription?: {
-    model: 'whisper-1';
-  };
-  turnDetection:
-    | {
-        type: 'server_vad';
-        threshold?: number;
-        prefix_padding_ms?: number;
-        silence_duration_ms?: number;
-      }
-    | 'none';
+  inputAudioTranscription?: api_proto.InputAudioTranscription;
+  turnDetection: api_proto.TurnDetectionType;
   temperature: number;
-  maxResponseOutputTokens: number;
+  maxResponseOutputTokens?: number;
   model: api_proto.Model;
   apiKey: string;
   baseURL: string;
 }
 
 export interface RealtimeResponse {
-  /** ID of the message */
   id: string;
-  /** Status of the response */
   status: api_proto.ResponseStatus;
-  /** List of outputs */
   output: RealtimeOutput[];
-  /** Promise that will be executed when the response is completed */
-  donePromise: () => Promise<void>;
+  doneFut: Future;
 }
 
 export interface RealtimeOutput {
-  /** ID of the response */
   responseId: string;
-  /** ID of the item */
   itemId: string;
-  /** Index of the output */
   outputIndex: number;
-  /** Role of the message */
   role: api_proto.Role;
-  /** Type of the output */
   type: 'message' | 'function_call';
-  /** List of content */
   content: RealtimeContent[];
-  /** Promise that will be executed when the response is completed */
-  donePromise: () => Promise<void>;
+  doneFut: Future;
 }
 
 export interface RealtimeContent {
-  /** ID of the response */
   responseId: string;
-  /** ID of the item */
   itemId: string;
-  /** Index of the output */
   outputIndex: number;
-  /** Index of the content */
   contentIndex: number;
-  /** Accumulated text content */
   text: string;
-  /** Accumulated audio content */
   audio: AudioFrame[];
-  /** Stream of text content */
   textStream: Queue<string | null>;
-  /** Stream of audio content */
   audioStream: Queue<AudioFrame | null>;
-  /** Pending tool calls */
   toolCalls: RealtimeToolCall[];
 }
 
 export interface RealtimeToolCall {
-  /** Name of the function */
   name: string;
-  /** Accumulated arguments */
   arguments: string;
-  /** ID of the tool call */
   toolCallID: string;
 }
 
@@ -98,6 +66,10 @@ export interface InputSpeechTranscriptionCompleted {
 export interface InputSpeechTranscriptionFailed {
   itemId: string;
   message: string;
+}
+
+export interface InputSpeechStarted {
+  itemId: string;
 }
 
 export interface InputSpeechCommitted {
@@ -219,7 +191,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     inputAudioTranscription = { model: 'whisper-1' },
     turnDetection = { type: 'server_vad' },
     temperature = 0.8,
-    maxResponseOutputTokens = 2048,
+    maxResponseOutputTokens = undefined,
     model = 'gpt-4o-realtime-preview-2024-10-01',
     apiKey = process.env.OPENAI_API_KEY || '',
     baseURL = api_proto.API_URL,
@@ -229,7 +201,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     voice?: api_proto.Voice;
     inputAudioFormat?: api_proto.AudioFormat;
     outputAudioFormat?: api_proto.AudioFormat;
-    inputAudioTranscription?: { model: 'whisper-1' };
+    inputAudioTranscription?: api_proto.InputAudioTranscription;
     turnDetection?: api_proto.TurnDetectionType;
     temperature?: number;
     maxResponseOutputTokens?: number;
@@ -283,7 +255,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     voice?: api_proto.Voice;
     inputAudioFormat?: api_proto.AudioFormat;
     outputAudioFormat?: api_proto.AudioFormat;
-    inputAudioTranscription?: { model: 'whisper-1' };
+    inputAudioTranscription?: api_proto.InputAudioTranscription;
     turnDetection?: api_proto.TurnDetectionType;
     temperature?: number;
     maxResponseOutputTokens?: number;
@@ -415,14 +387,14 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   }: {
     modalities: ['text', 'audio'] | ['text'];
     instructions?: string;
-    voice: api_proto.Voice;
-    inputAudioFormat: api_proto.AudioFormat;
-    outputAudioFormat: api_proto.AudioFormat;
-    inputAudioTranscription?: { model: 'whisper-1' };
-    turnDetection: api_proto.TurnDetectionType;
-    temperature: number;
-    maxResponseOutputTokens: number;
-    toolChoice: api_proto.ToolChoice;
+    voice?: api_proto.Voice;
+    inputAudioFormat?: api_proto.AudioFormat;
+    outputAudioFormat?: api_proto.AudioFormat;
+    inputAudioTranscription?: api_proto.InputAudioTranscription;
+    turnDetection?: api_proto.TurnDetectionType;
+    temperature?: number;
+    maxResponseOutputTokens?: number;
+    toolChoice?: api_proto.ToolChoice;
   }) {
     this.#opts = {
       modalities,
@@ -591,7 +563,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
       this.#ws.onclose = () => {
         if (!this.#closing) {
-          reject('OpenAI S2S connection closed unexpectedly');
+          reject('OpenAI Realtime connection closed unexpectedly');
         }
         this.#ws = null;
         resolve();
@@ -612,7 +584,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   }
 
   #handleError(event: api_proto.ErrorEvent): void {
-    this.#logger.error(`OpenAI S2S error ${event.error}`);
+    this.#logger.error(`OpenAI Realtime error ${JSON.stringify(event.error)}`);
   }
 
   #handleSessionCreated(event: api_proto.SessionCreatedEvent): void {
@@ -628,7 +600,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   #handleInputAudioBufferCommitted(event: api_proto.InputAudioBufferCommittedEvent): void {
     this.emit('input_speech_committed', {
       itemId: event.item_id,
-    });
+    } as InputSpeechCommitted);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -638,7 +610,9 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.InputAudioBufferSpeechStartedEvent,
   ): void {
-    this.emit('input_speech_started');
+    this.emit('input_speech_started', {
+      itemId: event.item_id,
+    } as InputSpeechStarted);
   }
 
   #handleInputAudioBufferSpeechStopped(
@@ -658,18 +632,18 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     this.emit('input_speech_transcription_completed', {
       itemId: event.item_id,
       transcript: transcript,
-    });
+    } as InputSpeechTranscriptionCompleted);
   }
 
   #handleConversationItemInputAudioTranscriptionFailed(
     event: api_proto.ConversationItemInputAudioTranscriptionFailedEvent,
   ): void {
     const error = event.error;
-    this.#logger.error(`OAI S2S failed to transcribe input audio: ${error.message}`);
+    this.#logger.error(`OpenAI Realtime failed to transcribe input audio: ${error.message}`);
     this.emit('input_speech_transcription_failed', {
       itemId: event.item_id,
       message: error.message,
-    });
+    } as InputSpeechTranscriptionFailed);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -680,14 +654,12 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   #handleResponseCreated(responseCreated: api_proto.ResponseCreatedEvent): void {
     const response = responseCreated.response;
-    const donePromise = new Promise<void>((resolve) => {
-      this.once('response_done', () => resolve());
-    });
+    const doneFut = new Future();
     const newResponse: RealtimeResponse = {
       id: response.id,
       status: response.status,
       output: [],
-      donePromise: () => donePromise,
+      doneFut: doneFut,
     };
     this.#pendingResponses[newResponse.id] = newResponse;
     this.emit('response_created', newResponse);
@@ -697,7 +669,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const responseData = event.response;
     const responseId = responseData.id;
     const response = this.#pendingResponses[responseId];
-    response.donePromise();
+    response.doneFut.resolve();
     this.emit('response_done', response);
   }
 
@@ -724,14 +696,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       type: itemData.type,
       role: role,
       content: [],
-      donePromise: () =>
-        new Promise<void>((resolve) => {
-          this.once('response_output_done', (output: RealtimeOutput) => {
-            if (output.itemId === itemData.id) {
-              resolve();
-            }
-          });
-        }),
+      doneFut: new Future(),
     };
     response.output.push(newOutput);
     this.emit('response_output_added', newOutput);
@@ -791,7 +756,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       );
     }
 
-    output.donePromise();
+    output.doneFut.resolve();
     this.emit('response_output_done', output);
   }
 

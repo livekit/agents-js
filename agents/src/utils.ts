@@ -149,12 +149,105 @@ export class Future {
     this.resolve = resolve;
     this.reject = reject;
   });
+  #done: boolean = false;
 
   get await() {
     return this.#await;
   }
-  resolve() {}
+
+  get done() {
+    return this.#done;
+  }
+
+  resolve() {
+    this.#done = true;
+  }
+
   reject(_: Error) {
+    this.#done = true;
     _;
+  }
+}
+
+/** @internal */
+export class CancellablePromise<T> {
+  #promise: Promise<T>;
+  #cancelFn: () => void;
+  #isCancelled: boolean = false;
+  #error: Error | null = null;
+
+  constructor(
+    executor: (
+      resolve: (value: T | PromiseLike<T>) => void,
+      reject: (reason?: any) => void,
+      onCancel: (cancelFn: () => void) => void,
+    ) => void,
+  ) {
+    let cancel: () => void;
+
+    this.#promise = new Promise<T>((resolve, reject) => {
+      executor(
+        resolve,
+        (reason) => {
+          this.#error = reason instanceof Error ? reason : new Error(String(reason));
+          reject(reason);
+        },
+        (cancelFn) => {
+          cancel = () => {
+            this.#isCancelled = true;
+            cancelFn();
+          };
+        }
+      );
+    });
+
+    this.#cancelFn = cancel!;
+  }
+
+  get isCancelled(): boolean {
+    return this.#isCancelled;
+  }
+
+  get error(): Error | null {
+    return this.#error;
+  }
+
+  then<TResult1 = T, TResult2 = never>(
+    onfulfilled?: ((value: T) => TResult1 | Promise<TResult1>) | null,
+    onrejected?: ((reason: any) => TResult2 | Promise<TResult2>) | null,
+  ): Promise<TResult1 | TResult2> {
+    return this.#promise.then(onfulfilled, onrejected);
+  }
+
+  catch<TResult = never>(
+    onrejected?: ((reason: any) => TResult | Promise<TResult>) | null,
+  ): Promise<T | TResult> {
+    return this.#promise.catch(onrejected);
+  }
+
+  finally(onfinally?: (() => void) | null): Promise<T> {
+    return this.#promise.finally(onfinally);
+  }
+
+  cancel(): void {
+    this.#cancelFn();
+  }
+
+  static from<T>(promise: Promise<T>): CancellablePromise<T> {
+    return new CancellablePromise<T>((resolve, reject) => {
+      promise.then(resolve).catch(reject);
+    });
+  }
+}
+
+/** @internal */
+export async function gracefullyCancel<T>(promise: CancellablePromise<T>): Promise<void> {
+  if (!promise.isCancelled) {
+    promise.cancel();
+  }
+  try {
+    await promise;
+  } catch (error) {
+    // Ignore the error, as it's expected due to cancellation
   }
 }
