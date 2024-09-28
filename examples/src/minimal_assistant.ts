@@ -24,10 +24,12 @@ export default defineAgent({
           parameters: z.object({
             location: z.string().describe('The location to get the weather for'),
           }),
-          execute: async ({ location }) =>
-            await fetch(`https://wttr.in/${location}?format=%C+%t`)
+          execute: async ({ location }) => {
+            console.debug(`executing weather function for ${location}`);
+            return await fetch(`https://wttr.in/${location}?format=%C+%t`)
               .then((data) => data.text())
-              .then((data) => `The weather in ${location} right now is ${data}.`),
+              .then((data) => `The weather in ${location} right now is ${data}.`);
+          },
         },
       },
     });

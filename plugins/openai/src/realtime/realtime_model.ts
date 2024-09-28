@@ -755,13 +755,14 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         throw new Error('Expected function_call item');
       }
 
-      this.#logger
-        .child({
-          function: item.name,
-        })
-        .debug('executing ai function');
+      const parsedArgs = JSON.parse(item.arguments);
 
-      this.#fncCtx[item.name].execute(item.arguments).then((content) => {
+      this.#logger.debug(
+        `[Function Call ${item.call_id}] Executing ${item.name} with arguments ${parsedArgs}`,
+      );
+
+      this.#fncCtx[item.name].execute(parsedArgs).then((content) => {
+        this.#logger.debug(`[Function Call ${item.call_id}] ${item.name} returned ${content}`);
         this.defaultConversation.item.create(
           {
             type: 'function_call_output',
