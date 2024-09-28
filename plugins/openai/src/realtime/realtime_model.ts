@@ -612,7 +612,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   }
 
   #handleError(event: api_proto.ErrorEvent): void {
-    this.#logger.error(`OpenAI S2S error ${event.error}`);
+    this.#logger.error(`OpenAI S2S error ${JSON.stringify(event.error)}`);
   }
 
   #handleSessionCreated(event: api_proto.SessionCreatedEvent): void {
