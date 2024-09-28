@@ -27,6 +27,17 @@ export default defineAgent({
   },
 });
 
+type TurnDetectionType =
+  | {
+      type: 'server_vad';
+      threshold?: number;
+      prefix_padding_ms?: number;
+      silence_duration_ms?: number;
+    }
+  | {
+      type: 'none';
+    };
+
 interface SessionConfig {
   openaiApiKey: string;
   instructions: string;
@@ -34,9 +45,28 @@ interface SessionConfig {
   temperature: number;
   maxOutputTokens?: number;
   modalities: string[];
+  turnDetection?: TurnDetectionType;
 }
 
 function parseSessionConfig(data: any): SessionConfig {
+  const turnDetection: TurnDetectionType | undefined =
+    data.turn_detection_type === 'server_vad'
+      ? {
+          type: 'server_vad',
+          ...(data.vad_threshold !== undefined && {
+            threshold: parseFloat(data.vad_threshold),
+          }),
+          ...(data.vad_prefix_padding_ms !== undefined && {
+            prefix_padding_ms: parseInt(data.vad_prefix_padding_ms),
+          }),
+          ...(data.vad_silence_duration_ms !== undefined && {
+            silence_duration_ms: parseInt(data.vad_silence_duration_ms),
+          }),
+        }
+      : data.turn_detection_type === 'none'
+        ? { type: 'none' as const }
+        : undefined;
+
   return {
     openaiApiKey: data.openai_api_key || '',
     instructions: data.instructions || '',
@@ -44,6 +74,7 @@ function parseSessionConfig(data: any): SessionConfig {
     temperature: parseFloat(data.temperature || '0.8'),
     maxOutputTokens: data.max_output_tokens || undefined,
     modalities: modalitiesFromString(data.modalities || 'text_and_audio'),
+    turnDetection: turnDetection,
   };
 }
 
@@ -109,7 +140,7 @@ async function runMultimodalAgent(ctx: JobContext, participant: RemoteParticipan
         // voice: newConfig.voice,
         // inputAudioFormat: 'pcm16',
         // outputAudioFormat: 'pcm16',
-        // turnDetection: 'auto',
+        turnDetection: newConfig.turnDetection,
         // toolChoice: 'auto',
       });
 
