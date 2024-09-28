@@ -29,9 +29,8 @@ import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
  */
 export abstract class RealtimeSession extends EventEmitter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  abstract queueMsg(msg: any): void; // openai.realtime.api_proto.ClientEvent
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   abstract defaultConversation: any; // openai.realtime.Conversation
+  abstract inputAudioBuffer: any; // openai.realtime.InputAudioBuffer
   abstract fncCtx: llm.FunctionContext | undefined;
 }
 
@@ -284,10 +283,7 @@ export class MultimodalAgent {
       for await (const frame of audioStream) {
         const audioData = frame.data;
         for (const frame of bstream.write(audioData.buffer)) {
-          this.#session!.queueMsg({
-            type: 'input_audio_buffer.append',
-            audio: Buffer.from(frame.data.buffer).toString('base64'),
-          });
+          this.#session!.inputAudioBuffer.append(frame);
         }
       }
     };
