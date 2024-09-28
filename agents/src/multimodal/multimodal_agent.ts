@@ -50,6 +50,7 @@ export abstract class RealtimeModel {
 }
 
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
+export const AGENT_STATE_ATTRIBUTE = 'lk.agent.state';
 
 /** @beta */
 export class MultimodalAgent {
@@ -409,12 +410,12 @@ export class MultimodalAgent {
 
   #setState(state: AgentState) {
     if (this.room?.isConnected && this.room.localParticipant) {
-      const currentState = this.room.localParticipant.attributes['lk.agent.state'];
+      const currentState = this.room.localParticipant.attributes[AGENT_STATE_ATTRIBUTE];
       if (currentState !== state) {
         this.room.localParticipant!.setAttributes({
-          'lk.agent.state': state,
+          [AGENT_STATE_ATTRIBUTE]: state,
         });
-        this.#logger.error(`lk.agent.state updated from ${currentState} to ${state}`);
+        this.#logger.debug(`${AGENT_STATE_ATTRIBUTE}: ${currentState} ->${state}`);
       }
     }
   }
