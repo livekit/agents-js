@@ -6,7 +6,7 @@ import { type AudioSource } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { AudioByteStream } from '../audio.js';
 import type { TranscriptionForwarder } from '../transcription.js';
-import type { Queue } from '../utils.js';
+import { CancellablePromise, type Queue } from '../utils.js';
 
 export const proto = {};
 
@@ -63,69 +63,101 @@ export class AgentPlayout {
 
     let firstFrame = true;
 
-    const playTextStream = async () => {
-      while (true) {
-        const text = await textStream.get();
-        if (text === null) break;
-        handle.transcriptionFwd.pushText(text);
-      }
-      handle.transcriptionFwd.markTextComplete();
-    };
+    const playTextStream = () =>
+      new CancellablePromise<void>((resolve, reject, onCancel) => {
+        let cancelled = false;
+        onCancel(() => {
+          cancelled = true;
+        });
 
-    const captureTask = async () => {
-      const samplesPerChannel = this.#outFrameSize;
-      const bstream = new AudioByteStream(this.#sampleRate, this.#numChannels, samplesPerChannel);
+        (async () => {
+          try {
+            while (!cancelled) {
+              const text = await textStream.get();
+              if (text === null) break;
+              handle.transcriptionFwd.pushText(text);
+            }
+            if (!cancelled) {
+              handle.transcriptionFwd.markTextComplete();
+            }
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        })();
+      });
 
-      while (true) {
-        const frame = await audioStream.get();
-        if (frame === null) break;
+    const capture = () =>
+      new CancellablePromise<void>((resolve, reject, onCancel) => {
+        let cancelled = false;
+        onCancel(() => {
+          cancelled = true;
+        });
 
-        if (firstFrame) {
-          handle.transcriptionFwd.start();
-          firstFrame = false;
-        }
+        (async () => {
+          try {
+            const samplesPerChannel = this.#outFrameSize;
+            const bstream = new AudioByteStream(
+              this.#sampleRate,
+              this.#numChannels,
+              samplesPerChannel,
+            );
 
-        handle.transcriptionFwd.pushAudio(frame);
+            while (!cancelled) {
+              const frame = await audioStream.get();
+              if (frame === null) break;
 
-        for (const f of bstream.write(frame.data.buffer)) {
-          handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
-          await this.#audioSource.captureFrame(f);
-        }
-      }
+              if (firstFrame) {
+                handle.transcriptionFwd.start();
+                firstFrame = false;
+              }
 
-      for (const f of bstream.flush()) {
-        handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
-        await this.#audioSource.captureFrame(f);
-      }
+              handle.transcriptionFwd.pushAudio(frame);
 
-      handle.transcriptionFwd.markAudioComplete();
+              for (const f of bstream.write(frame.data.buffer)) {
+                handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
+                await this.#audioSource.captureFrame(f);
+              }
+            }
 
-      await this.#audioSource.waitForPlayout();
-    };
+            if (!cancelled) {
+              for (const f of bstream.flush()) {
+                handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
+                await this.#audioSource.captureFrame(f);
+              }
+
+              handle.transcriptionFwd.markAudioComplete();
+
+              await this.#audioSource.waitForPlayout();
+            }
+
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        })();
+      });
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const readTextTaskPromise = playTextStream();
-    const captureTaskPromise = captureTask();
+    const playTextTask = playTextStream();
+    const captureTask = capture();
 
     try {
-      await Promise.race([captureTaskPromise, handle.intPromise]);
+      await Promise.race([captureTask, handle.intPromise]);
     } finally {
-      // TODO: cancel tasks
-      // if (!captureTaskPromise.isCancelled) {
-      //   captureTaskPromise.cancel();
-      // }
+      if (!captureTask.isCancelled) {
+        captureTask.cancel();
+      }
 
       handle.totalPlayedTime = handle.pushedDuration - this.#audioSource.queuedDuration;
 
-      // TODO: handle errors
-      // if (handle.interrupted || captureTaskPromise.error) {
-      //   this.#audioSource.clearQueue(); // make sure to remove any queued frames
-      // }
+      if (handle.interrupted || captureTask.error) {
+        this.#audioSource.clearQueue(); // make sure to remove any queued frames
+      }
 
-      // TODO: cancel tasks
-      // if (!readTextTask.isCancelled) {
-      //   readTextTask.cancel();
-      // }
+      if (!playTextTask.isCancelled) {
+        playTextTask.cancel();
+      }
 
       if (!firstFrame && !handle.interrupted) {
         handle.transcriptionFwd.markTextComplete();
