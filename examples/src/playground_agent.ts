@@ -43,11 +43,11 @@ interface SessionConfig {
 
 function parseSessionConfig(data: any): SessionConfig {
   return {
-    openaiApiKey: data.openaiApiKey || '',
+    openaiApiKey: data.openai_api_key || '',
     instructions: data.instructions || '',
     voice: data.voice || '',
     temperature: parseFloat(data.temperature || '0.8'),
-    maxOutputTokens: data.maxOutputTokens || undefined,
+    maxOutputTokens: data.max_output_tokens || undefined,
     modalities: modalitiesFromString(data.modalities || 'text_and_audio'),
   };
 }
