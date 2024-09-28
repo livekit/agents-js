@@ -106,7 +106,7 @@ export class JobContext {
     }
 
     for (const p of this.#room.remoteParticipants.values()) {
-      if (p.identity === identity && p.info.kind != ParticipantKind.AGENT) {
+      if ((!identity || p.identity === identity) && p.info.kind != ParticipantKind.AGENT) {
         return p;
       }
     }
