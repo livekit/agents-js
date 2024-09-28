@@ -149,12 +149,22 @@ export class Future {
     this.resolve = resolve;
     this.reject = reject;
   });
+  #done: boolean = false;
 
   get await() {
     return this.#await;
   }
-  resolve() {}
+
+  get done() {
+    return this.#done;
+  }
+
+  resolve() {
+    this.#done = true;
+  }
+
   reject(_: Error) {
+    this.#done = true;
     _;
   }
 }
