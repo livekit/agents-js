@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Future, Queue } from '@livekit/agents';
+import { Future, Queue, AsyncIterableQueue } from '@livekit/agents';
 import { llm, log, multimodal } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'events';
@@ -47,8 +47,8 @@ export interface RealtimeContent {
   contentIndex: number;
   text: string;
   audio: AudioFrame[];
-  textStream: Queue<string | null>;
-  audioStream: Queue<AudioFrame | null>;
+  textStream: AsyncIterableQueue<string>;
+  audioStream: AsyncIterableQueue<AudioFrame>;
   toolCalls: RealtimeToolCall[];
 }
 
@@ -766,8 +766,8 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const outputIndex = event.output_index;
     const output = response.output[outputIndex];
 
-    const textStream = new Queue<string>();
-    const audioStream = new Queue<AudioFrame>();
+    const textStream = new AsyncIterableQueue<string>();
+    const audioStream = new AsyncIterableQueue<AudioFrame>();
 
     const newContent: RealtimeContent = {
       responseId: responseId,
@@ -805,7 +805,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   #handleResponseAudioTranscriptDone(event: api_proto.ResponseAudioTranscriptDoneEvent): void {
     const content = this.#getContent(event);
-    content.textStream.put(null);
+    content.textStream.close();
   }
 
   #handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
@@ -824,7 +824,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   #handleResponseAudioDone(event: api_proto.ResponseAudioDoneEvent): void {
     const content = this.#getContent(event);
-    content.audioStream.put(null);
+    content.audioStream.close();
   }
 
   #handleResponseFunctionCallArgumentsDelta(

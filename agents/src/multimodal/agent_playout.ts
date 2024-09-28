@@ -6,7 +6,7 @@ import { type AudioSource } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { AudioByteStream } from '../audio.js';
 import type { TranscriptionForwarder } from '../transcription.js';
-import { CancellablePromise, Future, type Queue, gracefullyCancel } from '../utils.js';
+import { CancellablePromise, Future, type AsyncIterableQueue, gracefullyCancel } from '../utils.js';
 
 export const proto = {};
 
@@ -109,8 +109,8 @@ export class AgentPlayout {
     itemId: string,
     contentIndex: number,
     transcriptionFwd: TranscriptionForwarder,
-    textStream: Queue<string | null>,
-    audioStream: Queue<AudioFrame | null>,
+    textStream: AsyncIterableQueue<string>,
+    audioStream: AsyncIterableQueue<AudioFrame>,
   ): PlayoutHandle {
     const handle = new PlayoutHandle(
       this.#audioSource,
@@ -126,8 +126,8 @@ export class AgentPlayout {
   #makePlayoutTask(
     oldTask: CancellablePromise<void> | null,
     handle: PlayoutHandle,
-    textStream: Queue<string | null>,
-    audioStream: Queue<AudioFrame | null>,
+    textStream: AsyncIterableQueue<string>,
+    audioStream: AsyncIterableQueue<AudioFrame>,
   ): CancellablePromise<void> {
     return new CancellablePromise<void>((resolve, reject, onCancel) => {
       let cancelled = false;
@@ -152,13 +152,10 @@ export class AgentPlayout {
 
               (async () => {
                 try {
-                  while (!cancelledText && !cancelled) {
-                    const text = await textStream.get();
-                    if (text === null) {
-                      handle.transcriptionFwd.markTextComplete();
+                  for await (const text of textStream) {
+                    if (cancelledText || cancelled) {
                       break;
                     }
-
                     handle.transcriptionFwd.pushText(text);
                   }
                   resolveText();
@@ -184,20 +181,10 @@ export class AgentPlayout {
                     samplesPerChannel,
                   );
 
-                  while (!cancelledCapture && !cancelled) {
-                    const frame = await audioStream.get();
-                    if (frame === null) {
-                      for (const f of bstream.flush()) {
-                        handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
-                        await this.#audioSource.captureFrame(f);
-                      }
-
-                      handle.transcriptionFwd.markAudioComplete();
-
-                      await this.#audioSource.waitForPlayout();
+                  for await (const frame of audioStream) {
+                    if (cancelledCapture || cancelled) {
                       break;
                     }
-
                     if (firstFrame) {
                       handle.transcriptionFwd.start();
                       firstFrame = false;
@@ -209,6 +196,17 @@ export class AgentPlayout {
                       handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
                       await this.#audioSource.captureFrame(f);
                     }
+                  }
+
+                  if (!cancelledCapture && !cancelled) {
+                    for (const f of bstream.flush()) {
+                    handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
+                      await this.#audioSource.captureFrame(f);
+                    }
+
+                    handle.transcriptionFwd.markAudioComplete();
+
+                    await this.#audioSource.waitForPlayout();
                   }
 
                   resolveCapture();
