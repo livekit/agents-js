@@ -112,7 +112,16 @@ export class JobContext {
     }
 
     return new Promise((resolve) => {
-      this.#room.once(RoomEvent.ParticipantConnected, resolve);
+      const onParticipantConnected = (participant: RemoteParticipant) => {
+        if (
+          (!identity || participant.identity === identity) &&
+          participant.info.kind != ParticipantKind.AGENT
+        ) {
+          this.#room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
+          resolve(participant);
+        }
+      };
+      this.#room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
     });
   }
 
