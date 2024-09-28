@@ -4,6 +4,24 @@
 
 ### Minor Changes
 
+- Maximize self-import compatibility - [#69](https://github.com/livekit/agents-js/pull/69) ([@bcherry](https://github.com/bcherry))
+
+- omniassistant overhaul - [#65](https://github.com/livekit/agents-js/pull/65) ([@nbsp](https://github.com/nbsp))
+
+### Patch Changes
+
+- update rtc-node to 0.9.0 - [#73](https://github.com/livekit/agents-js/pull/73) ([@nbsp](https://github.com/nbsp))
+
+- Rename to MultimodalAgent, move to main package - [#74](https://github.com/livekit/agents-js/pull/74) ([@bcherry](https://github.com/bcherry))
+
+- Updated dependencies [[`4e6babac612c20b1a8d9121d39fe57902d22228f`](https://github.com/livekit/agents-js/commit/4e6babac612c20b1a8d9121d39fe57902d22228f), [`9cb2313f06f9d013ca3b08980a7ade1b6b43a04a`](https://github.com/livekit/agents-js/commit/9cb2313f06f9d013ca3b08980a7ade1b6b43a04a), [`08b9a329c05a6a1369de7682f555445f669fea79`](https://github.com/livekit/agents-js/commit/08b9a329c05a6a1369de7682f555445f669fea79), [`d703265a57c4491d7799936117a8a2b8ad527653`](https://github.com/livekit/agents-js/commit/d703265a57c4491d7799936117a8a2b8ad527653), [`5cbd46c715ded05107cd78492d85551c2ce924ae`](https://github.com/livekit/agents-js/commit/5cbd46c715ded05107cd78492d85551c2ce924ae), [`eee688907aafdef8ca2856929b8eb10ba72e8dee`](https://github.com/livekit/agents-js/commit/eee688907aafdef8ca2856929b8eb10ba72e8dee), [`9cb2313f06f9d013ca3b08980a7ade1b6b43a04a`](https://github.com/livekit/agents-js/commit/9cb2313f06f9d013ca3b08980a7ade1b6b43a04a), [`856ebe2294962f64b81c8f635bd762b513b2faac`](https://github.com/livekit/agents-js/commit/856ebe2294962f64b81c8f635bd762b513b2faac), [`c509b62972892ea3945403ef0cd50c2ece3fd4f2`](https://github.com/livekit/agents-js/commit/c509b62972892ea3945403ef0cd50c2ece3fd4f2), [`45cb43f41a5d53a048eef392bb81313ad5e95121`](https://github.com/livekit/agents-js/commit/45cb43f41a5d53a048eef392bb81313ad5e95121), [`eb7e73173c46dbbcee4e728299b8fe05fb8fdc01`](https://github.com/livekit/agents-js/commit/eb7e73173c46dbbcee4e728299b8fe05fb8fdc01)]:
+  - @livekit/agents-plugin-openai@0.3.0
+  - @livekit/agents@0.3.0
+
+## null
+
+### Minor Changes
+
 - bump underlying dependencies - [`be7160d39ea57239a51fbf6ad2cbea1342cc1889`](https://github.com/livekit/agents-js/commit/be7160d39ea57239a51fbf6ad2cbea1342cc1889) ([@bcherry](https://github.com/bcherry))
   fix load calculation
   report worker status
