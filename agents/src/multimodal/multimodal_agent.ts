@@ -69,7 +69,6 @@ export class MultimodalAgent {
     this.#fncCtx = fncCtx;
   }
 
-  #started: boolean = false;
   #participant: RemoteParticipant | string | null = null;
   #agentPublication: LocalTrackPublication | null = null;
   #localTrackSid: string | null = null;
@@ -80,8 +79,9 @@ export class MultimodalAgent {
   #session: RealtimeSession | null = null;
   #fncCtx: llm.FunctionContext | undefined = undefined;
 
-  #pendingFunctionCalls: Set<string> = new Set();
-  #speaking: boolean = false;
+  #_started: boolean = false;
+  #_pendingFunctionCalls: Set<string> = new Set();
+  #_speaking: boolean = false;
 
   get fncCtx(): llm.FunctionContext | undefined {
     return this.#fncCtx!;
@@ -94,6 +94,33 @@ export class MultimodalAgent {
     }
   }
 
+  get #pendingFunctionCalls(): Set<string> {
+    return this.#_pendingFunctionCalls;
+  }
+
+  set #pendingFunctionCalls(calls: Set<string>) {
+    this.#_pendingFunctionCalls = calls;
+    this.#updateState();
+  }
+
+  get #speaking(): boolean {
+    return this.#_speaking;
+  }
+
+  set #speaking(isSpeaking: boolean) {
+    this.#_speaking = isSpeaking;
+    this.#updateState();
+  }
+
+  get #started(): boolean {
+    return this.#_started;
+  }
+
+  set #started(started: boolean) {
+    this.#_started = started;
+    this.#updateState();
+  }
+
   start(
     room: Room,
     participant: RemoteParticipant | string | null = null,
@@ -104,6 +131,7 @@ export class MultimodalAgent {
         resolve(this.#session!); // TODO: throw error?
         return;
       }
+      this.#updateState();
 
       room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
         if (!this.linkedParticipant) {
@@ -151,6 +179,7 @@ export class MultimodalAgent {
       }
 
       this.#session = this.model.session({ fncCtx: this.#fncCtx });
+      this.#started = true;
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('response_content_added', (message: any) => {
@@ -162,13 +191,22 @@ export class MultimodalAgent {
           message.responseId,
         );
 
-        this.#playingHandle = this.#agentPlayout?.play(
+        const handle = this.#agentPlayout?.play(
           message.itemId,
           message.contentIndex,
           trFwd,
           message.textStream,
           message.audioStream,
         );
+        if (handle) {
+          this.#speaking = true;
+          handle.on('done', () => {
+            if (this.#playingHandle == handle) {
+              this.#speaking = false;
+            }
+          });
+        }
+        this.#playingHandle = handle;
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -338,23 +376,16 @@ export class MultimodalAgent {
   }
 
   #updateState() {
-    let newState: AgentState = 'listening';
+    let newState: AgentState = 'initializing';
     if (this.#pendingFunctionCalls.size > 0) {
       newState = 'thinking';
     } else if (this.#speaking) {
       newState = 'speaking';
+    } else if (this.#started) {
+      newState = 'listening';
     }
+
     this.#setState(newState);
-  }
-
-  set pendingFunctionCalls(calls: Set<string>) {
-    this.#pendingFunctionCalls = calls;
-    this.#updateState();
-  }
-
-  set speaking(isSpeaking: boolean) {
-    this.#speaking = isSpeaking;
-    this.#updateState();
   }
 
   #setState(state: AgentState) {
@@ -364,7 +395,7 @@ export class MultimodalAgent {
         this.room.localParticipant!.setAttributes({
           'lk.agent.state': state,
         });
-        this.#logger.debug(`lk.agent.state updated from ${currentState} to ${state}`);
+        this.#logger.error(`lk.agent.state updated from ${currentState} to ${state}`);
       }
     }
   }
