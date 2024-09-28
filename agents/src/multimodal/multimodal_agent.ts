@@ -90,7 +90,10 @@ export class MultimodalAgent {
     }
   }
 
-  start(room: Room, participant: RemoteParticipant | string | null = null): Promise<RealtimeSession> {
+  start(
+    room: Room,
+    participant: RemoteParticipant | string | null = null,
+  ): Promise<RealtimeSession> {
     return new Promise(async (resolve, reject) => {
       if (this.#started) {
         this.#logger.warn('MultimodalAgent already started');
