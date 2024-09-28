@@ -45,13 +45,14 @@ interface SessionConfig {
   temperature: number;
   maxOutputTokens?: number;
   modalities: string[];
-  turnDetection?: TurnDetectionType;
+  turnDetection: TurnDetectionType;
 }
 
 function parseSessionConfig(data: any): SessionConfig {
-  const turnDetection: TurnDetectionType | undefined =
-    data.turn_detection_type === 'server_vad'
-      ? {
+  const turnDetection: TurnDetectionType =
+    data.turn_detection_type === 'none'
+      ? { type: 'none' }
+      : {
           type: 'server_vad',
           ...(data.vad_threshold !== undefined && {
             threshold: parseFloat(data.vad_threshold),
@@ -62,10 +63,7 @@ function parseSessionConfig(data: any): SessionConfig {
           ...(data.vad_silence_duration_ms !== undefined && {
             silence_duration_ms: parseInt(data.vad_silence_duration_ms),
           }),
-        }
-      : data.turn_detection_type === 'none'
-        ? { type: 'none' as const }
-        : undefined;
+        };
 
   return {
     openaiApiKey: data.openai_api_key || '',

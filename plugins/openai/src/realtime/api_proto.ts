@@ -9,12 +9,12 @@ export const OUT_FRAME_SIZE = 1200; // 50ms
 
 export const API_URL = 'wss://api.openai.com/v1/realtime';
 
-export type Model = 'gpt-4o-realtime-preview-2024-10-01' | string;
+export type Model = 'gpt-4o-realtime-preview-2024-10-01' | string; // Open-ended, for future models
 export type Voice = 'alloy' | 'shimmer' | 'echo' | string;
 export type AudioFormat = 'pcm16'; // TODO: 'g711-ulaw' | 'g711-alaw'
 export type Role = 'system' | 'assistant' | 'user' | 'tool';
 export type GenerationFinishedReason = 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
-export type InputTranscriptionModel = 'whisper-1';
+export type InputTranscriptionModel = 'whisper-1' | string; // Open-ended, for future models
 export type Modality = 'text' | 'audio';
 export type ToolChoice = 'auto' | 'none' | 'required' | string;
 export type State = 'initializing' | 'listening' | 'thinking' | 'speaking' | string;
@@ -90,7 +90,13 @@ export type TurnDetectionType =
       prefix_padding_ms?: number; // default: 300
       silence_duration_ms?: number; // default: 200
     }
-  | 'none';
+  | {
+      type: 'none';
+    };
+
+export type InputAudioTranscription = {
+  model: InputTranscriptionModel;
+};
 
 export interface InputTextContent {
   type: 'input_text';
@@ -174,9 +180,7 @@ export interface SessionResource {
   voice: Voice; // default: "alloy"
   input_audio_format: AudioFormat; // default: "pcm16"
   output_audio_format: AudioFormat; // default: "pcm16"
-  input_audio_transcription?: {
-    model: 'whisper-1';
-  }; // default: null
+  input_audio_transcription?: InputAudioTranscription; // default: null
   turn_detection: TurnDetectionType;
   tools: Tool[];
   tool_choice: ToolChoice; // default: "auto"
@@ -234,17 +238,8 @@ export interface SessionUpdateEvent extends BaseClientEvent {
     voice: Voice;
     input_audio_format: AudioFormat;
     output_audio_format: AudioFormat;
-    input_audio_transcription: {
-      model: 'whisper-1';
-    };
-    turn_detection:
-      | {
-          type: 'server_vad';
-          threshold?: number;
-          prefix_padding_ms?: number;
-          silence_duration_ms?: number;
-        }
-      | 'none';
+    input_audio_transcription?: InputAudioTranscription;
+    turn_detection: TurnDetectionType;
     tools: Tool[];
     tool_choice: ToolChoice;
     temperature: number;
