@@ -17,7 +17,7 @@ import {
 } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { AudioByteStream } from '../audio.js';
-import type * as llm from '../llm/index.js';
+import * as llm from '../llm/index.js';
 import { log } from '../log.js';
 import { BasicTranscriptionForwarder } from '../transcription.js';
 import { findMicroTrackId } from '../utils.js';
@@ -246,6 +246,24 @@ export class MultimodalAgent {
 
           this.#playingHandle = undefined;
         }
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.#session.on('function_call_started', (ev: any) => {
+        this.#pendingFunctionCalls.add(ev.callId);
+        this.#updateState();
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.#session.on('function_call_completed', (ev: any) => {
+        this.#pendingFunctionCalls.delete(ev.callId);
+        this.#updateState();
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.#session.on('function_call_failed', (ev: any) => {
+        this.#pendingFunctionCalls.delete(ev.callId);
+        this.#updateState();
       });
 
       resolve(this.#session!);

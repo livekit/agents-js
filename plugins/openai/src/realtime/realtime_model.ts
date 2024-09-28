@@ -755,24 +755,40 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         throw new Error('Expected function_call item');
       }
 
+      this.emit('function_call_started', {
+        callId: item.call_id,
+      });
+
       const parsedArgs = JSON.parse(item.arguments);
 
       this.#logger.debug(
         `[Function Call ${item.call_id}] Executing ${item.name} with arguments ${parsedArgs}`,
       );
 
-      this.#fncCtx[item.name].execute(parsedArgs).then((content) => {
-        this.#logger.debug(`[Function Call ${item.call_id}] ${item.name} returned ${content}`);
-        this.defaultConversation.item.create(
-          {
-            type: 'function_call_output',
-            call_id: item.call_id,
-            output: content,
-          },
-          output.itemId,
-        );
-        this.response.create();
-      });
+      this.#fncCtx[item.name].execute(parsedArgs).then(
+        (content) => {
+          this.#logger.debug(`[Function Call ${item.call_id}] ${item.name} returned ${content}`);
+          this.emit('function_call_completed', {
+            callId: item.call_id,
+          });
+          this.defaultConversation.item.create(
+            {
+              type: 'function_call_output',
+              call_id: item.call_id,
+              output: content,
+            },
+            output.itemId,
+          );
+          this.response.create();
+        },
+        (error) => {
+          this.#logger.error(`[Function Call ${item.call_id}] ${item.name} failed with ${error}`);
+          // TODO: send it back up as failed?
+          this.emit('function_call_failed', {
+            callId: item.call_id,
+          });
+        },
+      );
     }
 
     output.donePromise();
