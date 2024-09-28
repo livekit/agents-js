@@ -100,6 +100,10 @@ export interface InputSpeechTranscriptionFailed {
   message: string;
 }
 
+export interface InputSpeechStarted {
+  itemId: string;
+}
+
 export interface InputSpeechCommitted {
   itemId: string;
 }
@@ -628,7 +632,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   #handleInputAudioBufferCommitted(event: api_proto.InputAudioBufferCommittedEvent): void {
     this.emit('input_speech_committed', {
       itemId: event.item_id,
-    });
+    } as InputSpeechCommitted);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -638,7 +642,9 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     event: api_proto.InputAudioBufferSpeechStartedEvent,
   ): void {
-    this.emit('input_speech_started');
+    this.emit('input_speech_started', {
+      itemId: event.item_id,
+    } as InputSpeechStarted);
   }
 
   #handleInputAudioBufferSpeechStopped(
@@ -658,7 +664,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     this.emit('input_speech_transcription_completed', {
       itemId: event.item_id,
       transcript: transcript,
-    });
+    } as InputSpeechTranscriptionCompleted);
   }
 
   #handleConversationItemInputAudioTranscriptionFailed(
@@ -669,7 +675,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     this.emit('input_speech_transcription_failed', {
       itemId: event.item_id,
       message: error.message,
-    });
+    } as InputSpeechTranscriptionFailed);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

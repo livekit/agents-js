@@ -3,11 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type JobContext, WorkerOptions, cli, defineAgent, multimodal } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
-import type {
-  LocalParticipant,
-  Participant,
-  TrackPublication,
-} from '@livekit/rtc-node';
+import type { LocalParticipant, Participant, TrackPublication } from '@livekit/rtc-node';
 import { RemoteParticipant, TrackSource } from '@livekit/rtc-node';
 import { fileURLToPath } from 'node:url';
 import { v4 as uuidv4 } from 'uuid';
@@ -96,12 +92,15 @@ async function runMultimodalAgent(ctx: JobContext, participant: RemoteParticipan
 
   ctx.room.on(
     'participantAttributesChanged',
-    (changedAttributes: Record<string, string>, participant: Participant) => {
-      if (!(participant instanceof RemoteParticipant)) {
+    (changedAttributes: Record<string, string>, changedParticipant: Participant) => {
+      if (changedParticipant !== participant) {
         return;
       }
-      console.log('participantAttributesChanged', changedAttributes, participant);
-      const newConfig = parseSessionConfig({ ...participant.attributes, ...changedAttributes });
+      console.log('participantAttributesChanged', changedAttributes, changedParticipant);
+      const newConfig = parseSessionConfig({
+        ...changedParticipant.attributes,
+        ...changedAttributes,
+      });
       console.log(`participant attributes changed: ${JSON.stringify(newConfig)}`);
 
       session.sessionUpdate({
@@ -131,8 +130,6 @@ async function runMultimodalAgent(ctx: JobContext, participant: RemoteParticipan
       session.response.create();
     },
   );
-
-  let lastTranscriptId: string | null = null;
 
   async function sendTranscription(
     ctx: JobContext,
@@ -176,58 +173,6 @@ async function runMultimodalAgent(ctx: JobContext, participant: RemoteParticipan
       sendTranscription(ctx, localParticipant, trackSid, uuidv4(), message);
     }
   });
-
-  session.on('input_speech_started', () => {
-    const remoteParticipant = Object.values(ctx.room.remoteParticipants)[0];
-    if (!remoteParticipant) return;
-
-    const trackSid = getMicrophoneTrackSid(remoteParticipant);
-
-    if (trackSid) {
-      if (lastTranscriptId) {
-        sendTranscription(ctx, remoteParticipant, trackSid, lastTranscriptId, '');
-      }
-
-      const newId = uuidv4();
-      lastTranscriptId = newId;
-      sendTranscription(ctx, remoteParticipant, trackSid, newId, '…', false);
-    }
-  });
-
-  session.on(
-    'input_speech_transcription_completed',
-    (event: openai.realtime.InputSpeechTranscriptionCompleted) => {
-      if (lastTranscriptId) {
-        const remoteParticipant = Object.values(ctx.room.remoteParticipants)[0];
-        if (!remoteParticipant) return;
-
-        const trackSid = getMicrophoneTrackSid(remoteParticipant);
-
-        if (trackSid) {
-          sendTranscription(ctx, remoteParticipant, trackSid, lastTranscriptId, '');
-          lastTranscriptId = null;
-        }
-      }
-    },
-  );
-
-  session.on(
-    'input_speech_transcription_failed',
-    (event: openai.realtime.InputSpeechTranscriptionFailed) => {
-      if (lastTranscriptId) {
-        const remoteParticipant = Object.values(ctx.room.remoteParticipants)[0];
-        if (!remoteParticipant) return;
-
-        const trackSid = getMicrophoneTrackSid(remoteParticipant);
-
-        if (trackSid) {
-          const errorMessage = '⚠️ Transcription failed';
-          sendTranscription(ctx, remoteParticipant, trackSid, lastTranscriptId, errorMessage);
-          lastTranscriptId = null;
-        }
-      }
-    },
-  );
 }
 
 cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
