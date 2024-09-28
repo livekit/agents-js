@@ -229,7 +229,7 @@ export class AgentPlayout {
             }
 
             handle.totalPlayedTime = handle.pushedDuration - this.#audioSource.queuedDuration;
-            
+
             if (handle.interrupted || captureTask.error) {
               this.#audioSource.clearQueue(); // make sure to remove any queued frames
             }

@@ -197,7 +197,7 @@ export class CancellablePromise<T> {
             this.#isCancelled = true;
             cancelFn();
           };
-        }
+        },
       );
     });
 
