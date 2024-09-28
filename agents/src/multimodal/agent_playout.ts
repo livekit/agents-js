@@ -61,7 +61,7 @@ export class PlayoutHandle extends EventEmitter {
   }
 
   get textChars(): number {
-    return this.transcriptionFwd.currentCharacterIndex; // TODO: length of played text
+    return this.transcriptionFwd.currentCharacterIndex;
   }
 
   get contentIndex(): number {
@@ -229,7 +229,7 @@ export class AgentPlayout {
             }
 
             handle.totalPlayedTime = handle.pushedDuration - this.#audioSource.queuedDuration;
-            
+
             if (handle.interrupted || captureTask.error) {
               this.#audioSource.clearQueue(); // make sure to remove any queued frames
             }
