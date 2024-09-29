@@ -25,6 +25,7 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
   #charsPerSecond: number = this.#DEFAULT_CHARS_PER_SECOND;
   #messageId: string;
   #isRunning: boolean = false;
+  #logger = log();
   currentCharacterIndex: number = 0;
 
   constructor(room: Room, participantIdentity: string, trackSid: string, messageId: string) {
@@ -38,7 +39,7 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     if (!this.#isRunning) {
       this.#isRunning = true;
       this.#startPublishingLoop().catch((error) => {
-        log().error('Error in publishing loop:', error);
+        this.#logger.error('Error in publishing loop:', error);
         this.#isRunning = false;
       });
     }
