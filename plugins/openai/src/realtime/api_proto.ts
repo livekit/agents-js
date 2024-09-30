@@ -88,7 +88,7 @@ export type TurnDetectionType = {
   threshold?: number; // 0.0 to 1.0, default: 0.5
   prefix_padding_ms?: number; // default: 300
   silence_duration_ms?: number; // default: 200
-};
+} | null;
 
 export type InputAudioTranscription = {
   model: InputTranscriptionModel;

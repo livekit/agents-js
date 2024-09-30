@@ -8,6 +8,12 @@ import { RemoteParticipant, TrackSource } from '@livekit/rtc-node';
 import { fileURLToPath } from 'node:url';
 import { v4 as uuidv4 } from 'uuid';
 
+// Add this helper function near the top of the file, after the imports
+function safeLogConfig(config: SessionConfig): string {
+  const safeConfig = { ...config, openaiApiKey: '[REDACTED]' };
+  return JSON.stringify(safeConfig);
+}
+
 export default defineAgent({
   entry: async (ctx: JobContext) => {
     // console.log(`connecting to room ${ctx.room.name}`);
@@ -93,7 +99,7 @@ function getMicrophoneTrackSid(participant: Participant): string | undefined {
 async function runMultimodalAgent(ctx: JobContext, participant: RemoteParticipant) {
   const metadata = JSON.parse(participant.metadata);
   const config = parseSessionConfig(metadata);
-  console.log(`starting multimodal agent with config: ${JSON.stringify(config)}`);
+  console.log(`starting multimodal agent with config: ${safeLogConfig(config)}`);
 
   const model = new openai.realtime.RealtimeModel({
     apiKey: config.openaiApiKey,
@@ -129,6 +135,8 @@ async function runMultimodalAgent(ctx: JobContext, participant: RemoteParticipan
         ...changedParticipant.attributes,
         ...changedAttributes,
       });
+
+      console.log(`Updating session with new config: ${safeLogConfig(newConfig)}`);
 
       session.sessionUpdate({
         instructions: newConfig.instructions,
