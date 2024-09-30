@@ -133,4 +133,4 @@ signal is received. The worker will remain alive while it manages any agents con
 This project is licensed under `Apache-2.0`, and is [REUSE-3.2](https://reuse.software) compliant.
 Refer to [the license](LICENSES/Apache-2.0.txt) for details.
 
-<!--BEGIN_REPO_NAV--><!---END_REPO_NAV-->
+<!--BEGIN_REPO_NAV--><!--END_REPO_NAV-->
