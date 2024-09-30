@@ -105,18 +105,34 @@ export class JobContext {
       throw new Error('room is not connected');
     }
 
-    console.log(this.#room.remoteParticipants.values());
-
     for (const p of this.#room.remoteParticipants.values()) {
       if ((!identity || p.identity === identity) && p.info.kind != ParticipantKind.AGENT) {
         return p;
       }
     }
 
-    return new Promise((resolve) => {
-      this.#room.once(RoomEvent.ParticipantConnected, () => {
-        resolve(this.#room.remoteParticipants.values().next().value);
-      });
+    return new Promise((resolve, reject) => {
+      const onParticipantConnected = (participant: RemoteParticipant) => {
+        if (
+          (!identity || participant.identity === identity) &&
+          participant.info.kind != ParticipantKind.AGENT
+        ) {
+          clearHandlers();
+          resolve(participant);
+        }
+      };
+      const onDisconnected = () => {
+        clearHandlers();
+        reject(new Error('Room disconnected while waiting for participant'));
+      };
+
+      const clearHandlers = () => {
+        this.#room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
+        this.#room.off(RoomEvent.Disconnected, onDisconnected);
+      };
+
+      this.#room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
+      this.#room.on(RoomEvent.Disconnected, onDisconnected);
     });
   }
 
