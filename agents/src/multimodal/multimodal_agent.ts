@@ -86,7 +86,7 @@ export class MultimodalAgent {
   #_speaking: boolean = false;
 
   get fncCtx(): llm.FunctionContext | undefined {
-    return this.#fncCtx!;
+    return this.#fncCtx;
   }
 
   set fncCtx(ctx: llm.FunctionContext | undefined) {
@@ -274,7 +274,7 @@ export class MultimodalAgent {
         this.#updateState();
       });
 
-      resolve(this.#session!);
+      resolve(this.#session);
     });
   }
 
@@ -339,7 +339,7 @@ export class MultimodalAgent {
       const track = publication.track;
 
       if (track && track !== this.subscribedTrack) {
-        this.subscribedTrack = track!;
+        this.subscribedTrack = track;
 
         if (this.readMicroTask) {
           this.readMicroTask.cancel();
@@ -418,7 +418,7 @@ export class MultimodalAgent {
     if (this.room?.isConnected && this.room.localParticipant) {
       const currentState = this.room.localParticipant.attributes[AGENT_STATE_ATTRIBUTE];
       if (currentState !== state) {
-        this.room.localParticipant!.setAttributes({
+        this.room.localParticipant.setAttributes({
           [AGENT_STATE_ATTRIBUTE]: state,
         });
         this.#logger.debug(`${AGENT_STATE_ATTRIBUTE}: ${currentState} ->${state}`);

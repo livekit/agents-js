@@ -18,6 +18,7 @@ type CliArgs = {
 
 const runWorker = async (args: CliArgs) => {
   initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
+  const logger = log();
 
   // though `production` is defined in WorkerOptions, it will always be overriddden by CLI.
   const { production: _, ...opts } = args.opts; // eslint-disable-line @typescript-eslint/no-unused-vars
@@ -25,7 +26,7 @@ const runWorker = async (args: CliArgs) => {
 
   if (args.room) {
     worker.event.once('worker_registered', () => {
-      log().info(`connecting to room ${args.room}`);
+      logger.info(`connecting to room ${args.room}`);
       worker.simulateJob(args.room!, args.participantIdentity);
     });
   }
@@ -33,21 +34,21 @@ const runWorker = async (args: CliArgs) => {
   process.once('SIGINT', async () => {
     // allow C-c C-c for force interrupt
     process.once('SIGINT', () => {
-      log().info('worker closed forcefully');
+      logger.info('worker closed forcefully');
       process.exit(130); // SIGINT exit code
     });
     if (args.production) {
       await worker.drain();
     }
     await worker.close();
-    log().info('worker closed');
+    logger.info('worker closed');
     process.exit(130); // SIGINT exit code
   });
 
   try {
     await worker.run();
   } catch {
-    log().fatal('worker failed');
+    logger.fatal('worker failed');
     process.exit(1);
   }
 };

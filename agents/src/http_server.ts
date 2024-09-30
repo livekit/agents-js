@@ -13,6 +13,7 @@ export class HTTPServer {
   host: string;
   port: number;
   app: Server;
+  #logger = log();
 
   constructor(host: string, port: number) {
     this.host = host;
@@ -34,7 +35,7 @@ export class HTTPServer {
         if (err) reject(err);
         const address = this.app.address();
         if (typeof address! !== 'string') {
-          log().info(`Server is listening on port ${address!.port}`);
+          this.#logger.info(`Server is listening on port ${address!.port}`);
         }
         resolve();
       });
