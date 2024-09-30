@@ -10,14 +10,14 @@ import * as api_proto from './api_proto.js';
 
 interface ModelOptions {
   modalities: ['text', 'audio'] | ['text'];
-  instructions?: string;
+  instructions: string;
   voice: api_proto.Voice;
   inputAudioFormat: api_proto.AudioFormat;
   outputAudioFormat: api_proto.AudioFormat;
-  inputAudioTranscription?: api_proto.InputAudioTranscription;
-  turnDetection: api_proto.TurnDetectionType;
+  inputAudioTranscription: api_proto.InputAudioTranscription | null;
+  turnDetection: api_proto.TurnDetectionType | null;
   temperature: number;
-  maxResponseOutputTokens?: number;
+  maxResponseOutputTokens: number;
   model: api_proto.Model;
   apiKey: string;
   baseURL: string;
@@ -184,14 +184,14 @@ export class RealtimeModel extends multimodal.RealtimeModel {
 
   constructor({
     modalities = ['text', 'audio'],
-    instructions = undefined,
+    instructions = '',
     voice = 'alloy',
     inputAudioFormat = 'pcm16',
     outputAudioFormat = 'pcm16',
     inputAudioTranscription = { model: 'whisper-1' },
     turnDetection = { type: 'server_vad' },
     temperature = 0.8,
-    maxResponseOutputTokens = undefined,
+    maxResponseOutputTokens = Infinity,
     model = 'gpt-4o-realtime-preview-2024-10-01',
     apiKey = process.env.OPENAI_API_KEY || '',
     baseURL = api_proto.API_URL,
@@ -255,8 +255,8 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     voice?: api_proto.Voice;
     inputAudioFormat?: api_proto.AudioFormat;
     outputAudioFormat?: api_proto.AudioFormat;
-    inputAudioTranscription?: api_proto.InputAudioTranscription;
-    turnDetection?: api_proto.TurnDetectionType;
+    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+    turnDetection?: api_proto.TurnDetectionType | null;
     temperature?: number;
     maxResponseOutputTokens?: number;
   }): RealtimeSession {
@@ -291,6 +291,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   #pendingResponses: { [id: string]: RealtimeResponse } = {};
   #sessionId = 'not-connected';
   #ws: WebSocket | null = null;
+  #expiresAt: number | null = null;
   #logger = log();
   #task: Promise<void>;
   #closing = true;
@@ -336,6 +337,13 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   get response(): Response {
     return new Response(this);
+  }
+
+  get expiration(): number {
+    if (!this.#expiresAt) {
+      throw new Error('session not started');
+    }
+    return this.#expiresAt * 1000;
   }
 
   queueMsg(command: api_proto.ClientEvent): void {
@@ -389,8 +397,8 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     voice?: api_proto.Voice;
     inputAudioFormat?: api_proto.AudioFormat;
     outputAudioFormat?: api_proto.AudioFormat;
-    inputAudioTranscription?: api_proto.InputAudioTranscription;
-    turnDetection?: api_proto.TurnDetectionType;
+    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+    turnDetection?: api_proto.TurnDetectionType | null;
     temperature?: number;
     maxResponseOutputTokens?: number;
     toolChoice?: api_proto.ToolChoice;
@@ -430,7 +438,10 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         input_audio_transcription: this.#opts.inputAudioTranscription,
         turn_detection: this.#opts.turnDetection,
         temperature: this.#opts.temperature,
-        max_response_output_tokens: this.#opts.maxResponseOutputTokens,
+        max_response_output_tokens:
+          this.#opts.maxResponseOutputTokens === Infinity
+            ? 'inf'
+            : this.#opts.maxResponseOutputTokens,
         tools,
         tool_choice: toolChoice,
       },
@@ -561,6 +572,9 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       sendTask();
 
       this.#ws.onclose = () => {
+        if (this.#expiresAt && Date.now() >= this.#expiresAt * 1000) {
+          this.#closing = true;
+        }
         if (!this.#closing) {
           reject('OpenAI Realtime connection closed unexpectedly');
         }
@@ -590,6 +604,8 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   #handleSessionCreated(event: api_proto.SessionCreatedEvent): void {
     this.#sessionId = event.session.id;
+    this.#expiresAt = event.session.expires_at;
+    this.#logger = this.#logger.child({ sessionId: this.#sessionId });
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

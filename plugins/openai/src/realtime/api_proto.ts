@@ -83,16 +83,12 @@ export interface Tool {
   };
 }
 
-export type TurnDetectionType =
-  | {
-      type: 'server_vad';
-      threshold?: number; // 0.0 to 1.0, default: 0.5
-      prefix_padding_ms?: number; // default: 300
-      silence_duration_ms?: number; // default: 200
-    }
-  | {
-      type: 'none';
-    };
+export type TurnDetectionType = {
+  type: 'server_vad';
+  threshold?: number; // 0.0 to 1.0, default: 0.5
+  prefix_padding_ms?: number; // default: 300
+  silence_duration_ms?: number; // default: 200
+};
 
 export type InputAudioTranscription = {
   model: InputTranscriptionModel;
@@ -176,16 +172,17 @@ export interface SessionResource {
   object: 'realtime.session';
   model: string;
   modalities: ['text', 'audio'] | ['text']; // default: ["text", "audio"]
-  instructions?: string; // default: null
+  instructions: string;
   voice: Voice; // default: "alloy"
   input_audio_format: AudioFormat; // default: "pcm16"
   output_audio_format: AudioFormat; // default: "pcm16"
-  input_audio_transcription?: InputAudioTranscription; // default: null
-  turn_detection: TurnDetectionType;
+  input_audio_transcription: InputAudioTranscription | null;
+  turn_detection: TurnDetectionType | null;
   tools: Tool[];
   tool_choice: ToolChoice; // default: "auto"
   temperature: number; // default: 0.8
-  max_response_output_tokens: number | null;
+  max_response_output_tokens: number | 'inf';
+  expires_at: number;
 }
 
 // Conversation Resource
@@ -238,12 +235,12 @@ export interface SessionUpdateEvent extends BaseClientEvent {
     voice: Voice;
     input_audio_format: AudioFormat;
     output_audio_format: AudioFormat;
-    input_audio_transcription?: InputAudioTranscription;
-    turn_detection: TurnDetectionType;
+    input_audio_transcription: InputAudioTranscription | null;
+    turn_detection: TurnDetectionType | null;
     tools: Tool[];
     tool_choice: ToolChoice;
     temperature: number;
-    max_response_output_tokens: number;
+    max_response_output_tokens: number | 'inf';
   }>;
 }
 
@@ -318,7 +315,7 @@ export interface ResponseCreateEvent extends BaseClientEvent {
     tools?: Tool[];
     tool_choice: ToolChoice;
     temperature: number;
-    max_response_output_tokens: number;
+    max_output_tokens: number | 'inf';
   }>;
 }
 
