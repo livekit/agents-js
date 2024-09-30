@@ -129,9 +129,7 @@ export class MultimodalAgent {
   ): Promise<RealtimeSession> {
     return new Promise(async (resolve, reject) => {
       if (this.#started) {
-        this.#logger.warn('MultimodalAgent already started');
-        resolve(this.#session!); // TODO: throw error?
-        return;
+        reject('MultimodalAgent already started');
       }
       this.#updateState();
 
