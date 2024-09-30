@@ -10,6 +10,7 @@ export class AudioByteStream {
   #numChannels: number;
   #bytesPerFrame: number;
   #buf: Int8Array;
+  #logger = log();
 
   constructor(sampleRate: number, numChannels: number, samplesPerChannel: number | null = null) {
     this.#sampleRate = sampleRate;
@@ -46,7 +47,7 @@ export class AudioByteStream {
 
   flush(): AudioFrame[] {
     if (this.#buf.length % (2 * this.#numChannels) !== 0) {
-      log().warn('AudioByteStream: incomplete frame during flush, dropping');
+      this.#logger.warn('AudioByteStream: incomplete frame during flush, dropping');
       return [];
     }
 
