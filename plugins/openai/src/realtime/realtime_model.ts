@@ -14,8 +14,8 @@ interface ModelOptions {
   voice: api_proto.Voice;
   inputAudioFormat: api_proto.AudioFormat;
   outputAudioFormat: api_proto.AudioFormat;
-  inputAudioTranscription?: api_proto.InputAudioTranscription;
-  turnDetection?: api_proto.TurnDetectionType;
+  inputAudioTranscription: api_proto.InputAudioTranscription | null;
+  turnDetection: api_proto.TurnDetectionType | null;
   temperature: number;
   maxResponseOutputTokens: number;
   model: api_proto.Model;
@@ -255,8 +255,8 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     voice?: api_proto.Voice;
     inputAudioFormat?: api_proto.AudioFormat;
     outputAudioFormat?: api_proto.AudioFormat;
-    inputAudioTranscription?: api_proto.InputAudioTranscription;
-    turnDetection?: api_proto.TurnDetectionType;
+    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+    turnDetection?: api_proto.TurnDetectionType | null;
     temperature?: number;
     maxResponseOutputTokens?: number;
   }): RealtimeSession {
@@ -397,8 +397,8 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     voice?: api_proto.Voice;
     inputAudioFormat?: api_proto.AudioFormat;
     outputAudioFormat?: api_proto.AudioFormat;
-    inputAudioTranscription?: api_proto.InputAudioTranscription;
-    turnDetection?: api_proto.TurnDetectionType;
+    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+    turnDetection?: api_proto.TurnDetectionType | null;
     temperature?: number;
     maxResponseOutputTokens?: number;
     toolChoice?: api_proto.ToolChoice;
