@@ -280,9 +280,8 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     return newSession;
   }
 
-  async close(): Promise<void> {
-    // TODO: Implement close method
-    throw new Error('Not implemented');
+  async close() {
+    await Promise.allSettled(this.#sessions.map((session) => session.close()));
   }
 }
 
@@ -571,9 +570,11 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     });
   }
 
-  async close(): Promise<void> {
-    // TODO: Implement close method
-    throw new Error('Not implemented');
+  async close() {
+    if (!this.#ws) return;
+    this.#closing = true;
+    this.#ws.close();
+    await this.#task;
   }
 
   #getContent(ptr: ContentPtr): RealtimeContent {
