@@ -9,7 +9,7 @@ SPDX-PackageDownloadLocation = "https://github.com/livekit/agents-js"
 
 # trivial files
 [[annotations]]
-path = [".gitignore", "flake.lock", ".envrc", "packages/livekit-rtc/.gitignore", ".changeset/**", "**/CHANGELOG.md", "NOTICE"]
+path = [".gitignore", "flake.lock", ".envrc", "packages/livekit-rtc/.gitignore", ".changeset/**", "**/CHANGELOG.md", "NOTICE", ".github/**"]
 SPDX-FileCopyrightText = "2024 LiveKit, Inc."
 SPDX-License-Identifier = "Apache-2.0"
 
