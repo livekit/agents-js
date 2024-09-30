@@ -291,6 +291,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   #pendingResponses: { [id: string]: RealtimeResponse } = {};
   #sessionId = 'not-connected';
   #ws: WebSocket | null = null;
+  #expiresAt: number | null = null;
   #logger = log();
   #task: Promise<void>;
   #closing = true;
@@ -336,6 +337,13 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   get response(): Response {
     return new Response(this);
+  }
+
+  get expiration(): number {
+    if (!this.#expiresAt) {
+      throw new Error('session not started');
+    }
+    return this.#expiresAt;
   }
 
   queueMsg(command: api_proto.ClientEvent): void {
@@ -564,6 +572,9 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       sendTask();
 
       this.#ws.onclose = () => {
+        if (this.#expiresAt && Date.now() >= this.#expiresAt) {
+          this.#closing = true;
+        }
         if (!this.#closing) {
           reject('OpenAI Realtime connection closed unexpectedly');
         }
@@ -593,6 +604,8 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   #handleSessionCreated(event: api_proto.SessionCreatedEvent): void {
     this.#sessionId = event.session.id;
+    this.#expiresAt = event.session.expires_at;
+    this.#logger = this.#logger.child({ sessionId: this.#sessionId });
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
