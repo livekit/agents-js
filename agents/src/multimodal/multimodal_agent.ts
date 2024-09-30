@@ -129,7 +129,7 @@ export class MultimodalAgent {
   ): Promise<RealtimeSession> {
     return new Promise(async (resolve, reject) => {
       if (this.#started) {
-        reject('MultimodalAgent already started');
+        reject(new Error('MultimodalAgent already started'));
       }
       this.#updateState();
 
