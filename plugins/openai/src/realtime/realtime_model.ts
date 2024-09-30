@@ -18,7 +18,6 @@ interface ModelOptions {
   turnDetection?: api_proto.TurnDetectionType;
   temperature: number;
   maxResponseOutputTokens: number;
-  expiresAt: number;
   model: api_proto.Model;
   apiKey: string;
   baseURL: string;
@@ -194,7 +193,6 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     temperature = 0.8,
     maxResponseOutputTokens = Infinity,
     model = 'gpt-4o-realtime-preview-2024-10-01',
-    expiresAt = Date.now() + 900000,
     apiKey = process.env.OPENAI_API_KEY || '',
     baseURL = api_proto.API_URL,
   }: {
@@ -207,7 +205,6 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     turnDetection?: api_proto.TurnDetectionType;
     temperature?: number;
     maxResponseOutputTokens?: number;
-    expiresAt?: number;
     model?: api_proto.Model;
     apiKey?: string;
     baseURL?: string;
@@ -230,7 +227,6 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       turnDetection,
       temperature,
       maxResponseOutputTokens,
-      expiresAt,
       model,
       apiKey,
       baseURL,
@@ -252,7 +248,6 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     turnDetection = this.#defaultOpts.turnDetection,
     temperature = this.#defaultOpts.temperature,
     maxResponseOutputTokens = this.#defaultOpts.maxResponseOutputTokens,
-    expiresAt = this.#defaultOpts.expiresAt,
   }: {
     fncCtx?: llm.FunctionContext;
     modalities?: ['text', 'audio'] | ['text'];
@@ -264,7 +259,6 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     turnDetection?: api_proto.TurnDetectionType;
     temperature?: number;
     maxResponseOutputTokens?: number;
-    expiresAt?: number;
   }): RealtimeSession {
     const opts: ModelOptions = {
       modalities,
@@ -276,7 +270,6 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       turnDetection,
       temperature,
       maxResponseOutputTokens,
-      expiresAt,
       model: this.#defaultOpts.model,
       apiKey: this.#defaultOpts.apiKey,
       baseURL: this.#defaultOpts.baseURL,
@@ -389,7 +382,6 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     turnDetection = this.#opts.turnDetection,
     temperature = this.#opts.temperature,
     maxResponseOutputTokens = this.#opts.maxResponseOutputTokens,
-    expiresAt = this.#opts.expiresAt,
     toolChoice = 'auto',
   }: {
     modalities: ['text', 'audio'] | ['text'];
@@ -401,7 +393,6 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     turnDetection?: api_proto.TurnDetectionType;
     temperature?: number;
     maxResponseOutputTokens?: number;
-    expiresAt?: number;
     toolChoice?: api_proto.ToolChoice;
   }) {
     this.#opts = {
@@ -414,7 +405,6 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       turnDetection,
       temperature,
       maxResponseOutputTokens,
-      expiresAt,
       model: this.#opts.model,
       apiKey: this.#opts.apiKey,
       baseURL: this.#opts.baseURL,
@@ -444,7 +434,6 @@ export class RealtimeSession extends multimodal.RealtimeSession {
           this.#opts.maxResponseOutputTokens === Infinity
             ? 'inf'
             : this.#opts.maxResponseOutputTokens,
-        expires_at: this.#opts.expiresAt,
         tools,
         tool_choice: toolChoice,
       },
