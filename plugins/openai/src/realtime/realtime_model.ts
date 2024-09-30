@@ -440,7 +440,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         temperature: this.#opts.temperature,
         max_response_output_tokens:
           this.#opts.maxResponseOutputTokens === Infinity
-            ? 'inf'
+            ? null
             : this.#opts.maxResponseOutputTokens,
         tools,
         tool_choice: toolChoice,

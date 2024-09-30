@@ -33,16 +33,12 @@ export default defineAgent({
   },
 });
 
-type TurnDetectionType =
-  | {
-      type: 'server_vad';
-      threshold?: number;
-      prefix_padding_ms?: number;
-      silence_duration_ms?: number;
-    }
-  | {
-      type: 'none';
-    };
+type TurnDetectionType = {
+  type: 'server_vad';
+  threshold?: number;
+  prefix_padding_ms?: number;
+  silence_duration_ms?: number;
+};
 
 interface SessionConfig {
   openaiApiKey: string;
@@ -51,13 +47,13 @@ interface SessionConfig {
   temperature: number;
   maxOutputTokens?: number;
   modalities: string[];
-  turnDetection: TurnDetectionType;
+  turnDetection: TurnDetectionType | null;
 }
 
 function parseSessionConfig(data: any): SessionConfig {
-  const turnDetection: TurnDetectionType =
+  const turnDetection: TurnDetectionType | null =
     data.turn_detection_type === 'none'
-      ? { type: 'none' }
+      ? null
       : {
           type: 'server_vad',
           ...(data.vad_threshold !== undefined && {

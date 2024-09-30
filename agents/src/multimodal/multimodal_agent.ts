@@ -202,7 +202,7 @@ export class MultimodalAgent {
         );
         if (handle) {
           this.#speaking = true;
-          handle.on('done', () => {
+          handle.doneFut.await.then(() => {
             if (this.#playingHandle == handle) {
               this.#speaking = false;
             }

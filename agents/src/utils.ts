@@ -161,11 +161,12 @@ export class Future {
 
   resolve() {
     this.#done = true;
+    this.resolve();
   }
 
-  reject(_: Error) {
+  reject(error: Error) {
     this.#done = true;
-    _;
+    this.reject(error);
   }
 }
 

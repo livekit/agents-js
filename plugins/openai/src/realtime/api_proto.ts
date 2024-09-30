@@ -181,7 +181,7 @@ export interface SessionResource {
   tools: Tool[];
   tool_choice: ToolChoice; // default: "auto"
   temperature: number; // default: 0.8
-  max_response_output_tokens: number | 'inf';
+  max_response_output_tokens: number | null;
   expires_at: number;
 }
 
@@ -240,7 +240,7 @@ export interface SessionUpdateEvent extends BaseClientEvent {
     tools: Tool[];
     tool_choice: ToolChoice;
     temperature: number;
-    max_response_output_tokens: number | 'inf';
+    max_response_output_tokens: number | null;
   }>;
 }
 
