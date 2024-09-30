@@ -458,7 +458,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       });
 
       this.#ws.onerror = (error) => {
-        reject(error.message);
+        reject(error);
       };
 
       await once(this.#ws, 'open');
@@ -576,7 +576,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
           this.#closing = true;
         }
         if (!this.#closing) {
-          reject('OpenAI Realtime connection closed unexpectedly');
+          reject(new Error('OpenAI Realtime connection closed unexpectedly'));
         }
         this.#ws = null;
         resolve();
