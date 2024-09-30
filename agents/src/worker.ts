@@ -420,7 +420,7 @@ export class Worker {
       }
     }
 
-    this.event!.emit(
+    this.event.emit(
       'worker_msg',
       new WorkerMessage({
         message: {
@@ -477,19 +477,21 @@ export class Worker {
           this.event.emit(
             'worker_registered',
             msg.message.value.workerId,
-            msg.message.value.serverInfo!,
+            msg.message.value.serverInfo,
           );
           this.#connecting = false;
           break;
         }
         case 'availability': {
+          if (!msg.message.value.job) return;
           const task = this.#availability(msg.message.value);
           this.#tasks.push(task);
           task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
           break;
         }
         case 'assignment': {
-          const job = msg.message.value.job!;
+          if (!msg.message.value.job) return;
+          const job = msg.message.value.job;
           if (job.id in this.#pending) {
             const task = this.#pending[job.id];
             delete this.#pending[job.id];
