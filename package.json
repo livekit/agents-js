@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "turbo run build",
+    "clean": "turbo run clean",
+    "clean:build": "turbo run clean:build",
     "build:agents": "turbo run build --filter=@livekit/agents...",
     "build:plugins": "turbo run build --filter=@livekit/agents-plugin-*...",
     "ci:publish": "pnpm build && changeset publish",
@@ -15,7 +17,8 @@
     "lint:fix": "turbo lint -- --fix",
     "test": "vitest run",
     "test:watch": "vitest",
-    "doc": "typedoc"
+    "doc": "typedoc",
+    "examples:minimal": "pnpm exec tsx examples/src/minimal_assistant.ts"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.1",

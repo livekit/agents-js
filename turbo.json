@@ -13,6 +13,14 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
+    "clean": {
+      "dependsOn": ["^clean"],
+      "outputs": [""]
+    },
+    "clean:build": {
+      "dependsOn": ["^clean:build"],
+      "outputs": ["dist/**"]
+    },
     "lint": {
       "outputs": []
     },

@@ -1,13 +1,15 @@
 {
   "name": "@livekit/agents",
-  "version": "0.2.0",
-  "description": "LiveKit Node Agents",
+  "version": "0.3.0",
+  "description": "LiveKit Agents - Node.js",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "author": "aoife cassidy <aoife@livekit.io>",
+  "author": "LiveKit",
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "clean": "rm -rf dist",
+    "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",
     "api:check": "api-extractor run --typescript-compiler-folder ../node_modules/typescript",
     "api:update": "api-extractor run --local --typescript-compiler-folder ../node_modules/typescript --verbose"

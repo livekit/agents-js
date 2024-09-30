@@ -4,17 +4,17 @@
 
 export const SAMPLE_RATE = 24000;
 export const NUM_CHANNELS = 1;
-export const INPUT_PCM_FRAME_SIZE = 2400; // 100ms
-export const OUTPUT_PCM_FRAME_SIZE = 1200; // 50ms
+export const IN_FRAME_SIZE = 2400; // 100ms
+export const OUT_FRAME_SIZE = 1200; // 50ms
 
 export const API_URL = 'wss://api.openai.com/v1/realtime';
 
-export type Model = 'gpt-4o-realtime-preview-2024-10-01' | string;
+export type Model = 'gpt-4o-realtime-preview-2024-10-01' | string; // Open-ended, for future models
 export type Voice = 'alloy' | 'shimmer' | 'echo' | string;
 export type AudioFormat = 'pcm16'; // TODO: 'g711-ulaw' | 'g711-alaw'
 export type Role = 'system' | 'assistant' | 'user' | 'tool';
 export type GenerationFinishedReason = 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
-export type InputTranscriptionModel = 'whisper-1';
+export type InputTranscriptionModel = 'whisper-1' | string; // Open-ended, for future models
 export type Modality = 'text' | 'audio';
 export type ToolChoice = 'auto' | 'none' | 'required' | string;
 export type State = 'initializing' | 'listening' | 'thinking' | 'speaking' | string;
@@ -90,19 +90,22 @@ export type TurnDetectionType =
       prefix_padding_ms?: number; // default: 300
       silence_duration_ms?: number; // default: 200
     }
-  | 'none';
+  | {
+      type: 'none';
+    };
 
-// Content Part Types
+export type InputAudioTranscription = {
+  model: InputTranscriptionModel;
+};
+
 export interface InputTextContent {
-  type: 'text';
+  type: 'input_text';
   text: string;
 }
 
 export interface InputAudioContent {
   type: 'input_audio';
-  // 'audio' field is excluded when rendered
-  // audio: AudioBase64Bytes;
-  transcript?: string;
+  audio: AudioBase64Bytes;
 }
 
 export interface TextContent {
@@ -112,34 +115,36 @@ export interface TextContent {
 
 export interface AudioContent {
   type: 'audio';
-  // 'audio' field is excluded when rendered
-  // audio: AudioBase64Bytes;
+  audio: AudioBase64Bytes;
   transcript: string;
 }
 
-export type ContentPart = InputTextContent | InputAudioContent | TextContent | AudioContent;
+export type Content = InputTextContent | InputAudioContent | TextContent | AudioContent;
+export type ContentPart = {
+  type: 'text' | 'audio';
+  audio?: AudioBase64Bytes;
+  transcript?: string;
+};
 
-// Item Resource Types
 export interface BaseItem {
   id: string;
   object: 'realtime.item';
-  previous_item_id?: string;
   type: string;
 }
 
-export interface SystemMessageItem extends BaseItem {
+export interface SystemItem extends BaseItem {
   type: 'message';
   role: 'system';
   content: InputTextContent;
 }
 
-export interface UserMessageItem extends BaseItem {
+export interface UserItem extends BaseItem {
   type: 'message';
   role: 'user';
   content: (InputTextContent | InputAudioContent)[];
 }
 
-export interface AssistantMessageItem extends BaseItem {
+export interface AssistantItem extends BaseItem {
   type: 'message';
   role: 'assistant';
   content: (TextContent | AudioContent)[];
@@ -159,9 +164,9 @@ export interface FunctionCallOutputItem extends BaseItem {
 }
 
 export type ItemResource =
-  | SystemMessageItem
-  | UserMessageItem
-  | AssistantMessageItem
+  | SystemItem
+  | UserItem
+  | AssistantItem
   | FunctionCallItem
   | FunctionCallOutputItem;
 
@@ -175,9 +180,7 @@ export interface SessionResource {
   voice: Voice; // default: "alloy"
   input_audio_format: AudioFormat; // default: "pcm16"
   output_audio_format: AudioFormat; // default: "pcm16"
-  input_audio_transcription?: {
-    model: 'whisper-1';
-  }; // default: null
+  input_audio_transcription?: InputAudioTranscription; // default: null
   turn_detection: TurnDetectionType;
   tools: Tool[];
   tool_choice: ToolChoice; // default: "auto"
@@ -235,17 +238,8 @@ export interface SessionUpdateEvent extends BaseClientEvent {
     voice: Voice;
     input_audio_format: AudioFormat;
     output_audio_format: AudioFormat;
-    input_audio_transcription: {
-      model: 'whisper-1';
-    };
-    turn_detection:
-      | {
-          type: 'server_vad';
-          threshold?: number;
-          prefix_padding_ms?: number;
-          silence_duration_ms?: number;
-        }
-      | 'none';
+    input_audio_transcription?: InputAudioTranscription;
+    turn_detection: TurnDetectionType;
     tools: Tool[];
     tool_choice: ToolChoice;
     temperature: number;
@@ -266,29 +260,40 @@ export interface InputAudioBufferClearEvent extends BaseClientEvent {
   type: 'input_audio_buffer.clear';
 }
 
+export interface UserItemCreate {
+  type: 'message';
+  role: 'user';
+  content: (InputTextContent | InputAudioContent)[];
+}
+
+export interface AssistantItemCreate {
+  type: 'message';
+  role: 'assistant';
+  content: TextContent[];
+}
+
+export interface SystemItemCreate {
+  type: 'message';
+  role: 'system';
+  content: InputTextContent[];
+}
+
+export interface FunctionCallOutputItemCreate {
+  type: 'function_call_output';
+  call_id: string;
+  output: string;
+}
+
+export type ConversationItemCreateContent =
+  | UserItemCreate
+  | AssistantItemCreate
+  | SystemItemCreate
+  | FunctionCallOutputItemCreate;
+
 export interface ConversationItemCreateEvent extends BaseClientEvent {
   type: 'conversation.item.create';
-  item:
-    | {
-        type: 'message';
-        role: 'user';
-        content: (InputTextContent | InputAudioContent)[];
-      }
-    | {
-        type: 'message';
-        role: 'assistant';
-        content: TextContent[];
-      }
-    | {
-        type: 'message';
-        role: 'system';
-        content: InputTextContent[];
-      }
-    | {
-        type: 'function_call_output';
-        call_id: string;
-        output: string;
-      };
+  previous_item_id?: string;
+  item: ConversationItemCreateContent;
 }
 
 export interface ConversationItemTruncateEvent extends BaseClientEvent {

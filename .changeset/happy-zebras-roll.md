@@ -2,4 +2,4 @@
 "@livekit/agents": patch
 ---
 
-shut everything down correctly
+audit uses of !
