@@ -105,8 +105,6 @@ export class JobContext {
       throw new Error('room is not connected');
     }
 
-    console.log(this.#room.remoteParticipants.values());
-
     for (const p of this.#room.remoteParticipants.values()) {
       if ((!identity || p.identity === identity) && p.info.kind != ParticipantKind.AGENT) {
         return p;
