@@ -113,17 +113,28 @@ export class JobContext {
       }
     }
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const onParticipantConnected = (participant: RemoteParticipant) => {
         if (
           (!identity || participant.identity === identity) &&
           participant.info.kind != ParticipantKind.AGENT
         ) {
-          this.#room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
+          clearHandlers();
           resolve(participant);
         }
       };
+      const onDisconnected = () => {
+        clearHandlers();
+        reject(new Error('Room disconnected while waiting for participant'));
+      };
+
+      const clearHandlers = () => {
+        this.#room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
+        this.#room.off(RoomEvent.Disconnected, onDisconnected);
+      };
+
       this.#room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
+      this.#room.on(RoomEvent.Disconnected, onDisconnected);
     });
   }
 
