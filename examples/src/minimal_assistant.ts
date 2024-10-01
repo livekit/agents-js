@@ -39,7 +39,7 @@ export default defineAgent({
       .start(ctx.room)
       .then((session) => session as openai.realtime.RealtimeSession);
 
-    session.defaultConversation.item.create({
+    session.conversation.item.create({
       type: 'message',
       role: 'user',
       content: [{ type: 'input_text', text: 'Say "How can I help you today?"' }],
