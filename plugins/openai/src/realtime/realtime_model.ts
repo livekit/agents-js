@@ -451,12 +451,15 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   #start(): Promise<void> {
     return new Promise(async (resolve, reject) => {
-      this.#ws = new WebSocket(`${this.#opts.baseURL}?model=${encodeURIComponent(this.#opts.model)}`, {
-        headers: {
-          Authorization: `Bearer ${this.#opts.apiKey}`,
-          'OpenAI-Beta': 'realtime=v1',
+      this.#ws = new WebSocket(
+        `${this.#opts.baseURL}?model=${encodeURIComponent(this.#opts.model)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${this.#opts.apiKey}`,
+            'OpenAI-Beta': 'realtime=v1',
+          },
         },
-      });
+      );
 
       this.#ws.onerror = (error) => {
         reject(error);
