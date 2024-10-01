@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 0.3.2
+
+### Patch Changes
+
+- A few more bugs and updates - [#88](https://github.com/livekit/agents-js/pull/88) ([@bcherry](https://github.com/bcherry))
+
+- allow writing userData - [#90](https://github.com/livekit/agents-js/pull/90) ([@nbsp](https://github.com/nbsp))
+
 ## 0.3.1
 
 ### Patch Changes
