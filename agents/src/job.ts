@@ -220,14 +220,10 @@ export class JobContext {
 
 export class JobProcess {
   #pid = process.pid;
-  #userData: { [id: string]: unknown } = {};
+  userData: { [id: string]: unknown } = {};
 
   get pid(): number {
     return this.#pid;
-  }
-
-  get userData(): { [id: string]: unknown } {
-    return this.#userData;
   }
 }
 
