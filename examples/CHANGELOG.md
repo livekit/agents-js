@@ -2,6 +2,14 @@
 
 ## null
 
+### Patch Changes
+
+- Updated dependencies [[`5ec3db8f645d5e45b673318816e2746c3f6ccb1b`](https://github.com/livekit/agents-js/commit/5ec3db8f645d5e45b673318816e2746c3f6ccb1b), [`d3db7cf19c696f611b5717ff8d510b2f910da712`](https://github.com/livekit/agents-js/commit/d3db7cf19c696f611b5717ff8d510b2f910da712), [`c0cce8a0f71cd8def7052917d8a6479e06178447`](https://github.com/livekit/agents-js/commit/c0cce8a0f71cd8def7052917d8a6479e06178447), [`e748aa4f7be76361c5fcafb03bdb760314b29a9f`](https://github.com/livekit/agents-js/commit/e748aa4f7be76361c5fcafb03bdb760314b29a9f), [`b35952ca243fecb087c898b670f5db0eaa1949bf`](https://github.com/livekit/agents-js/commit/b35952ca243fecb087c898b670f5db0eaa1949bf), [`4edacb8ba7dbbdd060dfedffe3116f1af4739b52`](https://github.com/livekit/agents-js/commit/4edacb8ba7dbbdd060dfedffe3116f1af4739b52)]:
+  - @livekit/agents-plugin-openai@0.3.1
+  - @livekit/agents@0.3.1
+
+## null
+
 ### Minor Changes
 
 - Maximize self-import compatibility - [#69](https://github.com/livekit/agents-js/pull/69) ([@bcherry](https://github.com/bcherry))
