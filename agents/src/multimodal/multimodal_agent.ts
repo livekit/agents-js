@@ -158,6 +158,7 @@ export class MultimodalAgent extends EventEmitter {
         this.#speaking = true;
       };
 
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const onPlayoutStopped = (interrupted: boolean) => {
         this.emit('agent_stopped_speaking');
         this.#speaking = false;
