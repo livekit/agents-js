@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type JobContext, WorkerOptions, cli, defineAgent, multimodal } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
+import { JobType } from '@livekit/protocol';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -47,4 +48,6 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp(
+  new WorkerOptions({ agent: fileURLToPath(import.meta.url), workerType: JobType.JT_ROOM }),
+);
