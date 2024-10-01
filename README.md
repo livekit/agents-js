@@ -27,9 +27,23 @@ originally written in Python.
 
 <!--END_DESCRIPTION-->
 
-> [!NOTE]
+## ✨ [NEW] OpenAI Realtime API support
+
+We're partnering with OpenAI on a new MultimodalAgent API in the Agents framework. This class
+completely wraps OpenAI’s Realtime API, abstract away the raw wire protocol, and provide an
+ultra-low latency WebRTC transport between GPT-4o and your users’ devices. This same stack powers
+Advanced Voice in the ChatGPT app.
+
+- Try the Realtime API in our [playground](https://playground.livekit.io/)
+  [[code](https://github.com/livekit-examples/realtime-playground)]
+- Check out our [guide](https://docs.livekit.io/agents/openai) to building your first app with this new API
+
+> [!WARNING]
 > This SDK is in Developer Preview. During this period, you may encounter bugs, and the APIs may
 > change. Currently, only the OpenAI Realtime voice assistant is available as a plugin.
+>
+> For production, we recommend using the [more mature version](https://github.com/livekit/agents)
+> of this framework, built with Python, which also supports other integrations.
 >
 > We welcome and appreciate any feedback or contributions. You can create issues here or chat live
 > with us in the [LiveKit Community Slack](https://livekit.io/join-slack).
