@@ -29,7 +29,7 @@ import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
  */
 export abstract class RealtimeSession extends EventEmitter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  abstract defaultConversation: any; // openai.realtime.Conversation
+  abstract conversation: any; // openai.realtime.Conversation
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   abstract inputAudioBuffer: any; // openai.realtime.InputAudioBuffer
   abstract fncCtx: llm.FunctionContext | undefined;
@@ -53,7 +53,7 @@ export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
 export const AGENT_STATE_ATTRIBUTE = 'lk.agent.state';
 
 /** @beta */
-export class MultimodalAgent {
+export class MultimodalAgent extends EventEmitter {
   model: RealtimeModel;
   room: Room | null = null;
   linkedParticipant: RemoteParticipant | null = null;
@@ -67,6 +67,7 @@ export class MultimodalAgent {
     model: RealtimeModel;
     fncCtx?: llm.FunctionContext | undefined;
   }) {
+    super();
     this.model = model;
     this.#fncCtx = fncCtx;
   }
@@ -152,6 +153,19 @@ export class MultimodalAgent {
         this.model.inFrameSize,
         this.model.outFrameSize,
       );
+      const onPlayoutStarted = () => {
+        this.emit('agent_started_speaking');
+        this.#speaking = true;
+      };
+
+      const onPlayoutStopped = (interrupted: boolean) => {
+        this.emit('agent_stopped_speaking');
+        this.#speaking = false;
+      };
+
+      this.#agentPlayout.on('playout_started', onPlayoutStarted);
+      this.#agentPlayout.on('playout_stopped', onPlayoutStopped);
+
       const track = LocalAudioTrack.createAudioTrack('assistant_voice', this.#localSource);
       const options = new TrackPublishOptions();
       options.source = TrackSource.SOURCE_MICROPHONE;
@@ -198,14 +212,6 @@ export class MultimodalAgent {
           message.textStream,
           message.audioStream,
         );
-        if (handle) {
-          this.#speaking = true;
-          handle.on('done', () => {
-            if (this.#playingHandle == handle) {
-              this.#speaking = false;
-            }
-          });
-        }
         this.#playingHandle = handle;
       });
 
@@ -238,7 +244,7 @@ export class MultimodalAgent {
         if (this.#playingHandle && !this.#playingHandle.done) {
           this.#playingHandle.interrupt();
 
-          this.#session!.defaultConversation.item.truncate(
+          this.#session!.conversation.item.truncate(
             this.#playingHandle.itemId,
             this.#playingHandle.contentIndex,
             Math.floor((this.#playingHandle.audioSamples / 24000) * 1000),
@@ -275,13 +281,6 @@ export class MultimodalAgent {
       resolve(this.#session);
     });
   }
-
-  // TODO
-  // close() {
-  //   if (!this.connected || !this.ws) return;
-  //   this.logger.debug('stopping assistant');
-  //   this.ws.close();
-  // }
 
   #linkParticipant(participantIdentity: string): void {
     if (!this.room) {

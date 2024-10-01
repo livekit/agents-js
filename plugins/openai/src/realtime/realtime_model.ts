@@ -327,7 +327,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     this.#fncCtx = ctx;
   }
 
-  get defaultConversation(): Conversation {
+  get conversation(): Conversation {
     return new Conversation(this);
   }
 
@@ -753,7 +753,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
           this.emit('function_call_completed', {
             callId: item.call_id,
           });
-          this.defaultConversation.item.create(
+          this.conversation.item.create(
             {
               type: 'function_call_output',
               call_id: item.call_id,

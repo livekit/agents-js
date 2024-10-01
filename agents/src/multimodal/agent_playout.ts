@@ -53,11 +53,14 @@ export class PlayoutHandle extends EventEmitter {
   }
 
   get audioSamples(): number {
+    // Log all variables used in this function
     if (this.totalPlayedTime !== undefined) {
       return Math.floor(this.totalPlayedTime * this.#sampleRate);
     }
 
-    return Math.floor(this.pushedDuration - this.#audioSource.queuedDuration * this.#sampleRate);
+    return Math.floor(
+      (this.pushedDuration - this.#audioSource.queuedDuration) * (this.#sampleRate / 1000),
+    );
   }
 
   get textChars(): number {
@@ -83,7 +86,7 @@ export class PlayoutHandle extends EventEmitter {
   }
 }
 
-export class AgentPlayout {
+export class AgentPlayout extends EventEmitter {
   #audioSource: AudioSource;
   #playoutTask: CancellablePromise<void> | null;
   #sampleRate: number;
@@ -97,6 +100,7 @@ export class AgentPlayout {
     inFrameSize: number,
     outFrameSize: number,
   ) {
+    super();
     this.#audioSource = audioSource;
     this.#playoutTask = null;
     this.#sampleRate = sampleRate;
@@ -187,20 +191,21 @@ export class AgentPlayout {
                     }
                     if (firstFrame) {
                       handle.transcriptionFwd.start();
+                      this.emit('playout_started');
                       firstFrame = false;
                     }
 
                     handle.transcriptionFwd.pushAudio(frame);
 
                     for (const f of bstream.write(frame.data.buffer)) {
-                      handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
+                      handle.pushedDuration += (f.samplesPerChannel / f.sampleRate) * 1000;
                       await this.#audioSource.captureFrame(f);
                     }
                   }
 
                   if (!cancelledCapture && !cancelled) {
                     for (const f of bstream.flush()) {
-                      handle.pushedDuration += f.samplesPerChannel / f.sampleRate;
+                      handle.pushedDuration += (f.samplesPerChannel / f.sampleRate) * 1000;
                       await this.#audioSource.captureFrame(f);
                     }
 
@@ -236,8 +241,12 @@ export class AgentPlayout {
               await gracefullyCancel(readTextTask);
             }
 
-            if (!firstFrame && !handle.interrupted) {
-              handle.transcriptionFwd.markTextComplete();
+            if (!firstFrame) {
+              if (!handle.interrupted) {
+                handle.transcriptionFwd.markTextComplete();
+              }
+
+              this.emit('playout_stopped', handle.interrupted);
             }
 
             handle.doneFut.resolve();
