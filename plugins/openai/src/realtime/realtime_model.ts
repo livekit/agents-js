@@ -26,6 +26,7 @@ interface ModelOptions {
 export interface RealtimeResponse {
   id: string;
   status: api_proto.ResponseStatus;
+  statusDetails: api_proto.ResponseStatusDetails | null;
   output: RealtimeOutput[];
   doneFut: Future;
 }
@@ -450,7 +451,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   #start(): Promise<void> {
     return new Promise(async (resolve, reject) => {
-      this.#ws = new WebSocket(`${this.#opts.baseURL}?model=${this.#opts.model}`, {
+      this.#ws = new WebSocket(`${this.#opts.baseURL}?model=${encodeURIComponent(this.#opts.model)}`, {
         headers: {
           Authorization: `Bearer ${this.#opts.apiKey}`,
           'OpenAI-Beta': 'realtime=v1',
@@ -675,6 +676,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const newResponse: RealtimeResponse = {
       id: response.id,
       status: response.status,
+      statusDetails: response.status_details,
       output: [],
       doneFut: doneFut,
     };
@@ -686,6 +688,9 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const responseData = event.response;
     const responseId = responseData.id;
     const response = this.#pendingResponses[responseId];
+    response.status = responseData.status;
+    response.statusDetails = responseData.status_details;
+    this.#pendingResponses[responseId] = response;
     response.doneFut.resolve();
     this.emit('response_done', response);
   }
