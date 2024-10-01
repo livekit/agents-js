@@ -53,7 +53,6 @@ export class PlayoutHandle extends EventEmitter {
   }
 
   get audioSamples(): number {
-    // Log all variables used in this function
     if (this.totalPlayedTime !== undefined) {
       return Math.floor(this.totalPlayedTime * this.#sampleRate);
     }
