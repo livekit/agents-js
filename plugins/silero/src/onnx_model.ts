@@ -1,25 +1,24 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 import { InferenceSession, Tensor } from 'onnxruntime-node';
 
-export type SampleRate = 8000 | 16000
+export type SampleRate = 8000 | 16000;
 
 export const newInferenceSession = (forceCPU: boolean) => {
-  return InferenceSession.create('./silero_vad.onnx',{
+  return InferenceSession.create('./silero_vad.onnx', {
     interOpNumThreads: 1,
     intraOpNumThreads: 1,
     executionMode: 'sequential',
     executionProviders: forceCPU ? [{ name: 'cpu' }] : undefined,
     extra: {
       session: {
-        inter_op: { allow_spinning: "0" },
-        intra_op: { allow_spinning: "0" },
+        inter_op: { allow_spinning: '0' },
+        intra_op: { allow_spinning: '0' },
       },
     },
-  })
-}
+  });
+};
 
 export class OnnxModel {
   #session: InferenceSession;
@@ -34,7 +33,7 @@ export class OnnxModel {
 
   constructor(session: InferenceSession, sampleRate: SampleRate) {
     this.#session = session;
-    this.#sampleRate = sampleRate
+    this.#sampleRate = sampleRate;
 
     switch (sampleRate) {
       case 8000:
@@ -51,7 +50,6 @@ export class OnnxModel {
     this.#context = new Float32Array(this.#contextSize);
     this.#rnnState = new Float32Array(2 * 1 * 128);
     this.#inputBuffer = new Float32Array(this.#contextSize + this.#windowSizeSamples);
-
   }
 
   get sampleRate(): number {
@@ -70,14 +68,16 @@ export class OnnxModel {
     this.#inputBuffer.set(this.#context, 0);
     this.#inputBuffer.set(x, this.#contextSize);
 
-    return await this.#session.run({
-      input: new Tensor('float32', this.#inputBuffer),
-      output: new Tensor('float32', this.#rnnState),
-      sr: new Tensor('float32', this.#sampleRateNd),
-    }).then((result) => {
-      // this.#state = result.output.data as Float32Array,
-      this.#context = this.#inputBuffer.subarray(0, this.#contextSize);
-      return (result.input.data as Float32Array).at(0)!;
-    });
+    return await this.#session
+      .run({
+        input: new Tensor('float32', this.#inputBuffer),
+        output: new Tensor('float32', this.#rnnState),
+        sr: new Tensor('float32', this.#sampleRateNd),
+      })
+      .then((result) => {
+        // this.#state = result.output.data as Float32Array,
+        this.#context = this.#inputBuffer.subarray(0, this.#contextSize);
+        return (result.input.data as Float32Array).at(0)!;
+      });
   }
 }

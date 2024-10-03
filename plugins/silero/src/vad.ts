@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 import {
   AsyncIterableQueue,
   ExpFilter,
@@ -13,8 +12,9 @@ import {
   mergeFrames,
 } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
-import { InferenceSession } from 'onnxruntime-node';
-import { OnnxModel, SampleRate, newInferenceSession } from './onnx_model';
+import type { InferenceSession } from 'onnxruntime-node';
+import type { SampleRate } from './onnx_model';
+import { OnnxModel, newInferenceSession } from './onnx_model';
 
 const SLOW_INFERENCE_THRESHOLD = 200; // late by 200ms
 
@@ -50,10 +50,10 @@ export class VAD extends baseVAD {
    * @example
    * ```ts
    * export default defineAgent({
-   *   prewarm: async (proc: JobProcess) => {
+   *   prewarm: async (proc: JobProcess) =\> {
    *     proc.userData.vad = await VAD.load();
    *   },
-   *   entry: async (ctx: JobContext) => {
+   *   entry: async (ctx: JobContext) =\> {
    *     const vad = ctx.proc.userData.vad! as VAD;
    *     // the rest of your agent logic
    *   },
@@ -119,7 +119,7 @@ export class VADStream extends baseStream {
     this.#model = model;
 
     this.#task = new Promise(async () => {
-      let inferenceData = new Float32Array(this.#model.windowSizeSamples);
+      const inferenceData = new Float32Array(this.#model.windowSizeSamples);
 
       // a copy is exposed to the user in END_OF_SPEECH
       let speechBuffer: Int16Array | null = null;
@@ -130,7 +130,7 @@ export class VADStream extends baseStream {
       let pubSpeaking = false;
       let pubSpeechDuration = 0;
       let pubSilenceDuration = 0;
-      let pubCurrentSample = 0;
+      const pubCurrentSample = 0;
       let pubTimestamp = 0;
       let pubSampleRate = 0;
       let pubPrefixPaddingSamples = 0; // size in samples of padding data

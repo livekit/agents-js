@@ -290,10 +290,10 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
       return { value: undefined, done: true };
     }
     return { value: item as T, done: false };
-  };
+  }
 
   [Symbol.asyncIterator](): AsyncIterableQueue<T> {
-    return this
+    return this;
   }
 }
 
