@@ -7,7 +7,7 @@
   "author": "LiveKit",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp src/*.onnx dist/",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.{ts,js}\"",

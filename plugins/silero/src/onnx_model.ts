@@ -70,14 +70,14 @@ export class OnnxModel {
 
     return await this.#session
       .run({
-        input: new Tensor('float32', this.#inputBuffer),
-        output: new Tensor('float32', this.#rnnState),
-        sr: new Tensor('float32', this.#sampleRateNd),
+        input: new Tensor('float32', this.#inputBuffer, [1, this.#contextSize + this.#windowSizeSamples]),
+        state: new Tensor('float32', this.#rnnState, [2, 1, 128]),
+        sr: new Tensor('int64', this.#sampleRateNd),
       })
       .then((result) => {
         // this.#state = result.output.data as Float32Array,
         this.#context = this.#inputBuffer.subarray(0, this.#contextSize);
-        return (result.input.data as Float32Array).at(0)!;
+        return (result.output.data as Float32Array).at(0)!;
       });
   }
 }
