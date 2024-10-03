@@ -261,8 +261,8 @@ export async function gracefullyCancel<T>(promise: CancellablePromise<T>): Promi
 
 /** @internal */
 export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
-  protected static readonly QUEUE_END_MARKER = Symbol('QUEUE_END_MARKER');
-  #queue = new Queue<T | typeof AsyncIterableQueue.QUEUE_END_MARKER>();
+  private static readonly CLOSE_SENTINEL = Symbol('CLOSE_SENTINEL');
+  #queue = new Queue<T | typeof AsyncIterableQueue.CLOSE_SENTINEL>();
   #closed = false;
 
   get closed(): boolean {
@@ -278,7 +278,7 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 
   close(): void {
     this.#closed = true;
-    this.#queue.put(AsyncIterableQueue.QUEUE_END_MARKER);
+    this.#queue.put(AsyncIterableQueue.CLOSE_SENTINEL);
   }
 
   async next(): Promise<IteratorResult<T>> {
@@ -286,7 +286,7 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
       return { value: undefined, done: true };
     }
     const item = await this.#queue.get();
-    if (item === AsyncIterableQueue.QUEUE_END_MARKER && this.#closed) {
+    if (item === AsyncIterableQueue.CLOSE_SENTINEL && this.#closed) {
       return { value: undefined, done: true };
     }
     return { value: item as T, done: false };
@@ -302,12 +302,12 @@ export class ExpFilter {
   #max?: number;
   #filtered?: number = undefined;
 
-  constructor(alpha: number, max: number | undefined = undefined) {
+  constructor(alpha: number, max?: number) {
     this.#alpha = alpha;
     this.#max = max;
   }
 
-  reset(alpha: number | undefined = undefined) {
+  reset(alpha?: number) {
     if (alpha) {
       this.#alpha = alpha;
     }
