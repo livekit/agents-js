@@ -2,9 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
-  AsyncIterableQueue,
   ExpFilter,
-  VADEvent,
   VADEventType,
   VADStream as baseStream,
   VAD as baseVAD,
@@ -50,18 +48,18 @@ export class VAD extends baseVAD {
    * @example
    * ```ts
    * export default defineAgent({
-   *   prewarm: async (proc: JobProcess) =\> {
+   *   prewarm: async (proc: JobProcess) => {
    *     proc.userData.vad = await VAD.load();
    *   },
-   *   entry: async (ctx: JobContext) =\> {
+   *   entry: async (ctx: JobContext) => {
    *     const vad = ctx.proc.userData.vad! as VAD;
    *     // the rest of your agent logic
    *   },
    * });
    * ```
    *
-   * @param options
-   * @returns Promise<{@link VAD}>: An instance of the VAD class ready for streaming.
+   * @param options -
+   * @returns Promise\<{@link VAD}\>: An instance of the VAD class ready for streaming.
    */
   static async load({
     minSpeechDuration = 50,
@@ -119,7 +117,7 @@ export class VADStream extends baseStream {
     this.#model = model;
 
     this.#task = new Promise(async () => {
-      const inferenceData = new Float32Array(this.#model.windowSizeSamples);
+      let inferenceData = new Float32Array(this.#model.windowSizeSamples);
 
       // a copy is exposed to the user in END_OF_SPEECH
       let speechBuffer: Int16Array | null = null;
@@ -130,7 +128,7 @@ export class VADStream extends baseStream {
       let pubSpeaking = false;
       let pubSpeechDuration = 0;
       let pubSilenceDuration = 0;
-      const pubCurrentSample = 0;
+      let pubCurrentSample = 0;
       let pubTimestamp = 0;
       let pubSampleRate = 0;
       let pubPrefixPaddingSamples = 0; // size in samples of padding data
@@ -193,16 +191,17 @@ export class VADStream extends baseStream {
           const inferenceFrame = mergeFrames(inferenceFrames);
 
           // convert data to f32
-          const inferenceF32Data = Float32Array.from(
+          inferenceData = Float32Array.from(
             inferenceFrame.data.subarray(0, this.#model.windowSizeSamples),
             (x) => x / 32767,
           );
 
           const p = await this.#model
-            .run(inferenceF32Data)
+            .run(inferenceData)
             .then((data) => this.#expFilter.apply(1, data));
 
           const windowDuration = this.#model.windowSizeSamples / this.#opts.sampleRate;
+          pubCurrentSample += this.#model.windowSizeSamples;
           pubTimestamp += windowDuration;
           const resamplingRatio = pubSampleRate / this.#model.sampleRate;
           const toCopy = this.#model.windowSizeSamples * resamplingRatio + inputCopyRemainingFrac;
