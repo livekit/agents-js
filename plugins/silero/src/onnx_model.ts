@@ -70,7 +70,10 @@ export class OnnxModel {
 
     return await this.#session
       .run({
-        input: new Tensor('float32', this.#inputBuffer, [1, this.#contextSize + this.#windowSizeSamples]),
+        input: new Tensor('float32', this.#inputBuffer, [
+          1,
+          this.#contextSize + this.#windowSizeSamples,
+        ]),
         state: new Tensor('float32', this.#rnnState, [2, 1, 128]),
         sr: new Tensor('int64', this.#sampleRateNd),
       })

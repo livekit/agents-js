@@ -9,7 +9,7 @@ import {
   log,
   mergeFrames,
 } from '@livekit/agents';
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler, AudioResamplerQuality } from '@livekit/rtc-node';
 import type { InferenceSession } from 'onnxruntime-node';
 import type { SampleRate } from './onnx_model';
 import { OnnxModel, newInferenceSession } from './onnx_model';

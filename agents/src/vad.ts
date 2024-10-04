@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
-import { AsyncIterableQueue, Queue } from './utils';
+import { AsyncIterableQueue } from './utils.js';
 
 export enum VADEventType {
   START_OF_SPEECH,
