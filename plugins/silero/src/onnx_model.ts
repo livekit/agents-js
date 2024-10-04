@@ -2,11 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { InferenceSession, Tensor } from 'onnxruntime-node';
+import { pathToFileURL } from 'url';
 
 export type SampleRate = 8000 | 16000;
 
 export const newInferenceSession = (forceCPU: boolean) => {
-  return InferenceSession.create('./silero_vad.onnx', {
+  return InferenceSession.create(new URL('silero_vad.onnx', import.meta.url).pathname, {
     interOpNumThreads: 1,
     intraOpNumThreads: 1,
     executionMode: 'sequential',

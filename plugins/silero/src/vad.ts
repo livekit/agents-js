@@ -11,19 +11,37 @@ import {
 } from '@livekit/agents';
 import { AudioFrame, AudioResampler, AudioResamplerQuality } from '@livekit/rtc-node';
 import type { InferenceSession } from 'onnxruntime-node';
-import type { SampleRate } from './onnx_model';
-import { OnnxModel, newInferenceSession } from './onnx_model';
+import type { SampleRate } from './onnx_model.js';
+import { OnnxModel, newInferenceSession } from './onnx_model.js';
 
 const SLOW_INFERENCE_THRESHOLD = 200; // late by 200ms
 
-interface VADOptions {
+export interface VADOptions {
+  /** Minimum duration of speech to start a new speech chunk */
   minSpeechDuration: number;
+  /** At the end of each speech, wait this duration before ending the speech */
   minSilenceDuration: number;
+  /** Duration of padding to add to the beginning of each speech chunk */
   prefixPaddingDuration: number;
+  /** Maximum duration of speech to keep in the buffer */
   maxBufferedSpeech: number;
+  /** Maximum duration of speech to keep in the buffer*/
   activationThreshold: number;
+  /** Sample rate for the inference (only 8KHz and 16KHz are supported) */
   sampleRate: SampleRate;
+  /** Force the use of CPU for inference */
+  forceCPU: boolean;
 }
+
+const defaultVADOptions: VADOptions = {
+  minSpeechDuration: 50,
+  minSilenceDuration: 250,
+  prefixPaddingDuration: 100,
+  maxBufferedSpeech: 60000,
+  activationThreshold: 0.5,
+  sampleRate: 16000,
+  forceCPU: true,
+};
 
 export class VAD extends baseVAD {
   #session: InferenceSession;
@@ -61,40 +79,8 @@ export class VAD extends baseVAD {
    * @param options -
    * @returns Promise\<{@link VAD}\>: An instance of the VAD class ready for streaming.
    */
-  static async load({
-    minSpeechDuration = 50,
-    minSilenceDuration = 250,
-    prefixPaddingDuration = 100,
-    maxBufferedSpeech = 60000,
-    activationThreshold = 500,
-    sampleRate = 16000,
-    forceCPU = true,
-  }: {
-    /** Minimum duration of speech to start a new speech chunk */
-    minSpeechDuration: number;
-    /** At the end of each speech, wait this duration before ending the speech */
-    minSilenceDuration: number;
-    /** Duration of padding to add to the beginning of each speech chunk */
-    prefixPaddingDuration: number;
-    /** Maximum duration of speech to keep in the buffer */
-    maxBufferedSpeech: number;
-    /** Maximum duration of speech to keep in the buffer*/
-    activationThreshold: number;
-    /** Sample rate for the inference (only 8KHz and 16KHz are supported) */
-    sampleRate: SampleRate;
-    /** Force the use of CPU for inference */
-    forceCPU: boolean;
-  }): Promise<VAD> {
-    const session = await newInferenceSession(forceCPU);
-    const opts = {
-      minSpeechDuration,
-      minSilenceDuration,
-      prefixPaddingDuration,
-      maxBufferedSpeech,
-      activationThreshold,
-      sampleRate,
-    };
-
+  static async load(opts = defaultVADOptions): Promise<VAD> {
+    const session = await newInferenceSession(opts.forceCPU);
     return new VAD(session, opts);
   }
 
@@ -162,10 +148,11 @@ export class VADStream extends baseStream {
             resampler = new AudioResampler(
               pubSampleRate,
               this.#opts.sampleRate,
+              1,
               AudioResamplerQuality.QUICK, // VAD doesn't need high quality
             );
           }
-        } else if (this.#opts.sampleRate !== pubSampleRate) {
+        } else if (frame.sampleRate !== pubSampleRate) {
           this.#logger.error('a frame with a different sample rate was already published');
           continue;
         }
@@ -181,7 +168,7 @@ export class VADStream extends baseStream {
           const startTime = process.hrtime.bigint();
           const availableInferenceSamples = inferenceFrames
             .map((x) => x.samplesPerChannel)
-            .reduce((acc, x) => acc + x);
+            .reduce((acc, x) => acc + x, 0);
 
           if (availableInferenceSamples < this.#model.windowSizeSamples) {
             break; // not enough samples to run inference
@@ -200,7 +187,7 @@ export class VADStream extends baseStream {
             .run(inferenceData)
             .then((data) => this.#expFilter.apply(1, data));
 
-          const windowDuration = this.#model.windowSizeSamples / this.#opts.sampleRate;
+          const windowDuration = (this.#model.windowSizeSamples / this.#opts.sampleRate) * 1000;
           pubCurrentSample += this.#model.windowSizeSamples;
           pubTimestamp += windowDuration;
           const resamplingRatio = pubSampleRate / this.#model.sampleRate;
@@ -280,46 +267,52 @@ export class VADStream extends baseStream {
                 frames: [copySpeechBuffer()],
                 speaking: pubSpeaking,
               });
-            } else {
-              silenceThresholdDuration += windowDuration;
-              speechThresholdDuration = 0;
+            }
+          } else {
+            silenceThresholdDuration += windowDuration;
+            speechThresholdDuration = 0;
 
-              if (!pubSpeaking && speechBufferIndex <= pubPrefixPaddingSamples) {
-                const paddingData = speechBuffer.subarray(
-                  speechBufferIndex - pubPrefixPaddingSamples,
-                  speechBufferIndex,
-                );
-                speechBuffer.set(paddingData, 0);
-                speechBufferIndex = pubPrefixPaddingSamples;
-                speechBufferMaxReached = false;
-              }
-
-              if (pubSpeaking && silenceThresholdDuration > this.#opts.minSilenceDuration) {
-                pubSpeaking = false;
-                pubSpeechDuration = 0;
-                pubSilenceDuration = silenceThresholdDuration;
-
-                this.queue.put({
-                  type: VADEventType.END_OF_SPEECH,
-                  samplesIndex: pubCurrentSample,
-                  timestamp: pubTimestamp,
-                  silenceDuration: pubSilenceDuration,
-                  speechDuration: pubSpeechDuration,
-                  probability: p,
-                  inferenceDuration,
-                  frames: [copySpeechBuffer()],
-                  speaking: pubSpeaking,
-                });
-              }
+            if (!pubSpeaking && speechBufferIndex <= pubPrefixPaddingSamples) {
+              const paddingData = speechBuffer.subarray(
+                speechBufferIndex - pubPrefixPaddingSamples,
+                speechBufferIndex,
+              );
+              speechBuffer.set(paddingData, 0);
+              speechBufferIndex = pubPrefixPaddingSamples;
+              speechBufferMaxReached = false;
             }
 
-            inputFrames = [];
-            inferenceFrames = [];
+            if (pubSpeaking && silenceThresholdDuration > this.#opts.minSilenceDuration) {
+              pubSpeaking = false;
+              pubSpeechDuration = 0;
+              pubSilenceDuration = silenceThresholdDuration;
 
-            if (inferenceFrame.data.length > this.#model.windowSizeSamples) {
-              const data = inferenceFrame.data.subarray(this.#model.windowSizeSamples);
-              inferenceFrames.push(new AudioFrame(data, this.#opts.sampleRate, 1, data.length));
+              this.queue.put({
+                type: VADEventType.END_OF_SPEECH,
+                samplesIndex: pubCurrentSample,
+                timestamp: pubTimestamp,
+                silenceDuration: pubSilenceDuration,
+                speechDuration: pubSpeechDuration,
+                probability: p,
+                inferenceDuration,
+                frames: [copySpeechBuffer()],
+                speaking: pubSpeaking,
+              });
             }
+          }
+
+          inputFrames = [];
+          inferenceFrames = [];
+
+          if (inputFrame.data.length > toCopyInt) {
+            const data = inputFrame.data.subarray(toCopyInt);
+            inputFrames.push(new AudioFrame(data, pubSampleRate, 1, Math.trunc(data.length / 2)));
+          }
+          if (inferenceFrame.data.length > this.#model.windowSizeSamples) {
+            const data = inferenceFrame.data.subarray(this.#model.windowSizeSamples);
+            inferenceFrames.push(
+              new AudioFrame(data, this.#opts.sampleRate, 1, Math.trunc(data.length / 2)),
+            );
           }
         }
       }
