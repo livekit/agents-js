@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { InferenceSession, Tensor } from 'onnxruntime-node';
-import { pathToFileURL } from 'url';
 
 export type SampleRate = 8000 | 16000;
 
