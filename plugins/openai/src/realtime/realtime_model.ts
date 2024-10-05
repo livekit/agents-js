@@ -20,7 +20,7 @@ interface ModelOptions {
   model: api_proto.Model;
   apiKey?: string;
   baseURL: string;
-  provider: 'openai' | 'microsoft';
+  provider: api_proto.Provider;
   queryParams: Record<string, string>;
   entraToken?: string;
 }
@@ -265,7 +265,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     model?: api_proto.Model;
     apiKey?: string;
     baseURL?: string;
-    provider?: 'openai' | 'microsoft';
+    provider?: api_proto.Provider;
     apiVersion?: string;
     entraToken?: string;
   }) {
@@ -535,7 +535,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   #start(): Promise<void> {
     return new Promise(async (resolve, reject) => {
       const headers: Record<string, string> = {
-        'User-Agent': 'LiveKit Agents JS',
+        'User-Agent': 'LiveKit-Agents-JS',
       };
       if (this.#opts.provider === 'microsoft') {
         // Microsoft API has two ways of authentication
