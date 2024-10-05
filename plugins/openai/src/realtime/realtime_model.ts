@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AsyncIterableQueue, Future, Queue } from '@livekit/agents';
-import { llm, log, multimodal } from '@livekit/agents';
+import { AsyncIterableQueue, Future, Queue, llm, log, multimodal } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'events';
 import { WebSocket } from 'ws';
@@ -19,8 +18,11 @@ interface ModelOptions {
   temperature: number;
   maxResponseOutputTokens: number;
   model: api_proto.Model;
-  apiKey: string;
+  apiKey: string | undefined;
   baseURL: string;
+  provider: 'openai' | 'microsoft';
+  queryParams: Record<string, string>;
+  entraToken?: string;
 }
 
 export interface RealtimeResponse {
@@ -183,6 +185,56 @@ export class RealtimeModel extends multimodal.RealtimeModel {
   #defaultOpts: ModelOptions;
   #sessions: RealtimeSession[] = [];
 
+  withAzure({
+    baseURL,
+    azureDeployment,
+    apiVersion = '2024-10-01-preview',
+    apiKey = undefined,
+    entraToken = undefined,
+    instructions = '',
+    modalities = ['text', 'audio'],
+    voice = 'alloy',
+    inputAudioFormat = 'pcm16',
+    outputAudioFormat = 'pcm16',
+    inputAudioTranscription = { model: 'whisper-1' },
+    turnDetection = { type: 'server_vad' },
+    temperature = 0.8,
+    maxResponseOutputTokens = Infinity,
+  }: {
+    baseURL: string;
+    azureDeployment: string;
+    apiVersion?: string;
+    apiKey?: string;
+    entraToken?: string;
+    instructions?: string;
+    modalities?: ['text', 'audio'] | ['text'];
+    voice?: api_proto.Voice;
+    inputAudioFormat?: api_proto.AudioFormat;
+    outputAudioFormat?: api_proto.AudioFormat;
+    inputAudioTranscription?: api_proto.InputAudioTranscription;
+    turnDetection?: api_proto.TurnDetectionType;
+    temperature?: number;
+    maxResponseOutputTokens?: number;
+  }) {
+    return new RealtimeModel({
+      provider: 'microsoft',
+      baseURL: `${baseURL}/openai`,
+      model: azureDeployment,
+      apiVersion,
+      apiKey,
+      entraToken,
+      instructions,
+      modalities,
+      voice,
+      inputAudioFormat,
+      outputAudioFormat,
+      inputAudioTranscription,
+      turnDetection,
+      temperature,
+      maxResponseOutputTokens,
+    });
+  }
+
   constructor({
     modalities = ['text', 'audio'],
     instructions = '',
@@ -196,6 +248,10 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     model = 'gpt-4o-realtime-preview-2024-10-01',
     apiKey = process.env.OPENAI_API_KEY || '',
     baseURL = api_proto.API_URL,
+    provider = 'openai',
+    // used for microsoft
+    apiVersion = undefined,
+    entraToken = undefined,
   }: {
     modalities?: ['text', 'audio'] | ['text'];
     instructions?: string;
@@ -209,6 +265,9 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     model?: api_proto.Model;
     apiKey?: string;
     baseURL?: string;
+    provider: 'openai' | 'microsoft';
+    apiVersion?: string;
+    entraToken?: string;
   }) {
     super();
 
@@ -216,6 +275,14 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       throw new Error(
         'OpenAI API key is required, either using the argument or by setting the OPENAI_API_KEY environmental variable',
       );
+    }
+
+    const queryParams: Record<string, string> = {};
+    if (provider === 'microsoft') {
+      queryParams['api-version'] = apiVersion || '2024-10-01-preview';
+      queryParams['deployment'] = model;
+    } else {
+      queryParams['model'] = model;
     }
 
     this.#defaultOpts = {
@@ -231,6 +298,9 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       model,
       apiKey,
       baseURL,
+      provider,
+      queryParams,
+      entraToken,
     };
   }
 
@@ -274,6 +344,9 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       model: this.#defaultOpts.model,
       apiKey: this.#defaultOpts.apiKey,
       baseURL: this.#defaultOpts.baseURL,
+      provider: this.#defaultOpts.provider,
+      queryParams: this.#defaultOpts.queryParams,
+      entraToken: this.#defaultOpts.entraToken,
     };
 
     const newSession = new RealtimeSession(opts, fncCtx);
@@ -417,6 +490,9 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       model: this.#opts.model,
       apiKey: this.#opts.apiKey,
       baseURL: this.#opts.baseURL,
+      provider: this.#opts.provider,
+      queryParams: this.#opts.queryParams,
+      entraToken: this.#opts.entraToken,
     };
 
     const tools = this.#fncCtx
@@ -428,7 +504,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         }))
       : [];
 
-    this.queueMsg({
+    const sessionUpdateEvent: api_proto.SessionUpdateEvent = {
       type: 'session.update',
       session: {
         modalities: this.#opts.modalities,
@@ -446,20 +522,48 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         tools,
         tool_choice: toolChoice,
       },
-    });
+    };
+
+    if (this.#opts.provider === 'microsoft' && this.#opts.maxResponseOutputTokens === Infinity) {
+      // microsoft doesn't support inf for max_response_output_tokens, but accepts no args
+      sessionUpdateEvent.session.max_response_output_tokens = undefined;
+    }
+
+    this.queueMsg(sessionUpdateEvent);
   }
 
   #start(): Promise<void> {
     return new Promise(async (resolve, reject) => {
-      this.#ws = new WebSocket(
-        `${this.#opts.baseURL}?model=${encodeURIComponent(this.#opts.model)}`,
-        {
-          headers: {
-            Authorization: `Bearer ${this.#opts.apiKey}`,
-            'OpenAI-Beta': 'realtime=v1',
-          },
-        },
-      );
+      const headers: Record<string, string> = {
+        'User-Agent': 'LiveKit Agents JS',
+      };
+      if (this.#opts.provider === 'microsoft') {
+        // Microsoft API has two ways of authentication
+        // 1. Entra token set as `Bearer` token
+        // 2. API key set as `api_key` header (also accepts query string)
+        if (this.#opts.entraToken) {
+          headers.Authorization = `Bearer ${this.#opts.entraToken}`;
+        } else if (this.#opts.apiKey) {
+          headers.api_key = this.#opts.apiKey;
+        } else {
+          reject(new Error('Microsoft API key or entraToken is required'));
+          return;
+        }
+      } else {
+        headers.Authorization = `Bearer ${this.#opts.apiKey}`;
+        headers['OpenAI-Beta'] = 'realtime=v1';
+      }
+      const url = new URL([this.#opts.baseURL, 'realtime'].join('/'));
+      if (url.protocol === 'https:') {
+        url.protocol = 'wss:';
+      }
+      for (const [key, value] of Object.entries(this.#opts.queryParams)) {
+        url.searchParams.set(key, value);
+      }
+
+      this.#ws = new WebSocket(url.toString(), {
+        headers: headers,
+      });
 
       this.#ws.onerror = (error) => {
         reject(error);
