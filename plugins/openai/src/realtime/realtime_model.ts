@@ -18,7 +18,7 @@ interface ModelOptions {
   temperature: number;
   maxResponseOutputTokens: number;
   model: api_proto.Model;
-  apiKey: string | undefined;
+  apiKey?: string;
   baseURL: string;
   provider: 'openai' | 'microsoft';
   queryParams: Record<string, string>;
