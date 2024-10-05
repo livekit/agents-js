@@ -265,7 +265,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     model?: api_proto.Model;
     apiKey?: string;
     baseURL?: string;
-    provider: 'openai' | 'microsoft';
+    provider?: 'openai' | 'microsoft';
     apiVersion?: string;
     entraToken?: string;
   }) {
