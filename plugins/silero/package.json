@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "^0.10.1",
+    "@livekit/rtc-node": "^0.10.2",
     "onnxruntime-node": "^1.19.2",
     "ws": "^8.16.0"
   }
