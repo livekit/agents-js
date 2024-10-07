@@ -1,13 +1,13 @@
 {
-  "name": "@livekit/agents-plugin-openai",
-  "version": "0.3.2",
-  "description": "OpenAI plugin for LiveKit Node Agents",
+  "name": "@livekit/agents-plugin-silero",
+  "version": "0.0.0",
+  "description": "Silero voice activity detection LiveKit Node Agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "author": "LiveKit",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp src/*.onnx dist/",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.{ts,js}\"",
@@ -17,11 +17,13 @@
   "devDependencies": {
     "@microsoft/api-extractor": "^7.35.0",
     "@types/ws": "^8.5.10",
+    "onnxruntime-common": "^1.19.2",
     "typescript": "^5.0.0"
   },
   "dependencies": {
     "@livekit/agents": "workspace:*",
     "@livekit/rtc-node": "^0.10.2",
+    "onnxruntime-node": "^1.19.2",
     "ws": "^8.16.0"
   }
 }

@@ -260,39 +260,80 @@ export async function gracefullyCancel<T>(promise: CancellablePromise<T>): Promi
 }
 
 /** @internal */
-export class AsyncIterableQueue<T> implements AsyncIterable<T> {
-  private queue: Queue<T | typeof AsyncIterableQueue.QUEUE_END_MARKER>;
-  private closed = false;
-  private static readonly QUEUE_END_MARKER = Symbol('QUEUE_END_MARKER');
+export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
+  private static readonly CLOSE_SENTINEL = Symbol('CLOSE_SENTINEL');
+  #queue = new Queue<T | typeof AsyncIterableQueue.CLOSE_SENTINEL>();
+  #closed = false;
 
-  constructor() {
-    this.queue = new Queue<T | typeof AsyncIterableQueue.QUEUE_END_MARKER>();
+  get closed(): boolean {
+    return this.#closed;
   }
 
   put(item: T): void {
-    if (this.closed) {
+    if (this.#closed) {
       throw new Error('Queue is closed');
     }
-    this.queue.put(item);
+    this.#queue.put(item);
   }
 
   close(): void {
-    this.closed = true;
-    this.queue.put(AsyncIterableQueue.QUEUE_END_MARKER);
+    this.#closed = true;
+    this.#queue.put(AsyncIterableQueue.CLOSE_SENTINEL);
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<T> {
-    return {
-      next: async (): Promise<IteratorResult<T>> => {
-        if (this.closed && this.queue.items.length === 0) {
-          return { value: undefined, done: true };
-        }
-        const item = await this.queue.get();
-        if (item === AsyncIterableQueue.QUEUE_END_MARKER && this.closed) {
-          return { value: undefined, done: true };
-        }
-        return { value: item as T, done: false };
-      },
-    };
+  async next(): Promise<IteratorResult<T>> {
+    if (this.#closed && this.#queue.items.length === 0) {
+      return { value: undefined, done: true };
+    }
+    const item = await this.#queue.get();
+    if (item === AsyncIterableQueue.CLOSE_SENTINEL && this.#closed) {
+      return { value: undefined, done: true };
+    }
+    return { value: item as T, done: false };
+  }
+
+  [Symbol.asyncIterator](): AsyncIterableQueue<T> {
+    return this;
+  }
+}
+
+export class ExpFilter {
+  #alpha: number;
+  #max?: number;
+  #filtered?: number = undefined;
+
+  constructor(alpha: number, max?: number) {
+    this.#alpha = alpha;
+    this.#max = max;
+  }
+
+  reset(alpha?: number) {
+    if (alpha) {
+      this.#alpha = alpha;
+    }
+    this.#filtered = undefined;
+  }
+
+  apply(exp: number, sample: number): number {
+    if (this.#filtered) {
+      const a = this.#alpha ** exp;
+      this.#filtered = a * this.#filtered + (1 - a) * sample;
+    } else {
+      this.#filtered = sample;
+    }
+
+    if (this.#max && this.#filtered > this.#max) {
+      this.#filtered = this.#max;
+    }
+
+    return this.#filtered;
+  }
+
+  get filtered(): number | undefined {
+    return this.#filtered;
+  }
+
+  set alpha(alpha: number) {
+    this.#alpha = alpha;
   }
 }
