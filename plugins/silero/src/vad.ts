@@ -233,7 +233,12 @@ export class VADStream extends baseStream {
             probability: p,
             inferenceDuration,
             frames: [
-              new AudioFrame(new Int16Array(inputFrame.data, 0, toCopyInt), pubSampleRate, 1, toCopyInt),
+              new AudioFrame(
+                new Int16Array(inputFrame.data, 0, toCopyInt),
+                pubSampleRate,
+                1,
+                toCopyInt,
+              ),
             ],
             speaking: pubSpeaking,
           });
