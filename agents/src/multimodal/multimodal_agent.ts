@@ -19,7 +19,7 @@ import { EventEmitter } from 'events';
 import { AudioByteStream } from '../audio.js';
 import type * as llm from '../llm/index.js';
 import { log } from '../log.js';
-import { BasicTranscriptionForwarder } from '../transcription.js';
+import { ChatAndTranscriptionForwarder, TranscriptionType } from '../transcription.js';
 import { findMicroTrackId } from '../utils.js';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 
@@ -49,8 +49,18 @@ export abstract class RealtimeModel {
   abstract outFrameSize: number;
 }
 
+interface InternalAgentOptions {
+  transcriptionType: TranscriptionType;
+}
+
+export type MultiModalAgentOptions = Partial<InternalAgentOptions>;
+
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
 export const AGENT_STATE_ATTRIBUTE = 'lk.agent.state';
+
+const DEFAULT_AGENT_OPTIONS: InternalAgentOptions = {
+  transcriptionType: TranscriptionType.CHAT_AND_TRANSCRIPTION,
+} as const;
 
 /** @beta */
 export class MultimodalAgent extends EventEmitter {
@@ -63,13 +73,16 @@ export class MultimodalAgent extends EventEmitter {
   constructor({
     model,
     fncCtx,
+    opts = {},
   }: {
     model: RealtimeModel;
     fncCtx?: llm.FunctionContext | undefined;
+    opts: MultiModalAgentOptions;
   }) {
     super();
     this.model = model;
     this.#fncCtx = fncCtx;
+    this.#options = { ...DEFAULT_AGENT_OPTIONS, ...opts };
   }
 
   #participant: RemoteParticipant | string | null = null;
@@ -81,6 +94,7 @@ export class MultimodalAgent extends EventEmitter {
   #logger = log();
   #session: RealtimeSession | null = null;
   #fncCtx: llm.FunctionContext | undefined = undefined;
+  #options: InternalAgentOptions;
 
   #_started: boolean = false;
   #_pendingFunctionCalls: Set<string> = new Set();
@@ -199,11 +213,12 @@ export class MultimodalAgent extends EventEmitter {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('response_content_added', (message: any) => {
         // openai.realtime.RealtimeContent
-        const trFwd = new BasicTranscriptionForwarder(
+        const trFwd = new ChatAndTranscriptionForwarder(
           this.room!,
           this.room!.localParticipant!.identity,
           this.#getLocalTrackSid()!,
           message.responseId,
+          this.#options.transcriptionType,
         );
 
         const handle = this.#agentPlayout?.play(
