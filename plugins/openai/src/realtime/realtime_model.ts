@@ -185,7 +185,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
   #defaultOpts: ModelOptions;
   #sessions: RealtimeSession[] = [];
 
-  withAzure({
+  static withAzure({
     baseURL,
     azureDeployment,
     apiVersion = '2024-10-01-preview',
@@ -218,7 +218,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
   }) {
     return new RealtimeModel({
       provider: 'microsoft',
-      baseURL: `${baseURL}/openai`,
+      baseURL: new URL('openai', baseURL).toString(),
       model: azureDeployment,
       apiVersion,
       apiKey,
@@ -544,7 +544,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         if (this.#opts.entraToken) {
           headers.Authorization = `Bearer ${this.#opts.entraToken}`;
         } else if (this.#opts.apiKey) {
-          headers.api_key = this.#opts.apiKey;
+          headers['api-key'] = this.#opts.apiKey;
         } else {
           reject(new Error('Microsoft API key or entraToken is required'));
           return;
@@ -566,7 +566,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       });
 
       this.#ws.onerror = (error) => {
-        reject(error);
+        reject(new Error('OpenAI Realtime WebSocket error: ' + error.message));
       };
 
       await once(this.#ws, 'open');

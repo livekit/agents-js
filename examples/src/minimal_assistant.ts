@@ -16,6 +16,18 @@ export default defineAgent({
       instructions: 'You are a helpful assistant.',
     });
 
+    /*
+    To use with Azure OpenAI instead, use the following:
+
+        const model = openai.realtime.RealtimeModel.withAzure({
+          baseURL: process.env.AZURE_OPENAI_BASE_URL,
+          azureDeployment: process.env.AZURE_OPENAI_DEPLOYMENT,
+          apiKey: process.env.AZURE_OPENAI_API_KEY,
+          entraToken: process.env.AZURE_OPENAI_ENTRA_TOKEN,
+          instructions: 'You are a helpful assistant.',
+        });
+    */
+
     const agent = new multimodal.MultimodalAgent({
       model,
       fncCtx: {
@@ -36,7 +48,7 @@ export default defineAgent({
 
     const session = await agent
       .start(ctx.room)
-      .then((session) => session as openai.realtime.RealtimeSession);
+      .then((session) => session as openai.realtime.RealtimeSession)
 
     session.conversation.item.create({
       type: 'message',
