@@ -314,7 +314,9 @@ export class VADStream extends baseStream {
             inputFrames.push(new AudioFrame(data, pubSampleRate, 1, Math.trunc(data.length / 2)));
           }
           if (inferenceFrame.data.length > this.#model.windowSizeSamples) {
-            const data = new Int16Array(inferenceFrame.data.subarray(this.#model.windowSizeSamples));
+            const data = new Int16Array(
+              inferenceFrame.data.subarray(this.#model.windowSizeSamples),
+            );
             inferenceFrames.push(
               new AudioFrame(data, this.#opts.sampleRate, 1, Math.trunc(data.length / 2)),
             );
