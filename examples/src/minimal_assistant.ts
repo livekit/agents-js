@@ -11,9 +11,9 @@ export default defineAgent({
     await ctx.connect();
 
     console.log('waiting for participant');
-    await ctx.waitForParticipant();
+    const participant = await ctx.waitForParticipant();
 
-    console.log('starting assistant example agent');
+    console.log(`starting assistant example agent for ${participant.identity}`);
     const model = new openai.realtime.RealtimeModel({
       instructions: 'You are a helpful assistant.',
     });
@@ -37,7 +37,7 @@ export default defineAgent({
     });
 
     const session = await agent
-      .start(ctx.room)
+      .start(ctx.room, participant)
       .then((session) => session as openai.realtime.RealtimeSession);
 
     session.conversation.item.create({
