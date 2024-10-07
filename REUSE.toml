@@ -24,3 +24,9 @@ SPDX-License-Identifier = "Apache-2.0"
 path = [".prettierrc", ".prettierignore", ".eslintrc", "**.json"]
 SPDX-FileCopyrightText = "2024 LiveKit, Inc."
 SPDX-License-Identifier = "Apache-2.0"
+
+# silero onnx file
+[[annotations]]
+path = ["**/*.onnx"]
+SPDX-FileCopyrightText = "2024 Silero Team"
+SPDX-License-Identifier = "CC-BY-NC-SA-4.0"
