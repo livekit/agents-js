@@ -13,7 +13,7 @@ export default defineAgent({
     console.log('starting assistant example agent');
 
     let model: openai.realtime.RealtimeModel;
-    
+
     if (process.env.AZURE_OPENAI_ENDPOINT) {
       model = openai.realtime.RealtimeModel.withAzure({
         baseURL: process.env.AZURE_OPENAI_ENDPOINT,
