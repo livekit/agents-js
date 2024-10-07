@@ -234,7 +234,7 @@ export class VADStream extends baseStream {
             inferenceDuration,
             frames: [
               new AudioFrame(
-                new Int16Array(inputFrame.data, 0, toCopyInt),
+                new Int16Array(inputFrame.data.subarray(0, toCopyInt)),
                 pubSampleRate,
                 1,
                 toCopyInt,
@@ -246,7 +246,7 @@ export class VADStream extends baseStream {
           const copySpeechBuffer = (): AudioFrame => {
             if (!speechBuffer) throw new Error('speechBuffer is empty');
             return new AudioFrame(
-              new Int16Array(speechBuffer, 0, speechBufferIndex),
+              new Int16Array(speechBuffer.subarray(0, speechBufferIndex)),
               pubSampleRate,
               1,
               speechBufferIndex,
@@ -310,11 +310,11 @@ export class VADStream extends baseStream {
           inferenceFrames = [];
 
           if (inputFrame.data.length > toCopyInt) {
-            const data = new Int16Array(inputFrame.data, 0, toCopyInt);
+            const data = new Int16Array(inputFrame.data.subarray(toCopyInt));
             inputFrames.push(new AudioFrame(data, pubSampleRate, 1, Math.trunc(data.length / 2)));
           }
           if (inferenceFrame.data.length > this.#model.windowSizeSamples) {
-            const data = new Int16Array(inferenceFrame.data, this.#model.windowSizeSamples);
+            const data = new Int16Array(inferenceFrame.data.subarray(this.#model.windowSizeSamples));
             inferenceFrames.push(
               new AudioFrame(data, this.#opts.sampleRate, 1, Math.trunc(data.length / 2)),
             );
