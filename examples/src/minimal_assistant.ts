@@ -48,7 +48,7 @@ export default defineAgent({
 
     const session = await agent
       .start(ctx.room)
-      .then((session) => session as openai.realtime.RealtimeSession)
+      .then((session) => session as openai.realtime.RealtimeSession);
 
     session.conversation.item.create({
       type: 'message',
