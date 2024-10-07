@@ -11,12 +11,6 @@ export const newInferenceSession = (forceCPU: boolean) => {
     intraOpNumThreads: 1,
     executionMode: 'sequential',
     executionProviders: forceCPU ? [{ name: 'cpu' }] : undefined,
-    extra: {
-      session: {
-        inter_op: { allow_spinning: '0' },
-        intra_op: { allow_spinning: '0' },
-      },
-    },
   });
 };
 
