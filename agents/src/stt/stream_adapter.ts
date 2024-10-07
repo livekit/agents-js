@@ -14,7 +14,6 @@ export class StreamAdapterWrapper extends SpeechStream {
   #language?: string;
   #task: {
     run: Promise<void>;
-    cancel: () => void;
   };
 
   constructor(stt: STT, vadStream: VADStream, language: string | undefined = undefined) {
@@ -25,25 +24,19 @@ export class StreamAdapterWrapper extends SpeechStream {
     this.#eventQueue = [];
     this.#language = language;
     this.#task = {
-      run: new Promise((_, reject) => {
-        this.run(reject);
+      run: new Promise(() => {
+        this.run();
       }),
-      cancel: () => {},
     };
   }
 
-  async run(reject: (arg: Error) => void) {
-    this.#task.cancel = () => {
-      this.#closed = true;
-      reject(new Error('cancelled'));
-    };
-
-    for (const event of this.#vadStream) {
+  async run() {
+    for await (const event of this.#vadStream) {
       if (event.type == VADEventType.START_OF_SPEECH) {
         const startEvent = new SpeechEvent(SpeechEventType.START_OF_SPEECH);
         this.#eventQueue.push(startEvent);
       } else if (event.type == VADEventType.END_OF_SPEECH) {
-        const mergedFrames = mergeFrames(event.speech);
+        const mergedFrames = mergeFrames(event.frames);
         const endEvent = await this.#stt.recognize(mergedFrames, this.#language);
         this.#eventQueue.push(endEvent);
       }
@@ -60,14 +53,10 @@ export class StreamAdapterWrapper extends SpeechStream {
     this.#vadStream.pushFrame(frame);
   }
 
-  async close(wait: boolean = true): Promise<void> {
+  async close(): Promise<void> {
     this.#closed = true;
 
-    if (!wait) {
-      this.#task.cancel();
-    }
-
-    await this.#vadStream.close(wait);
+    await this.#vadStream.close();
     await this.#task.run;
   }
 
