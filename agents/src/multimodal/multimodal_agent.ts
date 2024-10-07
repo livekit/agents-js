@@ -60,7 +60,11 @@ export class MultimodalAgent extends EventEmitter {
   room: Room | null = null;
   linkedParticipant: RemoteParticipant | null = null;
   subscribedTrack: RemoteAudioTrack | null = null;
-  readMicroTask: { promise: Promise<void>; cancel: () => void } | null = null;
+  readMicroTask: {
+    promise: Promise<void>;
+    /** @public */
+    cancel: () => void;
+  } | null = null;
 
   constructor({
     model,

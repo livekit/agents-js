@@ -15,6 +15,7 @@ export type inferParameters<P extends z.ZodTypeAny> = z.infer<P>;
 export interface CallableFunction<P extends z.ZodTypeAny = any, R = any> {
   description: string;
   parameters: P;
+  /** @public */
   execute: (args: inferParameters<P>) => PromiseLike<R>;
 }
 

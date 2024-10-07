@@ -52,6 +52,7 @@ export const mergeFrames = (buffer: AudioBuffer): AudioFrame => {
   return buffer;
 };
 
+/** @internal */
 export const findMicroTrackId = (room: Room, identity: string): string => {
   let p: RemoteParticipant | LocalParticipant | undefined = room.remoteParticipants.get(identity);
 

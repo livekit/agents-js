@@ -142,7 +142,9 @@ export class WorkerPermissions {
  */
 export class WorkerOptions {
   agent: string;
+  /** @public */
   requestFunc: (job: JobRequest) => Promise<void>;
+  /** @public */
   loadFunc: () => Promise<number>;
   loadThreshold: number;
   numIdleProcesses: number;
