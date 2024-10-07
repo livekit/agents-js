@@ -16,6 +16,7 @@ export type Role = 'system' | 'assistant' | 'user' | 'tool';
 export type GenerationFinishedReason = 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
 export type InputTranscriptionModel = 'whisper-1' | string; // Open-ended, for future models
 export type Modality = 'text' | 'audio';
+export type Provider = 'openai' | 'microsoft';
 export type ToolChoice = 'auto' | 'none' | 'required' | string;
 export type State = 'initializing' | 'listening' | 'thinking' | 'speaking' | string;
 export type ResponseStatus =
@@ -240,7 +241,7 @@ export interface SessionUpdateEvent extends BaseClientEvent {
     tools: Tool[];
     tool_choice: ToolChoice;
     temperature: number;
-    max_response_output_tokens: number | 'inf';
+    max_response_output_tokens?: number | 'inf';
   }>;
 }
 
