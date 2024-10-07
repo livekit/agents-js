@@ -561,6 +561,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         url.searchParams.set(key, value);
       }
 
+      console.debug('Connecting to OpenAI Realtime API at ', url.toString());
       this.#ws = new WebSocket(url.toString(), {
         headers: headers,
       });
