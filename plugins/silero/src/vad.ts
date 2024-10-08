@@ -43,6 +43,7 @@ const defaultVADOptions: VADOptions = {
   forceCPU: true,
 };
 
+/** An instance of Silero VAD. */
 export class VAD extends baseVAD {
   #session: InferenceSession;
   #opts: VADOptions;
@@ -76,7 +77,6 @@ export class VAD extends baseVAD {
    * });
    * ```
    *
-   * @param options -
    * @returns Promise\<{@link VAD}\>: An instance of the VAD class ready for streaming.
    */
   static async load(opts = defaultVADOptions): Promise<VAD> {
@@ -84,11 +84,13 @@ export class VAD extends baseVAD {
     return new VAD(session, opts);
   }
 
+  /** Returns a {@link VADStream} that can be used to push audio frames and receive VAD events. */
   stream(): VADStream {
     return new VADStream(this.#opts, new OnnxModel(this.#session, this.#opts.sampleRate));
   }
 }
 
+/** An instance of VADStream using Silero VAD. */
 export class VADStream extends baseStream {
   #opts: VADOptions;
   #model: OnnxModel;
