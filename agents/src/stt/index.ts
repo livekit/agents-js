@@ -2,5 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export { STT, SpeechEvent, SpeechEventType, SpeechStream, type SpeechData } from './stt.js';
-export { StreamAdapter, StreamAdapterWrapper } from './stream_adapter.js';
+export {
+  type SpeechEvent,
+  type SpeechData,
+  type STTCapabilities,
+  SpeechEventType,
+  STT,
+  SpeechStream,
+} from './stt.js';
