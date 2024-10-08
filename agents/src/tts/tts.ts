@@ -2,87 +2,99 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
-import { mergeFrames } from '../utils.js';
+import { AsyncIterableQueue } from '../utils.js';
 
 export interface SynthesizedAudio {
-  text: string;
-  data: AudioFrame;
+  /** Request ID (one segment could be made up of multiple requests) */
+  requestId: string;
+  /** Segment ID, each segment is separated by a flush */
+  segmentId: string;
+  /** Synthesized audio frame */
+  frame: AudioFrame;
+  /** Current segment of the synthesized audio */
+  deltaText: string;
 }
 
-export enum SynthesisEventType {
-  /**
-   * Indicate the start of synthesis.
-   * Retriggered after FINISHED.
-   */
-  STARTED = 0,
-  /**
-   * Indicate that audio data is available.
-   */
-  AUDIO = 1,
-  /**
-   * Indicate the end of synthesis. Does not necessarily mean stream is done.
-   */
-  FINISHED = 2,
-}
-
-export class SynthesisEvent {
-  type: SynthesisEventType;
-  audio?: SynthesizedAudio;
-
-  constructor(type: SynthesisEventType, audio: SynthesizedAudio | undefined = undefined) {
-    this.type = type;
-    this.audio = audio;
-  }
-}
-
-export abstract class SynthesizeStream implements IterableIterator<SynthesisEvent> {
-  abstract pushText(token?: string): void;
-
-  markSegmentEnd() {
-    this.pushText(undefined);
-  }
-
-  abstract close(wait: boolean): Promise<void>;
-  abstract next(): IteratorResult<SynthesisEvent>;
-
-  [Symbol.iterator](): SynthesizeStream {
-    return this;
-  }
+export interface TTSCapabilities {
+  streaming: boolean;
 }
 
 export abstract class TTS {
-  #streamingSupported: boolean;
+  #capabilities: TTSCapabilities;
+  #sampleRate: number;
+  #numChannels: number;
 
-  constructor(streamingSupported: boolean) {
-    this.#streamingSupported = streamingSupported;
+  constructor(sampleRate: number, numChannels: number, capabilities: TTSCapabilities) {
+    this.#capabilities = capabilities;
+    this.#sampleRate = sampleRate;
+    this.#numChannels = numChannels;
   }
 
-  abstract synthesize(text: string): Promise<ChunkedStream>;
+  get capabilities(): TTSCapabilities {
+    return this.#capabilities;
+  }
 
+  get sampleRate(): number {
+    return this.#sampleRate;
+  }
+
+  get numChannels(): number {
+    return this.#numChannels;
+  }
+
+  /**
+   * Returns a {@link SynthesizeStream} that can be used to push audio frames and receive syntheses.
+   */
   abstract stream(): SynthesizeStream;
-
-  get streamingSupported(): boolean {
-    return this.#streamingSupported;
-  }
 }
 
-export abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> {
-  async collect(): Promise<AudioFrame> {
-    const frames = [];
-    for await (const ev of this) {
-      frames.push(ev.data);
+export abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudio> {
+  protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
+  protected input = new AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
+  protected queue = new AsyncIterableQueue<SynthesizedAudio>();
+  protected closed = false;
+
+  pushText(text: string) {
+    if (this.input.closed) {
+      throw new Error('Input is closed');
     }
-    return mergeFrames(frames);
+    if (this.closed) {
+      throw new Error('Stream is closed');
+    }
+    this.input.put(text);
   }
 
-  abstract close(): Promise<void>;
-  abstract next(): Promise<IteratorResult<SynthesizedAudio>>;
-
-  [Symbol.iterator](): ChunkedStream {
-    return this;
+  flush() {
+    if (this.input.closed) {
+      throw new Error('Input is closed');
+    }
+    if (this.closed) {
+      throw new Error('Stream is closed');
+    }
+    this.input.put(SynthesizeStream.FLUSH_SENTINEL);
   }
 
-  [Symbol.asyncIterator](): ChunkedStream {
+  endInput() {
+    if (this.input.closed) {
+      throw new Error('Input is closed');
+    }
+    if (this.closed) {
+      throw new Error('Stream is closed');
+    }
+    this.input.close();
+  }
+
+  next(): Promise<IteratorResult<SynthesizedAudio>> {
+    return this.queue.next();
+  }
+
+  close() {
+    this.input.close();
+    this.queue.close();
+    this.closed = true;
+  }
+
+  [Symbol.asyncIterator](): SynthesizeStream {
     return this;
   }
 }
