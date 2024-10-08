@@ -5,9 +5,9 @@ import type { JobContext, JobProcess } from './job.js';
 
 /** @see {@link defineAgent} */
 export interface Agent {
-  /** @public */
+  /** @ignore */
   entry: (ctx: JobContext) => Promise<void>;
-  /** @public */
+  /** @ignore */
   prewarm?: (proc: JobProcess) => unknown;
 }
 

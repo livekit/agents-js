@@ -16,7 +16,7 @@ export type AudioBuffer = AudioFrame[] | AudioFrame;
 /**
  * Merge one or more {@link AudioFrame}s into a single one.
  *
- * @param buffer Either an {@link AudioFrame} or a list thereof
+ * @param buffer - Either an {@link AudioFrame} or a list thereof
  * @throws
  * {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypeError
  * | TypeError} if sample rate or channel count are mismatched

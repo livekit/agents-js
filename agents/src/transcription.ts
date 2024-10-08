@@ -4,12 +4,21 @@
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import { log } from './log.js';
 
+/**
+ * TranscriptionForwarder is an interface for creating incremental transcriptions of audio and text, such as chat logs.
+ */
 export interface TranscriptionForwarder {
+  /** Start the forwarding */
   start(): void;
+  /** Push an audio frame to the forwarder */
   pushAudio(frame: AudioFrame): void;
+  /** Add a string of text to the forwarder */
   pushText(text: string): void;
+  /** Mark text as complete */
   markTextComplete(): void;
+  /** Mark audio as complete */
   markAudioComplete(): void;
+  /** Close the forwarder */
   close(interrupt: boolean): Promise<void>;
   currentCharacterIndex: number;
 }

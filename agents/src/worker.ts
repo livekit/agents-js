@@ -142,9 +142,9 @@ export class WorkerPermissions {
  */
 export class WorkerOptions {
   agent: string;
-  /** @public */
+  /** @ignore */
   requestFunc: (job: JobRequest) => Promise<void>;
-  /** @public */
+  /** @ignore */
   loadFunc: () => Promise<number>;
   loadThreshold: number;
   numIdleProcesses: number;
@@ -162,7 +162,7 @@ export class WorkerOptions {
   logLevel: string;
   production: boolean;
 
-  /** @param options */
+  /** @param options - */
   constructor({
     agent,
     requestFunc = defaultRequestFunc,
@@ -297,7 +297,7 @@ export class Worker {
     this.#httpServer = new HTTPServer(opts.host, opts.port);
   }
 
-  /* @throws {@link WorkerError} if worker failed to connect or already running */
+  /** @throws {@link WorkerError} if worker failed to connect or already running */
   async run() {
     if (!this.#closed) {
       throw new WorkerError('worker is already running');
@@ -356,17 +356,19 @@ export class Worker {
     this.#close.resolve();
   }
 
+  /** Get this worker's ID */
   get id(): string {
     return this.#id;
   }
 
+  /** Get a list of active works managed by this worker */
   get activeJobs(): RunningJobInfo[] {
     return this.#procPool.processes
       .filter((proc) => proc.runningJob)
       .map((proc) => proc.runningJob!);
   }
 
-  /* @throws {@link WorkerError} if worker did not drain in time */
+  /** @throws {@link WorkerError} if worker did not drain in time */
   async drain(timeout?: number) {
     if (this.#draining) {
       return;
@@ -407,6 +409,7 @@ export class Worker {
     });
   }
 
+  /** Simulate receiving a job request and spin up a new job for a specific room */
   async simulateJob(roomName: string, participantIdentity?: string) {
     const client = new RoomServiceClient(this.#opts.wsURL, this.#opts.apiKey, this.#opts.apiSecret);
     const room = await client.createRoom({ name: roomName });
@@ -661,6 +664,7 @@ export class Worker {
     await proc.close();
   }
 
+  /** Shut down this worker */
   async close() {
     if (this.#closed) {
       await this.#close.await;

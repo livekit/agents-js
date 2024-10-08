@@ -8,8 +8,7 @@ import { AudioByteStream } from '../audio.js';
 import type { TranscriptionForwarder } from '../transcription.js';
 import { type AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 
-export const proto = {};
-
+/** @internal */
 export class PlayoutHandle extends EventEmitter {
   #audioSource: AudioSource;
   #sampleRate: number;
@@ -85,6 +84,7 @@ export class PlayoutHandle extends EventEmitter {
   }
 }
 
+/** @internal */
 export class AgentPlayout extends EventEmitter {
   #audioSource: AudioSource;
   #playoutTask: CancellablePromise<void> | null;
