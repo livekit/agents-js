@@ -4,6 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncIterableQueue } from '../utils.js';
 
+/** Indicates start/middle/end of speech */
 export enum SpeechEventType {
   /**
    * Indicate the start of speech.
@@ -27,6 +28,7 @@ export enum SpeechEventType {
   END_OF_SPEECH = 3,
 }
 
+/** SpeechData contains metadata about this {@link SpeechEvent}. */
 export interface SpeechData {
   language: string;
   text: string;
@@ -35,16 +37,30 @@ export interface SpeechData {
   confidence: number;
 }
 
+/** SpeechEvent is a packet of speech-to-text data. */
 export interface SpeechEvent {
   type: SpeechEventType;
   alternatives: SpeechData[];
 }
 
+/**
+ * Describes the capabilities of the STT provider.
+ *
+ * @remarks
+ * At present, the framework only supports providers that have a streaming endpoint.
+ */
 export interface STTCapabilities {
   streaming: boolean;
   interimResults: boolean;
 }
 
+/**
+ * An instance of a speech-to-text adapter.
+ *
+ * @remarks
+ * This class is abstract, and as such cannot be used directly. Instead, use a provider plugin that
+ * exports its own child STT class, which inherits this class's methods.
+ */
 export abstract class STT {
   #capabilities: STTCapabilities;
 
@@ -52,22 +68,41 @@ export abstract class STT {
     this.#capabilities = capabilities;
   }
 
+  /** Returns this STT's capabilities */
   get capabilities(): STTCapabilities {
     return this.#capabilities;
   }
 
   /**
-   * Returns a {@link SpeechStream} that can be used to push audio frames and receive syntheses.
+   * Returns a {@link SpeechStream} that can be used to push audio frames and receive
+   * transcriptions
    */
   abstract stream(): SpeechStream;
 }
 
+/**
+ * An instance of a speech-to-text stream, as an asynchronous iterable iterator.
+ *
+ * @example Looping through frames
+ * ```ts
+ * for await (const event of stream) {
+ *   if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+ *     console.log(event.alternatives[0].text)
+ *   }
+ * }
+ * ```
+ *
+ * @remarks
+ * This class is abstract, and as such cannot be used directly. Instead, use a provider plugin that
+ * exports its own child SpeechStream class, which inherits this class's methods.
+ */
 export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent> {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
   protected input = new AsyncIterableQueue<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>();
   protected queue = new AsyncIterableQueue<SpeechEvent>();
   protected closed = false;
 
+  /** Push an audio frame to the STT */
   pushFrame(frame: AudioFrame) {
     if (this.input.closed) {
       throw new Error('Input is closed');
@@ -78,6 +113,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     this.input.put(frame);
   }
 
+  /** Flush the STT, causing it to process all pending text */
   flush() {
     if (this.input.closed) {
       throw new Error('Input is closed');
@@ -88,6 +124,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     this.input.put(SpeechStream.FLUSH_SENTINEL);
   }
 
+  /** Mark the input as ended and forbid additional pushes */
   endInput() {
     if (this.input.closed) {
       throw new Error('Input is closed');
@@ -102,6 +139,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     return this.queue.next();
   }
 
+  /** Close both the input and output of the STT stream */
   close() {
     this.input.close();
     this.queue.close();
