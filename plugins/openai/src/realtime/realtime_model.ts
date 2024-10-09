@@ -6,6 +6,7 @@ import { llm, log, multimodal } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'events';
 import { WebSocket } from 'ws';
+import { ExtractStrict } from '../utility-types.js';
 import * as api_proto from './api_proto.js';
 
 interface ModelOptions {
@@ -23,13 +24,37 @@ interface ModelOptions {
   baseURL: string;
 }
 
-export interface RealtimeResponse {
+interface RealtimeResponseBase {
   id: string;
   status: api_proto.ResponseStatus;
   statusDetails: api_proto.ResponseStatusDetails | null;
   output: RealtimeOutput[];
   doneFut: Future;
 }
+
+interface KnownRealtimeResponseBase<T extends api_proto.ResponseStatusDetails>
+  extends RealtimeResponseBase {
+  status: T['type'];
+  statusDetails: T;
+}
+
+export interface UnknownRealtimeResponse extends RealtimeResponseBase {
+  status: string;
+  statusDetails: null;
+}
+
+export type IncompleteRealtimeResponse =
+  KnownRealtimeResponseBase<api_proto.IncompleteResponseStatusDetails>;
+export type FailedRealtimeResponse =
+  KnownRealtimeResponseBase<api_proto.FailedResponseStatusDetails>;
+export type CancelledRealtimeResponse =
+  KnownRealtimeResponseBase<api_proto.CancelledResponseStatusDetails>;
+export type KnownRealtimeResponse =
+  | IncompleteRealtimeResponse
+  | FailedRealtimeResponse
+  | CancelledRealtimeResponse;
+
+export type RealtimeResponse = KnownRealtimeResponse | UnknownRealtimeResponse;
 
 export interface RealtimeOutput {
   responseId: string;
