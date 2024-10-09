@@ -142,9 +142,9 @@ export class WorkerPermissions {
  */
 export class WorkerOptions {
   agent: string;
-  /** @ignore */
+  /** Called each time the server has a job for the agent, allowing you to accept or reject it. */
   requestFunc: (job: JobRequest) => Promise<void>;
-  /** @ignore */
+  /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
   loadFunc: () => Promise<number>;
   loadThreshold: number;
   numIdleProcesses: number;

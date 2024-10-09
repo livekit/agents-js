@@ -15,24 +15,26 @@
     "entryPoints": ["agents", "plugins/*"],
     "entryPointStrategy": "packages",
     "name": "LiveKit Agents",
-    "excludeInternal": true,
-    "excludePrivate": true,
-    "excludeProtected": true,
-    "excludeExternals": true,
-    "includeVersion": true,
-    "out": "docs",
-    "theme": "default",
-    "validation": {
-      "notExported": false,
-      "notDocumented": true
-    },
-    "requiredToBeDocumented": [
-      "Enum",
-      "Function",
-      "Class",
-      "Interface",
-      "Method"
-    ],
-    "treatValidationWarningsAsErrors": true,
+    "packageOptions": {
+      "excludeInternal": true,
+      "excludePrivate": true,
+      "excludeProtected": true,
+      "excludeExternals": true,
+      "includeVersion": true,
+      "out": "docs",
+      "theme": "default",
+      "validation": {
+        "notExported": false,
+        "notDocumented": true
+      },
+      "requiredToBeDocumented": [
+        "Enum",
+        "Function",
+        "Class",
+        "Interface",
+        "Method"
+      ],
+      "treatValidationWarningsAsErrors": true,
+    }
   }
 }

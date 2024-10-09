@@ -119,8 +119,8 @@ export abstract class SynthesizeStream implements AsyncIterableIterator<Synthesi
     this.input.close();
   }
 
-  /** @ignore */
-  next(): Promise<IteratorResult<SynthesizedAudio>> {
+  /** Gets the next audio frame in the queue */
+  async next(): Promise<IteratorResult<SynthesizedAudio>> {
     return this.queue.next();
   }
 
@@ -131,7 +131,7 @@ export abstract class SynthesizeStream implements AsyncIterableIterator<Synthesi
     this.closed = true;
   }
 
-  /** @ignore */
+  /** This method allows you to use this class as an async iterator. */
   [Symbol.asyncIterator](): SynthesizeStream {
     return this;
   }

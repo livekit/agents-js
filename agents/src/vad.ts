@@ -128,7 +128,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     this.input.close();
   }
 
-  /** @ignore */
+  /** Gets the next VAD event in the queue */
   next(): Promise<IteratorResult<VADEvent>> {
     return this.queue.next();
   }
@@ -140,7 +140,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     this.closed = true;
   }
 
-  /** @ignore */
+  /** This method allows you to use this class as an async iterator. */
   [Symbol.asyncIterator](): VADStream {
     return this;
   }
