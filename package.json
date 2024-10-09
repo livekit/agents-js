@@ -2,9 +2,6 @@
   "name": "@livekit/agents-monorepo",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=18"
-  },
   "scripts": {
     "build": "turbo run build",
     "clean": "turbo run clean",

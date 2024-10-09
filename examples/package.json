@@ -2,9 +2,6 @@
   "private": true,
   "name": "livekit-agents-examples",
   "type": "module",
-  "engines": {
-    "node": ">=18"
-  },
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",

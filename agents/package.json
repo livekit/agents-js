@@ -6,9 +6,6 @@
   "types": "dist/index.d.ts",
   "author": "LiveKit",
   "type": "module",
-  "engines": {
-    "node": ">=18"
-  },
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
