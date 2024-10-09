@@ -6,7 +6,6 @@ import { llm, log, multimodal } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'events';
 import { WebSocket } from 'ws';
-import { ExtractStrict } from '../utility-types.js';
 import * as api_proto from './api_proto.js';
 
 interface ModelOptions {
