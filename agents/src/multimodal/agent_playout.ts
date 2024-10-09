@@ -6,7 +6,8 @@ import type { AudioSource } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
 import { AudioByteStream } from '../audio.js';
 import type { TranscriptionForwarder } from '../transcription.js';
-import { type AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
+import { CancellablePromise, Future, gracefullyCancel } from '../utils.js';
+import type { AsyncIterableQueue } from '../utils.js';
 
 export const proto = {};
 

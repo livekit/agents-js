@@ -2,22 +2,38 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+/** @internal */
 export const SAMPLE_RATE = 24000;
+/** @internal */
 export const NUM_CHANNELS = 1;
+/** @internal */
 export const IN_FRAME_SIZE = 2400; // 100ms
+/** @internal */
 export const OUT_FRAME_SIZE = 1200; // 50ms
 
+/** @internal */
 export const API_URL = 'wss://api.openai.com/v1/realtime';
 
+/** @public */
 export type Model = 'gpt-4o-realtime-preview-2024-10-01' | string; // Open-ended, for future models
+/** @public */
+/** @public */
 export type Voice = 'alloy' | 'shimmer' | 'echo' | string;
+/** @public */
 export type AudioFormat = 'pcm16'; // TODO: 'g711-ulaw' | 'g711-alaw'
+/** @public */
 export type Role = 'system' | 'assistant' | 'user' | 'tool';
+/** @public */
 export type GenerationFinishedReason = 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
+/** @public */
 export type InputTranscriptionModel = 'whisper-1' | string; // Open-ended, for future models
+/** @public */
 export type Modality = 'text' | 'audio';
+/** @public */
 export type ToolChoice = 'auto' | 'none' | 'required' | string;
+/** @public */
 export type State = 'initializing' | 'listening' | 'thinking' | 'speaking' | string;
+/** @public */
 export type ResponseStatus =
   | 'in_progress'
   | 'completed'
@@ -25,6 +41,7 @@ export type ResponseStatus =
   | 'cancelled'
   | 'failed'
   | string;
+/** @public */
 export type ClientEventType =
   | 'session.update'
   | 'input_audio_buffer.append'
@@ -35,6 +52,7 @@ export type ClientEventType =
   | 'conversation.item.delete'
   | 'response.create'
   | 'response.cancel';
+/** @public */
 export type ServerEventType =
   | 'error'
   | 'session.created'
@@ -65,8 +83,10 @@ export type ServerEventType =
   | 'response.function_call_arguments.done'
   | 'rate_limits.updated';
 
+/** @public */
 export type AudioBase64Bytes = string;
 
+/** @public */
 export interface Tool {
   type: 'function';
   name: string;
@@ -83,6 +103,7 @@ export interface Tool {
   };
 }
 
+/** @public */
 export type TurnDetectionType = {
   type: 'server_vad';
   threshold?: number; // 0.0 to 1.0, default: 0.5
@@ -90,62 +111,76 @@ export type TurnDetectionType = {
   silence_duration_ms?: number; // default: 200
 };
 
+/** @public */
 export type InputAudioTranscription = {
   model: InputTranscriptionModel;
 };
 
+/** @public */
 export interface InputTextContent {
   type: 'input_text';
   text: string;
 }
 
+/** @public */
 export interface InputAudioContent {
   type: 'input_audio';
   audio: AudioBase64Bytes;
 }
 
+/** @public */
 export interface TextContent {
   type: 'text';
   text: string;
 }
 
+/** @public */
 export interface AudioContent {
   type: 'audio';
   audio: AudioBase64Bytes;
   transcript: string;
 }
 
+/** @public */
 export type Content = InputTextContent | InputAudioContent | TextContent | AudioContent;
+/** @public */
 export type ContentPart = {
   type: 'text' | 'audio';
   audio?: AudioBase64Bytes;
   transcript?: string;
 };
 
+/** @public */
 export interface BaseItem {
   id: string;
   object: 'realtime.item';
   type: string;
 }
 
+/** @public */
 export interface SystemItem extends BaseItem {
   type: 'message';
   role: 'system';
   content: InputTextContent;
 }
 
+/** @public */
 export interface UserItem extends BaseItem {
   type: 'message';
   role: 'user';
   content: (InputTextContent | InputAudioContent)[];
 }
 
+/** @public */
 export interface AssistantItem extends BaseItem {
   type: 'message';
   role: 'assistant';
   content: (TextContent | AudioContent)[];
 }
 
+/** @public */
+/** @public */
+/** @public */
 export interface FunctionCallItem extends BaseItem {
   type: 'function_call';
   call_id: string;
@@ -153,12 +188,14 @@ export interface FunctionCallItem extends BaseItem {
   arguments: string;
 }
 
+/** @public */
 export interface FunctionCallOutputItem extends BaseItem {
   type: 'function_call_output';
   call_id: string;
   output: string;
 }
 
+/** @public */
 export type ItemResource =
   | SystemItem
   | UserItem
@@ -167,6 +204,7 @@ export type ItemResource =
   | FunctionCallOutputItem;
 
 // Session Resource
+/** @public */
 export interface SessionResource {
   id: string;
   object: 'realtime.session';
@@ -186,11 +224,13 @@ export interface SessionResource {
 }
 
 // Conversation Resource
+/** @public */
 export interface ConversationResource {
   id: string;
   object: 'realtime.conversation';
 }
 
+/** @public */
 export type ResponseStatusDetails =
   | {
       type: 'incomplete';
@@ -208,6 +248,7 @@ export type ResponseStatusDetails =
       reason: 'turn_detected' | 'client_cancelled' | string;
     };
 
+/** @public */
 export interface ResponseResource {
   id: string;
   object: 'realtime.response';
@@ -222,11 +263,13 @@ export interface ResponseResource {
 }
 
 // Client Events
+/** @public */
 interface BaseClientEvent {
   event_id?: string;
   type: ClientEventType;
 }
 
+/** @public */
 export interface SessionUpdateEvent extends BaseClientEvent {
   type: 'session.update';
   session: Partial<{
@@ -244,55 +287,66 @@ export interface SessionUpdateEvent extends BaseClientEvent {
   }>;
 }
 
+/** @public */
+/** @public */
 export interface InputAudioBufferAppendEvent extends BaseClientEvent {
   type: 'input_audio_buffer.append';
   audio: AudioBase64Bytes;
 }
 
+/** @public */
 export interface InputAudioBufferCommitEvent extends BaseClientEvent {
   type: 'input_audio_buffer.commit';
 }
 
+/** @public */
 export interface InputAudioBufferClearEvent extends BaseClientEvent {
   type: 'input_audio_buffer.clear';
 }
 
+/** @public */
 export interface UserItemCreate {
   type: 'message';
   role: 'user';
   content: (InputTextContent | InputAudioContent)[];
 }
 
+/** @public */
 export interface AssistantItemCreate {
   type: 'message';
   role: 'assistant';
   content: TextContent[];
 }
 
+/** @public */
 export interface SystemItemCreate {
   type: 'message';
   role: 'system';
   content: InputTextContent[];
 }
 
+/** @public */
 export interface FunctionCallOutputItemCreate {
   type: 'function_call_output';
   call_id: string;
   output: string;
 }
 
+/** @public */
 export type ConversationItemCreateContent =
   | UserItemCreate
   | AssistantItemCreate
   | SystemItemCreate
   | FunctionCallOutputItemCreate;
 
+/** @public */
 export interface ConversationItemCreateEvent extends BaseClientEvent {
   type: 'conversation.item.create';
   previous_item_id?: string;
   item: ConversationItemCreateContent;
 }
 
+/** @public */
 export interface ConversationItemTruncateEvent extends BaseClientEvent {
   type: 'conversation.item.truncate';
   item_id: string;
@@ -300,11 +354,13 @@ export interface ConversationItemTruncateEvent extends BaseClientEvent {
   audio_end_ms: number;
 }
 
+/** @public */
 export interface ConversationItemDeleteEvent extends BaseClientEvent {
   type: 'conversation.item.delete';
   item_id: string;
 }
 
+/** @public */
 export interface ResponseCreateEvent extends BaseClientEvent {
   type: 'response.create';
   response?: Partial<{
@@ -319,10 +375,12 @@ export interface ResponseCreateEvent extends BaseClientEvent {
   }>;
 }
 
+/** @public */
 export interface ResponseCancelEvent extends BaseClientEvent {
   type: 'response.cancel';
 }
 
+/** @public */
 export type ClientEvent =
   | SessionUpdateEvent
   | InputAudioBufferAppendEvent
@@ -339,6 +397,7 @@ interface BaseServerEvent {
   type: ServerEventType;
 }
 
+/** @public */
 export interface ErrorEvent extends BaseServerEvent {
   type: 'error';
   error: {
@@ -350,47 +409,56 @@ export interface ErrorEvent extends BaseServerEvent {
   };
 }
 
+/** @public */
 export interface SessionCreatedEvent extends BaseServerEvent {
   type: 'session.created';
   session: SessionResource;
 }
 
+/** @public */
 export interface SessionUpdatedEvent extends BaseServerEvent {
   type: 'session.updated';
   session: SessionResource;
 }
 
+/** @public */
 export interface ConversationCreatedEvent extends BaseServerEvent {
   type: 'conversation.created';
   conversation: ConversationResource;
 }
 
+/** @public */
 export interface InputAudioBufferCommittedEvent extends BaseServerEvent {
   type: 'input_audio_buffer.committed';
   item_id: string;
 }
 
+/** @public */
 export interface InputAudioBufferClearedEvent extends BaseServerEvent {
   type: 'input_audio_buffer.cleared';
 }
 
+/** @public */
 export interface InputAudioBufferSpeechStartedEvent extends BaseServerEvent {
   type: 'input_audio_buffer.speech_started';
   audio_start_ms: number;
   item_id: string;
 }
 
+/** @public */
 export interface InputAudioBufferSpeechStoppedEvent extends BaseServerEvent {
   type: 'input_audio_buffer.speech_stopped';
   audio_end_ms: number;
   item_id: string;
 }
 
+/** @public */
 export interface ConversationItemCreatedEvent extends BaseServerEvent {
   type: 'conversation.item.created';
   item: ItemResource;
 }
 
+/** @public */
 export interface ConversationItemInputAudioTranscriptionCompletedEvent extends BaseServerEvent {
   type: 'conversation.item.input_audio_transcription.completed';
   item_id: string;
@@ -398,6 +466,8 @@ export interface ConversationItemInputAudioTranscriptionCompletedEvent extends B
   transcript: string;
 }
 
+/** @public */
+/** @public */
 export interface ConversationItemInputAudioTranscriptionFailedEvent extends BaseServerEvent {
   type: 'conversation.item.input_audio_transcription.failed';
   item_id: string;
@@ -410,6 +480,7 @@ export interface ConversationItemInputAudioTranscriptionFailedEvent extends Base
   };
 }
 
+/** @public */
 export interface ConversationItemTruncatedEvent extends BaseServerEvent {
   type: 'conversation.item.truncated';
   item_id: string;
@@ -417,21 +488,25 @@ export interface ConversationItemTruncatedEvent extends BaseServerEvent {
   audio_end_ms: number;
 }
 
+/** @public */
 export interface ConversationItemDeletedEvent extends BaseServerEvent {
   type: 'conversation.item.deleted';
   item_id: string;
 }
 
+/** @public */
 export interface ResponseCreatedEvent extends BaseServerEvent {
   type: 'response.created';
   response: ResponseResource;
 }
 
+/** @public */
 export interface ResponseDoneEvent extends BaseServerEvent {
   type: 'response.done';
   response: ResponseResource;
 }
 
+/** @public */
 export interface ResponseOutputItemAddedEvent extends BaseServerEvent {
   type: 'response.output_item.added';
   response_id: string;
@@ -439,6 +514,7 @@ export interface ResponseOutputItemAddedEvent extends BaseServerEvent {
   item: ItemResource;
 }
 
+/** @public */
 export interface ResponseOutputItemDoneEvent extends BaseServerEvent {
   type: 'response.output_item.done';
   response_id: string;
@@ -446,6 +522,7 @@ export interface ResponseOutputItemDoneEvent extends BaseServerEvent {
   item: ItemResource;
 }
 
+/** @public */
 export interface ResponseContentPartAddedEvent extends BaseServerEvent {
   type: 'response.content_part.added';
   response_id: string;
@@ -455,6 +532,7 @@ export interface ResponseContentPartAddedEvent extends BaseServerEvent {
   part: ContentPart;
 }
 
+/** @public */
 export interface ResponseContentPartDoneEvent extends BaseServerEvent {
   type: 'response.content_part.done';
   response_id: string;
@@ -463,6 +541,7 @@ export interface ResponseContentPartDoneEvent extends BaseServerEvent {
   part: ContentPart;
 }
 
+/** @public */
 export interface ResponseTextDeltaEvent extends BaseServerEvent {
   type: 'response.text.delta';
   response_id: string;
@@ -471,6 +550,7 @@ export interface ResponseTextDeltaEvent extends BaseServerEvent {
   delta: string;
 }
 
+/** @public */
 export interface ResponseTextDoneEvent extends BaseServerEvent {
   type: 'response.text.done';
   response_id: string;
@@ -479,6 +559,7 @@ export interface ResponseTextDoneEvent extends BaseServerEvent {
   text: string;
 }
 
+/** @public */
 export interface ResponseAudioTranscriptDeltaEvent extends BaseServerEvent {
   type: 'response.audio_transcript.delta';
   response_id: string;
@@ -487,6 +568,7 @@ export interface ResponseAudioTranscriptDeltaEvent extends BaseServerEvent {
   delta: string;
 }
 
+/** @public */
 export interface ResponseAudioTranscriptDoneEvent extends BaseServerEvent {
   type: 'response.audio_transcript.done';
   response_id: string;
@@ -495,6 +577,7 @@ export interface ResponseAudioTranscriptDoneEvent extends BaseServerEvent {
   transcript: string;
 }
 
+/** @public */
 export interface ResponseAudioDeltaEvent extends BaseServerEvent {
   type: 'response.audio.delta';
   response_id: string;
@@ -503,6 +586,7 @@ export interface ResponseAudioDeltaEvent extends BaseServerEvent {
   delta: AudioBase64Bytes;
 }
 
+/** @public */
 export interface ResponseAudioDoneEvent extends BaseServerEvent {
   type: 'response.audio.done';
   response_id: string;
@@ -510,6 +594,7 @@ export interface ResponseAudioDoneEvent extends BaseServerEvent {
   content_index: number;
 }
 
+/** @public */
 export interface ResponseFunctionCallArgumentsDeltaEvent extends BaseServerEvent {
   type: 'response.function_call_arguments.delta';
   response_id: string;
@@ -517,6 +602,7 @@ export interface ResponseFunctionCallArgumentsDeltaEvent extends BaseServerEvent
   delta: string;
 }
 
+/** @public */
 export interface ResponseFunctionCallArgumentsDoneEvent extends BaseServerEvent {
   type: 'response.function_call_arguments.done';
   response_id: string;
@@ -524,6 +610,7 @@ export interface ResponseFunctionCallArgumentsDoneEvent extends BaseServerEvent 
   arguments: string;
 }
 
+/** @public */
 export interface RateLimitsUpdatedEvent extends BaseServerEvent {
   type: 'rate_limits.updated';
   rate_limits: {
@@ -534,6 +621,7 @@ export interface RateLimitsUpdatedEvent extends BaseServerEvent {
   }[];
 }
 
+/** @public */
 export type ServerEvent =
   | ErrorEvent
   | SessionCreatedEvent
