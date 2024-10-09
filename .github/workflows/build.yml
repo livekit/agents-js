@@ -33,6 +33,23 @@ jobs:
         run: pnpm lint
       - name: Prettier
         run: pnpm format:check
+  api:
+    name: API validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install
+      - name: Build
+        run: pnpm build
+      - name: TypeDoc validation
+        run: pnpm doc:validate
   build:
     name: Build
     runs-on: ubuntu-latest
