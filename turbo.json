@@ -25,7 +25,6 @@
       "outputs": []
     },
     "api:check": {
-      "cache": false,
       "dependsOn": ["^build"]
     },
     "api:update": {

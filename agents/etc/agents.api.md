@@ -7,7 +7,7 @@
 /// <reference types="node" />
 
 import { AudioFrame } from '@livekit/rtc-node';
-import { AudioSource } from '@livekit/rtc-node';
+import type { AudioSource } from '@livekit/rtc-node';
 import type { E2EEOptions } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { JobType } from '@livekit/protocol';
