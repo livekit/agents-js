@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Command, Option } from 'commander';
-import type { EventEmitter } from 'node:events';
+import type { EventEmitter } from 'events';
 import { initializeLogger, log } from './log.js';
 import { version } from './version.js';
 import { Worker, WorkerOptions } from './worker.js';

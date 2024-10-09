@@ -15,7 +15,7 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
-import { EventEmitter } from 'node:events';
+import { EventEmitter } from 'events';
 import { AudioByteStream } from '../audio.js';
 import type * as llm from '../llm/index.js';
 import { log } from '../log.js';
