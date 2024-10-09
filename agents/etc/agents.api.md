@@ -7,9 +7,8 @@
 /// <reference types="node" />
 
 import { AudioFrame } from '@livekit/rtc-node';
-import type { AudioSource } from '@livekit/rtc-node';
 import type { E2EEOptions } from '@livekit/rtc-node';
-import { EventEmitter } from 'events';
+import { EventEmitter } from 'node:events';
 import { JobType } from '@livekit/protocol';
 import type { LocalParticipant } from '@livekit/rtc-node';
 import type { Logger } from 'pino';
@@ -31,16 +30,6 @@ export interface Agent {
 
 // @public (undocumented)
 const AGENT_STATE_ATTRIBUTE = "lk.agent.state";
-
-// @public (undocumented)
-class AgentPlayout extends EventEmitter {
-    constructor(audioSource: AudioSource, sampleRate: number, numChannels: number, inFrameSize: number, outFrameSize: number);
-    // Warning: (ae-incompatible-release-tags) The symbol "play" is marked as @public, but its signature references "AsyncIterableQueue" which is marked as @internal
-    // Warning: (ae-incompatible-release-tags) The symbol "play" is marked as @public, but its signature references "AsyncIterableQueue" which is marked as @internal
-    //
-    // (undocumented)
-    play(itemId: string, contentIndex: number, transcriptionFwd: TranscriptionForwarder, textStream: AsyncIterableQueue<string>, audioStream: AsyncIterableQueue<AudioFrame>): PlayoutHandle;
-}
 
 // @public (undocumented)
 type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
@@ -308,10 +297,7 @@ declare namespace multimodal {
         RealtimeModel,
         AgentState,
         AGENT_STATE_ATTRIBUTE,
-        MultimodalAgent,
-        proto_2 as proto,
-        PlayoutHandle,
-        AgentPlayout
+        MultimodalAgent
     }
 }
 export { multimodal }
@@ -361,35 +347,6 @@ const oaiParams: (p: z.AnyZodObject) => {
 };
 
 // @public (undocumented)
-class PlayoutHandle extends EventEmitter {
-    constructor(audioSource: AudioSource, sampleRate: number, itemId: string, contentIndex: number, transcriptionFwd: TranscriptionForwarder);
-    // (undocumented)
-    get audioSamples(): number;
-    // (undocumented)
-    get contentIndex(): number;
-    // (undocumented)
-    get done(): boolean;
-    // @internal (undocumented)
-    doneFut: Future;
-    // (undocumented)
-    interrupt(): void;
-    // (undocumented)
-    get interrupted(): boolean;
-    // @internal (undocumented)
-    intFut: Future;
-    // (undocumented)
-    get itemId(): string;
-    // @internal (undocumented)
-    pushedDuration: number;
-    // (undocumented)
-    get textChars(): number;
-    // @internal (undocumented)
-    totalPlayedTime: number | undefined;
-    // @internal (undocumented)
-    transcriptionFwd: TranscriptionForwarder;
-}
-
-// @public (undocumented)
 abstract class Plugin_2 {
     constructor(title: string, version: string);
     // (undocumented)
@@ -404,9 +361,6 @@ abstract class Plugin_2 {
     get version(): string;
 }
 export { Plugin_2 as Plugin }
-
-// @public (undocumented)
-const proto_2: {};
 
 // Warning: (ae-internal-missing-underscore) The name "Queue" should be prefixed with an underscore because the declaration is marked as @internal
 //
