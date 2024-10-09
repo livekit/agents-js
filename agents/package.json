@@ -6,6 +6,9 @@
   "types": "dist/index.d.ts",
   "author": "LiveKit",
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
@@ -16,7 +19,6 @@
   },
   "devDependencies": {
     "@microsoft/api-extractor": "^7.35.0",
-    "@types/node": "^22.5.5",
     "@types/ws": "^8.5.10",
     "typescript": "^5.0.0"
   },
