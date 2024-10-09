@@ -33,8 +33,7 @@ jobs:
         run: pnpm lint
       - name: Prettier
         run: pnpm format:check
-      - name: API changes
-        run: pnpm api:check
+
   build:
     name: Build
     runs-on: ubuntu-latest
@@ -50,3 +49,5 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm build
+      - name: API changes
+        run: pnpm api:check
