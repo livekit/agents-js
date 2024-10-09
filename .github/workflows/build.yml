@@ -33,6 +33,8 @@ jobs:
         run: pnpm lint
       - name: Prettier
         run: pnpm format:check
+      - name: API changes
+        run: pnpm api:check
   build:
     name: Build
     runs-on: ubuntu-latest
