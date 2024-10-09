@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AsyncIterableQueue, Future, Queue } from '@livekit/agents';
-import { llm, log, multimodal } from '@livekit/agents';
+import { AsyncIterableQueue, Future, Queue, llm, log, multimodal } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'events';
 import { WebSocket } from 'ws';

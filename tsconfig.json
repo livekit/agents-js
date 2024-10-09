@@ -9,7 +9,8 @@
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "composite": true
   },
   "typedocOptions": {
     "entryPoints": ["agents", "plugins/*"],
@@ -22,5 +23,11 @@
     "includeVersion": true,
     "out": "docs",
     "theme": "default"
+  },
+  "rootDir": ".",
+  "baseUrl": ".",
+  "paths": {
+    "@livekit/agents": ["agents/src"],
+    "@livekit/agents-plugin-openai": ["plugins/openai/src"]
   }
 }
