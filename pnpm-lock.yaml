@@ -16,13 +16,10 @@ importers:
         version: 0.0.4
       '@rushstack/heft':
         specifier: ^0.66.0
-        version: 0.66.9(@types/node@18.19.55)
+        version: 0.66.9(@types/node@22.5.5)
       '@trivago/prettier-plugin-sort-imports':
         specifier: ^4.3.0
         version: 4.3.0(prettier@3.2.5)
-      '@types/node':
-        specifier: ^18
-        version: 18.19.55
       '@typescript-eslint/eslint-plugin':
         specifier: ^6.21.0
         version: 6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint@8.57.0)(typescript@5.4.5)
@@ -76,7 +73,7 @@ importers:
         version: 5.4.5
       vitest:
         specifier: ^1.6.0
-        version: 1.6.0(@types/node@18.19.55)
+        version: 1.6.0(@types/node@22.5.5)
 
   agents:
     dependencies:
@@ -108,6 +105,9 @@ importers:
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
+      '@types/node':
+        specifier: ^22.5.5
+        version: 22.5.5
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
@@ -713,9 +713,6 @@ packages:
 
   '@types/node@12.20.55':
     resolution: {integrity: sha512-J8xLz7q2OFulZ2cyGTLE1TbbZcjpno7FaN6zdJNrgAdrJ+DZzh/uFR6YrTb4C+nXakvud8Q4+rbhoIWlYQbUFQ==}
-
-  '@types/node@18.19.55':
-    resolution: {integrity: sha512-zzw5Vw52205Zr/nmErSEkN5FLqXPuKX/k5d1D7RKHATGqU7y6YfX9QxZraUzUrFGqH6XzOzG196BC35ltJC4Cw==}
 
   '@types/node@22.5.5':
     resolution: {integrity: sha512-Xjs4y5UPO/CLdzpgR6GirZJx36yScjh73+2NlLlkFRSoQN8B0DpfXPdZGnvVmLRLOsqDpOfTNv7D9trgGhmOIA==}
@@ -2777,9 +2774,6 @@ packages:
   unbox-primitive@1.0.2:
     resolution: {integrity: sha512-61pPlCD9h51VoreyJ0BReideM3MDKMKnh6+V9L08331ipq6Q8OFXZYiqP6n/tbHx4s5I9uRhcye6BrbkizkBDw==}
 
-  undici-types@5.26.5:
-    resolution: {integrity: sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA==}
-
   undici-types@6.19.8:
     resolution: {integrity: sha512-ve2KP6f/JnbPBFyobGHuerC9g1FYGn/F8n1LWTwNxCEzd6IfqTwUQcNXgEtmmQ6DlRrC1hrSrBnCZPokRrDHjw==}
 
@@ -3527,23 +3521,23 @@ snapshots:
 
   '@rushstack/eslint-patch@1.10.3': {}
 
-  '@rushstack/heft-config-file@0.14.19(@types/node@18.19.55)':
+  '@rushstack/heft-config-file@0.14.19(@types/node@22.5.5)':
     dependencies:
-      '@rushstack/node-core-library': 4.3.0(@types/node@18.19.55)
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.5.5)
       '@rushstack/rig-package': 0.5.2
-      '@rushstack/terminal': 0.11.0(@types/node@18.19.55)
+      '@rushstack/terminal': 0.11.0(@types/node@22.5.5)
       jsonpath-plus: 4.0.0
     transitivePeerDependencies:
       - '@types/node'
 
-  '@rushstack/heft@0.66.9(@types/node@18.19.55)':
+  '@rushstack/heft@0.66.9(@types/node@22.5.5)':
     dependencies:
-      '@rushstack/heft-config-file': 0.14.19(@types/node@18.19.55)
-      '@rushstack/node-core-library': 4.3.0(@types/node@18.19.55)
-      '@rushstack/operation-graph': 0.2.19(@types/node@18.19.55)
+      '@rushstack/heft-config-file': 0.14.19(@types/node@22.5.5)
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.5.5)
+      '@rushstack/operation-graph': 0.2.19(@types/node@22.5.5)
       '@rushstack/rig-package': 0.5.2
-      '@rushstack/terminal': 0.11.0(@types/node@18.19.55)
-      '@rushstack/ts-command-line': 4.21.0(@types/node@18.19.55)
+      '@rushstack/terminal': 0.11.0(@types/node@22.5.5)
+      '@rushstack/ts-command-line': 4.21.0(@types/node@22.5.5)
       '@types/tapable': 1.0.6
       fast-glob: 3.3.2
       git-repo-info: 2.1.1
@@ -3553,17 +3547,6 @@ snapshots:
       watchpack: 2.4.0
     transitivePeerDependencies:
       - '@types/node'
-
-  '@rushstack/node-core-library@4.3.0(@types/node@18.19.55)':
-    dependencies:
-      fs-extra: 7.0.1
-      import-lazy: 4.0.0
-      jju: 1.4.0
-      resolve: 1.22.8
-      semver: 7.5.4
-      z-schema: 5.0.5
-    optionalDependencies:
-      '@types/node': 18.19.55
 
   '@rushstack/node-core-library@4.3.0(@types/node@22.5.5)':
     dependencies:
@@ -3576,24 +3559,17 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.5.5
 
-  '@rushstack/operation-graph@0.2.19(@types/node@18.19.55)':
+  '@rushstack/operation-graph@0.2.19(@types/node@22.5.5)':
     dependencies:
-      '@rushstack/node-core-library': 4.3.0(@types/node@18.19.55)
-      '@rushstack/terminal': 0.11.0(@types/node@18.19.55)
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.5.5)
+      '@rushstack/terminal': 0.11.0(@types/node@22.5.5)
     optionalDependencies:
-      '@types/node': 18.19.55
+      '@types/node': 22.5.5
 
   '@rushstack/rig-package@0.5.2':
     dependencies:
       resolve: 1.22.8
       strip-json-comments: 3.1.1
-
-  '@rushstack/terminal@0.11.0(@types/node@18.19.55)':
-    dependencies:
-      '@rushstack/node-core-library': 4.3.0(@types/node@18.19.55)
-      supports-color: 8.1.1
-    optionalDependencies:
-      '@types/node': 18.19.55
 
   '@rushstack/terminal@0.11.0(@types/node@22.5.5)':
     dependencies:
@@ -3601,15 +3577,6 @@ snapshots:
       supports-color: 8.1.1
     optionalDependencies:
       '@types/node': 22.5.5
-
-  '@rushstack/ts-command-line@4.21.0(@types/node@18.19.55)':
-    dependencies:
-      '@rushstack/terminal': 0.11.0(@types/node@18.19.55)
-      '@types/argparse': 1.0.38
-      argparse: 1.0.10
-      string-argv: 0.3.2
-    transitivePeerDependencies:
-      - '@types/node'
 
   '@rushstack/ts-command-line@4.21.0(@types/node@22.5.5)':
     dependencies:
@@ -3646,14 +3613,9 @@ snapshots:
 
   '@types/node@12.20.55': {}
 
-  '@types/node@18.19.55':
-    dependencies:
-      undici-types: 5.26.5
-
   '@types/node@22.5.5':
     dependencies:
       undici-types: 6.19.8
-    optional: true
 
   '@types/normalize-package-data@2.4.4': {}
 
@@ -3663,7 +3625,7 @@ snapshots:
 
   '@types/ws@8.5.10':
     dependencies:
-      '@types/node': 18.19.55
+      '@types/node': 22.5.5
 
   '@typescript-eslint/eslint-plugin@6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint@8.57.0)(typescript@5.4.5)':
     dependencies:
@@ -5936,10 +5898,7 @@ snapshots:
       has-symbols: 1.0.3
       which-boxed-primitive: 1.0.2
 
-  undici-types@5.26.5: {}
-
-  undici-types@6.19.8:
-    optional: true
+  undici-types@6.19.8: {}
 
   universalify@0.1.2: {}
 
@@ -5954,13 +5913,13 @@ snapshots:
 
   validator@13.12.0: {}
 
-  vite-node@1.6.0(@types/node@18.19.55):
+  vite-node@1.6.0(@types/node@22.5.5):
     dependencies:
       cac: 6.7.14
       debug: 4.3.4
       pathe: 1.1.2
       picocolors: 1.0.1
-      vite: 5.2.11(@types/node@18.19.55)
+      vite: 5.2.11(@types/node@22.5.5)
     transitivePeerDependencies:
       - '@types/node'
       - less
@@ -5971,16 +5930,16 @@ snapshots:
       - supports-color
       - terser
 
-  vite@5.2.11(@types/node@18.19.55):
+  vite@5.2.11(@types/node@22.5.5):
     dependencies:
       esbuild: 0.20.2
       postcss: 8.4.38
       rollup: 4.17.2
     optionalDependencies:
-      '@types/node': 18.19.55
+      '@types/node': 22.5.5
       fsevents: 2.3.3
 
-  vitest@1.6.0(@types/node@18.19.55):
+  vitest@1.6.0(@types/node@22.5.5):
     dependencies:
       '@vitest/expect': 1.6.0
       '@vitest/runner': 1.6.0
@@ -5999,11 +5958,11 @@ snapshots:
       strip-literal: 2.1.0
       tinybench: 2.8.0
       tinypool: 0.8.4
-      vite: 5.2.11(@types/node@18.19.55)
-      vite-node: 1.6.0(@types/node@18.19.55)
+      vite: 5.2.11(@types/node@22.5.5)
+      vite-node: 1.6.0(@types/node@22.5.5)
       why-is-node-running: 2.2.2
     optionalDependencies:
-      '@types/node': 18.19.55
+      '@types/node': 22.5.5
     transitivePeerDependencies:
       - less
       - lightningcss
