@@ -21,7 +21,8 @@ import type * as llm from '../llm/index.js';
 import { log } from '../log.js';
 import { BasicTranscriptionForwarder } from '../transcription.js';
 import { findMicroTrackId } from '../utils.js';
-import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
+import type { PlayoutHandle } from './agent_playout.js';
+import { AgentPlayout } from './agent_playout.js';
 
 /**
  * @internal

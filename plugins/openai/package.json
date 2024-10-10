@@ -11,11 +11,11 @@
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.{ts,js}\"",
-    "api:check": "api-extractor run --typescript-compiler-folder ../../node_modules/typescript",
-    "api:update": "api-extractor run --local --typescript-compiler-folder ../../node_modules/typescript --verbose"
+    "api:check": "api-extractor run",
+    "api:update": "api-extractor run --local --verbose"
   },
   "devDependencies": {
-    "@microsoft/api-extractor": "^7.35.0",
+    "@microsoft/api-extractor": "^7.47.9",
     "@types/ws": "^8.5.10",
     "typescript": "^5.0.0"
   },

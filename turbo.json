@@ -8,7 +8,7 @@
     "LIVEKIT_API_SECRET",
     "LOG_LEVEL"
   ],
-  "pipeline": {
+  "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
@@ -25,10 +25,11 @@
       "outputs": []
     },
     "api:check": {
-      "cache": false,
       "dependsOn": ["^build"]
     },
     "api:update": {
+      "outputs": ["temp/*", "etc/*"],
+      "cache": false,
       "dependsOn": ["^build"]
     }
   }
