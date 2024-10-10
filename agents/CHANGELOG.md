@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 0.3.3
+
+### Patch Changes
+
+- fix usage on Windows by importing using URLs, not paths - [#95](https://github.com/livekit/agents-js/pull/95) ([@nbsp](https://github.com/nbsp))
+
 ## 0.3.2
 
 ### Patch Changes
