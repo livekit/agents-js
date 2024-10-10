@@ -4,6 +4,14 @@
 
 ### Patch Changes
 
+- Updated dependencies [[`0a0e10817e4258ac5a250a9797722e1179c7ef73`](https://github.com/livekit/agents-js/commit/0a0e10817e4258ac5a250a9797722e1179c7ef73)]:
+  - @livekit/agents@0.3.3
+  - @livekit/agents-plugin-openai@0.3.3
+
+## null
+
+### Patch Changes
+
 - A few more bugs and updates - [#88](https://github.com/livekit/agents-js/pull/88) ([@bcherry](https://github.com/bcherry))
 
 - Updated dependencies [[`56333dd89486a1a10157f57576447d3bb7cb83c3`](https://github.com/livekit/agents-js/commit/56333dd89486a1a10157f57576447d3bb7cb83c3), [`07b4d4b123955bd850a208471d651810e075f0af`](https://github.com/livekit/agents-js/commit/07b4d4b123955bd850a208471d651810e075f0af)]:
