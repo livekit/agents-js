@@ -20,9 +20,9 @@ interface ModelOptions {
   model: api_proto.Model;
   apiKey?: string;
   baseURL: string;
-  provider: api_proto.Provider;
-  queryParams: Record<string, string>;
+  isAzure: boolean;
   entraToken?: string;
+  apiVersion?: string;
 }
 
 export interface RealtimeResponse {
@@ -217,7 +217,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     maxResponseOutputTokens?: number;
   }) {
     return new RealtimeModel({
-      provider: 'microsoft',
+      isAzure: true,
       baseURL: new URL('openai', baseURL).toString(),
       model: azureDeployment,
       apiVersion,
@@ -248,8 +248,8 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     model = 'gpt-4o-realtime-preview-2024-10-01',
     apiKey = process.env.OPENAI_API_KEY || '',
     baseURL = api_proto.API_URL,
-    provider = 'openai',
     // used for microsoft
+    isAzure = false,
     apiVersion = undefined,
     entraToken = undefined,
   }: {
@@ -265,7 +265,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     model?: api_proto.Model;
     apiKey?: string;
     baseURL?: string;
-    provider?: api_proto.Provider;
+    isAzure?: boolean;
     apiVersion?: string;
     entraToken?: string;
   }) {
@@ -275,14 +275,6 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       throw new Error(
         'OpenAI API key is required, either using the argument or by setting the OPENAI_API_KEY environmental variable',
       );
-    }
-
-    const queryParams: Record<string, string> = {};
-    if (provider === 'microsoft') {
-      queryParams['api-version'] = apiVersion || '2024-10-01-preview';
-      queryParams['deployment'] = model;
-    } else {
-      queryParams['model'] = model;
     }
 
     this.#defaultOpts = {
@@ -298,8 +290,8 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       model,
       apiKey,
       baseURL,
-      provider,
-      queryParams,
+      isAzure,
+      apiVersion,
       entraToken,
     };
   }
@@ -344,8 +336,8 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       model: this.#defaultOpts.model,
       apiKey: this.#defaultOpts.apiKey,
       baseURL: this.#defaultOpts.baseURL,
-      provider: this.#defaultOpts.provider,
-      queryParams: this.#defaultOpts.queryParams,
+      isAzure: this.#defaultOpts.isAzure,
+      apiVersion: this.#defaultOpts.apiVersion,
       entraToken: this.#defaultOpts.entraToken,
     };
 
@@ -490,8 +482,8 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       model: this.#opts.model,
       apiKey: this.#opts.apiKey,
       baseURL: this.#opts.baseURL,
-      provider: this.#opts.provider,
-      queryParams: this.#opts.queryParams,
+      isAzure: this.#opts.isAzure,
+      apiVersion: this.#opts.apiVersion,
       entraToken: this.#opts.entraToken,
     };
 
@@ -524,7 +516,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       },
     };
 
-    if (this.#opts.provider === 'microsoft' && this.#opts.maxResponseOutputTokens === Infinity) {
+    if (this.#opts.isAzure && this.#opts.maxResponseOutputTokens === Infinity) {
       // microsoft doesn't support inf for max_response_output_tokens, but accepts no args
       sessionUpdateEvent.session.max_response_output_tokens = undefined;
     }
@@ -537,7 +529,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       const headers: Record<string, string> = {
         'User-Agent': 'LiveKit-Agents-JS',
       };
-      if (this.#opts.provider === 'microsoft') {
+      if (this.#opts.isAzure) {
         // Microsoft API has two ways of authentication
         // 1. Entra token set as `Bearer` token
         // 2. API key set as `api_key` header (also accepts query string)
@@ -557,7 +549,17 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       if (url.protocol === 'https:') {
         url.protocol = 'wss:';
       }
-      for (const [key, value] of Object.entries(this.#opts.queryParams)) {
+
+      // Construct query parameters
+      const queryParams: Record<string, string> = {};
+      if (this.#opts.isAzure) {
+        queryParams['api-version'] = '2024-10-01-preview';
+        queryParams['deployment'] = this.#opts.model;
+      } else {
+        queryParams['model'] = this.#opts.model;
+      }
+
+      for (const [key, value] of Object.entries(queryParams)) {
         url.searchParams.set(key, value);
       }
 
