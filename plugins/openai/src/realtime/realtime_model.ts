@@ -247,7 +247,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     maxResponseOutputTokens = Infinity,
     model = 'gpt-4o-realtime-preview-2024-10-01',
     apiKey = process.env.OPENAI_API_KEY || '',
-    baseURL = api_proto.API_URL,
+    baseURL = api_proto.BASE_URL,
     // used for microsoft
     isAzure = false,
     apiVersion = undefined,
