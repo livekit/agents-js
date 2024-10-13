@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Room, RoomEvent } from '@livekit/rtc-node';
-import type { ChildProcess } from 'child_process';
-import { fork } from 'child_process';
-import { EventEmitter, once } from 'events';
+import type { ChildProcess } from 'node:child_process';
+import { fork } from 'node:child_process';
+import { EventEmitter, once } from 'node:events';
+import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
-import { fileURLToPath } from 'url';
 import { type Agent, isAgent } from '../generator.js';
 import type { RunningJobInfo } from '../job.js';
 import { JobContext } from '../job.js';
@@ -28,7 +28,7 @@ type JobTask = {
 };
 
 export const runProcess = (args: StartArgs): ChildProcess => {
-  return fork(fileURLToPath(import.meta.url), [args.agentFile]);
+  return fork(new URL(import.meta.url), [args.agentFile]);
 };
 
 const startJob = (
@@ -94,7 +94,7 @@ if (process.send) {
   //   [1] import.meta.filename
   //   [2] import.meta.filename of function containing entry file
   const moduleFile = process.argv[2];
-  const agent: Agent = await import(moduleFile).then((module) => {
+  const agent: Agent = await import(pathToFileURL(moduleFile).href).then((module) => {
     const agent = module.default;
     if (agent === undefined || !isAgent(agent)) {
       throw new Error(`Unable to load agent: Missing or invalid default export in ${moduleFile}`);

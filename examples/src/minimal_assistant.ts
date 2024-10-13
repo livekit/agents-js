@@ -10,7 +10,9 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     await ctx.connect();
 
-    console.log('starting assistant example agent');
+    console.log('waiting for participant');
+    const participant = await ctx.waitForParticipant();
+    console.log(`starting assistant example agent for ${participant.identity}`);
 
     let model: openai.realtime.RealtimeModel;
 
@@ -47,7 +49,7 @@ export default defineAgent({
     });
 
     const session = await agent
-      .start(ctx.room)
+      .start(ctx.room, participant)
       .then((session) => session as openai.realtime.RealtimeSession);
 
     session.conversation.item.create({

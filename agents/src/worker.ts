@@ -15,9 +15,9 @@ import {
   WorkerMessage,
   WorkerStatus,
 } from '@livekit/protocol';
-import { EventEmitter } from 'events';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
-import os from 'os';
+import { EventEmitter } from 'node:events';
+import os from 'node:os';
 import { WebSocket } from 'ws';
 import { HTTPServer } from './http_server.js';
 import { ProcPool } from './ipc/proc_pool.js';
