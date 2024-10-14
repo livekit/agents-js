@@ -78,17 +78,17 @@ importers:
   agents:
     dependencies:
       '@livekit/protocol':
-        specifier: ^1.21.0
-        version: 1.21.0
+        specifier: ^1.24.0
+        version: 1.24.0
       '@livekit/rtc-node':
-        specifier: ^0.9.0
-        version: 0.9.0
+        specifier: ^0.10.4
+        version: 0.10.4
       commander:
         specifier: ^12.0.0
         version: 12.0.0
       livekit-server-sdk:
-        specifier: ^2.6.1
-        version: 2.6.1
+        specifier: ^2.7.1
+        version: 2.7.1
       pino:
         specifier: ^8.19.0
         version: 8.21.0
@@ -124,12 +124,15 @@ importers:
         specifier: workspace:*
         version: link:../plugins/openai
       '@livekit/rtc-node':
-        specifier: ^0.9.0
-        version: 0.9.0
+        specifier: ^0.10.4
+        version: 0.10.4
       zod:
         specifier: ^3.23.8
         version: 3.23.8
     devDependencies:
+      '@types/dotenv':
+        specifier: ^8.2.0
+        version: 8.2.0
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -140,8 +143,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.9.0
-        version: 0.9.0
+        specifier: ^0.10.4
+        version: 0.10.4
       ws:
         specifier: ^8.16.0
         version: 8.17.0
@@ -223,8 +226,8 @@ packages:
     resolution: {integrity: sha512-6mQNsaLeXTw0nxYUYu+NSa4Hx4BlF1x1x8/PMFbiR+GBSr+2DkECc69b8hgy2frEodNcvPffeH8YfWd3LI6jhQ==}
     engines: {node: '>=6.9.0'}
 
-  '@bufbuild/protobuf@1.9.0':
-    resolution: {integrity: sha512-W7gp8Q/v1NlCZLsv8pQ3Y0uCu/SHgXOVFK+eUluUKWXmsb6VHkpNx0apdOWWcDbB9sJoKeP8uPrjmehJz6xETQ==}
+  '@bufbuild/protobuf@1.10.0':
+    resolution: {integrity: sha512-QDdVFLoN93Zjg36NoQPZfsVH9tZew7wKDKyV5qRdj8ntT4wQCOradQjRaTdwMhWUYsgKsvCINKKm87FdEk96Ag==}
 
   '@changesets/apply-release-plan@7.0.1':
     resolution: {integrity: sha512-aPdSq/R++HOyfEeBGjEe6LNG8gs0KMSyRETD/J2092OkNq8mOioAxyKjMbvVUdzgr/HTawzMOz7lfw339KnsCA==}
@@ -443,6 +446,7 @@ packages:
   '@humanwhocodes/config-array@0.11.14':
     resolution: {integrity: sha512-3T8LkOmg45BV5FICb15QQMsyUSWrQ8AygVfC7ZG32zOalnqrilm018ZVCw0eapXux8FtA33q8PSRSstjee3jSg==}
     engines: {node: '>=10.10.0'}
+    deprecated: Use @eslint/config-array instead
 
   '@humanwhocodes/module-importer@1.0.1':
     resolution: {integrity: sha512-bxveV4V8v5Yb4ncFTT3rPSgZBOpCkjfK0y4oVVVJwIuDVBRMDXrPyXRL988i5ap9m9bnyEEjWfm5WkBmtffLfA==}
@@ -450,6 +454,7 @@ packages:
 
   '@humanwhocodes/object-schema@2.0.3':
     resolution: {integrity: sha512-93zYdMES/c1D69yZiKDBj0V24vqNzB/koF26KPaagAfd3P/4gUlh3Dys5ogAK+Exi9QyzlD8x/08Zt7wIKcDcA==}
+    deprecated: Use @eslint/object-schema instead
 
   '@isaacs/cliui@8.0.2':
     resolution: {integrity: sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA==}
@@ -480,41 +485,41 @@ packages:
   '@livekit/changesets-changelog-github@0.0.4':
     resolution: {integrity: sha512-MXaiLYwgkYciZb8G2wkVtZ1pJJzZmVx5cM30Q+ClslrIYyAqQhRbPmZDM79/5CGxb1MTemR/tfOM25tgJgAK0g==}
 
-  '@livekit/protocol@1.21.0':
-    resolution: {integrity: sha512-3TohFPNZy1axTuoDLU6mA1rwuP4VawgehvX52OoLJnU+fNQYfmMJqz8k7NSh79jG5I8Og77YYhT905Omrhli2A==}
+  '@livekit/protocol@1.24.0':
+    resolution: {integrity: sha512-9dCsqnkMn7lvbI4NGh18zhLDsrXyUcpS++TEFgEk5Xv1WM3R2kT3EzqgL1P/mr3jaabM6rJ8wZA/KJLuQNpF5w==}
 
-  '@livekit/rtc-node-darwin-arm64@0.9.0':
-    resolution: {integrity: sha512-tZJ53W5/OBDbUVThDmonLtx7Rwd4TyC9rPVpUtb+r4OPKnQ6WMpTMqkrgXCO6u7KCl6Ol4vxXlPIHODcUOXaGw==}
+  '@livekit/rtc-node-darwin-arm64@0.10.4':
+    resolution: {integrity: sha512-tNmUzTxWFFk+9y07FwKkyU0r/dUw1LofymenJjwm7/Nc0ZdsdvSueYLYCA+NHpGiIY0ZqAMJlDJkwcy0j5gWzA==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
 
-  '@livekit/rtc-node-darwin-x64@0.9.0':
-    resolution: {integrity: sha512-O3oU1fftW4dLbNIrvDr6KcFCQm0c4K6PX5JYy50KSmqpCWCMbFeMOsdEaA+y/5lX58E5r1xVQ/Y6H19GDf1C7A==}
+  '@livekit/rtc-node-darwin-x64@0.10.4':
+    resolution: {integrity: sha512-HLfAF1JQ4geUqrDmahHmla6MbrGWC0rWLPmokUTKTwU4Uhucu7JKEdAUE9qeOE5cgQKaPbjBxrj8TB6zToUISw==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
 
-  '@livekit/rtc-node-linux-arm64-gnu@0.9.0':
-    resolution: {integrity: sha512-RSJEJ7Yz20Bcd0zpsHCtLwkJaz/iVldhvdTbsX5SwZ61cZUeQwJzhWF8+q2i2KiSvGcr5KAywrekTW1dNDj/pQ==}
+  '@livekit/rtc-node-linux-arm64-gnu@0.10.4':
+    resolution: {integrity: sha512-jfe5E1fySPq4yPTnWGHslXTRMVj9tEinPU0E6W2BYABwsmpcIobHpKbHiSwH2tBkKg1B4oopm5w0ByKpibKKYQ==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
 
-  '@livekit/rtc-node-linux-x64-gnu@0.9.0':
-    resolution: {integrity: sha512-CS93WNGGb3n7xVMxv++rgOk017AADsqYF7enz4d5QUbTJmowY5o3CGLsFA52Fe8x/YVXSezb85wE9mPTXmo/IA==}
+  '@livekit/rtc-node-linux-x64-gnu@0.10.4':
+    resolution: {integrity: sha512-asN3E9IqWqYqbiFeudfLgsGLIxAI2yyD5DANSmsRFNcflzOtU2XL1+rEqTas6G/ShX3oYGwBTAjMMI4uUw/+og==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@livekit/rtc-node-win32-x64-msvc@0.9.0':
-    resolution: {integrity: sha512-7E9teGVOkXC3XM/wNhbjAPuoPwzI4luAvTnwzAbQNpvP2FVDOuGfZTSjq39pr+zOqsVm7+pQ3u2ftYlrWO/F1Q==}
+  '@livekit/rtc-node-win32-x64-msvc@0.10.4':
+    resolution: {integrity: sha512-hHdnT3IvPT8Zan5Rg6m870dsTwwS2BZa5x0Ue3hM3LibAq71UXigqEhifT/L/Rx3dhl24rz9ViO8Ym2U1TT2Hg==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
 
-  '@livekit/rtc-node@0.9.0':
-    resolution: {integrity: sha512-T2e9YQVyoM37ClNq71wpCpkcAAWGYMSKA0VJpxwjVyOUtVjuRf37HAClZoKVJ1PoG5xw2aWegVlFvw8LY+wkqw==}
+  '@livekit/rtc-node@0.10.4':
+    resolution: {integrity: sha512-kVkDuVIbHENK+z+H8/JXzCt8kgl4ZWMKCjqD8hZtIlk6UMcPGy6/5KZjQUY1JmAHe7r3+SVN6INNreXjK5/dnQ==}
     engines: {node: '>= 18'}
 
   '@livekit/typed-emitter@3.0.0':
@@ -698,6 +703,10 @@ packages:
 
   '@types/argparse@1.0.38':
     resolution: {integrity: sha512-ebDJ9b0e702Yr7pWgB0jzm+CX4Srzz8RcXtLJDJB+BSccqMa36uyH/zUsSYao5+BD1ytv3k3rPYCq4mAE1hsXA==}
+
+  '@types/dotenv@8.2.0':
+    resolution: {integrity: sha512-ylSC9GhfRH7m1EUXBXofhgx4lUWmFeQDINW5oLuS+gxWdfUeW4zJdeVTYVkexEW+e2VUvlZR2kGnGGipAWR7kw==}
+    deprecated: This is a stub types definition. dotenv provides its own type definitions, so you do not need this installed.
 
   '@types/estree@1.0.5':
     resolution: {integrity: sha512-/kYRxGDLWzHOB7q+wtSUQlFrtcdUccpfy+X+9iMBpHK8QLLhx2wIPYuS5DYtR9Wa/YlZAbIovy7qVdB1Aq6Lyw==}
@@ -1165,6 +1174,10 @@ packages:
     resolution: {integrity: sha512-7GO6HghkA5fYG9TYnNxi14/7K9f5occMlp3zXAuSxn7CKCxt9xbNWG7yF8hTCSUchlfWSe3uLmlPfigevRItzQ==}
     engines: {node: '>=12'}
 
+  dotenv@16.4.5:
+    resolution: {integrity: sha512-ZmdL2rui+eB2YwhsWzjInR8LldtZHGDoQ1ugH85ppHKwpUHL7j7rN0Ti9NCnGiQbhaZ11FpR+7ao1dNsmduNUg==}
+    engines: {node: '>=12'}
+
   dotenv@8.6.0:
     resolution: {integrity: sha512-IrPdXQsk2BbzvCBGBOTmmSH5SodmqZNt4ERAZDmW4CT+tL8VtvinqywuANaFu4bOMWki16nqf0e4oC0QIaDr/g==}
     engines: {node: '>=10'}
@@ -1391,6 +1404,7 @@ packages:
   eslint@8.57.0:
     resolution: {integrity: sha512-dZ6+mexnaTIbSBZWgou51U6OmzIhYM2VcNdtiTtI7qPNZm35Akpr0f6vtw3w1Kmn5PYo+tZVfh13WrhpS6oLqQ==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
 
   espree@9.6.1:
@@ -1572,6 +1586,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
+    deprecated: Glob versions prior to v9 are no longer supported
 
   globals@11.12.0:
     resolution: {integrity: sha512-WOBp/EEGUiIsJSp7wcv/y6MO+lV9UoncWqxuFfm8eBwzWNgyfBd6Gz+IeKQ9jCmyhoH99g15M3T+QaVHFjizVA==}
@@ -1681,6 +1696,7 @@ packages:
 
   inflight@1.0.6:
     resolution: {integrity: sha512-k92I/b08q4wvFscXCLvqfsHCrjrF7yiXsQuIVvVE7N82W3+aqpzuUdBbfhWcy/FZR3/4IgflMgKLOsvPDrGCJA==}
+    deprecated: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
 
   inherits@2.0.4:
     resolution: {integrity: sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==}
@@ -1916,8 +1932,8 @@ packages:
   lines-and-columns@1.2.4:
     resolution: {integrity: sha512-7ylylesZQ/PV29jhEDl3Ufjo6ZX7gCqJr5F7PKrqc93v7fzSymt1BpwEU8nAUXs8qzzvqhbjhK5QZg6Mt/HkBg==}
 
-  livekit-server-sdk@2.6.1:
-    resolution: {integrity: sha512-j/8TOlahIyWnycNkuSzTv6q+win4JTbDGNH48iMsZDMnJBks9hhC9UwAO4ES42sAorIAxGkrH58hxt4KdTkZaQ==}
+  livekit-server-sdk@2.7.1:
+    resolution: {integrity: sha512-unpUAX3U5hPM81GO0PYf2+EXSpLZuWPTPH865L+r8gpf24nut4uVojigd3/0zAMBe8S4mRfEKWocP9+s7uuFYw==}
     engines: {node: '>=19'}
 
   load-yaml-file@0.2.0:
@@ -2380,6 +2396,7 @@ packages:
 
   rimraf@3.0.2:
     resolution: {integrity: sha512-JZkJMZkAGFFPP2YqXZXPbMlMBgsxzE8ILs4lMIX/2o0L9UBw9O/Y3o6wFw/i9YLapcUJWwqbi3kdxIPdC62TIA==}
+    deprecated: Rimraf versions prior to v4 are no longer supported
     hasBin: true
 
   rollup@4.17.2:
@@ -2989,7 +3006,7 @@ snapshots:
 
   '@babel/generator@7.17.7':
     dependencies:
-      '@babel/types': 7.17.0
+      '@babel/types': 7.24.5
       jsesc: 2.5.2
       source-map: 0.5.7
 
@@ -3028,7 +3045,7 @@ snapshots:
 
   '@babel/parser@7.24.5':
     dependencies:
-      '@babel/types': 7.17.0
+      '@babel/types': 7.24.5
 
   '@babel/runtime@7.24.5':
     dependencies:
@@ -3066,7 +3083,7 @@ snapshots:
       '@babel/helper-validator-identifier': 7.24.5
       to-fast-properties: 2.0.0
 
-  '@bufbuild/protobuf@1.9.0': {}
+  '@bufbuild/protobuf@1.10.0': {}
 
   '@changesets/apply-release-plan@7.0.1':
     dependencies:
@@ -3367,35 +3384,35 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  '@livekit/protocol@1.21.0':
+  '@livekit/protocol@1.24.0':
     dependencies:
-      '@bufbuild/protobuf': 1.9.0
+      '@bufbuild/protobuf': 1.10.0
 
-  '@livekit/rtc-node-darwin-arm64@0.9.0':
+  '@livekit/rtc-node-darwin-arm64@0.10.4':
     optional: true
 
-  '@livekit/rtc-node-darwin-x64@0.9.0':
+  '@livekit/rtc-node-darwin-x64@0.10.4':
     optional: true
 
-  '@livekit/rtc-node-linux-arm64-gnu@0.9.0':
+  '@livekit/rtc-node-linux-arm64-gnu@0.10.4':
     optional: true
 
-  '@livekit/rtc-node-linux-x64-gnu@0.9.0':
+  '@livekit/rtc-node-linux-x64-gnu@0.10.4':
     optional: true
 
-  '@livekit/rtc-node-win32-x64-msvc@0.9.0':
+  '@livekit/rtc-node-win32-x64-msvc@0.10.4':
     optional: true
 
-  '@livekit/rtc-node@0.9.0':
+  '@livekit/rtc-node@0.10.4':
     dependencies:
-      '@bufbuild/protobuf': 1.9.0
+      '@bufbuild/protobuf': 1.10.0
       '@livekit/typed-emitter': 3.0.0
     optionalDependencies:
-      '@livekit/rtc-node-darwin-arm64': 0.9.0
-      '@livekit/rtc-node-darwin-x64': 0.9.0
-      '@livekit/rtc-node-linux-arm64-gnu': 0.9.0
-      '@livekit/rtc-node-linux-x64-gnu': 0.9.0
-      '@livekit/rtc-node-win32-x64-msvc': 0.9.0
+      '@livekit/rtc-node-darwin-arm64': 0.10.4
+      '@livekit/rtc-node-darwin-x64': 0.10.4
+      '@livekit/rtc-node-linux-arm64-gnu': 0.10.4
+      '@livekit/rtc-node-linux-x64-gnu': 0.10.4
+      '@livekit/rtc-node-win32-x64-msvc': 0.10.4
 
   '@livekit/typed-emitter@3.0.0': {}
 
@@ -3602,6 +3619,10 @@ snapshots:
       - supports-color
 
   '@types/argparse@1.0.38': {}
+
+  '@types/dotenv@8.2.0':
+    dependencies:
+      dotenv: 16.4.5
 
   '@types/estree@1.0.5': {}
 
@@ -4121,6 +4142,8 @@ snapshots:
       esutils: 2.0.3
 
   dotenv@16.0.3: {}
+
+  dotenv@16.4.5: {}
 
   dotenv@8.6.0: {}
 
@@ -5009,9 +5032,9 @@ snapshots:
 
   lines-and-columns@1.2.4: {}
 
-  livekit-server-sdk@2.6.1:
+  livekit-server-sdk@2.7.1:
     dependencies:
-      '@livekit/protocol': 1.21.0
+      '@livekit/protocol': 1.24.0
       camelcase-keys: 9.1.3
       jose: 5.2.4
 
