@@ -26,10 +26,12 @@ export class SentenceTokenizer extends tokenizer.SentenceTokenizer {
     };
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   tokenize(text: string, language?: string): string[] {
     return splitSentences(text, this.#config.minSentenceLength).map((tok) => tok[0]);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   stream(language?: string): tokenizer.SentenceStream {
     return new BufferedSentenceStream(
       (text: string) => splitSentences(text, this.#config.minSentenceLength),
@@ -47,10 +49,12 @@ export class WordTokenizer extends tokenizer.SentenceTokenizer {
     this.#ignorePunctuation = ignorePunctuation;
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   tokenize(text: string, language?: string): string[] {
     return splitWords(text, this.#ignorePunctuation).map((tok) => tok[0]);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   stream(language?: string): tokenizer.SentenceStream {
     return new BufferedSentenceStream(
       (text: string) => splitWords(text, this.#ignorePunctuation),
