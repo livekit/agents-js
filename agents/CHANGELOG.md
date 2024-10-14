@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 0.3.3
+
+### Patch Changes
+
+- Fix subscription timing - [#110](https://github.com/livekit/agents-js/pull/110) ([@nbsp](https://github.com/nbsp))
+
+- fix usage on Windows by importing using URLs, not paths - [#110](https://github.com/livekit/agents-js/pull/110) ([@nbsp](https://github.com/nbsp))
+
 ## 0.3.2
 
 ### Patch Changes

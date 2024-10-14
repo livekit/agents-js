@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-openai
 
+## 0.3.3
+
+### Patch Changes
+
+- Support for Azure OpenAI Realtime - [#110](https://github.com/livekit/agents-js/pull/110) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`062935a1677a4a6f6c99f7cd52dfebae41039a85`](https://github.com/livekit/agents-js/commit/062935a1677a4a6f6c99f7cd52dfebae41039a85), [`062935a1677a4a6f6c99f7cd52dfebae41039a85`](https://github.com/livekit/agents-js/commit/062935a1677a4a6f6c99f7cd52dfebae41039a85)]:
+  - @livekit/agents@0.3.3
+
 ## 0.3.2
 
 ### Patch Changes
