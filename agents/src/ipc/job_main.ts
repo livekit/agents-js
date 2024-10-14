@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Room, RoomEvent } from '@livekit/rtc-node';
-import type { ChildProcess } from 'child_process';
-import { fork } from 'child_process';
-import { EventEmitter, once } from 'events';
+import type { ChildProcess } from 'node:child_process';
+import { fork } from 'node:child_process';
+import { EventEmitter, once } from 'node:events';
+import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
-import { pathToFileURL } from 'url';
 import { type Agent, isAgent } from '../generator.js';
 import type { RunningJobInfo } from '../job.js';
 import { JobContext } from '../job.js';
