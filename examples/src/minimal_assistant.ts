@@ -12,11 +12,23 @@ export default defineAgent({
 
     console.log('waiting for participant');
     const participant = await ctx.waitForParticipant();
-
     console.log(`starting assistant example agent for ${participant.identity}`);
-    const model = new openai.realtime.RealtimeModel({
-      instructions: 'You are a helpful assistant.',
-    });
+
+    let model: openai.realtime.RealtimeModel;
+
+    if (process.env.AZURE_OPENAI_ENDPOINT) {
+      model = openai.realtime.RealtimeModel.withAzure({
+        baseURL: process.env.AZURE_OPENAI_ENDPOINT,
+        azureDeployment: process.env.AZURE_OPENAI_DEPLOYMENT || '',
+        apiKey: process.env.AZURE_OPENAI_API_KEY,
+        entraToken: process.env.AZURE_OPENAI_ENTRA_TOKEN,
+        instructions: 'You are a helpful assistant.',
+      });
+    } else {
+      model = new openai.realtime.RealtimeModel({
+        instructions: 'You are a helpful assistant.',
+      });
+    }
 
     const agent = new multimodal.MultimodalAgent({
       model,
