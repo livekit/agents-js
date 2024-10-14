@@ -79,7 +79,7 @@ export class MultimodalAgent extends EventEmitter {
   }: {
     model: RealtimeModel;
     fncCtx?: llm.FunctionContext | undefined;
-    opts: MultiModalAgentOptions;
+    opts?: MultiModalAgentOptions;
   }) {
     super();
     this.model = model;
