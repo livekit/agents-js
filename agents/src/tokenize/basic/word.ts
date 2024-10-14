@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { PUNCTUATIONS } from './tokenizer.js';
+import { PUNCTUATIONS } from '../tokenizer.js';
 
 /**
  * Split the text into words.

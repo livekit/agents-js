@@ -39,6 +39,7 @@ export const splitSentences = (text: string, minLength = 20): [string, number, n
   text = text.replaceAll('.', '.<stop>');
   text = text.replaceAll('?', '?<stop>');
   text = text.replaceAll('!', '!<stop>');
+  text = text.replaceAll('!', '!<stop>');
   text = text.replaceAll('<prd>', '.');
 
   const split = text.split('<stop>');
