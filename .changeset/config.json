@@ -7,9 +7,10 @@
     }
   ],
   "commit": false,
-  "fixed": [],
+  "fixed": [["@livekit/agents", "@livekit/agents-plugin-*"]],
+  "ignore": ["livekit-agents-examples"],
   "linked": [],
-  "access": "restricted",
+  "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch"
 }
