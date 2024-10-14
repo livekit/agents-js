@@ -44,7 +44,7 @@ export const splitSentences = (text: string, minLength = 20): [string, number, n
   const split = text.split('<stop>');
   text = text.replaceAll('<stop>', '');
 
-  let sentences: [string, number, number][] = [];
+  const sentences: [string, number, number][] = [];
   let buf = '';
   let start = 0;
   let end = 0;

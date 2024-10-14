@@ -1,15 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import { PUNCTUATIONS } from "./tokenizer.js";
+import { PUNCTUATIONS } from './tokenizer.js';
 
 /**
  * Split the text into words.
  */
 export const splitWords = (text: string, ignorePunctuation = true): [string, number, number][] => {
   const re = /\S+/g;
-  let words: [string, number, number][] = [];
+  const words: [string, number, number][] = [];
 
   let arr;
   while ((arr = re.exec(text)) !== null) {
@@ -18,11 +17,11 @@ export const splitWords = (text: string, ignorePunctuation = true): [string, num
     const end = start + word.length;
 
     if (ignorePunctuation) {
-      word = word.replace(new RegExp(`[${PUNCTUATIONS.join('')}]`, 'g'), '')
+      word = word.replace(new RegExp(`[${PUNCTUATIONS.join('')}]`, 'g'), '');
     }
 
-    words.push([word, start, end])
+    words.push([word, start, end]);
   }
 
   return words;
-}
+};

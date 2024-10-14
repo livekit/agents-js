@@ -9,7 +9,7 @@ export const splitParagraphs = (text: string): [string, number, number][] => {
   const re = /\n\s*\n/g;
   const splits = Array.from(text.matchAll(re));
 
-  let paragraphs: [string, number, number][] = [];
+  const paragraphs: [string, number, number][] = [];
   let start = 0;
 
   // no splits (single paragraph)
