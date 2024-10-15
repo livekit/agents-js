@@ -17,7 +17,6 @@ import * as tokenize from './tokenize/index.js';
 import * as tts from './tts/index.js';
 
 export * from './vad.js';
-export * from './plugin.js';
 export * from './version.js';
 export * from './job.js';
 export * from './worker.js';

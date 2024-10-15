@@ -10,6 +10,7 @@
   "typedocOptions": {
     "name": "plugins/agents-plugin-openai",
     "entryPointStrategy": "resolve",
+    "readme": "none",
     "entryPoints": ["src/index.ts"]
   }
 }

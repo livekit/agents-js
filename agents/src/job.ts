@@ -21,12 +21,14 @@ export enum AutoSubscribe {
   AUDIO_ONLY,
 }
 
+/** Information about the agent in an accepted job */
 export type JobAcceptArguments = {
   name: string;
   identity: string;
   metadata: string;
 };
 
+/** Information about this running job */
 export type RunningJobInfo = {
   acceptArguments: JobAcceptArguments;
   job: proto.Job;
@@ -77,20 +79,22 @@ export class JobContext {
     this.#logger = log().child({ info: this.#info });
   }
 
+  /** The {@link JobProcess} associated with this job */
   get proc(): JobProcess {
     return this.#proc;
   }
 
+  /** The proto information about this job */
   get job(): proto.Job {
     return this.#info.job;
   }
 
-  /** @returns The room the agent was called into */
+  /** The room the agent was called into */
   get room(): Room {
     return this.#room;
   }
 
-  /** @returns The agent's participant if connected to the room, otherwise `undefined` */
+  /** The agent's participant if connected to the room, otherwise `undefined` */
   get agent(): LocalParticipant | undefined {
     return this.#room.localParticipant;
   }
@@ -100,6 +104,9 @@ export class JobContext {
     this.shutdownCallbacks.push(callback);
   }
 
+  /**
+   * Waits for any participant to connect to the room, or alternatively for a specific one to join.
+   */
   async waitForParticipant(identity?: string): Promise<RemoteParticipant> {
     if (!this.#room.isConnected) {
       throw new Error('room is not connected');
@@ -218,10 +225,20 @@ export class JobContext {
   }
 }
 
+/**
+ * JobProcess stores arbitrary information about the job.
+ *
+ * @remarks
+ * This is useful for preparing various data before the job has been accepted and then retrieving it
+ * for use in an entrypoint function.
+ *
+ * @see {@link Agent}
+ */
 export class JobProcess {
   #pid = process.pid;
   userData: { [id: string]: unknown } = {};
 
+  /** The process ID of this job */
   get pid(): number {
     return this.#pid;
   }
@@ -251,7 +268,7 @@ export class JobRequest {
     this.#onAccept = onAccept;
   }
 
-  /** @returns The ID of the job, set by the LiveKit server */
+  /** The ID of the job, set by the LiveKit server */
   get id(): string {
     return this.#job.id;
   }
@@ -271,7 +288,7 @@ export class JobRequest {
     return this.#job.participant;
   }
 
-  /** @returns The agent's name, as set in {@link WorkerOptions} */
+  /** The agent's name, as set in {@link WorkerOptions} */
   get agentName(): string {
     return this.#job.agentName;
   }
