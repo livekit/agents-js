@@ -1,43 +1,49 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, WorkerOptions, cli, defineAgent, log } from '@livekit/agents';
+import { type JobContext, WorkerOptions, cli, defineAgent } from '@livekit/agents';
 import { TTS } from '@livekit/agents-plugin-elevenlabs';
-import { AudioSource, LocalAudioTrack, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
-import { fileURLToPath } from 'url';
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  cli.runApp(new WorkerOptions({ agent: import.meta.filename }));
-}
+import {
+  AudioSource,
+  LocalAudioTrack,
+  RoomEvent,
+  TrackPublishOptions,
+  TrackSource,
+} from '@livekit/rtc-node';
+import { fileURLToPath } from 'node:url';
 
 export default defineAgent({
   entry: async (ctx: JobContext) => {
     await ctx.connect();
-    log().info('starting TTS example agent');
 
-    const source = new AudioSource(24000, 1);
+    console.log('starting TTS example agent');
+
+    const source = new AudioSource(22050, 1);
     const track = LocalAudioTrack.createAudioTrack('agent-mic', source);
     const options = new TrackPublishOptions();
     options.source = TrackSource.SOURCE_MICROPHONE;
+
     await ctx.room.localParticipant?.publishTrack(track, options);
+    const stream = new TTS().stream();
 
-    const tts = new TTS();
-    log().info('speaking "Hello!"');
-    await tts
-      .synthesize('Hello!')
-      .then((output) => output.collect())
-      .then((output) => {
-        source.captureFrame(output);
-      });
+    ctx.room.on(RoomEvent.LocalTrackSubscribed, async () => {
+      console.log('speaking "Hello!"');
+      stream.pushText('Hello!');
+      stream.flush();
 
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise<void>((resolve) => setTimeout(resolve, 2000));
 
-    log().info('speaking "Goodbye."');
-    await tts
-      .synthesize('Goodbye.')
-      .then((output) => output.collect())
-      .then((output) => {
-        source.captureFrame(output);
-      });
+      console.log('speaking "Goodbye!"');
+      stream.pushText('Goodbye!');
+      stream.flush();
+      // stream.endInput();
+    });
+
+    for await (const audio of stream) {
+      console.log(audio);
+      await source.captureFrame(audio.frame);
+    }
   },
 });
+
+cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
