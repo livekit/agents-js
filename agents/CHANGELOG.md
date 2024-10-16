@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 0.3.4
+
+### Patch Changes
+
+- fix issue wherein sometimes job processes would hang on CLI help - [#114](https://github.com/livekit/agents-js/pull/114) ([@nbsp](https://github.com/nbsp))
+
+- Use shared mutex helper lib - [#112](https://github.com/livekit/agents-js/pull/112) ([@lukasIO](https://github.com/lukasIO))
+
 ## 0.3.3
 
 ### Patch Changes
