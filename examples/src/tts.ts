@@ -36,11 +36,9 @@ export default defineAgent({
       console.log('speaking "Goodbye!"');
       stream.pushText('Goodbye!');
       stream.flush();
-      // stream.endInput();
     });
 
     for await (const audio of stream) {
-      console.log(audio);
       await source.captureFrame(audio.frame);
     }
   },

@@ -114,7 +114,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     super();
     this.#opts = opts;
     this.closed = false;
-    this.streamURL = `${this.#opts.baseURL}/text-to-speech/${this.#opts.voice.id}/stream-input?model_id=${this.#opts.modelID}&optimize_streaming_latency=${this.#opts.streamingLatency}`;
+    this.streamURL = `${this.#opts.baseURL}/text-to-speech/${this.#opts.voice.id}/stream-input?model_id=${this.#opts.modelID}&output_format=${this.#opts.encoding}&optimize_streaming_latency=${this.#opts.streamingLatency}&enable_ssml_parsing=${this.#opts.enableSsmlParsing}`;
     this.#run();
   }
 
@@ -234,13 +234,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }).then((msg) => {
             const json = JSON.parse(msg.toString());
             if ('audio' in json) {
-              console.log(json.audio);
-              const data = Int16Array.from(Buffer.from(json.audio, 'base64'));
+              const data = new Int16Array(Buffer.from(json.audio, 'base64').buffer);
               const frame = new AudioFrame(
                 data,
                 sampleRateFromFormat(this.#opts.encoding),
                 1,
-                Math.trunc(data.length / 2),
+                data.length,
               );
               this.queue.put({ requestId, segmentId, frame });
             }
