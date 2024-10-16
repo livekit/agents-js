@@ -93,7 +93,7 @@ export const runApp = (opts: WorkerOptions) => {
     .action(() => {
       if (
         // do not run CLI if origin file is agents/ipc/job_main.js
-        process.argv[1] !== new URL('ipc/job_main.js', import.meta.url).pathname ||
+        process.argv[1] !== new URL('ipc/job_main.js', import.meta.url).pathname &&
         process.argv.length < 3
       ) {
         program.help();
