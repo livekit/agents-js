@@ -39,14 +39,14 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
 
     while (true) {
       const tokens = this.#func(this.#inBuf);
-      if (tokens.length <= 1) break;
+      if (tokens.length === 0) break;
 
       if (this.#outBuf) this.#outBuf += ' ';
 
-      const tok = tokens.pop();
-      let tokText = tok! as string;
-      if (typeof tok! !== 'string') {
-        tokText = tok![0];
+      const tok = tokens.shift()!;
+      let tokText = tok as string;
+      if (tok.length > 1 && typeof tok[1] === 'number') {
+        tokText = tok[0];
       }
 
       this.#outBuf += tokText;
@@ -130,6 +130,11 @@ export class BufferedSentenceStream extends SentenceStream {
     this.#stream.pushText(text);
   }
 
+  close() {
+    super.close();
+    this.#stream.close();
+  }
+
   next(): Promise<IteratorResult<TokenData>> {
     return this.#stream.next();
   }
@@ -145,6 +150,11 @@ export class BufferedWordStream extends WordStream {
 
   pushText(text: string) {
     this.#stream.pushText(text);
+  }
+
+  close() {
+    super.close();
+    this.#stream.close();
   }
 
   next(): Promise<IteratorResult<TokenData>> {

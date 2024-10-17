@@ -28,14 +28,18 @@ export abstract class SentenceStream {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
   protected input = new AsyncIterableQueue<string | typeof SentenceStream.FLUSH_SENTINEL>();
   protected queue = new AsyncIterableQueue<TokenData>();
-  protected closed = false;
+  #closed = false;
+
+  get closed(): boolean {
+    return this.#closed;
+  }
 
   /** Push a string of text to the tokenizer */
   pushText(text: string) {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
-    if (this.closed) {
+    if (this.#closed) {
       throw new Error('Stream is closed');
     }
     this.input.put(text);
@@ -46,7 +50,7 @@ export abstract class SentenceStream {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
-    if (this.closed) {
+    if (this.#closed) {
       throw new Error('Stream is closed');
     }
     this.input.put(SentenceStream.FLUSH_SENTINEL);
@@ -57,7 +61,7 @@ export abstract class SentenceStream {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
-    if (this.closed) {
+    if (this.#closed) {
       throw new Error('Stream is closed');
     }
     this.input.close();
@@ -71,7 +75,7 @@ export abstract class SentenceStream {
   close() {
     this.input.close();
     this.queue.close();
-    this.closed = true;
+    this.#closed = true;
   }
 
   [Symbol.asyncIterator](): SentenceStream {
@@ -92,14 +96,18 @@ export abstract class WordStream {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
   protected input = new AsyncIterableQueue<string | typeof WordStream.FLUSH_SENTINEL>();
   protected queue = new AsyncIterableQueue<TokenData>();
-  protected closed = false;
+  #closed = false;
+
+  get closed(): boolean {
+    return this.#closed;
+  }
 
   /** Push a string of text to the tokenizer */
   pushText(text: string) {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
-    if (this.closed) {
+    if (this.#closed) {
       throw new Error('Stream is closed');
     }
     this.input.put(text);
@@ -110,7 +118,7 @@ export abstract class WordStream {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
-    if (this.closed) {
+    if (this.#closed) {
       throw new Error('Stream is closed');
     }
     this.input.put(WordStream.FLUSH_SENTINEL);
@@ -121,7 +129,7 @@ export abstract class WordStream {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
-    if (this.closed) {
+    if (this.#closed) {
       throw new Error('Stream is closed');
     }
     this.input.close();
@@ -135,7 +143,7 @@ export abstract class WordStream {
   close() {
     this.input.close();
     this.queue.close();
-    this.closed = true;
+    this.#closed = true;
   }
 
   [Symbol.asyncIterator](): WordStream {

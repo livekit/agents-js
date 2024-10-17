@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import * as tokenizer from '../index.js';
-import { BufferedSentenceStream } from '../token_stream.js';
+import { BufferedSentenceStream, BufferedWordStream } from '../token_stream.js';
 import { hyphenator } from './hyphenator.js';
 import { splitParagraphs } from './paragraph.js';
 import { splitSentences } from './sentence.js';
-import { splitWords } from './word';
+import { splitWords } from './word.js';
 
 interface TokenizerOptions {
   language: string;
@@ -41,7 +41,7 @@ export class SentenceTokenizer extends tokenizer.SentenceTokenizer {
   }
 }
 
-export class WordTokenizer extends tokenizer.SentenceTokenizer {
+export class WordTokenizer extends tokenizer.WordTokenizer {
   #ignorePunctuation: boolean;
 
   constructor(ignorePunctuation = true) {
@@ -55,8 +55,8 @@ export class WordTokenizer extends tokenizer.SentenceTokenizer {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  stream(language?: string): tokenizer.SentenceStream {
-    return new BufferedSentenceStream(
+  stream(language?: string): tokenizer.WordStream {
+    return new BufferedWordStream(
       (text: string) => splitWords(text, this.#ignorePunctuation),
       1,
       1,

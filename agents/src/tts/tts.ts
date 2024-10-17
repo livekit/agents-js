@@ -13,7 +13,7 @@ export interface SynthesizedAudio {
   /** Synthesized audio frame */
   frame: AudioFrame;
   /** Current segment of the synthesized audio */
-  deltaText: string;
+  deltaText?: string;
 }
 
 /**
