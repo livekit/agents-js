@@ -35,7 +35,7 @@ const DEFAULT_VOICE: Voice = {
   },
 };
 
-const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1';
+const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1/';
 const AUTHORIZATION_HEADER = 'xi-api-key';
 
 export interface TTSOptions {
@@ -108,13 +108,26 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   closed: boolean;
   #opts: TTSOptions;
   #logger = log();
-  readonly streamURL: string;
+  readonly streamURL: URL;
 
   constructor(opts: TTSOptions) {
     super();
     this.#opts = opts;
     this.closed = false;
-    this.streamURL = `${this.#opts.baseURL}/text-to-speech/${this.#opts.voice.id}/stream-input?model_id=${this.#opts.modelID}&output_format=${this.#opts.encoding}&optimize_streaming_latency=${this.#opts.streamingLatency}&enable_ssml_parsing=${this.#opts.enableSsmlParsing}`;
+
+    // add trailing slash to URL if needed
+    const baseURL = opts.baseURL + (opts.baseURL.endsWith('/') ? '' : '/');
+
+    this.streamURL = new URL(`text-to-speech/${opts.voice.id}/stream-input`, baseURL);
+    const params = {
+      model_id: opts.modelID,
+      output_format: opts.encoding,
+      optimize_streaming_latency: `${opts.streamingLatency}`,
+      enable_ssml_parsing: `${opts.enableSsmlParsing}`,
+    };
+    Object.entries(params).forEach(([k, v]) => this.streamURL.searchParams.append(k, v));
+    this.streamURL.protocol = this.streamURL.protocol.replace('http', 'ws');
+
     this.#run();
   }
 
@@ -153,10 +166,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   async #runWS(stream: tokenize.WordStream, maxRetry = 3) {
     let retries = 0;
     let ws: WebSocket;
-    const url = new URL(this.streamURL);
-    url.protocol = url.protocol.replace('http', 'ws');
     while (true) {
-      ws = new WebSocket(url, {
+      ws = new WebSocket(this.streamURL, {
         headers: { [AUTHORIZATION_HEADER]: this.#opts.apiKey },
       });
 
