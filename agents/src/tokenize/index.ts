@@ -11,6 +11,6 @@ export {
   WordStream,
 } from './tokenizer.js';
 
-export { BufferedSentenceStream, BufferedTokenStream } from './token_stream.js';
+export { BufferedSentenceStream, BufferedTokenStream, BufferedWordStream } from './token_stream.js';
 
 export { basic };
