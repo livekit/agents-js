@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@livekit/agents": "workspace:*",
+    "@livekit/agents-plugin-elevenlabs": "workspace:*",
     "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/rtc-node": "^0.11.0",
     "zod": "^3.23.8"
