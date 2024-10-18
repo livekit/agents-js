@@ -135,7 +135,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     this.input.close();
   }
 
-  next(): Promise<IteratorResult<SpeechEvent>> {
+  /** Gets the next speech event in the queue */
+  async next(): Promise<IteratorResult<SpeechEvent>> {
     return this.queue.next();
   }
 
@@ -146,6 +147,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     this.closed = true;
   }
 
+  /** This method allows you to use this class as an async iterator. */
   [Symbol.asyncIterator](): SpeechStream {
     return this;
   }

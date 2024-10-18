@@ -24,6 +24,7 @@ export class AudioByteStream {
     this.#buf = new Int8Array();
   }
 
+  /** Convert an ArrayBuffer to a list of AudioFrames */
   write(data: ArrayBuffer): AudioFrame[] {
     this.#buf = new Int8Array([...this.#buf, ...new Int8Array(data)]);
 
@@ -45,6 +46,7 @@ export class AudioByteStream {
     return frames;
   }
 
+  /** Flush the stream, causing it to process all pending buffers */
   flush(): AudioFrame[] {
     if (this.#buf.length % (2 * this.#numChannels) !== 0) {
       this.#logger.warn('AudioByteStream: incomplete frame during flush, dropping');

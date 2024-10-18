@@ -10,17 +10,10 @@ import type {
 import { AudioFrame, TrackSource } from '@livekit/rtc-node';
 import { EventEmitter, once } from 'events';
 
-/** Union of a single and a list of {@link AudioFrame}s */
+/** @internal */
 export type AudioBuffer = AudioFrame[] | AudioFrame;
 
-/**
- * Merge one or more {@link AudioFrame}s into a single one.
- *
- * @param buffer Either an {@link AudioFrame} or a list thereof
- * @throws
- * {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypeError
- * | TypeError} if sample rate or channel count are mismatched
- */
+/** @internal */
 export const mergeFrames = (buffer: AudioBuffer): AudioFrame => {
   if (Array.isArray(buffer)) {
     buffer = buffer as AudioFrame[];
@@ -52,6 +45,7 @@ export const mergeFrames = (buffer: AudioBuffer): AudioFrame => {
   return buffer;
 };
 
+/** @internal */
 export const findMicroTrackId = (room: Room, identity: string): string => {
   let p: RemoteParticipant | LocalParticipant | undefined = room.remoteParticipants.get(identity);
 
@@ -297,6 +291,7 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
   }
 }
 
+/** @internal */
 export class ExpFilter {
   #alpha: number;
   #max?: number;

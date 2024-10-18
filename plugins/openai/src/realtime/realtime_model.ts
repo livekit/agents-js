@@ -23,6 +23,7 @@ interface ModelOptions {
   baseURL: string;
 }
 
+/** RealtimeResponse describes a response given by the model. */
 export interface RealtimeResponse {
   id: string;
   status: api_proto.ResponseStatus;
@@ -31,6 +32,7 @@ export interface RealtimeResponse {
   doneFut: Future;
 }
 
+/** RealtimeOutput describes either a message or a function call included in the response. */
 export interface RealtimeOutput {
   responseId: string;
   itemId: string;
@@ -41,6 +43,7 @@ export interface RealtimeOutput {
   doneFut: Future;
 }
 
+/** RealtimeContent includes data including text, audio, and tool calls, pertaining to the output. */
 export interface RealtimeContent {
   responseId: string;
   itemId: string;
@@ -53,26 +56,31 @@ export interface RealtimeContent {
   toolCalls: RealtimeToolCall[];
 }
 
+/** RealtimeToolCall describes a function call initiated by OpenAI Realtime API. */
 export interface RealtimeToolCall {
   name: string;
   arguments: string;
   toolCallID: string;
 }
 
+/** Transcript of completed speech */
 export interface InputSpeechTranscriptionCompleted {
   itemId: string;
   transcript: string;
 }
 
+/** Error message for failed speech */
 export interface InputSpeechTranscriptionFailed {
   itemId: string;
   message: string;
 }
 
+/** Signifies user started speaking */
 export interface InputSpeechStarted {
   itemId: string;
 }
 
+/** Signifies speech audio was committed to model */
 export interface InputSpeechCommitted {
   itemId: string;
 }
@@ -174,6 +182,7 @@ interface ContentPtr {
   content_index: number;
 }
 
+/** An instance of OpenAI's Realtime API for the multimodal agent. */
 export class RealtimeModel extends multimodal.RealtimeModel {
   sampleRate = api_proto.SAMPLE_RATE;
   numChannels = api_proto.NUM_CHANNELS;
@@ -234,10 +243,12 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     };
   }
 
+  /** Returns the current sessions */
   get sessions(): RealtimeSession[] {
     return this.#sessions;
   }
 
+  /** Creates a new RealtimeSession */
   session({
     fncCtx,
     modalities = this.#defaultOpts.modalities,
@@ -281,11 +292,13 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     return newSession;
   }
 
+  /** Shuts down all sessions */
   async close() {
     await Promise.allSettled(this.#sessions.map((session) => session.close()));
   }
 }
 
+/** @internal */
 export class RealtimeSession extends multimodal.RealtimeSession {
   #fncCtx: llm.FunctionContext | undefined = undefined;
   #opts: ModelOptions;

@@ -23,6 +23,14 @@ import { BasicTranscriptionForwarder } from '../transcription.js';
 import { findMicroTrackId } from '../utils.js';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 
+/** Multimodal agent did not run as expected. */
+export class MultimodalAgentError extends Error {
+  constructor(msg?: string) {
+    super(msg);
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 /**
  * @internal
  * @beta
@@ -52,13 +60,24 @@ export abstract class RealtimeModel {
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
 export const AGENT_STATE_ATTRIBUTE = 'lk.agent.state';
 
-/** @beta */
+/**
+ * An instance of a multimodal agent adapter.
+ *
+ * @beta
+ * @remarks
+ * This class is abstract, and as such cannot be used directly. Instead, use a provider plugin that
+ * exports its own child MultimodalAgent class, which inherits this class's methods.
+ */
 export class MultimodalAgent extends EventEmitter {
   model: RealtimeModel;
   room: Room | null = null;
   linkedParticipant: RemoteParticipant | null = null;
   subscribedTrack: RemoteAudioTrack | null = null;
-  readMicroTask: { promise: Promise<void>; cancel: () => void } | null = null;
+  #readMicroTask: {
+    promise: Promise<void>;
+    /** @override */
+    cancel: () => void;
+  } | null = null;
 
   constructor({
     model,
@@ -86,10 +105,12 @@ export class MultimodalAgent extends EventEmitter {
   #_pendingFunctionCalls: Set<string> = new Set();
   #_speaking: boolean = false;
 
+  /** Returns the tools available to this agent */
   get fncCtx(): llm.FunctionContext | undefined {
     return this.#fncCtx;
   }
 
+  /** Sets the tools available to this agent */
   set fncCtx(ctx: llm.FunctionContext | undefined) {
     this.#fncCtx = ctx;
     if (this.#session) {
@@ -124,6 +145,7 @@ export class MultimodalAgent extends EventEmitter {
     this.#updateState();
   }
 
+  /** @throws {@link MultimodalAgentError} if agent already started or failed to connect */
   start(
     room: Room,
     participant: RemoteParticipant | string | null = null,
@@ -339,12 +361,12 @@ export class MultimodalAgent extends EventEmitter {
       if (track && track !== this.subscribedTrack) {
         this.subscribedTrack = track;
 
-        if (this.readMicroTask) {
-          this.readMicroTask.cancel();
+        if (this.#readMicroTask) {
+          this.#readMicroTask.cancel();
         }
 
         let cancel: () => void;
-        this.readMicroTask = {
+        this.#readMicroTask = {
           promise: new Promise<void>((resolve, reject) => {
             cancel = () => {
               reject(new Error('Task cancelled'));

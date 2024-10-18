@@ -5,7 +5,9 @@ import type { JobContext, JobProcess } from './job.js';
 
 /** @see {@link defineAgent} */
 export interface Agent {
+  /** The agent's main function logic, called when a new job is assigned to the worker. */
   entry: (ctx: JobContext) => Promise<void>;
+  /** Used to warm up the process and retrieve arbitrary data before a job is assigned. */
   prewarm?: (proc: JobProcess) => unknown;
 }
 
