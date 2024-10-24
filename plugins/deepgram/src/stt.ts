@@ -2,11 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioByteStream, AudioEnergyFilter, log, stt } from '@livekit/agents';
-import type { SpeechData } from '@livekit/agents/dist/stt/stt.js';
-import { SpeechEventType } from '@livekit/agents/dist/stt/stt.js';
 import type { AudioFrame } from '@livekit/rtc-node';
-import type { RawData } from 'ws';
-import { WebSocket } from 'ws';
+import { type RawData, WebSocket } from 'ws';
 import type { STTLanguages, STTModels } from './models.js';
 
 const API_BASE_URL_V1 = 'wss://api.deepgram.com/v1/listen';
@@ -225,7 +222,7 @@ export class SpeechStream extends stt.SpeechStream {
                 // It's also possible we receive a transcript without a SpeechStarted event.
                 if (this.#speaking) return;
                 this.#speaking = true;
-                this.queue.put({ type: SpeechEventType.START_OF_SPEECH, alternatives: [] });
+                this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH, alternatives: [] });
                 break;
               }
               // see this page:
@@ -243,13 +240,13 @@ export class SpeechStream extends stt.SpeechStream {
                 if (alternatives.length > 0 && alternatives[0].text) {
                   if (!this.#speaking) {
                     this.#speaking = true;
-                    this.queue.put({ type: SpeechEventType.START_OF_SPEECH, alternatives: [] });
+                    this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH, alternatives: [] });
                   }
 
                   if (isFinal) {
-                    this.queue.put({ type: SpeechEventType.FINAL_TRANSCRIPT, alternatives });
+                    this.queue.put({ type: stt.SpeechEventType.FINAL_TRANSCRIPT, alternatives });
                   } else {
-                    this.queue.put({ type: SpeechEventType.INTERIM_TRANSCRIPT, alternatives });
+                    this.queue.put({ type: stt.SpeechEventType.INTERIM_TRANSCRIPT, alternatives });
                   }
                 }
 
@@ -258,7 +255,7 @@ export class SpeechStream extends stt.SpeechStream {
                 // a non-empty transcript (deepgram doesn't have a SpeechEnded event)
                 if (isEndpoint && this.#speaking) {
                   this.#speaking = false;
-                  this.queue.put({ type: SpeechEventType.END_OF_SPEECH, alternatives: [] });
+                  this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH, alternatives: [] });
                 }
 
                 break;
@@ -286,7 +283,7 @@ export class SpeechStream extends stt.SpeechStream {
 const liveTranscriptionToSpeechData = (
   language: STTLanguages | string,
   data: { [id: string]: any },
-): SpeechData[] => {
+): stt.SpeechData[] => {
   const alts: any[] = data['channel']['alternatives'];
 
   return alts.map((alt) => ({
