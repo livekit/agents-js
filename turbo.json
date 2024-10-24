@@ -1,6 +1,7 @@
 {
   "$schema": "https://turborepo.org/schema.json",
   "globalEnv": [
+    "DEEPGRAM_API_KEY",
     "ELEVEN_API_KEY",
     "OPENAI_API_KEY",
     "LIVEKIT_URL",

@@ -65,8 +65,10 @@ const defaultTTSOptions: TTSOptions = {
 export class TTS extends tts.TTS {
   #opts: TTSOptions;
 
-  constructor(opts = defaultTTSOptions) {
-    super(sampleRateFromFormat(opts.encoding), 1, { streaming: true });
+  constructor(opts: Partial<TTSOptions> = defaultTTSOptions) {
+    super(sampleRateFromFormat(opts.encoding || defaultTTSOptions.encoding), 1, {
+      streaming: true,
+    });
     if (opts.apiKey === undefined) {
       throw new Error(
         'ElevenLabs API key is required, whether as an argument or as $ELEVEN_API_KEY',
@@ -105,7 +107,6 @@ export class TTS extends tts.TTS {
 }
 
 export class SynthesizeStream extends tts.SynthesizeStream {
-  closed: boolean;
   #opts: TTSOptions;
   #logger = log();
   readonly streamURL: URL;

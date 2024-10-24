@@ -120,6 +120,9 @@ importers:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../agents
+      '@livekit/agents-plugin-deepgram':
+        specifier: workspace:*
+        version: link:../plugins/deepgram
       '@livekit/agents-plugin-elevenlabs':
         specifier: workspace:*
         version: link:../plugins/elevenlabs
@@ -133,6 +136,28 @@ importers:
         specifier: ^3.23.8
         version: 3.23.8
     devDependencies:
+      typescript:
+        specifier: ^5.0.0
+        version: 5.4.5
+
+  plugins/deepgram:
+    dependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/rtc-node':
+        specifier: ^0.10.2
+        version: 0.10.2
+      ws:
+        specifier: ^8.16.0
+        version: 8.17.0
+    devDependencies:
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@22.5.5)
+      '@types/ws':
+        specifier: ^8.5.10
+        version: 8.5.10
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
