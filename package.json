@@ -17,7 +17,7 @@
     "lint:fix": "turbo lint -- --fix",
     "test": "vitest run",
     "test:watch": "vitest",
-    "doc": "typedoc && mkdir docs/.github && cp .github/*.png docs/.github/",
+    "doc": "typedoc && mkdir -p docs/assets/github && cp .github/*.png docs/assets/github/ && find docs -name '*.html' -type f -exec sed -i.bak 's|=\"/.github/|=\"assets/github/|g' {} + && find docs -name '*.bak' -delete",
     "examples:minimal": "pnpm exec tsx examples/src/minimal_assistant.ts"
   },
   "devDependencies": {
