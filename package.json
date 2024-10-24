@@ -17,7 +17,7 @@
     "lint:fix": "turbo lint -- --fix",
     "test": "vitest run",
     "test:watch": "vitest",
-    "doc": "typedoc",
+    "doc": "typedoc && mkdir docs/.github && cp .github/*.png docs/.github/",
     "examples:minimal": "pnpm exec tsx examples/src/minimal_assistant.ts"
   },
   "devDependencies": {
