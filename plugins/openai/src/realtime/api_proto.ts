@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { ExtractStrict } from "../utility-types";
+
 export const SAMPLE_RATE = 24000;
 export const NUM_CHANNELS = 1;
 export const IN_FRAME_SIZE = 2400; // 100ms
@@ -18,13 +20,13 @@ export type InputTranscriptionModel = 'whisper-1' | string; // Open-ended, for f
 export type Modality = 'text' | 'audio';
 export type ToolChoice = 'auto' | 'none' | 'required' | string;
 export type State = 'initializing' | 'listening' | 'thinking' | 'speaking' | string;
-export type ResponseStatus =
+export type KnownResponseStatus =
   | 'in_progress'
   | 'completed'
   | 'incomplete'
   | 'cancelled'
-  | 'failed'
-  | string;
+  | 'failed';
+export type ResponseStatus = KnownResponseStatus | string;
 export type ClientEventType =
   | 'session.update'
   | 'input_audio_buffer.append'
@@ -191,22 +193,28 @@ export interface ConversationResource {
   object: 'realtime.conversation';
 }
 
+export interface IncompleteResponseStatusDetails {
+  type: ExtractStrict<KnownResponseStatus, 'incomplete'>;
+  reason: 'max_output_tokens' | 'content_filter' | string;
+}
+
+export interface FailedResponseStatusDetails {
+  type: ExtractStrict<KnownResponseStatus, 'failed'>;
+  error?: {
+    code: 'server_error' | 'rate_limit_exceeded' | string;
+    message: string;
+  };
+}
+
+export interface CancelledResponseStatusDetails {
+  type: ExtractStrict<KnownResponseStatus, 'cancelled'>;
+  reason: 'turn_detected' | 'client_cancelled' | string;
+}
+
 export type ResponseStatusDetails =
-  | {
-      type: 'incomplete';
-      reason: 'max_output_tokens' | 'content_filter' | string;
-    }
-  | {
-      type: 'failed';
-      error?: {
-        code: 'server_error' | 'rate_limit_exceeded' | string;
-        message: string;
-      };
-    }
-  | {
-      type: 'cancelled';
-      reason: 'turn_detected' | 'client_cancelled' | string;
-    };
+  | IncompleteResponseStatusDetails
+  | FailedResponseStatusDetails
+  | CancelledResponseStatusDetails;
 
 export interface ResponseResource {
   id: string;
