@@ -120,13 +120,17 @@ export class SpeechStream extends stt.SpeechStream {
         channels: this.#opts.numChannels,
         endpointing: this.#opts.endpointing || false,
         filler_words: this.#opts.fillerWords,
-        keywords: this.#opts.keywords.map((x) => x.join(':')).join('&keywords='),
+        keywords: this.#opts.keywords.map((x) => x.join(':')),
         profanity_filter: this.#opts.profanityFilter,
         language: this.#opts.language,
       };
       Object.entries(params).forEach(([k, v]) => {
         if (v !== undefined) {
-          streamURL.searchParams.append(k, encodeURIComponent(v));
+          if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+            streamURL.searchParams.append(k, encodeURIComponent(v));
+          } else {
+            v.forEach((x) => streamURL.searchParams.append('keywords', encodeURIComponent(x)));
+          }
         }
       });
 
@@ -201,18 +205,22 @@ export class SpeechStream extends stt.SpeechStream {
     };
 
     const listenTask = async () => {
+      new Promise<void>((resolve, reject) =>
+        ws.once('close', (code, reason) => {
+          if (!closing) {
+            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+            reject();
+          }
+        }),
+      );
+
       while (!this.closed) {
         try {
+          console.log('awaiting');
           await new Promise<RawData>((resolve, reject) => {
-            ws.on('message', (data) => resolve(data));
-            ws.on('close', (code, reason) => {
-              if (!closing) {
-                reject(`WebSocket closed with code ${code}: ${reason}`);
-              }
-            });
-            // DEBUG(nbsp)
-            ws.on('error', this.#logger.error);
+            ws.once('message', (data) => resolve(data));
           }).then((msg) => {
+            console.log(msg.toString());
             const json = JSON.parse(msg.toString());
             switch (json['type']) {
               case 'SpeechStarted': {
@@ -269,7 +277,8 @@ export class SpeechStream extends stt.SpeechStream {
               }
             }
           });
-        } catch {
+        } catch (error) {
+          this.#logger.child({ error }).warn('unrecoverable error, exiting');
           break;
         }
       }
@@ -288,8 +297,8 @@ const liveTranscriptionToSpeechData = (
 
   return alts.map((alt) => ({
     language,
-    startTime: alt['words'] ? alt['words'][0]['start'] : 0,
-    endTime: alt['words'] ? alt['words'][alt['words'].length - 1]['end'] : 0,
+    startTime: alt['words'].length ? alt['words'][0]['start'] : 0,
+    endTime: alt['words'].length ? alt['words'][alt['words'].length - 1]['end'] : 0,
     confidence: alt['confidence'],
     text: alt['transcript'],
   }));

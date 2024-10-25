@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 export default defineAgent({
   entry: async (ctx: JobContext) => {
     await ctx.connect();
-    console.log('starting TTS example agent');
+    console.log('starting STT example agent');
 
     const transcribeTrack = async (track: Track) => {
       const audioStream = new AudioStream(track);
