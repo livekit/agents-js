@@ -36,7 +36,7 @@ const defaultSTTOptions: STTOptions = {
   noDelay: true,
   endpointing: 25,
   fillerWords: false,
-  sampleRate: 48000,
+  sampleRate: 16000,
   numChannels: 1,
   keywords: [],
   profanityFilter: false,
@@ -188,8 +188,13 @@ export class SpeechStream extends stt.SpeechStream {
         let frames: AudioFrame[];
         if (data === SpeechStream.FLUSH_SENTINEL) {
           frames = stream.flush();
-        } else {
+        } else if (
+          data.sampleRate === this.#opts.sampleRate ||
+          data.channels === this.#opts.numChannels
+        ) {
           frames = stream.write(data.data.buffer);
+        } else {
+          throw new Error(`sample rate or channel count of frame does not match`);
         }
 
         for await (const frame of frames) {

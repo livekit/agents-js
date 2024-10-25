@@ -14,7 +14,7 @@ export default defineAgent({
 
     const transcribeTrack = async (track: Track) => {
       const audioStream = new AudioStream(track);
-      const sttStream = new STT().stream();
+      const sttStream = new STT({ sampleRate: 48000 }).stream();
 
       const sendTask = async () => {
         for await (const event of audioStream) {
