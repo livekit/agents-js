@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioByteStream, AudioEnergyFilter, log, stt } from '@livekit/agents';
-import type { AudioFrame } from '@livekit/rtc-node';
+import { type AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
 import type { STTLanguages, STTModels } from './models.js';
 
@@ -36,7 +36,7 @@ const defaultSTTOptions: STTOptions = {
   noDelay: true,
   endpointing: 25,
   fillerWords: false,
-  sampleRate: 16000,
+  sampleRate: 48000,
   numChannels: 1,
   keywords: [],
   profanityFilter: false,
@@ -177,7 +177,7 @@ export class SpeechStream extends stt.SpeechStream {
     }, 5000);
 
     const sendTask = async () => {
-      const samples100Ms = Math.trunc(this.#opts.sampleRate / 10);
+      const samples100Ms = Math.floor(this.#opts.sampleRate / 10);
       const stream = new AudioByteStream(
         this.#opts.sampleRate,
         this.#opts.numChannels,
@@ -194,7 +194,6 @@ export class SpeechStream extends stt.SpeechStream {
 
         for await (const frame of frames) {
           if (this.#audioEnergyFilter.pushFrame(frame)) {
-            // DEBUG(nbsp): this line might not send the buffer correctly
             ws.send(frame.data.buffer);
           }
         }
@@ -205,7 +204,7 @@ export class SpeechStream extends stt.SpeechStream {
     };
 
     const listenTask = async () => {
-      new Promise<void>((resolve, reject) =>
+      new Promise<void>((_, reject) =>
         ws.once('close', (code, reason) => {
           if (!closing) {
             this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
@@ -216,11 +215,9 @@ export class SpeechStream extends stt.SpeechStream {
 
       while (!this.closed) {
         try {
-          console.log('awaiting');
-          await new Promise<RawData>((resolve, reject) => {
+          await new Promise<RawData>((resolve) => {
             ws.once('message', (data) => resolve(data));
           }).then((msg) => {
-            console.log(msg.toString());
             const json = JSON.parse(msg.toString());
             switch (json['type']) {
               case 'SpeechStarted': {
