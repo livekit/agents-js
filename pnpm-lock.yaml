@@ -149,8 +149,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.10.2
-        version: 0.10.2
+        specifier: ^0.10.4
+        version: 0.10.4
       ws:
         specifier: ^8.16.0
         version: 8.17.0
@@ -171,8 +171,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.10.2
-        version: 0.10.2
+        specifier: ^0.10.4
+        version: 0.10.4
       ws:
         specifier: ^8.16.0
         version: 8.17.0

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { AsyncIterableQueue } from '../utils.js';
 import type { TokenData } from './tokenizer.js';
 import { SentenceStream, WordStream } from './tokenizer.js';
