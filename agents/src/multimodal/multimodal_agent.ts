@@ -143,10 +143,19 @@ export class MultimodalAgent extends EventEmitter {
         }
         this.#linkParticipant(participant.identity);
       });
-      room.on(RoomEvent.TrackPublished, () => {
-        // in case we are connected before the participant has published, we'd need to re-subscribe
-        this.#subscribeToMicrophone();
-      });
+      room.on(
+        RoomEvent.TrackPublished,
+        (trackPublication: RemoteTrackPublication, participant: RemoteParticipant) => {
+          if (
+            this.linkedParticipant &&
+            participant.identity === this.linkedParticipant.identity &&
+            trackPublication.source === TrackSource.SOURCE_MICROPHONE &&
+            !trackPublication.subscribed
+          ) {
+            trackPublication.setSubscribed(true);
+          }
+        },
+      );
       room.on(RoomEvent.TrackSubscribed, this.#handleTrackSubscription.bind(this));
 
       this.room = room;
