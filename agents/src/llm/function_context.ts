@@ -33,21 +33,39 @@ export const oaiParams = (p: z.AnyZodObject) => {
     const description = field._def.description || undefined;
     let type: string;
     let enumValues: any[] | undefined;
+    let items: any = undefined;
 
-    if (field instanceof z.ZodEnum) {
-      enumValues = field._def.values;
+    const isOptional = field instanceof z.ZodOptional;
+    const nestedField = isOptional ? field._def.innerType : field;
+
+    if (nestedField instanceof z.ZodEnum) {
+      enumValues = nestedField._def.values;
       type = typeof enumValues![0];
+    } else if (nestedField instanceof z.ZodArray) {
+      type = 'array';
+      const elementType = nestedField._def.type;
+      items = {
+        type: elementType._def.typeName.toLowerCase().includes('zod')
+          ? elementType._def.typeName.toLowerCase().substring(3)
+          : elementType._def.typeName.toLowerCase(),
+      };
+
+      if (elementType instanceof z.ZodEnum) {
+        items.enum = elementType._def.values;
+      }
     } else {
-      type = field._def.typeName.toLowerCase();
+      type = nestedField._def.typeName.toLowerCase();
+      type = type.includes('zod') ? type.substring(3) : type;
     }
 
     properties[key] = {
-      type: type.includes('zod') ? type.substring(3) : type,
+      type,
       description,
-      enum: enumValues,
+      ...(enumValues && { enum: enumValues }),
+      ...(items && { items }),
     };
 
-    if (!field._def.defaultValue) {
+    if (!isOptional) {
       required_properties.push(key);
     }
   }

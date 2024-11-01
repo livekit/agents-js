@@ -1,0 +1,187 @@
+import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
+import { CallableFunction, oaiParams } from './function_context.js';
+
+describe('function_context', () => {
+  describe('oaiParams', () => {
+    it('should handle basic object schema', () => {
+      const schema = z.object({
+        name: z.string().describe('The user name'),
+        age: z.number().describe('The user age'),
+      });
+
+      const result = oaiParams(schema);
+
+      expect(result).toEqual({
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: 'The user name',
+          },
+          age: {
+            type: 'number',
+            description: 'The user age',
+          },
+        },
+        required_properties: ['name', 'age'],
+      });
+    });
+
+    it('should handle enum fields', () => {
+      const schema = z.object({
+        color: z.enum(['red', 'blue', 'green']).describe('Choose a color'),
+      });
+
+      const result = oaiParams(schema);
+
+      expect(result).toEqual({
+        type: 'object',
+        properties: {
+          color: {
+            type: 'string',
+            description: 'Choose a color',
+            enum: ['red', 'blue', 'green'],
+          },
+        },
+        required_properties: ['color'],
+      });
+    });
+
+    it('should handle array fields', () => {
+      const schema = z.object({
+        tags: z.array(z.string()).describe('List of tags'),
+      });
+
+      const result = oaiParams(schema);
+
+      expect(result).toEqual({
+        type: 'object',
+        properties: {
+          tags: {
+            type: 'array',
+            description: 'List of tags',
+            items: {
+              type: 'string',
+            },
+          },
+        },
+        required_properties: ['tags'],
+      });
+    });
+
+    it('should handle array of enums', () => {
+      const schema = z.object({
+        colors: z.array(z.enum(['red', 'blue', 'green'])).describe('List of colors'),
+      });
+
+      const result = oaiParams(schema);
+
+      expect(result).toEqual({
+        type: 'object',
+        properties: {
+          colors: {
+            type: 'array',
+            description: 'List of colors',
+            items: {
+              type: 'enum',
+              enum: ['red', 'blue', 'green'],
+            },
+          },
+        },
+        required_properties: ['colors'],
+      });
+    });
+
+    it('should handle optional fields', () => {
+      const schema = z.object({
+        name: z.string().describe('The user name'),
+        age: z.number().optional().describe('The user age'),
+      });
+
+      const result = oaiParams(schema);
+
+      expect(result).toEqual({
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: 'The user name',
+          },
+          age: {
+            type: 'number',
+            description: 'The user age',
+          },
+        },
+        required_properties: ['name'], // age should not be required
+      });
+    });
+
+    it('should handle fields without descriptions', () => {
+      const schema = z.object({
+        name: z.string(),
+        age: z.number(),
+      });
+
+      const result = oaiParams(schema);
+
+      expect(result).toEqual({
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: undefined,
+          },
+          age: {
+            type: 'number',
+            description: undefined,
+          },
+        },
+        required_properties: ['name', 'age'],
+      });
+    });
+  });
+
+  describe('CallableFunction type', () => {
+    it('should properly type a callable function', async () => {
+      const schema = z.object({
+        name: z.string().describe('The user name'),
+        age: z.number().describe('The user age'),
+      });
+
+      const testFunction: CallableFunction<typeof schema, string> = {
+        description: 'Test function',
+        parameters: schema,
+        execute: async (args: z.infer<typeof schema>) => {
+          // TypeScript should recognize args.name and args.age
+          return `${args.name} is ${args.age} years old`;
+        },
+      };
+
+      const result = await testFunction.execute({ name: 'John', age: 30 });
+      expect(result).toBe('John is 30 years old');
+    });
+
+    it('should handle async execution', async () => {
+      const schema = z.object({
+        delay: z.number().describe('Delay in milliseconds'),
+      });
+
+      const testFunction: CallableFunction<typeof schema, number> = {
+        description: 'Async test function',
+        parameters: schema,
+        execute: async (args: z.infer<typeof schema>) => {
+          await new Promise((resolve) => setTimeout(resolve, args.delay));
+          return args.delay;
+        },
+      };
+
+      const start = Date.now();
+      const result = await testFunction.execute({ delay: 100 });
+      const duration = Date.now() - start;
+
+      expect(result).toBe(100);
+      expect(duration).toBeGreaterThanOrEqual(95); // Allow for small timing variations
+    });
+  });
+});
