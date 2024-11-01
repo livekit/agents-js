@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 0.3.5
+
+### Patch Changes
+
+- support arrays in function call schema
+
 ## 0.3.4
 
 ### Patch Changes
