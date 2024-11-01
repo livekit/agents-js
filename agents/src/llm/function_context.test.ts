@@ -84,7 +84,7 @@ describe('function_context', () => {
             type: 'array',
             description: 'List of colors',
             items: {
-              type: 'enum',
+              type: 'string',
               enum: ['red', 'blue', 'green'],
             },
           },
@@ -190,12 +190,14 @@ describe('function_context', () => {
           items: z.array(
             z.object({
               name: z.string().describe('the item name'),
-              modifiers: z.array(
-                z.object({
-                  modifier_name: z.string(),
-                  modifier_value: z.string(),
-                }),
-              ).describe('list of the modifiers applied on this item, such as size'),
+              modifiers: z
+                .array(
+                  z.object({
+                    modifier_name: z.string(),
+                    modifier_value: z.string(),
+                  }),
+                )
+                .describe('list of the modifiers applied on this item, such as size'),
             }),
           ),
         });
@@ -226,9 +228,11 @@ describe('function_context', () => {
                           type: 'string',
                         },
                       },
+                      required: ['modifier_name', 'modifier_value'],
                     },
                   },
                 },
+                required: ['name', 'modifiers'],
               },
             },
           },
