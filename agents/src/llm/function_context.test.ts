@@ -184,8 +184,8 @@ describe('function_context', () => {
       expect(duration).toBeGreaterThanOrEqual(95); // Allow for small timing variations
     });
 
-    describe('array support', () => {
-      it('should handle array fields', () => {
+    describe('nested array support', () => {
+      it('should handle nested array fields', () => {
         const schema = z.object({
           items: z.array(
             z.object({
