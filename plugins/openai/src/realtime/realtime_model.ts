@@ -10,7 +10,6 @@ import {
   mergeFrames,
   multimodal,
 } from '@livekit/agents';
-import { ChatRole } from '@livekit/agents/src/llm/chat_context.js';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
@@ -167,7 +166,7 @@ class ConversationItem {
         content = [content];
       }
 
-      if (message.role === ChatRole.USER) {
+      if (message.role === llm.ChatRole.USER) {
         const contents: (api_proto.InputTextContent | api_proto.InputAudioContent)[] = [];
         for (const c of content) {
           if (typeof c === 'string') {
@@ -197,7 +196,7 @@ class ConversationItem {
             content: contents,
           },
         };
-      } else if (message.role === ChatRole.ASSISTANT) {
+      } else if (message.role === llm.ChatRole.ASSISTANT) {
         const contents: api_proto.TextContent[] = [];
         for (const c of content) {
           if (typeof c === 'string') {
@@ -224,7 +223,7 @@ class ConversationItem {
             content: contents,
           },
         };
-      } else if (message.role === ChatRole.SYSTEM) {
+      } else if (message.role === llm.ChatRole.SYSTEM) {
         const contents: api_proto.InputTextContent[] = [];
         for (const c of content) {
           if (typeof c === 'string') {
