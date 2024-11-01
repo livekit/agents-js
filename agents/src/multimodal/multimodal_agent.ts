@@ -64,13 +64,16 @@ export class MultimodalAgent extends EventEmitter {
 
   constructor({
     model,
+    chatCtx,
     fncCtx,
   }: {
     model: RealtimeModel;
-    fncCtx?: llm.FunctionContext | undefined;
+    chatCtx?: llm.ChatContext;
+    fncCtx?: llm.FunctionContext;
   }) {
     super();
     this.model = model;
+    this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
   }
 
@@ -83,6 +86,7 @@ export class MultimodalAgent extends EventEmitter {
   #logger = log();
   #session: RealtimeSession | null = null;
   #fncCtx: llm.FunctionContext | undefined = undefined;
+  #chatCtx: llm.ChatContext | undefined = undefined;
 
   #_started: boolean = false;
   #_pendingFunctionCalls: Set<string> = new Set();
@@ -200,7 +204,7 @@ export class MultimodalAgent extends EventEmitter {
         }
       }
 
-      this.#session = this.model.session({ fncCtx: this.#fncCtx });
+      this.#session = this.model.session({ fncCtx: this.#fncCtx, chatCtx: this.#chatCtx });
       this.#started = true;
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
