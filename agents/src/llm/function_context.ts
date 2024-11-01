@@ -31,26 +31,26 @@ export const oaiParams = (p: z.AnyZodObject) => {
   const processZodType = (field: z.ZodTypeAny): any => {
     const isOptional = field instanceof z.ZodOptional;
     const nestedField = isOptional ? field._def.innerType : field;
-    const description = field._def.description || undefined;
+    const description = field._def.description;
 
     if (nestedField instanceof z.ZodEnum) {
       return {
         type: typeof nestedField._def.values[0],
-        description,
+        ...(description && { description }),
         enum: nestedField._def.values,
       };
     } else if (nestedField instanceof z.ZodArray) {
       const elementType = nestedField._def.type;
       return {
         type: 'array',
-        description,
+        ...(description && { description }),
         items: processZodType(elementType),
       };
     } else if (nestedField instanceof z.ZodObject) {
       const { properties, required } = oaiParams(nestedField);
       return {
         type: 'object',
-        description,
+        ...(description && { description }),
         properties,
         required,
       };
@@ -59,7 +59,7 @@ export const oaiParams = (p: z.AnyZodObject) => {
       type = type.includes('zod') ? type.substring(3) : type;
       return {
         type,
-        description,
+        ...(description && { description }),
       };
     }
   };
