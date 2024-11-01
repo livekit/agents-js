@@ -25,6 +25,12 @@ export interface ChatAudio {
 
 export type ChatContent = string | ChatImage | ChatAudio;
 
+const defaultCreateChatMessage = {
+  text: '',
+  images: [],
+  role: ChatRole.SYSTEM,
+};
+
 export class ChatMessage {
   readonly role: ChatRole;
   readonly id?: string;
@@ -83,15 +89,15 @@ export class ChatMessage {
     });
   }
 
-  static create({
-    text = '',
-    images = [],
-    role = ChatRole.SYSTEM,
-  }: {
-    text?: string;
-    images: ChatImage[];
-    role: ChatRole;
-  }): ChatMessage {
+  static create(
+    options: Partial<{
+      text?: string;
+      images: ChatImage[];
+      role: ChatRole;
+    }>,
+  ): ChatMessage {
+    const { text, images, role } = { ...defaultCreateChatMessage, ...options };
+
     if (!images.length) {
       return new ChatMessage({
         role: ChatRole.ASSISTANT,
