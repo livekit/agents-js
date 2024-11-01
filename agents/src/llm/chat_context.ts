@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import type { CallableFunctionResult, FunctionContext } from './function_context.js';
 
 export enum ChatRole {
   SYSTEM,
@@ -29,6 +30,7 @@ export class ChatMessage {
   readonly id?: string;
   readonly name?: string;
   readonly content?: ChatContent | ChatContent[];
+  readonly toolCalls?: FunctionContext;
   readonly toolCallId?: string;
   readonly toolException?: Error;
 
@@ -38,6 +40,7 @@ export class ChatMessage {
     id,
     name,
     content,
+    toolCalls,
     toolCallId,
     toolException,
   }: {
@@ -45,6 +48,7 @@ export class ChatMessage {
     id?: string;
     name?: string;
     content?: ChatContent | ChatContent[];
+    toolCalls?: FunctionContext;
     toolCallId?: string;
     toolException?: Error;
   }) {
@@ -52,14 +56,32 @@ export class ChatMessage {
     this.id = id;
     this.name = name;
     this.content = content;
+    this.toolCalls = toolCalls;
     this.toolCallId = toolCallId;
     this.toolException = toolException;
   }
 
-  // TODO(nbsp): tool call functions.
-  // the system defined in function_context.ts is fundamentally different (and much, much simpler)
-  // than the one in Python Agents.
-  // pair with theo to figure out what to do here (and later in MultimodalAgent/RealtimeModel)
+  static createToolFromFunctionResult(func: CallableFunctionResult): ChatMessage {
+    if (!func.result && !func.error) {
+      throw new TypeError('CallableFunctionResult must include result or error');
+    }
+
+    return new ChatMessage({
+      role: ChatRole.TOOL,
+      name: func.name,
+      content: func.result || `Error: ${func.error}`,
+      toolCallId: func.toolCallId,
+      toolException: func.error,
+    });
+  }
+
+  static createToolCalls(toolCalls: FunctionContext, text = '') {
+    return new ChatMessage({
+      role: ChatRole.ASSISTANT,
+      toolCalls,
+      content: text,
+    });
+  }
 
   static create({
     text = '',
