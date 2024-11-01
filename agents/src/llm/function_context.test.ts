@@ -24,7 +24,7 @@ describe('function_context', () => {
             description: 'The user age',
           },
         },
-        required_properties: ['name', 'age'],
+        required: ['name', 'age'],
       });
     });
 
@@ -44,7 +44,7 @@ describe('function_context', () => {
             enum: ['red', 'blue', 'green'],
           },
         },
-        required_properties: ['color'],
+        required: ['color'],
       });
     });
 
@@ -66,7 +66,7 @@ describe('function_context', () => {
             },
           },
         },
-        required_properties: ['tags'],
+        required: ['tags'],
       });
     });
 
@@ -89,7 +89,7 @@ describe('function_context', () => {
             },
           },
         },
-        required_properties: ['colors'],
+        required: ['colors'],
       });
     });
 
@@ -113,7 +113,7 @@ describe('function_context', () => {
             description: 'The user age',
           },
         },
-        required_properties: ['name'], // age should not be required
+        required: ['name'], // age should not be required
       });
     });
 
@@ -137,7 +137,7 @@ describe('function_context', () => {
             description: undefined,
           },
         },
-        required_properties: ['name', 'age'],
+        required: ['name', 'age'],
       });
     });
   });
@@ -182,6 +182,59 @@ describe('function_context', () => {
 
       expect(result).toBe(100);
       expect(duration).toBeGreaterThanOrEqual(95); // Allow for small timing variations
+    });
+
+    describe('array support', () => {
+      it('should handle array fields', () => {
+        const schema = z.object({
+          items: z.array(
+            z.object({
+              name: z.string().describe('the item name'),
+              modifiers: z.array(
+                z.object({
+                  modifier_name: z.string(),
+                  modifier_value: z.string(),
+                }),
+              ).describe('list of the modifiers applied on this item, such as size'),
+            }),
+          ),
+        });
+        const result = oaiParams(schema);
+        expect(result).toEqual({
+          type: 'object',
+          properties: {
+            items: {
+              type: 'array',
+              description: undefined,
+              items: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                    description: 'the item name',
+                  },
+                  modifiers: {
+                    type: 'array',
+                    description: 'list of the modifiers applied on this item, such as size',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        modifier_name: {
+                          type: 'string',
+                        },
+                        modifier_value: {
+                          type: 'string',
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          required: ['items'],
+        });
+      });
     });
   });
 });

@@ -28,52 +28,54 @@ export const oaiParams = (p: z.AnyZodObject) => {
   const properties: Record<string, any> = {};
   const required_properties: string[] = [];
 
-  for (const key in p.shape) {
-    const field = p.shape[key];
-    const description = field._def.description || undefined;
-    let type: string;
-    let enumValues: any[] | undefined;
-    let items: any = undefined;
-
+  const processZodType = (field: z.ZodTypeAny): any => {
     const isOptional = field instanceof z.ZodOptional;
     const nestedField = isOptional ? field._def.innerType : field;
+    const description = field._def.description || undefined;
 
     if (nestedField instanceof z.ZodEnum) {
-      enumValues = nestedField._def.values;
-      type = typeof enumValues![0];
-    } else if (nestedField instanceof z.ZodArray) {
-      type = 'array';
-      const elementType = nestedField._def.type;
-      items = {
-        type: elementType._def.typeName.toLowerCase().includes('zod')
-          ? elementType._def.typeName.toLowerCase().substring(3)
-          : elementType._def.typeName.toLowerCase(),
+      return {
+        type: typeof nestedField._def.values[0],
+        description,
+        enum: nestedField._def.values,
       };
-
-      if (elementType instanceof z.ZodEnum) {
-        items.enum = elementType._def.values;
-      }
+    } else if (nestedField instanceof z.ZodArray) {
+      const elementType = nestedField._def.type;
+      return {
+        type: 'array',
+        description,
+        items: processZodType(elementType),
+      };
+    } else if (nestedField instanceof z.ZodObject) {
+      const { properties, required } = oaiParams(nestedField);
+      return {
+        type: 'object',
+        description,
+        properties,
+        required,
+      };
     } else {
-      type = nestedField._def.typeName.toLowerCase();
+      let type = nestedField._def.typeName.toLowerCase();
       type = type.includes('zod') ? type.substring(3) : type;
+      return {
+        type,
+        description,
+      };
     }
+  };
 
-    properties[key] = {
-      type,
-      description,
-      ...(enumValues && { enum: enumValues }),
-      ...(items && { items }),
-    };
+  for (const key in p.shape) {
+    const field = p.shape[key];
+    properties[key] = processZodType(field);
 
-    if (!isOptional) {
+    if (!(field instanceof z.ZodOptional)) {
       required_properties.push(key);
     }
   }
 
-  const type = 'object' as const;
   return {
-    type,
+    type: 'object',
     properties,
-    required_properties,
+    required: required_properties,
   };
 };
