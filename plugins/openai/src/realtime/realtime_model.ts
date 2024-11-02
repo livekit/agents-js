@@ -29,6 +29,7 @@ export interface RealtimeResponse {
   id: string;
   status: api_proto.ResponseStatus;
   statusDetails: api_proto.ResponseStatusDetails | null;
+  usage: api_proto.ResponseResource['usage'] | null;
   output: RealtimeOutput[];
   doneFut: Future;
 }
@@ -787,6 +788,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       id: response.id,
       status: response.status,
       statusDetails: response.status_details,
+      usage: null,
       output: [],
       doneFut: doneFut,
     };
@@ -800,6 +802,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const response = this.#pendingResponses[responseId];
     response.status = responseData.status;
     response.statusDetails = responseData.status_details;
+    response.usage = responseData.usage;
     this.#pendingResponses[responseId] = response;
     response.doneFut.resolve();
     this.emit('response_done', response);
