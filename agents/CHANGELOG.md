@@ -1,5 +1,15 @@
 # @livekit/agents
 
+## 0.3.5
+
+### Patch Changes
+
+- fix(treewide): use newer rtc-node version - [#118](https://github.com/livekit/agents-js/pull/118) ([@nbsp](https://github.com/nbsp))
+
+- Subscribe to published mic track for linked participant only - [#123](https://github.com/livekit/agents-js/pull/123) ([@bcherry](https://github.com/bcherry))
+
+- Update everything to rtc 0.11.0 - [#125](https://github.com/livekit/agents-js/pull/125) ([@bcherry](https://github.com/bcherry))
+
 ## 0.3.4
 
 ### Patch Changes
