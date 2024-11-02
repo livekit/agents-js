@@ -15,7 +15,7 @@ export interface ChatImage {
   image: string | AudioFrame;
   inferenceWidth?: number;
   inferenceHeight?: number;
-  /** 
+  /**
    * @internal
    * Used by LLM implementations to store a processed version of the image for later use.
    */
