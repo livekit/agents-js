@@ -1,5 +1,16 @@
 # @livekit/agents-plugin-openai
 
+## 0.3.5
+
+### Patch Changes
+
+- fix(treewide): use newer rtc-node version - [#118](https://github.com/livekit/agents-js/pull/118) ([@nbsp](https://github.com/nbsp))
+
+- Update everything to rtc 0.11.0 - [#125](https://github.com/livekit/agents-js/pull/125) ([@bcherry](https://github.com/bcherry))
+
+- Updated dependencies [[`1697907941f6afbbfcc6385d56d0894abb8768cc`](https://github.com/livekit/agents-js/commit/1697907941f6afbbfcc6385d56d0894abb8768cc), [`99eb758e6b3e965cb842e4ba6ef95551978fd1e0`](https://github.com/livekit/agents-js/commit/99eb758e6b3e965cb842e4ba6ef95551978fd1e0), [`d8de7546566324cbb456613578c403c721481cb5`](https://github.com/livekit/agents-js/commit/d8de7546566324cbb456613578c403c721481cb5)]:
+  - @livekit/agents@0.3.5
+
 ## 0.3.4
 
 ### Patch Changes
