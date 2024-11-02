@@ -1,7 +1,15 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AsyncIterableQueue, Future, Queue, llm, log, multimodal } from '@livekit/agents';
+import {
+  AsyncIterableQueue,
+  Future,
+  Queue,
+  llm,
+  log,
+  mergeFrames,
+  multimodal,
+} from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
@@ -109,6 +117,7 @@ class InputAudioBuffer {
 
 class ConversationItem {
   #session: RealtimeSession;
+  #logger = log();
 
   constructor(session: RealtimeSession) {
     this.#session = session;
@@ -130,12 +139,127 @@ class ConversationItem {
     });
   }
 
-  create(item: api_proto.ConversationItemCreateContent, previousItemId?: string): void {
-    this.#session.queueMsg({
-      type: 'conversation.item.create',
-      item,
-      previous_item_id: previousItemId,
-    });
+  // create(item: api_proto.ConversationItemCreateContent, previousItemId?: string): void {
+  create(message: llm.ChatMessage, previousItemId?: string): void {
+    if (!message.content) {
+      return;
+    }
+
+    let event: api_proto.ConversationItemCreateEvent;
+
+    if (message.toolCallId) {
+      if (typeof message.content !== 'string') {
+        throw new TypeError('message.content must be a string');
+      }
+
+      event = {
+        type: 'conversation.item.create',
+        previous_item_id: previousItemId,
+        item: {
+          type: 'function_call_output',
+          call_id: message.toolCallId,
+          output: message.content,
+        },
+      };
+    } else {
+      let content = message.content;
+      if (!Array.isArray(content)) {
+        content = [content];
+      }
+
+      if (message.role === llm.ChatRole.USER) {
+        const contents: (api_proto.InputTextContent | api_proto.InputAudioContent)[] = [];
+        for (const c of content) {
+          if (typeof c === 'string') {
+            contents.push({
+              type: 'input_text',
+              text: c,
+            });
+          } else if (
+            // typescript type guard for determining ChatAudio vs ChatImage
+            ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatAudio => {
+              return (c as llm.ChatAudio).frame !== undefined;
+            })(c)
+          ) {
+            contents.push({
+              type: 'input_audio',
+              audio: Buffer.from(mergeFrames(c.frame).data.buffer).toString('base64'),
+            });
+          }
+        }
+
+        event = {
+          type: 'conversation.item.create',
+          previous_item_id: previousItemId,
+          item: {
+            type: 'message',
+            role: 'user',
+            content: contents,
+          },
+        };
+      } else if (message.role === llm.ChatRole.ASSISTANT) {
+        const contents: api_proto.TextContent[] = [];
+        for (const c of content) {
+          if (typeof c === 'string') {
+            contents.push({
+              type: 'text',
+              text: c,
+            });
+          } else if (
+            // typescript type guard for determining ChatAudio vs ChatImage
+            ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatAudio => {
+              return (c as llm.ChatAudio).frame !== undefined;
+            })(c)
+          ) {
+            this.#logger.warn('audio content in assistant message is not supported');
+          }
+        }
+
+        event = {
+          type: 'conversation.item.create',
+          previous_item_id: previousItemId,
+          item: {
+            type: 'message',
+            role: 'assistant',
+            content: contents,
+          },
+        };
+      } else if (message.role === llm.ChatRole.SYSTEM) {
+        const contents: api_proto.InputTextContent[] = [];
+        for (const c of content) {
+          if (typeof c === 'string') {
+            contents.push({
+              type: 'input_text',
+              text: c,
+            });
+          } else if (
+            // typescript type guard for determining ChatAudio vs ChatImage
+            ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatAudio => {
+              return (c as llm.ChatAudio).frame !== undefined;
+            })(c)
+          ) {
+            this.#logger.warn('audio content in system message is not supported');
+          }
+        }
+
+        event = {
+          type: 'conversation.item.create',
+          previous_item_id: previousItemId,
+          item: {
+            type: 'message',
+            role: 'system',
+            content: contents,
+          },
+        };
+      } else {
+        this.#logger
+          .child({ message })
+          .warn('chat message is not supported inside the realtime API');
+        return;
+      }
+    }
+
+    this.#session.queueMsg(event);
   }
 }
 
@@ -303,6 +427,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
 
   session({
     fncCtx,
+    chatCtx,
     modalities = this.#defaultOpts.modalities,
     instructions = this.#defaultOpts.instructions,
     voice = this.#defaultOpts.voice,
@@ -314,6 +439,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     maxResponseOutputTokens = this.#defaultOpts.maxResponseOutputTokens,
   }: {
     fncCtx?: llm.FunctionContext;
+    chatCtx?: llm.ChatContext;
     modalities?: ['text', 'audio'] | ['text'];
     instructions?: string;
     voice?: api_proto.Voice;
@@ -342,7 +468,10 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       entraToken: this.#defaultOpts.entraToken,
     };
 
-    const newSession = new RealtimeSession(opts, fncCtx);
+    const newSession = new RealtimeSession(opts, {
+      chatCtx: chatCtx || new llm.ChatContext(),
+      fncCtx,
+    });
     this.#sessions.push(newSession);
     return newSession;
   }
@@ -353,6 +482,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
 }
 
 export class RealtimeSession extends multimodal.RealtimeSession {
+  #chatCtx: llm.ChatContext | undefined = undefined;
   #fncCtx: llm.FunctionContext | undefined = undefined;
   #opts: ModelOptions;
   #pendingResponses: { [id: string]: RealtimeResponse } = {};
@@ -364,10 +494,14 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   #closing = true;
   #sendQueue = new Queue<api_proto.ClientEvent>();
 
-  constructor(opts: ModelOptions, fncCtx?: llm.FunctionContext | undefined) {
+  constructor(
+    opts: ModelOptions,
+    { fncCtx, chatCtx }: { fncCtx?: llm.FunctionContext; chatCtx?: llm.ChatContext },
+  ) {
     super();
 
     this.#opts = opts;
+    this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
 
     this.#task = this.#start();
@@ -384,6 +518,10 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       maxResponseOutputTokens: this.#opts.maxResponseOutputTokens,
       toolChoice: 'auto',
     });
+  }
+
+  get chatCtx(): llm.ChatContext | undefined {
+    return this.#chatCtx;
   }
 
   get fncCtx(): llm.FunctionContext | undefined {
@@ -872,11 +1010,11 @@ export class RealtimeSession extends multimodal.RealtimeSession {
             callId: item.call_id,
           });
           this.conversation.item.create(
-            {
-              type: 'function_call_output',
-              call_id: item.call_id,
-              output: content,
-            },
+            llm.ChatMessage.createToolFromFunctionResult({
+              name: item.name,
+              toolCallId: item.call_id,
+              result: content,
+            }),
             output.itemId,
           );
           this.response.create();

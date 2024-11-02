@@ -18,6 +18,14 @@ export interface CallableFunction<P extends z.ZodTypeAny = any, R = any> {
   execute: (args: inferParameters<P>) => PromiseLike<R>;
 }
 
+/** A currently-running function call, called by the LLM. */
+export interface CallableFunctionResult {
+  name: string;
+  toolCallId: string;
+  result?: any;
+  error?: any;
+}
+
 /** An object containing callable functions and their names */
 export type FunctionContext = {
   [name: string]: CallableFunction;

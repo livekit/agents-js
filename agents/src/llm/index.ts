@@ -1,11 +1,19 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
+export {
   type CallableFunction,
+  type CallableFunctionResult,
   type FunctionContext,
   type inferParameters,
   oaiParams,
 } from './function_context.js';
 
-export { CallableFunction, FunctionContext, inferParameters, oaiParams };
+export {
+  type ChatImage,
+  type ChatAudio,
+  type ChatContent,
+  ChatRole,
+  ChatMessage,
+  ChatContext,
+} from './chat_context.js';
