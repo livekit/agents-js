@@ -17,3 +17,12 @@ export {
   ChatMessage,
   ChatContext,
 } from './chat_context.js';
+
+export {
+  type ChoiceDelta,
+  type CompletionUsage,
+  type Choice,
+  type ChatChunk,
+  LLM,
+  LLMStream,
+} from './llm.js';
