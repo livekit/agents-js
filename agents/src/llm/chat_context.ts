@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame } from '@livekit/rtc-node';
+import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
 import type { CallableFunctionResult, FunctionContext } from './function_context.js';
 
 export enum ChatRole {
@@ -12,7 +12,7 @@ export enum ChatRole {
 }
 
 export interface ChatImage {
-  image: string | AudioFrame;
+  image: string | VideoFrame;
   inferenceWidth?: number;
   inferenceHeight?: number;
   /**
