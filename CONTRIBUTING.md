@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Contributing to agents-js
 
 The LiveKit Node Agents framework is an open-source project, and we welcome any contribution from
