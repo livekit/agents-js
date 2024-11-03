@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 export {
   type CallableFunction,
+  type DeferredFunction,
   type CallableFunctionResult,
   type FunctionContext,
   type inferParameters,
   oaiParams,
+  oaiBuildFunctionInfo,
 } from './function_context.js';
 
 export {

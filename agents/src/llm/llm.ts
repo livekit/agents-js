@@ -54,19 +54,14 @@ export abstract class LLM {
 export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected queue = new AsyncIterableQueue<ChatChunk>();
   protected closed = false;
+  protected functionCalls: DeferredFunction[] = [];
 
   #chatCtx: ChatContext;
   #fncCtx?: FunctionContext;
-  #functionCalls: DeferredFunction[] = [];
 
   constructor(chatCtx: ChatContext, fncCtx?: FunctionContext) {
     this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
-  }
-
-  /** List of called functions from this stream. */
-  get functionCalls(): DeferredFunction[] {
-    return this.#functionCalls;
   }
 
   /** The function context of this stream. */
@@ -82,7 +77,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   /** Execute all deferred functions of this stream concurrently. */
   async executeFunctions(): Promise<CallableFunctionResult[]> {
     return Promise.all(
-      this.#functionCalls.map((f) =>
+      this.functionCalls.map((f) =>
         f.func.execute(f.params).then(
           (result) => ({ name: f.name, toolCallId: f.toolCallId, result }),
           (error) => ({ name: f.name, toolCallId: f.toolCallId, error }),

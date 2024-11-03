@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
-import type { CallableFunctionResult, FunctionContext } from './function_context.js';
+import type { CallableFunctionResult, DeferredFunction } from './function_context.js';
 
 export enum ChatRole {
   SYSTEM,
@@ -39,7 +39,7 @@ export class ChatMessage {
   readonly id?: string;
   readonly name?: string;
   readonly content?: ChatContent | ChatContent[];
-  readonly toolCalls?: FunctionContext;
+  readonly toolCalls?: DeferredFunction[];
   readonly toolCallId?: string;
   readonly toolException?: Error;
 
@@ -57,7 +57,7 @@ export class ChatMessage {
     id?: string;
     name?: string;
     content?: ChatContent | ChatContent[];
-    toolCalls?: FunctionContext;
+    toolCalls?: DeferredFunction[];
     toolCallId?: string;
     toolException?: Error;
   }) {
@@ -84,7 +84,7 @@ export class ChatMessage {
     });
   }
 
-  static createToolCalls(toolCalls: FunctionContext, text = '') {
+  static createToolCalls(toolCalls: DeferredFunction[], text = '') {
     return new ChatMessage({
       role: ChatRole.ASSISTANT,
       toolCalls,
@@ -124,7 +124,7 @@ export class ChatContext {
   messages: ChatMessage[] = [];
   metadata: { [id: string]: any } = {};
 
-  append(msg: { text?: string; images: ChatImage[]; role: ChatRole }): ChatContext {
+  append(msg: { text?: string; images?: ChatImage[]; role: ChatRole }): ChatContext {
     this.messages.push(ChatMessage.create(msg));
     return this;
   }

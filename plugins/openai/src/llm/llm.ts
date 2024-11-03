@@ -71,7 +71,7 @@ export class LLM extends llm.LLM {
             parameters: llm.oaiParams(func.parameters),
           },
         }))
-      : [];
+      : undefined;
 
     temperature = temperature || this.#opts.temperature;
 
@@ -201,8 +201,14 @@ export class LLMStream extends llm.LLMStream {
       return undefined;
     }
 
+    const functionInfo = llm.oaiBuildFunctionInfo(
+      this.fncCtx,
+      this.#toolCallId,
+      this.#fncName,
+      this.#fncRawArguments,
+    );
     this.#toolCallId = this.#fncName = this.#fncRawArguments = undefined;
-    // TODO(nbsp): create ai function info
+    this.functionCalls.push(functionInfo);
 
     return {
       requestId: id,
@@ -221,7 +227,7 @@ export class LLMStream extends llm.LLMStream {
 }
 
 const buildMessage = (msg: llm.ChatMessage, cacheKey: any) => {
-  let oaiMsg: Partial<OpenAI.ChatCompletionMessageParam> = {};
+  const oaiMsg: Partial<OpenAI.ChatCompletionMessageParam> = {};
 
   switch (msg.role) {
     case llm.ChatRole.SYSTEM:
@@ -234,9 +240,10 @@ const buildMessage = (msg: llm.ChatMessage, cacheKey: any) => {
       oaiMsg.role = 'assistant';
       break;
     case llm.ChatRole.TOOL:
-      oaiMsg = oaiMsg as Partial<OpenAI.ChatCompletionToolMessageParam>;
       oaiMsg.role = 'tool';
-      oaiMsg.tool_call_id = msg.toolCallId;
+      if (oaiMsg.role === 'tool') {
+        oaiMsg.tool_call_id = msg.toolCallId;
+      }
       break;
   }
 
@@ -263,19 +270,18 @@ const buildMessage = (msg: llm.ChatMessage, cacheKey: any) => {
     }) as OpenAI.ChatCompletionContentPart[];
   }
 
-  // TODO(nbsp): deferred function support inside chatmessage
-  // // make sure to provide when function has been called inside the context
-  // // (+ raw_arguments)
-  // if (msg.toolCalls) {
-  //   oaiMsg.tool_calls = Object.entries(msg.toolCalls).map(([name, func]) => ({
-  //     id: msg.toolCallId,
-  //     type: 'function' as const,
-  //     function: {
-  //       name: name,
-  //       arguments
-  //     }
-  //   }))
-  // }
+  // make sure to provide when function has been called inside the context
+  // (+ raw_arguments)
+  if (msg.toolCalls && oaiMsg.role === 'assistant') {
+    oaiMsg.tool_calls = Object.entries(msg.toolCalls).map(([name, func]) => ({
+      id: msg.toolCallId!,
+      type: 'function' as const,
+      function: {
+        name: name,
+        arguments: func.rawParams,
+      },
+    }));
+  }
 
   return oaiMsg as OpenAI.ChatCompletionMessageParam;
 };

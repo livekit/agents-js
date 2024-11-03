@@ -97,3 +97,23 @@ export const oaiParams = (p: z.AnyZodObject) => {
     required: requiredProperties,
   };
 };
+
+/** @internal */
+export const oaiBuildFunctionInfo = (
+  fncCtx: FunctionContext,
+  toolCallId: string,
+  fncName: string,
+  rawArgs: string,
+): DeferredFunction => {
+  if (!fncCtx[fncName]) {
+    throw new Error(`AI function ${fncName} not found`);
+  }
+
+  return {
+    name: fncName,
+    func: fncCtx[fncName],
+    toolCallId,
+    rawParams: rawArgs,
+    params: JSON.parse(rawArgs),
+  };
+};
