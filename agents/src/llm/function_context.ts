@@ -74,7 +74,7 @@ export const oaiParams = (p: z.AnyZodObject) => {
   }
 
   return {
-    type: 'object',
+    type: 'object' as const,
     properties,
     required: required_properties,
   };
