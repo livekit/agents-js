@@ -410,7 +410,7 @@ export class LLM extends llm.LLM {
       model: this.#opts.model,
       user: this.#opts.user,
       n,
-      messages: chatCtx.messages.map((m) => buildMessage(m, '')), // TODO(nbsp): identifier https://stackoverflow.com/questions/1997661/unique-object-identifier-in-javascript
+      messages: chatCtx.messages.map((m) => buildMessage(m, id(this))),
       temperature,
       stream_options: { include_usage: true },
       stream: true,
@@ -642,3 +642,18 @@ const buildImageContent = (image: llm.ChatImage, cacheKey: any) => {
     };
   }
 };
+
+// unique object identifier, used for cache
+// https://stackoverflow.com/a/43963612
+const id = (() => {
+  let currentId = 0;
+  const map = new WeakMap();
+
+  return (object: any) => {
+    if (!map.has(object)) {
+      map.set(object, ++currentId);
+    }
+
+    return map.get(object);
+  };
+})();
