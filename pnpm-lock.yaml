@@ -149,8 +149,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.10.4
-        version: 0.10.4
+        specifier: ^0.11.0
+        version: 0.11.0
       ws:
         specifier: ^8.16.0
         version: 8.17.0
@@ -171,8 +171,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.10.4
-        version: 0.10.4
+        specifier: ^0.11.0
+        version: 0.11.0
       ws:
         specifier: ^8.16.0
         version: 8.17.0
@@ -215,8 +215,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.10.4
-        version: 0.10.4
+        specifier: ^0.11.0
+        version: 0.11.0
       onnxruntime-node:
         specifier: ^1.19.2
         version: 1.19.2
