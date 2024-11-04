@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Mutex } from '@livekit/mutex';
+import { Mutex, MultiMutex } from '@livekit/mutex';
 import type { RunningJobInfo } from '../job.js';
 import { Queue } from '../utils.js';
 import type { JobExecutor } from './job_executor.js';
@@ -17,7 +17,7 @@ export class ProcPool {
   closed = false;
   controller = new AbortController();
   initMutex = new Mutex();
-  procMutex: Mutex;
+  procMutex: MultiMutex;
   procUnlock?: () => void;
   warmedProcQueue = new Queue<JobExecutor>();
 
@@ -28,7 +28,7 @@ export class ProcPool {
     closeTimeout: number,
   ) {
     this.agent = agent;
-    this.procMutex = new Mutex(numIdleProcesses);
+    this.procMutex = new MultiMutex(numIdleProcesses);
     this.initializeTimeout = initializeTimeout;
     this.closeTimeout = closeTimeout;
   }
