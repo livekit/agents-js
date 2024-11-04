@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Mutex, MultiMutex } from '@livekit/mutex';
+import { MultiMutex, Mutex } from '@livekit/mutex';
 import type { RunningJobInfo } from '../job.js';
 import { Queue } from '../utils.js';
 import type { JobExecutor } from './job_executor.js';
