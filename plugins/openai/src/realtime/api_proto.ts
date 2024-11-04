@@ -79,7 +79,7 @@ export interface Tool {
         [prop: string]: any;
       };
     };
-    required_properties: string[];
+    required: string[];
   };
 }
 
