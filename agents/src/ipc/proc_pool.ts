@@ -23,12 +23,12 @@ export class ProcPool {
 
   constructor(
     agent: string,
-    _numIdleProcesses: number,
+    numIdleProcesses: number,
     initializeTimeout: number,
     closeTimeout: number,
   ) {
     this.agent = agent;
-    this.procMutex = new Mutex();
+    this.procMutex = new Mutex(numIdleProcesses);
     this.initializeTimeout = initializeTimeout;
     this.closeTimeout = closeTimeout;
   }
