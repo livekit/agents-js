@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { llm, log } from '@livekit/agents';
+import { randomUUID } from 'node:crypto';
 import { AzureOpenAI, OpenAI } from 'openai';
 import type {
   CerebrasChatModels,
@@ -37,6 +38,7 @@ const defaultAzureLLMOptions: LLMOptions = {
 export class LLM extends llm.LLM {
   #opts: LLMOptions;
   #client: OpenAI;
+  #id = randomUUID();
 
   /**
    * Create a new instance of OpenAI LLM.
@@ -410,7 +412,7 @@ export class LLM extends llm.LLM {
       model: this.#opts.model,
       user: this.#opts.user,
       n,
-      messages: chatCtx.messages.map((m) => buildMessage(m, id(this))),
+      messages: chatCtx.messages.map((m) => buildMessage(m, this.#id)),
       temperature,
       stream_options: { include_usage: true },
       stream: true,
@@ -642,18 +644,3 @@ const buildImageContent = (image: llm.ChatImage, cacheKey: any) => {
     };
   }
 };
-
-// unique object identifier, used for cache
-// https://stackoverflow.com/a/43963612
-const id = (() => {
-  let currentId = 0;
-  const map = new WeakMap();
-
-  return (object: any) => {
-    if (!map.has(object)) {
-      map.set(object, ++currentId);
-    }
-
-    return map.get(object);
-  };
-})();
