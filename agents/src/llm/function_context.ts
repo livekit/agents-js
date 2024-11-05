@@ -43,29 +43,50 @@ export type FunctionContext = {
 /** @internal */
 export const oaiParams = (p: z.AnyZodObject) => {
   const properties: Record<string, any> = {};
-  const required_properties: string[] = [];
+  const requiredProperties: string[] = [];
+
+  const processZodType = (field: z.ZodTypeAny): any => {
+    const isOptional = field instanceof z.ZodOptional;
+    const nestedField = isOptional ? field._def.innerType : field;
+    const description = field._def.description;
+
+    if (nestedField instanceof z.ZodEnum) {
+      return {
+        type: typeof nestedField._def.values[0],
+        ...(description && { description }),
+        enum: nestedField._def.values,
+      };
+    } else if (nestedField instanceof z.ZodArray) {
+      const elementType = nestedField._def.type;
+      return {
+        type: 'array',
+        ...(description && { description }),
+        items: processZodType(elementType),
+      };
+    } else if (nestedField instanceof z.ZodObject) {
+      const { properties, required } = oaiParams(nestedField);
+      return {
+        type: 'object',
+        ...(description && { description }),
+        properties,
+        required,
+      };
+    } else {
+      let type = nestedField._def.typeName.toLowerCase();
+      type = type.includes('zod') ? type.substring(3) : type;
+      return {
+        type,
+        ...(description && { description }),
+      };
+    }
+  };
 
   for (const key in p.shape) {
     const field = p.shape[key];
-    const description = field._def.description || undefined;
-    let type: string;
-    let enumValues: any[] | undefined;
+    properties[key] = processZodType(field);
 
-    if (field instanceof z.ZodEnum) {
-      enumValues = field._def.values;
-      type = typeof enumValues![0];
-    } else {
-      type = field._def.typeName.toLowerCase();
-    }
-
-    properties[key] = {
-      type: type.includes('zod') ? type.substring(3) : type,
-      description,
-      enum: enumValues,
-    };
-
-    if (!field._def.defaultValue) {
-      required_properties.push(key);
+    if (!(field instanceof z.ZodOptional)) {
+      requiredProperties.push(key);
     }
   }
 
@@ -73,6 +94,6 @@ export const oaiParams = (p: z.AnyZodObject) => {
   return {
     type,
     properties,
-    required_properties,
+    required: requiredProperties,
   };
 };
