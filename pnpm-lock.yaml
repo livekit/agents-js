@@ -84,8 +84,8 @@ importers:
         specifier: ^1.21.0
         version: 1.21.0
       '@livekit/rtc-node':
-        specifier: ^0.11.0
-        version: 0.11.0
+        specifier: ^0.11.1
+        version: 0.11.1
       commander:
         specifier: ^12.0.0
         version: 12.0.0
@@ -133,8 +133,8 @@ importers:
         specifier: workspace:*
         version: link:../plugins/openai
       '@livekit/rtc-node':
-        specifier: ^0.11.0
-        version: 0.11.0
+        specifier: ^0.11.1
+        version: 0.11.1
       zod:
         specifier: ^3.23.8
         version: 3.23.8
@@ -149,8 +149,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.11.0
-        version: 0.11.0
+        specifier: ^0.11.1
+        version: 0.11.1
       ws:
         specifier: ^8.16.0
         version: 8.17.0
@@ -171,8 +171,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.11.0
-        version: 0.11.0
+        specifier: ^0.11.1
+        version: 0.11.1
       ws:
         specifier: ^8.16.0
         version: 8.17.0
@@ -193,8 +193,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.11.0
-        version: 0.11.0
+        specifier: ^0.11.1
+        version: 0.11.1
       openai:
         specifier: ^4.70.2
         version: 4.70.2(zod@3.23.8)
@@ -221,8 +221,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.11.0
-        version: 0.11.0
+        specifier: ^0.11.1
+        version: 0.11.1
       onnxruntime-node:
         specifier: ^1.19.2
         version: 1.19.2
@@ -690,38 +690,38 @@ packages:
   '@livekit/protocol@1.21.0':
     resolution: {integrity: sha512-3TohFPNZy1axTuoDLU6mA1rwuP4VawgehvX52OoLJnU+fNQYfmMJqz8k7NSh79jG5I8Og77YYhT905Omrhli2A==}
 
-  '@livekit/rtc-node-darwin-arm64@0.11.0':
-    resolution: {integrity: sha512-ZepFYFO984NnkM6h29KvGagGpQ7/Q/7WdtVr68rhque8YyP/SLPfW1AA73jSn7+FwIVQiaUUERtrOlSlEWe8hg==}
+  '@livekit/rtc-node-darwin-arm64@0.11.1':
+    resolution: {integrity: sha512-M+Ui87H06ae19GGI7r937dS6hI84MBBTQAkkNlL7qd+pvdCAk25u0FYa8r4SOElKJ0VR3AbzeDoXTihLgpvjMg==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
 
-  '@livekit/rtc-node-darwin-x64@0.11.0':
-    resolution: {integrity: sha512-JsqwV6XVDFYFUV67QZ3CFxD3OeK6+eZZzWuDjR7ELam5cDyqYjqi2bWEVDPnv+4zA+w6Xx9g7IPRDzkMdA60kg==}
+  '@livekit/rtc-node-darwin-x64@0.11.1':
+    resolution: {integrity: sha512-7G92fyuK2p+jdTH2cUJTNeAmtknTGsXuy0xbI727V7VzQvHFDXULCExRlgwn4t9TxvNlIjUpiltiQ6RCSai6zw==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
 
-  '@livekit/rtc-node-linux-arm64-gnu@0.11.0':
-    resolution: {integrity: sha512-3d1WtyMKhQwLbiZQuw6MnpazPq2nOSChFiePoIuZhcrDyZrN5Tte/QBkIL8G+dCXwyD1jfknTL4D0FeI+GRMww==}
+  '@livekit/rtc-node-linux-arm64-gnu@0.11.1':
+    resolution: {integrity: sha512-vqZN9+87Pvxit7auYVW69M+GvUPnf+EwipIJ92GgCJA3Ir1Tcceu5ud5/Ic+0FzSoV0cotVVlQNm74F0tQvyCg==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
 
-  '@livekit/rtc-node-linux-x64-gnu@0.11.0':
-    resolution: {integrity: sha512-iwi1FpnJgI0JNq1pNe6jgqIXa16bujBQPhEF0ul47uyp7bOnSpVzVAnbAdkrACnaalB106YWZ6cc1L37gACYPg==}
+  '@livekit/rtc-node-linux-x64-gnu@0.11.1':
+    resolution: {integrity: sha512-smHZUMfgILQh6/eoauYNe/VlKwQCp4/4jWxiIADHY+mtDtVSvQ9zB6y4GP8FrpohRwFWesKCUpvPBypU0Icrng==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@livekit/rtc-node-win32-x64-msvc@0.11.0':
-    resolution: {integrity: sha512-tLrdolxU+0PBxssIrSFNJie5XaCi1X/GN6GIbp/ZnSOZ+nwaNxFBmYolGjxRuW7ks1HGR7z/zIIpJey5CnFkWg==}
+  '@livekit/rtc-node-win32-x64-msvc@0.11.1':
+    resolution: {integrity: sha512-bTWVtb+UiRPFjiuhrqq40gt5vs5mMPTa1e+kd2jGQPTOlKZPLArQ0WgFcep2TAy1zmcpOgfeM1XRPVFhZl7G1A==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
 
-  '@livekit/rtc-node@0.11.0':
-    resolution: {integrity: sha512-HRnoGsNJC+okhzV9IlljaWskOYIGi1xLD9NzwJwRkzYRdPFwEMf5QU5bmELNCfwDw8bMOpMQB4M8wIkVhCrcxg==}
+  '@livekit/rtc-node@0.11.1':
+    resolution: {integrity: sha512-EFw+giPll12fcXATZpN2zKkE3umYJAdHvfjW+Yu0aBjwfxbUBXu8rz6le2CzDNvGmRwR888DSZXFZfYikwZgiw==}
     engines: {node: '>= 18'}
 
   '@livekit/typed-emitter@3.0.0':
@@ -3795,32 +3795,32 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 1.9.0
 
-  '@livekit/rtc-node-darwin-arm64@0.11.0':
+  '@livekit/rtc-node-darwin-arm64@0.11.1':
     optional: true
 
-  '@livekit/rtc-node-darwin-x64@0.11.0':
+  '@livekit/rtc-node-darwin-x64@0.11.1':
     optional: true
 
-  '@livekit/rtc-node-linux-arm64-gnu@0.11.0':
+  '@livekit/rtc-node-linux-arm64-gnu@0.11.1':
     optional: true
 
-  '@livekit/rtc-node-linux-x64-gnu@0.11.0':
+  '@livekit/rtc-node-linux-x64-gnu@0.11.1':
     optional: true
 
-  '@livekit/rtc-node-win32-x64-msvc@0.11.0':
+  '@livekit/rtc-node-win32-x64-msvc@0.11.1':
     optional: true
 
-  '@livekit/rtc-node@0.11.0':
+  '@livekit/rtc-node@0.11.1':
     dependencies:
       '@bufbuild/protobuf': 2.2.1
       '@livekit/mutex': 1.0.0
       '@livekit/typed-emitter': 3.0.0
     optionalDependencies:
-      '@livekit/rtc-node-darwin-arm64': 0.11.0
-      '@livekit/rtc-node-darwin-x64': 0.11.0
-      '@livekit/rtc-node-linux-arm64-gnu': 0.11.0
-      '@livekit/rtc-node-linux-x64-gnu': 0.11.0
-      '@livekit/rtc-node-win32-x64-msvc': 0.11.0
+      '@livekit/rtc-node-darwin-arm64': 0.11.1
+      '@livekit/rtc-node-darwin-x64': 0.11.1
+      '@livekit/rtc-node-linux-arm64-gnu': 0.11.1
+      '@livekit/rtc-node-linux-x64-gnu': 0.11.1
+      '@livekit/rtc-node-win32-x64-msvc': 0.11.1
 
   '@livekit/typed-emitter@3.0.0': {}
 
