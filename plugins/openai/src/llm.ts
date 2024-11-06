@@ -647,7 +647,12 @@ const buildImageContent = async (image: llm.ChatImage, cacheKey: any) => {
     if (!image.cache[cacheKey]) {
       // inside our internal implementation, we allow to put extra metadata to
       // each ChatImage (avoid to reencode each time we do a chatcompletion request)
-      const encoded = sharp(image.image.data);
+      let encoded = sharp(image.image.data);
+
+      if (image.inferenceHeight && image.inferenceHeight) {
+        encoded = encoded.resize(image.inferenceWidth, image.inferenceHeight);
+      }
+
       image.cache[cacheKey] = await encoded
         .jpeg()
         .toBuffer()
