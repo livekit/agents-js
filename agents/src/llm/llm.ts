@@ -3,11 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AsyncIterableQueue } from '../utils.js';
 import type { ChatContext, ChatRole } from './chat_context.js';
-import type {
-  CallableFunctionResult,
-  DeferredFunction,
-  FunctionContext,
-} from './function_context.js';
+import type { DeferredFunction, FunctionContext } from './function_context.js';
 
 export interface ChoiceDelta {
   role: ChatRole;
