@@ -4,6 +4,7 @@
 import { llm, log } from '@livekit/agents';
 import { randomUUID } from 'node:crypto';
 import { AzureOpenAI, OpenAI } from 'openai';
+import sharp from 'sharp';
 import type {
   CerebrasChatModels,
   ChatModels,
@@ -38,7 +39,6 @@ const defaultAzureLLMOptions: LLMOptions = {
 export class LLM extends llm.LLM {
   #opts: LLMOptions;
   #client: OpenAI;
-  #id = randomUUID();
 
   /**
    * Create a new instance of OpenAI LLM.
@@ -395,8 +395,45 @@ export class LLM extends llm.LLM {
     n?: number | undefined;
     parallelToolCalls?: boolean | undefined;
   }): LLMStream {
-    const tools = fncCtx
-      ? Object.entries(fncCtx).map(([name, func]) => ({
+    temperature = temperature || this.#opts.temperature;
+
+    return new LLMStream(
+      this.#client,
+      chatCtx,
+      fncCtx,
+      this.#opts,
+      parallelToolCalls,
+      temperature,
+      n,
+    );
+  }
+}
+
+export class LLMStream extends llm.LLMStream {
+  #toolCallId?: string;
+  #fncName?: string;
+  #fncRawArguments?: string;
+  #client: OpenAI;
+  #logger = log();
+  #id = randomUUID();
+
+  constructor(
+    client: OpenAI,
+    chatCtx: llm.ChatContext,
+    fncCtx: llm.FunctionContext | undefined,
+    opts: LLMOptions,
+    parallelToolCalls?: boolean,
+    temperature?: number,
+    n?: number,
+  ) {
+    super(chatCtx, fncCtx);
+    this.#client = client;
+    this.#run(opts, n, parallelToolCalls, temperature);
+  }
+
+  async #run(opts: LLMOptions, n?: number, parallelToolCalls?: boolean, temperature?: number) {
+    const tools = this.fncCtx
+      ? Object.entries(this.fncCtx).map(([name, func]) => ({
           type: 'function' as const,
           function: {
             name,
@@ -406,52 +443,25 @@ export class LLM extends llm.LLM {
         }))
       : undefined;
 
-    temperature = temperature || this.#opts.temperature;
-
-    const oaiStream = this.#client.chat.completions.create({
-      model: this.#opts.model,
-      user: this.#opts.user,
+    const stream = await this.#client.chat.completions.create({
+      model: opts.model,
+      user: opts.user,
       n,
-      messages: chatCtx.messages.map((m) => buildMessage(m, this.#id)),
-      temperature,
+      messages: await Promise.all(
+        this.chatCtx.messages.map(async (m) => await buildMessage(m, this.#id)),
+      ),
+      temperature: temperature || opts.temperature,
       stream_options: { include_usage: true },
       stream: true,
       tools,
-      parallel_tool_calls: fncCtx && parallelToolCalls,
+      parallel_tool_calls: this.fncCtx && parallelToolCalls,
     });
 
-    return new LLMStream(chatCtx, fncCtx, oaiStream);
-  }
-}
-
-export class LLMStream extends llm.LLMStream {
-  #awaitableOaiStream: Promise<AsyncIterable<OpenAI.ChatCompletionChunk>>;
-  #oaiStream?: AsyncIterable<OpenAI.ChatCompletionChunk>;
-  #toolCallId?: string;
-  #fncName?: string;
-  #fncRawArguments?: string;
-  #logger = log();
-
-  constructor(
-    chatCtx: llm.ChatContext,
-    fncCtx: llm.FunctionContext | undefined,
-    oaiStream: Promise<AsyncIterable<OpenAI.ChatCompletionChunk>>,
-  ) {
-    super(chatCtx, fncCtx);
-    this.#awaitableOaiStream = oaiStream;
-
-    this.#run();
-  }
-
-  async #run() {
-    if (!this.#oaiStream) {
-      this.#oaiStream = await this.#awaitableOaiStream;
-    }
-
-    for await (const chunk of this.#oaiStream) {
+    for await (const chunk of stream) {
       for (const choice of chunk.choices) {
         const chatChunk = this.#parseChoice(chunk.id, choice);
         if (chatChunk) {
+          console.log(chatChunk.choices[0]);
           this.queue.put(chatChunk);
         }
 
@@ -470,7 +480,7 @@ export class LLMStream extends llm.LLMStream {
       }
     }
 
-    this.queue.close()
+    this.queue.close();
   }
 
   #parseChoice(id: string, choice: OpenAI.ChatCompletionChunk.Choice): llm.ChatChunk | undefined {
@@ -561,7 +571,7 @@ export class LLMStream extends llm.LLMStream {
   }
 }
 
-const buildMessage = (msg: llm.ChatMessage, cacheKey: any) => {
+const buildMessage = async (msg: llm.ChatMessage, cacheKey: any) => {
   const oaiMsg: Partial<OpenAI.ChatCompletionMessageParam> = {};
 
   switch (msg.role) {
@@ -589,20 +599,22 @@ const buildMessage = (msg: llm.ChatMessage, cacheKey: any) => {
       return (c as llm.ChatContent[]).length !== undefined;
     })(msg.content)
   ) {
-    oaiMsg.content = msg.content.map((c) => {
-      if (typeof c === 'string') {
-        return { type: 'text', text: c };
-      } else if (
-        // typescript type guard for determining ChatAudio vs ChatImage
-        ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatImage => {
-          return (c as llm.ChatImage).image !== undefined;
-        })(c)
-      ) {
-        return buildImageContent(c, cacheKey);
-      } else {
-        throw new Error('ChatAudio is not supported');
-      }
-    }) as OpenAI.ChatCompletionContentPart[];
+    oaiMsg.content = (await Promise.all(
+      msg.content.map(async (c) => {
+        if (typeof c === 'string') {
+          return { type: 'text', text: c };
+        } else if (
+          // typescript type guard for determining ChatAudio vs ChatImage
+          ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatImage => {
+            return (c as llm.ChatImage).image !== undefined;
+          })(c)
+        ) {
+          return await buildImageContent(c, cacheKey);
+        } else {
+          throw new Error('ChatAudio is not supported');
+        }
+      }),
+    )) as OpenAI.ChatCompletionContentPart[];
   }
 
   // make sure to provide when function has been called inside the context
@@ -621,7 +633,7 @@ const buildMessage = (msg: llm.ChatMessage, cacheKey: any) => {
   return oaiMsg as OpenAI.ChatCompletionMessageParam;
 };
 
-const buildImageContent = (image: llm.ChatImage, cacheKey: any) => {
+const buildImageContent = async (image: llm.ChatImage, cacheKey: any) => {
   if (typeof image.image === 'string') {
     // image url
     return {
@@ -635,7 +647,11 @@ const buildImageContent = (image: llm.ChatImage, cacheKey: any) => {
     if (!image.cache[cacheKey]) {
       // inside our internal implementation, we allow to put extra metadata to
       // each ChatImage (avoid to reencode each time we do a chatcompletion request)
-      // TODO(nbsp): resize image and encode to base64
+      const encoded = sharp(image.image.data);
+      image.cache[cacheKey] = await encoded
+        .jpeg()
+        .toBuffer()
+        .then((buffer) => buffer.toString('utf-8'));
     }
 
     return {

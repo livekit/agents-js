@@ -81,11 +81,12 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
 
   /** Execute all deferred functions of this stream concurrently. */
   executeFunctions(): DeferredFunction[] {
-    this._functionCalls.forEach((f) =>
-      f.task = f.func.execute(f.params).then(
-        (result) => ({ name: f.name, toolCallId: f.toolCallId, result }),
-        (error) => ({ name: f.name, toolCallId: f.toolCallId, error }),
-      ),
+    this._functionCalls.forEach(
+      (f) =>
+        (f.task = f.func.execute(f.params).then(
+          (result) => ({ name: f.name, toolCallId: f.toolCallId, result }),
+          (error) => ({ name: f.name, toolCallId: f.toolCallId, error }),
+        )),
     );
     return this._functionCalls;
   }

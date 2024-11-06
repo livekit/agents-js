@@ -23,6 +23,7 @@
     "@livekit/agents": "workspace:*",
     "@livekit/rtc-node": "^0.11.0",
     "openai": "^4.70.2",
+    "sharp": "^0.33.5",
     "ws": "^8.16.0"
   }
 }
