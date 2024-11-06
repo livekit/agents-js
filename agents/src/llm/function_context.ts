@@ -18,6 +18,15 @@ export interface CallableFunction<P extends z.ZodTypeAny = any, R = any> {
   execute: (args: inferParameters<P>) => PromiseLike<R>;
 }
 
+/** A function that has been called but is not yet running */
+export interface DeferredFunction<P extends z.ZodTypeAny = any, R = any> {
+  name: string;
+  func: CallableFunction<P, R>;
+  toolCallId: string;
+  rawParams: string;
+  params: inferParameters<P>;
+}
+
 /** A currently-running function call, called by the LLM. */
 export interface CallableFunctionResult {
   name: string;
