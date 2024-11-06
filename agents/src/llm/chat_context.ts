@@ -116,7 +116,15 @@ export class ChatMessage {
 
   /** Returns a structured clone of this message. */
   copy(): ChatMessage {
-    return structuredClone(this);
+    return new ChatMessage({
+      role: this.role,
+      id: this.id,
+      name: this.name,
+      content: this.content,
+      toolCalls: this.toolCalls,
+      toolCallId: this.toolCallId,
+      toolException: this.toolException,
+    });
   }
 }
 
@@ -131,6 +139,9 @@ export class ChatContext {
 
   /** Returns a structured clone of this context. */
   copy(): ChatContext {
-    return structuredClone(this);
+    const ctx = new ChatContext();
+    ctx.messages.push(...this.messages.map((msg) => msg.copy()));
+    ctx.metadata = structuredClone(this.metadata);
+    return ctx;
   }
 }

@@ -550,7 +550,7 @@ export class LLMStream extends llm.LLMStream {
           delta: {
             content: choice.delta.content || undefined,
             role: llm.ChatRole.ASSISTANT,
-            toolCalls: this.fncCtx,
+            toolCalls: this._functionCalls,
           },
           index: choice.index,
         },

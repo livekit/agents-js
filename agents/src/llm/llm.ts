@@ -12,7 +12,7 @@ import type {
 export interface ChoiceDelta {
   role: ChatRole;
   content?: string;
-  toolCalls?: FunctionContext;
+  toolCalls?: DeferredFunction[];
 }
 
 export interface CompletionUsage {
