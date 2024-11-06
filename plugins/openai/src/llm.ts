@@ -541,7 +541,7 @@ export class LLMStream extends llm.LLMStream {
       this.#fncRawArguments,
     );
     this.#toolCallId = this.#fncName = this.#fncRawArguments = undefined;
-    this.functionCalls.push(functionInfo);
+    this._functionCalls.push(functionInfo);
 
     return {
       requestId: id,
@@ -607,7 +607,7 @@ const buildMessage = (msg: llm.ChatMessage, cacheKey: any) => {
   // (+ raw_arguments)
   if (msg.toolCalls && oaiMsg.role === 'assistant') {
     oaiMsg.tool_calls = Object.entries(msg.toolCalls).map(([name, func]) => ({
-      id: msg.toolCallId!,
+      id: func.toolCallId,
       type: 'function' as const,
       function: {
         name: name,

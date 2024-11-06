@@ -25,9 +25,10 @@ export interface DeferredFunction<P extends z.ZodTypeAny = any, R = any> {
   toolCallId: string;
   rawParams: string;
   params: inferParameters<P>;
+  task?: PromiseLike<CallableFunctionResult>;
 }
 
-/** A currently-running function call, called by the LLM. */
+/** The result of a ran DeferredFunction. */
 export interface CallableFunctionResult {
   name: string;
   toolCallId: string;

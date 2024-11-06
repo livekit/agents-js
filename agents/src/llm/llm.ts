@@ -54,7 +54,7 @@ export abstract class LLM {
 export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected queue = new AsyncIterableQueue<ChatChunk>();
   protected closed = false;
-  protected functionCalls: DeferredFunction[] = [];
+  protected _functionCalls: DeferredFunction[] = [];
 
   #chatCtx: ChatContext;
   #fncCtx?: FunctionContext;
@@ -62,6 +62,11 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   constructor(chatCtx: ChatContext, fncCtx?: FunctionContext) {
     this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
+  }
+
+  /** List of called functions from this stream. */
+  get functionCalls(): DeferredFunction[] {
+    return this._functionCalls;
   }
 
   /** The function context of this stream. */
@@ -75,15 +80,14 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   }
 
   /** Execute all deferred functions of this stream concurrently. */
-  async executeFunctions(): Promise<CallableFunctionResult[]> {
-    return Promise.all(
-      this.functionCalls.map((f) =>
-        f.func.execute(f.params).then(
-          (result) => ({ name: f.name, toolCallId: f.toolCallId, result }),
-          (error) => ({ name: f.name, toolCallId: f.toolCallId, error }),
-        ),
+  executeFunctions(): DeferredFunction[] {
+    this._functionCalls.forEach((f) =>
+      f.task = f.func.execute(f.params).then(
+        (result) => ({ name: f.name, toolCallId: f.toolCallId, result }),
+        (error) => ({ name: f.name, toolCallId: f.toolCallId, error }),
       ),
     );
+    return this._functionCalls;
   }
 
   next(): Promise<IteratorResult<ChatChunk>> {
