@@ -11,13 +11,15 @@ export default defineAgent({
     await ctx.connect();
     console.log('starting STT example agent');
 
-    const initialContent = new llm.ChatContext().append({
-      role: llm.ChatRole.SYSTEM,
-      text: 'You are a weather assistant created by LiveKit. Your interface with users will be voice. You will provide weather information for a given location.',
-    }).append({
-      role: llm.ChatRole.USER,
-      text: "What's the weather in San Francisco?",
-    });
+    const initialContent = new llm.ChatContext()
+      .append({
+        role: llm.ChatRole.SYSTEM,
+        text: 'You are a weather assistant created by LiveKit. Your interface with users will be voice. You will provide weather information for a given location.',
+      })
+      .append({
+        role: llm.ChatRole.USER,
+        text: "What's the weather in San Francisco?",
+      });
 
     const fncCtx: llm.FunctionContext = {
       weather: {
@@ -37,26 +39,28 @@ export default defineAgent({
       },
     };
 
-    const ollm = new LLM()
+    const ollm = new LLM();
     let stream = ollm.chat({ chatCtx: initialContent, fncCtx });
+    for await (const _ of stream) {
+      continue;
+    }
 
     // TODO(nbsp): the stream awaitable needs to be awaited before functions are executed
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    const functions = stream.executeFunctions()
-    let toolCallsInfo = []
-    let toolCallsResults = []
+    // await new Promise((resolve) => setTimeout(resolve, 2000))
+    const functions = stream.executeFunctions();
+    let toolCallsInfo = [];
+    let toolCallsResults = [];
     for (const func of functions) {
       if (func.task) {
         const task = await func.task;
-        toolCallsInfo.push(func)
-        toolCallsResults.push(llm.ChatMessage.createToolFromFunctionResult(task))
+        toolCallsInfo.push(func);
+        toolCallsResults.push(llm.ChatMessage.createToolFromFunctionResult(task));
       }
     }
-    const chatCtx = initialContent.copy()
-    chatCtx.messages.push(llm.ChatMessage.createToolCalls(toolCallsInfo))
-    chatCtx.messages.push(...toolCallsResults)
+    const chatCtx = initialContent.copy();
+    chatCtx.messages.push(llm.ChatMessage.createToolCalls(toolCallsInfo));
+    chatCtx.messages.push(...toolCallsResults);
 
-    console.log({ toolCallsResults })
     stream = ollm.chat({ chatCtx, fncCtx });
   },
 });

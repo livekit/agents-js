@@ -469,6 +469,8 @@ export class LLMStream extends llm.LLMStream {
         }
       }
     }
+
+    this.queue.close()
   }
 
   #parseChoice(id: string, choice: OpenAI.ChatCompletionChunk.Choice): llm.ChatChunk | undefined {
