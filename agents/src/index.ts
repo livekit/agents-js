@@ -24,7 +24,7 @@ const isCommonJS = (): boolean => {
 };
 if (isCommonJS()) {
   throw new ReferenceError(
-    '@livekit/agents cannot be used in a CommonJS environment. Please set your project to use ES modules.',
+    '@livekit/agents cannot be used in a CommonJS environment. Please set `"type": "module"` in package.json.',
   );
 }
 
