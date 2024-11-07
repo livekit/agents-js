@@ -39,9 +39,8 @@ export type HumanInputEvent =
     };
 
 export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
-  // protected input = new AsyncIterableQueue<HumanInput>();
-  protected queue = new AsyncIterableQueue<HumanInputEvent>();
-  protected closed = false;
+  #queue = new AsyncIterableQueue<HumanInputEvent>();
+  #closed = false;
 
   #room: Room;
   #vad: VAD;
@@ -54,19 +53,13 @@ export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
   #speechProbability = 0;
   #logger = log();
 
-  constructor({
-    room,
-    vad,
-    stt,
-    participant,
-    transcription,
-  }: {
-    room: Room;
-    vad: VAD;
-    stt: STT;
-    participant: RemoteParticipant;
-    transcription: boolean;
-  }) {
+  constructor(
+    room: Room,
+    vad: VAD,
+    stt: STT,
+    participant: RemoteParticipant,
+    transcription: boolean,
+  ) {
     this.#room = room;
     this.#vad = vad;
     this.#stt = stt;
@@ -145,15 +138,15 @@ export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
             switch (ev.type) {
               case VADEventType.START_OF_SPEECH:
                 this.#speaking = true;
-                this.queue.put({ type: HumanInputEventType.START_OF_SPEECH, event: ev });
+                this.#queue.put({ type: HumanInputEventType.START_OF_SPEECH, event: ev });
                 break;
               case VADEventType.INFERENCE_DONE:
                 this.#speechProbability = ev.probability;
-                this.queue.put({ type: HumanInputEventType.VAD_INFERENCE_DONE, event: ev });
+                this.#queue.put({ type: HumanInputEventType.VAD_INFERENCE_DONE, event: ev });
                 break;
               case VADEventType.END_OF_SPEECH:
                 this.#speaking = false;
-                this.queue.put({ type: HumanInputEventType.END_OF_SPEECH, event: ev });
+                this.#queue.put({ type: HumanInputEventType.END_OF_SPEECH, event: ev });
                 break;
             }
           }
@@ -164,9 +157,9 @@ export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
             if (cancelled) return;
             if (ev.type === SpeechEventType.FINAL_TRANSCRIPT) {
               forwarder.pushText(ev.alternatives[0].text);
-              this.queue.put({ type: HumanInputEventType.FINAL_TRANSCRIPT, event: ev });
+              this.#queue.put({ type: HumanInputEventType.FINAL_TRANSCRIPT, event: ev });
             } else {
-              this.queue.put({ type: HumanInputEventType.INTERIM_TRANSCRIPT, event: ev });
+              this.#queue.put({ type: HumanInputEventType.INTERIM_TRANSCRIPT, event: ev });
             }
           }
         };
@@ -193,20 +186,20 @@ export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
   }
 
   next(): Promise<IteratorResult<HumanInputEvent>> {
-    return this.queue.next();
+    return this.#queue.next();
   }
 
   async close() {
-    if (this.closed) {
+    if (this.#closed) {
       throw new Error('HumanInput already closed');
     }
-    this.closed = true;
+    this.#closed = true;
     this.#room.removeAllListeners();
     this.#speaking = false;
     if (this.#recognizeTask) {
       await gracefullyCancel(this.#recognizeTask);
     }
-    this.queue.close();
+    this.#queue.close();
   }
 
   [Symbol.asyncIterator](): HumanInput {
