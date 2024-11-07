@@ -443,44 +443,46 @@ export class LLMStream extends llm.LLMStream {
         }))
       : undefined;
 
-    const stream = await this.#client.chat.completions.create({
-      model: opts.model,
-      user: opts.user,
-      n,
-      messages: await Promise.all(
-        this.chatCtx.messages.map(async (m) => await buildMessage(m, this.#id)),
-      ),
-      temperature: temperature || opts.temperature,
-      stream_options: { include_usage: true },
-      stream: true,
-      tools,
-      parallel_tool_calls: this.fncCtx && parallelToolCalls,
-    });
+    try {
+      const stream = await this.#client.chat.completions.create({
+        model: opts.model,
+        user: opts.user,
+        n,
+        messages: await Promise.all(
+          this.chatCtx.messages.map(async (m) => await buildMessage(m, this.#id)),
+        ),
+        temperature: temperature || opts.temperature,
+        stream_options: { include_usage: true },
+        stream: true,
+        tools,
+        parallel_tool_calls: this.fncCtx && parallelToolCalls,
+      });
 
-    for await (const chunk of stream) {
-      for (const choice of chunk.choices) {
-        const chatChunk = this.#parseChoice(chunk.id, choice);
-        if (chatChunk) {
-          console.log(chatChunk.choices[0]);
-          this.queue.put(chatChunk);
-        }
+      for await (const chunk of stream) {
+        for (const choice of chunk.choices) {
+          const chatChunk = this.#parseChoice(chunk.id, choice);
+          if (chatChunk) {
+            console.log(chatChunk.choices[0]);
+            this.queue.put(chatChunk);
+          }
 
-        if (chunk.usage) {
-          const usage = chunk.usage;
-          this.queue.put({
-            requestId: chunk.id,
-            choices: [],
-            usage: {
-              completionTokens: usage.completion_tokens,
-              promptTokens: usage.prompt_tokens,
-              totalTokens: usage.total_tokens,
-            },
-          });
+          if (chunk.usage) {
+            const usage = chunk.usage;
+            this.queue.put({
+              requestId: chunk.id,
+              choices: [],
+              usage: {
+                completionTokens: usage.completion_tokens,
+                promptTokens: usage.prompt_tokens,
+                totalTokens: usage.total_tokens,
+              },
+            });
+          }
         }
       }
+    } finally {
+      this.queue.close();
     }
-
-    this.queue.close();
   }
 
   #parseChoice(id: string, choice: OpenAI.ChatCompletionChunk.Choice): llm.ChatChunk | undefined {
