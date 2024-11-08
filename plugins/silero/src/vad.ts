@@ -139,7 +139,7 @@ export class VADStream extends baseStream {
           pubPrefixPaddingSamples = Math.ceil(this.#opts.prefixPaddingDuration * pubSampleRate);
 
           speechBuffer = new Int16Array(
-            (this.#opts.maxBufferedSpeech + this.#opts.prefixPaddingDuration) * pubCurrentSample,
+            (this.#opts.maxBufferedSpeech + this.#opts.prefixPaddingDuration) * pubSampleRate,
           );
 
           if (this.#opts.sampleRate !== pubSampleRate) {
@@ -203,7 +203,7 @@ export class VADStream extends baseStream {
           } else if (!speechBufferMaxReached) {
             speechBufferMaxReached = true;
             this.#logger.warn(
-              'max_buffered_speech reached, ignoring further data for the current speech input',
+              'maxBufferedSpeech reached, ignoring further data for the current speech input',
             );
           }
 
