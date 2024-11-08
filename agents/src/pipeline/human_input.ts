@@ -8,6 +8,8 @@ import type {
   Room,
 } from '@livekit/rtc-node';
 import { AudioStream, RoomEvent, TrackSource } from '@livekit/rtc-node';
+import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { EventEmitter } from 'node:events';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import { SpeechEventType } from '../stt/stt.js';
@@ -15,7 +17,7 @@ import { AsyncIterableQueue, CancellablePromise, gracefullyCancel } from '../uti
 import type { VAD, VADEvent } from '../vad.js';
 import { VADEventType } from '../vad.js';
 
-export enum HumanInputEventType {
+export enum HumanInputEvent {
   START_OF_SPEECH,
   VAD_INFERENCE_DONE,
   END_OF_SPEECH,
@@ -23,23 +25,16 @@ export enum HumanInputEventType {
   INTERIM_TRANSCRIPT,
 }
 
-export type HumanInputEvent =
-  | {
-      type:
-        | HumanInputEventType.START_OF_SPEECH
-        | HumanInputEventType.VAD_INFERENCE_DONE
-        | HumanInputEventType.END_OF_SPEECH;
-      event: VADEvent;
-    }
-  | {
-      type: HumanInputEventType.FINAL_TRANSCRIPT | HumanInputEventType.INTERIM_TRANSCRIPT;
-      event: SpeechEvent;
-    };
+export type HumanInputCallbacks = {
+  [HumanInputEvent.START_OF_SPEECH]: (event: VADEvent) => void;
+  [HumanInputEvent.VAD_INFERENCE_DONE]: (event: VADEvent) => void;
+  [HumanInputEvent.END_OF_SPEECH]: (event: VADEvent) => void;
+  [HumanInputEvent.FINAL_TRANSCRIPT]: (event: SpeechEvent) => void;
+  [HumanInputEvent.INTERIM_TRANSCRIPT]: (event: SpeechEvent) => void;
+};
 
-export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
-  #queue = new AsyncIterableQueue<HumanInputEvent>();
+export class HumanInput extends (EventEmitter as new () => TypedEmitter<HumanInputCallbacks>) {
   #closed = false;
-
   #room: Room;
   #vad: VAD;
   #stt: STT;
@@ -51,6 +46,7 @@ export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
   #logger = log();
 
   constructor(room: Room, vad: VAD, stt: STT, participant: RemoteParticipant) {
+    super();
     this.#room = room;
     this.#vad = vad;
     this.#stt = stt;
@@ -114,15 +110,15 @@ export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
             switch (ev.type) {
               case VADEventType.START_OF_SPEECH:
                 this.#speaking = true;
-                this.#queue.put({ type: HumanInputEventType.START_OF_SPEECH, event: ev });
+                this.emit(HumanInputEvent.START_OF_SPEECH, ev);
                 break;
               case VADEventType.INFERENCE_DONE:
                 this.#speechProbability = ev.probability;
-                this.#queue.put({ type: HumanInputEventType.VAD_INFERENCE_DONE, event: ev });
+                this.emit(HumanInputEvent.VAD_INFERENCE_DONE, ev);
                 break;
               case VADEventType.END_OF_SPEECH:
                 this.#speaking = false;
-                this.#queue.put({ type: HumanInputEventType.END_OF_SPEECH, event: ev });
+                this.emit(HumanInputEvent.END_OF_SPEECH, ev);
                 break;
             }
           }
@@ -132,9 +128,9 @@ export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
           for await (const ev of sttStream) {
             if (cancelled) return;
             if (ev.type === SpeechEventType.FINAL_TRANSCRIPT) {
-              this.#queue.put({ type: HumanInputEventType.FINAL_TRANSCRIPT, event: ev });
+              this.emit(HumanInputEvent.FINAL_TRANSCRIPT, ev);
             } else {
-              this.#queue.put({ type: HumanInputEventType.INTERIM_TRANSCRIPT, event: ev });
+              this.emit(HumanInputEvent.INTERIM_TRANSCRIPT, ev);
             }
           }
         };
@@ -159,10 +155,6 @@ export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
     return this.#speechProbability;
   }
 
-  next(): Promise<IteratorResult<HumanInputEvent>> {
-    return this.#queue.next();
-  }
-
   async close() {
     if (this.#closed) {
       throw new Error('HumanInput already closed');
@@ -173,10 +165,5 @@ export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
     if (this.#recognizeTask) {
       await gracefullyCancel(this.#recognizeTask);
     }
-    this.#queue.close();
-  }
-
-  [Symbol.asyncIterator](): HumanInput {
-    return this;
   }
 }

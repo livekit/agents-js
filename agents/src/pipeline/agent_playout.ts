@@ -2,18 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, AudioSource } from '@livekit/rtc-node';
+import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import EventEmitter from 'node:events';
 import { log } from '../log.js';
 import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 
-export enum AgentPlayoutEventType {
+export enum AgentPlayoutEvent {
   PLAYOUT_STARTED,
   PLAYOUT_STOPPED,
 }
 
-export interface AgentPlayoutEvent {
-  type: AgentPlayoutEventType;
-  interrupted?: boolean;
-}
+export type AgentPlayoutCallbacks = {
+  [AgentPlayoutEvent.PLAYOUT_STARTED]: () => void;
+  [AgentPlayoutEvent.PLAYOUT_STOPPED]: (interrupt: boolean) => void;
+};
 
 export class PlayoutHandle {
   #speechId: string;
@@ -65,7 +67,7 @@ export class PlayoutHandle {
   }
 }
 
-export class AgentPlayout implements AsyncIterableIterator<AgentPlayoutEvent> {
+export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentPlayoutCallbacks>) {
   #queue = new AsyncIterableQueue<AgentPlayoutEvent>();
   #closed = false;
 
@@ -75,6 +77,7 @@ export class AgentPlayout implements AsyncIterableIterator<AgentPlayoutEvent> {
   #logger = log();
 
   constructor(audioSource: AudioSource) {
+    super();
     this.#audioSource = audioSource;
   }
 
@@ -121,7 +124,7 @@ export class AgentPlayout implements AsyncIterableIterator<AgentPlayoutEvent> {
         if (cancelled) break;
         if (firstFrame) {
           this.#logger.child({ speechId: handle.speechId }).debug('started playing the first time');
-          this.#queue.put({ type: AgentPlayoutEventType.PLAYOUT_STARTED });
+          this.emit(AgentPlayoutEvent.PLAYOUT_STARTED);
           firstFrame = false;
         }
         handle.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
@@ -150,10 +153,7 @@ export class AgentPlayout implements AsyncIterableIterator<AgentPlayoutEvent> {
       }
 
       if (!firstFrame) {
-        this.#queue.put({
-          type: AgentPlayoutEventType.PLAYOUT_STOPPED,
-          interrupted: handle.interrupted,
-        });
+        this.emit(AgentPlayoutEvent.PLAYOUT_STOPPED, handle.interrupted);
       }
 
       handle.doneFut.resolve();

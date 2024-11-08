@@ -78,14 +78,17 @@ importers:
   agents:
     dependencies:
       '@livekit/mutex':
-        specifier: ^1.0.0
-        version: 1.0.0
+        specifier: ^1.1.0
+        version: 1.1.0
       '@livekit/protocol':
         specifier: ^1.21.0
         version: 1.21.0
       '@livekit/rtc-node':
         specifier: ^0.11.1
         version: 0.11.1
+      '@livekit/typed-emitter':
+        specifier: ^3.0.0
+        version: 3.0.0
       commander:
         specifier: ^12.0.0
         version: 12.0.0
@@ -684,8 +687,8 @@ packages:
   '@livekit/changesets-changelog-github@0.0.4':
     resolution: {integrity: sha512-MXaiLYwgkYciZb8G2wkVtZ1pJJzZmVx5cM30Q+ClslrIYyAqQhRbPmZDM79/5CGxb1MTemR/tfOM25tgJgAK0g==}
 
-  '@livekit/mutex@1.0.0':
-    resolution: {integrity: sha512-aiUhoThBNF9UyGTxEURFzJLhhPLIVTnQiEVMjRhPnfHNKLfo2JY9xovHKIus7B78UD5hsP6DlgpmAsjrz4U0Iw==}
+  '@livekit/mutex@1.1.0':
+    resolution: {integrity: sha512-XRLG+z/0uoyDioupjUiskjI06Y51U/IXVPJn7qJ+R3J75XX01irYVBM9MpxeJahpVoe9QhU4moIEolX+HO9U9g==}
 
   '@livekit/protocol@1.21.0':
     resolution: {integrity: sha512-3TohFPNZy1axTuoDLU6mA1rwuP4VawgehvX52OoLJnU+fNQYfmMJqz8k7NSh79jG5I8Og77YYhT905Omrhli2A==}
@@ -3789,7 +3792,7 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  '@livekit/mutex@1.0.0': {}
+  '@livekit/mutex@1.1.0': {}
 
   '@livekit/protocol@1.21.0':
     dependencies:
@@ -3813,7 +3816,7 @@ snapshots:
   '@livekit/rtc-node@0.11.1':
     dependencies:
       '@bufbuild/protobuf': 2.2.1
-      '@livekit/mutex': 1.0.0
+      '@livekit/mutex': 1.1.0
       '@livekit/typed-emitter': 3.0.0
     optionalDependencies:
       '@livekit/rtc-node-darwin-arm64': 0.11.1
