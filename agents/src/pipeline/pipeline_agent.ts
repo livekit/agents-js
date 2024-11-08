@@ -220,7 +220,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   #agentOutput?: AgentOutput;
   #trackPublishedFut = new Future();
   #pendingAgentReply?: SpeechHandle;
-  #agentReplyTask?: Promise<void>;
+  #agentReplyTask?: CancellablePromise<void>;
   #playingSpeech?: SpeechHandle;
   #transcribedText = '';
   #transcribedInterimText = '';
@@ -468,7 +468,9 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.#transcribedText,
     );
     const newHandle = this.#pendingAgentReply;
-    this.#agentReplyTask = this.#synthesizeAnswerTask(this.#agentReplyTask, newHandle);
+    this.#agentReplyTask = CancellablePromise.from(
+      this.#synthesizeAnswerTask(this.#agentReplyTask, newHandle),
+    );
   }
 
   async #synthesizeAnswerTask(
@@ -806,7 +808,7 @@ class DeferredReplyValidation {
   readonly LATE_TRANSCRIPT_TOLERANCE = 1.5; // late compared to end of speech
 
   #validateFunc: () => Promise<void>;
-  #validatingPromise?: Promise<void>;
+  // #validatingPromise?: Promise<void>;
   #validatingFuture = new Future();
   #lastFinalTranscript = '';
   #lastRecvEndOfSpeechTime = 0;
@@ -882,6 +884,7 @@ class DeferredReplyValidation {
     if (this.#validatingFuture.done) {
       this.#validatingFuture = new Future();
     }
-    this.#validatingPromise = runTask(delay);
+    // TODO(nbsp): promise
+    // this.#validatingPromise = runTask(delay);
   }
 }
