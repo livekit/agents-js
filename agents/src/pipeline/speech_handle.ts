@@ -130,7 +130,8 @@ export class SpeechHandle {
   }
 
   cancel() {
-    this.#initFut.reject(new Error());
+    // TODO(nbsp): cancelable
+    // this.#initFut.reject(new Error());
     this.#synthesisHandle?.interrupt();
   }
 }

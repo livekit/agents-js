@@ -135,6 +135,9 @@ importers:
       '@livekit/agents-plugin-openai':
         specifier: workspace:*
         version: link:../plugins/openai
+      '@livekit/agents-plugin-silero':
+        specifier: workspace:*
+        version: link:../plugins/silero
       '@livekit/rtc-node':
         specifier: ^0.11.1
         version: 0.11.1

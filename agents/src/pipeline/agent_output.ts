@@ -97,9 +97,8 @@ export class AgentOutput {
   }
 
   #synthesize(handle: SynthesisHandle): CancellablePromise<void> {
-    return new CancellablePromise(async (resolve, reject, onCancel) => {
-      let cancelled = false;
-
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    return new CancellablePromise(async (resolve, _, onCancel) => {
       const ttsSource = await handle.ttsSource;
       let task: CancellablePromise<void>;
       if (typeof ttsSource === 'string') {
@@ -109,28 +108,23 @@ export class AgentOutput {
       }
 
       onCancel(() => {
-        cancelled = true;
         gracefullyCancel(task);
       });
 
       try {
         await Promise.any([task, handle.intFut]);
       } finally {
-        cancelled = true;
         gracefullyCancel(task);
       }
 
-      if (cancelled) {
-        reject();
-      } else {
-        resolve();
-      }
+      resolve();
     });
   }
 }
 
 const stringSynthesisTask = (text: string, handle: SynthesisHandle): CancellablePromise<void> => {
-  return new CancellablePromise<void>(async (resolve, reject, onCancel) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  return new CancellablePromise<void>(async (resolve, _, onCancel) => {
     let cancelled = false;
     onCancel(() => {
       cancelled = true;
@@ -143,11 +137,7 @@ const stringSynthesisTask = (text: string, handle: SynthesisHandle): Cancellable
       handle.queue.put(audio.frame);
     }
 
-    if (cancelled) {
-      reject();
-    } else {
-      resolve();
-    }
+    resolve();
   });
 };
 

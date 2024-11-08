@@ -52,8 +52,8 @@ export class HumanInput extends (EventEmitter as new () => TypedEmitter<HumanInp
     this.#stt = stt;
     this.#participant = participant;
 
-    this.#room.on(RoomEvent.TrackPublished, this.#subscribeToMicrophone);
-    this.#room.on(RoomEvent.TrackSubscribed, this.#subscribeToMicrophone);
+    this.#room.on(RoomEvent.TrackPublished, this.#subscribeToMicrophone.bind(this));
+    this.#room.on(RoomEvent.TrackSubscribed, this.#subscribeToMicrophone.bind(this));
     this.#subscribeToMicrophone();
   }
 
@@ -87,7 +87,8 @@ export class HumanInput extends (EventEmitter as new () => TypedEmitter<HumanInp
 
       const audioStream = new AudioStream(track, 16000);
 
-      this.#recognizeTask = new CancellablePromise(async (resolve, reject, onCancel) => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      this.#recognizeTask = new CancellablePromise(async (resolve, _, onCancel) => {
         let cancelled = false;
         onCancel(() => {
           cancelled = true;
@@ -129,7 +130,7 @@ export class HumanInput extends (EventEmitter as new () => TypedEmitter<HumanInp
             if (cancelled) return;
             if (ev.type === SpeechEventType.FINAL_TRANSCRIPT) {
               this.emit(HumanInputEvent.FINAL_TRANSCRIPT, ev);
-            } else {
+            } else if (ev.type == SpeechEventType.INTERIM_TRANSCRIPT) {
               this.emit(HumanInputEvent.INTERIM_TRANSCRIPT, ev);
             }
           }
@@ -138,11 +139,7 @@ export class HumanInput extends (EventEmitter as new () => TypedEmitter<HumanInp
         await Promise.all([audioStreamCo(), vadStreamCo(), sttStreamCo()]);
         sttStream.close();
         vadStream.close();
-        if (cancelled) {
-          resolve();
-        } else {
-          reject();
-        }
+        resolve();
       });
     }
   }

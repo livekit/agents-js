@@ -114,7 +114,8 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
 
     let firstFrame = true;
 
-    const captureTask = new CancellablePromise<void>(async (resolve, reject, onCancel) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const captureTask = new CancellablePromise<void>(async (resolve, _, onCancel) => {
       let cancelled = false;
       onCancel(() => {
         cancelled = true;
@@ -135,11 +136,7 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
         await this.#audioSource.waitForPlayout();
       }
 
-      if (cancelled) {
-        reject();
-      } else {
-        resolve();
-      }
+      resolve();
     });
 
     try {

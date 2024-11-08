@@ -33,8 +33,8 @@ import type { VAD, VADEvent } from '../vad.js';
 import type { SpeechSource, SynthesisHandle } from './agent_output.js';
 import { AgentOutput } from './agent_output.js';
 import { AgentPlayout, AgentPlayoutEvent } from './agent_playout.js';
-import { HumanInput, HumanInputEvent } from './human_input';
-import { SpeechHandle } from './speech_handle';
+import { HumanInput, HumanInputEvent } from './human_input.js';
+import { SpeechHandle } from './speech_handle.js';
 
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
 
@@ -886,5 +886,6 @@ class DeferredReplyValidation {
     }
     // TODO(nbsp): promise
     // this.#validatingPromise = runTask(delay);
+    runTask(delay);
   }
 }
