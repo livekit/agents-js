@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { RemoteParticipant, Room } from '@livekit/rtc-node';
+import type { LocalTrackPublication, RemoteParticipant, Room } from '@livekit/rtc-node';
 import {
   AudioSource,
   LocalAudioTrack,
@@ -11,8 +11,14 @@ import {
 } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'node:events';
-import type { FunctionContext, LLM, LLMStream } from '../llm/index.js';
-import { ChatContext } from '../llm/index.js';
+import {
+  CallableFunctionResult,
+  FunctionCallInfo,
+  FunctionContext,
+  LLM,
+  LLMStream,
+} from '../llm/index.js';
+import { ChatContext, ChatMessage, ChatRole } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
 import {
@@ -22,9 +28,9 @@ import {
 } from '../tokenize/basic/index.js';
 import type { SentenceTokenizer, WordTokenizer } from '../tokenize/tokenizer.js';
 import type { TTS } from '../tts/index.js';
-import { AsyncIterableQueue, CancellablePromise, Future } from '../utils.js';
+import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 import type { VAD, VADEvent } from '../vad.js';
-import type { SpeechSource } from './agent_output.js';
+import type { SpeechSource, SynthesisHandle } from './agent_output.js';
 import { AgentOutput } from './agent_output.js';
 import { AgentPlayout, AgentPlayoutEvent } from './agent_playout.js';
 import { HumanInput, HumanInputEvent } from './human_input';
@@ -59,11 +65,11 @@ export type VPACallbacks = {
   [VPAEvent.USER_STOPPED_SPEAKING]: () => void;
   [VPAEvent.AGENT_STARTED_SPEAKING]: () => void;
   [VPAEvent.AGENT_STOPPED_SPEAKING]: () => void;
-  [VPAEvent.USER_SPEECH_COMMITTED]: () => void;
-  [VPAEvent.AGENT_SPEECH_COMMITTED]: () => void;
-  [VPAEvent.AGENT_SPEECH_INTERRUPTED]: () => void;
-  [VPAEvent.FUNCTION_CALLS_COLLECTED]: () => void;
-  [VPAEvent.FUNCTION_CALLS_FINISHED]: () => void;
+  [VPAEvent.USER_SPEECH_COMMITTED]: (msg: ChatMessage) => void;
+  [VPAEvent.AGENT_SPEECH_COMMITTED]: (msg: ChatMessage) => void;
+  [VPAEvent.AGENT_SPEECH_INTERRUPTED]: (msg: ChatMessage) => void;
+  [VPAEvent.FUNCTION_CALLS_COLLECTED]: (funcs: FunctionCallInfo[]) => void;
+  [VPAEvent.FUNCTION_CALLS_FINISHED]: (funcs: CallableFunctionResult[]) => void;
 };
 
 export class AgentCallContext {
@@ -107,7 +113,8 @@ const defaultBeforeLLMCallback: BeforeLLMCallback = (
 };
 
 const defaultBeforeTTSCallback: BeforeTTSCallback = (
-  agent: VoicePipelineAgent,
+  // eslint-ignore-next-line @typescript-eslint/no-unused-vars
+  _: VoicePipelineAgent,
   text: string | AsyncIterable<string>,
 ): string | AsyncIterable<string> => {
   return text;
@@ -182,8 +189,6 @@ export interface VPAOptions {
    * (e.g. editing the pronunciation of a word).
    */
   beforeTTSCallback: BeforeTTSCallback;
-  /** Whether to enable plotting for debugging. */
-  plotting: boolean;
   /** Options for assistant transcription. */
   transcription: AgentTranscriptionOptions;
 }
@@ -193,12 +198,11 @@ const defaultVPAOptions: VPAOptions = {
   allowInterruptions: true,
   interruptSpeechDuration: 0.5,
   interruptMinWords: 0,
-  minEndpointingDelay: 0.5,
+  minEndpointingDelay: 500,
   maxRecursiveFncCalls: 1,
   preemptiveSynthesis: false,
   beforeLLMCallback: defaultBeforeLLMCallback,
   beforeTTSCallback: defaultBeforeTTSCallback,
-  plotting: false,
   transcription: defaultAgentTranscriptionOptions,
 };
 
@@ -228,7 +232,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   #participant: RemoteParticipant | string | null = null;
   #deferredValidation: DeferredReplyValidation;
   #logger = log();
-  #agentPublication: any;
+  #agentPublication?: LocalTrackPublication;
 
   constructor(
     /** Voice Activity Detection instance. */
@@ -245,8 +249,6 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     super();
 
     this.#opts = { ...defaultVPAOptions, ...opts };
-
-    // TODO(nbsp): AssistantPlotter
 
     this.#vad = vad;
     this.#stt = stt;
@@ -334,6 +336,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     await this.#trackPublishedFut.await;
     const newHandle = SpeechHandle.createAssistantSpeech(allowInterruptions, addToChatCtx);
     const synthesisHandle = this.#synthesizeAgentSpeech(newHandle.id, source);
+    newHandle.initialize(source, synthesisHandle);
     this.#addSpeechForPlayout(newHandle);
   }
 
@@ -366,7 +369,6 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
 
     this.#humanInput = new HumanInput(this.#room, this.#vad, this.#stt, this.#participant);
     this.#humanInput.on(HumanInputEvent.START_OF_SPEECH, (event) => {
-      // TODO(nbsp): this.plotter.plot_event
       this.emit(VPAEvent.USER_STARTED_SPEAKING);
       this.#deferredValidation.onHumanStartOfSpeech(event);
     });
@@ -384,18 +386,11 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         this.#agentOutput.playout.targetVolume = tv;
       }
 
-      const smoothedTv = this.#agentOutput.playout.targetVolume;
-
-      // self._plotter.plot_value("raw_vol", tv)
-      // self._plotter.plot_value("smoothed_vol", smoothed_tv)
-      // self._plotter.plot_value("vad_probability", ev.probability)
-
       if (event.speechDuration >= this.#opts.interruptSpeechDuration) {
         this.#interruptIfPossible();
       }
     });
     this.#humanInput.on(HumanInputEvent.END_OF_SPEECH, (event) => {
-      // TODO(nbsp): this.plotter.plot_event
       this.emit(VPAEvent.USER_STARTED_SPEAKING);
       this.#deferredValidation.onHumanEndOfSpeech(event);
       this.#lastEndOfSpeechTime = Date.now();
@@ -429,10 +424,6 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   }
 
   async #run() {
-    if (this.#opts.plotting) {
-      // await this.#plotter.start()
-    }
-
     this.#updateState('initializing');
     const audioSource = new AudioSource(this.#tts.sampleRate, this.#tts.numChannels);
     const track = LocalAudioTrack.createAudioTrack('assistant_voice', audioSource);
@@ -447,13 +438,11 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     this.#agentOutput = new AgentOutput(agentPlayout, ttsStream);
 
     agentPlayout.on(AgentPlayoutEvent.PLAYOUT_STARTED, () => {
-      // this.plotter
       this.emit(VPAEvent.AGENT_STARTED_SPEAKING);
       this.#updateState('speaking');
     });
     // eslint-ignore-next-line @typescript-eslint/no-unused-vars
     agentPlayout.on(AgentPlayoutEvent.PLAYOUT_STOPPED, (_) => {
-      // this.plotter
       this.emit(VPAEvent.AGENT_STOPPED_SPEAKING);
       this.#updateState('listening');
     });
@@ -467,19 +456,326 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     }
   }
 
-  #synthesizeAgentReply() {}
+  #synthesizeAgentReply() {
+    this.#pendingAgentReply?.cancel();
+    if (this.#humanInput && this.#humanInput.speaking) {
+      this.#updateState('thinking', 0.2);
+    }
 
-  async #synthesizeAnswerTask(oldTask: CancellablePromise<void>, handle?: SpeechHandle) {}
+    this.#pendingAgentReply = SpeechHandle.createAssistantReply(
+      this.#opts.allowInterruptions,
+      true,
+      this.#transcribedText,
+    );
+    const newHandle = this.#pendingAgentReply;
+    this.#agentReplyTask = this.#synthesizeAnswerTask(this.#agentReplyTask, newHandle);
+  }
 
-  async #playSpeech(handle: SpeechHandle) {}
+  async #synthesizeAnswerTask(
+    oldTask: CancellablePromise<void> | undefined,
+    handle?: SpeechHandle,
+  ) {
+    if (oldTask) {
+      await gracefullyCancel(oldTask);
+    }
 
-  #synthesizeAgentSpeech(speechId: string, source: string | LLMStream | AsyncIterable<string>) {}
+    const copiedCtx = this.chatCtx.copy();
+    const playingSpeech = this.#playingSpeech;
+    if (playingSpeech && playingSpeech.initialized) {
+      if (
+        (!playingSpeech.userQuestion || playingSpeech.userCommitted) &&
+        !playingSpeech.speechCommitted
+      ) {
+        // the speech is playing but not committed yet,
+        // add it to the chat context for this new reply synthesis
+        copiedCtx.messages.push(
+          ChatMessage.create({
+            // TODO(nbsp): uhhh unsure where to get the played text here
+            // text: playingSpeech.synthesisHandle.(theres no ttsForwarder here)
+            role: ChatRole.ASSISTANT,
+          }),
+        );
+      }
 
-  #validateReplyIfPossible() {}
+      copiedCtx.messages.push(
+        ChatMessage.create({
+          text: handle?.userQuestion,
+          role: ChatRole.USER,
+        }),
+      );
 
-  #interruptIfPossible() {}
+      let llmStream = await this.#opts.beforeLLMCallback(this, copiedCtx);
+      if (llmStream === false) {
+        handle?.cancel();
+        return;
+      }
 
-  #addSpeechForPlayout(handle: SpeechHandle) {}
+      // fallback to default impl if no custom/user stream is returned
+      if (!(llmStream instanceof LLMStream)) {
+        llmStream = (await defaultBeforeLLMCallback(this, copiedCtx)) as LLMStream;
+      }
+
+      if (handle?.interrupted) {
+        return;
+      }
+
+      const synthesisHandle = this.#synthesizeAgentSpeech(handle!.id, llmStream);
+      handle?.initialize(llmStream, synthesisHandle);
+
+      // TODO(theomonnom): find a more reliable way to get the elapsed time from the last EOS
+      // (VAD could not have detected any speech — maybe unlikely?)
+      const elapsed = !!this.#lastEndOfSpeechTime
+        ? Math.round((Date.now() - this.#lastEndOfSpeechTime) * 1000) / 1000
+        : -1;
+
+      this.#logger.child({ speechId: handle!.id, elapsed }).debug('synthesizing agent reply');
+    }
+  }
+
+  async #playSpeech(handle: SpeechHandle) {
+    try {
+      await handle.waitForInitialization();
+    } catch {
+      return;
+    }
+    await this.#agentPublication!.waitForSubscription();
+    const synthesisHandle = handle.synthesisHandle;
+    if (synthesisHandle.interrupted) return;
+
+    const userQuestion = handle.userQuestion;
+    const playHandle = synthesisHandle.play();
+    const joinFut = playHandle.join();
+
+    const commitUserQuestionIfNeeded = () => {
+      if (!userQuestion || synthesisHandle.interrupted || handle.userCommitted) return;
+      const isUsingtools = handle.source instanceof LLMStream && handle.source.functionCalls.length;
+
+      // make sure at least some speech was played before committing the user message
+      // since we try to validate as fast as possible it is possible the agent gets interrupted
+      // really quickly (barely audible), we don't want to mark this question as "answered".
+      if (
+        handle.allowInterruptions &&
+        !isUsingtools &&
+        playHandle.timePlayed < this.MIN_TIME_PLAYED_FOR_COMMIT &&
+        !joinFut.done
+      ) {
+        return;
+      }
+
+      this.#logger.child({ userTranscript: userQuestion }).debug('committed user transcript');
+      const userMsg = ChatMessage.create({ text: userQuestion, role: ChatRole.USER });
+      this.chatCtx.messages.push(userMsg);
+      this.emit(VPAEvent.USER_SPEECH_COMMITTED, userMsg);
+
+      this.#transcribedText = this.#transcribedText.slice(userQuestion.length);
+    };
+
+    // wait for the playHandle to finish and check every 1s if user question should be committed
+    commitUserQuestionIfNeeded();
+
+    while (!joinFut.done) {
+      await new Promise<void>(async (resolve) => {
+        setTimeout(resolve, 500);
+        await joinFut.await;
+        resolve();
+      });
+      commitUserQuestionIfNeeded();
+      if (handle.interrupted) break;
+    }
+    commitUserQuestionIfNeeded();
+
+    // TODO(nbsp): what goes here
+    const collectedText = '';
+    const isUsingTools = handle.source instanceof LLMStream && handle.source.functionCalls.length;
+    let extraToolsMessages = []; // additional messages from the functions to add to the context
+    let interrupted = handle.interrupted;
+
+    // if the answer is using tools, execute the functions and automatically generate
+    // a response to the user question from the returned values
+    if (isUsingTools && !interrupted) {
+      if (!userQuestion || handle.userCommitted) {
+        throw new Error('user speech should have been committed before using tools');
+      }
+      const llmStream = handle.source;
+      let newFunctionCalls = llmStream.functionCalls;
+
+      for (let i = 0; i < this.#opts.maxRecursiveFncCalls; i++) {
+        this.emit(VPAEvent.FUNCTION_CALLS_COLLECTED, newFunctionCalls);
+        let calledFuncs: CallableFunctionResult[] = [];
+        for (const fnc of newFunctionCalls) {
+          const calledFnc = fnc.func.execute(fnc.params);
+          this.#logger
+            .child({ function: fnc.name, speechId: handle.id })
+            .debug('executing AI function');
+          try {
+            await calledFnc.then(
+              (result) =>
+                calledFuncs.push({
+                  name: fnc.name,
+                  toolCallId: fnc.toolCallId,
+                  result,
+                }),
+              (error) =>
+                calledFuncs.push({
+                  name: fnc.name,
+                  toolCallId: fnc.toolCallId,
+                  error,
+                }),
+            );
+          } catch {
+            this.#logger
+              .child({ function: fnc.name, speechId: handle.id })
+              .error('error executing AI function');
+          }
+        }
+
+        let toolCallsInfo = [];
+        let toolCallsResults = [];
+        for (const fnc of calledFuncs) {
+          // ignore the function calls that return void
+          if (fnc.result === undefined) continue;
+          toolCallsInfo.push(fnc);
+          toolCallsResults.push(ChatMessage.createToolFromFunctionResult(fnc));
+        }
+
+        if (!toolCallsInfo.length) break;
+
+        // generate an answer from the tool calls
+        extraToolsMessages.push(ChatMessage.createToolCalls(toolCallsInfo, collectedText));
+        extraToolsMessages.push(...toolCallsResults);
+
+        const chatCtx = handle.source.chatCtx.copy();
+        chatCtx.messages.push(...extraToolsMessages);
+
+        const answerLLMStream = this.llm.chat({
+          chatCtx,
+          fncCtx: i < this.#opts.maxRecursiveFncCalls - 1 ? this.fncCtx : undefined,
+        });
+        const answerSynthesis = this.#synthesizeAgentSpeech(handle.id, answerLLMStream);
+        // replace the synthesis handle with the new one to allow interruption
+        handle.synthesisHandle = answerSynthesis;
+        const playHandle = answerSynthesis.play();
+        await playHandle.join().await;
+
+        // TODO(nbsp): what text goes here
+        const collectedText = '';
+        interrupted = answerSynthesis.interrupted;
+        newFunctionCalls = answerLLMStream.functionCalls;
+
+        this.emit(VPAEvent.FUNCTION_CALLS_FINISHED, calledFuncs);
+        if (!newFunctionCalls) break;
+      }
+
+      if (handle.addToChatCtx && (!userQuestion || handle.userCommitted)) {
+        this.chatCtx.messages.push(...extraToolsMessages);
+        if (interrupted) {
+          collectedText + '…';
+        }
+
+        const msg = ChatMessage.create({ text: collectedText, role: ChatRole.ASSISTANT });
+        this.chatCtx.messages.push(msg);
+
+        handle.markSpeechCommitted();
+        if (interrupted) {
+          this.emit(VPAEvent.AGENT_SPEECH_INTERRUPTED, msg);
+        } else {
+          this.emit(VPAEvent.AGENT_SPEECH_COMMITTED, msg);
+        }
+
+        this.#logger
+          .child({
+            agentTranscript: collectedText,
+            interrupted,
+            speechId: handle.id,
+          })
+          .debug('committed agent speech');
+      }
+    }
+  }
+
+  #synthesizeAgentSpeech(
+    speechId: string,
+    source: string | LLMStream | AsyncIterable<string>,
+  ): SynthesisHandle {
+    if (!this.#agentOutput) {
+      throw new Error('agent output should be initialized when ready');
+    }
+
+    if (source instanceof LLMStream) {
+      source = llmStreamToStringIterable(speechId, source);
+    }
+
+    const ogSource = source;
+    if (!(typeof source === 'string')) {
+      // TODO(nbsp): itertools.tee
+    }
+
+    const ttsSource = this.#opts.beforeTTSCallback(this, ogSource);
+    if (!ttsSource) {
+      throw new Error('beforeTTSCallback must return string or AsyncIterable<string>');
+    }
+
+    return this.#agentOutput.synthesize(speechId, ttsSource);
+  }
+
+  async #validateReplyIfPossible() {
+    if (this.#playingSpeech && this.#playingSpeech.allowInterruptions) {
+      this.#logger
+        .child({ speechId: this.#playingSpeech.id })
+        .debug('skipping validation, agent is speaking and does not allow interruptions');
+      return;
+    }
+
+    if (this.#pendingAgentReply) {
+      if (this.#opts.preemptiveSynthesis || !this.#transcribedText) {
+        return;
+      }
+      this.#synthesizeAgentReply();
+    }
+
+    if (!this.#pendingAgentReply) {
+      throw new Error('pending agent reply is undefined');
+    }
+
+    // in some bad timimg, we could end up with two pushed agent replies inside the speech queue.
+    // so make sure we directly interrupt every reply when validating a new one
+    for await (const speech of this.#speechQueue) {
+      if (!speech.isReply) continue;
+      if (!speech.allowInterruptions) speech.interrupt();
+    }
+
+    this.#logger.child({ speechId: this.#pendingAgentReply.id }).debug('validated agent reply');
+
+    this.#addSpeechForPlayout(this.#pendingAgentReply);
+    this.#pendingAgentReply = undefined;
+    this.#transcribedInterimText = '';
+  }
+
+  #interruptIfPossible() {
+    if (
+      !this.#playingSpeech ||
+      this.#playingSpeech.allowInterruptions ||
+      this.#playingSpeech.interrupted
+    ) {
+      return;
+    }
+
+    if (this.#opts.interruptMinWords !== 0) {
+      // check the final/interim transcribed text for the minimum word count
+      // to interrupt the agent speech
+      const interimWords = this.#opts.transcription.wordTokenizer.tokenize(
+        this.#transcribedInterimText,
+      );
+      if (interimWords.length < this.#opts.interruptMinWords) {
+        return;
+      }
+    }
+    this.#playingSpeech.interrupt();
+  }
+
+  #addSpeechForPlayout(handle: SpeechHandle) {
+    this.#speechQueue.put(handle);
+  }
 
   /** Close the voice assistant. */
   async close() {
@@ -488,7 +784,28 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     }
 
     this.#room?.removeAllListeners(RoomEvent.ParticipantConnected);
-    // await this.#deferredValidation.close()
+    // TODO(nbsp): await this.#deferredValidation.close()
+  }
+}
+
+async function* llmStreamToStringIterable(
+  speechId: string,
+  stream: LLMStream,
+): AsyncGenerator<string> {
+  const startTime = Date.now();
+  let firstFrame = true;
+
+  for await (const chunk of stream) {
+    const content = chunk.choices[0].delta.content;
+    if (!content) continue;
+
+    if (firstFrame) {
+      firstFrame = false;
+      log()
+        .child({ speechId, elapsed: Math.round(Date.now() * 1000 - startTime) / 1000 })
+        .debug('received first LLM token');
+    }
+    yield content;
   }
 }
 
@@ -499,7 +816,7 @@ class DeferredReplyValidation {
   readonly PUNCTUATION_REDUCE_FACTOR = 0.75;
   readonly LATE_TRANSCRIPT_TOLERANCE = 1.5; // late compared to end of speech
 
-  #validateFunc: () => void;
+  #validateFunc: () => Promise<void>;
   #validatingPromise?: Promise<void>;
   #validatingFuture = new Future();
   #lastFinalTranscript = '';
@@ -508,7 +825,7 @@ class DeferredReplyValidation {
   #endOfSpeechDelay: number;
   #finalTranscriptDelay: number;
 
-  constructor(validateFunc: () => void, minEndpointingDelay: number) {
+  constructor(validateFunc: () => Promise<void>, minEndpointingDelay: number) {
     this.#validateFunc = validateFunc;
     this.#endOfSpeechDelay = minEndpointingDelay;
     this.#finalTranscriptDelay = minEndpointingDelay;
@@ -533,6 +850,7 @@ class DeferredReplyValidation {
   // eslint-ignore-next-line @typescript-eslint/no-unused-vars
   onHumanStartOfSpeech(_: VADEvent) {
     this.#speaking = true;
+    // TODO(nbsp):
     // if (this.validating) {
     //   this.#validatingPromise.cancel()
     // }
@@ -551,7 +869,7 @@ class DeferredReplyValidation {
     }
   }
 
-  // aclose
+  // TODO(nbsp): aclose
 
   #endWithPunctuation(): boolean {
     return (
@@ -569,7 +887,7 @@ class DeferredReplyValidation {
     const runTask = async (delay: number) => {
       await new Promise((resolve) => setTimeout(resolve, delay));
       this.#resetStates();
-      this.#validateFunc();
+      await this.#validateFunc();
     };
 
     if (this.#validatingFuture.done) {

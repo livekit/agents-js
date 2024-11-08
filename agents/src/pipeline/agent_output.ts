@@ -88,11 +88,12 @@ export class AgentOutput {
     await Promise.all(this.#tasks);
   }
 
-  synthesize(speechId: string, ttsSource: SpeechSource) {
+  synthesize(speechId: string, ttsSource: SpeechSource): SynthesisHandle {
     const handle = new SynthesisHandle(speechId, ttsSource, this.#agentPlayout, this.#ttsStream);
     const task = this.#synthesize(handle);
     this.#tasks.push(task);
     task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
+    return handle
   }
 
   #synthesize(handle: SynthesisHandle): CancellablePromise<void> {
