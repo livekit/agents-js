@@ -103,7 +103,7 @@ export class ChatMessage {
 
     if (!images.length) {
       return new ChatMessage({
-        role: ChatRole.ASSISTANT,
+        role,
         content: text,
       });
     } else {
