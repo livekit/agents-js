@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame } from '@livekit/rtc-node';
-import type { CallableFunctionResult, FunctionContext } from './function_context.js';
+import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
+import type { CallableFunctionResult, FunctionCallInfo } from './function_context.js';
 
 export enum ChatRole {
   SYSTEM,
@@ -12,7 +12,7 @@ export enum ChatRole {
 }
 
 export interface ChatImage {
-  image: string | AudioFrame;
+  image: string | VideoFrame;
   inferenceWidth?: number;
   inferenceHeight?: number;
   /**
@@ -39,7 +39,7 @@ export class ChatMessage {
   readonly id?: string;
   readonly name?: string;
   readonly content?: ChatContent | ChatContent[];
-  readonly toolCalls?: FunctionContext;
+  readonly toolCalls?: FunctionCallInfo[];
   readonly toolCallId?: string;
   readonly toolException?: Error;
 
@@ -57,7 +57,7 @@ export class ChatMessage {
     id?: string;
     name?: string;
     content?: ChatContent | ChatContent[];
-    toolCalls?: FunctionContext;
+    toolCalls?: FunctionCallInfo[];
     toolCallId?: string;
     toolException?: Error;
   }) {
@@ -84,7 +84,7 @@ export class ChatMessage {
     });
   }
 
-  static createToolCalls(toolCalls: FunctionContext, text = '') {
+  static createToolCalls(toolCalls: FunctionCallInfo[], text = '') {
     return new ChatMessage({
       role: ChatRole.ASSISTANT,
       toolCalls,
@@ -116,7 +116,15 @@ export class ChatMessage {
 
   /** Returns a structured clone of this message. */
   copy(): ChatMessage {
-    return structuredClone(this);
+    return new ChatMessage({
+      role: this.role,
+      id: this.id,
+      name: this.name,
+      content: this.content,
+      toolCalls: this.toolCalls,
+      toolCallId: this.toolCallId,
+      toolException: this.toolException,
+    });
   }
 }
 
@@ -124,13 +132,16 @@ export class ChatContext {
   messages: ChatMessage[] = [];
   metadata: { [id: string]: any } = {};
 
-  append(msg: { text?: string; images: ChatImage[]; role: ChatRole }): ChatContext {
+  append(msg: { text?: string; images?: ChatImage[]; role: ChatRole }): ChatContext {
     this.messages.push(ChatMessage.create(msg));
     return this;
   }
 
   /** Returns a structured clone of this context. */
   copy(): ChatContext {
-    return structuredClone(this);
+    const ctx = new ChatContext();
+    ctx.messages.push(...this.messages.map((msg) => msg.copy()));
+    ctx.metadata = structuredClone(this.metadata);
+    return ctx;
   }
 }

@@ -19,15 +19,16 @@ export interface CallableFunction<P extends z.ZodTypeAny = any, R = any> {
 }
 
 /** A function that has been called but is not yet running */
-export interface DeferredFunction<P extends z.ZodTypeAny = any, R = any> {
+export interface FunctionCallInfo<P extends z.ZodTypeAny = any, R = any> {
   name: string;
   func: CallableFunction<P, R>;
   toolCallId: string;
   rawParams: string;
   params: inferParameters<P>;
+  task?: PromiseLike<CallableFunctionResult>;
 }
 
-/** A currently-running function call, called by the LLM. */
+/** The result of a ran FunctionCallInfo. */
 export interface CallableFunctionResult {
   name: string;
   toolCallId: string;
@@ -95,5 +96,25 @@ export const oaiParams = (p: z.AnyZodObject) => {
     type,
     properties,
     required: requiredProperties,
+  };
+};
+
+/** @internal */
+export const oaiBuildFunctionInfo = (
+  fncCtx: FunctionContext,
+  toolCallId: string,
+  fncName: string,
+  rawArgs: string,
+): FunctionCallInfo => {
+  if (!fncCtx[fncName]) {
+    throw new Error(`AI function ${fncName} not found`);
+  }
+
+  return {
+    name: fncName,
+    func: fncCtx[fncName],
+    toolCallId,
+    rawParams: rawArgs,
+    params: JSON.parse(rawArgs),
   };
 };

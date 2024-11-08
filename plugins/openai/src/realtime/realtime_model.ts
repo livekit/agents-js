@@ -139,7 +139,6 @@ class ConversationItem {
     });
   }
 
-  // create(item: api_proto.ConversationItemCreateContent, previousItemId?: string): void {
   create(message: llm.ChatMessage, previousItemId?: string): void {
     if (!message.content) {
       return;
