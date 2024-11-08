@@ -93,7 +93,7 @@ export class AgentOutput {
     const task = this.#synthesize(handle);
     this.#tasks.push(task);
     task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
-    return handle
+    return handle;
   }
 
   #synthesize(handle: SynthesisHandle): CancellablePromise<void> {

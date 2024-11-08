@@ -11,13 +11,13 @@ import {
 } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'node:events';
-import {
+import type {
   CallableFunctionResult,
   FunctionCallInfo,
   FunctionContext,
   LLM,
-  LLMStream,
 } from '../llm/index.js';
+import { LLMStream } from '../llm/index.js';
 import { ChatContext, ChatMessage, ChatRole } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
@@ -113,7 +113,7 @@ const defaultBeforeLLMCallback: BeforeLLMCallback = (
 };
 
 const defaultBeforeTTSCallback: BeforeTTSCallback = (
-  // eslint-ignore-next-line @typescript-eslint/no-unused-vars
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _: VoicePipelineAgent,
   text: string | AsyncIterable<string>,
 ): string | AsyncIterable<string> => {
@@ -441,7 +441,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.emit(VPAEvent.AGENT_STARTED_SPEAKING);
       this.#updateState('speaking');
     });
-    // eslint-ignore-next-line @typescript-eslint/no-unused-vars
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     agentPlayout.on(AgentPlayoutEvent.PLAYOUT_STOPPED, (_) => {
       this.emit(VPAEvent.AGENT_STOPPED_SPEAKING);
       this.#updateState('listening');
@@ -585,9 +585,9 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     commitUserQuestionIfNeeded();
 
     // TODO(nbsp): what goes here
-    const collectedText = '';
+    let collectedText = '';
     const isUsingTools = handle.source instanceof LLMStream && handle.source.functionCalls.length;
-    let extraToolsMessages = []; // additional messages from the functions to add to the context
+    const extraToolsMessages = []; // additional messages from the functions to add to the context
     let interrupted = handle.interrupted;
 
     // if the answer is using tools, execute the functions and automatically generate
@@ -601,39 +601,28 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
 
       for (let i = 0; i < this.#opts.maxRecursiveFncCalls; i++) {
         this.emit(VPAEvent.FUNCTION_CALLS_COLLECTED, newFunctionCalls);
-        let calledFuncs: CallableFunctionResult[] = [];
-        for (const fnc of newFunctionCalls) {
-          const calledFnc = fnc.func.execute(fnc.params);
+        const calledFuncs: FunctionCallInfo[] = [];
+        for (const func of newFunctionCalls) {
+          const task = func.func.execute(func.params);
+          calledFuncs.push({ ...func, task });
           this.#logger
-            .child({ function: fnc.name, speechId: handle.id })
+            .child({ function: func.name, speechId: handle.id })
             .debug('executing AI function');
           try {
-            await calledFnc.then(
-              (result) =>
-                calledFuncs.push({
-                  name: fnc.name,
-                  toolCallId: fnc.toolCallId,
-                  result,
-                }),
-              (error) =>
-                calledFuncs.push({
-                  name: fnc.name,
-                  toolCallId: fnc.toolCallId,
-                  error,
-                }),
-            );
+            await task;
           } catch {
             this.#logger
-              .child({ function: fnc.name, speechId: handle.id })
+              .child({ function: func.name, speechId: handle.id })
               .error('error executing AI function');
           }
         }
 
-        let toolCallsInfo = [];
-        let toolCallsResults = [];
+        const toolCallsInfo = [];
+        const toolCallsResults = [];
         for (const fnc of calledFuncs) {
           // ignore the function calls that return void
-          if (fnc.result === undefined) continue;
+          const task = await fnc.task;
+          if (!task || task.result === undefined) continue;
           toolCallsInfo.push(fnc);
           toolCallsResults.push(ChatMessage.createToolFromFunctionResult(fnc));
         }
@@ -658,7 +647,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         await playHandle.join().await;
 
         // TODO(nbsp): what text goes here
-        const collectedText = '';
+        collectedText = '';
         interrupted = answerSynthesis.interrupted;
         newFunctionCalls = answerLLMStream.functionCalls;
 
@@ -847,7 +836,7 @@ class DeferredReplyValidation {
     this.#run(delay);
   }
 
-  // eslint-ignore-next-line @typescript-eslint/no-unused-vars
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onHumanStartOfSpeech(_: VADEvent) {
     this.#speaking = true;
     // TODO(nbsp):
@@ -856,7 +845,7 @@ class DeferredReplyValidation {
     // }
   }
 
-  // eslint-ignore-next-line @typescript-eslint/no-unused-vars
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onHumanEndOfSpeech(_: VADEvent) {
     this.#speaking = false;
     this.#lastRecvEndOfSpeechTime = Date.now();

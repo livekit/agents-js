@@ -13,7 +13,7 @@ import { EventEmitter } from 'node:events';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import { SpeechEventType } from '../stt/stt.js';
-import { AsyncIterableQueue, CancellablePromise, gracefullyCancel } from '../utils.js';
+import { CancellablePromise, gracefullyCancel } from '../utils.js';
 import type { VAD, VADEvent } from '../vad.js';
 import { VADEventType } from '../vad.js';
 
