@@ -1,21 +1,19 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  AudioStream,
+import type {
   RemoteAudioTrack,
   RemoteParticipant,
   RemoteTrackPublication,
   Room,
-  RoomEvent,
-  TrackSource,
-  Transcription,
 } from '@livekit/rtc-node';
+import { AudioStream, RoomEvent, TrackSource } from '@livekit/rtc-node';
 import { log } from '../log.js';
-import { STT, SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import { BasicTranscriptionForwarder, TranscriptionForwarder } from '../transcription.js';
+import type { STT, SpeechEvent } from '../stt/stt.js';
+import { SpeechEventType } from '../stt/stt.js';
 import { AsyncIterableQueue, CancellablePromise, gracefullyCancel } from '../utils.js';
-import { VAD, VADEvent, VADEventType } from '../vad.js';
+import type { VAD, VADEvent } from '../vad.js';
+import { VADEventType } from '../vad.js';
 
 export enum HumanInputEventType {
   START_OF_SPEECH,
@@ -46,25 +44,17 @@ export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
   #vad: VAD;
   #stt: STT;
   #participant: RemoteParticipant;
-  #transciption: boolean;
   #subscribedTrack?: RemoteAudioTrack;
   #recognizeTask?: CancellablePromise<void>;
   #speaking = false;
   #speechProbability = 0;
   #logger = log();
 
-  constructor(
-    room: Room,
-    vad: VAD,
-    stt: STT,
-    participant: RemoteParticipant,
-    transcription: boolean,
-  ) {
+  constructor(room: Room, vad: VAD, stt: STT, participant: RemoteParticipant) {
     this.#room = room;
     this.#vad = vad;
     this.#stt = stt;
     this.#participant = participant;
-    this.#transciption = transcription;
 
     this.#room.on(RoomEvent.TrackPublished, this.#subscribeToMicrophone);
     this.#room.on(RoomEvent.TrackSubscribed, this.#subscribeToMicrophone);
@@ -110,20 +100,6 @@ export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
         const sttStream = this.#stt.stream();
         const vadStream = this.#vad.stream();
 
-        // TODO(nbsp): STTSegmentsForwarder update
-        // const beforeForward = (forwarder: TranscriptionForwarder, transcription: Transcription) => {
-        //   if (!this.#transciption) {
-        //     transcription.segments = []
-        //   }
-        // }
-
-        const forwarder = new BasicTranscriptionForwarder(
-          this.#room,
-          this.#participant.identity,
-          this.#subscribedTrack!.sid,
-          'SG_000000000000',
-        );
-
         const audioStreamCo = async () => {
           for await (const ev of audioStream) {
             if (cancelled) return;
@@ -156,7 +132,6 @@ export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
           for await (const ev of sttStream) {
             if (cancelled) return;
             if (ev.type === SpeechEventType.FINAL_TRANSCRIPT) {
-              forwarder.pushText(ev.alternatives[0].text);
               this.#queue.put({ type: HumanInputEventType.FINAL_TRANSCRIPT, event: ev });
             } else {
               this.#queue.put({ type: HumanInputEventType.INTERIM_TRANSCRIPT, event: ev });
@@ -165,7 +140,6 @@ export class HumanInput implements AsyncIterableIterator<HumanInputEvent> {
         };
 
         await Promise.all([audioStreamCo(), vadStreamCo(), sttStreamCo()]);
-        await forwarder.close(false);
         sttStream.close();
         vadStream.close();
         if (cancelled) {

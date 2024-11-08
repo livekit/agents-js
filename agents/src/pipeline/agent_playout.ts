@@ -1,6 +1,8 @@
-import { AudioFrame, AudioSource } from '@livekit/rtc-node';
+// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import type { AudioFrame, AudioSource } from '@livekit/rtc-node';
 import { log } from '../log.js';
-import { TranscriptionForwarder } from '../transcription.js';
 import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 
 export enum AgentPlayoutEventType {
@@ -17,7 +19,6 @@ export class PlayoutHandle {
   #speechId: string;
   #audioSource: AudioSource;
   playoutSource: AsyncIterable<AudioFrame>;
-  transcriptionForwarder: TranscriptionForwarder;
   totalPlayedTime?: number;
   #interrupted = false;
   pushedDuration = 0;
@@ -28,12 +29,10 @@ export class PlayoutHandle {
     speechId: string,
     audioSource: AudioSource,
     playoutSource: AsyncIterable<AudioFrame>,
-    transcriptionForwarder: TranscriptionForwarder,
   ) {
     this.#speechId = speechId;
     this.#audioSource = audioSource;
     this.playoutSource = playoutSource;
-    this.transcriptionForwarder = transcriptionForwarder;
   }
 
   get speechId(): string {
@@ -87,23 +86,15 @@ export class AgentPlayout implements AsyncIterableIterator<AgentPlayoutEvent> {
     this.#targetVolume = vol;
   }
 
-  play(
-    speechId: string,
-    playoutSource: AsyncIterable<AudioFrame>,
-    transcriptionForwarder: TranscriptionForwarder,
-  ) {
+  play(speechId: string, playoutSource: AsyncIterable<AudioFrame>): PlayoutHandle {
     if (this.#closed) {
       throw new Error('source closed');
     }
 
-    const handle = new PlayoutHandle(
-      speechId,
-      this.#audioSource,
-      playoutSource,
-      transcriptionForwarder,
-    );
+    const handle = new PlayoutHandle(speechId, this.#audioSource, playoutSource);
 
     this.#playoutTask = CancellablePromise.from(this.#playout(handle, this.#playoutTask));
+    return handle;
   }
 
   async #playout(handle: PlayoutHandle, oldTask?: CancellablePromise<void>) {
@@ -129,7 +120,6 @@ export class AgentPlayout implements AsyncIterableIterator<AgentPlayoutEvent> {
       for await (const frame of handle.playoutSource) {
         if (cancelled) break;
         if (firstFrame) {
-          // handle.transcriptionForwarder.segmentPlayoutStarted()
           this.#logger.child({ speechId: handle.speechId }).debug('started playing the first time');
           this.#queue.put({ type: AgentPlayoutEventType.PLAYOUT_STARTED });
           firstFrame = false;
@@ -160,16 +150,12 @@ export class AgentPlayout implements AsyncIterableIterator<AgentPlayoutEvent> {
       }
 
       if (!firstFrame) {
-        if (!handle.interrupted) {
-          // handle.transcriptionForwarder.segmentPlayoutFinished()
-        }
         this.#queue.put({
           type: AgentPlayoutEventType.PLAYOUT_STOPPED,
           interrupted: handle.interrupted,
         });
       }
 
-      await handle.transcriptionForwarder.close(handle.interrupted);
       handle.doneFut.resolve();
 
       this.#logger
