@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
-import type { CallableFunctionResult, DeferredFunction } from './function_context.js';
+import type { CallableFunctionResult, FunctionCallInfo } from './function_context.js';
 
 export enum ChatRole {
   SYSTEM,
@@ -39,7 +39,7 @@ export class ChatMessage {
   readonly id?: string;
   readonly name?: string;
   readonly content?: ChatContent | ChatContent[];
-  readonly toolCalls?: DeferredFunction[];
+  readonly toolCalls?: FunctionCallInfo[];
   readonly toolCallId?: string;
   readonly toolException?: Error;
 
@@ -57,7 +57,7 @@ export class ChatMessage {
     id?: string;
     name?: string;
     content?: ChatContent | ChatContent[];
-    toolCalls?: DeferredFunction[];
+    toolCalls?: FunctionCallInfo[];
     toolCallId?: string;
     toolException?: Error;
   }) {
@@ -84,7 +84,7 @@ export class ChatMessage {
     });
   }
 
-  static createToolCalls(toolCalls: DeferredFunction[], text = '') {
+  static createToolCalls(toolCalls: FunctionCallInfo[], text = '') {
     return new ChatMessage({
       role: ChatRole.ASSISTANT,
       toolCalls,

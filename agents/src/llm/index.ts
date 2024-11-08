@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 export {
   type CallableFunction,
-  type DeferredFunction,
+  type FunctionCallInfo,
   type CallableFunctionResult,
   type FunctionContext,
   type inferParameters,

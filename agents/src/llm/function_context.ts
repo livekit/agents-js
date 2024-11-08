@@ -19,7 +19,7 @@ export interface CallableFunction<P extends z.ZodTypeAny = any, R = any> {
 }
 
 /** A function that has been called but is not yet running */
-export interface DeferredFunction<P extends z.ZodTypeAny = any, R = any> {
+export interface FunctionCallInfo<P extends z.ZodTypeAny = any, R = any> {
   name: string;
   func: CallableFunction<P, R>;
   toolCallId: string;
@@ -28,7 +28,7 @@ export interface DeferredFunction<P extends z.ZodTypeAny = any, R = any> {
   task?: PromiseLike<CallableFunctionResult>;
 }
 
-/** The result of a ran DeferredFunction. */
+/** The result of a ran FunctionCallInfo. */
 export interface CallableFunctionResult {
   name: string;
   toolCallId: string;
@@ -105,7 +105,7 @@ export const oaiBuildFunctionInfo = (
   toolCallId: string,
   fncName: string,
   rawArgs: string,
-): DeferredFunction => {
+): FunctionCallInfo => {
   if (!fncCtx[fncName]) {
     throw new Error(`AI function ${fncName} not found`);
   }

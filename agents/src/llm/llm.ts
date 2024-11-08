@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AsyncIterableQueue } from '../utils.js';
 import type { ChatContext, ChatRole } from './chat_context.js';
-import type { DeferredFunction, FunctionContext } from './function_context.js';
+import type { FunctionCallInfo, FunctionContext } from './function_context.js';
 
 export interface ChoiceDelta {
   role: ChatRole;
   content?: string;
-  toolCalls?: DeferredFunction[];
+  toolCalls?: FunctionCallInfo[];
 }
 
 export interface CompletionUsage {
@@ -50,7 +50,7 @@ export abstract class LLM {
 export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected queue = new AsyncIterableQueue<ChatChunk>();
   protected closed = false;
-  protected _functionCalls: DeferredFunction[] = [];
+  protected _functionCalls: FunctionCallInfo[] = [];
 
   #chatCtx: ChatContext;
   #fncCtx?: FunctionContext;
@@ -61,7 +61,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   }
 
   /** List of called functions from this stream. */
-  get functionCalls(): DeferredFunction[] {
+  get functionCalls(): FunctionCallInfo[] {
     return this._functionCalls;
   }
 
@@ -76,7 +76,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   }
 
   /** Execute all deferred functions of this stream concurrently. */
-  executeFunctions(): DeferredFunction[] {
+  executeFunctions(): FunctionCallInfo[] {
     this._functionCalls.forEach(
       (f) =>
         (f.task = f.func.execute(f.params).then(
