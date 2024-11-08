@@ -157,16 +157,18 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
           handle.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
           await this.#audioSource.captureFrame(frame);
         }
+        console.log('all done!')
 
         if (this.#audioSource.queuedDuration > 0) {
           await this.#audioSource.waitForPlayout();
         }
 
+        console.log('all done for realsies')
         resolve();
       });
 
       try {
-        await Promise.any([captureTask, handle.intFut]);
+        await Promise.any([captureTask, handle.intFut.await]);
       } finally {
         cancel();
         resolve();
