@@ -96,69 +96,82 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
 
     const handle = new PlayoutHandle(speechId, this.#audioSource, playoutSource);
 
-    this.#playoutTask = CancellablePromise.from(this.#playout(handle, this.#playoutTask));
+    this.#playoutTask = this.#playout(handle, this.#playoutTask);
     return handle;
   }
 
-  async #playout(handle: PlayoutHandle, oldTask?: CancellablePromise<void>) {
-    if (oldTask) {
-      await gracefullyCancel(oldTask);
-    }
+  #playout(handle: PlayoutHandle, oldTask?: CancellablePromise<void>): CancellablePromise<void> {
+    return new CancellablePromise(async (resolve, _, onCancel) => {
+      const cancel = () => {
+        captureTask.cancel();
+        handle.totalPlayedTime = handle.pushedDuration - this.#audioSource.queuedDuration;
 
-    if (this.#audioSource.queuedDuration > 0) {
-      // this should not happen, but log it just in case
-      this.#logger
-        .child({ speechId: handle.speechId, queuedDuration: this.#audioSource.queuedDuration })
-        .warn('new playout while the source is still playing');
-    }
+        if (handle.interrupted || captureTask.error) {
+          this.#audioSource.clearQueue(); // make sure to remove any queued frames
+        }
 
-    let firstFrame = true;
+        if (!firstFrame) {
+          this.emit(AgentPlayoutEvent.PLAYOUT_STOPPED, handle.interrupted);
+        }
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const captureTask = new CancellablePromise<void>(async (resolve, _, onCancel) => {
-      let cancelled = false;
+        handle.doneFut.resolve();
+
+        this.#logger
+          .child({ speechId: handle.speechId, interrupted: handle.interrupted })
+          .debug('playout finished');
+      };
+
       onCancel(() => {
-        cancelled = true;
+        cancel();
       });
 
-      for await (const frame of handle.playoutSource) {
-        if (cancelled) break;
-        if (firstFrame) {
-          this.#logger.child({ speechId: handle.speechId }).debug('started playing the first time');
-          this.emit(AgentPlayoutEvent.PLAYOUT_STARTED);
-          firstFrame = false;
-        }
-        handle.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
-        await this.#audioSource.captureFrame(frame);
+      if (oldTask) {
+        await gracefullyCancel(oldTask);
       }
 
       if (this.#audioSource.queuedDuration > 0) {
-        await this.#audioSource.waitForPlayout();
+        // this should not happen, but log it just in case
+        this.#logger
+          .child({ speechId: handle.speechId, queuedDuration: this.#audioSource.queuedDuration })
+          .warn('new playout while the source is still playing');
       }
 
-      resolve();
+      let firstFrame = true;
+
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const captureTask = new CancellablePromise<void>(async (resolve, _, onCancel) => {
+        let cancelled = false;
+        onCancel(() => {
+          cancelled = true;
+        });
+
+        for await (const frame of handle.playoutSource) {
+          if (cancelled) break;
+          if (firstFrame) {
+            this.#logger
+              .child({ speechId: handle.speechId })
+              .debug('started playing the first time');
+            this.emit(AgentPlayoutEvent.PLAYOUT_STARTED);
+            firstFrame = false;
+          }
+          handle.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
+          await this.#audioSource.captureFrame(frame);
+        }
+
+        if (this.#audioSource.queuedDuration > 0) {
+          await this.#audioSource.waitForPlayout();
+        }
+
+        resolve();
+      });
+
+      try {
+        await Promise.any([captureTask, handle.intFut]);
+      } finally {
+        cancel();
+        resolve();
+      }
     });
-
-    try {
-      await Promise.any([captureTask, handle.intFut]);
-    } finally {
-      await gracefullyCancel(captureTask);
-      handle.totalPlayedTime = handle.pushedDuration - this.#audioSource.queuedDuration;
-
-      if (handle.interrupted || captureTask.error) {
-        this.#audioSource.clearQueue(); // make sure to remove any queued frames
-      }
-
-      if (!firstFrame) {
-        this.emit(AgentPlayoutEvent.PLAYOUT_STOPPED, handle.interrupted);
-      }
-
-      handle.doneFut.resolve();
-
-      this.#logger
-        .child({ speechId: handle.speechId, interrupted: handle.interrupted })
-        .debug('playout finished');
-    }
   }
 
   next(): Promise<IteratorResult<AgentPlayoutEvent>> {

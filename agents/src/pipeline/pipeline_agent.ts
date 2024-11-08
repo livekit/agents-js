@@ -224,7 +224,8 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   #playingSpeech?: SpeechHandle;
   #transcribedText = '';
   #transcribedInterimText = '';
-  #speechQueue = new AsyncIterableQueue<SpeechHandle>();
+  #speechQueueOpen = new Future();
+  #speechQueue = new AsyncIterableQueue<SpeechHandle | undefined>();
   #lastEndOfSpeechTime?: number;
   #updateStateTask?: CancellablePromise<void>;
   #started = false;
@@ -341,18 +342,27 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   }
 
   #updateState(state: AgentState, delay = 0) {
-    const runTask = async (delay: number) => {
-      await new Promise((resolve) => setTimeout(resolve, delay));
-      if (this.#room?.isConnected) {
-        await this.#room.localParticipant?.setAttributes({ ATTRIBUTE_AGENT_STATE: state });
-      }
+    const runTask = (delay: number): CancellablePromise<void> => {
+      return new CancellablePromise(async (resolve, _, onCancel) => {
+        let cancelled = false;
+        onCancel(() => {
+          cancelled = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        if (this.#room?.isConnected) {
+          if (!cancelled) {
+            await this.#room.localParticipant?.setAttributes({ ATTRIBUTE_AGENT_STATE: state });
+          }
+        }
+        resolve();
+      });
     };
 
     if (this.#updateStateTask) {
       this.#updateStateTask.cancel();
     }
 
-    this.#updateStateTask = CancellablePromise.from(runTask(delay));
+    this.#updateStateTask = runTask(delay);
   }
 
   #linkParticipant(participantIdentity: string): void {
@@ -449,10 +459,15 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
 
     this.#trackPublishedFut.resolve();
 
-    for await (const speech of this.#speechQueue) {
-      this.#playingSpeech = speech;
-      await this.#playSpeech(speech);
-      this.#playingSpeech = undefined;
+    while (true) {
+      await this.#speechQueueOpen.await;
+      for await (const speech of this.#speechQueue) {
+        if (!speech) break;
+        this.#playingSpeech = speech;
+        await this.#playSpeech(speech);
+        this.#playingSpeech = undefined;
+      }
+      this.#speechQueueOpen = new Future();
     }
   }
 
@@ -468,35 +483,40 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.#transcribedText,
     );
     const newHandle = this.#pendingAgentReply;
-    this.#agentReplyTask = CancellablePromise.from(
-      this.#synthesizeAnswerTask(this.#agentReplyTask, newHandle),
-    );
+    this.#agentReplyTask = this.#synthesizeAnswerTask(this.#agentReplyTask, newHandle);
   }
 
-  async #synthesizeAnswerTask(
+  #synthesizeAnswerTask(
     oldTask: CancellablePromise<void> | undefined,
     handle?: SpeechHandle,
-  ) {
-    if (oldTask) {
-      await gracefullyCancel(oldTask);
-    }
+  ): CancellablePromise<void> {
+    return new CancellablePromise(async (resolve, _, onCancel) => {
+      let cancelled = false;
+      onCancel(() => {
+        cancelled = true;
+      });
 
-    const copiedCtx = this.chatCtx.copy();
-    const playingSpeech = this.#playingSpeech;
-    if (playingSpeech && playingSpeech.initialized) {
-      if (
-        (!playingSpeech.userQuestion || playingSpeech.userCommitted) &&
-        !playingSpeech.speechCommitted
-      ) {
-        // the speech is playing but not committed yet,
-        // add it to the chat context for this new reply synthesis
-        copiedCtx.messages.push(
-          ChatMessage.create({
-            // TODO(nbsp): uhhh unsure where to get the played text here
-            // text: playingSpeech.synthesisHandle.(theres no ttsForwarder here)
-            role: ChatRole.ASSISTANT,
-          }),
-        );
+      if (oldTask) {
+        await gracefullyCancel(oldTask);
+      }
+
+      const copiedCtx = this.chatCtx.copy();
+      const playingSpeech = this.#playingSpeech;
+      if (playingSpeech && playingSpeech.initialized) {
+        if (
+          (!playingSpeech.userQuestion || playingSpeech.userCommitted) &&
+          !playingSpeech.speechCommitted
+        ) {
+          // the speech is playing but not committed yet,
+          // add it to the chat context for this new reply synthesis
+          copiedCtx.messages.push(
+            ChatMessage.create({
+              // TODO(nbsp): uhhh unsure where to get the played text here
+              // text: playingSpeech.synthesisHandle.(theres no ttsForwarder here)
+              role: ChatRole.ASSISTANT,
+            }),
+          );
+        }
       }
 
       copiedCtx.messages.push(
@@ -506,12 +526,14 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         }),
       );
 
+      if (cancelled) resolve();
       let llmStream = await this.#opts.beforeLLMCallback(this, copiedCtx);
       if (llmStream === false) {
         handle?.cancel();
         return;
       }
 
+      if (cancelled) resolve();
       // fallback to default impl if no custom/user stream is returned
       if (!(llmStream instanceof LLMStream)) {
         llmStream = (await defaultBeforeLLMCallback(this, copiedCtx)) as LLMStream;
@@ -531,7 +553,8 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         : -1;
 
       this.#logger.child({ speechId: handle!.id, elapsed }).debug('synthesizing agent reply');
-    }
+      resolve();
+    });
   }
 
   async #playSpeech(handle: SpeechHandle) {
@@ -717,7 +740,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       return;
     }
 
-    if (this.#pendingAgentReply) {
+    if (!this.#pendingAgentReply) {
       if (this.#opts.preemptiveSynthesis || !this.#transcribedText) {
         return;
       }
@@ -730,9 +753,12 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
 
     // in some bad timimg, we could end up with two pushed agent replies inside the speech queue.
     // so make sure we directly interrupt every reply when validating a new one
-    for await (const speech of this.#speechQueue) {
-      if (!speech.isReply) continue;
-      if (!speech.allowInterruptions) speech.interrupt();
+    if (this.#speechQueueOpen.done) {
+      for await (const speech of this.#speechQueue) {
+        if (!speech) break;
+        if (!speech.isReply) continue;
+        if (!speech.allowInterruptions) speech.interrupt();
+      }
     }
 
     this.#logger.child({ speechId: this.#pendingAgentReply.id }).debug('validated agent reply');
@@ -766,6 +792,8 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
 
   #addSpeechForPlayout(handle: SpeechHandle) {
     this.#speechQueue.put(handle);
+    this.#speechQueue.put(undefined);
+    this.#speechQueueOpen.resolve();
   }
 
   /** Close the voice assistant. */
@@ -808,7 +836,7 @@ class DeferredReplyValidation {
   readonly LATE_TRANSCRIPT_TOLERANCE = 1.5; // late compared to end of speech
 
   #validateFunc: () => Promise<void>;
-  // #validatingPromise?: Promise<void>;
+  #validatingPromise?: Promise<void>;
   #validatingFuture = new Future();
   #lastFinalTranscript = '';
   #lastRecvEndOfSpeechTime = 0;
@@ -881,11 +909,7 @@ class DeferredReplyValidation {
       await this.#validateFunc();
     };
 
-    if (this.#validatingFuture.done) {
-      this.#validatingFuture = new Future();
-    }
-    // TODO(nbsp): promise
-    // this.#validatingPromise = runTask(delay);
-    runTask(delay);
+    this.#validatingFuture = new Future();
+    this.#validatingPromise = runTask(delay);
   }
 }

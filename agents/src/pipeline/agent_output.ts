@@ -164,7 +164,7 @@ const streamSynthesisTask = (
       handle.ttsStream.pushText(text);
     }
 
-    handle.ttsStream.endInput();
+    handle.ttsStream.flush();
 
     if (cancelled) {
       reject();
