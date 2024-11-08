@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 import { randomUUID } from 'crypto';
 import type { LLMStream } from '../llm/index.js';
 import { Future } from '../utils.js';
