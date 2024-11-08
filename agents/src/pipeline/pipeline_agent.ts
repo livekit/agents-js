@@ -256,7 +256,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     this.#tts = tts;
 
     this.#deferredValidation = new DeferredReplyValidation(
-      this.#validateReplyIfPossible,
+      this.#validateReplyIfPossible.bind(this),
       this.#opts.minEndpointingDelay,
     );
   }
@@ -310,7 +310,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       if (this.#participant) {
         return;
       }
-      this.#linkParticipant(participant.identity);
+      this.#linkParticipant.call(this, participant.identity);
     });
 
     this.#room = room;
