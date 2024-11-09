@@ -196,7 +196,7 @@ export interface VPAOptions {
 const defaultVPAOptions: VPAOptions = {
   chatCtx: new ChatContext(),
   allowInterruptions: true,
-  interruptSpeechDuration: 0.5,
+  interruptSpeechDuration: 500,
   interruptMinWords: 0,
   minEndpointingDelay: 500,
   maxRecursiveFncCalls: 1,
@@ -210,6 +210,7 @@ const defaultVPAOptions: VPAOptions = {
 export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<VPACallbacks>) {
   /** Minimum time played for the user speech to be committed to the chat context. */
   readonly MIN_TIME_PLAYED_FOR_COMMIT = 1.5;
+  protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
 
   #vad: VAD;
   #stt: STT;
@@ -225,7 +226,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   #transcribedText = '';
   #transcribedInterimText = '';
   #speechQueueOpen = new Future();
-  #speechQueue = new AsyncIterableQueue<SpeechHandle | undefined>();
+  #speechQueue = new AsyncIterableQueue<SpeechHandle | typeof VoicePipelineAgent.FLUSH_SENTINEL>();
   #lastEndOfSpeechTime?: number;
   #updateStateTask?: CancellablePromise<void>;
   #started = false;
@@ -442,10 +443,8 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
     );
 
-    const ttsStream = this.#tts.stream();
-
     const agentPlayout = new AgentPlayout(audioSource);
-    this.#agentOutput = new AgentOutput(agentPlayout, ttsStream);
+    this.#agentOutput = new AgentOutput(agentPlayout, this.#tts);
 
     agentPlayout.on(AgentPlayoutEvent.PLAYOUT_STARTED, () => {
       this.emit(VPAEvent.AGENT_STARTED_SPEAKING);
@@ -462,7 +461,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     while (true) {
       await this.#speechQueueOpen.await;
       for await (const speech of this.#speechQueue) {
-        if (!speech) break;
+        if (speech === VoicePipelineAgent.FLUSH_SENTINEL) break;
         this.#playingSpeech = speech;
         await this.#playSpeech(speech);
         this.#playingSpeech = undefined;
@@ -474,7 +473,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   #synthesizeAgentReply() {
     this.#pendingAgentReply?.cancel();
     if (this.#humanInput && this.#humanInput.speaking) {
-      this.#updateState('thinking', 0.2);
+      this.#updateState('thinking', 200);
     }
 
     this.#pendingAgentReply = SpeechHandle.createAssistantReply(
@@ -628,7 +627,10 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         this.emit(VPAEvent.FUNCTION_CALLS_COLLECTED, newFunctionCalls);
         const calledFuncs: FunctionCallInfo[] = [];
         for (const func of newFunctionCalls) {
-          const task = func.func.execute(func.params);
+          const task = func.func.execute(func.params).then(
+            (result) => ({ name: func.name, toolCallId: func.toolCallId, result }),
+            (error) => ({ name: func.name, toolCallId: func.toolCallId, error }),
+          );
           calledFuncs.push({ ...func, task });
           this.#logger
             .child({ function: func.name, speechId: handle.id })
@@ -649,7 +651,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
           const task = await fnc.task;
           if (!task || task.result === undefined) continue;
           toolCallsInfo.push(fnc);
-          toolCallsResults.push(ChatMessage.createToolFromFunctionResult(fnc));
+          toolCallsResults.push(ChatMessage.createToolFromFunctionResult(task));
         }
 
         if (!toolCallsInfo.length) break;
@@ -755,7 +757,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     // so make sure we directly interrupt every reply when validating a new one
     if (this.#speechQueueOpen.done) {
       for await (const speech of this.#speechQueue) {
-        if (!speech) break;
+        if (speech === VoicePipelineAgent.FLUSH_SENTINEL) break;
         if (!speech.isReply) continue;
         if (!speech.allowInterruptions) speech.interrupt();
       }
@@ -792,7 +794,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
 
   #addSpeechForPlayout(handle: SpeechHandle) {
     this.#speechQueue.put(handle);
-    this.#speechQueue.put(undefined);
+    this.#speechQueue.put(VoicePipelineAgent.FLUSH_SENTINEL);
     this.#speechQueueOpen.resolve();
   }
 
@@ -810,10 +812,9 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
 async function* llmStreamToStringIterable(
   speechId: string,
   stream: LLMStream,
-): AsyncGenerator<string> {
+): AsyncIterable<string> {
   const startTime = Date.now();
   let firstFrame = true;
-
   for await (const chunk of stream) {
     const content = chunk.choices[0].delta.content;
     if (!content) continue;

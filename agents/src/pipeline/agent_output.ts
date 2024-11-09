@@ -3,32 +3,29 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { log } from '../log.js';
-import type { SynthesizeStream } from '../tts/index.js';
+import type { TTS } from '../tts/index.js';
 import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 import type { AgentPlayout, PlayoutHandle } from './agent_playout.js';
 
 export type SpeechSource = AsyncIterable<string> | string | Promise<string>;
 
 export class SynthesisHandle {
+  static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
+
   #speechId: string;
   ttsSource: SpeechSource;
   #agentPlayout: AgentPlayout;
-  ttsStream: SynthesizeStream;
-  queue = new AsyncIterableQueue<AudioFrame>();
+  tts: TTS;
+  queue = new AsyncIterableQueue<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>();
   #playHandle?: PlayoutHandle;
   intFut = new Future();
   #logger = log();
 
-  constructor(
-    speechId: string,
-    ttsSource: SpeechSource,
-    agentPlayout: AgentPlayout,
-    ttsStream: SynthesizeStream,
-  ) {
+  constructor(speechId: string, ttsSource: SpeechSource, agentPlayout: AgentPlayout, tts: TTS) {
     this.#speechId = speechId;
     this.ttsSource = ttsSource;
     this.#agentPlayout = agentPlayout;
-    this.ttsStream = ttsStream;
+    this.tts = tts;
   }
 
   get speechId(): string {
@@ -71,12 +68,12 @@ export class SynthesisHandle {
 
 export class AgentOutput {
   #agentPlayout: AgentPlayout;
-  #ttsStream: SynthesizeStream;
+  #tts: TTS;
   #tasks: CancellablePromise<void>[] = [];
 
-  constructor(agentPlayout: AgentPlayout, ttsStream: SynthesizeStream) {
+  constructor(agentPlayout: AgentPlayout, tts: TTS) {
     this.#agentPlayout = agentPlayout;
-    this.#ttsStream = ttsStream;
+    this.#tts = tts;
   }
 
   get playout(): AgentPlayout {
@@ -89,7 +86,7 @@ export class AgentOutput {
   }
 
   synthesize(speechId: string, ttsSource: SpeechSource): SynthesisHandle {
-    const handle = new SynthesisHandle(speechId, ttsSource, this.#agentPlayout, this.#ttsStream);
+    const handle = new SynthesisHandle(speechId, ttsSource, this.#agentPlayout, this.#tts);
     const task = this.#synthesize(handle);
     this.#tasks.push(task);
     task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
@@ -112,7 +109,7 @@ export class AgentOutput {
       });
 
       try {
-        await Promise.any([task, handle.intFut]);
+        await Promise.any([task, handle.intFut.await]);
       } finally {
         gracefullyCancel(task);
       }
@@ -130,12 +127,15 @@ const stringSynthesisTask = (text: string, handle: SynthesisHandle): Cancellable
       cancelled = true;
     });
 
-    handle.ttsStream.pushText(text);
-    handle.ttsStream.flush();
-    for await (const audio of handle.ttsStream) {
+    const ttsStream = handle.tts.stream();
+    ttsStream.pushText(text);
+    ttsStream.flush();
+    ttsStream.endInput();
+    for await (const audio of ttsStream) {
       if (cancelled) break;
       handle.queue.put(audio.frame);
     }
+    handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
 
     resolve();
   });
@@ -145,31 +145,31 @@ const streamSynthesisTask = (
   stream: AsyncIterable<string>,
   handle: SynthesisHandle,
 ): CancellablePromise<void> => {
-  return new CancellablePromise<void>(async (resolve, reject, onCancel) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  return new CancellablePromise<void>(async (resolve, _, onCancel) => {
     let cancelled = false;
     onCancel(() => {
       cancelled = true;
     });
 
+    const ttsStream = handle.tts.stream();
     const readGeneratedAudio = async () => {
-      for await (const audio of handle.ttsStream) {
+      for await (const audio of ttsStream) {
         if (cancelled) break;
         handle.queue.put(audio.frame);
       }
+
     };
     readGeneratedAudio();
 
     for await (const text of stream) {
       if (cancelled) break;
-      handle.ttsStream.pushText(text);
+      ttsStream.pushText(text);
     }
+    ttsStream.flush();
+    ttsStream.endInput();
 
-    handle.ttsStream.flush();
-
-    if (cancelled) {
-      reject();
-    } else {
-      resolve();
-    }
+    handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
+    resolve();
   });
 };

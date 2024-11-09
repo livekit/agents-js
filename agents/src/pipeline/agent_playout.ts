@@ -6,6 +6,7 @@ import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'node:events';
 import { log } from '../log.js';
 import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
+import { SynthesisHandle } from './agent_output.js';
 
 export enum AgentPlayoutEvent {
   PLAYOUT_STARTED,
@@ -20,7 +21,7 @@ export type AgentPlayoutCallbacks = {
 export class PlayoutHandle {
   #speechId: string;
   #audioSource: AudioSource;
-  playoutSource: AsyncIterable<AudioFrame>;
+  playoutSource: AsyncIterable<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>;
   totalPlayedTime?: number;
   #interrupted = false;
   pushedDuration = 0;
@@ -30,7 +31,7 @@ export class PlayoutHandle {
   constructor(
     speechId: string,
     audioSource: AudioSource,
-    playoutSource: AsyncIterable<AudioFrame>,
+    playoutSource: AsyncIterable<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>,
   ) {
     this.#speechId = speechId;
     this.#audioSource = audioSource;
@@ -89,7 +90,10 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
     this.#targetVolume = vol;
   }
 
-  play(speechId: string, playoutSource: AsyncIterable<AudioFrame>): PlayoutHandle {
+  play(
+    speechId: string,
+    playoutSource: AsyncIterable<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>,
+  ): PlayoutHandle {
     if (this.#closed) {
       throw new Error('source closed');
     }
@@ -146,7 +150,7 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
         });
 
         for await (const frame of handle.playoutSource) {
-          if (cancelled) break;
+          if (cancelled || frame === SynthesisHandle.FLUSH_SENTINEL) break;
           if (firstFrame) {
             this.#logger
               .child({ speechId: handle.speechId })
@@ -157,13 +161,11 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
           handle.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
           await this.#audioSource.captureFrame(frame);
         }
-        console.log('all done!')
 
         if (this.#audioSource.queuedDuration > 0) {
           await this.#audioSource.waitForPlayout();
         }
 
-        console.log('all done for realsies')
         resolve();
       });
 
