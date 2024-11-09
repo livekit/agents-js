@@ -538,12 +538,12 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         llmStream = (await defaultBeforeLLMCallback(this, copiedCtx)) as LLMStream;
       }
 
-      if (handle?.interrupted) {
+      if (handle!.interrupted) {
         return;
       }
 
       const synthesisHandle = this.#synthesizeAgentSpeech(handle!.id, llmStream);
-      handle?.initialize(llmStream, synthesisHandle);
+      handle!.initialize(llmStream, synthesisHandle);
 
       // TODO(theomonnom): find a more reliable way to get the elapsed time from the last EOS
       // (VAD could not have detected any speech — maybe unlikely?)

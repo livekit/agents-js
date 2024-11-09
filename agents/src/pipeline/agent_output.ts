@@ -111,7 +111,9 @@ export class AgentOutput {
       try {
         await Promise.any([task, handle.intFut.await]);
       } finally {
-        gracefullyCancel(task);
+        if (handle.intFut.done) {
+          gracefullyCancel(task);
+        }
       }
 
       resolve();
@@ -154,10 +156,20 @@ const streamSynthesisTask = (
 
     const ttsStream = handle.tts.stream();
     const readGeneratedAudio = async () => {
+      let started = false;
       for await (const audio of ttsStream) {
-        if (cancelled || audio === SynthesizeStream.END_OF_STREAM) break;
+        if (cancelled) break;
+        if (audio === SynthesizeStream.END_OF_STREAM) {
+          if (started) {
+            break;
+          } else {
+            continue;
+          }
+        }
         handle.queue.put(audio.frame);
+        started = true;
       }
+      handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
     };
     readGeneratedAudio();
 
@@ -168,7 +180,6 @@ const streamSynthesisTask = (
     ttsStream.flush();
     ttsStream.endInput();
 
-    handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
     resolve();
   });
 };

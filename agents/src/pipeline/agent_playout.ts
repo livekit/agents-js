@@ -69,9 +69,7 @@ export class PlayoutHandle {
 }
 
 export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentPlayoutCallbacks>) {
-  #queue = new AsyncIterableQueue<AgentPlayoutEvent>();
   #closed = false;
-
   #audioSource: AudioSource;
   #targetVolume = 1;
   #playoutTask?: CancellablePromise<void>;
@@ -150,7 +148,8 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
         });
 
         for await (const frame of handle.playoutSource) {
-          if (cancelled || frame === SynthesisHandle.FLUSH_SENTINEL) break;
+          if (cancelled || (frame === SynthesisHandle.FLUSH_SENTINEL && !firstFrame)) break;
+          if (frame === SynthesisHandle.FLUSH_SENTINEL) continue;
           if (firstFrame) {
             this.#logger
               .child({ speechId: handle.speechId })
@@ -178,17 +177,8 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
     });
   }
 
-  next(): Promise<IteratorResult<AgentPlayoutEvent>> {
-    return this.#queue.next();
-  }
-
   async close() {
     this.#closed = true;
     await this.#playoutTask;
-    this.#queue.close();
-  }
-
-  [Symbol.asyncIterator](): AgentPlayout {
-    return this;
-  }
+ }
 }
