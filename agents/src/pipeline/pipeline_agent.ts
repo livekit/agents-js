@@ -196,7 +196,7 @@ export interface VPAOptions {
 const defaultVPAOptions: VPAOptions = {
   chatCtx: new ChatContext(),
   allowInterruptions: true,
-  interruptSpeechDuration: 500,
+  interruptSpeechDuration: 50,
   interruptMinWords: 0,
   minEndpointingDelay: 500,
   maxRecursiveFncCalls: 1,
@@ -429,7 +429,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       if (words.length >= 3) {
         // VAD can sometimes not detect that the human is speaking.
         // to make the interruption more reliable, we also interrupt on the final transcript.
-        this.#interruptIfPossible;
+        this.#interruptIfPossible();
       }
     });
   }
@@ -773,7 +773,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   #interruptIfPossible() {
     if (
       !this.#playingSpeech ||
-      this.#playingSpeech.allowInterruptions ||
+      !this.#playingSpeech.allowInterruptions ||
       this.#playingSpeech.interrupted
     ) {
       return;
