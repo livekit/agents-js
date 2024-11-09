@@ -5,7 +5,7 @@ import type { AudioFrame, AudioSource } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'node:events';
 import { log } from '../log.js';
-import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
+import { CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 import { SynthesisHandle } from './agent_output.js';
 
 export enum AgentPlayoutEvent {

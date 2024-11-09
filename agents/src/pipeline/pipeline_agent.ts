@@ -572,7 +572,8 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
 
     const commitUserQuestionIfNeeded = () => {
       if (!userQuestion || synthesisHandle.interrupted || handle.userCommitted) return;
-      const isUsingTools = handle.source instanceof LLMStream && !!handle.source.functionCalls.length;
+      const isUsingTools =
+        handle.source instanceof LLMStream && !!handle.source.functionCalls.length;
 
       // make sure at least some speech was played before committing the user message
       // since we try to validate as fast as possible it is possible the agent gets interrupted

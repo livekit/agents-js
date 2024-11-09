@@ -157,7 +157,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const runStream = async () => {
       for await (const stream of segments) {
         await this.#runWS(stream);
-        this.queue.put(SynthesizeStream.END_OF_STREAM)
+        this.queue.put(SynthesizeStream.END_OF_STREAM);
       }
     };
 
@@ -238,7 +238,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       while (!this.closed) {
         try {
           await new Promise<RawData>((resolve, reject) => {
-            ws.removeAllListeners()
+            ws.removeAllListeners();
             ws.on('message', (data) => resolve(data));
             ws.on('close', (code, reason) => {
               if (!eosSent) {

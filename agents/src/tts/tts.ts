@@ -80,11 +80,15 @@ export abstract class TTS {
  * This class is abstract, and as such cannot be used directly. Instead, use a provider plugin that
  * exports its own child SynthesizeStream class, which inherits this class's methods.
  */
-export abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM> {
+export abstract class SynthesizeStream
+  implements AsyncIterableIterator<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>
+{
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
   static readonly END_OF_STREAM = Symbol('END_OF_STREAM');
   protected input = new AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
-  protected queue = new AsyncIterableQueue<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>();
+  protected queue = new AsyncIterableQueue<
+    SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
+  >();
   protected closed = false;
 
   /** Push a string of text to the TTS */
