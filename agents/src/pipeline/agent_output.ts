@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { log } from '../log.js';
-import type { TTS } from '../tts/index.js';
+import { SynthesizeStream, type TTS } from '../tts/index.js';
 import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 import type { AgentPlayout, PlayoutHandle } from './agent_playout.js';
 
@@ -132,7 +132,7 @@ const stringSynthesisTask = (text: string, handle: SynthesisHandle): Cancellable
     ttsStream.flush();
     ttsStream.endInput();
     for await (const audio of ttsStream) {
-      if (cancelled) break;
+      if (cancelled || audio === SynthesizeStream.END_OF_STREAM) break;
       handle.queue.put(audio.frame);
     }
     handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
@@ -155,10 +155,9 @@ const streamSynthesisTask = (
     const ttsStream = handle.tts.stream();
     const readGeneratedAudio = async () => {
       for await (const audio of ttsStream) {
-        if (cancelled) break;
+        if (cancelled || audio === SynthesizeStream.END_OF_STREAM) break;
         handle.queue.put(audio.frame);
       }
-
     };
     readGeneratedAudio();
 

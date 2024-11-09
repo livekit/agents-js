@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { type JobContext, WorkerOptions, cli, defineAgent } from '@livekit/agents';
-import { TTS } from '@livekit/agents-plugin-elevenlabs';
+import { SynthesizeStream, TTS } from '@livekit/agents-plugin-elevenlabs';
 import {
   AudioSource,
   LocalAudioTrack,
@@ -36,10 +36,13 @@ export default defineAgent({
       console.log('speaking "Goodbye!"');
       stream.pushText('Goodbye!');
       stream.flush();
+      stream.endInput();
     });
 
     for await (const audio of stream) {
-      await source.captureFrame(audio.frame);
+      if (audio !== SynthesizeStream.END_OF_STREAM) {
+        await source.captureFrame(audio.frame);
+      }
     }
   },
 });
