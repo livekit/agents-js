@@ -156,12 +156,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     const runStream = async () => {
       for await (const stream of segments) {
-        this.#runWS(stream);
+        await this.#runWS(stream);
+        this.queue.put(SynthesizeStream.END_OF_STREAM);
       }
     };
 
     await Promise.all([tokenizeInput(), runStream()]);
-    this.closed = true;
+    this.close();
   }
 
   async #runWS(stream: tokenize.WordStream, maxRetry = 3) {
@@ -237,11 +238,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       while (!this.closed) {
         try {
           await new Promise<RawData>((resolve, reject) => {
+            ws.removeAllListeners();
             ws.on('message', (data) => resolve(data));
             ws.on('close', (code, reason) => {
               if (!eosSent) {
-                reject(`WebSocket closed with code ${code}: ${reason}`);
+                this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
               }
+              reject();
             });
           }).then((msg) => {
             const json = JSON.parse(msg.toString());

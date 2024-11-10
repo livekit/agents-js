@@ -462,7 +462,6 @@ export class LLMStream extends llm.LLMStream {
         for (const choice of chunk.choices) {
           const chatChunk = this.#parseChoice(chunk.id, choice);
           if (chatChunk) {
-            console.log(chatChunk.choices[0]);
             this.queue.put(chatChunk);
           }
 
