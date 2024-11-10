@@ -119,6 +119,7 @@ export abstract class SynthesizeStream implements AsyncIterableIterator<Synthesi
     this.input.close();
   }
 
+  /** @ignore */
   next(): Promise<IteratorResult<SynthesizedAudio>> {
     return this.queue.next();
   }
@@ -130,6 +131,7 @@ export abstract class SynthesizeStream implements AsyncIterableIterator<Synthesi
     this.closed = true;
   }
 
+  /** @ignore */
   [Symbol.asyncIterator](): SynthesizeStream {
     return this;
   }

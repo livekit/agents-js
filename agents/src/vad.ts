@@ -4,12 +4,14 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncIterableQueue } from './utils.js';
 
+/** Indicates start/end of speech */
 export enum VADEventType {
   START_OF_SPEECH,
   INFERENCE_DONE,
   END_OF_SPEECH,
 }
 
+/** VADEvent is a packet of VAD data */
 export interface VADEvent {
   /** Type of the VAD event (e.g., start of speech, end of speech, inference done). */
   type: VADEventType;
@@ -40,16 +42,25 @@ export interface VADEvent {
   speaking: boolean;
 }
 
+/** Describes the capabilities of the STT provider. */
 export interface VADCapabilities {
   updateInterval: number;
 }
 
+/**
+ * An instance of a voice activity detection adapter.
+ *
+ * @remarks
+ * This class is abstract, and as such cannot be used directly. Instead, use a provider plugin that
+ * exports its own child VAD class, which inherits this class's methods.
+ */
 export abstract class VAD {
   #capabilities: VADCapabilities;
   constructor(capabilities: VADCapabilities) {
     this.#capabilities = capabilities;
   }
 
+  /** Returns this STT's capabilities */
   get capabilities(): VADCapabilities {
     return this.#capabilities;
   }
@@ -60,12 +71,31 @@ export abstract class VAD {
   abstract stream(): VADStream;
 }
 
+/**
+ * An instance of a voice activity detection stream, as an asynchronous iterable iterator.
+ *
+ * @example Looping through frames
+ * ```ts
+ * for await (const event of stream) {
+ *   if (event.type === VADEventType.START_OF_SPEECH) {
+ *     console.log('speech started')
+ *   } else if (event.type === VADEventType.END_OF_SPEECH) {
+ *     console.log('speech ended')
+ *   }
+ * }
+ * ```
+ *
+ * @remarks
+ * This class is abstract, and as such cannot be used directly. Instead, use a provider plugin that
+ * exports its own child VADStream class, which inherits this class's methods.
+ */
 export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
   protected input = new AsyncIterableQueue<AudioFrame | typeof VADStream.FLUSH_SENTINEL>();
   protected queue = new AsyncIterableQueue<VADEvent>();
   protected closed = false;
 
+  /** Push an audio frame to the VAD */
   pushFrame(frame: AudioFrame) {
     if (this.input.closed) {
       throw new Error('Input is closed');
@@ -76,6 +106,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     this.input.put(frame);
   }
 
+  /** Flush the VAD, causing it to process all pending text */
   flush() {
     if (this.input.closed) {
       throw new Error('Input is closed');
@@ -86,6 +117,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     this.input.put(VADStream.FLUSH_SENTINEL);
   }
 
+  /** Mark the input as ended and forbid additional pushes */
   endInput() {
     if (this.input.closed) {
       throw new Error('Input is closed');
@@ -96,16 +128,19 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     this.input.close();
   }
 
+  /** @ignore */
   next(): Promise<IteratorResult<VADEvent>> {
     return this.queue.next();
   }
 
+  /** Close both the input and output of the VAD stream */
   close() {
     this.input.close();
     this.queue.close();
     this.closed = true;
   }
 
+  /** @ignore */
   [Symbol.asyncIterator](): VADStream {
     return this;
   }
