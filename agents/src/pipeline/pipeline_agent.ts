@@ -666,7 +666,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
 
         const answerLLMStream = this.llm.chat({
           chatCtx,
-          fncCtx: i < this.#opts.maxRecursiveFncCalls - 1 ? this.fncCtx : undefined,
+          fncCtx: this.fncCtx,
         });
         const answerSynthesis = this.#synthesizeAgentSpeech(handle.id, answerLLMStream);
         // replace the synthesis handle with the new one to allow interruption
