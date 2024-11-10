@@ -17,7 +17,7 @@ export class ProcPool {
   closed = false;
   controller = new AbortController();
   initMutex = new Mutex();
-  procMutex: MultiMutex;
+  procMutex?: MultiMutex;
   procUnlock?: () => void;
   warmedProcQueue = new Queue<JobExecutor>();
 
@@ -28,7 +28,9 @@ export class ProcPool {
     closeTimeout: number,
   ) {
     this.agent = agent;
-    this.procMutex = new MultiMutex(numIdleProcesses);
+    if (numIdleProcesses > 0) {
+      this.procMutex = new MultiMutex(numIdleProcesses);
+    }
     this.initializeTimeout = initializeTimeout;
     this.closeTimeout = closeTimeout;
   }
@@ -42,10 +44,18 @@ export class ProcPool {
   }
 
   async launchJob(info: RunningJobInfo) {
-    const proc = await this.warmedProcQueue.get();
-    if (this.procUnlock) {
-      this.procUnlock();
-      this.procUnlock = undefined;
+    let proc: JobExecutor;
+    if (this.procMutex) {
+      proc = await this.warmedProcQueue.get();
+      if (this.procUnlock) {
+        this.procUnlock();
+        this.procUnlock = undefined;
+      }
+    } else {
+      proc = new ProcJobExecutor(this.agent, this.initializeTimeout, this.closeTimeout);
+      this.executors.push(proc);
+      await proc.start();
+      await proc.initialize();
     }
     await proc.launchJob(info);
   }
@@ -89,11 +99,13 @@ export class ProcPool {
   }
 
   async run(signal: AbortSignal) {
-    while (!signal.aborted) {
-      this.procUnlock = await this.procMutex.lock();
-      const task = this.procWatchTask();
-      this.tasks.push(task);
-      task.finally(() => this.tasks.splice(this.tasks.indexOf(task)));
+    if (this.procMutex) {
+      while (!signal.aborted) {
+        this.procUnlock = await this.procMutex.lock();
+        const task = this.procWatchTask();
+        this.tasks.push(task);
+        task.finally(() => this.tasks.splice(this.tasks.indexOf(task)));
+      }
     }
   }
 
