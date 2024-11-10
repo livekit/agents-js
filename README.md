@@ -40,10 +40,10 @@ Advanced Voice in the ChatGPT app.
 
 > [!WARNING]
 > This SDK is in Developer Preview. During this period, you may encounter bugs, and the APIs may
-> change. Currently, only the OpenAI Realtime voice assistant is available as a plugin.
+> change.
 >
 > For production, we recommend using the [more mature version](https://github.com/livekit/agents)
-> of this framework, built with Python, which also supports other integrations.
+> of this framework, built with Python, which supports a larger number of integrations.
 >
 > We welcome and appreciate any feedback or contributions. You can create issues here or chat live
 > with us in the [LiveKit Community Slack](https://livekit.io/join-slack).
@@ -56,11 +56,22 @@ To install the core Agents library:
 pnpm install @livekit/agents
 ```
 
-To install the OpenAI plugin, for optional support for realtime voice assistants:
+The framework includes a variety of plugins that make it easy to process streaming input or generate
+output. For example, there are plugins for converting text-to-speech or running inference with
+popular LLMs. To install a plugin:
 
 ```bash
 pnpm install @livekit/agents-plugin-openai
 ```
+
+The following plugins are available today:
+
+| Plugin                                                                                               | Features          |
+|------------------------------------------------------------------------------------------------------|-------------------|
+| [@livekit/agents-plugin-openai](https://www.npmjs.com/package/@livekit/agents-plugin-openai)         | LLM, Realtime API |
+| [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT               |
+| [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS               |
+| [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD               |
 
 ## Usage
 
@@ -90,7 +101,7 @@ environment variables set:
 - `LIVEKIT_URL`
 - `LIVEKIT_API_KEY`
 - `LIVEKIT_API_SECRET`
-- `OPENAI_API_KEY`
+- any additional provider API keys (e.g. `OPENAI_API_KEY`)
 
 The following command will start the worker and wait for users to connect to your LiveKit server:
 

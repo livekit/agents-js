@@ -1,14 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  type JobContext,
-  WorkerOptions,
-  cli,
-  defineAgent,
-  type llm,
-  multimodal,
-} from '@livekit/agents';
+import { type JobContext, WorkerOptions, cli, defineAgent, llm, multimodal } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -64,11 +57,12 @@ export default defineAgent({
       .start(ctx.room, participant)
       .then((session) => session as openai.realtime.RealtimeSession);
 
-    session.conversation.item.create({
-      type: 'message',
-      role: 'user',
-      content: [{ type: 'input_text', text: 'Say "How can I help you today?"' }],
-    });
+    session.conversation.item.create(
+      llm.ChatMessage.create({
+        role: llm.ChatRole.USER,
+        text: 'Say "How can I help you today?"',
+      }),
+    );
     session.response.create();
   },
 });
