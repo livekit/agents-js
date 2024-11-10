@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 0.4.1
+
+### Patch Changes
+
+- fix(proc): behave correctly on numIdleProcesses: 0 - [#142](https://github.com/livekit/agents-js/pull/142) ([@nbsp](https://github.com/nbsp))
+
 ## 0.4.0
 
 ### Minor Changes
