@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 0.4.2
+
+### Patch Changes
+
+- fix ESM interop - [#145](https://github.com/livekit/agents-js/pull/145) ([@nbsp](https://github.com/nbsp))
+
 ## 0.4.1
 
 ### Patch Changes
