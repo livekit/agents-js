@@ -27,6 +27,10 @@ originally written in Python.
 
 <!--END_DESCRIPTION-->
 
+> [!WARNING]
+> We are aware of a bug concerning users of tsx under certain conditions. See [this
+> issue](https://github.com/livekit/agents-js/issues/147) for more details and a fix.
+
 ## ✨ [NEW] OpenAI Realtime API support
 
 We're partnering with OpenAI on a new MultimodalAgent API in the Agents framework. This class
