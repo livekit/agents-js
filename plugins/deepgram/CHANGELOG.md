@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-deepgram
 
+## 0.4.3
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @livekit/agents@0.4.3
+
 ## 0.4.2
 
 ### Patch Changes
