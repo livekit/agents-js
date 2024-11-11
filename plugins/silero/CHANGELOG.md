@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-silero
 
+## 0.4.3
+
+### Patch Changes
+
+- enable LFS in publish script - [#150](https://github.com/livekit/agents-js/pull/150) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies []:
+  - @livekit/agents@0.4.3
+
 ## 0.4.2
 
 ### Patch Changes
