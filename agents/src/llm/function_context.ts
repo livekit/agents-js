@@ -11,10 +11,18 @@ import { z } from 'zod';
 /** Type reinforcement for the callable function's execute parameters. */
 export type inferParameters<P extends z.ZodTypeAny> = z.infer<P>;
 
+/** Raw OpenAI-adherent function parameters. */
+export type OpenAIFunctionParameters = {
+  type: 'object';
+  properties: { [id: string]: any };
+  required: string[];
+  additionalProperties: boolean;
+};
+
 /** A definition for a function callable by the LLM. */
 export interface CallableFunction<P extends z.ZodTypeAny = any, R = any> {
   description: string;
-  parameters: P;
+  parameters: OpenAIFunctionParameters | P;
   execute: (args: inferParameters<P>) => PromiseLike<R>;
 }
 

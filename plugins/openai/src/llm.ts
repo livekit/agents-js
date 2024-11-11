@@ -438,7 +438,11 @@ export class LLMStream extends llm.LLMStream {
           function: {
             name,
             description: func.description,
-            parameters: llm.oaiParams(func.parameters),
+            // don't format parameters if they are raw openai params
+            parameters:
+              func.parameters.type == ('object' as const)
+                ? func.parameters
+                : llm.oaiParams(func.parameters),
           },
         }))
       : undefined;
