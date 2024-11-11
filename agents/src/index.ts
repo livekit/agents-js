@@ -17,19 +17,6 @@ import * as stt from './stt/index.js';
 import * as tokenize from './tokenize/index.js';
 import * as tts from './tts/index.js';
 
-const isCommonJS = (): boolean => {
-  try {
-    return !!require;
-  } catch {
-    return false;
-  }
-};
-if (isCommonJS()) {
-  throw new ReferenceError(
-    '@livekit/agents cannot be used in a CommonJS environment. Please set `"type": "module"` in package.json.',
-  );
-}
-
 export * from './vad.js';
 export * from './plugin.js';
 export * from './version.js';

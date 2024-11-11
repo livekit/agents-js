@@ -41,6 +41,19 @@ export type FunctionContext = {
   [name: string]: CallableFunction;
 };
 
+// XXX: Zod is victim to the dual-package hazard. this is a hacky sorta-fix
+// until Zod v4.0.0 is released.
+// https://github.com/colinhacks/zod/issues/2241#issuecomment-2142688925
+const looksLikeInstanceof = <T>(value: unknown, target: new (...args: any[]) => T): value is T => {
+  let current = value?.constructor;
+  do {
+    if (current?.name === target.name) return true;
+    // eslint-disable-next-line @typescript-eslint/ban-types
+    current = Object.getPrototypeOf(current) as Function;
+  } while (current?.name);
+  return false;
+};
+
 /** @internal */
 export const oaiParams = (p: z.AnyZodObject) => {
   const properties: Record<string, any> = {};
@@ -51,20 +64,20 @@ export const oaiParams = (p: z.AnyZodObject) => {
     const nestedField = isOptional ? field._def.innerType : field;
     const description = field._def.description;
 
-    if (nestedField instanceof z.ZodEnum) {
+    if (looksLikeInstanceof(nestedField, z.ZodEnum)) {
       return {
         type: typeof nestedField._def.values[0],
         ...(description && { description }),
         enum: nestedField._def.values,
       };
-    } else if (nestedField instanceof z.ZodArray) {
+    } else if (looksLikeInstanceof(nestedField, z.ZodArray)) {
       const elementType = nestedField._def.type;
       return {
         type: 'array',
         ...(description && { description }),
         items: processZodType(elementType),
       };
-    } else if (nestedField instanceof z.ZodObject) {
+    } else if (looksLikeInstanceof(nestedField, z.ZodObject)) {
       const { properties, required } = oaiParams(nestedField);
       return {
         type: 'object',
