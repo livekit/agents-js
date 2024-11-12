@@ -4,3 +4,4 @@
 export * as realtime from './realtime/index.js';
 export * from './models.js';
 export { type LLMOptions, LLM, LLMStream } from './llm.js';
+export { type STTOptions, STT } from './stt.js';
