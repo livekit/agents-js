@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
-import { AsyncIterableQueue } from '../utils.js';
+import { AsyncIterableQueue, mergeFrames } from '../utils.js';
 
 /** SynthesizedAudio is a packet of speech synthesis as returned by the TTS. */
 export interface SynthesizedAudio {
@@ -59,6 +59,11 @@ export abstract class TTS {
   get numChannels(): number {
     return this.#numChannels;
   }
+
+  /**
+   * Receives text and returns synthesis in the form of a {@link ChunkedStream}
+   */
+  abstract synthesize(text: string): ChunkedStream;
 
   /**
    * Returns a {@link SynthesizeStream} that can be used to push text and receive audio data
@@ -136,6 +141,48 @@ export abstract class SynthesizeStream
   }
 
   [Symbol.asyncIterator](): SynthesizeStream {
+    return this;
+  }
+}
+
+/**
+ * An instance of a text-to-speech response, as an asynchronous iterable iterator.
+ *
+ * @example Looping through frames
+ * ```ts
+ * for await (const event of stream) {
+ *   await source.captureFrame(event.frame);
+ * }
+ * ```
+ *
+ * @remarks
+ * This class is abstract, and as such cannot be used directly. Instead, use a provider plugin that
+ * exports its own child ChunkedStream class, which inherits this class's methods.
+ */
+export abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> {
+  protected queue = new AsyncIterableQueue<SynthesizedAudio>();
+  protected closed = false;
+
+  /** Collect every frame into one in a single call */
+  async collect(): Promise<AudioFrame> {
+    const frames = [];
+    for await (const event of this) {
+      frames.push(event.frame);
+    }
+    return mergeFrames(frames);
+  }
+
+  next(): Promise<IteratorResult<SynthesizedAudio>> {
+    return this.queue.next();
+  }
+
+  /** Close both the input and output of the TTS stream */
+  close() {
+    this.queue.close();
+    this.closed = true;
+  }
+
+  [Symbol.asyncIterator](): ChunkedStream {
     return this;
   }
 }

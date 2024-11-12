@@ -101,6 +101,10 @@ export class TTS extends tts.TTS {
       });
   }
 
+  synthesize(): tts.ChunkedStream {
+    throw new Error('Chunked responses are not supported on ElevenLabs TTS');
+  }
+
   stream(): tts.SynthesizeStream {
     return new SynthesizeStream(this.#opts);
   }

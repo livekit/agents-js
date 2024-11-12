@@ -29,6 +29,10 @@ export type ChatModels =
 
 export type WhisperModels = 'whisper-1';
 
+export type TTSModels = 'tts-1' | 'tts-1-hd';
+
+export type TTSVoices = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
+
 // adapters for OpenAI-compatible LLMs, TTSs, STTs
 
 export type TelnyxChatModels =
