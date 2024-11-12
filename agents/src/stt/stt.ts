@@ -73,6 +73,9 @@ export abstract class STT {
     return this.#capabilities;
   }
 
+  /** Receives an audio frame and returns transcription in the form of a {@link SpeechEvent} */
+  abstract recognize(frame: AudioFrame): Promise<SpeechEvent>;
+
   /**
    * Returns a {@link SpeechStream} that can be used to push audio frames and receive
    * transcriptions

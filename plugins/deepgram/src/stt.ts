@@ -83,6 +83,10 @@ export class STT extends stt.STT {
     }
   }
 
+  async recognize(_: AudioFrame): Promise<stt.SpeechEvent> {
+    throw new Error('Recognize is not supported on Deepgram STT');
+  }
+
   stream(): stt.SpeechStream {
     return new SpeechStream(this.#opts);
   }
