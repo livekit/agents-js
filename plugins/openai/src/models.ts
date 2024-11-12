@@ -27,7 +27,9 @@ export type ChatModels =
   | 'gpt-3.5-turbo-1106'
   | 'gpt-3.5-turbo-16k-0613';
 
-// adapters for OpenAI-compatible LLMs
+export type WhisperModels = 'whisper-1';
+
+// adapters for OpenAI-compatible LLMs, TTSs, STTs
 
 export type TelnyxChatModels =
   | 'meta-llama/Meta-Llama-3.1-8B-Instruct'
@@ -55,6 +57,11 @@ export type GroqChatModels =
   | 'mixtral-8x7b-32768'
   | 'gemma-7b-it'
   | 'gemma2-9b-it';
+
+export type GroqAudioModels =
+  | 'whisper-large-v3'
+  | 'distil-whisper-large-v3-en'
+  | 'whisper-large-v3-turbo';
 
 export type DeepSeekChatModels = 'deepseek-coder' | 'deepseek-chat';
 
