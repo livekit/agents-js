@@ -8,3 +8,4 @@ export {
   SynthesizeStream,
   ChunkedStream,
 } from './tts.js';
+export { StreamAdapter, StreamAdapterWrapper } from './stream_adapter.js';

@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, AudioEnergyFilter, log, stt } from '@livekit/agents';
-import { type AudioFrame } from '@livekit/rtc-node';
+import { type AudioBuffer, AudioByteStream, AudioEnergyFilter, log, stt } from '@livekit/agents';
+import type { AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
 import type { STTLanguages, STTModels } from './models.js';
 
@@ -51,7 +51,7 @@ export class STT extends stt.STT {
       streaming: true,
       interimResults: opts.interimResults || defaultSTTOptions.interimResults,
     });
-    if (opts.apiKey === undefined) {
+    if (opts.apiKey === undefined && defaultSTTOptions.apiKey === undefined) {
       throw new Error(
         'Deepgram API key is required, whether as an argument or as $DEEPGRAM_API_KEY',
       );
@@ -83,7 +83,8 @@ export class STT extends stt.STT {
     }
   }
 
-  async recognize(_: AudioFrame): Promise<stt.SpeechEvent> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async recognize(_: AudioBuffer): Promise<stt.SpeechEvent> {
     throw new Error('Recognize is not supported on Deepgram STT');
   }
 
