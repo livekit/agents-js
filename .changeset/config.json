@@ -7,7 +7,6 @@
     }
   ],
   "commit": false,
-  "fixed": [["@livekit/agents", "@livekit/agents-plugin-*"]],
   "ignore": ["livekit-agents-examples"],
   "linked": [],
   "access": "public",
