@@ -1,5 +1,5 @@
 ---
-"@livekit/agents": minor
+"@livekit/agents": patch
 "@livekit/agents-plugin-deepgram": patch
 ---
 
