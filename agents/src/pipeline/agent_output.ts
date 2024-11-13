@@ -134,7 +134,9 @@ const stringSynthesisTask = (text: string, handle: SynthesisHandle): Cancellable
     ttsStream.flush();
     ttsStream.endInput();
     for await (const audio of ttsStream) {
-      if (cancelled || audio === SynthesizeStream.END_OF_STREAM) break;
+      if (cancelled || audio === SynthesizeStream.END_OF_STREAM) {
+        break;
+      }
       handle.queue.put(audio.frame);
     }
     handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
@@ -175,6 +177,7 @@ const streamSynthesisTask = (
 
     for await (const text of stream) {
       if (cancelled) break;
+      // TODO(nbsp): if this line is present, the next text of stream never resolves (???)
       ttsStream.pushText(text);
     }
     ttsStream.flush();
