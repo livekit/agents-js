@@ -10,3 +10,4 @@ export {
   STT,
   SpeechStream,
 } from './stt.js';
+export { StreamAdapter, StreamAdapterWrapper } from './stream_adapter.js';
