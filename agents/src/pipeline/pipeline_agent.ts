@@ -20,14 +20,14 @@ import type {
 import { LLMStream } from '../llm/index.js';
 import { ChatContext, ChatMessage, ChatRole } from '../llm/index.js';
 import { log } from '../log.js';
-import type { STT } from '../stt/index.js';
+import { type STT, StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import {
   SentenceTokenizer as BasicSentenceTokenizer,
   WordTokenizer as BasicWordTokenizer,
   hyphenateWord,
 } from '../tokenize/basic/index.js';
 import type { SentenceTokenizer, WordTokenizer } from '../tokenize/tokenizer.js';
-import type { TTS } from '../tts/index.js';
+import { TTS, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 import type { VAD, VADEvent } from '../vad.js';
 import type { SpeechSource, SynthesisHandle } from './agent_output.js';
@@ -251,6 +251,14 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     super();
 
     this.#opts = { ...defaultVPAOptions, ...opts };
+
+    if (!stt.capabilities.streaming) {
+      stt = new STTStreamAdapter(stt, vad);
+    }
+
+    if (!tts.capabilities.streaming) {
+      tts = new TTSStreamAdapter(tts, new BasicSentenceTokenizer());
+    }
 
     this.#vad = vad;
     this.#stt = stt;

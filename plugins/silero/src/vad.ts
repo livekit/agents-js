@@ -36,7 +36,7 @@ export interface VADOptions {
 const defaultVADOptions: VADOptions = {
   minSpeechDuration: 50,
   minSilenceDuration: 250,
-  prefixPaddingDuration: 100,
+  prefixPaddingDuration: 500,
   maxBufferedSpeech: 60000,
   activationThreshold: 0.5,
   sampleRate: 16000,
@@ -136,10 +136,12 @@ export class VADStream extends baseStream {
 
         if (!pubSampleRate || !speechBuffer) {
           pubSampleRate = frame.sampleRate;
-          pubPrefixPaddingSamples = Math.ceil(this.#opts.prefixPaddingDuration * pubSampleRate);
+          pubPrefixPaddingSamples = Math.trunc(
+            (this.#opts.prefixPaddingDuration * pubSampleRate) / 1000,
+          );
 
           speechBuffer = new Int16Array(
-            (this.#opts.maxBufferedSpeech + this.#opts.prefixPaddingDuration) * pubSampleRate,
+            this.#opts.maxBufferedSpeech * pubSampleRate + pubPrefixPaddingSamples,
           );
 
           if (this.#opts.sampleRate !== pubSampleRate) {
@@ -200,6 +202,7 @@ export class VADStream extends baseStream {
           const toCopyBuffer = Math.min(this.#model.windowSizeSamples, availableSpace);
           if (toCopyBuffer > 0) {
             speechBuffer.set(inputFrame.data.subarray(0, toCopyBuffer), speechBufferIndex);
+            speechBufferIndex += toCopyBuffer;
           } else if (!speechBufferMaxReached) {
             speechBufferMaxReached = true;
             this.#logger.warn(
@@ -233,20 +236,30 @@ export class VADStream extends baseStream {
             probability: p,
             inferenceDuration,
             frames: [
-              new AudioFrame(
-                new Int16Array(inputFrame.data.subarray(0, toCopyInt)),
-                pubSampleRate,
-                1,
-                toCopyInt,
-              ),
+              new AudioFrame(inputFrame.data.subarray(0, toCopyInt), pubSampleRate, 1, toCopyInt),
             ],
             speaking: pubSpeaking,
           });
 
+          const resetWriteCursor = () => {
+            if (!speechBuffer) throw new Error('speechBuffer is empty');
+            if (speechBufferIndex <= pubPrefixPaddingSamples) {
+              return;
+            }
+
+            const paddingData = speechBuffer.subarray(
+              speechBufferIndex - pubPrefixPaddingSamples,
+              speechBufferIndex,
+            );
+            speechBuffer.set(paddingData, 0);
+            speechBufferIndex = pubPrefixPaddingSamples;
+            speechBufferMaxReached = false;
+          };
+
           const copySpeechBuffer = (): AudioFrame => {
             if (!speechBuffer) throw new Error('speechBuffer is empty');
             return new AudioFrame(
-              new Int16Array(speechBuffer.subarray(0, speechBufferIndex)),
+              speechBuffer.subarray(0, speechBufferIndex),
               pubSampleRate,
               1,
               speechBufferIndex,
@@ -277,14 +290,8 @@ export class VADStream extends baseStream {
             silenceThresholdDuration += windowDuration;
             speechThresholdDuration = 0;
 
-            if (!pubSpeaking && speechBufferIndex <= pubPrefixPaddingSamples) {
-              const paddingData = speechBuffer.subarray(
-                speechBufferIndex - pubPrefixPaddingSamples,
-                speechBufferIndex,
-              );
-              speechBuffer.set(paddingData, 0);
-              speechBufferIndex = pubPrefixPaddingSamples;
-              speechBufferMaxReached = false;
+            if (!pubSpeaking) {
+              resetWriteCursor();
             }
 
             if (pubSpeaking && silenceThresholdDuration > this.#opts.minSilenceDuration) {
@@ -303,6 +310,8 @@ export class VADStream extends baseStream {
                 frames: [copySpeechBuffer()],
                 speaking: pubSpeaking,
               });
+
+              resetWriteCursor();
             }
           }
 
@@ -310,13 +319,11 @@ export class VADStream extends baseStream {
           inferenceFrames = [];
 
           if (inputFrame.data.length > toCopyInt) {
-            const data = new Int16Array(inputFrame.data.subarray(toCopyInt));
+            const data = inputFrame.data.subarray(toCopyInt);
             inputFrames.push(new AudioFrame(data, pubSampleRate, 1, Math.trunc(data.length / 2)));
           }
           if (inferenceFrame.data.length > this.#model.windowSizeSamples) {
-            const data = new Int16Array(
-              inferenceFrame.data.subarray(this.#model.windowSizeSamples),
-            );
+            const data = inferenceFrame.data.subarray(this.#model.windowSizeSamples);
             inferenceFrames.push(
               new AudioFrame(data, this.#opts.sampleRate, 1, Math.trunc(data.length / 2)),
             );
