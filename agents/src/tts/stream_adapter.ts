@@ -46,6 +46,7 @@ export class StreamAdapterWrapper extends SynthesizeStream {
         }
       }
       this.#sentenceStream.endInput();
+      this.#sentenceStream.close();
     };
 
     const synthesize = async () => {
