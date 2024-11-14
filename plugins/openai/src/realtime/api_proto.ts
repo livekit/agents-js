@@ -208,17 +208,32 @@ export type ResponseStatusDetails =
       reason: 'turn_detected' | 'client_cancelled' | string;
     };
 
+export interface ModelUsage {
+  total_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  input_token_details: {
+    text_tokens: number;
+    audio_tokens: number;
+    cached_tokens: number;
+    cached_tokens_details: {
+      text_tokens: number;
+      audio_tokens: number;
+    };
+  };
+  output_token_details: {
+    text_tokens: number;
+    audio_tokens: number;
+  };
+}
+
 export interface ResponseResource {
   id: string;
   object: 'realtime.response';
   status: ResponseStatus;
   status_details: ResponseStatusDetails;
   output: ItemResource[];
-  usage?: {
-    total_tokens: number;
-    input_tokens: number;
-    output_tokens: number;
-  };
+  usage?: ModelUsage;
 }
 
 // Client Events
