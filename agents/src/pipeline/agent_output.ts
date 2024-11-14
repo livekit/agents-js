@@ -158,18 +158,12 @@ const streamSynthesisTask = (
 
     const ttsStream = handle.tts.stream();
     const readGeneratedAudio = async () => {
-      let started = false;
       for await (const audio of ttsStream) {
         if (cancelled) break;
         if (audio === SynthesizeStream.END_OF_STREAM) {
-          if (started) {
-            break;
-          } else {
-            continue;
-          }
+          break;
         }
         handle.queue.put(audio.frame);
-        started = true;
       }
       handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
     };

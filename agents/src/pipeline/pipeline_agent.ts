@@ -27,7 +27,8 @@ import {
   hyphenateWord,
 } from '../tokenize/basic/index.js';
 import type { SentenceTokenizer, WordTokenizer } from '../tokenize/tokenizer.js';
-import { TTS, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
+import type { TTS } from '../tts/index.js';
+import { StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 import type { VAD, VADEvent } from '../vad.js';
 import type { SpeechSource, SynthesisHandle } from './agent_output.js';
@@ -621,7 +622,6 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     // TODO(nbsp): what goes here
     let collectedText = '';
     const isUsingTools = handle.source instanceof LLMStream && !!handle.source.functionCalls.length;
-    console.log({ isUsingTools });
     const extraToolsMessages = []; // additional messages from the functions to add to the context
     let interrupted = handle.interrupted;
 
