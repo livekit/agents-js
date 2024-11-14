@@ -148,8 +148,9 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
         });
 
         for await (const frame of handle.playoutSource) {
-          if (cancelled || (frame === SynthesisHandle.FLUSH_SENTINEL && !firstFrame)) break;
-          if (frame === SynthesisHandle.FLUSH_SENTINEL) continue;
+          if (cancelled || frame === SynthesisHandle.FLUSH_SENTINEL) {
+            break;
+          }
           if (firstFrame) {
             this.#logger
               .child({ speechId: handle.speechId })

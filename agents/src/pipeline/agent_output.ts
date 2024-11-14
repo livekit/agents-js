@@ -2,13 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
-import { LLMStream } from '../llm/llm.js';
 import { log } from '../log.js';
 import { SynthesizeStream, type TTS } from '../tts/index.js';
 import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 import type { AgentPlayout, PlayoutHandle } from './agent_playout.js';
 
-export type SpeechSource = AsyncIterable<string> | string | Promise<string> | LLMStream;
+export type SpeechSource = AsyncIterable<string> | string | Promise<string>;
 
 export class SynthesisHandle {
   static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
@@ -101,10 +100,8 @@ export class AgentOutput {
       let task: CancellablePromise<void>;
       if (typeof ttsSource === 'string') {
         task = stringSynthesisTask(ttsSource, handle);
-      } else if (ttsSource instanceof LLMStream) {
-        task = llmStreamSynthesisTask(ttsSource, handle);
       } else {
-        task = iterableSynthesisTask(ttsSource, handle);
+        task = streamSynthesisTask(ttsSource, handle);
       }
 
       onCancel(() => {
@@ -148,7 +145,7 @@ const stringSynthesisTask = (text: string, handle: SynthesisHandle): Cancellable
   });
 };
 
-const iterableSynthesisTask = (
+const streamSynthesisTask = (
   stream: AsyncIterable<string>,
   handle: SynthesisHandle,
 ): CancellablePromise<void> => {
@@ -185,57 +182,6 @@ const iterableSynthesisTask = (
     }
     ttsStream.flush();
     ttsStream.endInput();
-
-    resolve();
-  });
-};
-
-const llmStreamSynthesisTask = (
-  stream: LLMStream,
-  handle: SynthesisHandle,
-): CancellablePromise<void> => {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  return new CancellablePromise<void>(async (resolve, _, onCancel) => {
-    let cancelled = false;
-    onCancel(() => {
-      cancelled = true;
-    });
-
-    const ttsStream = handle.tts.stream();
-    const readGeneratedAudio = async () => {
-      let started = false;
-      for await (const audio of ttsStream) {
-        if (cancelled) break;
-        if (audio === SynthesizeStream.END_OF_STREAM) {
-          if (started) {
-            break;
-          } else {
-            continue;
-          }
-        }
-        handle.queue.put(audio.frame);
-        started = true;
-      }
-      handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
-    };
-    readGeneratedAudio();
-
-    for await (const chunk of stream) {
-      // XXX: this pushes a few frames (typically undefined + two or three),
-      // and then OpenAI's stream hangs. it does add the item to the queue,
-      // and this does attempt to read it (i checked with manual next()),
-      // but something is off and it hangs forever.
-      // same happens if we do pushText(content || '').
-      const content = chunk.choices[0].delta.content;
-      if (cancelled) break;
-      if (content) {
-        console.log('tts <-', content)
-        ttsStream.pushText(content);
-      }
-    }
-    ttsStream.flush();
-    ttsStream.endInput();
-    console.log('input ended')
 
     resolve();
   });
