@@ -831,7 +831,7 @@ async function* llmStreamToStringIterable(
     if (firstFrame) {
       firstFrame = false;
       log()
-        .child({ speechId, elapsed: Math.round(Date.now() * 1000 - startTime) / 1000 })
+        .child({ speechId, elapsed: Math.round(Date.now() - startTime) })
         .debug('received first LLM token');
     }
     yield content;
