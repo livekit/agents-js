@@ -45,7 +45,7 @@ export type BeforeLLMCallback = (
 
 export type BeforeTTSCallback = (
   agent: VoicePipelineAgent,
-  source: string | AsyncIterable<string>,
+  source: string | AsyncIterable<string> | LLMStream,
 ) => SpeechSource;
 
 export enum VPAEvent {
@@ -115,8 +115,8 @@ const defaultBeforeLLMCallback: BeforeLLMCallback = (
 const defaultBeforeTTSCallback: BeforeTTSCallback = (
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _: VoicePipelineAgent,
-  text: string | AsyncIterable<string>,
-): string | AsyncIterable<string> => {
+  text: string | AsyncIterable<string> | LLMStream,
+) => {
   return text;
 };
 
@@ -726,9 +726,9 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       throw new Error('agent output should be initialized when ready');
     }
 
-    if (source instanceof LLMStream) {
-      source = llmStreamToStringIterable(speechId, source);
-    }
+    // if (source instanceof LLMStream) {
+    //   source = llmStreamToStringIterable(speechId, source);
+    // }
 
     const ogSource = source;
     if (!(typeof source === 'string')) {

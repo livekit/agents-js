@@ -459,14 +459,18 @@ export class LLMStream extends llm.LLMStream {
       });
 
       for await (const chunk of stream) {
+        console.log('chunking')
         for (const choice of chunk.choices) {
+          console.log('choicing')
           const chatChunk = this.#parseChoice(chunk.id, choice);
           if (chatChunk) {
+            console.log('putting llm', chatChunk.choices[0].delta)
             this.queue.put(chatChunk);
           }
 
           if (chunk.usage) {
             const usage = chunk.usage;
+            console.log('usageing')
             this.queue.put({
               requestId: chunk.id,
               choices: [],

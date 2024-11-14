@@ -59,7 +59,8 @@ export default defineAgent({
       vad,
       new deepgram.STT(),
       new openai.LLM(),
-      new elevenlabs.TTS(),
+      // new elevenlabs.TTS(),
+      new openai.TTS(),
       { chatCtx: initialContext, fncCtx },
     );
     agent.start(ctx.room, participant);
