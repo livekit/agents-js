@@ -601,6 +601,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.emit(VPAEvent.USER_SPEECH_COMMITTED, userMsg);
 
       this.#transcribedText = this.#transcribedText.slice(userQuestion.length);
+      handle.markUserCommitted();
     };
 
     // wait for the playHandle to finish and check every 1s if user question should be committed
@@ -620,13 +621,14 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     // TODO(nbsp): what goes here
     let collectedText = '';
     const isUsingTools = handle.source instanceof LLMStream && !!handle.source.functionCalls.length;
+    console.log({ isUsingTools });
     const extraToolsMessages = []; // additional messages from the functions to add to the context
     let interrupted = handle.interrupted;
 
     // if the answer is using tools, execute the functions and automatically generate
     // a response to the user question from the returned values
     if (isUsingTools && !interrupted) {
-      if (!userQuestion || handle.userCommitted) {
+      if (!userQuestion || !handle.userCommitted) {
         throw new Error('user speech should have been committed before using tools');
       }
       const llmStream = handle.source;

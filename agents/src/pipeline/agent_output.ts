@@ -177,7 +177,6 @@ const streamSynthesisTask = (
 
     for await (const text of stream) {
       if (cancelled) break;
-      // TODO(nbsp): if this line is present, the next text of stream never resolves (???)
       ttsStream.pushText(text);
     }
     ttsStream.flush();
