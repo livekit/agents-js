@@ -39,7 +39,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
 
     while (true) {
       const tokens = this.#func(this.#inBuf);
-      if (tokens.length === 0) break;
+      if (tokens.length <= 1) break;
 
       if (this.#outBuf) this.#outBuf += ' ';
 
@@ -128,6 +128,10 @@ export class BufferedSentenceStream extends SentenceStream {
 
   pushText(text: string) {
     this.#stream.pushText(text);
+  }
+
+  flush() {
+    this.#stream.flush();
   }
 
   close() {

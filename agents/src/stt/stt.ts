@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import type { AudioBuffer } from '../utils.js';
 import { AsyncIterableQueue } from '../utils.js';
 
 /** Indicates start/middle/end of speech */
@@ -72,6 +73,9 @@ export abstract class STT {
   get capabilities(): STTCapabilities {
     return this.#capabilities;
   }
+
+  /** Receives an audio buffer and returns transcription in the form of a {@link SpeechEvent} */
+  abstract recognize(frame: AudioBuffer): Promise<SpeechEvent>;
 
   /**
    * Returns a {@link SpeechStream} that can be used to push audio frames and receive

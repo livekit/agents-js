@@ -20,7 +20,7 @@ import type {
 import { LLMStream } from '../llm/index.js';
 import { ChatContext, ChatMessage, ChatRole } from '../llm/index.js';
 import { log } from '../log.js';
-import type { STT } from '../stt/index.js';
+import { type STT, StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import {
   SentenceTokenizer as BasicSentenceTokenizer,
   WordTokenizer as BasicWordTokenizer,
@@ -28,6 +28,7 @@ import {
 } from '../tokenize/basic/index.js';
 import type { SentenceTokenizer, WordTokenizer } from '../tokenize/tokenizer.js';
 import type { TTS } from '../tts/index.js';
+import { StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 import type { VAD, VADEvent } from '../vad.js';
 import type { SpeechSource, SynthesisHandle } from './agent_output.js';
@@ -251,6 +252,14 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     super();
 
     this.#opts = { ...defaultVPAOptions, ...opts };
+
+    if (!stt.capabilities.streaming) {
+      stt = new STTStreamAdapter(stt, vad);
+    }
+
+    if (!tts.capabilities.streaming) {
+      tts = new TTSStreamAdapter(tts, new BasicSentenceTokenizer());
+    }
 
     this.#vad = vad;
     this.#stt = stt;
@@ -593,6 +602,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.emit(VPAEvent.USER_SPEECH_COMMITTED, userMsg);
 
       this.#transcribedText = this.#transcribedText.slice(userQuestion.length);
+      handle.markUserCommitted();
     };
 
     // wait for the playHandle to finish and check every 1s if user question should be committed
@@ -618,7 +628,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     // if the answer is using tools, execute the functions and automatically generate
     // a response to the user question from the returned values
     if (isUsingTools && !interrupted) {
-      if (!userQuestion || handle.userCommitted) {
+      if (!userQuestion || !handle.userCommitted) {
         throw new Error('user speech should have been committed before using tools');
       }
       const llmStream = handle.source;
@@ -823,7 +833,7 @@ async function* llmStreamToStringIterable(
     if (firstFrame) {
       firstFrame = false;
       log()
-        .child({ speechId, elapsed: Math.round(Date.now() * 1000 - startTime) / 1000 })
+        .child({ speechId, elapsed: Math.round(Date.now() - startTime) })
         .debug('received first LLM token');
     }
     yield content;

@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioBuffer } from '@livekit/agents';
-import { mergeFrames, stt } from '@livekit/agents';
+import { type AudioBuffer, mergeFrames, stt } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { OpenAI } from 'openai';
 import type { GroqAudioModels, WhisperModels } from './models.js';
@@ -88,6 +87,10 @@ export class STT extends stt.STT {
   }
 
   #createWav(frame: AudioFrame): Buffer {
+    const bitsPerSample = 16;
+    const byteRate = (frame.sampleRate * frame.channels * bitsPerSample) / 8;
+    const blockAlign = (frame.channels * bitsPerSample) / 8;
+
     const header = Buffer.alloc(44);
     header.write('RIFF', 0);
     header.writeUInt32LE(36 + frame.data.byteLength, 4);
@@ -97,8 +100,8 @@ export class STT extends stt.STT {
     header.writeUInt16LE(1, 20);
     header.writeUInt16LE(frame.channels, 22);
     header.writeUInt32LE(frame.sampleRate, 24);
-    header.writeUInt32LE((frame.sampleRate * frame.channels) / 2, 28);
-    header.writeUInt16LE(frame.channels / 2, 32);
+    header.writeUInt32LE(byteRate, 28);
+    header.writeUInt16LE(blockAlign, 32);
     header.writeUInt16LE(16, 34);
     header.write('data', 36);
     header.writeUInt32LE(frame.data.byteLength, 40);
@@ -108,7 +111,7 @@ export class STT extends stt.STT {
   async recognize(buffer: AudioBuffer, language?: string): Promise<stt.SpeechEvent> {
     const config = this.#sanitizeOptions(language);
     buffer = mergeFrames(buffer);
-    const file = new File([this.#createWav(buffer)], 'audio.wav');
+    const file = new File([this.#createWav(buffer)], 'audio.wav', { type: 'audio/wav' });
     const resp = await this.#client.audio.transcriptions.create({
       file,
       model: this.#opts.model,
