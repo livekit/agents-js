@@ -6,10 +6,10 @@ export {
   type AgentState,
   type BeforeTTSCallback,
   type BeforeLLMCallback,
-  type VPAEvent,
   type VPACallbacks,
   type AgentCallContext,
   type AgentTranscriptionOptions,
   type VPAOptions,
+  VPAEvent,
   VoicePipelineAgent,
 } from './pipeline_agent.js';
