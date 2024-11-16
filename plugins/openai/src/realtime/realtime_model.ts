@@ -1061,11 +1061,13 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     this.emit('response_content_done', content);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  #handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {}
+  #handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
+    this.emit('response_text_delta', event);
+  }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  #handleResponseTextDone(event: api_proto.ResponseTextDoneEvent): void {}
+  #handleResponseTextDone(event: api_proto.ResponseTextDoneEvent): void {
+    this.emit('response_text_done', event);
+  }
 
   #handleResponseAudioTranscriptDelta(event: api_proto.ResponseAudioTranscriptDeltaEvent): void {
     const content = this.#getContent(event);
