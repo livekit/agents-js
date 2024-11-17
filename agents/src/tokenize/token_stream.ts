@@ -100,7 +100,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
       throw new Error('Stream is closed');
     }
     this.flush();
-    this.closed = true;
+    this.close();
   }
 
   next(): Promise<IteratorResult<TokenData>> {
@@ -156,8 +156,15 @@ export class BufferedWordStream extends WordStream {
     this.#stream.pushText(text);
   }
 
+  flush() {
+    this.#stream.flush();
+  }
+
+  endInput() {
+    this.#stream.endInput();
+  }
+
   close() {
-    super.close();
     this.#stream.close();
   }
 
