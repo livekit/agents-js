@@ -65,17 +65,21 @@ const defaultTTSOptions: TTSOptions = {
 export class TTS extends tts.TTS {
   #opts: TTSOptions;
 
-  constructor(opts: Partial<TTSOptions> = defaultTTSOptions) {
+  constructor(opts: Partial<TTSOptions> = {}) {
     super(sampleRateFromFormat(opts.encoding || defaultTTSOptions.encoding), 1, {
       streaming: true,
     });
-    if (opts.apiKey === undefined) {
+
+    this.#opts = {
+      ...defaultTTSOptions,
+      ...opts,
+    };
+
+    if (this.#opts.apiKey === undefined) {
       throw new Error(
         'ElevenLabs API key is required, whether as an argument or as $ELEVEN_API_KEY',
       );
     }
-
-    this.#opts = { ...defaultTTSOptions, ...opts };
   }
 
   async listVoices(): Promise<Voice[]> {
