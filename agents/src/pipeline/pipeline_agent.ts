@@ -827,7 +827,7 @@ async function* llmStreamToStringIterable(
   const startTime = Date.now();
   let firstFrame = true;
   for await (const chunk of stream) {
-    const content = chunk.choices[0].delta.content;
+    const content = chunk.choices[0]?.delta.content;
     if (!content) continue;
 
     if (firstFrame) {
