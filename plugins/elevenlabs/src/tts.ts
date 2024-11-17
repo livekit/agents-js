@@ -147,9 +147,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       let stream: tokenize.WordStream | null = null;
       for await (const text of this.input) {
         if (text === SynthesizeStream.FLUSH_SENTINEL) {
-          if (stream) {
-            stream.close();
-          }
+          stream?.endInput();
           stream = null;
         } else {
           if (!stream) {
