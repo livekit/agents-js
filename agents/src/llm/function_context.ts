@@ -127,13 +127,14 @@ export const oaiBuildFunctionInfo = (
   fncName: string,
   rawArgs: string,
 ): FunctionCallInfo => {
-  if (!fncCtx[fncName]) {
+  const func = fncCtx[fncName];
+  if (!func) {
     throw new Error(`AI function ${fncName} not found`);
   }
 
   return {
     name: fncName,
-    func: fncCtx[fncName],
+    func,
     toolCallId,
     rawParams: rawArgs,
     params: JSON.parse(rawArgs),

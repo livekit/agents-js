@@ -94,7 +94,7 @@ if (process.send) {
   //   [1] import.meta.filename
   //   [2] import.meta.filename of function containing entry file
   const moduleFile = process.argv[2];
-  const agent: Agent = await import(pathToFileURL(moduleFile).href).then((module) => {
+  const agent: Agent = await import(pathToFileURL(moduleFile!).href).then((module) => {
     const agent = module.default;
     if (agent === undefined || !isAgent(agent)) {
       throw new Error(`Unable to load agent: Missing or invalid default export in ${moduleFile}`);
@@ -110,6 +110,7 @@ if (process.send) {
   process.on('SIGINT', () => {});
 
   await once(process, 'message').then(([msg]: IPCMessage[]) => {
+    msg = msg!;
     if (msg.case !== 'initializeRequest') {
       throw new Error('first message must be InitializeRequest');
     }

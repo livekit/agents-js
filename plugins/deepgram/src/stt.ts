@@ -237,7 +237,7 @@ export class SpeechStream extends stt.SpeechStream {
                 // It's also possible we receive a transcript without a SpeechStarted event.
                 if (this.#speaking) return;
                 this.#speaking = true;
-                this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH, alternatives: [] });
+                this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
                 break;
               }
               // see this page:
@@ -252,16 +252,22 @@ export class SpeechStream extends stt.SpeechStream {
                 // If, for some reason, we didn't get a SpeechStarted event but we got
                 // a transcript with text, we should start speaking. It's rare but has
                 // been observed.
-                if (alternatives.length > 0 && alternatives[0].text) {
+                if (alternatives[0] && alternatives[0].text) {
                   if (!this.#speaking) {
                     this.#speaking = true;
-                    this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH, alternatives: [] });
+                    this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
                   }
 
                   if (isFinal) {
-                    this.queue.put({ type: stt.SpeechEventType.FINAL_TRANSCRIPT, alternatives });
+                    this.queue.put({
+                      type: stt.SpeechEventType.FINAL_TRANSCRIPT,
+                      alternatives: [alternatives[0], ...alternatives.splice(0)],
+                    });
                   } else {
-                    this.queue.put({ type: stt.SpeechEventType.INTERIM_TRANSCRIPT, alternatives });
+                    this.queue.put({
+                      type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
+                      alternatives: [alternatives[0], ...alternatives.splice(0)],
+                    });
                   }
                 }
 
@@ -270,7 +276,7 @@ export class SpeechStream extends stt.SpeechStream {
                 // a non-empty transcript (deepgram doesn't have a SpeechEnded event)
                 if (isEndpoint && this.#speaking) {
                   this.#speaking = false;
-                  this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH, alternatives: [] });
+                  this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
                 }
 
                 break;

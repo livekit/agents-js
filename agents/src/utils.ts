@@ -28,8 +28,8 @@ export const mergeFrames = (buffer: AudioBuffer): AudioFrame => {
       throw new TypeError('buffer is empty');
     }
 
-    const sampleRate = buffer[0].sampleRate;
-    const channels = buffer[0].channels;
+    const sampleRate = buffer[0]!.sampleRate;
+    const channels = buffer[0]!.channels;
     let samplesPerChannel = 0;
     let data = new Int16Array();
 

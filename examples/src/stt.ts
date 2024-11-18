@@ -25,7 +25,7 @@ export default defineAgent({
       const recvTask = async () => {
         for await (const event of sttStream) {
           if (event.type === stt.SpeechEventType.FINAL_TRANSCRIPT) {
-            console.log(event.alternatives[0].text);
+            console.log(event.alternatives![0].text);
           }
         }
       };

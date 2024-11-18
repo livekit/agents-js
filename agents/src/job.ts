@@ -189,10 +189,7 @@ export class JobContext {
   /** @internal */
   onParticipantConnected(p: RemoteParticipant) {
     for (const callback of this.#participantEntrypoints) {
-      if (
-        p.identity in this.#participantTasks &&
-        this.#participantTasks[p.identity].callback == callback
-      ) {
+      if (this.#participantTasks[p.identity]?.callback == callback) {
         this.#logger.warn(
           'a participant has joined before a prior prticipant task matching the same identity has finished:',
           p.identity,

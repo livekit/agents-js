@@ -846,8 +846,8 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   #getContent(ptr: ContentPtr): RealtimeContent {
     const response = this.#pendingResponses[ptr.response_id];
-    const output = response.output[ptr.output_index];
-    const content = output.content[ptr.content_index];
+    const output = response!.output[ptr.output_index];
+    const content = output!.content[ptr.content_index]!;
     return content;
   }
 
@@ -940,7 +940,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   #handleResponseDone(event: api_proto.ResponseDoneEvent): void {
     const responseData = event.response;
     const responseId = responseData.id;
-    const response = this.#pendingResponses[responseId];
+    const response = this.#pendingResponses[responseId]!;
     response.status = responseData.status;
     response.statusDetails = responseData.status_details;
     response.usage = responseData.usage ?? null;
@@ -974,7 +974,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       content: [],
       doneFut: new Future(),
     };
-    response.output.push(newOutput);
+    response?.output.push(newOutput);
     this.emit('response_output_added', newOutput);
   }
 
@@ -982,9 +982,9 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const responseId = event.response_id;
     const response = this.#pendingResponses[responseId];
     const outputIndex = event.output_index;
-    const output = response.output[outputIndex];
+    const output = response!.output[outputIndex];
 
-    if (output.type === 'function_call') {
+    if (output?.type === 'function_call') {
       if (!this.#fncCtx) {
         this.#logger.error('function call received but no fncCtx is available');
         return;
@@ -994,6 +994,11 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       const item = event.item;
       if (item.type !== 'function_call') {
         throw new Error('Expected function_call item');
+      }
+      const func = this.#fncCtx[item.name];
+      if (!func) {
+        this.#logger.error(`no function with name ${item.name} in fncCtx`);
+        return;
       }
 
       this.emit('function_call_started', {
@@ -1006,7 +1011,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         `[Function Call ${item.call_id}] Executing ${item.name} with arguments ${parsedArgs}`,
       );
 
-      this.#fncCtx[item.name].execute(parsedArgs).then(
+      func.execute(parsedArgs).then(
         (content) => {
           this.#logger.debug(`[Function Call ${item.call_id}] ${item.name} returned ${content}`);
           this.emit('function_call_completed', {
@@ -1032,7 +1037,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       );
     }
 
-    output.doneFut.resolve();
+    output?.doneFut.resolve();
     this.emit('response_output_done', output);
   }
 
@@ -1040,7 +1045,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const responseId = event.response_id;
     const response = this.#pendingResponses[responseId];
     const outputIndex = event.output_index;
-    const output = response.output[outputIndex];
+    const output = response!.output[outputIndex];
 
     const textStream = new AsyncIterableQueue<string>();
     const audioStream = new AsyncIterableQueue<AudioFrame>();
@@ -1056,7 +1061,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       audioStream: audioStream,
       toolCalls: [],
     };
-    output.content.push(newContent);
+    output?.content.push(newContent);
     this.emit('response_content_added', newContent);
   }
 

@@ -54,13 +54,13 @@ export class StreamAdapterWrapper extends SpeechStream {
       for await (const ev of this.#vadStream) {
         switch (ev.type) {
           case VADEventType.START_OF_SPEECH:
-            this.queue.put({ type: SpeechEventType.START_OF_SPEECH, alternatives: [] });
+            this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
             break;
           case VADEventType.END_OF_SPEECH:
-            this.queue.put({ type: SpeechEventType.END_OF_SPEECH, alternatives: [] });
+            this.queue.put({ type: SpeechEventType.END_OF_SPEECH });
 
             const event = await this.#stt.recognize(ev.frames);
-            if (!event.alternatives.length || !event.alternatives[0].text) {
+            if (!event.alternatives![0].text) {
               continue;
             }
 
