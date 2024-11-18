@@ -12,6 +12,7 @@ export interface TranscriptionForwarder {
   markAudioComplete(): void;
   close(interrupt: boolean): Promise<void>;
   currentCharacterIndex: number;
+  text: string;
 }
 
 export class BasicTranscriptionForwarder implements TranscriptionForwarder {
@@ -33,6 +34,10 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     this.#participantIdentity = participantIdentity;
     this.#trackSid = trackSid;
     this.#messageId = messageId;
+  }
+
+  get text(): string {
+    return this.#currentText;
   }
 
   start(): void {
