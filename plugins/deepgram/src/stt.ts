@@ -247,7 +247,7 @@ export class SpeechStream extends stt.SpeechStream {
                 const isFinal = json['is_final'];
                 const isEndpoint = json['speech_final'];
 
-                let alternatives = liveTranscriptionToSpeechData(this.#opts.language!, json);
+                const alternatives = liveTranscriptionToSpeechData(this.#opts.language!, json);
 
                 // If, for some reason, we didn't get a SpeechStarted event but we got
                 // a transcript with text, we should start speaking. It's rare but has
