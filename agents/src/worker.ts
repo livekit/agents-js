@@ -622,6 +622,8 @@ export class Worker {
           url: asgn.url || this.#opts.wsURL,
           token: asgn.token,
         });
+      } else {
+        this.#logger.child({ requestId: req.id }).warn('pending assignment not found');
       }
     };
 

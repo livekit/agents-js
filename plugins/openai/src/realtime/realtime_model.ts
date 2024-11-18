@@ -995,6 +995,11 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       if (item.type !== 'function_call') {
         throw new Error('Expected function_call item');
       }
+      const func = this.#fncCtx[item.name];
+      if (!func) {
+        this.#logger.error(`no function with name ${item.name} in fncCtx`);
+        return;
+      }
 
       this.emit('function_call_started', {
         callId: item.call_id,
@@ -1006,7 +1011,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         `[Function Call ${item.call_id}] Executing ${item.name} with arguments ${parsedArgs}`,
       );
 
-      this.#fncCtx[item.name]?.execute(parsedArgs).then(
+      func.execute(parsedArgs).then(
         (content) => {
           this.#logger.debug(`[Function Call ${item.call_id}] ${item.name} returned ${content}`);
           this.emit('function_call_completed', {

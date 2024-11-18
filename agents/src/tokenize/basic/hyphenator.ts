@@ -49,10 +49,8 @@ class Hyphenator {
     }
 
     // if the word is an exception, get the stored points
-    let points: number[];
-    if (this.exceptions[word.toLowerCase()]) {
-      points = this.exceptions[word.toLowerCase()]!;
-    } else {
+    let points = this.exceptions[word.toLowerCase()];
+    if (!points) {
       const work = `.${word.toLowerCase()}.`;
       points = new Array(work.length + 1).fill(0);
 
@@ -64,7 +62,7 @@ class Hyphenator {
             if (node[END]) {
               const end = node[END];
               end.forEach((x, j) => {
-                points[i + j] = Math.max(points[i + j]!, x);
+                points![i + j] = Math.max(points![i + j]!, x);
               });
             }
           } else {

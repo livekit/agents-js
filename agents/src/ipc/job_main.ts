@@ -110,10 +110,11 @@ if (process.send) {
   process.on('SIGINT', () => {});
 
   await once(process, 'message').then(([msg]: IPCMessage[]) => {
-    if (msg!.case !== 'initializeRequest') {
+    msg = msg!;
+    if (msg.case !== 'initializeRequest') {
       throw new Error('first message must be InitializeRequest');
     }
-    initializeLogger(msg!.value.loggerOptions);
+    initializeLogger(msg.value.loggerOptions);
   });
   const proc = new JobProcess();
   let logger = log().child({ pid: proc.pid });
