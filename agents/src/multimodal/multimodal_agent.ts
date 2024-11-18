@@ -178,7 +178,6 @@ export class MultimodalAgent extends EventEmitter {
         this.#speaking = true;
       };
 
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const onPlayoutStopped = (interrupted: boolean) => {
         this.emit('agent_stopped_speaking');
         this.#speaking = false;
@@ -304,6 +303,7 @@ export class MultimodalAgent extends EventEmitter {
         }
       });
 
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       this.#session.on('input_speech_stopped', (ev: any) => {
         this.emit('user_stopped_speaking');
       });
