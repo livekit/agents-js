@@ -60,7 +60,7 @@ export class StreamAdapterWrapper extends SpeechStream {
             this.queue.put({ type: SpeechEventType.END_OF_SPEECH, alternatives: [] });
 
             const event = await this.#stt.recognize(ev.frames);
-            if (!event.alternatives.length || !event.alternatives[0].text) {
+            if (!event.alternatives.length || !event.alternatives[0]!.text) {
               continue;
             }
 

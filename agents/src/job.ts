@@ -191,7 +191,7 @@ export class JobContext {
     for (const callback of this.#participantEntrypoints) {
       if (
         p.identity in this.#participantTasks &&
-        this.#participantTasks[p.identity].callback == callback
+        this.#participantTasks[p.identity]!.callback == callback
       ) {
         this.#logger.warn(
           'a participant has joined before a prior prticipant task matching the same identity has finished:',

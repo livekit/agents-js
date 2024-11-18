@@ -133,7 +133,7 @@ export const oaiBuildFunctionInfo = (
 
   return {
     name: fncName,
-    func: fncCtx[fncName],
+    func: fncCtx[fncName]!,
     toolCallId,
     rawParams: rawArgs,
     params: JSON.parse(rawArgs),

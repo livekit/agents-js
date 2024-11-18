@@ -89,8 +89,8 @@ const defaultCpuLoad = async (): Promise<number> => {
       let total = 0;
 
       for (let i = 0; i < cpus1.length; i++) {
-        const cpu1 = cpus1[i].times;
-        const cpu2 = cpus2[i].times;
+        const cpu1 = cpus1[i]!.times;
+        const cpu2 = cpus2[i]!.times;
 
         idle += cpu2.idle - cpu1.idle;
 
@@ -495,7 +495,7 @@ export class Worker {
           if (job.id in this.#pending) {
             const task = this.#pending[job.id];
             delete this.#pending[job.id];
-            task.resolve(msg.message.value);
+            task?.resolve(msg.message.value);
           } else {
             this.#logger.child({ job }).warn('received assignment for unknown job ' + job.id);
           }
@@ -610,17 +610,19 @@ export class Worker {
         this.#logger.child({ req }).warn(`assignment for job ${req.id} timed out`);
         return;
       }, ASSIGNMENT_TIMEOUT);
-      const asgn = await this.#pending[req.id].promise.then(async (asgn) => {
+      const asgn = await this.#pending[req.id]?.promise.then(async (asgn) => {
         clearTimeout(timer);
         return asgn;
       });
 
-      await this.#procPool.launchJob({
-        acceptArguments: args,
-        job: msg.job!,
-        url: asgn.url || this.#opts.wsURL,
-        token: asgn.token,
-      });
+      if (asgn) {
+        await this.#procPool.launchJob({
+          acceptArguments: args,
+          job: msg.job!,
+          url: asgn.url || this.#opts.wsURL,
+          token: asgn.token,
+        });
+      }
     };
 
     const req = new JobRequest(msg.job!, onReject, onAccept);

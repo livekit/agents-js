@@ -122,7 +122,7 @@ export class ProcJobExecutor extends JobExecutor {
     this.#proc!.send({ case: 'initializeRequest', value: { loggerOptions } });
     await once(this.#proc!, 'message').then(([msg]: IPCMessage[]) => {
       clearTimeout(timer);
-      if (msg.case !== 'initializeResponse') {
+      if (msg!.case !== 'initializeResponse') {
         throw new Error('first message must be InitializeResponse');
       }
     });

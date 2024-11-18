@@ -74,7 +74,7 @@ export class OnnxModel {
       .then((result) => {
         // this.#state = result.output.data as Float32Array,
         this.#context = this.#inputBuffer.subarray(0, this.#contextSize);
-        return (result.output.data as Float32Array).at(0)!;
+        return (result.output!.data as Float32Array).at(0)!;
       });
   }
 }

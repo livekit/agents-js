@@ -252,7 +252,7 @@ export class SpeechStream extends stt.SpeechStream {
                 // If, for some reason, we didn't get a SpeechStarted event but we got
                 // a transcript with text, we should start speaking. It's rare but has
                 // been observed.
-                if (alternatives.length > 0 && alternatives[0].text) {
+                if (alternatives.length > 0 && alternatives[0]!.text) {
                   if (!this.#speaking) {
                     this.#speaking = true;
                     this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH, alternatives: [] });
