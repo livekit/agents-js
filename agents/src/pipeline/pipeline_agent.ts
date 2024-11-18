@@ -416,12 +416,10 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.#lastEndOfSpeechTime = Date.now();
     });
     this.#humanInput.on(HumanInputEvent.INTERIM_TRANSCRIPT, (event) => {
-      if (event.alternatives[0]) {
-        this.#transcribedInterimText = event.alternatives[0].text;
-      }
+      this.#transcribedInterimText = event.alternatives![0].text;
     });
     this.#humanInput.on(HumanInputEvent.FINAL_TRANSCRIPT, (event) => {
-      const newTranscript = event.alternatives[0]?.text;
+      const newTranscript = event.alternatives![0].text;
       if (!newTranscript) return;
 
       this.#logger.child({ userTranscript: newTranscript }).debug('received user transcript');

@@ -41,7 +41,7 @@ export interface SpeechData {
 /** SpeechEvent is a packet of speech-to-text data. */
 export interface SpeechEvent {
   type: SpeechEventType;
-  alternatives: SpeechData[];
+  alternatives?: [SpeechData, ...SpeechData[]];
 }
 
 /**
