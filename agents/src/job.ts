@@ -190,7 +190,7 @@ export class JobContext {
   onParticipantConnected(p: RemoteParticipant) {
     for (const callback of this.#participantEntrypoints) {
       if (
-        p.identity in this.#participantTasks &&
+        this.#participantTasks[p.identity] &&
         this.#participantTasks[p.identity]!.callback == callback
       ) {
         this.#logger.warn(
