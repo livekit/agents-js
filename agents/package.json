@@ -23,13 +23,15 @@
   "dependencies": {
     "@livekit/mutex": "^1.1.0",
     "@livekit/protocol": "^1.21.0",
-    "@livekit/rtc-node": "^0.11.1",
     "@livekit/typed-emitter": "^3.0.0",
     "commander": "^12.0.0",
-    "livekit-server-sdk": "^2.6.1",
+    "livekit-server-sdk": "^2.8.1",
     "pino": "^8.19.0",
     "pino-pretty": "^11.0.0",
     "ws": "^8.16.0",
     "zod": "^3.23.8"
+  },
+  "peerDependencies": {
+    "@livekit/rtc-node": "^0.11.1"
   }
 }
