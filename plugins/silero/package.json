@@ -6,6 +6,12 @@
   "types": "dist/index.d.ts",
   "author": "LiveKit",
   "type": "module",
+  "repository": "git@github.com:livekit/agents-js.git",
+  "license": "Apache-2.0",
+  "files": [
+    "dist",
+    "src"
+  ],
   "scripts": {
     "build": "tsc && cp src/*.onnx dist/",
     "clean": "rm -rf dist",
