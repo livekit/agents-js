@@ -152,7 +152,7 @@ importers:
   plugins/deepgram:
     dependencies:
       '@livekit/agents':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: ^0.11.1
@@ -174,7 +174,7 @@ importers:
   plugins/elevenlabs:
     dependencies:
       '@livekit/agents':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: ^0.11.1
@@ -196,7 +196,7 @@ importers:
   plugins/openai:
     dependencies:
       '@livekit/agents':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: ^0.11.1
@@ -224,7 +224,7 @@ importers:
   plugins/silero:
     dependencies:
       '@livekit/agents':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: ^0.11.1
