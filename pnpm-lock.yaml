@@ -81,8 +81,8 @@ importers:
         specifier: ^1.1.0
         version: 1.1.0
       '@livekit/protocol':
-        specifier: ^1.21.0
-        version: 1.21.0
+        specifier: ^1.27.1
+        version: 1.27.1
       '@livekit/typed-emitter':
         specifier: ^3.0.0
         version: 3.0.0
@@ -318,9 +318,6 @@ packages:
 
   '@bufbuild/protobuf@1.10.0':
     resolution: {integrity: sha512-QDdVFLoN93Zjg36NoQPZfsVH9tZew7wKDKyV5qRdj8ntT4wQCOradQjRaTdwMhWUYsgKsvCINKKm87FdEk96Ag==}
-
-  '@bufbuild/protobuf@1.9.0':
-    resolution: {integrity: sha512-W7gp8Q/v1NlCZLsv8pQ3Y0uCu/SHgXOVFK+eUluUKWXmsb6VHkpNx0apdOWWcDbB9sJoKeP8uPrjmehJz6xETQ==}
 
   '@bufbuild/protobuf@2.2.1':
     resolution: {integrity: sha512-gdWzq7eX017a1kZCU/bP/sbk4e0GZ6idjsXOcMrQwODCb/rx985fHJJ8+hCu79KpuG7PfZh7bo3BBjPH37JuZw==}
@@ -695,9 +692,6 @@ packages:
 
   '@livekit/mutex@1.1.0':
     resolution: {integrity: sha512-XRLG+z/0uoyDioupjUiskjI06Y51U/IXVPJn7qJ+R3J75XX01irYVBM9MpxeJahpVoe9QhU4moIEolX+HO9U9g==}
-
-  '@livekit/protocol@1.21.0':
-    resolution: {integrity: sha512-3TohFPNZy1axTuoDLU6mA1rwuP4VawgehvX52OoLJnU+fNQYfmMJqz8k7NSh79jG5I8Og77YYhT905Omrhli2A==}
 
   '@livekit/protocol@1.27.1':
     resolution: {integrity: sha512-ISEp7uWdV82mtCR1eyHFTzdRZTVbe2+ZztjmjiMPzR/KPrI1Ma/u5kLh87NNuY3Rn8wv1VlEvGHHsFjQ+dKVUw==}
@@ -3416,8 +3410,6 @@ snapshots:
 
   '@bufbuild/protobuf@1.10.0': {}
 
-  '@bufbuild/protobuf@1.9.0': {}
-
   '@bufbuild/protobuf@2.2.1': {}
 
   '@changesets/apply-release-plan@7.0.1':
@@ -3804,10 +3796,6 @@ snapshots:
       - encoding
 
   '@livekit/mutex@1.1.0': {}
-
-  '@livekit/protocol@1.21.0':
-    dependencies:
-      '@bufbuild/protobuf': 1.9.0
 
   '@livekit/protocol@1.27.1':
     dependencies:
