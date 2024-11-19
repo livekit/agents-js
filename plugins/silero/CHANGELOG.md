@@ -1,5 +1,16 @@
 # @livekit/agents-plugin-silero
 
+## 0.4.5
+
+### Patch Changes
+
+- Use peer dependencies for @livekit/rtc-node and @livekit/agents - [#170](https://github.com/livekit/agents-js/pull/170) ([@lukasIO](https://github.com/lukasIO))
+
+- chore(tsconfig): enable `noUncheckedIndexedAccess` - [#168](https://github.com/livekit/agents-js/pull/168) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`f5dc9896a9eec2ba1e703d7209936bcc22d46b33`](https://github.com/livekit/agents-js/commit/f5dc9896a9eec2ba1e703d7209936bcc22d46b33), [`141519068094ca72f0fa86c4ee829ab3746bc02f`](https://github.com/livekit/agents-js/commit/141519068094ca72f0fa86c4ee829ab3746bc02f), [`6bff3b030063b2e851946b90ad9e7d981a46e2aa`](https://github.com/livekit/agents-js/commit/6bff3b030063b2e851946b90ad9e7d981a46e2aa), [`b719e7d5ffa37b541b219cd05c631483480e2103`](https://github.com/livekit/agents-js/commit/b719e7d5ffa37b541b219cd05c631483480e2103), [`1558b9bc4ed8ddc1c6b552875549a4fb96ec3802`](https://github.com/livekit/agents-js/commit/1558b9bc4ed8ddc1c6b552875549a4fb96ec3802)]:
+  - @livekit/agents@0.4.5
+
 ## 0.4.4
 
 ### Patch Changes
