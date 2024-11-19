@@ -1,5 +1,18 @@
 # @livekit/agents-plugin-elevenlabs
 
+## 0.4.5
+
+### Patch Changes
+
+- Use peer dependencies for @livekit/rtc-node and @livekit/agents - [#170](https://github.com/livekit/agents-js/pull/170) ([@lukasIO](https://github.com/lukasIO))
+
+- Override with defaults if opts are provided - [#165](https://github.com/livekit/agents-js/pull/165) ([@gching](https://github.com/gching))
+
+- Ensure token stream flushes - [#167](https://github.com/livekit/agents-js/pull/167) ([@gching](https://github.com/gching))
+
+- Updated dependencies [[`f5dc9896a9eec2ba1e703d7209936bcc22d46b33`](https://github.com/livekit/agents-js/commit/f5dc9896a9eec2ba1e703d7209936bcc22d46b33), [`141519068094ca72f0fa86c4ee829ab3746bc02f`](https://github.com/livekit/agents-js/commit/141519068094ca72f0fa86c4ee829ab3746bc02f), [`6bff3b030063b2e851946b90ad9e7d981a46e2aa`](https://github.com/livekit/agents-js/commit/6bff3b030063b2e851946b90ad9e7d981a46e2aa), [`b719e7d5ffa37b541b219cd05c631483480e2103`](https://github.com/livekit/agents-js/commit/b719e7d5ffa37b541b219cd05c631483480e2103), [`1558b9bc4ed8ddc1c6b552875549a4fb96ec3802`](https://github.com/livekit/agents-js/commit/1558b9bc4ed8ddc1c6b552875549a4fb96ec3802)]:
+  - @livekit/agents@0.4.5
+
 ## 0.4.4
 
 ### Patch Changes
