@@ -10,7 +10,16 @@ export const OUT_FRAME_SIZE = 1200; // 50ms
 export const BASE_URL = 'wss://api.openai.com/v1';
 
 export type Model = 'gpt-4o-realtime-preview-2024-10-01' | string; // Open-ended, for future models
-export type Voice = 'alloy' | 'shimmer' | 'echo' | string;
+export type Voice =
+  | 'alloy'
+  | 'shimmer'
+  | 'echo'
+  | 'ash'
+  | 'ballad'
+  | 'coral'
+  | 'sage'
+  | 'verse'
+  | string;
 export type AudioFormat = 'pcm16'; // TODO: 'g711-ulaw' | 'g711-alaw'
 export type Role = 'system' | 'assistant' | 'user' | 'tool';
 export type GenerationFinishedReason = 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
