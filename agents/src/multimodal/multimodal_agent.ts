@@ -19,7 +19,7 @@ import {
 } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
 import { AudioByteStream } from '../audio.js';
-import type * as llm from '../llm/index.js';
+import * as llm from '../llm/index.js';
 import { log } from '../log.js';
 import { BasicTranscriptionForwarder } from '../transcription.js';
 import { findMicroTrackId } from '../utils.js';
@@ -178,10 +178,26 @@ export class MultimodalAgent extends EventEmitter {
         this.#speaking = true;
       };
 
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const onPlayoutStopped = (interrupted: boolean) => {
         this.emit('agent_stopped_speaking');
         this.#speaking = false;
+        if (this.#playingHandle) {
+          let text = this.#playingHandle.transcriptionFwd.text;
+          if (interrupted) {
+            text += '…';
+          }
+          const msg = llm.ChatMessage.create({
+            role: llm.ChatRole.ASSISTANT,
+            text,
+          });
+
+          if (interrupted) {
+            this.emit('agent_speech_interrupted', msg);
+          } else {
+            this.emit('agent_speech_committed', msg);
+          }
+          this.#logger.child({ transcription: text, interrupted }).debug('committed agent speech');
+        }
       };
 
       this.#agentPlayout.on('playout_started', onPlayoutStarted);
@@ -259,6 +275,12 @@ export class MultimodalAgent extends EventEmitter {
         } else {
           this.#logger.error('Participant or track not set');
         }
+        const userMsg = llm.ChatMessage.create({
+          role: llm.ChatRole.USER,
+          text: transcription,
+        });
+        this.emit('user_speech_committed', userMsg);
+        this.#logger.child({ transcription }).debug('committed user speech');
       });
 
       this.#session.on('input_speech_started', (ev: any) => {
@@ -279,6 +301,11 @@ export class MultimodalAgent extends EventEmitter {
         if (participantIdentity && trackSid) {
           this.#publishTranscription(participantIdentity, trackSid, '…', false, ev.itemId);
         }
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      this.#session.on('input_speech_stopped', (ev: any) => {
+        this.emit('user_stopped_speaking');
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
