@@ -38,6 +38,7 @@ import { HumanInput, HumanInputEvent } from './human_input.js';
 import { SpeechHandle } from './speech_handle.js';
 
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
+export const AGENT_STATE_ATTRIBUTE = 'lk.agent.state';
 
 export type BeforeLLMCallback = (
   agent: VoicePipelineAgent,
@@ -361,7 +362,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         await new Promise((resolve) => setTimeout(resolve, delay));
         if (this.#room?.isConnected) {
           if (!cancelled) {
-            await this.#room.localParticipant?.setAttributes({ ATTRIBUTE_AGENT_STATE: state });
+            await this.#room.localParticipant?.setAttributes({ [AGENT_STATE_ATTRIBUTE]: state });
           }
         }
         resolve();
