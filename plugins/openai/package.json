@@ -13,7 +13,7 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc -b tsconfig.json",
+    "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\"",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.{ts,js}\"",
@@ -21,10 +21,11 @@
     "api:update": "api-extractor run --local --typescript-compiler-folder ../../node_modules/typescript --verbose"
   },
   "devDependencies": {
-    "@microsoft/api-extractor": "^7.35.0",
     "@livekit/agents": "workspace:^",
     "@livekit/rtc-node": "^0.11.1",
+    "@microsoft/api-extractor": "^7.35.0",
     "@types/ws": "^8.5.10",
+    "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {

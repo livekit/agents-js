@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, WorkerOptions, cli, defineAgent, llm, multimodal } from '@livekit/agents';
-import * as openai from '@livekit/agents-plugin-openai';
-import { fileURLToPath } from 'node:url';
-import { z } from 'zod';
+const { JobContext, WorkerOptions, cli, defineAgent, llm, multimodal } = require('@livekit/agents');
+const openai = require('@livekit/agents-plugin-openai');
+const { fileURLToPath } = require('node:url');
+const { z } = require('zod');
 
 export default defineAgent({
-  entry: async (ctx: JobContext) => {
+  entry: async (ctx: typeof JobContext) => {
     await ctx.connect();
 
     console.log('waiting for participant');
@@ -67,4 +67,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp(new WorkerOptions({ agent: __filename }));
