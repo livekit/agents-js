@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-elevenlabs
 
+## 0.4.6
+
+### Patch Changes
+
+- Add missing package info - [#172](https://github.com/livekit/agents-js/pull/172) ([@lukasIO](https://github.com/lukasIO))
+
+- Updated dependencies [[`ad3c34823fc1955a4274e912ef0587d9b7f2218d`](https://github.com/livekit/agents-js/commit/ad3c34823fc1955a4274e912ef0587d9b7f2218d), [`1d74e20a0337e548af2cb87b64e131907648cc06`](https://github.com/livekit/agents-js/commit/1d74e20a0337e548af2cb87b64e131907648cc06), [`4aaec04857c623fef75ac6800fc9a078efdd4391`](https://github.com/livekit/agents-js/commit/4aaec04857c623fef75ac6800fc9a078efdd4391), [`4aaec04857c623fef75ac6800fc9a078efdd4391`](https://github.com/livekit/agents-js/commit/4aaec04857c623fef75ac6800fc9a078efdd4391)]:
+  - @livekit/agents@0.4.6
+
 ## 0.4.5
 
 ### Patch Changes
