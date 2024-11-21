@@ -90,7 +90,6 @@ const startJob = (
 
 (async () => {
   if (process.send) {
-    console.log("AAAAAAAAAAAAAA")
     // process.argv:
     //   [0] `node'
     //   [1] import.meta.filename

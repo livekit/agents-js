@@ -9,6 +9,7 @@
     "minimal": "pnpm exec tsx src/minimal_assistant.ts"
   },
   "devDependencies": {
+    "@types/node": "^22.5.5",
     "tsx": "^4.19.2",
     "typescript": "^5.0.0"
   },

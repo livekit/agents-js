@@ -13,7 +13,7 @@
     "src"
   ],
   "scripts": {
-    "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\"",
+    "build": "tsup --splitting true --onSuccess \"tsc --declaration --emitDeclarationOnly\"",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",
