@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { fileURLToPath } from 'node:url';
 import { InferenceSession, Tensor } from 'onnxruntime-node';
 
 export type SampleRate = 8000 | 16000;
 
 export const newInferenceSession = (forceCPU: boolean) => {
-  return InferenceSession.create(new URL('silero_vad.onnx', import.meta.url).pathname, {
+  return InferenceSession.create(fileURLToPath(new URL('silero_vad.onnx', import.meta.url).href), {
     interOpNumThreads: 1,
     intraOpNumThreads: 1,
     executionMode: 'sequential',
