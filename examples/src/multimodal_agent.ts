@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-const { JobContext, WorkerOptions, cli, defineAgent, llm, multimodal } = require('@livekit/agents');
-const openai = require('@livekit/agents-plugin-openai');
-const { z } = require('zod');
+import agents = require('@livekit/agents');
+import openai = require('@livekit/agents-plugin-openai');
+import z = require('zod');
 
-export default defineAgent({
-  entry: async (ctx: typeof JobContext) => {
+module.exports = agents.defineAgent({
+  entry: async (ctx: agents.JobContext) => {
     await ctx.connect();
 
     console.log('waiting for participant');
@@ -29,7 +29,7 @@ export default defineAgent({
       });
     }
 
-    const fncCtx: llm.FunctionContext = {
+    const fncCtx: agents.llm.FunctionContext = {
       weather: {
         description: 'Get the weather in a location',
         parameters: z.object({
@@ -47,7 +47,7 @@ export default defineAgent({
       },
     };
 
-    const agent = new multimodal.MultimodalAgent({
+    const agent = new agents.multimodal.MultimodalAgent({
       model,
       fncCtx,
     });
@@ -57,8 +57,8 @@ export default defineAgent({
       .then((session) => session as openai.realtime.RealtimeSession);
 
     session.conversation.item.create(
-      llm.ChatMessage.create({
-        role: llm.ChatRole.USER,
+      agents.llm.ChatMessage.create({
+        role: agents.llm.ChatRole.USER,
         text: 'Say "How can I help you today?"',
       }),
     );
@@ -66,4 +66,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new WorkerOptions({ agent: __filename }));
+agents.cli.runApp(new agents.WorkerOptions({ agent: __filename }));
