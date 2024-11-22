@@ -79,9 +79,10 @@ export class VAD extends baseVAD {
    * @param options -
    * @returns Promise\<{@link VAD}\>: An instance of the VAD class ready for streaming.
    */
-  static async load(opts = defaultVADOptions): Promise<VAD> {
-    const session = await newInferenceSession(opts.forceCPU);
-    return new VAD(session, opts);
+  static async load(opts: Partial<VADOptions> = {}): Promise<VAD> {
+    const mergedOpts: VADOptions = { ...defaultVADOptions, ...opts };
+    const session = await newInferenceSession(mergedOpts.forceCPU);
+    return new VAD(session, mergedOpts);
   }
 
   stream(): VADStream {
