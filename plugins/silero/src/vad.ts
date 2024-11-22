@@ -65,24 +65,9 @@ export class VAD extends baseVAD {
    *
    * @example
    * ```ts
-   * // using default options
    * export default defineAgent({
    *   prewarm: async (proc: JobProcess) => {
    *     proc.userData.vad = await VAD.load();
-   *   },
-   *   entry: async (ctx: JobContext) => {
-   *     const vad = ctx.proc.userData.vad! as VAD;
-   *     // the rest of your agent logic
-   *   },
-   * });
-   *
-   * // override specific options while keeping other defaults
-   * export default defineAgent({
-   *   prewarm: async (proc: JobProcess) => {
-   *     proc.userData.vad = await VAD.load({
-   *       minSilenceDuration: 300,
-   *       activationThreshold: 0.7
-   *     });
    *   },
    *   entry: async (ctx: JobContext) => {
    *     const vad = ctx.proc.userData.vad! as VAD;
