@@ -65,9 +65,24 @@ export class VAD extends baseVAD {
    *
    * @example
    * ```ts
+   * // using default options
    * export default defineAgent({
    *   prewarm: async (proc: JobProcess) => {
    *     proc.userData.vad = await VAD.load();
+   *   },
+   *   entry: async (ctx: JobContext) => {
+   *     const vad = ctx.proc.userData.vad! as VAD;
+   *     // the rest of your agent logic
+   *   },
+   * });
+   *
+   * // override specific options while keeping other defaults
+   * export default defineAgent({
+   *   prewarm: async (proc: JobProcess) => {
+   *     proc.userData.vad = await VAD.load({
+   *       minSilenceDuration: 300,
+   *       activationThreshold: 0.7
+   *     });
    *   },
    *   entry: async (ctx: JobContext) => {
    *     const vad = ctx.proc.userData.vad! as VAD;
@@ -79,9 +94,10 @@ export class VAD extends baseVAD {
    * @param options -
    * @returns Promise\<{@link VAD}\>: An instance of the VAD class ready for streaming.
    */
-  static async load(opts = defaultVADOptions): Promise<VAD> {
-    const session = await newInferenceSession(opts.forceCPU);
-    return new VAD(session, opts);
+  static async load(opts: Partial<VADOptions> = {}): Promise<VAD> {
+    const mergedOpts: VADOptions = { ...defaultVADOptions, ...opts };
+    const session = await newInferenceSession(mergedOpts.forceCPU);
+    return new VAD(session, mergedOpts);
   }
 
   stream(): VADStream {
