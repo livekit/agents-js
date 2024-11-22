@@ -771,13 +771,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       for await (const speech of this.#speechQueue) {
         if (speech === VoicePipelineAgent.FLUSH_SENTINEL) break;
         if (!speech.isReply) continue;
-        if (speech.allowInterruptions) {
-          try {
-            speech.interrupt();
-          } catch (error) {
-            this.#logger.warn('Failed to interrupt queued speech:', error);
-          }
-        }
+        if (speech.allowInterruptions) speech.interrupt();
       }
     }
 
