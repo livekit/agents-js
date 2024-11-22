@@ -747,7 +747,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   }
 
   async #validateReplyIfPossible() {
-    if (this.#playingSpeech && this.#playingSpeech.allowInterruptions) {
+    if (this.#playingSpeech && !this.#playingSpeech.allowInterruptions) {
       this.#logger
         .child({ speechId: this.#playingSpeech.id })
         .debug('skipping validation, agent is speaking and does not allow interruptions');
@@ -771,7 +771,13 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       for await (const speech of this.#speechQueue) {
         if (speech === VoicePipelineAgent.FLUSH_SENTINEL) break;
         if (!speech.isReply) continue;
-        if (!speech.allowInterruptions) speech.interrupt();
+        if (speech.allowInterruptions) {
+          try {
+            speech.interrupt();
+          } catch (error) {
+            this.#logger.warn('Failed to interrupt queued speech:', error);
+          }
+        }
       }
     }
 
