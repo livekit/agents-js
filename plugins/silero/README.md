@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+
+SPDX-License-Identifier: Apache-2.0
+-->
 # Silero plugin for LiveKit Agents
 
 The Agents Framework is designed for building realtime, programmable
