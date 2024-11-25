@@ -48,7 +48,6 @@
   "pnpm": {
     "overrides": {
       "@livekit/protocol": "file:/home/nbsp/src/@livekit/protocol/packages/javascript",
-      "@livekit/mutex": "file:/home/nbsp/src/@livekit/ts-mutex",
       "@livekit/rtc-node": "file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-rtc",
       "livekit-server-sdk": "file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-server-sdk"
     }

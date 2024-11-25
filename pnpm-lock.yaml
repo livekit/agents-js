@@ -6,7 +6,6 @@ settings:
 
 overrides:
   '@livekit/protocol': file:/home/nbsp/src/@livekit/protocol/packages/javascript
-  '@livekit/mutex': file:/home/nbsp/src/@livekit/ts-mutex
   '@livekit/rtc-node': file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-rtc
   livekit-server-sdk: file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-server-sdk
 
@@ -84,8 +83,8 @@ importers:
   agents:
     dependencies:
       '@livekit/mutex':
-        specifier: file:/home/nbsp/src/@livekit/ts-mutex
-        version: file:../ts-mutex
+        specifier: ^1.1.1
+        version: 1.1.1
       '@livekit/protocol':
         specifier: file:/home/nbsp/src/@livekit/protocol/packages/javascript
         version: file:../protocol/packages/javascript
@@ -1005,8 +1004,8 @@ packages:
   '@livekit/changesets-changelog-github@0.0.4':
     resolution: {integrity: sha512-MXaiLYwgkYciZb8G2wkVtZ1pJJzZmVx5cM30Q+ClslrIYyAqQhRbPmZDM79/5CGxb1MTemR/tfOM25tgJgAK0g==}
 
-  '@livekit/mutex@file:../ts-mutex':
-    resolution: {directory: ../ts-mutex, type: directory}
+  '@livekit/mutex@1.1.1':
+    resolution: {integrity: sha512-EsshAucklmpuUAfkABPxJNhzj9v2sG7JuzFDL4ML1oJQSV14sqrpTYnsaOudMAw9yOaW53NU3QQTlUQoRs4czw==}
 
   '@livekit/protocol@file:../protocol/packages/javascript':
     resolution: {directory: ../protocol/packages/javascript, type: directory}
@@ -4483,7 +4482,7 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  '@livekit/mutex@file:../ts-mutex': {}
+  '@livekit/mutex@1.1.1': {}
 
   '@livekit/protocol@file:../protocol/packages/javascript':
     dependencies:
@@ -4492,7 +4491,7 @@ snapshots:
   '@livekit/rtc-node@file:../node-sdks/packages/livekit-rtc':
     dependencies:
       '@bufbuild/protobuf': 2.2.1
-      '@livekit/mutex': file:../ts-mutex
+      '@livekit/mutex': 1.1.1
       '@livekit/typed-emitter': 3.0.0
 
   '@livekit/typed-emitter@3.0.0': {}
