@@ -49,7 +49,7 @@ export class STT extends stt.STT {
   constructor(opts: Partial<STTOptions> = defaultSTTOptions) {
     super({
       streaming: true,
-      interimResults: opts.interimResults || defaultSTTOptions.interimResults,
+      interimResults: opts.interimResults ?? defaultSTTOptions.interimResults,
     });
     if (opts.apiKey === undefined && defaultSTTOptions.apiKey === undefined) {
       throw new Error(
@@ -261,12 +261,12 @@ export class SpeechStream extends stt.SpeechStream {
                   if (isFinal) {
                     this.queue.put({
                       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
-                      alternatives: [alternatives[0], ...alternatives.splice(0)],
+                      alternatives: [alternatives[0], ...alternatives.slice(1)],
                     });
                   } else {
                     this.queue.put({
                       type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
-                      alternatives: [alternatives[0], ...alternatives.splice(0)],
+                      alternatives: [alternatives[0], ...alternatives.slice(1)],
                     });
                   }
                 }
