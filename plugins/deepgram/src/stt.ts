@@ -261,13 +261,11 @@ export class SpeechStream extends stt.SpeechStream {
                   if (isFinal) {
                     this.queue.put({
                       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
-                      // Ensures that TS knows that the array is not empty
                       alternatives: [alternatives[0], ...alternatives.slice(1)],
                     });
                   } else {
                     this.queue.put({
                       type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
-                      // Ensures that TS knows that the array is not empty
                       alternatives: [alternatives[0], ...alternatives.slice(1)],
                     });
                   }
