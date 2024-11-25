@@ -4,6 +4,5 @@ import defaults from '../tsup.config';
 
 export default defineConfig({
   ...defaults,
-  shims: true,
 });
 

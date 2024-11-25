@@ -10,6 +10,7 @@ const defaultOptions: Options = {
   clean: true,
   target: 'node16',
   bundle: false,
+  shims: true,
   esbuildOptions: (options, context) => {
     if (context.format === 'esm') {
       options.packages = 'external';
