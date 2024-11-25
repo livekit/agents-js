@@ -21,7 +21,7 @@ SPDX-License-Identifier = "Apache-2.0"
 
 # project configuration files
 [[annotations]]
-path = [".prettierrc", ".prettierignore", ".eslintrc", "**.json"]
+path = [".prettierrc", ".prettierignore", ".eslintrc", "**.json", "**/tsup.config.ts"]
 SPDX-FileCopyrightText = "2024 LiveKit, Inc."
 SPDX-License-Identifier = "Apache-2.0"
 
