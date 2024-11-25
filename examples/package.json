@@ -1,6 +1,7 @@
 {
   "private": true,
   "name": "livekit-agents-examples",
+  "type": "module",
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",

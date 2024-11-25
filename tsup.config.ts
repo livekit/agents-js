@@ -1,7 +1,7 @@
 import { Options } from 'tsup';
 
 const defaultOptions: Options = {
-  entry: ['src/'],
+  entry: ['src/**/*.ts'],
   format: ['cjs', 'esm'],
   splitting: false,
   sourcemap: true,
@@ -27,10 +27,12 @@ const defaultOptions: Options = {
       renderChunk(code) {
         if (this.format === 'cjs') {
           const regexCjs = /require\((?<quote>['"])(?<import>\.[^'"]+)\.js['"]\)/g;
+          const regexDynamic = /import\((?<quote>['"])(?<import>\.[^'"]+)\.js['"]\)/g;
           const regexEsm = /from(?<space>[\s]*)(?<quote>['"])(?<import>\.[^'"]+)\.js['"]/g;
           return {
             code: code
               .replace(regexCjs, 'require($<quote>$<import>.cjs$<quote>)')
+              .replace(regexDynamic, 'import($<quote>$<import>.cjs$<quote>)')
               .replace(regexEsm, 'from$<space>$<quote>$<import>.cjs$<quote>'),
           };
         }
