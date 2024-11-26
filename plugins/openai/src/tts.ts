@@ -73,7 +73,8 @@ export class TTS extends tts.TTS {
 }
 
 export class ChunkedStream extends tts.ChunkedStream {
-  constructor(stream: Promise<Response>) {
+  // set Promise<T> to any because OpenAI returns an annoying Response type
+  constructor(stream: Promise<any>) {
     super();
     this.#run(stream);
   }

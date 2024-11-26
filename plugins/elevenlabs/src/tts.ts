@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AsyncIterableQueue, log, tokenize, tts } from '@livekit/agents';
-import type { WordStream } from '@livekit/agents/dist/tokenize/tokenizer.js';
 import { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
 import { URL } from 'node:url';
@@ -141,7 +140,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   async #run() {
-    const segments = new AsyncIterableQueue<WordStream>();
+    const segments = new AsyncIterableQueue<tokenize.WordStream>();
 
     const tokenizeInput = async () => {
       let stream: tokenize.WordStream | null = null;

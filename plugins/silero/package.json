@@ -21,7 +21,7 @@
     "src"
   ],
   "scripts": {
-    "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\"",
+    "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\" && cp src/silero_vad.onnx dist/",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.{ts,js}\"",
