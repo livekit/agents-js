@@ -18,7 +18,8 @@
   "license": "Apache-2.0",
   "files": [
     "dist",
-    "src"
+    "src",
+    "README.md"
   ],
   "scripts": {
     "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\"",

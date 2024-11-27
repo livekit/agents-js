@@ -5,7 +5,6 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@livekit/protocol': file:/home/nbsp/src/@livekit/protocol/packages/javascript
   '@livekit/rtc-node': file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-rtc
   livekit-server-sdk: file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-server-sdk
 
@@ -86,8 +85,8 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1
       '@livekit/protocol':
-        specifier: file:/home/nbsp/src/@livekit/protocol/packages/javascript
-        version: file:../protocol/packages/javascript
+        specifier: ^1.28.0
+        version: 1.28.0
       '@livekit/typed-emitter':
         specifier: ^3.0.0
         version: 3.0.0
@@ -1007,8 +1006,8 @@ packages:
   '@livekit/mutex@1.1.1':
     resolution: {integrity: sha512-EsshAucklmpuUAfkABPxJNhzj9v2sG7JuzFDL4ML1oJQSV14sqrpTYnsaOudMAw9yOaW53NU3QQTlUQoRs4czw==}
 
-  '@livekit/protocol@file:../protocol/packages/javascript':
-    resolution: {directory: ../protocol/packages/javascript, type: directory}
+  '@livekit/protocol@1.28.0':
+    resolution: {integrity: sha512-j7ifbZ1TVfrLDQEuyl4M5rOAS8mRNhpgGoSKE4z03gc012hUHThx227bD1M1BfFPTqNFHzpaGCu/HYE/l09dHw==}
 
   '@livekit/rtc-node@file:../node-sdks/packages/livekit-rtc':
     resolution: {directory: ../node-sdks/packages/livekit-rtc, type: directory}
@@ -4484,7 +4483,7 @@ snapshots:
 
   '@livekit/mutex@1.1.1': {}
 
-  '@livekit/protocol@file:../protocol/packages/javascript':
+  '@livekit/protocol@1.28.0':
     dependencies:
       '@bufbuild/protobuf': 1.10.0
 
@@ -6297,7 +6296,7 @@ snapshots:
 
   livekit-server-sdk@file:../node-sdks/packages/livekit-server-sdk:
     dependencies:
-      '@livekit/protocol': file:../protocol/packages/javascript
+      '@livekit/protocol': 1.28.0
       camelcase-keys: 9.1.3
       jose: 5.2.4
 
