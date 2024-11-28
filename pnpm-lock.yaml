@@ -4,10 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-overrides:
-  '@livekit/rtc-node': file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-rtc
-  livekit-server-sdk: file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-server-sdk
-
 importers:
 
   .:
@@ -85,8 +81,8 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1
       '@livekit/protocol':
-        specifier: ^1.28.0
-        version: 1.28.0
+        specifier: ^1.28.1
+        version: 1.29.1
       '@livekit/typed-emitter':
         specifier: ^3.0.0
         version: 3.0.0
@@ -94,8 +90,8 @@ importers:
         specifier: ^12.0.0
         version: 12.0.0
       livekit-server-sdk:
-        specifier: file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-server-sdk
-        version: file:../node-sdks/packages/livekit-server-sdk
+        specifier: ^2.9.1
+        version: 2.9.1
       pino:
         specifier: ^8.19.0
         version: 8.21.0
@@ -110,8 +106,8 @@ importers:
         version: 3.23.8
     devDependencies:
       '@livekit/rtc-node':
-        specifier: file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-rtc
-        version: file:../node-sdks/packages/livekit-rtc
+        specifier: ^0.12.1
+        version: 0.12.1
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -146,8 +142,8 @@ importers:
         specifier: workspace:*
         version: link:../plugins/silero
       '@livekit/rtc-node':
-        specifier: file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-rtc
-        version: file:../node-sdks/packages/livekit-rtc
+        specifier: ^0.12.1
+        version: 0.12.1
       zod:
         specifier: ^3.23.8
         version: 3.23.8
@@ -172,8 +168,8 @@ importers:
         specifier: workspace:^
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-rtc
-        version: file:../node-sdks/packages/livekit-rtc
+        specifier: ^0.12.1
+        version: 0.12.1
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -197,8 +193,8 @@ importers:
         specifier: workspace:^
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-rtc
-        version: file:../node-sdks/packages/livekit-rtc
+        specifier: ^0.12.1
+        version: 0.12.1
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -228,8 +224,8 @@ importers:
         specifier: workspace:^
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-rtc
-        version: file:../node-sdks/packages/livekit-rtc
+        specifier: ^0.12.1
+        version: 0.12.1
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -256,8 +252,8 @@ importers:
         specifier: workspace:^
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: file:/home/nbsp/src/@livekit/node-sdks/packages/livekit-rtc
-        version: file:../node-sdks/packages/livekit-rtc
+        specifier: ^0.12.1
+        version: 0.12.1
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -1006,11 +1002,41 @@ packages:
   '@livekit/mutex@1.1.1':
     resolution: {integrity: sha512-EsshAucklmpuUAfkABPxJNhzj9v2sG7JuzFDL4ML1oJQSV14sqrpTYnsaOudMAw9yOaW53NU3QQTlUQoRs4czw==}
 
-  '@livekit/protocol@1.28.0':
-    resolution: {integrity: sha512-j7ifbZ1TVfrLDQEuyl4M5rOAS8mRNhpgGoSKE4z03gc012hUHThx227bD1M1BfFPTqNFHzpaGCu/HYE/l09dHw==}
+  '@livekit/protocol@1.29.1':
+    resolution: {integrity: sha512-OhxXTZlyM5f4ydnAq1p5azzzOtKWmIoCSVtyVj9rgE42zQI5JM1rR9pubVRZovouGSvEDSJx9yL4Js2IlIyM1Q==}
 
-  '@livekit/rtc-node@file:../node-sdks/packages/livekit-rtc':
-    resolution: {directory: ../node-sdks/packages/livekit-rtc, type: directory}
+  '@livekit/rtc-node-darwin-arm64@0.12.1':
+    resolution: {integrity: sha512-GF+QnRp7yBK4AyeG3eZiuAzbQOH4+bkLSyTgb5A1CzGEca2XD5CSgKUeGtIgIglq0XmYzN6bvl260xUWPl0WCQ==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@livekit/rtc-node-darwin-x64@0.12.1':
+    resolution: {integrity: sha512-uORO+/W5jvCfuFcmzQ4q5WCgJX5EW7eUxgfUHSaIuzcwgxBxG4yagWDl9WkK6MY9V1j6fhAiNlJ3hPl8cYGUjA==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@livekit/rtc-node-linux-arm64-gnu@0.12.1':
+    resolution: {integrity: sha512-8LIHq0nSwCjUMVPNfrohupH2ynhEFcYmidYa1KmHLkVlW+gyXBfy+QE7voAbXhTSbLZLDX58N5KGCQa61LSVAA==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@livekit/rtc-node-linux-x64-gnu@0.12.1':
+    resolution: {integrity: sha512-8x5IKzcTmwGyy0I0CU5vzealCl7c0Fp4KMBakq/uUOavbh/Rs1nAsjT8flrXC09F4njXD1E9uYN6CMTN9uZeKw==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+
+  '@livekit/rtc-node-win32-x64-msvc@0.12.1':
+    resolution: {integrity: sha512-zPbvUnpHdDlkEW3AN8wIqa3Wwae26MV/gQmqmP+3AjZRog8hMZy9Fe48lJgZR6VobjFjw99wSgIytYZCdIOUqQ==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [win32]
+
+  '@livekit/rtc-node@0.12.1':
+    resolution: {integrity: sha512-VNRobdI/CmZ8mVUV105uqFOH7BMDmK8VsNq4GrpWAdXKnQMVKoAjLmvFU2LVQMKP4qE9BG3aTi59BGYt/PCLiA==}
     engines: {node: '>= 18'}
 
   '@livekit/typed-emitter@3.0.0':
@@ -2613,8 +2639,8 @@ packages:
   lines-and-columns@1.2.4:
     resolution: {integrity: sha512-7ylylesZQ/PV29jhEDl3Ufjo6ZX7gCqJr5F7PKrqc93v7fzSymt1BpwEU8nAUXs8qzzvqhbjhK5QZg6Mt/HkBg==}
 
-  livekit-server-sdk@file:../node-sdks/packages/livekit-server-sdk:
-    resolution: {directory: ../node-sdks/packages/livekit-server-sdk, type: directory}
+  livekit-server-sdk@2.9.1:
+    resolution: {integrity: sha512-o+7aGhS6mqayo5+EJhaXLFNlgpr4TskBlLTld0SU3RPSnfO2jmMx30FqKHJiMfmEZSkepi0jsUT3YQbaRQ5/tQ==}
     engines: {node: '>=19'}
 
   load-tsconfig@0.2.5:
@@ -4483,15 +4509,36 @@ snapshots:
 
   '@livekit/mutex@1.1.1': {}
 
-  '@livekit/protocol@1.28.0':
+  '@livekit/protocol@1.29.1':
     dependencies:
       '@bufbuild/protobuf': 1.10.0
 
-  '@livekit/rtc-node@file:../node-sdks/packages/livekit-rtc':
+  '@livekit/rtc-node-darwin-arm64@0.12.1':
+    optional: true
+
+  '@livekit/rtc-node-darwin-x64@0.12.1':
+    optional: true
+
+  '@livekit/rtc-node-linux-arm64-gnu@0.12.1':
+    optional: true
+
+  '@livekit/rtc-node-linux-x64-gnu@0.12.1':
+    optional: true
+
+  '@livekit/rtc-node-win32-x64-msvc@0.12.1':
+    optional: true
+
+  '@livekit/rtc-node@0.12.1':
     dependencies:
       '@bufbuild/protobuf': 2.2.1
       '@livekit/mutex': 1.1.1
       '@livekit/typed-emitter': 3.0.0
+    optionalDependencies:
+      '@livekit/rtc-node-darwin-arm64': 0.12.1
+      '@livekit/rtc-node-darwin-x64': 0.12.1
+      '@livekit/rtc-node-linux-arm64-gnu': 0.12.1
+      '@livekit/rtc-node-linux-x64-gnu': 0.12.1
+      '@livekit/rtc-node-win32-x64-msvc': 0.12.1
 
   '@livekit/typed-emitter@3.0.0': {}
 
@@ -6294,9 +6341,9 @@ snapshots:
 
   lines-and-columns@1.2.4: {}
 
-  livekit-server-sdk@file:../node-sdks/packages/livekit-server-sdk:
+  livekit-server-sdk@2.9.1:
     dependencies:
-      '@livekit/protocol': 1.28.0
+      '@livekit/protocol': 1.29.1
       camelcase-keys: 9.1.3
       jose: 5.2.4
 
