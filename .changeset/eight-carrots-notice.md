@@ -1,10 +1,9 @@
 ---
-"@livekit/agents": patch
-"@livekit/agents-plugin-deepgram": patch
-"@livekit/agents-plugin-elevenlabs": patch
-"@livekit/agents-plugin-openai": patch
-"@livekit/agents-plugin-silero": patch
-"livekit-agents-examples": patch
+"@livekit/agents": minor
+"@livekit/agents-plugin-deepgram": minor
+"@livekit/agents-plugin-elevenlabs": minor
+"@livekit/agents-plugin-openai": minor
+"@livekit/agents-plugin-silero": minor
 ---
 
 support native CommonJS
