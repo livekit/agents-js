@@ -1,22 +1,5 @@
 # @livekit/agents-plugin-silero
 
-## 0.5.0
-
-### Minor Changes
-
-- support native CommonJS - [#176](https://github.com/livekit/agents-js/pull/176) ([@nbsp](https://github.com/nbsp))
-
-### Patch Changes
-
-- Windows compat: correct file load - [#179](https://github.com/livekit/agents-js/pull/179) ([@nbsp](https://github.com/nbsp))
-
-- chore(treewide): add READMEs for npmjs.com - [#180](https://github.com/livekit/agents-js/pull/180) ([@nbsp](https://github.com/nbsp))
-
-- allow partial VAD options while maintaining defaults - [#183](https://github.com/livekit/agents-js/pull/183) ([@hamza-ghufran](https://github.com/hamza-ghufran))
-
-- Updated dependencies [[`35fc4286b136bb7798c667fff6e0d07919f3bdcd`](https://github.com/livekit/agents-js/commit/35fc4286b136bb7798c667fff6e0d07919f3bdcd), [`0e192fd322f20039905f3a865c17b2697b72d232`](https://github.com/livekit/agents-js/commit/0e192fd322f20039905f3a865c17b2697b72d232), [`6f24650bd989d7b01f15b842ce6ced5f179dd702`](https://github.com/livekit/agents-js/commit/6f24650bd989d7b01f15b842ce6ced5f179dd702)]:
-  - @livekit/agents@0.5.0
-
 ## 0.4.6
 
 ### Patch Changes
