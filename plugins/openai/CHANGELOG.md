@@ -1,5 +1,18 @@
 # @livekit/agents-plugin-openai
 
+## 0.7.0
+
+### Minor Changes
+
+- support native CommonJS - [#187](https://github.com/livekit/agents-js/pull/187) ([@nbsp](https://github.com/nbsp))
+
+### Patch Changes
+
+- chore(treewide): add READMEs for npmjs.com - [#187](https://github.com/livekit/agents-js/pull/187) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`9c9b73d3b9d3ed7b8ce071470492991dcd21d546`](https://github.com/livekit/agents-js/commit/9c9b73d3b9d3ed7b8ce071470492991dcd21d546), [`9c9b73d3b9d3ed7b8ce071470492991dcd21d546`](https://github.com/livekit/agents-js/commit/9c9b73d3b9d3ed7b8ce071470492991dcd21d546), [`9c9b73d3b9d3ed7b8ce071470492991dcd21d546`](https://github.com/livekit/agents-js/commit/9c9b73d3b9d3ed7b8ce071470492991dcd21d546)]:
+  - @livekit/agents@0.5.0
+
 ## 0.6.1
 
 ### Patch Changes
