@@ -1,5 +1,17 @@
 # @livekit/agents
 
+## 0.5.0
+
+### Minor Changes
+
+- support native CommonJS - [#187](https://github.com/livekit/agents-js/pull/187) ([@nbsp](https://github.com/nbsp))
+
+### Patch Changes
+
+- proper checks for `allowInterruptions` flag before attempting interruption - [#187](https://github.com/livekit/agents-js/pull/187) ([@nbsp](https://github.com/nbsp))
+
+- chore(treewide): add READMEs for npmjs.com - [#187](https://github.com/livekit/agents-js/pull/187) ([@nbsp](https://github.com/nbsp))
+
 ## 0.4.6
 
 ### Patch Changes
