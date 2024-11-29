@@ -15,11 +15,11 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@livekit/agents": "workspace:^0.5.0",
-    "@livekit/agents-plugin-deepgram": "workspace:^0.5.0",
-    "@livekit/agents-plugin-elevenlabs": "workspace:^0.5.0",
-    "@livekit/agents-plugin-openai": "workspace:^0.7.0",
-    "@livekit/agents-plugin-silero": "workspace:^0.5.0",
+    "@livekit/agents": "workspace:*",
+    "@livekit/agents-plugin-deepgram": "workspace:*",
+    "@livekit/agents-plugin-elevenlabs": "workspace:*",
+    "@livekit/agents-plugin-openai": "workspace:*",
+    "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/rtc-node": "^0.12.1",
     "zod": "^3.23.8"
   },
