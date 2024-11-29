@@ -165,7 +165,7 @@ importers:
         version: 8.17.0
     devDependencies:
       '@livekit/agents':
-        specifier: workspace:^
+        specifier: workspace:^x
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: ^0.12.1
@@ -190,7 +190,7 @@ importers:
         version: 8.17.0
     devDependencies:
       '@livekit/agents':
-        specifier: workspace:^
+        specifier: workspace:^x
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: ^0.12.1
@@ -221,7 +221,7 @@ importers:
         version: 8.17.0
     devDependencies:
       '@livekit/agents':
-        specifier: workspace:^
+        specifier: workspace:^x
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: ^0.12.1
@@ -249,7 +249,7 @@ importers:
         version: 8.17.0
     devDependencies:
       '@livekit/agents':
-        specifier: workspace:^
+        specifier: workspace:^x
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: ^0.12.1
