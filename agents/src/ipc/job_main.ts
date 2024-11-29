@@ -88,77 +88,79 @@ const startJob = (
   return { ctx, task };
 };
 
-if (process.send) {
-  // process.argv:
-  //   [0] `node'
-  //   [1] import.meta.filename
-  //   [2] import.meta.filename of function containing entry file
-  const moduleFile = process.argv[2];
-  const agent: Agent = await import(pathToFileURL(moduleFile!).href).then((module) => {
-    const agent = module.default;
-    if (agent === undefined || !isAgent(agent)) {
-      throw new Error(`Unable to load agent: Missing or invalid default export in ${moduleFile}`);
-    }
-    return agent;
-  });
-  if (!agent.prewarm) {
-    agent.prewarm = defaultInitializeProcessFunc;
-  }
-
-  // don't do anything on C-c
-  // this is handled in cli, triggering a termination of all child processes at once.
-  process.on('SIGINT', () => {});
-
-  await once(process, 'message').then(([msg]: IPCMessage[]) => {
-    msg = msg!;
-    if (msg.case !== 'initializeRequest') {
-      throw new Error('first message must be InitializeRequest');
-    }
-    initializeLogger(msg.value.loggerOptions);
-  });
-  const proc = new JobProcess();
-  let logger = log().child({ pid: proc.pid });
-
-  logger.debug('initializing job runner');
-  agent.prewarm(proc);
-  logger.debug('job runner initialized');
-  process.send({ case: 'initializeResponse' });
-
-  let job: JobTask | undefined = undefined;
-  const closeEvent = new EventEmitter();
-
-  const orphanedTimeout = setTimeout(() => {
-    logger.warn('process orphaned, shutting down');
-    process.exit();
-  }, ORPHANED_TIMEOUT);
-
-  process.on('message', (msg: IPCMessage) => {
-    switch (msg.case) {
-      case 'pingRequest': {
-        orphanedTimeout.refresh();
-        process.send!({
-          case: 'pongResponse',
-          value: { lastTimestamp: msg.value.timestamp, timestamp: Date.now() },
-        });
-        break;
+(async () => {
+  if (process.send) {
+    // process.argv:
+    //   [0] `node'
+    //   [1] import.meta.filename
+    //   [2] import.meta.filename of function containing entry file
+    const moduleFile = process.argv[2];
+    const agent: Agent = await import(pathToFileURL(moduleFile!).pathname).then((module) => {
+      const agent = module.default;
+      if (agent === undefined || !isAgent(agent)) {
+        throw new Error(`Unable to load agent: Missing or invalid default export in ${moduleFile}`);
       }
-      case 'startJobRequest': {
-        if (job) {
-          throw new Error('job task already running');
-        }
+      return agent;
+    });
+    if (!agent.prewarm) {
+      agent.prewarm = defaultInitializeProcessFunc;
+    }
 
-        logger = logger.child({ jobID: msg.value.runningJob.job.id });
+    // don't do anything on C-c
+    // this is handled in cli, triggering a termination of all child processes at once.
+    process.on('SIGINT', () => {});
 
-        job = startJob(proc, agent.entry, msg.value.runningJob, closeEvent, logger);
-        logger.debug('job started');
-        break;
+    await once(process, 'message').then(([msg]: IPCMessage[]) => {
+      msg = msg!;
+      if (msg.case !== 'initializeRequest') {
+        throw new Error('first message must be InitializeRequest');
       }
-      case 'shutdownRequest': {
-        if (!job) {
+      initializeLogger(msg.value.loggerOptions);
+    });
+    const proc = new JobProcess();
+    let logger = log().child({ pid: proc.pid });
+
+    logger.debug('initializing job runner');
+    agent.prewarm(proc);
+    logger.debug('job runner initialized');
+    process.send({ case: 'initializeResponse' });
+
+    let job: JobTask | undefined = undefined;
+    const closeEvent = new EventEmitter();
+
+    const orphanedTimeout = setTimeout(() => {
+      logger.warn('process orphaned, shutting down');
+      process.exit();
+    }, ORPHANED_TIMEOUT);
+
+    process.on('message', (msg: IPCMessage) => {
+      switch (msg.case) {
+        case 'pingRequest': {
+          orphanedTimeout.refresh();
+          process.send!({
+            case: 'pongResponse',
+            value: { lastTimestamp: msg.value.timestamp, timestamp: Date.now() },
+          });
           break;
         }
-        closeEvent.emit('close', '');
+        case 'startJobRequest': {
+          if (job) {
+            throw new Error('job task already running');
+          }
+
+          logger = logger.child({ jobID: msg.value.runningJob.job.id });
+
+          job = startJob(proc, agent.entry, msg.value.runningJob, closeEvent, logger);
+          logger.debug('job started');
+          break;
+        }
+        case 'shutdownRequest': {
+          if (!job) {
+            break;
+          }
+          closeEvent.emit('close', '');
+        }
       }
-    }
-  });
-}
+    });
+  }
+})();
