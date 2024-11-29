@@ -693,31 +693,31 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         this.emit(VPAEvent.FUNCTION_CALLS_FINISHED, calledFuncs);
         if (!newFunctionCalls) break;
       }
+    }
 
-      if (handle.addToChatCtx && (!userQuestion || handle.userCommitted)) {
-        this.chatCtx.messages.push(...extraToolsMessages);
-        if (interrupted) {
-          collectedText + '…';
-        }
-
-        const msg = ChatMessage.create({ text: collectedText, role: ChatRole.ASSISTANT });
-        this.chatCtx.messages.push(msg);
-
-        handle.markSpeechCommitted();
-        if (interrupted) {
-          this.emit(VPAEvent.AGENT_SPEECH_INTERRUPTED, msg);
-        } else {
-          this.emit(VPAEvent.AGENT_SPEECH_COMMITTED, msg);
-        }
-
-        this.#logger
-          .child({
-            agentTranscript: collectedText,
-            interrupted,
-            speechId: handle.id,
-          })
-          .debug('committed agent speech');
+    if (handle.addToChatCtx && (!userQuestion || handle.userCommitted)) {
+      this.chatCtx.messages.push(...extraToolsMessages);
+      if (interrupted) {
+        collectedText + '…';
       }
+
+      const msg = ChatMessage.create({ text: collectedText, role: ChatRole.ASSISTANT });
+      this.chatCtx.messages.push(msg);
+
+      handle.markSpeechCommitted();
+      if (interrupted) {
+        this.emit(VPAEvent.AGENT_SPEECH_INTERRUPTED, msg);
+      } else {
+        this.emit(VPAEvent.AGENT_SPEECH_COMMITTED, msg);
+      }
+
+      this.#logger
+        .child({
+          agentTranscript: collectedText,
+          interrupted,
+          speechId: handle.id,
+        })
+        .debug('committed agent speech');
     }
   }
 
@@ -747,7 +747,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   }
 
   async #validateReplyIfPossible() {
-    if (this.#playingSpeech && this.#playingSpeech.allowInterruptions) {
+    if (this.#playingSpeech && !this.#playingSpeech.allowInterruptions) {
       this.#logger
         .child({ speechId: this.#playingSpeech.id })
         .debug('skipping validation, agent is speaking and does not allow interruptions');
@@ -771,7 +771,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       for await (const speech of this.#speechQueue) {
         if (speech === VoicePipelineAgent.FLUSH_SENTINEL) break;
         if (!speech.isReply) continue;
-        if (!speech.allowInterruptions) speech.interrupt();
+        if (speech.allowInterruptions) speech.interrupt();
       }
     }
 

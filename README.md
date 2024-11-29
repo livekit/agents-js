@@ -90,7 +90,7 @@ Your main file for an agent is built of two parts:
 - The code that is exported when this file is imported into Agents, to be ran on all jobs (which
   includes your entrypoint function, and an optional prewarm function)
 
-Refer to the [minimal voice assistant](/examples/src/minimal_assistant.ts) example to understand
+Refer to the [minimal voice assistant](/examples/src/multimodal_agent.ts) example to understand
 how to build a simple voice assistant with function calling using OpenAI's model.
 
 ## Running
