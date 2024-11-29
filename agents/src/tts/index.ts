@@ -4,6 +4,8 @@
 export {
   type SynthesizedAudio,
   type TTSCapabilities,
+  type TTSEvent,
+  type TTSCallbacks,
   TTS,
   SynthesizeStream,
   ChunkedStream,

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
-import EventEmitter from 'node:events';
+import { EventEmitter } from 'node:events';
 import { TTSMetrics } from '../metrics/base.js';
 import { AsyncIterableQueue, mergeFrames } from '../utils.js';
 
@@ -146,7 +146,7 @@ export abstract class SynthesizeStream
       }
     };
 
-    for await (const audio of this.output) {
+    for await (const audio of this.queue) {
       this.output.put(audio);
       if (audio === SynthesizeStream.END_OF_STREAM) continue;
       requestId = audio.requestId;
@@ -296,6 +296,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   /** Close both the input and output of the TTS stream */
   close() {
     this.queue.close();
+    this.output.close();
     this.closed = true;
   }
 

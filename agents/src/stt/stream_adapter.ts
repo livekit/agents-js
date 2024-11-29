@@ -15,6 +15,10 @@ export class StreamAdapter extends STT {
     super({ streaming: true, interimResults: false });
     this.#stt = stt;
     this.#vad = vad;
+
+    this.#stt.on(STTEvent.METRICS_COLLECTED, (metrics) => {
+      this.emit(STTEvent.METRICS_COLLECTED, metrics);
+    });
   }
 
   recognize(frame: AudioFrame): Promise<SpeechEvent> {
@@ -36,6 +40,10 @@ export class StreamAdapterWrapper extends SpeechStream {
     this.#vadStream = vad.stream();
 
     this.#run();
+  }
+
+  async monitorMetrics() {
+    return; // do nothing
   }
 
   async #run() {

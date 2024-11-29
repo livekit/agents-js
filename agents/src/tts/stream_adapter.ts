@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { SentenceStream, SentenceTokenizer } from '../tokenize/index.js';
 import type { ChunkedStream } from './tts.js';
-import { SynthesizeStream, TTS } from './tts.js';
+import { SynthesizeStream, TTS, TTSEvent } from './tts.js';
 
 export class StreamAdapter extends TTS {
   #tts: TTS;
@@ -13,6 +13,10 @@ export class StreamAdapter extends TTS {
     super(tts.sampleRate, tts.numChannels, { streaming: true });
     this.#tts = tts;
     this.#sentenceTokenizer = sentenceTokenizer;
+
+    this.#tts.on(TTSEvent.METRICS_COLLECTED, (metrics) => {
+      this.emit(TTSEvent.METRICS_COLLECTED, metrics)
+    })
   }
 
   synthesize(text: string): ChunkedStream {
