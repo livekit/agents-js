@@ -13,6 +13,7 @@ import {
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
+import { MultimodalLLMError, MultimodalLLMMetrics } from '../../../../agents/src/metrics/base.js';
 import * as api_proto from './api_proto.js';
 
 interface ModelOptions {
@@ -40,6 +41,8 @@ export interface RealtimeResponse {
   usage: api_proto.ModelUsage | null;
   output: RealtimeOutput[];
   doneFut: Future;
+  createdTimestamp: number;
+  firstTokenTimestamp?: number;
 }
 
 export interface RealtimeOutput {
@@ -932,6 +935,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       usage: null,
       output: [],
       doneFut: doneFut,
+      createdTimestamp: Date.now(),
     };
     this.#pendingResponses[newResponse.id] = newResponse;
     this.emit('response_created', newResponse);
@@ -946,7 +950,68 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     response.usage = responseData.usage ?? null;
     this.#pendingResponses[responseId] = response;
     response.doneFut.resolve();
+
+    let metricsError: Error | undefined;
+    let cancelled = false;
+    switch (response.statusDetails.type) {
+      case 'failed': {
+        const err = response.statusDetails.error;
+        metricsError = new MultimodalLLMError({
+          type: response.statusDetails.type,
+          code: err?.code,
+          message: err?.message,
+        });
+        this.#logger
+          .child({ code: err?.code, error: err?.message })
+          .error('response generation failed');
+        break;
+      }
+      case 'incomplete': {
+        const reason = response.statusDetails.reason;
+        metricsError = new MultimodalLLMError({
+          type: response.statusDetails.type,
+          reason,
+        });
+        this.#logger.child({ reason }).error('response generation incomplete');
+        break;
+      }
+      case 'cancelled': {
+        cancelled = true;
+        break;
+      }
+    }
     this.emit('response_done', response);
+
+    let ttft: number | undefined;
+    if (response.firstTokenTimestamp) {
+      ttft = response.firstTokenTimestamp - response.createdTimestamp;
+    }
+    const duration = Date.now() - response.createdTimestamp;
+
+    const usage = response.usage;
+    const metrics: MultimodalLLMMetrics = {
+      timestamp: response.createdTimestamp,
+      requestId: response.id,
+      ttft: ttft!,
+      duration,
+      cancelled,
+      label: this.constructor.name,
+      completionTokens: usage?.output_tokens || 0,
+      promptTokens: usage?.input_tokens || 0,
+      totalTokens: usage?.total_tokens || 0,
+      tokensPerSecond: (usage?.output_tokens || 0) / duration,
+      error: metricsError,
+      inputTokenDetails: {
+        cachedTokens: usage?.input_token_details.cached_tokens || 0,
+        textTokens: usage?.input_token_details.text_tokens || 0,
+        audioTokens: usage?.input_token_details.audio_tokens || 0,
+      },
+      outputTokenDetails: {
+        textTokens: usage?.output_token_details.text_tokens || 0,
+        audioTokens: usage?.output_token_details.audio_tokens || 0,
+      },
+    };
+    this.emit('metrics_collected', metrics);
   }
 
   #handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
@@ -1062,6 +1127,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       toolCalls: [],
     };
     output?.content.push(newContent);
+    response!.firstTokenTimestamp = Date.now();
     this.emit('response_content_added', newContent);
   }
 

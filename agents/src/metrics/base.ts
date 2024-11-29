@@ -92,8 +92,8 @@ export class MultimodalLLMError extends Error {
       reason,
       code,
       message,
-    }: { type?: string; reason?: string; code?: string; message?: string },
-    options: ErrorOptions,
+    }: { type?: string; reason?: string; code?: string; message?: string } = {},
+    options?: ErrorOptions,
   ) {
     super(message, options);
     this.type = type;
