@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import EventEmitter from 'node:events';
+import { TTSMetrics } from '../metrics/base.js';
 import { AsyncIterableQueue, mergeFrames } from '../utils.js';
 
 /** SynthesizedAudio is a packet of speech synthesis as returned by the TTS. */
@@ -14,6 +17,8 @@ export interface SynthesizedAudio {
   frame: AudioFrame;
   /** Current segment of the synthesized audio */
   deltaText?: string;
+  /** Whether this is the last frame of the segment (streaming only) */
+  final: boolean;
 }
 
 /**
@@ -27,6 +32,14 @@ export interface TTSCapabilities {
   streaming: boolean;
 }
 
+export enum TTSEvent {
+  METRICS_COLLECTED,
+}
+
+export type TTSCallbacks = {
+  [TTSEvent.METRICS_COLLECTED]: (metrics: TTSMetrics) => void;
+};
+
 /**
  * An instance of a text-to-speech adapter.
  *
@@ -34,12 +47,13 @@ export interface TTSCapabilities {
  * This class is abstract, and as such cannot be used directly. Instead, use a provider plugin that
  * exports its own child TTS class, which inherits this class's methods.
  */
-export abstract class TTS {
+export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCallbacks>) {
   #capabilities: TTSCapabilities;
   #sampleRate: number;
   #numChannels: number;
 
   constructor(sampleRate: number, numChannels: number, capabilities: TTSCapabilities) {
+    super();
     this.#capabilities = capabilities;
     this.#sampleRate = sampleRate;
     this.#numChannels = numChannels;
@@ -94,10 +108,69 @@ export abstract class SynthesizeStream
   protected queue = new AsyncIterableQueue<
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
   >();
+  protected output = new AsyncIterableQueue<
+    SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
+  >();
   protected closed = false;
+  #tts: TTS;
+  #metricsPendingTexts: string[] = [];
+  #metricsText = '';
+  #monitorMetricsTask?: Promise<void>;
+
+  constructor(tts: TTS) {
+    this.#tts = tts;
+  }
+
+  protected async monitorMetrics() {
+    const startTime = process.hrtime.bigint();
+    let audioDuration = 0;
+    let ttfb: bigint | undefined;
+    let requestId = '';
+
+    const emit = () => {
+      if (this.#metricsPendingTexts.length) {
+        const text = this.#metricsPendingTexts.shift()!;
+        const duration = process.hrtime.bigint() - startTime;
+        const metrics: TTSMetrics = {
+          timestamp: Date.now(),
+          requestId,
+          ttfb: Math.trunc(Number(ttfb! / BigInt(1000000))),
+          duration: Math.trunc(Number(duration / BigInt(1000000))),
+          charactersCount: text.length,
+          audioDuration,
+          cancelled: false, // XXX(nbsp)
+          label: this.constructor.name,
+          streamed: false,
+        };
+        this.#tts.emit(TTSEvent.METRICS_COLLECTED, metrics);
+      }
+    };
+
+    for await (const audio of this.output) {
+      this.output.put(audio);
+      if (audio === SynthesizeStream.END_OF_STREAM) continue;
+      requestId = audio.requestId;
+      if (!ttfb) {
+        ttfb = process.hrtime.bigint() - startTime;
+      }
+      audioDuration += audio.frame.samplesPerChannel / audio.frame.sampleRate;
+      if (audio.final) {
+        emit();
+      }
+    }
+
+    if (requestId) {
+      emit();
+    }
+  }
 
   /** Push a string of text to the TTS */
   pushText(text: string) {
+    if (!this.#monitorMetricsTask) {
+      this.#monitorMetricsTask = this.monitorMetrics();
+    }
+    this.#metricsText += text;
+
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
@@ -109,6 +182,10 @@ export abstract class SynthesizeStream
 
   /** Flush the TTS, causing it to process all pending text */
   flush() {
+    if (this.#metricsText) {
+      this.#metricsPendingTexts.push(this.#metricsText);
+      this.#metricsText = '';
+    }
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
@@ -130,13 +207,13 @@ export abstract class SynthesizeStream
   }
 
   next(): Promise<IteratorResult<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>> {
-    return this.queue.next();
+    return this.output.next();
   }
 
   /** Close both the input and output of the TTS stream */
   close() {
     this.input.close();
-    this.queue.close();
+    this.output.close();
     this.closed = true;
   }
 
@@ -161,7 +238,47 @@ export abstract class SynthesizeStream
  */
 export abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> {
   protected queue = new AsyncIterableQueue<SynthesizedAudio>();
+  protected output = new AsyncIterableQueue<SynthesizedAudio>();
   protected closed = false;
+  #text: string;
+  #tts: TTS;
+
+  constructor(text: string, tts: TTS) {
+    this.#text = text;
+    this.#tts = tts;
+
+    this.monitorMetrics();
+  }
+
+  protected async monitorMetrics() {
+    const startTime = process.hrtime.bigint();
+    let audioDuration = 0;
+    let ttfb: bigint | undefined;
+    let requestId = '';
+
+    for await (const audio of this.queue) {
+      this.output.put(audio);
+      requestId = audio.requestId;
+      if (!ttfb) {
+        ttfb = process.hrtime.bigint() - startTime;
+      }
+      audioDuration += audio.frame.samplesPerChannel / audio.frame.sampleRate;
+    }
+
+    const duration = process.hrtime.bigint() - startTime;
+    const metrics: TTSMetrics = {
+      timestamp: Date.now(),
+      requestId,
+      ttfb: Math.trunc(Number(ttfb! / BigInt(1000000))),
+      duration: Math.trunc(Number(duration / BigInt(1000000))),
+      charactersCount: this.#text.length,
+      audioDuration,
+      cancelled: false, // XXX(nbsp)
+      label: this.constructor.name,
+      streamed: false,
+    };
+    this.#tts.emit(TTSEvent.METRICS_COLLECTED, metrics);
+  }
 
   /** Collect every frame into one in a single call */
   async collect(): Promise<AudioFrame> {
@@ -173,7 +290,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   }
 
   next(): Promise<IteratorResult<SynthesizedAudio>> {
-    return this.queue.next();
+    return this.output.next();
   }
 
   /** Close both the input and output of the TTS stream */

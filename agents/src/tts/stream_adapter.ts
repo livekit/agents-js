@@ -29,11 +29,15 @@ export class StreamAdapterWrapper extends SynthesizeStream {
   #sentenceStream: SentenceStream;
 
   constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer) {
-    super();
+    super(tts);
     this.#tts = tts;
     this.#sentenceStream = sentenceTokenizer.stream();
 
     this.#run();
+  }
+
+  async monitorMetrics() {
+    return; // do nothing
   }
 
   async #run() {
