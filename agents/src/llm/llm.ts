@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { EventEmitter } from 'node:events';
+import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { AsyncIterableQueue } from '../utils.js';
 import type { ChatContext, ChatRole } from './chat_context.js';
 import type { FunctionCallInfo, FunctionContext } from './function_context.js';
+import { LLMMetrics } from '../metrics/base.js';
 
 export interface ChoiceDelta {
   role: ChatRole;
@@ -28,7 +31,16 @@ export interface ChatChunk {
   usage?: CompletionUsage;
 }
 
-export abstract class LLM {
+
+export enum LLMEvent {
+  METRICS_COLLECTED,
+}
+
+export type LLMCallbacks = {
+  [LLMEvent.METRICS_COLLECTED]: (metrics: LLMMetrics) => void;
+};
+
+export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCallbacks>) {
   /**
    * Returns a {@link LLMStream} that can be used to push text and receive LLM responses.
    */
@@ -48,16 +60,53 @@ export abstract class LLM {
 }
 
 export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
+  protected output = new AsyncIterableQueue<ChatChunk>();
   protected queue = new AsyncIterableQueue<ChatChunk>();
   protected closed = false;
   protected _functionCalls: FunctionCallInfo[] = [];
 
+  #llm: LLM;
   #chatCtx: ChatContext;
   #fncCtx?: FunctionContext;
 
-  constructor(chatCtx: ChatContext, fncCtx?: FunctionContext) {
+  constructor(llm: LLM, chatCtx: ChatContext, fncCtx?: FunctionContext) {
+    this.#llm = llm;
     this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
+  }
+
+  protected async monitorMetrics() {
+    const startTime = process.hrtime.bigint();
+    let ttft: bigint | undefined;
+    let requestId = '';
+    let usage: CompletionUsage | undefined;
+
+    for await (const ev of this.queue) {
+      this.output.put(ev);
+      requestId = ev.requestId;
+      if (!ttft) {
+        ttft = process.hrtime.bigint() - startTime;
+      }
+      if (ev.usage) {
+        usage =ev.usage
+      }
+    }
+
+      const duration = process.hrtime.bigint() - startTime;
+      const metrics: LLMMetrics = {
+        timestamp: Date.now(),
+        requestId,
+        ttft: Math.trunc(Number(ttft! / BigInt(1000000))),
+        duration: Math.trunc(Number(duration / BigInt(1000000))),
+        cancelled: false, // XXX(nbsp)
+        label: this.constructor.name,
+        completionTokens: usage?.completionTokens || 0,
+        promptTokens: usage?.promptTokens || 0,
+        totalTokens: usage?.totalTokens || 0,
+        tokensPerSecond: (usage?.completionTokens || 0) / Math.trunc(Number(duration / BigInt(1000000000))),
+      };
+      this.#llm.emit(LLMEvent.METRICS_COLLECTED, metrics);
+
   }
 
   /** List of called functions from this stream. */
@@ -88,10 +137,11 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   }
 
   next(): Promise<IteratorResult<ChatChunk>> {
-    return this.queue.next();
+    return this.output.next();
   }
 
   close() {
+    this.output.close();
     this.queue.close();
     this.closed = true;
   }

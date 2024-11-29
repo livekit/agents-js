@@ -25,6 +25,8 @@ export {
   type CompletionUsage,
   type Choice,
   type ChatChunk,
+  type LLMEvent,
+  type LLMCallbacks,
   LLM,
   LLMStream,
 } from './llm.js';
