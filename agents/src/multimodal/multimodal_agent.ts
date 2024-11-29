@@ -24,6 +24,7 @@ import { log } from '../log.js';
 import { BasicTranscriptionForwarder } from '../transcription.js';
 import { findMicroTrackId } from '../utils.js';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
+import { MultimodalLLMMetrics } from '../metrics/base.js';
 
 /**
  * @internal
@@ -325,6 +326,10 @@ export class MultimodalAgent extends EventEmitter {
         this.#pendingFunctionCalls.delete(ev.callId);
         this.#updateState();
       });
+
+      this.#session.on('metrics_collected', (metrics: MultimodalLLMMetrics) => {
+        this.emit('metrics_collected', metrics);
+      })
 
       resolve(this.#session);
     });
