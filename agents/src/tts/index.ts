@@ -4,9 +4,9 @@
 export {
   type SynthesizedAudio,
   type TTSCapabilities,
-  type TTSEvent,
   type TTSCallbacks,
   TTS,
+  TTSEvent,
   SynthesizeStream,
   ChunkedStream,
 } from './tts.js';

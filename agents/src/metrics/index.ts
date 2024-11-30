@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export {
+export type {
   AgentMetrics,
   STTMetrics,
   LLMMetrics,
@@ -16,5 +16,5 @@ export {
   MultimodalLLMMetrics,
   MultimodalLLMError,
 } from './base.js';
-export { UsageSummary, UsageCollector } from './usage_collector.js';
+export { type UsageSummary, UsageCollector } from './usage_collector.js';
 export { logMetrics } from './utils.js';
