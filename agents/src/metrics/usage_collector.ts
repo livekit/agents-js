@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AgentMetrics } from './base.js';
+import type { AgentMetrics } from './base.js';
 import { isLLMMetrics, isSTTMetrics, isTTSMetrics } from './utils.js';
 
 export interface UsageSummary {

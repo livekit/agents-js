@@ -1,5 +1,5 @@
 import { log } from '../log.js';
-import {
+import type {
   AgentMetrics,
   LLMMetrics,
   PipelineEOUMetrics,

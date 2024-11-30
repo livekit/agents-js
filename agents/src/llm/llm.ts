@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { EventEmitter } from 'node:events';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { EventEmitter } from 'node:events';
+import type { LLMMetrics } from '../metrics/base.js';
 import { AsyncIterableQueue } from '../utils.js';
 import type { ChatContext, ChatRole } from './chat_context.js';
 import type { FunctionCallInfo, FunctionContext } from './function_context.js';
-import { LLMMetrics } from '../metrics/base.js';
 
 export interface ChoiceDelta {
   role: ChatRole;
@@ -30,7 +30,6 @@ export interface ChatChunk {
   choices: Choice[];
   usage?: CompletionUsage;
 }
-
 
 export enum LLMEvent {
   METRICS_COLLECTED,
@@ -64,6 +63,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected queue = new AsyncIterableQueue<ChatChunk>();
   protected closed = false;
   protected _functionCalls: FunctionCallInfo[] = [];
+  abstract label: string;
 
   #llm: LLM;
   #chatCtx: ChatContext;
@@ -88,25 +88,25 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         ttft = process.hrtime.bigint() - startTime;
       }
       if (ev.usage) {
-        usage =ev.usage
+        usage = ev.usage;
       }
     }
 
-      const duration = process.hrtime.bigint() - startTime;
-      const metrics: LLMMetrics = {
-        timestamp: Date.now(),
-        requestId,
-        ttft: Math.trunc(Number(ttft! / BigInt(1000000))),
-        duration: Math.trunc(Number(duration / BigInt(1000000))),
-        cancelled: false, // XXX(nbsp)
-        label: this.constructor.name,
-        completionTokens: usage?.completionTokens || 0,
-        promptTokens: usage?.promptTokens || 0,
-        totalTokens: usage?.totalTokens || 0,
-        tokensPerSecond: (usage?.completionTokens || 0) / Math.trunc(Number(duration / BigInt(1000000000))),
-      };
-      this.#llm.emit(LLMEvent.METRICS_COLLECTED, metrics);
-
+    const duration = process.hrtime.bigint() - startTime;
+    const metrics: LLMMetrics = {
+      timestamp: Date.now(),
+      requestId,
+      ttft: Math.trunc(Number(ttft! / BigInt(1000000))),
+      duration: Math.trunc(Number(duration / BigInt(1000000))),
+      cancelled: false, // XXX(nbsp)
+      label: this.label,
+      completionTokens: usage?.completionTokens || 0,
+      promptTokens: usage?.promptTokens || 0,
+      totalTokens: usage?.totalTokens || 0,
+      tokensPerSecond:
+        (usage?.completionTokens || 0) / Math.trunc(Number(duration / BigInt(1000000000))),
+    };
+    this.#llm.emit(LLMEvent.METRICS_COLLECTED, metrics);
   }
 
   /** List of called functions from this stream. */

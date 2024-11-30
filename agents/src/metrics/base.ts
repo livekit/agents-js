@@ -79,8 +79,8 @@ export interface PipelineTTSMetrics extends TTSMetrics {
   sequenceId: string;
 }
 
-export interface PipelineSTTMetrics extends STTMetrics {}
-export interface PipelineVADMetrics extends VADMetrics {}
+export type PipelineSTTMetrics = STTMetrics;
+export type PipelineVADMetrics = VADMetrics;
 
 export class MultimodalLLMError extends Error {
   type?: string;

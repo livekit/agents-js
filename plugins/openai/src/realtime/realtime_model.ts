@@ -13,7 +13,8 @@ import {
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
-import { MultimodalLLMError, MultimodalLLMMetrics } from '../../../../agents/src/metrics/base.js';
+import type { MultimodalLLMMetrics } from '../../../../agents/src/metrics/base.js';
+import { MultimodalLLMError } from '../../../../agents/src/metrics/base.js';
 import * as api_proto from './api_proto.js';
 
 interface ModelOptions {

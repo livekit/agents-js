@@ -5,23 +5,25 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import type { VAD, VADStream } from '../vad.js';
 import { VADEventType } from '../vad.js';
 import type { SpeechEvent } from './stt.js';
-import { STT, SpeechEventType, SpeechStream } from './stt.js';
+import { STT, STTEvent, SpeechEventType, SpeechStream } from './stt.js';
 
 export class StreamAdapter extends STT {
   #stt: STT;
   #vad: VAD;
+  label: string;
 
   constructor(stt: STT, vad: VAD) {
     super({ streaming: true, interimResults: false });
     this.#stt = stt;
     this.#vad = vad;
+    this.label = `stt.StreamAdapter<${this.#stt.label}>`;
 
     this.#stt.on(STTEvent.METRICS_COLLECTED, (metrics) => {
       this.emit(STTEvent.METRICS_COLLECTED, metrics);
     });
   }
 
-  recognize(frame: AudioFrame): Promise<SpeechEvent> {
+  _recognize(frame: AudioFrame): Promise<SpeechEvent> {
     return this.#stt.recognize(frame);
   }
 
@@ -33,11 +35,13 @@ export class StreamAdapter extends STT {
 export class StreamAdapterWrapper extends SpeechStream {
   #stt: STT;
   #vadStream: VADStream;
+  label: string;
 
   constructor(stt: STT, vad: VAD) {
-    super();
+    super(stt);
     this.#stt = stt;
     this.#vadStream = vad.stream();
+    this.label = `stt.StreamAdapterWrapper<${this.#stt.label}>`;
 
     this.#run();
   }

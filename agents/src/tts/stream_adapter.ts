@@ -8,15 +8,18 @@ import { SynthesizeStream, TTS, TTSEvent } from './tts.js';
 export class StreamAdapter extends TTS {
   #tts: TTS;
   #sentenceTokenizer: SentenceTokenizer;
+  label: string;
 
   constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer) {
     super(tts.sampleRate, tts.numChannels, { streaming: true });
     this.#tts = tts;
     this.#sentenceTokenizer = sentenceTokenizer;
+    this.label = this.#tts.label;
+    this.label = `tts.StreamAdapter<${this.#tts.label}>`;
 
     this.#tts.on(TTSEvent.METRICS_COLLECTED, (metrics) => {
-      this.emit(TTSEvent.METRICS_COLLECTED, metrics)
-    })
+      this.emit(TTSEvent.METRICS_COLLECTED, metrics);
+    });
   }
 
   synthesize(text: string): ChunkedStream {
@@ -31,11 +34,13 @@ export class StreamAdapter extends TTS {
 export class StreamAdapterWrapper extends SynthesizeStream {
   #tts: TTS;
   #sentenceStream: SentenceStream;
+  label: string;
 
   constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer) {
     super(tts);
     this.#tts = tts;
     this.#sentenceStream = sentenceTokenizer.stream();
+    this.label = `tts.StreamAdapterWrapper<${this.#tts.label}>`;
 
     this.#run();
   }

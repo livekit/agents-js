@@ -45,6 +45,7 @@ const defaultSTTOptions: STTOptions = {
 export class STT extends stt.STT {
   #opts: STTOptions;
   #logger = log();
+  label = 'deepgram.STT';
 
   constructor(opts: Partial<STTOptions> = defaultSTTOptions) {
     super({
@@ -84,12 +85,12 @@ export class STT extends stt.STT {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async recognize(_: AudioBuffer): Promise<stt.SpeechEvent> {
+  async _recognize(_: AudioBuffer): Promise<stt.SpeechEvent> {
     throw new Error('Recognize is not supported on Deepgram STT');
   }
 
   stream(): stt.SpeechStream {
-    return new SpeechStream(this.#opts);
+    return new SpeechStream(this, this.#opts);
   }
 }
 
@@ -98,9 +99,10 @@ export class SpeechStream extends stt.SpeechStream {
   #audioEnergyFilter: AudioEnergyFilter;
   #logger = log();
   #speaking = false;
+  label = 'deepgram.SpeechStream';
 
-  constructor(opts: STTOptions) {
-    super();
+  constructor(stt: STT, opts: STTOptions) {
+    super(stt);
     this.#opts = opts;
     this.closed = false;
     this.#audioEnergyFilter = new AudioEnergyFilter();

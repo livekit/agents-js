@@ -4,7 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
-import { TTSMetrics } from '../metrics/base.js';
+import type { TTSMetrics } from '../metrics/base.js';
 import { AsyncIterableQueue, mergeFrames } from '../utils.js';
 
 /** SynthesizedAudio is a packet of speech synthesis as returned by the TTS. */
@@ -51,6 +51,7 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
   #capabilities: TTSCapabilities;
   #sampleRate: number;
   #numChannels: number;
+  abstract label: string;
 
   constructor(sampleRate: number, numChannels: number, capabilities: TTSCapabilities) {
     super();
@@ -112,6 +113,7 @@ export abstract class SynthesizeStream
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
   >();
   protected closed = false;
+  abstract label: string;
   #tts: TTS;
   #metricsPendingTexts: string[] = [];
   #metricsText = '';
@@ -139,7 +141,7 @@ export abstract class SynthesizeStream
           charactersCount: text.length,
           audioDuration,
           cancelled: false, // XXX(nbsp)
-          label: this.constructor.name,
+          label: this.label,
           streamed: false,
         };
         this.#tts.emit(TTSEvent.METRICS_COLLECTED, metrics);
@@ -240,6 +242,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   protected queue = new AsyncIterableQueue<SynthesizedAudio>();
   protected output = new AsyncIterableQueue<SynthesizedAudio>();
   protected closed = false;
+  abstract label: string;
   #text: string;
   #tts: TTS;
 
@@ -274,7 +277,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       charactersCount: this.#text.length,
       audioDuration,
       cancelled: false, // XXX(nbsp)
-      label: this.constructor.name,
+      label: this.label,
       streamed: false,
     };
     this.#tts.emit(TTSEvent.METRICS_COLLECTED, metrics);

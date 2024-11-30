@@ -21,10 +21,10 @@ import { EventEmitter } from 'node:events';
 import { AudioByteStream } from '../audio.js';
 import * as llm from '../llm/index.js';
 import { log } from '../log.js';
+import type { MultimodalLLMMetrics } from '../metrics/base.js';
 import { BasicTranscriptionForwarder } from '../transcription.js';
 import { findMicroTrackId } from '../utils.js';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
-import { MultimodalLLMMetrics } from '../metrics/base.js';
 
 /**
  * @internal
@@ -329,7 +329,7 @@ export class MultimodalAgent extends EventEmitter {
 
       this.#session.on('metrics_collected', (metrics: MultimodalLLMMetrics) => {
         this.emit('metrics_collected', metrics);
-      })
+      });
 
       resolve(this.#session);
     });
