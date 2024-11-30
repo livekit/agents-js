@@ -16,3 +16,5 @@ export {
   MultimodalLLMMetrics,
   MultimodalLLMError,
 } from './base.js';
+export { UsageSummary, UsageCollector } from './usage_collector.js';
+export { logMetrics } from './utils.js';

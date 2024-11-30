@@ -1,14 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import {
-  AgentMetrics,
-  LLMMetrics,
-  PipelineEOUMetrics,
-  TTSMetrics,
-  VADMetrics,
-} from './base.js';
+import { AgentMetrics } from './base.js';
+import { isLLMMetrics, isSTTMetrics, isTTSMetrics } from './utils.js';
 
 export interface UsageSummary {
   llmPromptTokens: number;
@@ -35,8 +29,7 @@ export class UsageCollector {
       this.#summary.llmCompletionTokens += metrics.completionTokens;
     } else if (isTTSMetrics(metrics)) {
       this.#summary.ttsCharactersCount += metrics.charactersCount;
-    } else if (!isVADMetrics(metrics) && !isPipelineEOUMetrics(metrics)) {
-      // has to be STT
+    } else if (isSTTMetrics(metrics)) {
       this.#summary.sttAudioDuration += metrics.audioDuration;
     }
   }
@@ -45,19 +38,3 @@ export class UsageCollector {
     return { ...this.#summary };
   }
 }
-
-const isLLMMetrics = (metrics: AgentMetrics): metrics is LLMMetrics => {
-  return !!(metrics as LLMMetrics).ttft;
-};
-
-const isVADMetrics = (metrics: AgentMetrics): metrics is VADMetrics => {
-  return !!(metrics as VADMetrics).inferenceCount;
-};
-
-const isPipelineEOUMetrics = (metrics: AgentMetrics): metrics is PipelineEOUMetrics => {
-  return !!(metrics as PipelineEOUMetrics).endOfUtteranceDelay;
-};
-
-const isTTSMetrics = (metrics: AgentMetrics): metrics is TTSMetrics => {
-  return !!(metrics as TTSMetrics).ttfb;
-};
