@@ -241,6 +241,8 @@ export class VADStream extends baseStream {
               new AudioFrame(inputFrame.data.subarray(0, toCopyInt), pubSampleRate, 1, toCopyInt),
             ],
             speaking: pubSpeaking,
+            rawAccumulatedSilence: silenceThresholdDuration,
+            rawAccumulatedSpeech: speechThresholdDuration,
           });
 
           const resetWriteCursor = () => {
@@ -286,6 +288,8 @@ export class VADStream extends baseStream {
                 inferenceDuration,
                 frames: [copySpeechBuffer()],
                 speaking: pubSpeaking,
+                rawAccumulatedSilence: 0,
+                rawAccumulatedSpeech: 0,
               });
             }
           } else {
@@ -311,6 +315,8 @@ export class VADStream extends baseStream {
                 inferenceDuration,
                 frames: [copySpeechBuffer()],
                 speaking: pubSpeaking,
+                rawAccumulatedSilence: 0,
+                rawAccumulatedSpeech: 0,
               });
 
               resetWriteCursor();

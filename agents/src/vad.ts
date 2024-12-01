@@ -4,7 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
-import { VADMetrics } from './metrics/base.js';
+import type { VADMetrics } from './metrics/base.js';
 import { AsyncIterableQueue } from './utils.js';
 
 export enum VADEventType {
@@ -23,9 +23,9 @@ export interface VADEvent {
   samplesIndex: number;
   /** Timestamp when the event was fired. */
   timestamp: number;
-  /** Duration of the detected speech segment in seconds. */
+  /** Duration of the speech segment. */
   speechDuration: number;
-  /** Duration of the silence segment preceding or following the speech, in seconds. */
+  /** Duration of the silence segment. */
   silenceDuration: number;
   /**
    * List of audio frames associated with the speech.
@@ -42,6 +42,10 @@ export interface VADEvent {
   inferenceDuration: number;
   /** Indicates whether speech was detected in the frames. */
   speaking: boolean;
+  /** Threshold used to detect silence. */
+  rawAccumulatedSilence: number;
+  /** Threshold used to detect speech. */
+  rawAccumulatedSpeech: number;
 }
 
 export interface VADCapabilities {
