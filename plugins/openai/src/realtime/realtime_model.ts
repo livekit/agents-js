@@ -8,13 +8,12 @@ import {
   llm,
   log,
   mergeFrames,
+  metrics,
   multimodal,
 } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
-import type { MultimodalLLMMetrics } from '../../../../agents/src/metrics/base.js';
-import { MultimodalLLMError } from '../../../../agents/src/metrics/base.js';
 import * as api_proto from './api_proto.js';
 
 interface ModelOptions {
@@ -954,10 +953,11 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
     let metricsError: Error | undefined;
     let cancelled = false;
-    switch (response.statusDetails.type) {
+    switch (response.status) {
       case 'failed': {
+        if (response.statusDetails.type !== 'failed') break;
         const err = response.statusDetails.error;
-        metricsError = new MultimodalLLMError({
+        metricsError = new metrics.MultimodalLLMError({
           type: response.statusDetails.type,
           code: err?.code,
           message: err?.message,
@@ -968,8 +968,9 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         break;
       }
       case 'incomplete': {
+        if (response.statusDetails.type !== 'incomplete') break;
         const reason = response.statusDetails.reason;
-        metricsError = new MultimodalLLMError({
+        metricsError = new metrics.MultimodalLLMError({
           type: response.statusDetails.type,
           reason,
         });
@@ -990,7 +991,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const duration = Date.now() - response.createdTimestamp;
 
     const usage = response.usage;
-    const metrics: MultimodalLLMMetrics = {
+    const metric: metrics.MultimodalLLMMetrics = {
       timestamp: response.createdTimestamp,
       requestId: response.id,
       ttft: ttft!,
@@ -1000,7 +1001,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       completionTokens: usage?.output_tokens || 0,
       promptTokens: usage?.input_tokens || 0,
       totalTokens: usage?.total_tokens || 0,
-      tokensPerSecond: (usage?.output_tokens || 0) / duration,
+      tokensPerSecond: (usage?.output_tokens || 0) / duration * 1000,
       error: metricsError,
       inputTokenDetails: {
         cachedTokens: usage?.input_token_details.cached_tokens || 0,
@@ -1012,7 +1013,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         audioTokens: usage?.output_token_details.audio_tokens || 0,
       },
     };
-    this.emit('metrics_collected', metrics);
+    this.emit('metrics_collected', metric);
   }
 
   #handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
