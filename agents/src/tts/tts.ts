@@ -164,6 +164,7 @@ export abstract class SynthesizeStream
     if (requestId) {
       emit();
     }
+    this.output.close();
   }
 
   /** Push a string of text to the TTS */
@@ -267,6 +268,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       }
       audioDuration += audio.frame.samplesPerChannel / audio.frame.sampleRate;
     }
+    this.output.close();
 
     const duration = process.hrtime.bigint() - startTime;
     const metrics: TTSMetrics = {

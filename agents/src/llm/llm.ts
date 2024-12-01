@@ -73,6 +73,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     this.#llm = llm;
     this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
+    this.monitorMetrics();
   }
 
   protected async monitorMetrics() {
@@ -91,6 +92,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         usage = ev.usage;
       }
     }
+    this.output.close();
 
     const duration = process.hrtime.bigint() - startTime;
     const metrics: LLMMetrics = {

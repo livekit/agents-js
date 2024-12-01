@@ -86,6 +86,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
 
   constructor(vad: VAD) {
     this.#vad = vad;
+    this.monitorMetrics();
   }
 
   protected async monitorMetrics() {
@@ -118,6 +119,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
           break;
       }
     }
+    this.output.close();
   }
 
   pushFrame(frame: AudioFrame) {

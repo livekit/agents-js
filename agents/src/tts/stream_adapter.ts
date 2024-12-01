@@ -65,10 +65,10 @@ export class StreamAdapterWrapper extends SynthesizeStream {
     const synthesize = async () => {
       for await (const ev of this.#sentenceStream) {
         for await (const audio of this.#tts.synthesize(ev.token)) {
-          this.queue.put(audio);
+          this.output.put(audio);
         }
       }
-      this.queue.put(SynthesizeStream.END_OF_STREAM);
+      this.output.put(SynthesizeStream.END_OF_STREAM);
     };
 
     Promise.all([forwardInput(), synthesize()]);

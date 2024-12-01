@@ -146,6 +146,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   constructor(stt: STT) {
     this.#stt = stt;
+    this.monitorMetrics();
   }
 
   protected async monitorMetrics() {
@@ -165,6 +166,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
       };
       this.#stt.emit(SpeechEventType.METRICS_COLLECTED, metrics);
     }
+    this.output.close();
   }
 
   /** Push an audio frame to the STT */
@@ -201,7 +203,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   next(): Promise<IteratorResult<SpeechEvent>> {
-    return this.queue.next();
+    return this.output.next();
   }
 
   /** Close both the input and output of the STT stream */

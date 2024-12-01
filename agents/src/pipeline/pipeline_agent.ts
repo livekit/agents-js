@@ -805,7 +805,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     if (this.#lastSpeechTime) {
       const timeSinceLastSpeech = Date.now() - this.#lastSpeechTime;
       const transcriptionDelay = Math.max(
-        this.#lastFinalTranscriptTime || 0 - this.#lastSpeechTime,
+        (this.#lastFinalTranscriptTime || 0) - this.#lastSpeechTime,
         0,
       );
       const metrics: PipelineEOUMetrics = {
