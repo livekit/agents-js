@@ -46,6 +46,7 @@ const defaultVADOptions: VADOptions = {
 export class VAD extends baseVAD {
   #session: InferenceSession;
   #opts: VADOptions;
+  label = 'silero.VAD';
 
   constructor(session: InferenceSession, opts: VADOptions) {
     super({ updateInterval: 32 });
@@ -86,7 +87,7 @@ export class VAD extends baseVAD {
   }
 
   stream(): VADStream {
-    return new VADStream(this.#opts, new OnnxModel(this.#session, this.#opts.sampleRate));
+    return new VADStream(this, this.#opts, new OnnxModel(this.#session, this.#opts.sampleRate));
   }
 }
 
@@ -98,8 +99,8 @@ export class VADStream extends baseStream {
   #extraInferenceTime = 0;
   #logger = log();
 
-  constructor(opts: VADOptions, model: OnnxModel) {
-    super();
+  constructor(vad: VAD, opts: VADOptions, model: OnnxModel) {
+    super(vad);
     this.#opts = opts;
     this.#model = model;
 
