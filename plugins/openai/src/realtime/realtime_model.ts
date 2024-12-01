@@ -1001,7 +1001,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       completionTokens: usage?.output_tokens || 0,
       promptTokens: usage?.input_tokens || 0,
       totalTokens: usage?.total_tokens || 0,
-      tokensPerSecond: (usage?.output_tokens || 0) / duration * 1000,
+      tokensPerSecond: ((usage?.output_tokens || 0) / duration) * 1000,
       error: metricsError,
       inputTokenDetails: {
         cachedTokens: usage?.input_token_details.cached_tokens || 0,
