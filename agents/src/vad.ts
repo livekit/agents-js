@@ -2,12 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { EventEmitter } from 'node:events';
+import { VADMetrics } from './metrics/base.js';
 import { AsyncIterableQueue } from './utils.js';
 
 export enum VADEventType {
   START_OF_SPEECH,
   INFERENCE_DONE,
   END_OF_SPEECH,
+  METRICS_COLLECTED,
 }
 
 export interface VADEvent {
@@ -44,9 +48,16 @@ export interface VADCapabilities {
   updateInterval: number;
 }
 
-export abstract class VAD {
+export type VADCallbacks = {
+  [VADEventType.METRICS_COLLECTED]: (metrics: VADMetrics) => void;
+};
+
+export abstract class VAD extends (EventEmitter as new () => TypedEmitter<VADCallbacks>) {
   #capabilities: VADCapabilities;
+  abstract label: string;
+
   constructor(capabilities: VADCapabilities) {
+    super();
     this.#capabilities = capabilities;
   }
 
@@ -64,7 +75,46 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
   protected input = new AsyncIterableQueue<AudioFrame | typeof VADStream.FLUSH_SENTINEL>();
   protected queue = new AsyncIterableQueue<VADEvent>();
+  protected output = new AsyncIterableQueue<VADEvent>();
   protected closed = false;
+  #vad: VAD;
+  #lastActivityTime = BigInt(0);
+
+  constructor(vad: VAD) {
+    this.#vad = vad;
+  }
+
+  protected async monitorMetrics() {
+    let inferenceDurationTotal = 0;
+    let inferenceCount = 0;
+
+    for await (const event of this.queue) {
+      this.output.put(event);
+      switch (event.type) {
+        case VADEventType.START_OF_SPEECH:
+          inferenceCount++;
+          if (inferenceCount >= 1 / this.#vad.capabilities.updateInterval) {
+            this.#vad.emit(VADEventType.METRICS_COLLECTED, {
+              timestamp: Date.now(),
+              idleTime: Math.trunc(
+                Number((process.hrtime.bigint() - this.#lastActivityTime) / BigInt(1000000)),
+              ),
+              inferenceDurationTotal,
+              inferenceCount,
+              label: this.#vad.label,
+            });
+
+            inferenceCount = 0;
+            inferenceDurationTotal = 0;
+          }
+          break;
+        case VADEventType.INFERENCE_DONE:
+        case VADEventType.END_OF_SPEECH:
+          this.#lastActivityTime = process.hrtime.bigint();
+          break;
+      }
+    }
+  }
 
   pushFrame(frame: AudioFrame) {
     if (this.input.closed) {
@@ -97,12 +147,13 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   }
 
   next(): Promise<IteratorResult<VADEvent>> {
-    return this.queue.next();
+    return this.output.next();
   }
 
   close() {
     this.input.close();
     this.queue.close();
+    this.output.close();
     this.closed = true;
   }
 

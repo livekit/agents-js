@@ -5,7 +5,7 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import type { VAD, VADStream } from '../vad.js';
 import { VADEventType } from '../vad.js';
 import type { SpeechEvent } from './stt.js';
-import { STT, STTEvent, SpeechEventType, SpeechStream } from './stt.js';
+import { STT, SpeechEventType, SpeechStream } from './stt.js';
 
 export class StreamAdapter extends STT {
   #stt: STT;
@@ -18,8 +18,8 @@ export class StreamAdapter extends STT {
     this.#vad = vad;
     this.label = `stt.StreamAdapter<${this.#stt.label}>`;
 
-    this.#stt.on(STTEvent.METRICS_COLLECTED, (metrics) => {
-      this.emit(STTEvent.METRICS_COLLECTED, metrics);
+    this.#stt.on(SpeechEventType.METRICS_COLLECTED, (metrics) => {
+      this.emit(SpeechEventType.METRICS_COLLECTED, metrics);
     });
   }
 

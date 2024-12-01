@@ -8,7 +8,6 @@ export {
   type STTCapabilities,
   type RecognitionUsage,
   type STTCallbacks,
-  STTEvent,
   SpeechEventType,
   STT,
   SpeechStream,

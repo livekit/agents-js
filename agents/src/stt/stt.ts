@@ -32,6 +32,7 @@ export enum SpeechEventType {
   END_OF_SPEECH = 3,
   /** Usage event, emitted periodically to indicate usage metrics. */
   RECOGNITION_USAGE = 4,
+  METRICS_COLLECTED = 5,
 }
 
 /** SpeechData contains metadata about this {@link SpeechEvent}. */
@@ -66,12 +67,8 @@ export interface STTCapabilities {
   interimResults: boolean;
 }
 
-export enum STTEvent {
-  METRICS_COLLECTED,
-}
-
 export type STTCallbacks = {
-  [STTEvent.METRICS_COLLECTED]: (metrics: STTMetrics) => void;
+  [SpeechEventType.METRICS_COLLECTED]: (metrics: STTMetrics) => void;
 };
 
 /**
@@ -100,7 +97,7 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
     const startTime = process.hrtime.bigint();
     const event = await this._recognize(frame);
     const duration = Number((process.hrtime.bigint() - startTime) / BigInt(1000000));
-    this.emit(STTEvent.METRICS_COLLECTED, {
+    this.emit(SpeechEventType.METRICS_COLLECTED, {
       requestId: event.requestId ?? '',
       timestamp: Date.now(),
       duration,
@@ -166,7 +163,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         audioDuration: event.recognitionUsage!.audioDuration,
         streamed: true,
       };
-      this.#stt.emit(STTEvent.METRICS_COLLECTED, metrics);
+      this.#stt.emit(SpeechEventType.METRICS_COLLECTED, metrics);
     }
   }
 
