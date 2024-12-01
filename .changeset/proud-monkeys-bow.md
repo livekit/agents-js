@@ -1,5 +1,5 @@
 ---
-"@livekit/agents": patch
+"@livekit/agents": minor
 "@livekit/agents-plugin-deepgram": patch
 "@livekit/agents-plugin-elevenlabs": patch
 "@livekit/agents-plugin-openai": patch
