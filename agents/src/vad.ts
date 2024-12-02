@@ -84,12 +84,16 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   >();
   protected output = new TransformStream<VADEvent, VADEvent>();
   protected closed = false;
+  protected inputClosed = false;
   #vad: VAD;
   #lastActivityTime = BigInt(0);
   #outputReadable: ReadableStream<VADEvent>;
 
   constructor(vad: VAD) {
     this.#vad = vad;
+    this.output.writable.close().then(() => {
+      this.inputClosed = true;
+    });
     const [r1, r2] = this.output.readable.tee();
     this.#outputReadable = r1;
     this.monitorMetrics(r2);
@@ -127,9 +131,9 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   }
 
   pushFrame(frame: AudioFrame) {
-    // if (this.input.closed) {
-    //   throw new Error('Input is closed');
-    // }
+    if (this.inputClosed) {
+      throw new Error('Input is closed');
+    }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
@@ -137,9 +141,9 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   }
 
   flush() {
-    // if (this.input.closed) {
-    //   throw new Error('Input is closed');
-    // }
+    if (this.inputClosed) {
+      throw new Error('Input is closed');
+    }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
@@ -147,9 +151,9 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   }
 
   endInput() {
-    // if (this.input.closed) {
-    //   throw new Error('Input is closed');
-    // }
+    if (this.inputClosed) {
+      throw new Error('Input is closed');
+    }
     if (this.closed) {
       throw new Error('Stream is closed');
     }

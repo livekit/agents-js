@@ -145,11 +145,13 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   protected output = new TransformStream<SpeechEvent, SpeechEvent>();
   abstract label: string;
   protected closed = false;
+  protected inputClosed = false;
   #stt: STT;
   #outputReadable: ReadableStream<SpeechEvent>;
 
   constructor(stt: STT) {
     this.#stt = stt;
+    this.output.writable.close().then(() => { this.inputClosed = true })
     const [r1, r2] = this.output.readable.tee();
     this.#outputReadable = r1;
     this.monitorMetrics(r2);
@@ -175,9 +177,9 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   /** Push an audio frame to the STT */
   pushFrame(frame: AudioFrame) {
-    // if (this.input.closed) {
-    //   throw new Error('Input is closed');
-    // }
+    if (this.inputClosed) {
+      throw new Error('Input is closed');
+    }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
@@ -186,9 +188,9 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   /** Flush the STT, causing it to process all pending text */
   flush() {
-    // if (this.input.closed) {
-    //   throw new Error('Input is closed');
-    // }
+    if (this.inputClosed) {
+      throw new Error('Input is closed');
+    }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
@@ -197,9 +199,9 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
-    // if (this.input.closed) {
-    //   throw new Error('Input is closed');
-    // }
+    if (this.inputClosed) {
+      throw new Error('Input is closed');
+    }
     if (this.closed) {
       throw new Error('Stream is closed');
     }

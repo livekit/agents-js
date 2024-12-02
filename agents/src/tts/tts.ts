@@ -116,6 +116,7 @@ export abstract class SynthesizeStream
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
   >();
   protected closed = false;
+  protected inputClosed = false;
   abstract label: string;
   #tts: TTS;
   #metricsPendingTexts: string[] = [];
@@ -124,6 +125,9 @@ export abstract class SynthesizeStream
 
   constructor(tts: TTS) {
     this.#tts = tts;
+    this.output.writable.close().then(() => {
+      this.inputClosed = true;
+    });
     const [r1, r2] = this.output.readable.tee();
     this.#outputReadable = r1;
     this.monitorMetrics(r2);
@@ -177,9 +181,9 @@ export abstract class SynthesizeStream
   pushText(text: string) {
     this.#metricsText += text;
 
-    // if (this.input.closed) {
-    //   throw new Error('Input is closed');
-    // }
+    if (this.inputClosed) {
+      throw new Error('Input is closed');
+    }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
@@ -192,9 +196,9 @@ export abstract class SynthesizeStream
       this.#metricsPendingTexts.push(this.#metricsText);
       this.#metricsText = '';
     }
-    // if (this.input.closed) {
-    //   throw new Error('Input is closed');
-    // }
+    if (this.inputClosed) {
+      throw new Error('Input is closed');
+    }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
@@ -203,9 +207,9 @@ export abstract class SynthesizeStream
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
-    // if (this.input.closed) {
-    //   throw new Error('Input is closed');
-    // }
+    if (this.inputClosed) {
+      throw new Error('Input is closed');
+    }
     if (this.closed) {
       throw new Error('Stream is closed');
     }

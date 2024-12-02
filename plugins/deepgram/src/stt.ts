@@ -113,7 +113,7 @@ export class SpeechStream extends stt.SpeechStream {
   async #run(maxRetry = 32) {
     let retries = 0;
     let ws: WebSocket;
-    while (!this.input.closed) {
+    while (!this.inputClosed) {
       const streamURL = new URL(API_BASE_URL_V1);
       const params = {
         model: this.#opts.model,
