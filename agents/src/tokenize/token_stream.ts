@@ -18,11 +18,15 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
   #inBuf = '';
   #outBuf = '';
   #currentSegmentId: string;
+  #writer: WritableStreamDefaultWriter<TokenData>;
+  #reader: ReadableStreamDefaultReader<TokenData>;
 
   constructor(func: TokenizeFunc, minTokenLength: number, minContextLength: number) {
     this.#func = func;
     this.#minTokenLength = minTokenLength;
     this.#minContextLength = minContextLength;
+    this.#reader = this.queue.readable.getReader();
+    this.#writer = this.queue.writable.getWriter();
 
     this.#currentSegmentId = randomUUID();
   }
@@ -32,8 +36,6 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-
-    const writer = this.queue.writable.getWriter();
 
     this.#inBuf += text;
     if (this.#inBuf.length < this.#minContextLength) return;
@@ -52,7 +54,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
 
       this.#outBuf += tokText;
       if (this.#outBuf.length >= this.#minTokenLength) {
-        writer.write({ token: this.#outBuf, segmentId: this.#currentSegmentId });
+        this.#writer.write({ token: this.#outBuf, segmentId: this.#currentSegmentId });
         this.#outBuf = '';
       }
 
@@ -72,8 +74,6 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
       throw new Error('Stream is closed');
     }
 
-    const writer = this.queue.writable.getWriter();
-
     if (this.#inBuf || this.#outBuf) {
       const tokens = this.#func(this.#inBuf);
       if (tokens) {
@@ -87,7 +87,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
       }
 
       if (this.#outBuf) {
-        writer.write({ token: this.#outBuf, segmentId: this.#currentSegmentId });
+        this.#writer.write({ token: this.#outBuf, segmentId: this.#currentSegmentId });
       }
 
       this.#currentSegmentId = randomUUID();
@@ -107,22 +107,21 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
   }
 
   async next(): Promise<IteratorResult<TokenData>> {
-    return this.queue.readable
-      .getReader()
-      .read()
-      .then(({ value }) => {
-        if (value) {
-          return { value, done: false };
-        } else {
-          return { value: undefined, done: true };
-        }
-      });
+    return this.#reader.read().then(({ value }) => {
+      if (value) {
+        return { value, done: false };
+      } else {
+        return { value: undefined, done: true };
+      }
+    });
   }
 
   /** Close both the input and output of the token stream */
   close() {
-    this.queue.writable.close();
-    this.closed = true;
+    if (!this.closed) {
+      this.#writer.close();
+      this.closed = true;
+    }
   }
 
   [Symbol.asyncIterator](): BufferedTokenStream {

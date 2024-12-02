@@ -177,7 +177,6 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
 
   close() {
     this.input.writable.close();
-    this.output.writable.close();
     this.closed = true;
   }
 

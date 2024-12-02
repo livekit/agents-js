@@ -147,14 +147,14 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   protected closed = false;
   protected inputClosed = false;
   #stt: STT;
-  #outputReadable: ReadableStream<SpeechEvent>;
+  #reader: ReadableStreamDefaultReader<SpeechEvent>;
   #writer: WritableStreamDefaultWriter<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
 
   constructor(stt: STT) {
     this.#stt = stt;
     this.#writer = this.input.writable.getWriter();
     const [r1, r2] = this.output.readable.tee();
-    this.#outputReadable = r1;
+    this.#reader = r1.getReader();
     this.monitorMetrics(r2);
   }
 
@@ -211,22 +211,18 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   async next(): Promise<IteratorResult<SpeechEvent>> {
-    return this.#outputReadable
-      .getReader()
-      .read()
-      .then(({ value }) => {
-        if (value) {
-          return { value, done: false };
-        } else {
-          return { value: undefined, done: true };
-        }
-      });
+    return this.#reader.read().then(({ value }) => {
+      if (value) {
+        return { value, done: false };
+      } else {
+        return { value: undefined, done: true };
+      }
+    });
   }
 
   /** Close both the input and output of the STT stream */
   close() {
     this.input.writable.close();
-    this.output.writable.close();
     this.closed = true;
     this.inputClosed = true;
   }

@@ -68,14 +68,14 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   #llm: LLM;
   #chatCtx: ChatContext;
   #fncCtx?: FunctionContext;
-  #outputReadable: ReadableStream<ChatChunk>;
+  #reader: ReadableStreamDefaultReader<ChatChunk>;
 
   constructor(llm: LLM, chatCtx: ChatContext, fncCtx?: FunctionContext) {
     this.#llm = llm;
     this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
     const [r1, r2] = this.output.readable.tee();
-    this.#outputReadable = r1;
+    this.#reader = r1.getReader();
     this.monitorMetrics(r2);
   }
 
@@ -140,20 +140,16 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   }
 
   async next(): Promise<IteratorResult<ChatChunk>> {
-    return this.#outputReadable
-      .getReader()
-      .read()
-      .then(({ value }) => {
-        if (value) {
-          return { value, done: false };
-        } else {
-          return { value: undefined, done: true };
-        }
-      });
+    return this.#reader.read().then(({ value }) => {
+      if (value) {
+        return { value, done: false };
+      } else {
+        return { value: undefined, done: true };
+      }
+    });
   }
 
   close() {
-    this.output.writable.close();
     this.closed = true;
   }
 

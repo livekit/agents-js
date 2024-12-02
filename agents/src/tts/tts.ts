@@ -4,7 +4,11 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
-import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
+import type {
+  ReadableStream,
+  ReadableStreamDefaultReader,
+  WritableStreamDefaultWriter,
+} from 'node:stream/web';
 import { TransformStream } from 'node:stream/web';
 import type { TTSMetrics } from '../metrics/base.js';
 import { mergeFrames } from '../utils.js';
@@ -121,17 +125,14 @@ export abstract class SynthesizeStream
   #tts: TTS;
   #metricsPendingTexts: string[] = [];
   #metricsText = '';
-  #outputReadable: ReadableStream<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>;
   #writer: WritableStreamDefaultWriter<string | typeof SynthesizeStream.FLUSH_SENTINEL>;
+  #reader: ReadableStreamDefaultReader<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>;
 
   constructor(tts: TTS) {
     this.#tts = tts;
-    this.output.writable.close().then(() => {
-      this.inputClosed = true;
-    });
     this.#writer = this.input.writable.getWriter();
     const [r1, r2] = this.output.readable.tee();
-    this.#outputReadable = r1;
+    this.#reader = r1.getReader();
     this.monitorMetrics(r2);
   }
 
@@ -216,26 +217,22 @@ export abstract class SynthesizeStream
       throw new Error('Stream is closed');
     }
     this.#writer.close();
+    this.inputClosed = true;
   }
 
   async next(): Promise<IteratorResult<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>> {
-    return this.#outputReadable
-      .getReader()
-      .read()
-      .then(({ value }) => {
-        if (value) {
-          return { value, done: false };
-        } else {
-          return { value: undefined, done: true };
-        }
-      });
+    return this.#reader.read().then(({ value }) => {
+      if (value) {
+        return { value, done: false };
+      } else {
+        return { value: undefined, done: true };
+      }
+    });
   }
 
   /** Close both the input and output of the TTS stream */
   close() {
-    this.#writer.close();
-    this.input.writable.close();
-    this.output.writable.close();
+    this.endInput();
     this.closed = true;
   }
 
@@ -264,13 +261,13 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   abstract label: string;
   #text: string;
   #tts: TTS;
-  #outputReadable: ReadableStream<SynthesizedAudio>;
+  #reader: ReadableStreamDefaultReader<SynthesizedAudio>;
 
   constructor(text: string, tts: TTS) {
     this.#text = text;
     this.#tts = tts;
     const [r1, r2] = this.output.readable.tee();
-    this.#outputReadable = r1;
+    this.#reader = r1.getReader();
     this.monitorMetrics(r2);
   }
 
@@ -313,16 +310,13 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   }
 
   async next(): Promise<IteratorResult<SynthesizedAudio>> {
-    return this.#outputReadable
-      .getReader()
-      .read()
-      .then(({ value }) => {
-        if (value) {
-          return { value, done: false };
-        } else {
-          return { value: undefined, done: true };
-        }
-      });
+    return this.#reader.read().then(({ value }) => {
+      if (value) {
+        return { value, done: false };
+      } else {
+        return { value: undefined, done: true };
+      }
+    });
   }
 
   /** Close both the input and output of the TTS stream */
