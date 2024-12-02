@@ -17,19 +17,24 @@ export class SynthesisHandle {
   ttsSource: SpeechSource;
   #agentPlayout: AgentPlayout;
   tts: TTS;
-  queue = new TransformStream<
-    AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL,
-    AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL
-  >();
+  queue: ReadableStream<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>;
   #playHandle?: PlayoutHandle;
   intFut = new Future();
   #logger = log();
+  streamController!: ReadableStreamDefaultController<
+    AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL
+  >;
 
   constructor(speechId: string, ttsSource: SpeechSource, agentPlayout: AgentPlayout, tts: TTS) {
     this.#speechId = speechId;
     this.ttsSource = ttsSource;
     this.#agentPlayout = agentPlayout;
     this.tts = tts;
+    this.queue = new ReadableStream<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>({
+      start: (controller) => {
+        this.streamController = controller;
+      },
+    });
   }
 
   get speechId(): string {
@@ -54,7 +59,7 @@ export class SynthesisHandle {
       throw new Error('synthesis was interrupted');
     }
 
-    this.#playHandle = this.#agentPlayout.play(this.#speechId, this.queue.readable);
+    this.#playHandle = this.#agentPlayout.play(this.#speechId, this.queue);
     return this.#playHandle;
   }
 
@@ -133,8 +138,6 @@ const stringSynthesisTask = (text: string, handle: SynthesisHandle): Cancellable
       cancelled = true;
     });
 
-    const writer = handle.queue.writable.getWriter();
-
     const ttsStream = handle.tts.stream();
     ttsStream.pushText(text);
     ttsStream.flush();
@@ -143,9 +146,9 @@ const stringSynthesisTask = (text: string, handle: SynthesisHandle): Cancellable
       if (cancelled || audio === SynthesizeStream.END_OF_STREAM) {
         break;
       }
-      writer.write(audio.frame);
+      handle.streamController.enqueue(audio.frame);
     }
-    writer.write(SynthesisHandle.FLUSH_SENTINEL);
+    handle.streamController.enqueue(SynthesisHandle.FLUSH_SENTINEL);
 
     resolve();
   });
@@ -162,8 +165,6 @@ const streamSynthesisTask = (
       cancelled = true;
     });
 
-    const writer = handle.queue.writable.getWriter();
-
     const ttsStream = handle.tts.stream();
     const readGeneratedAudio = async () => {
       for await (const audio of ttsStream) {
@@ -171,9 +172,9 @@ const streamSynthesisTask = (
         if (audio === SynthesizeStream.END_OF_STREAM) {
           break;
         }
-        writer.write(audio.frame);
+        handle.streamController.enqueue(audio.frame);
       }
-      writer.write(SynthesisHandle.FLUSH_SENTINEL);
+      handle.streamController.enqueue(SynthesisHandle.FLUSH_SENTINEL);
     };
     readGeneratedAudio();
 

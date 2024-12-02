@@ -130,8 +130,8 @@ export class AgentPlayout extends EventEmitter {
   #makePlayoutTask(
     oldTask: CancellablePromise<void> | null,
     handle: PlayoutHandle,
-    textStream: TransformStream<string, string>,
-    audioStream: TransformStream<AudioFrame, AudioFrame>,
+    textStream: ReadableStream<string>,
+    audioStream: ReadableStream<AudioFrame>,
   ): CancellablePromise<void> {
     return new CancellablePromise<void>((resolve, reject, onCancel) => {
       let cancelled = false;
@@ -156,7 +156,7 @@ export class AgentPlayout extends EventEmitter {
 
               (async () => {
                 try {
-                  for await (const text of textStream.readable) {
+                  for await (const text of textStream) {
                     if (cancelledText || cancelled) {
                       break;
                     }
@@ -185,7 +185,7 @@ export class AgentPlayout extends EventEmitter {
                     samplesPerChannel,
                   );
 
-                  for await (const frame of audioStream.readable) {
+                  for await (const frame of audioStream) {
                     if (cancelledCapture || cancelled) {
                       break;
                     }

@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
-import { TransformStream } from 'node:stream/web';
+import { ReadableStream } from 'node:stream/web';
 import type { LLMMetrics } from '../metrics/base.js';
 import type { ChatContext, ChatRole } from './chat_context.js';
 import type { FunctionCallInfo, FunctionContext } from './function_context.js';
@@ -60,7 +59,7 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
 }
 
 export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
-  protected output = new TransformStream<ChatChunk, ChatChunk>();
+  protected output = new ReadableStream<ChatChunk>();
   protected closed = false;
   protected _functionCalls: FunctionCallInfo[] = [];
   abstract label: string;
@@ -74,7 +73,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     this.#llm = llm;
     this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
-    const [r1, r2] = this.output.readable.tee();
+    const [r1, r2] = this.output.tee();
     this.#outputReadable = r1;
     this.monitorMetrics(r2);
   }
@@ -153,7 +152,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   }
 
   close() {
-    this.output.writable.close();
     this.closed = true;
   }
 
