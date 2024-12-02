@@ -52,7 +52,7 @@ export class StreamAdapterWrapper extends SpeechStream {
 
   async #run() {
     const forwardInput = async () => {
-      for await (const input of this.input) {
+      for await (const input of this.input.readable) {
         if (input === SpeechStream.FLUSH_SENTINEL) {
           this.#vadStream.flush();
         } else {
@@ -63,20 +63,21 @@ export class StreamAdapterWrapper extends SpeechStream {
     };
 
     const recognize = async () => {
+      const writer = this.output.writable.getWriter();
       for await (const ev of this.#vadStream) {
         switch (ev.type) {
           case VADEventType.START_OF_SPEECH:
-            this.output.put({ type: SpeechEventType.START_OF_SPEECH });
+            writer.write({ type: SpeechEventType.START_OF_SPEECH });
             break;
           case VADEventType.END_OF_SPEECH:
-            this.output.put({ type: SpeechEventType.END_OF_SPEECH });
+            writer.write({ type: SpeechEventType.END_OF_SPEECH });
 
             const event = await this.#stt.recognize(ev.frames);
             if (!event.alternatives![0].text) {
               continue;
             }
 
-            this.output.put(event);
+            writer.write(event);
             break;
         }
       }

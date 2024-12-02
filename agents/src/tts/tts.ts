@@ -4,8 +4,10 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import type { ReadableStream } from 'node:stream/web';
+import { TransformStream } from 'node:stream/web';
 import type { TTSMetrics } from '../metrics/base.js';
-import { AsyncIterableQueue, mergeFrames } from '../utils.js';
+import { mergeFrames } from '../utils.js';
 
 /** SynthesizedAudio is a packet of speech synthesis as returned by the TTS. */
 export interface SynthesizedAudio {
@@ -105,11 +107,12 @@ export abstract class SynthesizeStream
 {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
   static readonly END_OF_STREAM = Symbol('END_OF_STREAM');
-  protected input = new AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
-  protected queue = new AsyncIterableQueue<
-    SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
+  protected input = new TransformStream<
+    string | typeof SynthesizeStream.FLUSH_SENTINEL,
+    string | typeof SynthesizeStream.FLUSH_SENTINEL
   >();
-  protected output = new AsyncIterableQueue<
+  protected output = new TransformStream<
+    SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM,
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
   >();
   protected closed = false;
@@ -117,13 +120,18 @@ export abstract class SynthesizeStream
   #tts: TTS;
   #metricsPendingTexts: string[] = [];
   #metricsText = '';
-  #monitorMetricsTask?: Promise<void>;
+  #outputReadable: ReadableStream<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>;
 
   constructor(tts: TTS) {
     this.#tts = tts;
+    const [r1, r2] = this.output.readable.tee();
+    this.#outputReadable = r1;
+    this.monitorMetrics(r2);
   }
 
-  protected async monitorMetrics() {
+  protected async monitorMetrics(
+    readable: ReadableStream<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>,
+  ) {
     const startTime = process.hrtime.bigint();
     let audioDuration = 0;
     let ttfb: bigint | undefined;
@@ -148,8 +156,7 @@ export abstract class SynthesizeStream
       }
     };
 
-    for await (const audio of this.queue) {
-      this.output.put(audio);
+    for await (const audio of readable) {
       if (audio === SynthesizeStream.END_OF_STREAM) continue;
       requestId = audio.requestId;
       if (!ttfb) {
@@ -164,23 +171,19 @@ export abstract class SynthesizeStream
     if (requestId) {
       emit();
     }
-    this.output.close();
   }
 
   /** Push a string of text to the TTS */
   pushText(text: string) {
-    if (!this.#monitorMetricsTask) {
-      this.#monitorMetricsTask = this.monitorMetrics();
-    }
     this.#metricsText += text;
 
-    if (this.input.closed) {
-      throw new Error('Input is closed');
-    }
+    // if (this.input.closed) {
+    //   throw new Error('Input is closed');
+    // }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(text);
+    this.input.writable.getWriter().write(text);
   }
 
   /** Flush the TTS, causing it to process all pending text */
@@ -189,34 +192,43 @@ export abstract class SynthesizeStream
       this.#metricsPendingTexts.push(this.#metricsText);
       this.#metricsText = '';
     }
-    if (this.input.closed) {
-      throw new Error('Input is closed');
-    }
+    // if (this.input.closed) {
+    //   throw new Error('Input is closed');
+    // }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(SynthesizeStream.FLUSH_SENTINEL);
+    this.input.writable.getWriter().write(SynthesizeStream.FLUSH_SENTINEL);
   }
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
-    if (this.input.closed) {
-      throw new Error('Input is closed');
-    }
+    // if (this.input.closed) {
+    //   throw new Error('Input is closed');
+    // }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.close();
+    this.input.writable.close();
   }
 
-  next(): Promise<IteratorResult<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>> {
-    return this.output.next();
+  async next(): Promise<IteratorResult<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>> {
+    return this.#outputReadable
+      .getReader()
+      .read()
+      .then(({ value }) => {
+        if (value) {
+          return { value, done: false };
+        } else {
+          return { value: undefined, done: true };
+        }
+      });
   }
 
   /** Close both the input and output of the TTS stream */
   close() {
-    this.input.close();
-    this.output.close();
+    this.input.writable.close();
+    this.output.writable.close();
     this.closed = true;
   }
 
@@ -240,35 +252,34 @@ export abstract class SynthesizeStream
  * exports its own child ChunkedStream class, which inherits this class's methods.
  */
 export abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> {
-  protected queue = new AsyncIterableQueue<SynthesizedAudio>();
-  protected output = new AsyncIterableQueue<SynthesizedAudio>();
+  protected output = new TransformStream<SynthesizedAudio, SynthesizedAudio>();
   protected closed = false;
   abstract label: string;
   #text: string;
   #tts: TTS;
+  #outputReadable: ReadableStream<SynthesizedAudio>;
 
   constructor(text: string, tts: TTS) {
     this.#text = text;
     this.#tts = tts;
-
-    this.monitorMetrics();
+    const [r1, r2] = this.output.readable.tee();
+    this.#outputReadable = r1;
+    this.monitorMetrics(r2);
   }
 
-  protected async monitorMetrics() {
+  protected async monitorMetrics(readable: ReadableStream<SynthesizedAudio>) {
     const startTime = process.hrtime.bigint();
     let audioDuration = 0;
     let ttfb: bigint | undefined;
     let requestId = '';
 
-    for await (const audio of this.queue) {
-      this.output.put(audio);
+    for await (const audio of readable) {
       requestId = audio.requestId;
       if (!ttfb) {
         ttfb = process.hrtime.bigint() - startTime;
       }
       audioDuration += audio.frame.samplesPerChannel / audio.frame.sampleRate;
     }
-    this.output.close();
 
     const duration = process.hrtime.bigint() - startTime;
     const metrics: TTSMetrics = {
@@ -294,14 +305,22 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     return mergeFrames(frames);
   }
 
-  next(): Promise<IteratorResult<SynthesizedAudio>> {
-    return this.output.next();
+  async next(): Promise<IteratorResult<SynthesizedAudio>> {
+    return this.#outputReadable
+      .getReader()
+      .read()
+      .then(({ value }) => {
+        if (value) {
+          return { value, done: false };
+        } else {
+          return { value: undefined, done: true };
+        }
+      });
   }
 
   /** Close both the input and output of the TTS stream */
   close() {
-    this.queue.close();
-    this.output.close();
+    this.output.writable.close();
     this.closed = true;
   }
 

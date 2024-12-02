@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AsyncIterableQueue } from '../utils.js';
 
 // prettier-ignore
 export const PUNCTUATIONS = [
@@ -26,8 +25,11 @@ export abstract class SentenceTokenizer {
 
 export abstract class SentenceStream {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
-  protected input = new AsyncIterableQueue<string | typeof SentenceStream.FLUSH_SENTINEL>();
-  protected queue = new AsyncIterableQueue<TokenData>();
+  protected input = new TransformStream<
+    string | typeof SentenceStream.FLUSH_SENTINEL,
+    string | typeof SentenceStream.FLUSH_SENTINEL
+  >();
+  protected output = new TransformStream<TokenData, TokenData>();
   #closed = false;
 
   get closed(): boolean {
@@ -36,45 +38,54 @@ export abstract class SentenceStream {
 
   /** Push a string of text to the tokenizer */
   pushText(text: string) {
-    if (this.input.closed) {
-      throw new Error('Input is closed');
-    }
+    // if (this.input.closed) {
+    //   throw new Error('Input is closed');
+    // }
     if (this.#closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(text);
+    this.input.writable.getWriter().write(text);
   }
 
   /** Flush the tokenizer, causing it to process all pending text */
   flush() {
-    if (this.input.closed) {
-      throw new Error('Input is closed');
-    }
+    // if (this.input.closed) {
+    //   throw new Error('Input is closed');
+    // }
     if (this.#closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(SentenceStream.FLUSH_SENTINEL);
+    this.input.writable.getWriter().write(SentenceStream.FLUSH_SENTINEL);
   }
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
-    if (this.input.closed) {
-      throw new Error('Input is closed');
-    }
+    // if (this.input.closed) {
+    //   throw new Error('Input is closed');
+    // }
     if (this.#closed) {
       throw new Error('Stream is closed');
     }
-    this.input.close();
+    this.input.writable.close();
   }
 
-  next(): Promise<IteratorResult<TokenData>> {
-    return this.queue.next();
+  async next(): Promise<IteratorResult<TokenData>> {
+    return this.output.readable
+      .getReader()
+      .read()
+      .then(({ value }) => {
+        if (value) {
+          return { value, done: false };
+        } else {
+          return { value: undefined, done: true };
+        }
+      });
   }
 
   /** Close both the input and output of the tokenizer stream */
   close() {
-    this.input.close();
-    this.queue.close();
+    this.input.writable.close();
+    this.output.writable.close();
     this.#closed = true;
   }
 
@@ -94,8 +105,11 @@ export abstract class WordTokenizer {
 
 export abstract class WordStream {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
-  protected input = new AsyncIterableQueue<string | typeof WordStream.FLUSH_SENTINEL>();
-  protected queue = new AsyncIterableQueue<TokenData>();
+  protected input = new TransformStream<
+    string | typeof WordStream.FLUSH_SENTINEL,
+    string | typeof WordStream.FLUSH_SENTINEL
+  >();
+  protected output = new TransformStream<TokenData, TokenData>();
   #closed = false;
 
   get closed(): boolean {
@@ -104,45 +118,54 @@ export abstract class WordStream {
 
   /** Push a string of text to the tokenizer */
   pushText(text: string) {
-    if (this.input.closed) {
-      throw new Error('Input is closed');
-    }
+    // if (this.input.closed) {
+    //   throw new Error('Input is closed');
+    // }
     if (this.#closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(text);
+    this.input.writable.getWriter().write(text);
   }
 
   /** Flush the tokenizer, causing it to process all pending text */
   flush() {
-    if (this.input.closed) {
-      throw new Error('Input is closed');
-    }
+    // if (this.input.closed) {
+    //   throw new Error('Input is closed');
+    // }
     if (this.#closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(WordStream.FLUSH_SENTINEL);
+    this.input.writable.getWriter().write(WordStream.FLUSH_SENTINEL);
   }
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
-    if (this.input.closed) {
-      throw new Error('Input is closed');
-    }
+    // if (this.input.closed) {
+    //   throw new Error('Input is closed');
+    // }
     if (this.#closed) {
       throw new Error('Stream is closed');
     }
-    this.input.close();
+    this.input.writable.close();
   }
 
-  next(): Promise<IteratorResult<TokenData>> {
-    return this.queue.next();
+  async next(): Promise<IteratorResult<TokenData>> {
+    return this.output.readable
+      .getReader()
+      .read()
+      .then(({ value }) => {
+        if (value) {
+          return { value, done: false };
+        } else {
+          return { value: undefined, done: true };
+        }
+      });
   }
 
   /** Close both the input and output of the tokenizer stream */
   close() {
-    this.input.close();
-    this.queue.close();
+    this.input.writable.close();
+    this.output.writable.close();
     this.#closed = true;
   }
 
