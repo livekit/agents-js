@@ -92,10 +92,12 @@ export class ChunkedStream extends tts.ChunkedStream {
     const audioByteStream = new AudioByteStream(OPENAI_TTS_SAMPLE_RATE, OPENAI_TTS_CHANNELS);
     const frames = audioByteStream.write(buffer);
 
+    const writer = this.output.writable.getWriter();
+    
     let lastFrame: AudioFrame | undefined;
     const sendLastFrame = (segmentId: string, final: boolean) => {
       if (lastFrame) {
-        this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+        writer.write({ requestId, segmentId, frame: lastFrame, final });
         lastFrame = undefined;
       }
     };
@@ -106,6 +108,6 @@ export class ChunkedStream extends tts.ChunkedStream {
     }
     sendLastFrame(requestId, true);
 
-    this.queue.close();
+    writer.close();
   }
 }

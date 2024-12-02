@@ -103,6 +103,7 @@ export class VADStream extends baseStream {
     super(vad);
     this.#opts = opts;
     this.#model = model;
+    const writer = this.output.writable.getWriter()
 
     this.#task = new Promise(async () => {
       let inferenceData = new Float32Array(this.#model.windowSizeSamples);
@@ -131,7 +132,7 @@ export class VADStream extends baseStream {
       // used to avoid drift when the sampleRate ratio is not an integer
       let inputCopyRemainingFrac = 0.0;
 
-      for await (const frame of this.input) {
+      for await (const frame of this.input.readable) {
         if (typeof frame === 'symbol') {
           continue; // ignore flush sentinel for now
         }
@@ -229,7 +230,7 @@ export class VADStream extends baseStream {
             pubSilenceDuration += inferenceDuration;
           }
 
-          this.queue.put({
+          writer.write({
             type: VADEventType.INFERENCE_DONE,
             samplesIndex: pubCurrentSample,
             timestamp: pubTimestamp,
@@ -278,7 +279,7 @@ export class VADStream extends baseStream {
               pubSilenceDuration = 0;
               pubSpeechDuration = speechThresholdDuration;
 
-              this.queue.put({
+              writer.write({
                 type: VADEventType.START_OF_SPEECH,
                 samplesIndex: pubCurrentSample,
                 timestamp: pubTimestamp,
@@ -305,7 +306,7 @@ export class VADStream extends baseStream {
               pubSpeechDuration = 0;
               pubSilenceDuration = silenceThresholdDuration;
 
-              this.queue.put({
+              writer.write({
                 type: VADEventType.END_OF_SPEECH,
                 samplesIndex: pubCurrentSample,
                 timestamp: pubTimestamp,

@@ -191,7 +191,7 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
-      for await (const data of this.input) {
+      for await (const data of this.input.readable) {
         let frames: AudioFrame[];
         if (data === SpeechStream.FLUSH_SENTINEL) {
           frames = stream.flush();
@@ -225,6 +225,8 @@ export class SpeechStream extends stt.SpeechStream {
         }),
       );
 
+      const writer = this.output.writable.getWriter()
+
       while (!this.closed) {
         try {
           await new Promise<RawData>((resolve) => {
@@ -239,7 +241,7 @@ export class SpeechStream extends stt.SpeechStream {
                 // It's also possible we receive a transcript without a SpeechStarted event.
                 if (this.#speaking) return;
                 this.#speaking = true;
-                this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
+                writer.write({ type: stt.SpeechEventType.START_OF_SPEECH });
                 break;
               }
               // see this page:
@@ -257,16 +259,16 @@ export class SpeechStream extends stt.SpeechStream {
                 if (alternatives[0] && alternatives[0].text) {
                   if (!this.#speaking) {
                     this.#speaking = true;
-                    this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
+                    writer.write({ type: stt.SpeechEventType.START_OF_SPEECH });
                   }
 
                   if (isFinal) {
-                    this.queue.put({
+                    writer.write({
                       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
                       alternatives: [alternatives[0], ...alternatives.slice(1)],
                     });
                   } else {
-                    this.queue.put({
+                    writer.write({
                       type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
                       alternatives: [alternatives[0], ...alternatives.slice(1)],
                     });
@@ -278,7 +280,7 @@ export class SpeechStream extends stt.SpeechStream {
                 // a non-empty transcript (deepgram doesn't have a SpeechEnded event)
                 if (isEndpoint && this.#speaking) {
                   this.#speaking = false;
-                  this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+                  writer.write({ type: stt.SpeechEventType.END_OF_SPEECH });
                 }
 
                 break;

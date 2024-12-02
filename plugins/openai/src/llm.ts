@@ -435,6 +435,8 @@ export class LLMStream extends llm.LLMStream {
   }
 
   async #run(opts: LLMOptions, n?: number, parallelToolCalls?: boolean, temperature?: number) {
+    const writer = this.output.writable.getWriter();
+    
     const tools = this.fncCtx
       ? Object.entries(this.fncCtx).map(([name, func]) => ({
           type: 'function' as const,
@@ -469,12 +471,12 @@ export class LLMStream extends llm.LLMStream {
         for (const choice of chunk.choices) {
           const chatChunk = this.#parseChoice(chunk.id, choice);
           if (chatChunk) {
-            this.queue.put(chatChunk);
+            writer.write(chatChunk);
           }
 
           if (chunk.usage) {
             const usage = chunk.usage;
-            this.queue.put({
+            writer.write({
               requestId: chunk.id,
               choices: [],
               usage: {
@@ -487,7 +489,7 @@ export class LLMStream extends llm.LLMStream {
         }
       }
     } finally {
-      this.queue.close();
+      writer.close();
     }
   }
 
