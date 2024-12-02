@@ -4,7 +4,11 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
+import type {
+  ReadableStream,
+  ReadableStreamDefaultReader,
+  WritableStreamDefaultWriter,
+} from 'node:stream/web';
 import { TransformStream } from 'node:stream/web';
 import type { VADMetrics } from './metrics/base.js';
 
@@ -87,15 +91,14 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected inputClosed = false;
   #vad: VAD;
   #lastActivityTime = BigInt(0);
-  #outputReadable: ReadableStream<VADEvent>;
+  #writer: WritableStreamDefaultWriter<AudioFrame | typeof VADStream.FLUSH_SENTINEL>;
+  #reader: ReadableStreamDefaultReader<VADEvent>;
 
   constructor(vad: VAD) {
     this.#vad = vad;
-    this.output.writable.close().then(() => {
-      this.inputClosed = true;
-    });
     const [r1, r2] = this.output.readable.tee();
-    this.#outputReadable = r1;
+    this.#reader = r1.getReader();
+    this.#writer = this.input.writable.getWriter();
     this.monitorMetrics(r2);
   }
 
@@ -137,7 +140,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.writable.getWriter().write(frame);
+    this.#writer.write(frame);
   }
 
   flush() {
@@ -147,7 +150,8 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.writable.getWriter().write(VADStream.FLUSH_SENTINEL);
+    this.inputClosed = true;
+    this.#writer.write(VADStream.FLUSH_SENTINEL);
   }
 
   endInput() {
@@ -157,20 +161,18 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     if (this.closed) {
       throw new Error('Stream is closed');
     }
+    this.inputClosed = true;
     this.input.writable.close();
   }
 
   async next(): Promise<IteratorResult<VADEvent>> {
-    return this.#outputReadable
-      .getReader()
-      .read()
-      .then(({ value }) => {
-        if (value) {
-          return { value, done: false };
-        } else {
-          return { value: undefined, done: true };
-        }
-      });
+    return this.#reader.read().then(({ value }) => {
+      if (value) {
+        return { value, done: false };
+      } else {
+        return { value: undefined, done: true };
+      }
+    });
   }
 
   close() {

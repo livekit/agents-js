@@ -4,7 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
+import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
 import { TransformStream } from 'node:stream/web';
 import type { TTSMetrics } from '../metrics/base.js';
 import { mergeFrames } from '../utils.js';
@@ -122,12 +122,14 @@ export abstract class SynthesizeStream
   #metricsPendingTexts: string[] = [];
   #metricsText = '';
   #outputReadable: ReadableStream<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>;
+  #writer: WritableStreamDefaultWriter<string | typeof SynthesizeStream.FLUSH_SENTINEL>;
 
   constructor(tts: TTS) {
     this.#tts = tts;
     this.output.writable.close().then(() => {
       this.inputClosed = true;
     });
+    this.#writer = this.input.writable.getWriter();
     const [r1, r2] = this.output.readable.tee();
     this.#outputReadable = r1;
     this.monitorMetrics(r2);
@@ -187,7 +189,7 @@ export abstract class SynthesizeStream
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.writable.getWriter().write(text);
+    this.#writer.write(text);
   }
 
   /** Flush the TTS, causing it to process all pending text */
@@ -202,7 +204,7 @@ export abstract class SynthesizeStream
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.writable.getWriter().write(SynthesizeStream.FLUSH_SENTINEL);
+    this.#writer.write(SynthesizeStream.FLUSH_SENTINEL);
   }
 
   /** Mark the input as ended and forbid additional pushes */
@@ -213,7 +215,7 @@ export abstract class SynthesizeStream
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.writable.close();
+    this.#writer.close();
   }
 
   async next(): Promise<IteratorResult<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>> {
@@ -231,6 +233,7 @@ export abstract class SynthesizeStream
 
   /** Close both the input and output of the TTS stream */
   close() {
+    this.#writer.close();
     this.input.writable.close();
     this.output.writable.close();
     this.closed = true;

@@ -148,9 +148,10 @@ const stringSynthesisTask = (text: string, handle: SynthesisHandle): Cancellable
       if (cancelled || audio === SynthesizeStream.END_OF_STREAM) {
         break;
       }
-      writer.write(audio.frame);
+      await writer.write(audio.frame);
     }
-    writer.write(SynthesisHandle.FLUSH_SENTINEL);
+    await writer.write(SynthesisHandle.FLUSH_SENTINEL);
+    writer.releaseLock();
 
     resolve(text);
   });
@@ -177,9 +178,10 @@ const streamSynthesisTask = (
         if (audio === SynthesizeStream.END_OF_STREAM) {
           break;
         }
-        writer.write(audio.frame);
+        await writer.write(audio.frame);
       }
-      writer.write(SynthesisHandle.FLUSH_SENTINEL);
+      await writer.write(SynthesisHandle.FLUSH_SENTINEL);
+      writer.releaseLock();
     };
     readGeneratedAudio();
 

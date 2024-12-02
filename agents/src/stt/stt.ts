@@ -4,7 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
+import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
 import { TransformStream } from 'node:stream/web';
 import type { STTMetrics } from '../metrics/base.js';
 import type { AudioBuffer } from '../utils.js';
@@ -148,12 +148,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   protected inputClosed = false;
   #stt: STT;
   #outputReadable: ReadableStream<SpeechEvent>;
+  #writer: WritableStreamDefaultWriter<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
 
   constructor(stt: STT) {
     this.#stt = stt;
-    this.output.writable.close().then(() => {
-      this.inputClosed = true;
-    });
+    this.#writer = this.input.writable.getWriter();
     const [r1, r2] = this.output.readable.tee();
     this.#outputReadable = r1;
     this.monitorMetrics(r2);
@@ -185,7 +184,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.writable.getWriter().write(frame);
+    this.#writer.write(frame);
   }
 
   /** Flush the STT, causing it to process all pending text */
@@ -196,7 +195,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.writable.getWriter().write(SpeechStream.FLUSH_SENTINEL);
+    this.#writer.write(SpeechStream.FLUSH_SENTINEL);
   }
 
   /** Mark the input as ended and forbid additional pushes */
@@ -207,6 +206,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     if (this.closed) {
       throw new Error('Stream is closed');
     }
+    this.inputClosed = true;
     this.input.writable.close();
   }
 
@@ -228,6 +228,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     this.input.writable.close();
     this.output.writable.close();
     this.closed = true;
+    this.inputClosed = true;
   }
 
   [Symbol.asyncIterator](): SpeechStream {
