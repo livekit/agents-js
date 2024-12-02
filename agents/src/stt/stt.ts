@@ -151,7 +151,9 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   constructor(stt: STT) {
     this.#stt = stt;
-    this.output.writable.close().then(() => { this.inputClosed = true })
+    this.output.writable.close().then(() => {
+      this.inputClosed = true;
+    });
     const [r1, r2] = this.output.readable.tee();
     this.#outputReadable = r1;
     this.monitorMetrics(r2);

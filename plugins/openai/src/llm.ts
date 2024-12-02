@@ -436,7 +436,7 @@ export class LLMStream extends llm.LLMStream {
 
   async #run(opts: LLMOptions, n?: number, parallelToolCalls?: boolean, temperature?: number) {
     const writer = this.output.writable.getWriter();
-    
+
     const tools = this.fncCtx
       ? Object.entries(this.fncCtx).map(([name, func]) => ({
           type: 'function' as const,

@@ -103,7 +103,7 @@ export class VADStream extends baseStream {
     super(vad);
     this.#opts = opts;
     this.#model = model;
-    const writer = this.output.writable.getWriter()
+    const writer = this.output.writable.getWriter();
 
     this.#task = new Promise(async () => {
       let inferenceData = new Float32Array(this.#model.windowSizeSamples);

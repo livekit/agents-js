@@ -225,7 +225,7 @@ export class SpeechStream extends stt.SpeechStream {
         }),
       );
 
-      const writer = this.output.writable.getWriter()
+      const writer = this.output.writable.getWriter();
 
       while (!this.closed) {
         try {

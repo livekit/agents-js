@@ -93,7 +93,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     const frames = audioByteStream.write(buffer);
 
     const writer = this.output.writable.getWriter();
-    
+
     let lastFrame: AudioFrame | undefined;
     const sendLastFrame = (segmentId: string, final: boolean) => {
       if (lastFrame) {

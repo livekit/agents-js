@@ -1,19 +1,11 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  Future,
-  Queue,
-  llm,
-  log,
-  mergeFrames,
-  metrics,
-  multimodal,
-} from '@livekit/agents';
+import { Future, Queue, llm, log, mergeFrames, metrics, multimodal } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
+import { TransformStream } from 'node:stream/web';
 import { WebSocket } from 'ws';
-import {TransformStream} from 'node:stream/web'
 import * as api_proto from './api_proto.js';
 
 interface ModelOptions {
