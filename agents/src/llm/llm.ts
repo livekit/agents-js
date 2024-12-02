@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import type { ReadableStream } from 'node:stream/web';
+import { TransformStream } from 'node:stream/web';
 import type { LLMMetrics } from '../metrics/base.js';
-import { AsyncIterableQueue } from '../utils.js';
 import type { ChatContext, ChatRole } from './chat_context.js';
 import type { FunctionCallInfo, FunctionContext } from './function_context.js';
 
@@ -59,8 +60,7 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
 }
 
 export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
-  protected output = new AsyncIterableQueue<ChatChunk>();
-  protected queue = new AsyncIterableQueue<ChatChunk>();
+  protected output = new TransformStream<ChatChunk, ChatChunk>();
   protected closed = false;
   protected _functionCalls: FunctionCallInfo[] = [];
   abstract label: string;
@@ -68,22 +68,24 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   #llm: LLM;
   #chatCtx: ChatContext;
   #fncCtx?: FunctionContext;
+  #outputReadable: ReadableStream<ChatChunk>;
 
   constructor(llm: LLM, chatCtx: ChatContext, fncCtx?: FunctionContext) {
     this.#llm = llm;
     this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
-    this.monitorMetrics();
+    const [r1, r2] = this.output.readable.tee();
+    this.#outputReadable = r1;
+    this.monitorMetrics(r2);
   }
 
-  protected async monitorMetrics() {
+  protected async monitorMetrics(readable: ReadableStream<ChatChunk>) {
     const startTime = process.hrtime.bigint();
     let ttft: bigint | undefined;
     let requestId = '';
     let usage: CompletionUsage | undefined;
 
-    for await (const ev of this.queue) {
-      this.output.put(ev);
+    for await (const ev of readable) {
       requestId = ev.requestId;
       if (!ttft) {
         ttft = process.hrtime.bigint() - startTime;
@@ -92,7 +94,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         usage = ev.usage;
       }
     }
-    this.output.close();
 
     const duration = process.hrtime.bigint() - startTime;
     const metrics: LLMMetrics = {
@@ -138,13 +139,21 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     return this._functionCalls;
   }
 
-  next(): Promise<IteratorResult<ChatChunk>> {
-    return this.output.next();
+  async next(): Promise<IteratorResult<ChatChunk>> {
+    return this.#outputReadable
+      .getReader()
+      .read()
+      .then(({ value }) => {
+        if (value) {
+          return { value, done: false };
+        } else {
+          return { value: undefined, done: true };
+        }
+      });
   }
 
   close() {
-    this.output.close();
-    this.queue.close();
+    this.output.writable.close();
     this.closed = true;
   }
 

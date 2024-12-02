@@ -11,6 +11,7 @@ import {
 } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'node:events';
+import { TransformStream } from 'node:stream/web';
 import type {
   CallableFunctionResult,
   FunctionCallInfo,
@@ -30,7 +31,7 @@ import {
 import type { SentenceTokenizer, WordTokenizer } from '../tokenize/tokenizer.js';
 import type { TTS } from '../tts/index.js';
 import { TTSEvent, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
-import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
+import { CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { SpeechSource, SynthesisHandle } from './agent_output.js';
 import { AgentOutput } from './agent_output.js';
@@ -241,7 +242,10 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   #transcribedText = '';
   #transcribedInterimText = '';
   #speechQueueOpen = new Future();
-  #speechQueue = new AsyncIterableQueue<SpeechHandle | typeof VoicePipelineAgent.FLUSH_SENTINEL>();
+  #speechQueue = new TransformStream<
+    SpeechHandle | typeof VoicePipelineAgent.FLUSH_SENTINEL,
+    SpeechHandle | typeof VoicePipelineAgent.FLUSH_SENTINEL
+  >();
   #updateStateTask?: CancellablePromise<void>;
   #started = false;
   #room?: Room;
@@ -545,7 +549,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
 
     while (true) {
       await this.#speechQueueOpen.await;
-      for await (const speech of this.#speechQueue) {
+      for await (const speech of this.#speechQueue.readable) {
         if (speech === VoicePipelineAgent.FLUSH_SENTINEL) break;
         this.#playingSpeech = speech;
         await this.#playSpeech(speech);
@@ -868,7 +872,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     // in some bad timimg, we could end up with two pushed agent replies inside the speech queue.
     // so make sure we directly interrupt every reply when validating a new one
     if (this.#speechQueueOpen.done) {
-      for await (const speech of this.#speechQueue) {
+      for await (const speech of this.#speechQueue.readable) {
         if (speech === VoicePipelineAgent.FLUSH_SENTINEL) break;
         if (!speech.isReply) continue;
         if (speech.allowInterruptions) speech.interrupt();
@@ -920,8 +924,9 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   }
 
   #addSpeechForPlayout(handle: SpeechHandle) {
-    this.#speechQueue.put(handle);
-    this.#speechQueue.put(VoicePipelineAgent.FLUSH_SENTINEL);
+    const writer = this.#speechQueue.writable.getWriter();
+    writer.write(handle);
+    writer.write(VoicePipelineAgent.FLUSH_SENTINEL);
     this.#speechQueueOpen.resolve();
   }
 

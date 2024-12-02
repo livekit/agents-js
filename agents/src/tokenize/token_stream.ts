@@ -2,14 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from 'node:crypto';
-import { AsyncIterableQueue } from '../utils.js';
 import type { TokenData } from './tokenizer.js';
 import { SentenceStream, WordStream } from './tokenizer.js';
 
 type TokenizeFunc = (x: string) => string[] | [string, number, number][];
 
 export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
-  protected queue = new AsyncIterableQueue<TokenData>();
+  protected queue = new TransformStream<TokenData, TokenData>();
   protected closed = false;
 
   #func: TokenizeFunc;
@@ -34,6 +33,8 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
       throw new Error('Stream is closed');
     }
 
+    const writer = this.queue.writable.getWriter();
+
     this.#inBuf += text;
     if (this.#inBuf.length < this.#minContextLength) return;
 
@@ -51,7 +52,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
 
       this.#outBuf += tokText;
       if (this.#outBuf.length >= this.#minTokenLength) {
-        this.queue.put({ token: this.#outBuf, segmentId: this.#currentSegmentId });
+        writer.write({ token: this.#outBuf, segmentId: this.#currentSegmentId });
         this.#outBuf = '';
       }
 
@@ -71,6 +72,8 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
       throw new Error('Stream is closed');
     }
 
+    const writer = this.queue.writable.getWriter();
+
     if (this.#inBuf || this.#outBuf) {
       const tokens = this.#func(this.#inBuf);
       if (tokens) {
@@ -84,7 +87,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
       }
 
       if (this.#outBuf) {
-        this.queue.put({ token: this.#outBuf, segmentId: this.#currentSegmentId });
+        writer.write({ token: this.#outBuf, segmentId: this.#currentSegmentId });
       }
 
       this.#currentSegmentId = randomUUID();
@@ -103,13 +106,22 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
     this.close();
   }
 
-  next(): Promise<IteratorResult<TokenData>> {
-    return this.queue.next();
+  async next(): Promise<IteratorResult<TokenData>> {
+    return this.queue.readable
+      .getReader()
+      .read()
+      .then(({ value }) => {
+        if (value) {
+          return { value, done: false };
+        } else {
+          return { value: undefined, done: true };
+        }
+      });
   }
 
   /** Close both the input and output of the token stream */
   close() {
-    this.queue.close();
+    this.queue.writable.close();
     this.closed = true;
   }
 
