@@ -398,6 +398,7 @@ export class LLM extends llm.LLM {
     temperature = temperature || this.#opts.temperature;
 
     return new LLMStream(
+      this,
       this.#client,
       chatCtx,
       fncCtx,
@@ -416,8 +417,10 @@ export class LLMStream extends llm.LLMStream {
   #client: OpenAI;
   #logger = log();
   #id = randomUUID();
+  label = 'openai.LLMStream';
 
   constructor(
+    llm: LLM,
     client: OpenAI,
     chatCtx: llm.ChatContext,
     fncCtx: llm.FunctionContext | undefined,
@@ -426,7 +429,7 @@ export class LLMStream extends llm.LLMStream {
     temperature?: number,
     n?: number,
   ) {
-    super(chatCtx, fncCtx);
+    super(llm, chatCtx, fncCtx);
     this.#client = client;
     this.#run(opts, n, parallelToolCalls, temperature);
   }

@@ -63,6 +63,7 @@ const defaultTTSOptions: TTSOptions = {
 
 export class TTS extends tts.TTS {
   #opts: TTSOptions;
+  label = 'elevenlabs.TTS';
 
   constructor(opts: Partial<TTSOptions> = {}) {
     super(sampleRateFromFormat(opts.encoding || defaultTTSOptions.encoding), 1, {
@@ -109,17 +110,18 @@ export class TTS extends tts.TTS {
   }
 
   stream(): tts.SynthesizeStream {
-    return new SynthesizeStream(this.#opts);
+    return new SynthesizeStream(this, this.#opts);
   }
 }
 
 export class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
   #logger = log();
+  label = 'elevenlabs.SynthesizeStream';
   readonly streamURL: URL;
 
-  constructor(opts: TTSOptions) {
-    super();
+  constructor(tts: TTS, opts: TTSOptions) {
+    super(tts);
     this.#opts = opts;
     this.closed = false;
 
@@ -239,6 +241,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       eosSent = true;
     };
 
+    let lastFrame: AudioFrame | undefined;
+    const sendLastFrame = (segmentId: string, final: boolean) => {
+      if (lastFrame) {
+        this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+        lastFrame = undefined;
+      }
+    };
+
     const listenTask = async () => {
       while (!this.closed) {
         try {
@@ -261,7 +271,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 1,
                 data.length,
               );
-              this.queue.put({ requestId, segmentId, frame });
+              sendLastFrame(segmentId, false);
+              lastFrame = frame;
+            } else if ('isFinal' in json) {
+              sendLastFrame(segmentId, true);
             }
           });
         } catch {

@@ -17,10 +17,11 @@ import type {
   FunctionContext,
   LLM,
 } from '../llm/index.js';
-import { LLMStream } from '../llm/index.js';
+import { LLMEvent, LLMStream } from '../llm/index.js';
 import { ChatContext, ChatMessage, ChatRole } from '../llm/index.js';
 import { log } from '../log.js';
-import { type STT, StreamAdapter as STTStreamAdapter } from '../stt/index.js';
+import type { AgentMetrics, PipelineEOUMetrics } from '../metrics/base.js';
+import { type STT, StreamAdapter as STTStreamAdapter, SpeechEventType } from '../stt/index.js';
 import {
   SentenceTokenizer as BasicSentenceTokenizer,
   WordTokenizer as BasicWordTokenizer,
@@ -28,9 +29,9 @@ import {
 } from '../tokenize/basic/index.js';
 import type { SentenceTokenizer, WordTokenizer } from '../tokenize/tokenizer.js';
 import type { TTS } from '../tts/index.js';
-import { StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
+import { TTSEvent, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
-import type { VAD, VADEvent } from '../vad.js';
+import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { SpeechSource, SynthesisHandle } from './agent_output.js';
 import { AgentOutput } from './agent_output.js';
 import { AgentPlayout, AgentPlayoutEvent } from './agent_playout.js';
@@ -39,6 +40,7 @@ import { SpeechHandle } from './speech_handle.js';
 
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
 export const AGENT_STATE_ATTRIBUTE = 'lk.agent.state';
+let speechData: { sequenceId: string } | undefined;
 
 export type BeforeLLMCallback = (
   agent: VoicePipelineAgent,
@@ -60,6 +62,7 @@ export enum VPAEvent {
   AGENT_SPEECH_INTERRUPTED,
   FUNCTION_CALLS_COLLECTED,
   FUNCTION_CALLS_FINISHED,
+  METRICS_COLLECTED,
 }
 
 export type VPACallbacks = {
@@ -72,6 +75,7 @@ export type VPACallbacks = {
   [VPAEvent.AGENT_SPEECH_INTERRUPTED]: (msg: ChatMessage) => void;
   [VPAEvent.FUNCTION_CALLS_COLLECTED]: (funcs: FunctionCallInfo[]) => void;
   [VPAEvent.FUNCTION_CALLS_FINISHED]: (funcs: CallableFunctionResult[]) => void;
+  [VPAEvent.METRICS_COLLECTED]: (metrics: AgentMetrics) => void;
 };
 
 export class AgentCallContext {
@@ -229,7 +233,6 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   #transcribedInterimText = '';
   #speechQueueOpen = new Future();
   #speechQueue = new AsyncIterableQueue<SpeechHandle | typeof VoicePipelineAgent.FLUSH_SENTINEL>();
-  #lastEndOfSpeechTime?: number;
   #updateStateTask?: CancellablePromise<void>;
   #started = false;
   #room?: Room;
@@ -237,6 +240,8 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   #deferredValidation: DeferredReplyValidation;
   #logger = log();
   #agentPublication?: LocalTrackPublication;
+  #lastFinalTranscriptTime?: number;
+  #lastSpeechTime?: number;
 
   constructor(
     /** Voice Activity Detection instance. */
@@ -317,6 +322,25 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     if (this.#started) {
       throw new Error('voice assistant already started');
     }
+
+    this.#stt.on(SpeechEventType.METRICS_COLLECTED, (metrics) => {
+      this.emit(VPAEvent.METRICS_COLLECTED, metrics);
+    });
+
+    this.#tts.on(TTSEvent.METRICS_COLLECTED, (metrics) => {
+      if (!speechData) return;
+      this.emit(VPAEvent.METRICS_COLLECTED, { ...metrics, sequenceId: speechData.sequenceId });
+    });
+
+    this.#llm.on(LLMEvent.METRICS_COLLECTED, (metrics) => {
+      if (!speechData) return;
+      this.emit(VPAEvent.METRICS_COLLECTED, { ...metrics, sequenceId: speechData.sequenceId });
+    });
+
+    this.#vad.on(VADEventType.METRICS_COLLECTED, (metrics) => {
+      this.emit(VPAEvent.METRICS_COLLECTED, metrics);
+    });
+
     room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
       // automatically link to the first participant that connects, if not already linked
       if (this.#participant) {
@@ -410,11 +434,14 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       if (event.speechDuration >= this.#opts.interruptSpeechDuration) {
         this.#interruptIfPossible();
       }
+
+      if (event.rawAccumulatedSpeech > 0) {
+        this.#lastSpeechTime = Date.now() - event.rawAccumulatedSilence;
+      }
     });
     this.#humanInput.on(HumanInputEvent.END_OF_SPEECH, (event) => {
       this.emit(VPAEvent.USER_STARTED_SPEAKING);
       this.#deferredValidation.onHumanEndOfSpeech(event);
-      this.#lastEndOfSpeechTime = Date.now();
     });
     this.#humanInput.on(HumanInputEvent.INTERIM_TRANSCRIPT, (event) => {
       this.#transcribedInterimText = event.alternatives![0].text;
@@ -423,7 +450,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       const newTranscript = event.alternatives![0].text;
       if (!newTranscript) return;
 
-      this.#logger.child({ userTranscript: newTranscript }).debug('received user transcript');
+      this.#lastFinalTranscriptTime = Date.now();
       this.#transcribedText += (this.#transcribedText ? ' ' : '') + newTranscript;
 
       if (
@@ -535,33 +562,31 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         }),
       );
 
-      if (cancelled) resolve();
-      let llmStream = await this.#opts.beforeLLMCallback(this, copiedCtx);
-      if (llmStream === false) {
-        handle?.cancel();
-        return;
+      speechData = { sequenceId: handle!.id };
+
+      try {
+        if (cancelled) resolve();
+        let llmStream = await this.#opts.beforeLLMCallback(this, copiedCtx);
+        if (llmStream === false) {
+          handle?.cancel();
+          return;
+        }
+
+        if (cancelled) resolve();
+        // fallback to default impl if no custom/user stream is returned
+        if (!(llmStream instanceof LLMStream)) {
+          llmStream = (await defaultBeforeLLMCallback(this, copiedCtx)) as LLMStream;
+        }
+
+        if (handle!.interrupted) {
+          return;
+        }
+
+        const synthesisHandle = this.#synthesizeAgentSpeech(handle!.id, llmStream);
+        handle!.initialize(llmStream, synthesisHandle);
+      } finally {
+        speechData = undefined;
       }
-
-      if (cancelled) resolve();
-      // fallback to default impl if no custom/user stream is returned
-      if (!(llmStream instanceof LLMStream)) {
-        llmStream = (await defaultBeforeLLMCallback(this, copiedCtx)) as LLMStream;
-      }
-
-      if (handle!.interrupted) {
-        return;
-      }
-
-      const synthesisHandle = this.#synthesizeAgentSpeech(handle!.id, llmStream);
-      handle!.initialize(llmStream, synthesisHandle);
-
-      // TODO(theomonnom): find a more reliable way to get the elapsed time from the last EOS
-      // (VAD could not have detected any speech — maybe unlikely?)
-      const elapsed = !!this.#lastEndOfSpeechTime
-        ? Math.round((Date.now() - this.#lastEndOfSpeechTime) * 1000) / 1000
-        : -1;
-
-      this.#logger.child({ speechId: handle!.id, elapsed }).debug('synthesizing agent reply');
       resolve();
     });
   }
@@ -776,6 +801,21 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     }
 
     this.#logger.child({ speechId: this.#pendingAgentReply.id }).debug('validated agent reply');
+
+    if (this.#lastSpeechTime) {
+      const timeSinceLastSpeech = Date.now() - this.#lastSpeechTime;
+      const transcriptionDelay = Math.max(
+        (this.#lastFinalTranscriptTime || 0) - this.#lastSpeechTime,
+        0,
+      );
+      const metrics: PipelineEOUMetrics = {
+        timestamp: Date.now(),
+        sequenceId: this.#pendingAgentReply.id,
+        endOfUtteranceDelay: timeSinceLastSpeech,
+        transcriptionDelay,
+      };
+      this.emit(VPAEvent.METRICS_COLLECTED, metrics);
+    }
 
     this.#addSpeechForPlayout(this.#pendingAgentReply);
     this.#pendingAgentReply = undefined;
