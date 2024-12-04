@@ -10,7 +10,7 @@
   "ignore": ["livekit-agents-examples"],
   "linked": [],
   "access": "public",
-  "baseBranch": "stable",
+  "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH": {
     "onlyUpdatePeerDependentsWhenOutOfRange": true
