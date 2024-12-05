@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 0.5.1
+
+### Patch Changes
+
+- Allow attributes to be set on accept - [#198](https://github.com/livekit/agents-js/pull/198) ([@nbsp](https://github.com/nbsp))
+
 ## 0.5.0
 
 ### Minor Changes
