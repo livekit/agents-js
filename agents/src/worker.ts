@@ -600,6 +600,7 @@ export class Worker {
               participantIdentity: args.identity,
               participantName: args.name,
               participantMetadata: args.metadata,
+              participantAttributes: args.attributes,
             },
           },
         }),

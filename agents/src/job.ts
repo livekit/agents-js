@@ -25,6 +25,7 @@ export type JobAcceptArguments = {
   name: string;
   identity: string;
   metadata: string;
+  attributes?: { [key: string]: string };
 };
 
 export type RunningJobInfo = {
@@ -279,9 +280,9 @@ export class JobRequest {
   }
 
   /** Accepts the job, launching it on an idle child process. */
-  async accept(name = '', identity = '', metadata = '') {
+  async accept(name = '', identity = '', metadata = '', attributes?: { [key: string]: string }) {
     if (identity === '') identity = 'agent-' + this.id;
 
-    this.#onAccept({ name, identity, metadata });
+    this.#onAccept({ name, identity, metadata, attributes });
   }
 }
