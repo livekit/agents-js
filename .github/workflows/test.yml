@@ -12,6 +12,8 @@ on:
 jobs:
   build:
     name: Test
+    # Don't run tests for PRs on forks
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,4 +28,7 @@ jobs:
       - name: Build
         run: pnpm build
       - name: Test
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ELEVEN_API_KEY: ${{ secrets.ELEVEN_API_KEY }}
         run: pnpm test
