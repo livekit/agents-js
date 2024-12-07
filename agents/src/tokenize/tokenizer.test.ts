@@ -2,12 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
-import {
-  SentenceTokenizer,
-  WordTokenizer,
-  hyphenateWord,
-  tokenizeParagraphs,
-} from './basic/index.js';
+import { SentenceTokenizer, WordTokenizer, hyphenateWord } from './basic/index.js';
 import { splitParagraphs } from './basic/paragraph.js';
 
 const TEXT =
