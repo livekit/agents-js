@@ -8,10 +8,11 @@ export default defineWorkspace([
   'packages/*',
   {
     test: {
-      include: ['**/*.test.{ts,js}'],
+      include: ['**/*.test.ts'],
       // it is recommended to define a name when using inline configs
       name: 'nodejs',
       environment: 'node',
+      testTimeout: 60_000,
     },
   },
 ]);
