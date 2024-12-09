@@ -1,0 +1,43 @@
+{
+  "name": "@livekit/agents-test",
+  "version": "0.0.0",
+  "description": "Testing suite for LiveKit Agents",
+  "author": "LiveKit",
+  "type": "module",
+  "repository": "git@github.com:livekit/agents-js.git",
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "require": "dist/index.cjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "src",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\"",
+    "lint": "eslint -f unix \"src/**/*.{ts,js}\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.5",
+    "typescript": "^5.0.0",
+    "@livekit/agents": "workspace:^x",
+    "@livekit/rtc-node": "^0.12.1",
+    "tsup": "^8.3.5"
+  },
+  "dependencies": {
+    "vitest": "^1.6.0",
+    "fastest-levenshtein": "^1.0.16"
+  },
+  "peerDependencies": {
+    "@livekit/agents": "workspace:^x",
+    "@livekit/rtc-node": "^0.12.1"
+  }
+}

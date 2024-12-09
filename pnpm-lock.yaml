@@ -198,6 +198,9 @@ importers:
       '@livekit/agents-plugin-openai':
         specifier: ^0.7.0
         version: 0.7.0(@livekit/agents@agents)(@livekit/rtc-node@0.12.1)(zod@3.23.8)
+      '@livekit/agents-test':
+        specifier: workspace:^x
+        version: link:../../test
       '@livekit/rtc-node':
         specifier: ^0.12.1
         version: 0.12.1
@@ -229,6 +232,9 @@ importers:
       '@livekit/agents':
         specifier: workspace:^x
         version: link:../../agents
+      '@livekit/agents-test':
+        specifier: workspace:^x
+        version: link:../../test
       '@livekit/rtc-node':
         specifier: ^0.12.1
         version: 0.12.1
@@ -269,6 +275,31 @@ importers:
       onnxruntime-common:
         specifier: ^1.19.2
         version: 1.19.2
+      tsup:
+        specifier: ^8.3.5
+        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.5.5))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.4.5
+
+  test:
+    dependencies:
+      fastest-levenshtein:
+        specifier: ^1.0.16
+        version: 1.0.16
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.0(@types/node@22.5.5)
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:^x
+        version: link:../agents
+      '@livekit/rtc-node':
+        specifier: ^0.12.1
+        version: 0.12.1
+      '@types/node':
+        specifier: ^22.5.5
+        version: 22.5.5
       tsup:
         specifier: ^8.3.5
         version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.5.5))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
