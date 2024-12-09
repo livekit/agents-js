@@ -4,6 +4,7 @@
   "description": "Testing suite for LiveKit Agents",
   "author": "LiveKit",
   "type": "module",
+  "private": true,
   "repository": "git@github.com:livekit/agents-js.git",
   "license": "Apache-2.0",
   "main": "dist/index.js",
