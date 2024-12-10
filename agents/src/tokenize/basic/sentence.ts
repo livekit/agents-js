@@ -19,19 +19,25 @@ export const splitSentences = (text: string, minLength = 20): [string, number, n
   text = text.replaceAll('\n', ' ');
   text = text.replaceAll(prefixes, '$1<prd>');
   text = text.replaceAll(websites, '<prd>$2');
-  text = text.replaceAll(new RegExp(`${digits}[.]${digits}`, 'g'), '$1<prd>$2');
+  text = text.replaceAll(new RegExp(`${digits.source}[.]${digits.source}`, 'g'), '$1<prd>$2');
   text = text.replaceAll(dots, (match) => '<prd>'.repeat(match.length));
   text = text.replaceAll('Ph.D.', 'Ph<prd>D<prd>');
-  text = text.replaceAll(new RegExp(`\s${alphabets}[.]`, 'g'), '$1<prd>');
-  text = text.replaceAll(new RegExp(`${acronyms} ${starters}`, 'g'), '$1<stop> $2');
+  text = text.replaceAll(new RegExp(`\\s${alphabets.source}[.] `, 'g'), ' $1<prd> ');
+  text = text.replaceAll(new RegExp(`${acronyms.source} ${starters.source}`, 'g'), '$1<stop> $2');
   text = text.replaceAll(
-    new RegExp(`${alphabets}[.]${alphabets}[.]${alphabets}[.]`, 'g'),
+    new RegExp(`${alphabets.source}[.]${alphabets.source}[.]${alphabets.source}[.]`, 'g'),
     '$1<prd>$2<prd>$3<prd>',
   );
-  text = text.replaceAll(new RegExp(`${alphabets}[.]${alphabets}[.]`, 'g'), '$1<prd>$2<prd>');
-  text = text.replaceAll(new RegExp(` ${suffixes}[.] ${starters}`, 'g'), '$1<stop> $2');
-  text = text.replaceAll(new RegExp(` ${suffixes}[.]`, 'g'), '$1<prd>');
-  text = text.replaceAll(new RegExp(` ${alphabets}[.]`, 'g'), '$1<prd>');
+  text = text.replaceAll(
+    new RegExp(`${alphabets.source}[.]${alphabets.source}[.]`, 'g'),
+    '$1<prd>$2<prd>',
+  );
+  text = text.replaceAll(
+    new RegExp(` ${suffixes.source}[.] ${starters.source}`, 'g'),
+    '$1<stop> $2',
+  );
+  text = text.replaceAll(new RegExp(` ${suffixes.source}[.]`, 'g'), '$1<prd>');
+  text = text.replaceAll(new RegExp(` ${alphabets.source}[.]`, 'g'), '$1<prd>');
   text = text.replaceAll('.”', '”.');
   text = text.replaceAll('."', '".');
   text = text.replaceAll('!"', '"!');
