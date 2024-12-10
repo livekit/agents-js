@@ -27,15 +27,16 @@
     "lint": "eslint -f unix \"src/**/*.{ts,js}\""
   },
   "devDependencies": {
-    "@types/node": "^22.5.5",
-    "typescript": "^5.0.0",
     "@livekit/agents": "workspace:^x",
     "@livekit/rtc-node": "^0.12.1",
-    "tsup": "^8.3.5"
+    "@types/node": "^22.5.5",
+    "tsup": "^8.3.5",
+    "typescript": "^5.0.0"
   },
   "dependencies": {
+    "fastest-levenshtein": "^1.0.16",
     "vitest": "^1.6.0",
-    "fastest-levenshtein": "^1.0.16"
+    "zod": "^3.23.8"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:^x",
