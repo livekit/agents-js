@@ -2,4 +2,3 @@ packages:
   - "agents"
   - "plugins/*"
   - "examples"
-  - "test"

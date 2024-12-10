@@ -195,9 +195,9 @@ importers:
       '@livekit/agents-plugin-openai':
         specifier: workspace:^x
         version: link:../openai
-      '@livekit/agents-test':
+      '@livekit/agents-plugins-test':
         specifier: workspace:^x
-        version: link:../../test
+        version: link:../test
       '@livekit/rtc-node':
         specifier: ^0.12.1
         version: 0.12.1
@@ -229,9 +229,9 @@ importers:
       '@livekit/agents':
         specifier: workspace:^x
         version: link:../../agents
-      '@livekit/agents-test':
+      '@livekit/agents-plugins-test':
         specifier: workspace:^x
-        version: link:../../test
+        version: link:../test
       '@livekit/rtc-node':
         specifier: ^0.12.1
         version: 0.12.1
@@ -279,7 +279,7 @@ importers:
         specifier: ^5.0.0
         version: 5.4.5
 
-  test:
+  plugins/test:
     dependencies:
       fastest-levenshtein:
         specifier: ^1.0.16
@@ -290,7 +290,7 @@ importers:
     devDependencies:
       '@livekit/agents':
         specifier: workspace:^x
-        version: link:../agents
+        version: link:../../agents
       '@livekit/rtc-node':
         specifier: ^0.12.1
         version: 0.12.1
