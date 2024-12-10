@@ -1,5 +1,16 @@
 # @livekit/agents-plugin-openai
 
+## 0.7.1
+
+### Patch Changes
+
+- fix multiple function calls not firing - [#206](https://github.com/livekit/agents-js/pull/206) ([@nbsp](https://github.com/nbsp))
+
+- add testutils, tests for oai, 11labs - [#206](https://github.com/livekit/agents-js/pull/206) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`67bad88bb59328fac03320e88c245871005ccc05`](https://github.com/livekit/agents-js/commit/67bad88bb59328fac03320e88c245871005ccc05), [`beb141f7de380d5a938347a2eda76d56f706333c`](https://github.com/livekit/agents-js/commit/beb141f7de380d5a938347a2eda76d56f706333c), [`8fa2b176bb6bdeba34430d59b23024d935f77453`](https://github.com/livekit/agents-js/commit/8fa2b176bb6bdeba34430d59b23024d935f77453)]:
+  - @livekit/agents@0.5.1
+
 ## 0.7.0
 
 ### Minor Changes
