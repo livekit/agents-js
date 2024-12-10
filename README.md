@@ -66,12 +66,12 @@ pnpm install @livekit/agents-plugin-openai
 
 The following plugins are available today:
 
-| Plugin                                                                                               | Features          |
-|------------------------------------------------------------------------------------------------------|-------------------|
-| [@livekit/agents-plugin-openai](https://www.npmjs.com/package/@livekit/agents-plugin-openai)         | LLM, Realtime API |
-| [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT               |
-| [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS               |
-| [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD               |
+| Plugin                                                                                               | Features                    |
+|------------------------------------------------------------------------------------------------------|-----------------------------|
+| [@livekit/agents-plugin-openai](https://www.npmjs.com/package/@livekit/agents-plugin-openai)         | STT, LLM, TTS, Realtime API |
+| [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT                         |
+| [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS                         |
+| [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD                         |
 
 ## Usage
 

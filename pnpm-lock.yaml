@@ -167,6 +167,12 @@ importers:
       '@livekit/agents':
         specifier: workspace:^x
         version: link:../../agents
+      '@livekit/agents-plugin-silero':
+        specifier: workspace:^x
+        version: link:../silero
+      '@livekit/agents-plugins-test':
+        specifier: workspace:^x
+        version: link:../test
       '@livekit/rtc-node':
         specifier: ^0.12.1
         version: 0.12.1
@@ -229,6 +235,9 @@ importers:
       '@livekit/agents':
         specifier: workspace:^x
         version: link:../../agents
+      '@livekit/agents-plugin-silero':
+        specifier: workspace:^x
+        version: link:../silero
       '@livekit/agents-plugins-test':
         specifier: workspace:^x
         version: link:../test
