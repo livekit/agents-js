@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Test
+on:
+  push:
+    branches: [next, main]
+  pull_request:
+    branches: [next, main]
+
+jobs:
+  build:
+    name: Test
+    # Don't run tests for PRs on forks
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: pnpm/action-setup@v4
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm build
+      - name: Test
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ELEVEN_API_KEY: ${{ secrets.ELEVEN_API_KEY }}
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+        run: pnpm test
