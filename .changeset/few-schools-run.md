@@ -2,4 +2,4 @@
 "@livekit/agents": patch
 ---
 
-add tests + fix tokenizer
+fix tokenizer
