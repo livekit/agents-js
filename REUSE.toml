@@ -30,3 +30,9 @@ SPDX-License-Identifier = "Apache-2.0"
 path = ["**/*.onnx"]
 SPDX-FileCopyrightText = "2024 Silero Team"
 SPDX-License-Identifier = "CC-BY-NC-SA-4.0"
+
+# testing files
+[[annotations]]
+path = ["**/.gitattributes", "**.wav"]
+SPDX-FileCopyrightText = "2024 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
