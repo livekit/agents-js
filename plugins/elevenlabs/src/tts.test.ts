@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { STT } from '@livekit/agents-plugin-openai';
-import { tts } from '@livekit/agents-test';
+import { tts } from '@livekit/agents-plugins-test';
 import { describe } from 'vitest';
 import { TTS } from './tts.js';
 
