@@ -23,7 +23,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\"",
+    "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\" && cp src/long.wav dist/",
     "lint": "eslint -f unix \"src/**/*.{ts,js}\""
   },
   "devDependencies": {
