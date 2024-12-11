@@ -285,6 +285,7 @@ export class MultimodalAgent extends EventEmitter {
       });
 
       this.#session.on('input_speech_started', (ev: any) => {
+        this.emit('user_started_speaking');
         if (this.#playingHandle && !this.#playingHandle.done) {
           this.#playingHandle.interrupt();
 
