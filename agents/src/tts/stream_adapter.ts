@@ -51,7 +51,7 @@ export class StreamAdapterWrapper extends SynthesizeStream {
 
   async #run() {
     const forwardInput = async () => {
-      for await (const input of this.input) {
+      for await (const input of this.input.readable) {
         if (input === SynthesizeStream.FLUSH_SENTINEL) {
           this.#sentenceStream.flush();
         } else {
@@ -63,12 +63,13 @@ export class StreamAdapterWrapper extends SynthesizeStream {
     };
 
     const synthesize = async () => {
+      const writer = this.output.writable.getWriter();
       for await (const ev of this.#sentenceStream) {
         for await (const audio of this.#tts.synthesize(ev.token)) {
-          this.output.put(audio);
+          writer.write(audio);
         }
       }
-      this.output.put(SynthesizeStream.END_OF_STREAM);
+      writer.write(SynthesizeStream.END_OF_STREAM);
     };
 
     Promise.all([forwardInput(), synthesize()]);
