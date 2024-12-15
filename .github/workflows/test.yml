@@ -34,4 +34,19 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ELEVEN_API_KEY: ${{ secrets.ELEVEN_API_KEY }}
           DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
-        run: pnpm test
+        run: |
+          agents=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q '^agents.*\.ts$' && echo 1 || echo 0)
+          tests=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q '^plugins/test.*\.ts$' && echo 1 || echo 0)
+          plugins=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^plugins.*\.ts$' | cut -d/ -f2 | sort -u | tr '\n' ' ')
+
+          if [[ "$agents" -eq 1 || "$tests" -eq 1 ]]; then
+            pnpm test
+          elif [[ -n "$plugins" ]]; then
+            read -ra plugins <<< "$plugins"
+            for plugin in "${plugins[@]}"; do
+              pnpm test $plugin
+            done
+          else
+            echo "::notice::no testable changes detected"
+            exit 0
+          fi
