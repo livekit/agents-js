@@ -501,6 +501,11 @@ export class LLMStream extends llm.LLMStream {
           continue; // oai may add other tools in the future
         }
 
+        let callChunk: llm.ChatChunk | undefined;
+        if (this.#toolCallId && tool.id && tool.id !== this.#toolCallId) {
+          callChunk = this.#tryBuildFunction(id, choice);
+        }
+
         if (tool.function.name) {
           this.#toolCallId = tool.id;
           this.#fncName = tool.function.name;
@@ -509,8 +514,8 @@ export class LLMStream extends llm.LLMStream {
           this.#fncRawArguments += tool.function.arguments;
         }
 
-        if (this.#toolCallId && tool.id && tool.id !== this.#toolCallId) {
-          return this.#tryBuildFunction(id, choice);
+        if (callChunk) {
+          return callChunk;
         }
       }
     }
