@@ -385,15 +385,15 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     if (addToChatCtx) {
       callContext = AgentCallContext.getCurrent();
       if (source instanceof LLMStream) {
-        this.#logger.warn("LLMStream will be ignored for function call chat context")
+        this.#logger.warn('LLMStream will be ignored for function call chat context');
       } else if (typeof source === 'string') {
-        fncSource = source
+        fncSource = source;
       } else {
-        fncSource = source
+        fncSource = source;
         source = new AsyncIterableQueue<string>();
       }
     }
-    
+
     const newHandle = SpeechHandle.createAssistantSpeech(allowInterruptions, addToChatCtx);
     const synthesisHandle = this.#synthesizeAgentSpeech(newHandle.id, source);
     newHandle.initialize(source, synthesisHandle);
@@ -417,8 +417,8 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         (source as AsyncIterableQueue<string>).close();
       }
 
-      callContext.addExtraChatMessage(ChatMessage.create({ text, role: ChatRole.ASSISTANT }))
-      this.#logger.child({ text }).debug("added speech to function call chat context")
+      callContext.addExtraChatMessage(ChatMessage.create({ text, role: ChatRole.ASSISTANT }));
+      this.#logger.child({ text }).debug('added speech to function call chat context');
     }
 
     return newHandle;
@@ -694,9 +694,9 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     commitUserQuestionIfNeeded();
 
     // TODO(nbsp): what goes here
-    let collectedText = '';
+    const collectedText = '';
     const isUsingTools = handle.source instanceof LLMStream && !!handle.source.functionCalls.length;
-    let interrupted = handle.interrupted;
+    const interrupted = handle.interrupted;
 
     const executeFunctionCalls = async () => {
       // if the answer is using tools, execute the functions and automatically generate
@@ -714,7 +714,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         throw new Error('user speech should have been committed before using tools');
       }
       const llmStream = handle.source;
-      let newFunctionCalls = llmStream.functionCalls;
+      const newFunctionCalls = llmStream.functionCalls;
 
       new AgentCallContext(this, llmStream);
 
@@ -760,25 +760,27 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         handle.addToChatCtx,
         handle.fncNestedDepth + 1,
         extraToolsMessages,
-      )
+      );
 
       // synthesize the tool speech with the chat ctx from llmStream
       const chatCtx = handle.source.chatCtx.copy();
       chatCtx.messages.push(...extraToolsMessages);
-      chatCtx.messages.push(...AgentCallContext.getCurrent().extraChatMessages)
+      chatCtx.messages.push(...AgentCallContext.getCurrent().extraChatMessages);
 
       const answerLLMStream = this.llm.chat({
         chatCtx,
         fncCtx: this.fncCtx,
       });
       const answerSynthesis = this.#synthesizeAgentSpeech(newSpeechHandle.id, answerLLMStream);
-      newSpeechHandle.initialize(answerLLMStream, answerSynthesis)
-      handle.addNestedSpeech(newSpeechHandle)
+      newSpeechHandle.initialize(answerLLMStream, answerSynthesis);
+      handle.addNestedSpeech(newSpeechHandle);
 
       this.emit(VPAEvent.FUNCTION_CALLS_FINISHED, calledFuncs);
     };
 
-    const task = executeFunctionCalls().then(() => { handle.markNestedSpeechFinished() });
+    const task = executeFunctionCalls().then(() => {
+      handle.markNestedSpeechFinished();
+    });
     while (!handle.nestedSpeechFinished) {
       const changed = handle.nestedSpeechChanged();
       await Promise.race([changed, task]);
