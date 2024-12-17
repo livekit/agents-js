@@ -82,6 +82,7 @@ export class AgentCallContext {
   #agent: VoicePipelineAgent;
   #llmStream: LLMStream;
   #metadata = new Map<string, any>();
+  #extraChatMessages: ChatMessage[] = [];
   static #current: AgentCallContext;
 
   constructor(agent: VoicePipelineAgent, llmStream: LLMStream) {
@@ -108,6 +109,14 @@ export class AgentCallContext {
 
   get llmStream(): LLMStream {
     return this.#llmStream;
+  }
+
+  get extraChatMessages() {
+    return this.#extraChatMessages;
+  }
+
+  addExtraChatMessage(message: ChatMessage) {
+    this.#extraChatMessages.push(message);
   }
 }
 
@@ -175,7 +184,7 @@ export interface VPAOptions {
   interruptMinWords: number;
   /** Delay to wait before considering the user speech done. */
   minEndpointingDelay: number;
-  maxRecursiveFncCalls: number;
+  maxNestedFncCalls: number;
   /* Whether to preemptively synthesize responses. */
   preemptiveSynthesis: boolean;
   /*
@@ -205,7 +214,7 @@ const defaultVPAOptions: VPAOptions = {
   interruptSpeechDuration: 50,
   interruptMinWords: 0,
   minEndpointingDelay: 500,
-  maxRecursiveFncCalls: 1,
+  maxNestedFncCalls: 1,
   preemptiveSynthesis: false,
   beforeLLMCallback: defaultBeforeLLMCallback,
   beforeTTSCallback: defaultBeforeTTSCallback,
@@ -368,12 +377,51 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     source: string | LLMStream | AsyncIterable<string>,
     allowInterruptions = true,
     addToChatCtx = true,
-  ) {
+  ): Promise<SpeechHandle> {
     await this.#trackPublishedFut.await;
+
+    let callContext: AgentCallContext | undefined;
+    let fncSource: string | AsyncIterable<string> | undefined;
+    if (addToChatCtx) {
+      callContext = AgentCallContext.getCurrent();
+      if (source instanceof LLMStream) {
+        this.#logger.warn("LLMStream will be ignored for function call chat context")
+      } else if (typeof source === 'string') {
+        fncSource = source
+      } else {
+        fncSource = source
+        source = new AsyncIterableQueue<string>();
+      }
+    }
+    
     const newHandle = SpeechHandle.createAssistantSpeech(allowInterruptions, addToChatCtx);
     const synthesisHandle = this.#synthesizeAgentSpeech(newHandle.id, source);
     newHandle.initialize(source, synthesisHandle);
-    this.#addSpeechForPlayout(newHandle);
+
+    if (this.#playingSpeech && !this.#playingSpeech.nestedSpeechFinished) {
+      this.#playingSpeech.addNestedSpeech(newHandle);
+    } else {
+      this.#addSpeechForPlayout(newHandle);
+    }
+
+    if (callContext && fncSource) {
+      let text: string;
+      if (typeof source === 'string') {
+        text = fncSource as string;
+      } else {
+        text = '';
+        for await (const chunk of fncSource) {
+          (source as AsyncIterableQueue<string>).put(chunk);
+          text += chunk;
+        }
+        (source as AsyncIterableQueue<string>).close();
+      }
+
+      callContext.addExtraChatMessage(ChatMessage.create({ text, role: ChatRole.ASSISTANT }))
+      this.#logger.child({ text }).debug("added speech to function call chat context")
+    }
+
+    return newHandle;
   }
 
   #updateState(state: AgentState, delay = 0) {
