@@ -4,6 +4,7 @@
 import type { AudioFrame, AudioSource } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'node:events';
+import type { ReadableStream } from 'node:stream/web';
 import { log } from '../log.js';
 import { CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 import { SynthesisHandle } from './agent_output.js';
@@ -21,7 +22,7 @@ export type AgentPlayoutCallbacks = {
 export class PlayoutHandle {
   #speechId: string;
   #audioSource: AudioSource;
-  playoutSource: AsyncIterable<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>;
+  playoutSource: ReadableStream<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>;
   totalPlayedTime?: number;
   #interrupted = false;
   pushedDuration = 0;
@@ -31,7 +32,7 @@ export class PlayoutHandle {
   constructor(
     speechId: string,
     audioSource: AudioSource,
-    playoutSource: AsyncIterable<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>,
+    playoutSource: ReadableStream<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>,
   ) {
     this.#speechId = speechId;
     this.#audioSource = audioSource;
@@ -90,7 +91,7 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
 
   play(
     speechId: string,
-    playoutSource: AsyncIterable<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>,
+    playoutSource: ReadableStream<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>,
   ): PlayoutHandle {
     if (this.#closed) {
       throw new Error('source closed');

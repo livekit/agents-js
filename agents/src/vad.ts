@@ -4,8 +4,13 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import type {
+  ReadableStream,
+  ReadableStreamDefaultReader,
+  WritableStreamDefaultWriter,
+} from 'node:stream/web';
+import { TransformStream } from 'node:stream/web';
 import type { VADMetrics } from './metrics/base.js';
-import { AsyncIterableQueue } from './utils.js';
 
 export enum VADEventType {
   START_OF_SPEECH,
@@ -77,24 +82,31 @@ export abstract class VAD extends (EventEmitter as new () => TypedEmitter<VADCal
 
 export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
-  protected input = new AsyncIterableQueue<AudioFrame | typeof VADStream.FLUSH_SENTINEL>();
-  protected queue = new AsyncIterableQueue<VADEvent>();
-  protected output = new AsyncIterableQueue<VADEvent>();
+  protected input = new TransformStream<
+    AudioFrame | typeof VADStream.FLUSH_SENTINEL,
+    AudioFrame | typeof VADStream.FLUSH_SENTINEL
+  >();
+  protected output = new TransformStream<VADEvent, VADEvent>();
   protected closed = false;
+  protected inputClosed = false;
   #vad: VAD;
   #lastActivityTime = BigInt(0);
+  #writer: WritableStreamDefaultWriter<AudioFrame | typeof VADStream.FLUSH_SENTINEL>;
+  #reader: ReadableStreamDefaultReader<VADEvent>;
 
   constructor(vad: VAD) {
     this.#vad = vad;
-    this.monitorMetrics();
+    const [r1, r2] = this.output.readable.tee();
+    this.#reader = r1.getReader();
+    this.#writer = this.input.writable.getWriter();
+    this.monitorMetrics(r2);
   }
 
-  protected async monitorMetrics() {
+  protected async monitorMetrics(readable: ReadableStream<VADEvent>) {
     let inferenceDurationTotal = 0;
     let inferenceCount = 0;
 
-    for await (const event of this.queue) {
-      this.output.put(event);
+    for await (const event of readable) {
       switch (event.type) {
         case VADEventType.START_OF_SPEECH:
           inferenceCount++;
@@ -119,47 +131,52 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
           break;
       }
     }
-    this.output.close();
   }
 
   pushFrame(frame: AudioFrame) {
-    if (this.input.closed) {
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(frame);
+    this.#writer.write(frame);
   }
 
   flush() {
-    if (this.input.closed) {
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(VADStream.FLUSH_SENTINEL);
+    this.inputClosed = true;
+    this.#writer.write(VADStream.FLUSH_SENTINEL);
   }
 
   endInput() {
-    if (this.input.closed) {
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.close();
+    this.inputClosed = true;
+    this.input.writable.close();
   }
 
-  next(): Promise<IteratorResult<VADEvent>> {
-    return this.output.next();
+  async next(): Promise<IteratorResult<VADEvent>> {
+    return this.#reader.read().then(({ value }) => {
+      if (value) {
+        return { value, done: false };
+      } else {
+        return { value: undefined, done: true };
+      }
+    });
   }
 
   close() {
-    this.input.close();
-    this.queue.close();
-    this.output.close();
+    this.input.writable.close();
     this.closed = true;
   }
 

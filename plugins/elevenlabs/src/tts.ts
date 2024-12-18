@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AsyncIterableQueue, log, tokenize, tts } from '@livekit/agents';
+import { log, tokenize, tts } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
 import { URL } from 'node:url';
@@ -142,33 +142,28 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   async #run() {
-    const segments = new AsyncIterableQueue<tokenize.WordStream>();
+    const segments = new WritableStream<tokenize.WordStream>({
+      write: async (chunk) => {
+        await this.#runWS(chunk);
+        this.output.writable.getWriter().write(SynthesizeStream.END_OF_STREAM);
+      },
+    });
+    const writer = segments.getWriter();
 
-    const tokenizeInput = async () => {
-      let stream: tokenize.WordStream | null = null;
-      for await (const text of this.input) {
-        if (text === SynthesizeStream.FLUSH_SENTINEL) {
-          stream?.endInput();
-          stream = null;
-        } else {
-          if (!stream) {
-            stream = this.#opts.wordTokenizer.stream();
-            segments.put(stream);
-          }
-          stream.pushText(text);
+    let stream: tokenize.WordStream | null = null;
+    for await (const text of this.input.readable) {
+      if (text === SynthesizeStream.FLUSH_SENTINEL) {
+        stream?.endInput();
+        stream = null;
+      } else {
+        if (!stream) {
+          stream = this.#opts.wordTokenizer.stream();
+          writer.write(stream);
         }
+        stream.pushText(text);
       }
-      segments.close();
-    };
-
-    const runStream = async () => {
-      for await (const stream of segments) {
-        await this.#runWS(stream);
-        this.queue.put(SynthesizeStream.END_OF_STREAM);
-      }
-    };
-
-    await Promise.all([tokenizeInput(), runStream()]);
+    }
+    writer.close();
     this.close();
   }
 
@@ -244,7 +239,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     let lastFrame: AudioFrame | undefined;
     const sendLastFrame = (segmentId: string, final: boolean) => {
       if (lastFrame) {
-        this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+        this.output.writable.getWriter().write({ requestId, segmentId, frame: lastFrame, final });
         lastFrame = undefined;
       }
     };
