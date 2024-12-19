@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioByteStream, tts } from '@livekit/agents';
+import { randomUUID } from 'crypto';
 import { OpenAI } from 'openai';
 import type { TTSModels, TTSVoices } from './models.js';
 
@@ -81,7 +82,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
   async #run(stream: Promise<Response>) {
     const buffer = await stream.then((r) => r.arrayBuffer());
-    const requestId = crypto.randomUUID();
+    const requestId = randomUUID();
     const audioByteStream = new AudioByteStream(OPENAI_TTS_SAMPLE_RATE, OPENAI_TTS_CHANNELS);
     const frames = audioByteStream.write(buffer);
 

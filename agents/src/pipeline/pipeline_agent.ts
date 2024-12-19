@@ -520,8 +520,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
           // add it to the chat context for this new reply synthesis
           copiedCtx.messages.push(
             ChatMessage.create({
-              // TODO(nbsp): uhhh unsure where to get the played text here
-              // text: playingSpeech.synthesisHandle.(theres no ttsForwarder here)
+              text: playingSpeech.synthesisHandle.text,
               role: ChatRole.ASSISTANT,
             }),
           );
@@ -620,8 +619,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     }
     commitUserQuestionIfNeeded();
 
-    // TODO(nbsp): what goes here
-    let collectedText = '';
+    const collectedText = handle.synthesisHandle.text;
     const isUsingTools = handle.source instanceof LLMStream && !!handle.source.functionCalls.length;
     const extraToolsMessages = []; // additional messages from the functions to add to the context
     let interrupted = handle.interrupted;
@@ -685,8 +683,6 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         const playHandle = answerSynthesis.play();
         await playHandle.join().await;
 
-        // TODO(nbsp): what text goes here
-        collectedText = '';
         interrupted = answerSynthesis.interrupted;
         newFunctionCalls = answerLLMStream.functionCalls;
 

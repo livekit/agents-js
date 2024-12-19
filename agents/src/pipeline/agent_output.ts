@@ -13,6 +13,7 @@ export class SynthesisHandle {
   static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
 
   #speechId: string;
+  text?: string;
   ttsSource: SpeechSource;
   #agentPlayout: AgentPlayout;
   tts: TTS;
@@ -97,7 +98,7 @@ export class AgentOutput {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     return new CancellablePromise(async (resolve, _, onCancel) => {
       const ttsSource = await handle.ttsSource;
-      let task: CancellablePromise<void>;
+      let task: CancellablePromise<string>;
       if (typeof ttsSource === 'string') {
         task = stringSynthesisTask(ttsSource, handle);
       } else {
@@ -113,6 +114,10 @@ export class AgentOutput {
       } finally {
         if (handle.intFut.done) {
           gracefullyCancel(task);
+        } else {
+          task.then((text) => {
+            handle.text = text;
+          });
         }
       }
 
@@ -121,9 +126,9 @@ export class AgentOutput {
   }
 }
 
-const stringSynthesisTask = (text: string, handle: SynthesisHandle): CancellablePromise<void> => {
+const stringSynthesisTask = (text: string, handle: SynthesisHandle): CancellablePromise<string> => {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  return new CancellablePromise<void>(async (resolve, _, onCancel) => {
+  return new CancellablePromise(async (resolve, _, onCancel) => {
     let cancelled = false;
     onCancel(() => {
       cancelled = true;
@@ -141,16 +146,17 @@ const stringSynthesisTask = (text: string, handle: SynthesisHandle): Cancellable
     }
     handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
 
-    resolve();
+    resolve(text);
   });
 };
 
 const streamSynthesisTask = (
   stream: AsyncIterable<string>,
   handle: SynthesisHandle,
-): CancellablePromise<void> => {
+): CancellablePromise<string> => {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  return new CancellablePromise<void>(async (resolve, _, onCancel) => {
+  return new CancellablePromise(async (resolve, _, onCancel) => {
+    let fullText = '';
     let cancelled = false;
     onCancel(() => {
       cancelled = true;
@@ -170,12 +176,13 @@ const streamSynthesisTask = (
     readGeneratedAudio();
 
     for await (const text of stream) {
+      fullText += text;
       if (cancelled) break;
       ttsStream.pushText(text);
     }
     ttsStream.flush();
     ttsStream.endInput();
 
-    resolve();
+    resolve(fullText);
   });
 };
