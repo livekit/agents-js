@@ -2,9 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import { TransformStream } from 'node:stream/web';
 import { log } from '../log.js';
 import { SynthesizeStream, type TTS } from '../tts/index.js';
-import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
+import { CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 import type { AgentPlayout, PlayoutHandle } from './agent_playout.js';
 
 export type SpeechSource = AsyncIterable<string> | string | Promise<string>;
@@ -17,7 +18,10 @@ export class SynthesisHandle {
   ttsSource: SpeechSource;
   #agentPlayout: AgentPlayout;
   tts: TTS;
-  queue = new AsyncIterableQueue<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>();
+  queue = new TransformStream<
+    AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL,
+    AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL
+  >();
   #playHandle?: PlayoutHandle;
   intFut = new Future();
   #logger = log();
@@ -51,7 +55,7 @@ export class SynthesisHandle {
       throw new Error('synthesis was interrupted');
     }
 
-    this.#playHandle = this.#agentPlayout.play(this.#speechId, this.queue);
+    this.#playHandle = this.#agentPlayout.play(this.#speechId, this.queue.readable);
     return this.#playHandle;
   }
 
@@ -134,6 +138,8 @@ const stringSynthesisTask = (text: string, handle: SynthesisHandle): Cancellable
       cancelled = true;
     });
 
+    const writer = handle.queue.writable.getWriter();
+
     const ttsStream = handle.tts.stream();
     ttsStream.pushText(text);
     ttsStream.flush();
@@ -142,9 +148,10 @@ const stringSynthesisTask = (text: string, handle: SynthesisHandle): Cancellable
       if (cancelled || audio === SynthesizeStream.END_OF_STREAM) {
         break;
       }
-      handle.queue.put(audio.frame);
+      await writer.write(audio.frame);
     }
-    handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
+    await writer.write(SynthesisHandle.FLUSH_SENTINEL);
+    writer.releaseLock();
 
     resolve(text);
   });
@@ -162,6 +169,8 @@ const streamSynthesisTask = (
       cancelled = true;
     });
 
+    const writer = handle.queue.writable.getWriter();
+
     const ttsStream = handle.tts.stream();
     const readGeneratedAudio = async () => {
       for await (const audio of ttsStream) {
@@ -169,9 +178,10 @@ const streamSynthesisTask = (
         if (audio === SynthesizeStream.END_OF_STREAM) {
           break;
         }
-        handle.queue.put(audio.frame);
+        await writer.write(audio.frame);
       }
-      handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
+      await writer.write(SynthesisHandle.FLUSH_SENTINEL);
+      writer.releaseLock();
     };
     readGeneratedAudio();
 

@@ -2,14 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from 'node:crypto';
-import { AsyncIterableQueue } from '../utils.js';
 import type { TokenData } from './tokenizer.js';
 import { SentenceStream, WordStream } from './tokenizer.js';
 
 type TokenizeFunc = (x: string) => string[] | [string, number, number][];
 
 export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
-  protected queue = new AsyncIterableQueue<TokenData>();
+  protected queue = new TransformStream<TokenData, TokenData>();
   protected closed = false;
 
   #func: TokenizeFunc;
@@ -19,11 +18,15 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
   #inBuf = '';
   #outBuf = '';
   #currentSegmentId: string;
+  #writer: WritableStreamDefaultWriter<TokenData>;
+  #reader: ReadableStreamDefaultReader<TokenData>;
 
   constructor(func: TokenizeFunc, minTokenLength: number, minContextLength: number) {
     this.#func = func;
     this.#minTokenLength = minTokenLength;
     this.#minContextLength = minContextLength;
+    this.#reader = this.queue.readable.getReader();
+    this.#writer = this.queue.writable.getWriter();
 
     this.#currentSegmentId = randomUUID();
   }
@@ -51,7 +54,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
 
       this.#outBuf += tokText;
       if (this.#outBuf.length >= this.#minTokenLength) {
-        this.queue.put({ token: this.#outBuf, segmentId: this.#currentSegmentId });
+        this.#writer.write({ token: this.#outBuf, segmentId: this.#currentSegmentId });
         this.#outBuf = '';
       }
 
@@ -84,7 +87,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
       }
 
       if (this.#outBuf) {
-        this.queue.put({ token: this.#outBuf, segmentId: this.#currentSegmentId });
+        this.#writer.write({ token: this.#outBuf, segmentId: this.#currentSegmentId });
       }
 
       this.#currentSegmentId = randomUUID();
@@ -103,14 +106,22 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
     this.close();
   }
 
-  next(): Promise<IteratorResult<TokenData>> {
-    return this.queue.next();
+  async next(): Promise<IteratorResult<TokenData>> {
+    return this.#reader.read().then(({ value }) => {
+      if (value) {
+        return { value, done: false };
+      } else {
+        return { value: undefined, done: true };
+      }
+    });
   }
 
   /** Close both the input and output of the token stream */
   close() {
-    this.queue.close();
-    this.closed = true;
+    if (!this.closed) {
+      this.#writer.close();
+      this.closed = true;
+    }
   }
 
   [Symbol.asyncIterator](): BufferedTokenStream {

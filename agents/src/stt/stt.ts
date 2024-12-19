@@ -4,9 +4,10 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
+import { TransformStream } from 'node:stream/web';
 import type { STTMetrics } from '../metrics/base.js';
 import type { AudioBuffer } from '../utils.js';
-import { AsyncIterableQueue } from '../utils.js';
 
 /** Indicates start/middle/end of speech */
 export enum SpeechEventType {
@@ -137,23 +138,30 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
  */
 export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent> {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
-  protected input = new AsyncIterableQueue<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>();
-  protected output = new AsyncIterableQueue<SpeechEvent>();
-  protected queue = new AsyncIterableQueue<SpeechEvent>();
+  protected input = new TransformStream<
+    AudioFrame | typeof SpeechStream.FLUSH_SENTINEL,
+    AudioFrame | typeof SpeechStream.FLUSH_SENTINEL
+  >();
+  protected output = new TransformStream<SpeechEvent, SpeechEvent>();
   abstract label: string;
   protected closed = false;
+  protected inputClosed = false;
   #stt: STT;
+  #reader: ReadableStreamDefaultReader<SpeechEvent>;
+  #writer: WritableStreamDefaultWriter<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
 
   constructor(stt: STT) {
     this.#stt = stt;
-    this.monitorMetrics();
+    this.#writer = this.input.writable.getWriter();
+    const [r1, r2] = this.output.readable.tee();
+    this.#reader = r1.getReader();
+    this.monitorMetrics(r2);
   }
 
-  protected async monitorMetrics() {
+  protected async monitorMetrics(readable: ReadableStream<SpeechEvent>) {
     const startTime = process.hrtime.bigint();
 
-    for await (const event of this.queue) {
-      this.output.put(event);
+    for await (const event of readable) {
       if (event.type !== SpeechEventType.RECOGNITION_USAGE) continue;
       const duration = process.hrtime.bigint() - startTime;
       const metrics: STTMetrics = {
@@ -166,52 +174,57 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
       };
       this.#stt.emit(SpeechEventType.METRICS_COLLECTED, metrics);
     }
-    this.output.close();
   }
 
   /** Push an audio frame to the STT */
   pushFrame(frame: AudioFrame) {
-    if (this.input.closed) {
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(frame);
+    this.#writer.write(frame);
   }
 
   /** Flush the STT, causing it to process all pending text */
   flush() {
-    if (this.input.closed) {
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(SpeechStream.FLUSH_SENTINEL);
+    this.#writer.write(SpeechStream.FLUSH_SENTINEL);
   }
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
-    if (this.input.closed) {
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.close();
+    this.inputClosed = true;
+    this.input.writable.close();
   }
 
-  next(): Promise<IteratorResult<SpeechEvent>> {
-    return this.output.next();
+  async next(): Promise<IteratorResult<SpeechEvent>> {
+    return this.#reader.read().then(({ value }) => {
+      if (value) {
+        return { value, done: false };
+      } else {
+        return { value: undefined, done: true };
+      }
+    });
   }
 
   /** Close both the input and output of the STT stream */
   close() {
-    this.input.close();
-    this.queue.close();
-    this.output.close();
+    this.input.writable.close();
     this.closed = true;
+    this.inputClosed = true;
   }
 
   [Symbol.asyncIterator](): SpeechStream {
