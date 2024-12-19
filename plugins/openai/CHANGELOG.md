@@ -1,5 +1,16 @@
 # @livekit/agents-plugin-openai
 
+## 0.7.2
+
+### Patch Changes
+
+- fix(tts): add missing crypto import to OpenAI tts - [#219](https://github.com/livekit/agents-js/pull/219) ([@nbsp](https://github.com/nbsp))
+
+- groq: add support for llama 3.3 70b - [#219](https://github.com/livekit/agents-js/pull/219) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`9e15430387406e59947ef19974ed71b2fc766107`](https://github.com/livekit/agents-js/commit/9e15430387406e59947ef19974ed71b2fc766107)]:
+  - @livekit/agents@0.5.2
+
 ## 0.7.1
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 0.5.2
+
+### Patch Changes
+
+- fix(pipeline): add transcription for AGENT_SPEECH_COMMITTED - [#219](https://github.com/livekit/agents-js/pull/219) ([@nbsp](https://github.com/nbsp))
+
 ## 0.5.1
 
 ### Patch Changes
