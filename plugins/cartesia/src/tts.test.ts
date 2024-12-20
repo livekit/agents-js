@@ -7,5 +7,5 @@ import { describe } from 'vitest';
 import { TTS } from './tts.js';
 
 describe('Cartesia', async () => {
-  await tts(new TTS(), new STT(), { streaming: false });
+  await tts(new TTS(), new STT());
 });
