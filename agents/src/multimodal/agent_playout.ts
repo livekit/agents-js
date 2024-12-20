@@ -4,9 +4,10 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { type AudioSource } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
+import type { TransformStream } from 'node:stream/web';
 import { AudioByteStream } from '../audio.js';
 import type { TranscriptionForwarder } from '../transcription.js';
-import { type AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
+import { CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 
 export const proto = {};
 
@@ -112,8 +113,8 @@ export class AgentPlayout extends EventEmitter {
     itemId: string,
     contentIndex: number,
     transcriptionFwd: TranscriptionForwarder,
-    textStream: AsyncIterableQueue<string>,
-    audioStream: AsyncIterableQueue<AudioFrame>,
+    textStream: TransformStream<string, string>,
+    audioStream: TransformStream<AudioFrame, AudioFrame>,
   ): PlayoutHandle {
     const handle = new PlayoutHandle(
       this.#audioSource,
@@ -129,8 +130,8 @@ export class AgentPlayout extends EventEmitter {
   #makePlayoutTask(
     oldTask: CancellablePromise<void> | null,
     handle: PlayoutHandle,
-    textStream: AsyncIterableQueue<string>,
-    audioStream: AsyncIterableQueue<AudioFrame>,
+    textStream: TransformStream<string, string>,
+    audioStream: TransformStream<AudioFrame, AudioFrame>,
   ): CancellablePromise<void> {
     return new CancellablePromise<void>((resolve, reject, onCancel) => {
       let cancelled = false;
@@ -155,7 +156,7 @@ export class AgentPlayout extends EventEmitter {
 
               (async () => {
                 try {
-                  for await (const text of textStream) {
+                  for await (const text of textStream.readable) {
                     if (cancelledText || cancelled) {
                       break;
                     }
@@ -184,7 +185,7 @@ export class AgentPlayout extends EventEmitter {
                     samplesPerChannel,
                   );
 
-                  for await (const frame of audioStream) {
+                  for await (const frame of audioStream.readable) {
                     if (cancelledCapture || cancelled) {
                       break;
                     }
