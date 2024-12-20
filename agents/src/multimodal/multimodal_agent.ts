@@ -61,7 +61,7 @@ export class MultimodalAgent extends EventEmitter {
   room: Room | null = null;
   linkedParticipant: RemoteParticipant | null = null;
   subscribedTrack: RemoteAudioTrack | null = null;
-  readMicroTask: { promise: Promise<void>; cancel: () => void } | null = null;
+  readMicroTask: Promise<void> | null = null;
 
   constructor({
     model,
@@ -410,22 +410,11 @@ export class MultimodalAgent extends EventEmitter {
     };
     this.subscribedTrack = track;
 
-    if (this.readMicroTask) {
-      this.readMicroTask.cancel();
-    }
-
-    let cancel: () => void;
-    this.readMicroTask = {
-      promise: new Promise<void>((resolve, reject) => {
-        cancel = () => {
-          reject(new Error('Task cancelled'));
-        };
-        readAudioStreamTask(new AudioStream(track, this.model.sampleRate, this.model.numChannels))
-          .then(resolve)
-          .catch(reject);
-      }),
-      cancel: () => cancel(),
-    };
+    this.readMicroTask = new Promise<void>((resolve, reject) => {
+      readAudioStreamTask(new AudioStream(track, this.model.sampleRate, this.model.numChannels))
+        .then(resolve)
+        .catch(reject);
+    });
   }
 
   #getLocalTrackSid(): string | null {
