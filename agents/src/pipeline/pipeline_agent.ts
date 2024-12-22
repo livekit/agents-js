@@ -80,7 +80,7 @@ export type VPACallbacks = {
 
 interface TurnDetector {
   unlikelyThreshold: number;
-  suportsLanguage: (language?: string) => boolean;
+  supportsLanguage: (language?: string) => boolean;
   predictEndOfTurn: (chatCtx: ChatContext) => Promise<number>;
 }
 
