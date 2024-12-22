@@ -28,5 +28,6 @@ export * from './log.js';
 export * from './generator.js';
 export * from './audio.js';
 export * from './transcription.js';
+export * from './inference_runner.js';
 
 export { cli, stt, tts, llm, pipeline, multimodal, tokenize, metrics };
