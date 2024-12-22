@@ -5,13 +5,13 @@
 /** @internal */
 export abstract class InferenceRunner {
   abstract INFERENCE_METHOD: string;
-  static registeredRunners: { [id: string]: InferenceRunner } = {}
+  static registeredRunners: { [id: string]: InferenceRunner } = {};
 
   static registerRunner(runner: InferenceRunner) {
     if (InferenceRunner.registeredRunners[runner.INFERENCE_METHOD]) {
-      throw new Error(`Inference runner ${runner.INFERENCE_METHOD} already registered`)
+      throw new Error(`Inference runner ${runner.INFERENCE_METHOD} already registered`);
     }
-    InferenceRunner.registeredRunners[runner.INFERENCE_METHOD] = runner
+    InferenceRunner.registeredRunners[runner.INFERENCE_METHOD] = runner;
   }
 
   abstract initialize(): Promise<void>;

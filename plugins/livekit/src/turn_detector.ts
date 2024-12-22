@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AutoTokenizer, PreTrainedTokenizer } from '@huggingface/transformers';
+import type { PreTrainedTokenizer } from '@huggingface/transformers';
+import { AutoTokenizer } from '@huggingface/transformers';
 import { InferenceRunner, llm, log } from '@livekit/agents';
 import { fileURLToPath } from 'node:url';
 import { InferenceSession, Tensor } from 'onnxruntime-node';
@@ -61,13 +62,12 @@ export class EOURunner extends InferenceRunner {
     );
     const endTime = Date.now();
     const logits = outputs.logits!;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [_, seqLen, vocabSize] = logits.dims as [number, number, number];
     const offset = (0 * seqLen + (seqLen - 1)) * vocabSize;
     const lastTokenLogits = logits.data.slice(offset, offset + vocabSize);
     const probs = softmax(lastTokenLogits as Float32Array);
-    console.log(probs)
     const eouProbability = probs[this.#eouIndex!];
-    console.log(eouProbability, '========================');
     this.#logger
       .child({ eouProbability, input: text, duration: endTime - startTime })
       .debug('eou prediction');

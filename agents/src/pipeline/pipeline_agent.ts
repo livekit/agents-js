@@ -1070,7 +1070,7 @@ class DeferredReplyValidation {
     this.#validatingFuture = new Future();
     const detectCtx = this.#agent.chatCtx.copy();
     console.log(detectCtx);
-    detectCtx.append({ text: this.#agent.transcribedText, role: ChatRole.USER })
+    detectCtx.append({ text: this.#agent.transcribedText, role: ChatRole.USER });
     this.#validatingPromise = runTask(delay, detectCtx);
   }
 }
