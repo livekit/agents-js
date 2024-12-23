@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioByteStream, tts } from '@livekit/agents';
+import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'crypto';
 import { OpenAI } from 'openai';
 import type { TTSModels, TTSVoices } from './models.js';
@@ -28,6 +29,7 @@ const defaultTTSOptions: TTSOptions = {
 export class TTS extends tts.TTS {
   #opts: TTSOptions;
   #client: OpenAI;
+  label = 'openai.TTS';
 
   /**
    * Create a new instance of OpenAI TTS.
@@ -58,6 +60,8 @@ export class TTS extends tts.TTS {
 
   synthesize(text: string): ChunkedStream {
     return new ChunkedStream(
+      this,
+      text,
       this.#client.audio.speech.create({
         input: text,
         model: this.#opts.model,
@@ -74,9 +78,11 @@ export class TTS extends tts.TTS {
 }
 
 export class ChunkedStream extends tts.ChunkedStream {
+  label = 'openai.ChunkedStream';
+
   // set Promise<T> to any because OpenAI returns an annoying Response type
-  constructor(stream: Promise<any>) {
-    super();
+  constructor(tts: TTS, text: string, stream: Promise<any>) {
+    super(text, tts);
     this.#run(stream);
   }
 
@@ -86,13 +92,20 @@ export class ChunkedStream extends tts.ChunkedStream {
     const audioByteStream = new AudioByteStream(OPENAI_TTS_SAMPLE_RATE, OPENAI_TTS_CHANNELS);
     const frames = audioByteStream.write(buffer);
 
+    let lastFrame: AudioFrame | undefined;
+    const sendLastFrame = (segmentId: string, final: boolean) => {
+      if (lastFrame) {
+        this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+        lastFrame = undefined;
+      }
+    };
+
     for (const frame of frames) {
-      this.queue.put({
-        frame,
-        requestId,
-        segmentId: requestId,
-      });
+      sendLastFrame(requestId, false);
+      lastFrame = frame;
     }
+    sendLastFrame(requestId, true);
+
     this.queue.close();
   }
 }

@@ -25,6 +25,7 @@ const defaultSTTOptions: STTOptions = {
 export class STT extends stt.STT {
   #opts: STTOptions;
   #client: OpenAI;
+  label = 'openai.STT';
 
   /**
    * Create a new instance of OpenAI STT.
@@ -108,7 +109,7 @@ export class STT extends stt.STT {
     return Buffer.concat([header, Buffer.from(frame.data.buffer)]);
   }
 
-  async recognize(buffer: AudioBuffer, language?: string): Promise<stt.SpeechEvent> {
+  async _recognize(buffer: AudioBuffer, language?: string): Promise<stt.SpeechEvent> {
     const config = this.#sanitizeOptions(language);
     buffer = mergeFrames(buffer);
     const file = new File([this.#createWav(buffer)], 'audio.wav', { type: 'audio/wav' });

@@ -11,6 +11,7 @@
  */
 import * as cli from './cli.js';
 import * as llm from './llm/index.js';
+import * as metrics from './metrics/index.js';
 import * as multimodal from './multimodal/index.js';
 import * as pipeline from './pipeline/index.js';
 import * as stt from './stt/index.js';
@@ -28,4 +29,4 @@ export * from './generator.js';
 export * from './audio.js';
 export * from './transcription.js';
 
-export { cli, stt, tts, llm, pipeline, multimodal, tokenize };
+export { cli, stt, tts, llm, pipeline, multimodal, tokenize, metrics };

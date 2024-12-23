@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from 'crypto';
-import type { LLMStream } from '../llm/index.js';
-import { Future } from '../utils.js';
+import type { ChatMessage, LLMStream } from '../llm/index.js';
+import { AsyncIterableQueue, Future } from '../utils.js';
 import type { SynthesisHandle } from './agent_output.js';
 
 export class SpeechHandle {
@@ -14,10 +14,16 @@ export class SpeechHandle {
   #userQuestion: string;
   #userCommitted = false;
   #initFut = new Future();
+  #doneFut = new Future();
   #speechCommitted = false;
   #source?: string | LLMStream | AsyncIterable<string>;
   #synthesisHandle?: SynthesisHandle;
   #initialized = false;
+  #fncNestedDepth: number;
+  #fncExtraToolsMesages?: ChatMessage[];
+  #nestedSpeechHandles: SpeechHandle[] = [];
+  #nestedSpeechChanged = new AsyncIterableQueue<void>();
+  #nestedSpeechFinished = false;
 
   constructor(
     id: string,
@@ -25,12 +31,16 @@ export class SpeechHandle {
     addToChatCtx: boolean,
     isReply: boolean,
     userQuestion: string,
+    fncNestedDepth = 0,
+    extraToolsMessages: ChatMessage[] | undefined = undefined,
   ) {
     this.#id = id;
     this.#allowInterruptions = allowInterruptions;
     this.#addToChatCtx = addToChatCtx;
     this.#isReply = isReply;
     this.#userQuestion = userQuestion;
+    this.#fncNestedDepth = fncNestedDepth;
+    this.#fncExtraToolsMesages = extraToolsMessages;
   }
 
   static createAssistantReply(
@@ -43,6 +53,23 @@ export class SpeechHandle {
 
   static createAssistantSpeech(allowInterruptions: boolean, addToChatCtx: boolean): SpeechHandle {
     return new SpeechHandle(randomUUID(), allowInterruptions, addToChatCtx, false, '');
+  }
+
+  static createToolSpeech(
+    allowInterruptions: boolean,
+    addToChatCtx: boolean,
+    fncNestedDepth: number,
+    extraToolsMessages: ChatMessage[],
+  ): SpeechHandle {
+    return new SpeechHandle(
+      randomUUID(),
+      allowInterruptions,
+      addToChatCtx,
+      false,
+      '',
+      fncNestedDepth,
+      extraToolsMessages,
+    );
   }
 
   async waitForInitialization() {
@@ -122,6 +149,43 @@ export class SpeechHandle {
     return !!this.#synthesisHandle?.interrupted;
   }
 
+  get fncNestedDepth(): number {
+    return this.#fncNestedDepth;
+  }
+
+  get extraToolsMessages(): ChatMessage[] | undefined {
+    return this.#fncExtraToolsMesages;
+  }
+
+  addNestedSpeech(handle: SpeechHandle) {
+    this.#nestedSpeechHandles.push(handle);
+    this.#nestedSpeechChanged.put();
+  }
+
+  get nestedSpeechHandles(): SpeechHandle[] {
+    return this.#nestedSpeechHandles;
+  }
+
+  async nestedSpeechChanged() {
+    await this.#nestedSpeechChanged.next();
+  }
+
+  get nestedSpeechFinished(): boolean {
+    return this.#nestedSpeechFinished;
+  }
+
+  markNestedSpeechFinished() {
+    this.#nestedSpeechFinished = true;
+  }
+
+  join() {
+    return this.#doneFut.await;
+  }
+
+  setDone() {
+    this.#doneFut.resolve();
+  }
+
   interrupt() {
     if (!this.#allowInterruptions) {
       throw new Error('interruptions are not allowed');
@@ -131,6 +195,7 @@ export class SpeechHandle {
 
   cancel() {
     this.#initFut.reject(new Error());
+    this.#nestedSpeechChanged.close();
     this.#synthesisHandle?.interrupt();
   }
 }

@@ -6,6 +6,8 @@ export {
   type SpeechEvent,
   type SpeechData,
   type STTCapabilities,
+  type RecognitionUsage,
+  type STTCallbacks,
   SpeechEventType,
   STT,
   SpeechStream,

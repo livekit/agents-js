@@ -21,6 +21,7 @@ import { EventEmitter } from 'node:events';
 import { AudioByteStream } from '../audio.js';
 import * as llm from '../llm/index.js';
 import { log } from '../log.js';
+import type { MultimodalLLMMetrics } from '../metrics/base.js';
 import { BasicTranscriptionForwarder } from '../transcription.js';
 import { findMicroTrackId } from '../utils.js';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
@@ -60,7 +61,7 @@ export class MultimodalAgent extends EventEmitter {
   room: Room | null = null;
   linkedParticipant: RemoteParticipant | null = null;
   subscribedTrack: RemoteAudioTrack | null = null;
-  readMicroTask: { promise: Promise<void>; cancel: () => void } | null = null;
+  readMicroTask: Promise<void> | null = null;
 
   constructor({
     model,
@@ -284,6 +285,7 @@ export class MultimodalAgent extends EventEmitter {
       });
 
       this.#session.on('input_speech_started', (ev: any) => {
+        this.emit('user_started_speaking');
         if (this.#playingHandle && !this.#playingHandle.done) {
           this.#playingHandle.interrupt();
 
@@ -324,6 +326,10 @@ export class MultimodalAgent extends EventEmitter {
       this.#session.on('function_call_failed', (ev: any) => {
         this.#pendingFunctionCalls.delete(ev.callId);
         this.#updateState();
+      });
+
+      this.#session.on('metrics_collected', (metrics: MultimodalLLMMetrics) => {
+        this.emit('metrics_collected', metrics);
       });
 
       resolve(this.#session);
@@ -404,22 +410,11 @@ export class MultimodalAgent extends EventEmitter {
     };
     this.subscribedTrack = track;
 
-    if (this.readMicroTask) {
-      this.readMicroTask.cancel();
-    }
-
-    let cancel: () => void;
-    this.readMicroTask = {
-      promise: new Promise<void>((resolve, reject) => {
-        cancel = () => {
-          reject(new Error('Task cancelled'));
-        };
-        readAudioStreamTask(new AudioStream(track, this.model.sampleRate, this.model.numChannels))
-          .then(resolve)
-          .catch(reject);
-      }),
-      cancel: () => cancel(),
-    };
+    this.readMicroTask = new Promise<void>((resolve, reject) => {
+      readAudioStreamTask(new AudioStream(track, this.model.sampleRate, this.model.numChannels))
+        .then(resolve)
+        .catch(reject);
+    });
   }
 
   #getLocalTrackSid(): string | null {
