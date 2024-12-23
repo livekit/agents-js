@@ -1,5 +1,18 @@
 # @livekit/agents-plugin-elevenlabs
 
+## 0.5.2
+
+### Patch Changes
+
+- use AudioByteStream for TTS - [#227](https://github.com/livekit/agents-js/pull/227) ([@nbsp](https://github.com/nbsp))
+
+- add metrics monitoring - [#227](https://github.com/livekit/agents-js/pull/227) ([@nbsp](https://github.com/nbsp))
+
+- add testutils, tests for oai, 11labs - [#227](https://github.com/livekit/agents-js/pull/227) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0)]:
+  - @livekit/agents@0.6.0
+
 ## 0.5.1
 
 ### Patch Changes
