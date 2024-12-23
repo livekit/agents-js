@@ -1,5 +1,27 @@
 # @livekit/agents-plugin-openai
 
+## 0.7.2
+
+### Patch Changes
+
+- fix(tts): add missing crypto import to OpenAI tts - [#219](https://github.com/livekit/agents-js/pull/219) ([@nbsp](https://github.com/nbsp))
+
+- groq: add support for llama 3.3 70b - [#219](https://github.com/livekit/agents-js/pull/219) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`9e15430387406e59947ef19974ed71b2fc766107`](https://github.com/livekit/agents-js/commit/9e15430387406e59947ef19974ed71b2fc766107)]:
+  - @livekit/agents@0.5.2
+
+## 0.7.1
+
+### Patch Changes
+
+- fix multiple function calls not firing - [#206](https://github.com/livekit/agents-js/pull/206) ([@nbsp](https://github.com/nbsp))
+
+- add testutils, tests for oai, 11labs - [#206](https://github.com/livekit/agents-js/pull/206) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`67bad88bb59328fac03320e88c245871005ccc05`](https://github.com/livekit/agents-js/commit/67bad88bb59328fac03320e88c245871005ccc05), [`beb141f7de380d5a938347a2eda76d56f706333c`](https://github.com/livekit/agents-js/commit/beb141f7de380d5a938347a2eda76d56f706333c), [`8fa2b176bb6bdeba34430d59b23024d935f77453`](https://github.com/livekit/agents-js/commit/8fa2b176bb6bdeba34430d59b23024d935f77453)]:
+  - @livekit/agents@0.5.1
+
 ## 0.7.0
 
 ### Minor Changes
