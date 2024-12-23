@@ -29,9 +29,32 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm build
-      - name: Test
+      - name: Check which tests to run
+        id: check
+        run: |
+          echo "agents=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q '^agents.*\.ts$' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "tests=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q '^plugins/test.*\.ts$' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "plugins=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^plugins.*\.ts$' | cut -d/ -f2 | sort -u | tr '\n' ' ')" >> $GITHUB_OUTPUT
+      - name: Test agents
+        if: steps.check.outputs.agents == 'true' || steps.check.outputs.tests == 'true' || github.event_name != 'pull_request'
+        run: pnpm test agents
+      - name: Test plugins
+        if: steps.check.outputs.agents == 'true' || steps.check.outputs.tests == 'true' || steps.check.outputs.plugins != '' || github.event_name != 'pull_request'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ELEVEN_API_KEY: ${{ secrets.ELEVEN_API_KEY }}
           DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
-        run: pnpm test
+        run: |
+          pr=${{ github.event_name == 'pull_request' }}
+          agents=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q '^agents.*\.ts$' && echo 1 || echo 0)
+          tests=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q '^plugins/test.*\.ts$' && echo 1 || echo 0)
+          plugins=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^plugins.*\.ts$' | cut -d/ -f2 | sort -u | tr '\n' ' ')
+
+          if [[ "${{ steps.check.outputs.agents }}" = "true" || "${{ steps.check.outputs.tests }}" = "true" || "${{ github.event_name }}" != "pull_request" ]]; then
+            pnpm test plugins
+          else
+            read -ra plugins <<< "${{ steps.check.outputs.plugins }}"
+            for plugin in "${plugins[@]}"; do
+              pnpm test $plugin
+            done
+          fi
