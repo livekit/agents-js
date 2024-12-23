@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AsyncIterableQueue, log, tokenize, tts } from '@livekit/agents';
-import { AudioFrame } from '@livekit/rtc-node';
+import { AsyncIterableQueue, AudioByteStream, log, tokenize, tts } from '@livekit/agents';
+import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
 import { URL } from 'node:url';
 import { type RawData, WebSocket } from 'ws';
@@ -250,6 +250,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     const listenTask = async () => {
+      const bstream = new AudioByteStream(sampleRateFromFormat(this.#opts.encoding), 1);
       while (!this.closed) {
         try {
           await new Promise<RawData>((resolve, reject) => {
@@ -264,16 +265,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }).then((msg) => {
             const json = JSON.parse(msg.toString());
             if ('audio' in json) {
-              const data = new Int16Array(Buffer.from(json.audio, 'base64').buffer);
-              const frame = new AudioFrame(
-                data,
-                sampleRateFromFormat(this.#opts.encoding),
-                1,
-                data.length,
-              );
-              sendLastFrame(segmentId, false);
-              lastFrame = frame;
+              const data = new Int8Array(Buffer.from(json.audio, 'base64').buffer);
+              for (const frame of bstream.write(data)) {
+                sendLastFrame(segmentId, false);
+                lastFrame = frame;
+              }
             } else if ('isFinal' in json) {
+              for (const frame of bstream.flush()) {
+                sendLastFrame(segmentId, false);
+                lastFrame = frame;
+              }
               sendLastFrame(segmentId, true);
             }
           });
