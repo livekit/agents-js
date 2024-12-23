@@ -11,7 +11,21 @@ import type {
 } from '@livekit/rtc-node';
 import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import type { Logger } from 'pino';
+import { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
+
+// TODO(nbsp): what is this thing
+class JobCallContext {
+  static #current: JobCallContext;
+
+  constructor() {
+    JobCallContext.#current = this;
+  }
+
+  static getCurrent(): JobCallContext {
+    return JobCallContext.#current;
+  }
+}
 
 /** Which tracks, if any, should the agent automatically subscribe to? */
 export enum AutoSubscribe {
@@ -60,6 +74,7 @@ export class JobContext {
     };
   } = {};
   #logger: Logger;
+  #inferenceExecutor: InferenceExecutor;
 
   constructor(
     proc: JobProcess,
@@ -67,6 +82,7 @@ export class JobContext {
     room: Room,
     onConnect: () => void,
     onShutdown: (s: string) => void,
+    inferenceExecutor: InferenceExecutor,
   ) {
     this.#proc = proc;
     this.#info = info;
@@ -76,6 +92,7 @@ export class JobContext {
     this.onParticipantConnected = this.onParticipantConnected.bind(this);
     this.#room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
     this.#logger = log().child({ info: this.#info });
+    this.#inferenceExecutor = inferenceExecutor;
   }
 
   get proc(): JobProcess {
@@ -94,6 +111,11 @@ export class JobContext {
   /** @returns The agent's participant if connected to the room, otherwise `undefined` */
   get agent(): LocalParticipant | undefined {
     return this.#room.localParticipant;
+  }
+
+  /** @returns The global inference executor */
+  get inferenceExecutor(): InferenceExecutor {
+    return this.#inferenceExecutor;
   }
 
   /** Adds a promise to be awaited when {@link JobContext.shutdown | shutdown} is called. */

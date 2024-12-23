@@ -10,7 +10,7 @@ import type { ProcOpts } from './job_executor.js';
 import { JobExecutor } from './job_executor.js';
 import type { IPCMessage } from './message.js';
 
-export class ProcJobExecutor extends JobExecutor {
+export class SupervisedProc {
   #opts: ProcOpts;
   #started = false;
   #closing = false;
@@ -22,12 +22,26 @@ export class ProcJobExecutor extends JobExecutor {
   #join = new Future();
   #logger = log().child({ runningJob: this.#runningJob });
 
-  constructor(agent: string, initializeTimeout: number, closeTimeout: number) {
-    super();
+  constructor(
+    agent: string,
+    initializeTimeout: number,
+    closeTimeout: number,
+    // XXX(nbsp): memoryWarnMB and memoryLimitMB are currently stubbed and serve no use
+    memoryWarnMB: number,
+    memoryLimitMB: number,
+    pingInterval: number,
+    pingTimeout: number,
+    highPingThreshold: number,
+  ) {
     this.#opts = {
       agent,
       initializeTimeout,
       closeTimeout,
+      memoryWarnMB,
+      memoryLimitMB,
+      pingInterval,
+      pingTimeout,
+      highPingThreshold,
     };
   }
 
@@ -61,7 +75,7 @@ export class ProcJobExecutor extends JobExecutor {
 
     this.#pingInterval = setInterval(() => {
       this.#proc!.send({ case: 'pingRequest', value: { timestamp: Date.now() } });
-    }, this.PING_INTERVAL);
+    }, this.#opts.pingInterval);
 
     this.#pongTimeout = setTimeout(() => {
       this.#logger.warn('job is unresponsive');
@@ -69,13 +83,13 @@ export class ProcJobExecutor extends JobExecutor {
       clearInterval(this.#pingInterval);
       this.#proc!.kill();
       this.#join.resolve();
-    }, this.PING_TIMEOUT);
+    }, this.#opts.pingTimeout);
 
     const listener = (msg: IPCMessage) => {
       switch (msg.case) {
         case 'pongResponse': {
           const delay = Date.now() - msg.value.timestamp;
-          if (delay > this.HIGH_PING_THRESHOLD) {
+          if (delay > this.#opts.highPingThreshold) {
             this.#logger.child({ delay }).warn('job executor is unresponsive');
           }
           this.#pongTimeout?.refresh();
@@ -119,7 +133,15 @@ export class ProcJobExecutor extends JobExecutor {
       this.#init.reject(err);
       throw err;
     }, this.#opts.initializeTimeout);
-    this.#proc!.send({ case: 'initializeRequest', value: { loggerOptions } });
+    this.#proc!.send({
+      case: 'initializeRequest',
+      value: {
+        loggerOptions,
+        pingInterval: this.#opts.pingInterval,
+        pingTimeout: this.#opts.pingTimeout,
+        highPingThreshold: this.#opts.highPingThreshold,
+      },
+    });
     await once(this.#proc!, 'message').then(([msg]: IPCMessage[]) => {
       clearTimeout(timer);
       if (msg!.case !== 'initializeResponse') {

@@ -4,6 +4,7 @@
 import { MultiMutex, Mutex } from '@livekit/mutex';
 import type { RunningJobInfo } from '../job.js';
 import { Queue } from '../utils.js';
+import { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
 import { ProcJobExecutor } from './proc_job_executor.js';
 
@@ -20,12 +21,18 @@ export class ProcPool {
   procMutex?: MultiMutex;
   procUnlock?: () => void;
   warmedProcQueue = new Queue<JobExecutor>();
+  inferenceExecutor: InferenceExecutor;
+  memoryWarnMB: number;
+  memoryLimitMB: number;
 
   constructor(
     agent: string,
     numIdleProcesses: number,
     initializeTimeout: number,
     closeTimeout: number,
+    inferenceExecutor: InferenceExecutor,
+    memoryWarnMB: number,
+    memoryLimitMB: number,
   ) {
     this.agent = agent;
     if (numIdleProcesses > 0) {
@@ -33,6 +40,9 @@ export class ProcPool {
     }
     this.initializeTimeout = initializeTimeout;
     this.closeTimeout = closeTimeout;
+    this.inferenceExecutor = inferenceExecutor;
+    this.memoryWarnMB = memoryWarnMB;
+    this.memoryLimitMB = memoryLimitMB;
   }
 
   get processes(): JobExecutor[] {
@@ -52,7 +62,17 @@ export class ProcPool {
         this.procUnlock = undefined;
       }
     } else {
-      proc = new ProcJobExecutor(this.agent, this.initializeTimeout, this.closeTimeout);
+      proc = new ProcJobExecutor(
+        this.agent,
+        this.initializeTimeout,
+        this.closeTimeout,
+        this.inferenceExecutor,
+        2500,
+        60000,
+        500,
+        this.memoryWarnMB,
+        this.memoryLimitMB,
+      );
       this.executors.push(proc);
       await proc.start();
       await proc.initialize();

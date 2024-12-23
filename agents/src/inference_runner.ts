@@ -15,5 +15,5 @@ export abstract class InferenceRunner {
   }
 
   abstract initialize(): Promise<void>;
-  abstract run(data: any): Promise<any>;
+  abstract run(data: unknown): Promise<unknown>;
 }
