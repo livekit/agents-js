@@ -7,13 +7,14 @@ export interface ProcOpts {
   agent: string;
   initializeTimeout: number;
   closeTimeout: number;
+  memoryWarnMB: number;
+  memoryLimitMB: number;
+  pingInterval: number;
+  pingTimeout: number;
+  highPingThreshold: number;
 }
 
 export abstract class JobExecutor {
-  PING_INTERVAL = 2.5 * 1000;
-  PING_TIMEOUT = 90 * 1000;
-  HIGH_PING_THRESHOLD = 0.5 * 1000;
-
   abstract get started(): boolean;
   abstract get runningJob(): RunningJobInfo | undefined;
 

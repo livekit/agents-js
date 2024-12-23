@@ -27,20 +27,15 @@ originally written in Python.
 
 <!--END_DESCRIPTION-->
 
-## ✨ [NEW] OpenAI Realtime API support
+## ✨ [NEW] In-house phrase endpointing model
 
-We're partnering with OpenAI on a new MultimodalAgent API in the Agents framework. This class
-completely wraps OpenAI’s Realtime API, abstract away the raw wire protocol, and provide an
-ultra-low latency WebRTC transport between GPT-4o and your users’ devices. This same stack powers
-Advanced Voice in the ChatGPT app.
-
-- Try the Realtime API in our [playground](https://playground.livekit.io/)
-  [[code](https://github.com/livekit-examples/realtime-playground)]
-- Check out our [guide](https://docs.livekit.io/agents/openai) to building your first app with this new API
+We’ve trained a new, open weights phrase endpointing model that significantly improves end-of-turn
+detection and conversational flow between voice agents and users by reducing agent interruptions.
+Optimized to run on CPUs, it’s available via [`@livekit/agents-plugin-livekit`](plugins/livekit)
+package.
 
 > [!WARNING]
-> This SDK is in Developer Preview. During this period, you may encounter bugs, and the APIs may
-> change.
+> This SDK is in beta. During this period, you may encounter bugs, and the APIs may change.
 >
 > For production, we recommend using the [more mature version](https://github.com/livekit/agents)
 > of this framework, built with Python, which supports a larger number of integrations.
@@ -72,6 +67,7 @@ The following plugins are available today:
 | [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT                         |
 | [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS                         |
 | [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD                         |
+| [@livekit/agents-plugin-livekit](https://www.npmjs.com/package/@livekit/agents-plugin-livekit)       | End-of-turn detection       |
 
 ## Usage
 
