@@ -8,7 +8,7 @@
     "outDir": "./dist"
   },
   "typedocOptions": {
-    "name": "plugins/agents-plugin-elevenlabs",
+    "name": "plugins/agents-plugin-cartesia",
     "entryPointStrategy": "resolve",
     "readme": "none",
     "entryPoints": ["src/index.ts"]
