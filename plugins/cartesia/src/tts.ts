@@ -112,6 +112,8 @@ export class ChunkedStream extends tts.ChunkedStream {
               segmentId: requestId,
             });
           }
+        });
+        res.on('close', () => {
           for (const frame of bstream.flush()) {
             this.queue.put({
               requestId,
@@ -120,8 +122,6 @@ export class ChunkedStream extends tts.ChunkedStream {
               segmentId: requestId,
             });
           }
-        });
-        res.on('close', () => {
           this.queue.close();
         });
       },
@@ -198,7 +198,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         const json = JSON.parse(data.toString());
         const segmentId = json.context_id;
         if ('data' in json) {
-          const data = new Int8Array(Buffer.from(json.data, 'base64').buffer);
+          const data = new Int8Array(Buffer.from(json.data, 'base64'));
           for (const frame of bstream.write(data)) {
             sendLastFrame(segmentId, false);
             lastFrame = frame;
@@ -209,6 +209,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             lastFrame = frame;
           }
           sendLastFrame(segmentId, true);
+          this.queue.put(SynthesizeStream.END_OF_STREAM);
 
           if (segmentId === requestId) {
             closing = true;
