@@ -14,14 +14,8 @@ import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
-import dotenv from 'dotenv';
 import { SipClient } from 'livekit-server-sdk';
-import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const envPath = path.join(__dirname, '../.env.local');
-dotenv.config({ path: envPath });
 
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
