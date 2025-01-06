@@ -331,6 +331,11 @@ export class Worker {
           this.#runWS(this.#session);
           return;
         } catch (e) {
+          if (typeof e !== 'string') {
+            // it's probably an Error type
+            e = (e as Error).message;
+          }
+
           if (this.#closed) return;
           if (retries >= this.#opts.maxRetry) {
             throw new WorkerError(
