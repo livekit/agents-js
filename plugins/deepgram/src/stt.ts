@@ -46,6 +46,7 @@ export class STT extends stt.STT {
   #opts: STTOptions;
   #logger = log();
   label = 'deepgram.STT';
+  #streams = new Set<SpeechStream>();
 
   constructor(opts: Partial<STTOptions> = defaultSTTOptions) {
     super({
@@ -62,25 +63,8 @@ export class STT extends stt.STT {
 
     if (this.#opts.detectLanguage) {
       this.#opts.language = undefined;
-    } else if (
-      this.#opts.language &&
-      !['en-US', 'en'].includes(this.#opts.language) &&
-      [
-        'nova-2-meeting',
-        'nova-2-phonecall',
-        'nova-2-finance',
-        'nova-2-conversationalai',
-        'nova-2-voicemail',
-        'nova-2-video',
-        'nova-2-medical',
-        'nova-2-drivethru',
-        'nova-2-automotive',
-      ].includes(this.#opts.model)
-    ) {
-      this.#logger.warn(
-        `${this.#opts.model} does not support language ${this.#opts.language}, falling back to nova-2-general`,
-      );
-      this.#opts.model = 'nova-2-general';
+    } else {
+      this.#opts.model = validateModel(this.#opts.model, this.#opts.language);
     }
   }
 
@@ -90,7 +74,54 @@ export class STT extends stt.STT {
   }
 
   stream(): stt.SpeechStream {
-    return new SpeechStream(this, this.#opts);
+    const stream = new SpeechStream(this, this.#opts);
+    this.#streams.add(stream);
+    return stream;
+  }
+
+  updateOptions(
+    language?: STTLanguages,
+    model?: STTModels,
+    interimResults?: boolean,
+    punctuate?: boolean,
+    smartFormat?: boolean,
+    noDelay?: boolean,
+    endpointing?: number,
+    fillerWords?: boolean,
+    sampleRate?: number,
+    numChannels?: number,
+    keywords?: [string, number][],
+    profanityFilter?: boolean,
+  ) {
+    if (language !== undefined) this.#opts.language = language;
+    if (model !== undefined) this.#opts.model = model;
+    if (interimResults !== undefined) this.#opts.interimResults = interimResults;
+    if (punctuate !== undefined) this.#opts.punctuate = punctuate;
+    if (smartFormat !== undefined) this.#opts.smartFormat = smartFormat;
+    if (noDelay !== undefined) this.#opts.noDelay = noDelay;
+    if (endpointing !== undefined) this.#opts.endpointing = endpointing;
+    if (fillerWords !== undefined) this.#opts.fillerWords = fillerWords;
+    if (sampleRate !== undefined) this.#opts.sampleRate = sampleRate;
+    if (numChannels !== undefined) this.#opts.numChannels = numChannels;
+    if (keywords !== undefined) this.#opts.keywords = keywords;
+    if (profanityFilter !== undefined) this.#opts.profanityFilter = profanityFilter;
+
+    this.#streams.forEach((stream) => {
+      stream.updateOptions(
+        language,
+        model,
+        interimResults,
+        punctuate,
+        smartFormat,
+        noDelay,
+        endpointing,
+        fillerWords,
+        sampleRate,
+        numChannels,
+        keywords,
+        profanityFilter,
+      );
+    });
   }
 }
 
@@ -114,36 +145,7 @@ export class SpeechStream extends stt.SpeechStream {
     let retries = 0;
     let ws: WebSocket;
     while (!this.input.closed) {
-      const streamURL = new URL(API_BASE_URL_V1);
-      const params = {
-        model: this.#opts.model,
-        punctuate: this.#opts.punctuate,
-        smart_format: this.#opts.smartFormat,
-        no_delay: this.#opts.noDelay,
-        interim_results: this.#opts.interimResults,
-        encoding: 'linear16',
-        vad_events: true,
-        sample_rate: this.#opts.sampleRate,
-        channels: this.#opts.numChannels,
-        endpointing: this.#opts.endpointing || false,
-        filler_words: this.#opts.fillerWords,
-        keywords: this.#opts.keywords.map((x) => x.join(':')),
-        profanity_filter: this.#opts.profanityFilter,
-        language: this.#opts.language,
-      };
-      Object.entries(params).forEach(([k, v]) => {
-        if (v !== undefined) {
-          if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-            streamURL.searchParams.append(k, encodeURIComponent(v));
-          } else {
-            v.forEach((x) => streamURL.searchParams.append('keywords', encodeURIComponent(x)));
-          }
-        }
-      });
-
-      ws = new WebSocket(streamURL, {
-        headers: { Authorization: `Token ${this.#opts.apiKey}` },
-      });
+      ws = this.#connectWs();
 
       try {
         await new Promise((resolve, reject) => {
@@ -302,6 +304,68 @@ export class SpeechStream extends stt.SpeechStream {
     await Promise.all([sendTask(), listenTask()]);
     clearInterval(keepalive);
   }
+
+  updateOptions(
+    language?: STTLanguages,
+    model?: STTModels,
+    interimResults?: boolean,
+    punctuate?: boolean,
+    smartFormat?: boolean,
+    noDelay?: boolean,
+    endpointing?: number,
+    fillerWords?: boolean,
+    sampleRate?: number,
+    numChannels?: number,
+    keywords?: [string, number][],
+    profanityFilter?: boolean,
+  ) {
+    if (language !== undefined) this.#opts.language = language;
+    if (model !== undefined) this.#opts.model = model;
+    if (interimResults !== undefined) this.#opts.interimResults = interimResults;
+    if (punctuate !== undefined) this.#opts.punctuate = punctuate;
+    if (smartFormat !== undefined) this.#opts.smartFormat = smartFormat;
+    if (noDelay !== undefined) this.#opts.noDelay = noDelay;
+    if (endpointing !== undefined) this.#opts.endpointing = endpointing;
+    if (fillerWords !== undefined) this.#opts.fillerWords = fillerWords;
+    if (sampleRate !== undefined) this.#opts.sampleRate = sampleRate;
+    if (numChannels !== undefined) this.#opts.numChannels = numChannels;
+    if (keywords !== undefined) this.#opts.keywords = keywords;
+    if (profanityFilter !== undefined) this.#opts.profanityFilter = profanityFilter;
+  }
+
+  #connectWs(): WebSocket {
+    const streamURL = new URL(API_BASE_URL_V1);
+    const params = {
+      model: this.#opts.model,
+      punctuate: this.#opts.punctuate,
+      smart_format: this.#opts.smartFormat,
+      no_delay: this.#opts.noDelay,
+      interim_results: this.#opts.interimResults,
+      encoding: 'linear16',
+      vad_events: true,
+      sample_rate: this.#opts.sampleRate,
+      channels: this.#opts.numChannels,
+      endpointing: this.#opts.endpointing || false,
+      filler_words: this.#opts.fillerWords,
+      keywords: this.#opts.keywords.map((x) => x.join(':')),
+      profanity_filter: this.#opts.profanityFilter,
+      language: this.#opts.language,
+    };
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined) {
+        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+          streamURL.searchParams.append(k, encodeURIComponent(v));
+        } else {
+          v.forEach((x) => streamURL.searchParams.append('keywords', encodeURIComponent(x)));
+        }
+      }
+    });
+
+    const ws = new WebSocket(streamURL, {
+      headers: { Authorization: `Token ${this.#opts.apiKey}` },
+    });
+    return ws;
+  }
 }
 
 const liveTranscriptionToSpeechData = (
@@ -317,4 +381,27 @@ const liveTranscriptionToSpeechData = (
     confidence: alt['confidence'],
     text: alt['transcript'],
   }));
+};
+
+const validateModel = (
+  model: STTModels,
+  language: STTLanguages | string | undefined,
+): STTModels => {
+  const logger = log();
+  const engModels = [
+    'nova-2-meeting',
+    'nova-2-phonecall',
+    'nova-2-finance',
+    'nova-2-conversationalai',
+    'nova-2-voicemail',
+    'nova-2-video',
+    'nova-2-medical',
+    'nova-2-drivethru',
+    'nova-2-automotive',
+  ];
+  if (language && !['en-US', 'en'].includes(language) && engModels.includes(model)) {
+    logger.warn(`${model} does not support language ${language}, falling back to nova-2-general`);
+    return 'nova-2-general';
+  }
+  return model;
 };
