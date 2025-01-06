@@ -39,7 +39,6 @@ jobs:
               - 'plugins/test/**'
             plugins: 
               - 'plugins/**'
-              - '!plugins/test/**'
       - name: Test agents
         if: steps.filter.outputs.agents-or-tests == 'true' || github.event_name != 'pull_request'
         run: pnpm test agents
