@@ -44,6 +44,11 @@ jobs:
         run: pnpm test agents
       - name: Test all plugins
         if: steps.filter.outputs.agents-or-tests == 'true' || github.event_name != 'pull_request'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ELEVEN_API_KEY: ${{ secrets.ELEVEN_API_KEY }}
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+          CARTESIA_API_KEY: ${{ secrets.CARTESIA_API_KEY }}
         run: pnpm test plugins
       - name: Test specific plugins
         if: steps.check.outputs.agents-or-tests == 'false' && steps.check.outputs.plugins == 'true' && github.event_name == 'pull_request'
