@@ -322,15 +322,19 @@ export class Worker {
         try {
           await new Promise((resolve, reject) => {
             this.#session!.on('open', resolve);
-            this.#session!.on('error', (error) => reject(error));
-            this.#session!.on('close', (code) => reject(new Error(`WebSocket returned ${code}`)));
+            this.#session!.on('error', (error) => reject(error.message));
+            this.#session!.on('close', (code) => reject(`WebSocket returned ${code}`));
           });
 
           retries = 0;
           this.#logger.debug('connected to LiveKit server');
           this.#runWS(this.#session);
           return;
-        } catch (e) {
+        } catch (e: unknown) {
+          if (e instanceof Error || e instanceof ErrorEvent) {
+            e = e.message;
+          }
+
           if (this.#closed) return;
           if (retries >= this.#opts.maxRetry) {
             throw new WorkerError(
