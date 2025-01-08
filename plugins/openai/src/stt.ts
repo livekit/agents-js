@@ -9,6 +9,7 @@ import type { GroqAudioModels, WhisperModels } from './models.js';
 export interface STTOptions {
   apiKey?: string;
   language: string;
+  prompt?: string;
   detectLanguage: boolean;
   model: WhisperModels | string;
   baseURL?: string;
@@ -117,6 +118,7 @@ export class STT extends stt.STT {
       file,
       model: this.#opts.model,
       language: config.language,
+      prompt: config.prompt,
       response_format: 'json',
     });
 
