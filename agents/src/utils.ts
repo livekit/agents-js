@@ -91,10 +91,18 @@ export class Queue<T> {
   }
 
   async get(): Promise<T> {
-    if (this.items.length === 0) {
-      await once(this.#events, 'put');
-    }
-    const item = this.items.shift()!;
+    const _get = async (): Promise<T> => {
+      if (this.items.length === 0) {
+        await once(this.#events, 'put');
+      }
+      let item = this.items.shift();
+      if (!item) {
+        item = await _get();
+      }
+      return item;
+    };
+
+    const item = _get();
     this.#events.emit('get');
     return item;
   }
