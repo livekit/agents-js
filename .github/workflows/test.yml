@@ -51,14 +51,14 @@ jobs:
           CARTESIA_API_KEY: ${{ secrets.CARTESIA_API_KEY }}
         run: pnpm test plugins
       - name: Test specific plugins
-        if: steps.check.outputs.agents-or-tests == 'false' && steps.check.outputs.plugins == 'true' && github.event_name == 'pull_request'
+        if: steps.filter.outputs.agents-or-tests == 'false' && steps.filter.outputs.plugins == 'true' && github.event_name == 'pull_request'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ELEVEN_API_KEY: ${{ secrets.ELEVEN_API_KEY }}
           DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
           CARTESIA_API_KEY: ${{ secrets.CARTESIA_API_KEY }}
         run: |
-          plugins=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^plugins.*\.ts$' | cut -d/ -f2 | sort -u | tr '\n' ' ')
+          plugins=$(git diff-tree --name-only --no-commit-id -r ${{ github.sha }} | grep '^plugins.*\.ts$' | cut -d/ -f2 | sort -u | tr '\n' ' ')
           read -ra plugins <<< "$plugins"
           for plugin in "${plugins[@]}"; do
             pnpm test $plugin

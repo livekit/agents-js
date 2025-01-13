@@ -40,7 +40,7 @@ const AUTHORIZATION_HEADER = 'xi-api-key';
 export interface TTSOptions {
   apiKey?: string;
   voice: Voice;
-  modelID: TTSModels;
+  modelID: TTSModels | string;
   baseURL: string;
   encoding: TTSEncoding;
   streamingLatency: number;
