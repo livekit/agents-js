@@ -355,7 +355,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       if (this.#participant) {
         return;
       }
-      this.#linkParticipant.call(this, participant.identity);
+      this.#linkParticipant.call(this, participant.identity!);
     });
 
     this.#room = room;
@@ -365,7 +365,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       if (typeof participant === 'string') {
         this.#linkParticipant(participant);
       } else {
-        this.#linkParticipant(participant.identity);
+        this.#linkParticipant(participant.identity!);
       }
     }
 

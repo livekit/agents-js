@@ -37,7 +37,7 @@ importers:
         version: 8.10.0(eslint@8.57.0)
       eslint-config-standard:
         specifier: ^17.1.0
-        version: 17.1.0(eslint-plugin-import@2.29.1)(eslint-plugin-n@16.6.2(eslint@8.57.0))(eslint-plugin-promise@6.1.1(eslint@8.57.0))(eslint@8.57.0)
+        version: 17.1.0(eslint-plugin-import@2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint@8.57.0))(eslint-plugin-n@16.6.2(eslint@8.57.0))(eslint-plugin-promise@6.1.1(eslint@8.57.0))(eslint@8.57.0)
       eslint-config-turbo:
         specifier: ^1.12.2
         version: 1.13.3(eslint@8.57.0)
@@ -106,8 +106,8 @@ importers:
         version: 3.23.8
     devDependencies:
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.1
+        version: 0.13.1
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -142,8 +142,8 @@ importers:
         specifier: workspace:*
         version: link:../plugins/silero
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.1
+        version: 0.13.1
       livekit-server-sdk:
         specifier: ^2.9.2
         version: 2.9.2
@@ -177,8 +177,8 @@ importers:
         specifier: workspace:^x
         version: link:../test
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.1
+        version: 0.13.1
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -208,8 +208,8 @@ importers:
         specifier: workspace:^x
         version: link:../test
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.1
+        version: 0.13.1
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -239,8 +239,8 @@ importers:
         specifier: workspace:^x
         version: link:../test
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.1
+        version: 0.13.1
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -276,8 +276,8 @@ importers:
         specifier: workspace:^x
         version: link:../test
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.1
+        version: 0.13.1
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -304,8 +304,8 @@ importers:
         specifier: workspace:^x
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.1
+        version: 0.13.1
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -338,8 +338,8 @@ importers:
         specifier: workspace:^x
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.1
+        version: 0.13.1
       '@types/node':
         specifier: ^22.5.5
         version: 22.5.5
@@ -419,9 +419,6 @@ packages:
 
   '@bufbuild/protobuf@1.10.0':
     resolution: {integrity: sha512-QDdVFLoN93Zjg36NoQPZfsVH9tZew7wKDKyV5qRdj8ntT4wQCOradQjRaTdwMhWUYsgKsvCINKKm87FdEk96Ag==}
-
-  '@bufbuild/protobuf@2.2.1':
-    resolution: {integrity: sha512-gdWzq7eX017a1kZCU/bP/sbk4e0GZ6idjsXOcMrQwODCb/rx985fHJJ8+hCu79KpuG7PfZh7bo3BBjPH37JuZw==}
 
   '@changesets/apply-release-plan@7.0.1':
     resolution: {integrity: sha512-aPdSq/R++HOyfEeBGjEe6LNG8gs0KMSyRETD/J2092OkNq8mOioAxyKjMbvVUdzgr/HTawzMOz7lfw339KnsCA==}
@@ -1085,38 +1082,38 @@ packages:
   '@livekit/protocol@1.29.1':
     resolution: {integrity: sha512-OhxXTZlyM5f4ydnAq1p5azzzOtKWmIoCSVtyVj9rgE42zQI5JM1rR9pubVRZovouGSvEDSJx9yL4Js2IlIyM1Q==}
 
-  '@livekit/rtc-node-darwin-arm64@0.12.1':
-    resolution: {integrity: sha512-GF+QnRp7yBK4AyeG3eZiuAzbQOH4+bkLSyTgb5A1CzGEca2XD5CSgKUeGtIgIglq0XmYzN6bvl260xUWPl0WCQ==}
+  '@livekit/rtc-node-darwin-arm64@0.13.1':
+    resolution: {integrity: sha512-7/DwkJbwT13J7zh2ikHC83mw/ooIQLdqSpC5GTaoqOVWfNCantzLYM7y1LpeP15A3pYtjaUHjrg3TvUaJxFP1w==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
 
-  '@livekit/rtc-node-darwin-x64@0.12.1':
-    resolution: {integrity: sha512-uORO+/W5jvCfuFcmzQ4q5WCgJX5EW7eUxgfUHSaIuzcwgxBxG4yagWDl9WkK6MY9V1j6fhAiNlJ3hPl8cYGUjA==}
+  '@livekit/rtc-node-darwin-x64@0.13.1':
+    resolution: {integrity: sha512-qdeqOum4u/G1dUiT9uOnFCOcAcd3wQ2FKG9wMcIO8szFIk4DZjlCBwZ3Z3rz43LMww4wGM0zbIFdtOyCezbiTA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
 
-  '@livekit/rtc-node-linux-arm64-gnu@0.12.1':
-    resolution: {integrity: sha512-8LIHq0nSwCjUMVPNfrohupH2ynhEFcYmidYa1KmHLkVlW+gyXBfy+QE7voAbXhTSbLZLDX58N5KGCQa61LSVAA==}
+  '@livekit/rtc-node-linux-arm64-gnu@0.13.1':
+    resolution: {integrity: sha512-BxybNchEYcZeX/TaacnnoaeEegauu7pRDujDffTJVegYJQUveh83KjV2nQlg7JRvLeaT2VMAt3mMiZiGdkZNWA==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
 
-  '@livekit/rtc-node-linux-x64-gnu@0.12.1':
-    resolution: {integrity: sha512-8x5IKzcTmwGyy0I0CU5vzealCl7c0Fp4KMBakq/uUOavbh/Rs1nAsjT8flrXC09F4njXD1E9uYN6CMTN9uZeKw==}
+  '@livekit/rtc-node-linux-x64-gnu@0.13.1':
+    resolution: {integrity: sha512-ROvoLSWAo1qEIClFvMaQKNKr3B9VFDhDz0GAMAUpSY9Xlb1IpF7nao4N/c0O43K+M7YtBsIjW5oML+II7fm/lA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@livekit/rtc-node-win32-x64-msvc@0.12.1':
-    resolution: {integrity: sha512-zPbvUnpHdDlkEW3AN8wIqa3Wwae26MV/gQmqmP+3AjZRog8hMZy9Fe48lJgZR6VobjFjw99wSgIytYZCdIOUqQ==}
+  '@livekit/rtc-node-win32-x64-msvc@0.13.1':
+    resolution: {integrity: sha512-bpjODZrCNMWL+vQIZ+4G6gfnqavznGfHo+D8MltzYCBasuyAxjCjz4BZn5R+RJNm7wf+hJOhvFPmJ68Tb0V8cg==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
 
-  '@livekit/rtc-node@0.12.1':
-    resolution: {integrity: sha512-VNRobdI/CmZ8mVUV105uqFOH7BMDmK8VsNq4GrpWAdXKnQMVKoAjLmvFU2LVQMKP4qE9BG3aTi59BGYt/PCLiA==}
+  '@livekit/rtc-node@0.13.1':
+    resolution: {integrity: sha512-bB5BW461lbNRUqNcC3cFCZB4iHzIJAaYaTLMaC5VmONR/CW852kibKPcEdrUILHaOcr7LDvBhG1S+j/28qfFhg==}
     engines: {node: '>= 18'}
 
   '@livekit/typed-emitter@3.0.0':
@@ -4062,8 +4059,6 @@ snapshots:
 
   '@bufbuild/protobuf@1.10.0': {}
 
-  '@bufbuild/protobuf@2.2.1': {}
-
   '@changesets/apply-release-plan@7.0.1':
     dependencies:
       '@babel/runtime': 7.24.5
@@ -4597,32 +4592,32 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 1.10.0
 
-  '@livekit/rtc-node-darwin-arm64@0.12.1':
+  '@livekit/rtc-node-darwin-arm64@0.13.1':
     optional: true
 
-  '@livekit/rtc-node-darwin-x64@0.12.1':
+  '@livekit/rtc-node-darwin-x64@0.13.1':
     optional: true
 
-  '@livekit/rtc-node-linux-arm64-gnu@0.12.1':
+  '@livekit/rtc-node-linux-arm64-gnu@0.13.1':
     optional: true
 
-  '@livekit/rtc-node-linux-x64-gnu@0.12.1':
+  '@livekit/rtc-node-linux-x64-gnu@0.13.1':
     optional: true
 
-  '@livekit/rtc-node-win32-x64-msvc@0.12.1':
+  '@livekit/rtc-node-win32-x64-msvc@0.13.1':
     optional: true
 
-  '@livekit/rtc-node@0.12.1':
+  '@livekit/rtc-node@0.13.1':
     dependencies:
-      '@bufbuild/protobuf': 2.2.1
+      '@bufbuild/protobuf': 1.10.0
       '@livekit/mutex': 1.1.1
       '@livekit/typed-emitter': 3.0.0
     optionalDependencies:
-      '@livekit/rtc-node-darwin-arm64': 0.12.1
-      '@livekit/rtc-node-darwin-x64': 0.12.1
-      '@livekit/rtc-node-linux-arm64-gnu': 0.12.1
-      '@livekit/rtc-node-linux-x64-gnu': 0.12.1
-      '@livekit/rtc-node-win32-x64-msvc': 0.12.1
+      '@livekit/rtc-node-darwin-arm64': 0.13.1
+      '@livekit/rtc-node-darwin-x64': 0.13.1
+      '@livekit/rtc-node-linux-arm64-gnu': 0.13.1
+      '@livekit/rtc-node-linux-x64-gnu': 0.13.1
+      '@livekit/rtc-node-win32-x64-msvc': 0.13.1
 
   '@livekit/typed-emitter@3.0.0': {}
 
@@ -5690,7 +5685,7 @@ snapshots:
     dependencies:
       eslint: 8.57.0
 
-  eslint-config-standard@17.1.0(eslint-plugin-import@2.29.1)(eslint-plugin-n@16.6.2(eslint@8.57.0))(eslint-plugin-promise@6.1.1(eslint@8.57.0))(eslint@8.57.0):
+  eslint-config-standard@17.1.0(eslint-plugin-import@2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint@8.57.0))(eslint-plugin-n@16.6.2(eslint@8.57.0))(eslint-plugin-promise@6.1.1(eslint@8.57.0))(eslint@8.57.0):
     dependencies:
       eslint: 8.57.0
       eslint-plugin-import: 2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0)
@@ -5715,7 +5710,7 @@ snapshots:
       debug: 4.3.4
       enhanced-resolve: 5.16.1
       eslint: 8.57.0
-      eslint-module-utils: 2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0)
+      eslint-module-utils: 2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1)(eslint@8.57.0))(eslint@8.57.0)
       eslint-plugin-import: 2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0)
       fast-glob: 3.3.2
       get-tsconfig: 4.7.5
@@ -5727,7 +5722,7 @@ snapshots:
       - eslint-import-resolver-webpack
       - supports-color
 
-  eslint-module-utils@2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0):
+  eslint-module-utils@2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1)(eslint@8.57.0))(eslint@8.57.0):
     dependencies:
       debug: 3.2.7
     optionalDependencies:
@@ -5755,7 +5750,7 @@ snapshots:
       doctrine: 2.1.0
       eslint: 8.57.0
       eslint-import-resolver-node: 0.3.9
-      eslint-module-utils: 2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0)
+      eslint-module-utils: 2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1)(eslint@8.57.0))(eslint@8.57.0)
       hasown: 2.0.2
       is-core-module: 2.13.1
       is-glob: 4.0.3
