@@ -419,7 +419,7 @@ export class MultimodalAgent extends EventEmitter {
 
   #getLocalTrackSid(): string | null {
     if (!this.#localTrackSid && this.room && this.room.localParticipant) {
-      this.#localTrackSid = findMicroTrackId(this.room, this.room.localParticipant?.identity!);
+      this.#localTrackSid = findMicroTrackId(this.room, this.room.localParticipant!.identity!);
     }
     return this.#localTrackSid;
   }
