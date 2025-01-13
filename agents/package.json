@@ -49,6 +49,6 @@
     "zod": "^3.23.8"
   },
   "peerDependencies": {
-    "@livekit/rtc-node": "^0.12.1"
+    "@livekit/rtc-node": "^0.13.1"
   }
 }
