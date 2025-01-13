@@ -159,7 +159,7 @@ export class AgentPlayout extends EventEmitter {
                     if (cancelledText || cancelled) {
                       break;
                     }
-                    handle.transcriptionFwd.pushText(text);
+                    await handle.transcriptionFwd.pushText(text);
                   }
                   resolveText();
                 } catch (error) {
@@ -189,12 +189,12 @@ export class AgentPlayout extends EventEmitter {
                       break;
                     }
                     if (firstFrame) {
-                      handle.transcriptionFwd.start();
+                      await handle.transcriptionFwd.start();
                       this.emit('playout_started');
                       firstFrame = false;
                     }
 
-                    handle.transcriptionFwd.pushAudio(frame);
+                    await handle.transcriptionFwd.pushAudio(frame);
 
                     for (const f of bstream.write(frame.data.buffer)) {
                       handle.pushedDuration += (f.samplesPerChannel / f.sampleRate) * 1000;
@@ -208,7 +208,7 @@ export class AgentPlayout extends EventEmitter {
                       await this.#audioSource.captureFrame(f);
                     }
 
-                    handle.transcriptionFwd.markAudioComplete();
+                    await handle.transcriptionFwd.markAudioComplete();
 
                     await this.#audioSource.waitForPlayout();
                   }
@@ -242,7 +242,7 @@ export class AgentPlayout extends EventEmitter {
 
             if (!firstFrame) {
               if (!handle.interrupted) {
-                handle.transcriptionFwd.markTextComplete();
+                await handle.transcriptionFwd.markTextComplete();
               }
 
               this.emit('playout_stopped', handle.interrupted);

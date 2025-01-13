@@ -331,3 +331,8 @@ export class AudioEnergyFilter {
     return false;
   }
 }
+
+/** @internal */
+export function sleep(timeInMs: number) {
+  return new Promise((resolve) => setTimeout(resolve, timeInMs));
+}
