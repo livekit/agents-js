@@ -40,7 +40,7 @@ const AUTHORIZATION_HEADER = 'xi-api-key';
 export interface TTSOptions {
   apiKey?: string;
   voice: Voice;
-  modelID: TTSModels;
+  modelID: TTSModels | string;
   baseURL: string;
   encoding: TTSEncoding;
   streamingLatency: number;
@@ -52,7 +52,7 @@ export interface TTSOptions {
 const defaultTTSOptions: TTSOptions = {
   apiKey: process.env.ELEVEN_API_KEY,
   voice: DEFAULT_VOICE,
-  modelID: 'eleven_turbo_v2_5',
+  modelID: 'eleven_flash_v2_5',
   baseURL: API_BASE_URL_V1,
   encoding: 'pcm_22050',
   streamingLatency: 3,

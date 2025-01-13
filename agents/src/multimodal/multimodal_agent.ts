@@ -153,7 +153,7 @@ export class MultimodalAgent extends EventEmitter {
         if (this.linkedParticipant) {
           return;
         }
-        this.#linkParticipant(participant.identity);
+        this.#linkParticipant(participant.identity!);
       });
       room.on(
         RoomEvent.TrackPublished,
@@ -227,12 +227,12 @@ export class MultimodalAgent extends EventEmitter {
         if (typeof participant === 'string') {
           this.#linkParticipant(participant);
         } else {
-          this.#linkParticipant(participant.identity);
+          this.#linkParticipant(participant.identity!);
         }
       } else {
         // No participant specified, try to find the first participant in the room
         for (const participant of room.remoteParticipants.values()) {
-          this.#linkParticipant(participant.identity);
+          this.#linkParticipant(participant.identity!);
           break;
         }
       }
@@ -247,7 +247,7 @@ export class MultimodalAgent extends EventEmitter {
 
         const trFwd = new BasicTranscriptionForwarder(
           this.room!,
-          this.room!.localParticipant!.identity,
+          this.room!.localParticipant!.identity!,
           this.#getLocalTrackSid()!,
           message.responseId,
         );
@@ -458,7 +458,7 @@ export class MultimodalAgent extends EventEmitter {
 
   #getLocalTrackSid(): string | null {
     if (!this.#localTrackSid && this.room && this.room.localParticipant) {
-      this.#localTrackSid = findMicroTrackId(this.room, this.room.localParticipant?.identity);
+      this.#localTrackSid = findMicroTrackId(this.room, this.room.localParticipant!.identity!);
     }
     return this.#localTrackSid;
   }
@@ -509,7 +509,7 @@ export class MultimodalAgent extends EventEmitter {
 
   #setState(state: AgentState) {
     if (this.room?.isConnected && this.room.localParticipant) {
-      const currentState = this.room.localParticipant.attributes[AGENT_STATE_ATTRIBUTE];
+      const currentState = this.room.localParticipant.attributes![AGENT_STATE_ATTRIBUTE];
       if (currentState !== state) {
         this.room.localParticipant.setAttributes({
           [AGENT_STATE_ATTRIBUTE]: state,
