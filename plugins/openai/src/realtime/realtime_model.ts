@@ -65,6 +65,7 @@ export interface RealtimeContent {
   textStream: AsyncIterableQueue<string>;
   audioStream: AsyncIterableQueue<AudioFrame>;
   toolCalls: RealtimeToolCall[];
+  contentType: api_proto.Modality;
 }
 
 export interface RealtimeToolCall {
@@ -669,6 +670,38 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     this.queueMsg(sessionUpdateEvent);
   }
 
+  /** Create an empty audio message with the given duration. */
+  #createEmptyUserAudioMessage(duration: number): llm.ChatMessage {
+    const samples = duration * api_proto.SAMPLE_RATE;
+    return new llm.ChatMessage({
+      role: llm.ChatRole.USER,
+      content: {
+        frame: new AudioFrame(
+          new Int16Array(samples * api_proto.NUM_CHANNELS),
+          api_proto.SAMPLE_RATE,
+          api_proto.NUM_CHANNELS,
+          samples,
+        ),
+      },
+    });
+  }
+
+  /**
+   * Try to recover from a text response to audio mode.
+   *
+   * @remarks
+   * Sometimes the OpenAI Realtime API returns text instead of audio responses.
+   * This method tries to recover from this by requesting a new response after deleting the text
+   * response and creating an empty user audio message.
+   */
+  recoverFromTextResponse(itemId: string) {
+    if (itemId) {
+      this.conversation.item.delete(itemId);
+    }
+    this.conversation.item.create(this.#createEmptyUserAudioMessage(1));
+    this.response.create();
+  }
+
   #start(): Promise<void> {
     return new Promise(async (resolve, reject) => {
       const headers: Record<string, string> = {
@@ -1127,6 +1160,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       textStream: textStream,
       audioStream: audioStream,
       toolCalls: [],
+      contentType: event.part.type,
     };
     output?.content.push(newContent);
     response!.firstTokenTimestamp = Date.now();
@@ -1143,6 +1177,8 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   }
 
   #handleResponseTextDone(event: api_proto.ResponseTextDoneEvent): void {
+    const content = this.#getContent(event);
+    content.text = event.text;
     this.emit('response_text_done', event);
   }
 
