@@ -1,5 +1,15 @@
 # @livekit/agents
 
+## 0.6.1
+
+### Patch Changes
+
+- remove incorrect !-assertion in queue implementation leading to race conditions - [#240](https://github.com/livekit/agents-js/pull/240) ([@nbsp](https://github.com/nbsp))
+
+- chore(bump): rtc-node -> 0.13.1 - [#247](https://github.com/livekit/agents-js/pull/247) ([@nbsp](https://github.com/nbsp))
+
+- re-request audio response in multimodal agent when text is given - [#243](https://github.com/livekit/agents-js/pull/243) ([@nbsp](https://github.com/nbsp))
+
 ## 0.6.0
 
 ### Minor Changes
