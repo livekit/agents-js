@@ -35,7 +35,7 @@ export const tts = async (
       await validate(frames, stt, TEXT, 0.2);
     });
 
-    it('should properly stream synthesize tests', async () => {
+    it('should properly stream synthesize text', async () => {
       let stream: ttslib.SynthesizeStream;
       if (supports.streaming) {
         stream = tts.stream();
