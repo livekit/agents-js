@@ -1,5 +1,16 @@
 # @livekit/agents-plugin-elevenlabs
 
+## 0.5.3
+
+### Patch Changes
+
+- allow any string for model - [#249](https://github.com/livekit/agents-js/pull/249) ([@nbsp](https://github.com/nbsp))
+
+- add flash models - [#246](https://github.com/livekit/agents-js/pull/246) ([@sam-trost](https://github.com/sam-trost))
+
+- Updated dependencies [[`4a66a82fc2fd0a25e30bdaa0bd095804c65ee101`](https://github.com/livekit/agents-js/commit/4a66a82fc2fd0a25e30bdaa0bd095804c65ee101), [`01aaa85445bbb8f30afe9c16360afb5a45c38e9e`](https://github.com/livekit/agents-js/commit/01aaa85445bbb8f30afe9c16360afb5a45c38e9e), [`4b7504654c73d9111d39e90d325d5f660b2c8ad9`](https://github.com/livekit/agents-js/commit/4b7504654c73d9111d39e90d325d5f660b2c8ad9)]:
+  - @livekit/agents@0.6.1
+
 ## 0.5.2
 
 ### Patch Changes

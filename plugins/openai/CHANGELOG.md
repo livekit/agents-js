@@ -1,5 +1,18 @@
 # @livekit/agents-plugin-openai
 
+## 0.8.0
+
+### Minor Changes
+
+- Add support for OpenAI Whisper STT prompt parameter - [#239](https://github.com/livekit/agents-js/pull/239) ([@FlorDonnaSanders](https://github.com/FlorDonnaSanders))
+
+### Patch Changes
+
+- re-request audio response in multimodal agent when text is given - [#243](https://github.com/livekit/agents-js/pull/243) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`4a66a82fc2fd0a25e30bdaa0bd095804c65ee101`](https://github.com/livekit/agents-js/commit/4a66a82fc2fd0a25e30bdaa0bd095804c65ee101), [`01aaa85445bbb8f30afe9c16360afb5a45c38e9e`](https://github.com/livekit/agents-js/commit/01aaa85445bbb8f30afe9c16360afb5a45c38e9e), [`4b7504654c73d9111d39e90d325d5f660b2c8ad9`](https://github.com/livekit/agents-js/commit/4b7504654c73d9111d39e90d325d5f660b2c8ad9)]:
+  - @livekit/agents@0.6.1
+
 ## 0.7.3
 
 ### Patch Changes
