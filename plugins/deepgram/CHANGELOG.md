@@ -1,5 +1,11 @@
 # @livekit/agents-plugin-deepgram
 
+## 0.5.2
+
+### Patch Changes
+
+- update rtc-node - [#255](https://github.com/livekit/agents-js/pull/255) ([@nbsp](https://github.com/nbsp))
+
 ## 0.5.1
 
 ### Patch Changes
