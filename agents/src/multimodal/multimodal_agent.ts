@@ -36,6 +36,7 @@ export abstract class RealtimeSession extends EventEmitter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   abstract inputAudioBuffer: any; // openai.realtime.InputAudioBuffer
   abstract fncCtx: llm.FunctionContext | undefined;
+  abstract recoverFromTextResponse(itemId: string): void;
 }
 
 /**
@@ -63,19 +64,25 @@ export class MultimodalAgent extends EventEmitter {
   subscribedTrack: RemoteAudioTrack | null = null;
   readMicroTask: Promise<void> | null = null;
 
+  #textResponseRetries = 0;
+  #maxTextResponseRetries: number;
+
   constructor({
     model,
     chatCtx,
     fncCtx,
+    maxTextResponseRetries = 5,
   }: {
     model: RealtimeModel;
     chatCtx?: llm.ChatContext;
     fncCtx?: llm.FunctionContext;
+    maxTextResponseRetries?: number;
   }) {
     super();
     this.model = model;
     this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
+    this.#maxTextResponseRetries = maxTextResponseRetries;
   }
 
   #participant: RemoteParticipant | string | null = null;
@@ -236,6 +243,8 @@ export class MultimodalAgent extends EventEmitter {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('response_content_added', (message: any) => {
         // openai.realtime.RealtimeContent
+        if (message.contentType === 'text') return;
+
         const trFwd = new BasicTranscriptionForwarder(
           this.room!,
           this.room!.localParticipant!.identity!,
@@ -251,6 +260,36 @@ export class MultimodalAgent extends EventEmitter {
           message.audioStream,
         );
         this.#playingHandle = handle;
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.#session.on('response_content_done', (message: any) => {
+        // openai.realtime.RealtimeContent
+        if (message.contentType === 'text') {
+          if (this.#textResponseRetries >= this.#maxTextResponseRetries) {
+            throw new Error(
+              'The OpenAI Realtime API returned a text response ' +
+                `after ${this.#maxTextResponseRetries} retries. ` +
+                'Please try to reduce the number of text system or ' +
+                'assistant messages in the chat context.',
+            );
+          }
+
+          this.#textResponseRetries++;
+          this.#logger
+            .child({
+              itemId: message.itemId,
+              text: message.text,
+              retries: this.#textResponseRetries,
+            })
+            .warn(
+              'The OpenAI Realtime API returned a text response instead of audio. ' +
+                'Attempting to recover to audio mode...',
+            );
+          this.#session!.recoverFromTextResponse(message.itemId);
+        } else {
+          this.#textResponseRetries = 0;
+        }
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
