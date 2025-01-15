@@ -488,7 +488,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       }
     });
     this.#humanInput.on(HumanInputEvent.END_OF_SPEECH, (event) => {
-      this.emit(VPAEvent.USER_STARTED_SPEAKING);
+      this.emit(VPAEvent.USER_STOPPED_SPEAKING);
       this.#deferredValidation.onHumanEndOfSpeech(event);
     });
     this.#humanInput.on(HumanInputEvent.INTERIM_TRANSCRIPT, (event) => {
@@ -971,6 +971,7 @@ class DeferredReplyValidation {
   #speaking = false;
   #endOfSpeechDelay: number;
   #finalTranscriptDelay: number;
+  #abort?: AbortController;
 
   constructor(validateFunc: () => Promise<void>, minEndpointingDelay: number) {
     this.#validateFunc = validateFunc;
@@ -997,10 +998,9 @@ class DeferredReplyValidation {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onHumanStartOfSpeech(_: VADEvent) {
     this.#speaking = true;
-    // TODO(nbsp):
-    // if (this.validating) {
-    //   this.#validatingPromise.cancel()
-    // }
+    if (this.validating) {
+      this.#abort?.abort();
+    }
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1011,7 +1011,7 @@ class DeferredReplyValidation {
     if (this.#lastFinalTranscript) {
       const delay = this.#endWithPunctuation()
         ? this.#endOfSpeechDelay * this.PUNCTUATION_REDUCE_FACTOR
-        : 1;
+        : 1_000;
       this.#run(delay);
     }
   }
@@ -1031,13 +1031,19 @@ class DeferredReplyValidation {
   }
 
   #run(delay: number) {
-    const runTask = async (delay: number) => {
-      await new Promise((resolve) => setTimeout(resolve, delay));
-      this.#resetStates();
-      await this.#validateFunc();
+    const runTask = async (delay: number, signal: AbortSignal) => {
+      const timeout = setTimeout(() => {
+        this.#resetStates();
+        this.#validateFunc();
+      }, delay);
+      signal.addEventListener('abort', () => {
+        clearTimeout(timeout);
+      });
     };
 
+    this.#abort?.abort();
+    this.#abort = new AbortController();
     this.#validatingFuture = new Future();
-    this.#validatingPromise = runTask(delay);
+    this.#validatingPromise = runTask(delay, this.#abort.signal);
   }
 }
