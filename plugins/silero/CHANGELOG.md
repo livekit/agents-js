@@ -1,5 +1,16 @@
 # @livekit/agents-plugin-silero
 
+## 0.5.3
+
+### Patch Changes
+
+- update rtc-node to 0.13.2 to fix issue with e2ee - [#258](https://github.com/livekit/agents-js/pull/258) ([@nbsp](https://github.com/nbsp))
+
+- update rtc-node - [#254](https://github.com/livekit/agents-js/pull/254) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`dedb1cf139c8af4ce8709c86440c818157f5b475`](https://github.com/livekit/agents-js/commit/dedb1cf139c8af4ce8709c86440c818157f5b475), [`f3258b948539406213c15f8e817449b2588cde84`](https://github.com/livekit/agents-js/commit/f3258b948539406213c15f8e817449b2588cde84)]:
+  - @livekit/agents@0.6.2
+
 ## 0.5.2
 
 ### Patch Changes
