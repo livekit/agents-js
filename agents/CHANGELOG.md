@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 0.6.2
+
+### Patch Changes
+
+- fix(pipeline): double LLM replies - [#259](https://github.com/livekit/agents-js/pull/259) ([@nbsp](https://github.com/nbsp))
+
+- update rtc-node to 0.13.2 to fix issue with e2ee - [#258](https://github.com/livekit/agents-js/pull/258) ([@nbsp](https://github.com/nbsp))
+
 ## 0.6.1
 
 ### Patch Changes
