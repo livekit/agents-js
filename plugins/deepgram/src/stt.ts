@@ -130,6 +130,7 @@ export class SpeechStream extends stt.SpeechStream {
   #audioEnergyFilter: AudioEnergyFilter;
   #logger = log();
   #speaking = false;
+  #ws: WebSocket;
   label = 'deepgram.SpeechStream';
 
   constructor(stt: STT, opts: STTOptions) {
@@ -137,36 +138,47 @@ export class SpeechStream extends stt.SpeechStream {
     this.#opts = opts;
     this.closed = false;
     this.#audioEnergyFilter = new AudioEnergyFilter();
+    this.#ws = new WebSocket(null);
 
     this.#run();
   }
 
   async #run(maxRetry = 32) {
     let retries = 0;
-    let ws: WebSocket;
+    // let ws: WebSocket;
     while (!this.input.closed) {
-      ws = this.#connectWs();
+      this.#ws = this.#connectWs();
 
       try {
         await new Promise((resolve, reject) => {
-          ws.on('open', resolve);
-          ws.on('error', (error) => reject(error));
-          ws.on('close', (code) => reject(`WebSocket returned ${code}`));
+          this.#ws.on('open', resolve);
+          this.#ws.on('error', (error) => reject(error));
+          this.#ws.on('close', (code) => {
+            if (code === 4000) {
+              // WebSocket closed to update Deepgram STT options
+              reject('4000');
+            } else {
+              reject(`WebSocket returned ${code}`);
+            }
+          });
         });
 
-        await this.#runWS(ws);
+        await this.#runWS(this.#ws);
       } catch (e) {
-        if (retries >= maxRetry) {
-          throw new Error(`failed to connect to Deepgram after ${retries} attempts: ${e}`);
+        if (e === '4000') {
+          this.#logger.info('updating Deepgram STT options');
+        } else {
+          if (retries >= maxRetry) {
+            throw new Error(`failed to connect to Deepgram after ${retries} attempts: ${e}`);
+          }
+
+          const delay = Math.min(retries * 5, 10);
+          retries++;
+          this.#logger.warn(
+            `failed to connect to Deepgram, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         }
-
-        const delay = Math.min(retries * 5, 10);
-        retries++;
-
-        this.#logger.warn(
-          `failed to connect to Deepgram, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, delay * 1000));
       }
     }
 
@@ -319,6 +331,7 @@ export class SpeechStream extends stt.SpeechStream {
     keywords?: [string, number][],
     profanityFilter?: boolean,
   ) {
+    console.log('called update', punctuate);
     if (language !== undefined) this.#opts.language = language;
     if (model !== undefined) this.#opts.model = model;
     if (interimResults !== undefined) this.#opts.interimResults = interimResults;
@@ -331,6 +344,8 @@ export class SpeechStream extends stt.SpeechStream {
     if (numChannels !== undefined) this.#opts.numChannels = numChannels;
     if (keywords !== undefined) this.#opts.keywords = keywords;
     if (profanityFilter !== undefined) this.#opts.profanityFilter = profanityFilter;
+    // Custom close code to handle update options
+    this.#ws.close(4000);
   }
 
   #connectWs(): WebSocket {
