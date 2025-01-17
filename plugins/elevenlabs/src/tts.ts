@@ -41,6 +41,7 @@ export interface TTSOptions {
   apiKey?: string;
   voice: Voice;
   modelID: TTSModels | string;
+  languageCode?: string;
   baseURL: string;
   encoding: TTSEncoding;
   streamingLatency: number;
@@ -134,6 +135,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       output_format: opts.encoding,
       optimize_streaming_latency: `${opts.streamingLatency}`,
       enable_ssml_parsing: `${opts.enableSsmlParsing}`,
+      ...(opts.languageCode && { language_code: opts.languageCode }),
     };
     Object.entries(params).forEach(([k, v]) => this.streamURL.searchParams.append(k, v));
     this.streamURL.protocol = this.streamURL.protocol.replace('http', 'ws');
