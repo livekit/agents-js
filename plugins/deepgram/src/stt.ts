@@ -79,48 +79,22 @@ export class STT extends stt.STT {
     return stream;
   }
 
-  updateOptions(
-    language?: STTLanguages,
-    model?: STTModels,
-    interimResults?: boolean,
-    punctuate?: boolean,
-    smartFormat?: boolean,
-    noDelay?: boolean,
-    endpointing?: number,
-    fillerWords?: boolean,
-    sampleRate?: number,
-    numChannels?: number,
-    keywords?: [string, number][],
-    profanityFilter?: boolean,
-  ) {
-    if (language !== undefined) this.#opts.language = language;
-    if (model !== undefined) this.#opts.model = model;
-    if (interimResults !== undefined) this.#opts.interimResults = interimResults;
-    if (punctuate !== undefined) this.#opts.punctuate = punctuate;
-    if (smartFormat !== undefined) this.#opts.smartFormat = smartFormat;
-    if (noDelay !== undefined) this.#opts.noDelay = noDelay;
-    if (endpointing !== undefined) this.#opts.endpointing = endpointing;
-    if (fillerWords !== undefined) this.#opts.fillerWords = fillerWords;
-    if (sampleRate !== undefined) this.#opts.sampleRate = sampleRate;
-    if (numChannels !== undefined) this.#opts.numChannels = numChannels;
-    if (keywords !== undefined) this.#opts.keywords = keywords;
-    if (profanityFilter !== undefined) this.#opts.profanityFilter = profanityFilter;
+  updateOptions(opts: Partial<STTOptions>) {
+    if (opts.language !== undefined) this.#opts.language = opts.language;
+    if (opts.model !== undefined) this.#opts.model = opts.model;
+    if (opts.interimResults !== undefined) this.#opts.interimResults = opts.interimResults;
+    if (opts.punctuate !== undefined) this.#opts.punctuate = opts.punctuate;
+    if (opts.smartFormat !== undefined) this.#opts.smartFormat = opts.smartFormat;
+    if (opts.noDelay !== undefined) this.#opts.noDelay = opts.noDelay;
+    if (opts.endpointing !== undefined) this.#opts.endpointing = opts.endpointing;
+    if (opts.fillerWords !== undefined) this.#opts.fillerWords = opts.fillerWords;
+    if (opts.sampleRate !== undefined) this.#opts.sampleRate = opts.sampleRate;
+    if (opts.numChannels !== undefined) this.#opts.numChannels = opts.numChannels;
+    if (opts.keywords !== undefined) this.#opts.keywords = opts.keywords;
+    if (opts.profanityFilter !== undefined) this.#opts.profanityFilter = opts.profanityFilter;
 
     this.#streams.forEach((stream) => {
-      stream.updateOptions(
-        language,
-        model,
-        interimResults,
-        punctuate,
-        smartFormat,
-        noDelay,
-        endpointing,
-        fillerWords,
-        sampleRate,
-        numChannels,
-        keywords,
-        profanityFilter,
-      );
+      stream.updateOptions(opts);
     });
   }
 }
@@ -147,6 +121,7 @@ export class SpeechStream extends stt.SpeechStream {
     let retries = 0;
     // let ws: WebSocket;
     while (!this.input.closed) {
+      console.log('websocket running');
       this.#ws = this.#connectWs();
 
       try {
@@ -155,6 +130,7 @@ export class SpeechStream extends stt.SpeechStream {
           this.#ws.on('error', (error) => reject(error));
           this.#ws.on('close', (code) => {
             if (code === 4000) {
+              console.log('websocket closed');
               // WebSocket closed to update Deepgram STT options
               reject('4000');
             } else {
@@ -317,33 +293,20 @@ export class SpeechStream extends stt.SpeechStream {
     clearInterval(keepalive);
   }
 
-  updateOptions(
-    language?: STTLanguages,
-    model?: STTModels,
-    interimResults?: boolean,
-    punctuate?: boolean,
-    smartFormat?: boolean,
-    noDelay?: boolean,
-    endpointing?: number,
-    fillerWords?: boolean,
-    sampleRate?: number,
-    numChannels?: number,
-    keywords?: [string, number][],
-    profanityFilter?: boolean,
-  ) {
-    console.log('called update', punctuate);
-    if (language !== undefined) this.#opts.language = language;
-    if (model !== undefined) this.#opts.model = model;
-    if (interimResults !== undefined) this.#opts.interimResults = interimResults;
-    if (punctuate !== undefined) this.#opts.punctuate = punctuate;
-    if (smartFormat !== undefined) this.#opts.smartFormat = smartFormat;
-    if (noDelay !== undefined) this.#opts.noDelay = noDelay;
-    if (endpointing !== undefined) this.#opts.endpointing = endpointing;
-    if (fillerWords !== undefined) this.#opts.fillerWords = fillerWords;
-    if (sampleRate !== undefined) this.#opts.sampleRate = sampleRate;
-    if (numChannels !== undefined) this.#opts.numChannels = numChannels;
-    if (keywords !== undefined) this.#opts.keywords = keywords;
-    if (profanityFilter !== undefined) this.#opts.profanityFilter = profanityFilter;
+  updateOptions(opts: Partial<STTOptions>) {
+    console.log('called update', opts);
+    if (opts.language !== undefined) this.#opts.language = opts.language;
+    if (opts.model !== undefined) this.#opts.model = opts.model;
+    if (opts.interimResults !== undefined) this.#opts.interimResults = opts.interimResults;
+    if (opts.punctuate !== undefined) this.#opts.punctuate = opts.punctuate;
+    if (opts.smartFormat !== undefined) this.#opts.smartFormat = opts.smartFormat;
+    if (opts.noDelay !== undefined) this.#opts.noDelay = opts.noDelay;
+    if (opts.endpointing !== undefined) this.#opts.endpointing = opts.endpointing;
+    if (opts.fillerWords !== undefined) this.#opts.fillerWords = opts.fillerWords;
+    if (opts.sampleRate !== undefined) this.#opts.sampleRate = opts.sampleRate;
+    if (opts.numChannels !== undefined) this.#opts.numChannels = opts.numChannels;
+    if (opts.keywords !== undefined) this.#opts.keywords = opts.keywords;
+    if (opts.profanityFilter !== undefined) this.#opts.profanityFilter = opts.profanityFilter;
     // Custom close code to handle update options
     this.#ws.close(4000);
   }
@@ -366,6 +329,7 @@ export class SpeechStream extends stt.SpeechStream {
       profanity_filter: this.#opts.profanityFilter,
       language: this.#opts.language,
     };
+    console.log('params', params);
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined) {
         if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
