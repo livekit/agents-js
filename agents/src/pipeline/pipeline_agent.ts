@@ -805,9 +805,9 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.emit(VPAEvent.FUNCTION_CALLS_FINISHED, calledFuncs);
     };
 
-    let finished = false
+    let finished = false;
     const task = executeFunctionCalls().then(() => {
-      finished = true
+      finished = true;
     });
     while (!handle.nestedSpeechFinished) {
       const changed = handle.nestedSpeechChanged();
@@ -825,8 +825,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         handle.markNestedSpeechFinished();
       }
     }
-    handle.setDone()
-
+    handle.setDone();
   }
 
   #synthesizeAgentSpeech(
