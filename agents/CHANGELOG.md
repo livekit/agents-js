@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 0.6.3
+
+### Patch Changes
+
+- fix LLM retries breaking on VoicePipelineAgent - [#265](https://github.com/livekit/agents-js/pull/265) ([@nbsp](https://github.com/nbsp))
+
 ## 0.6.2
 
 ### Patch Changes

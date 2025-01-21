@@ -1,5 +1,16 @@
 # @livekit/agents-plugin-elevenlabs
 
+## 0.6.0
+
+### Minor Changes
+
+- Add support for language code in 11Labs TTS package. - [#262](https://github.com/livekit/agents-js/pull/262) ([@FlorDonnaSanders](https://github.com/FlorDonnaSanders))
+
+### Patch Changes
+
+- Updated dependencies [[`7546a5b76729c90553142159bed0d14247486273`](https://github.com/livekit/agents-js/commit/7546a5b76729c90553142159bed0d14247486273)]:
+  - @livekit/agents@0.6.3
+
 ## 0.5.4
 
 ### Patch Changes
