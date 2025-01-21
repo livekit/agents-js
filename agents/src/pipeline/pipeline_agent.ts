@@ -696,6 +696,35 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     const isUsingTools = handle.source instanceof LLMStream && !!handle.source.functionCalls.length;
     const interrupted = handle.interrupted;
 
+    if (handle.addToChatCtx && (!userQuestion || handle.userCommitted)) {
+      if (handle.extraToolsMessages) {
+        this.chatCtx.messages.push(...handle.extraToolsMessages);
+      }
+      if (interrupted) {
+        collectedText + '…';
+      }
+
+      const msg = ChatMessage.create({ text: collectedText, role: ChatRole.ASSISTANT });
+      this.chatCtx.messages.push(msg);
+
+      handle.markSpeechCommitted();
+      if (interrupted) {
+        this.emit(VPAEvent.AGENT_SPEECH_INTERRUPTED, msg);
+      } else {
+        this.emit(VPAEvent.AGENT_SPEECH_COMMITTED, msg);
+      }
+
+      this.#logger
+        .child({
+          agentTranscript: collectedText,
+          interrupted,
+          speechId: handle.id,
+        })
+        .debug('committed agent speech');
+
+      handle.setDone();
+    }
+
     const executeFunctionCalls = async () => {
       // if the answer is using tools, execute the functions and automatically generate
       // a response to the user question from the returned values
@@ -708,7 +737,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         return;
       }
 
-      if (!userQuestion || !handle.userCommitted) {
+      if (userQuestion && !handle.userCommitted) {
         throw new Error('user speech should have been committed before using tools');
       }
       const llmStream = handle.source;
@@ -776,8 +805,9 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.emit(VPAEvent.FUNCTION_CALLS_FINISHED, calledFuncs);
     };
 
+    let finished = false
     const task = executeFunctionCalls().then(() => {
-      handle.markNestedSpeechFinished();
+      finished = true
     });
     while (!handle.nestedSpeechFinished) {
       const changed = handle.nestedSpeechChanged();
@@ -789,36 +819,14 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         handle.nestedSpeechHandles.shift();
         this.#playingSpeech = handle;
       }
+
+      handle.nestedSpeechHandles.forEach(() => handle.nestedSpeechHandles.pop());
+      if (finished) {
+        handle.markNestedSpeechFinished();
+      }
     }
+    handle.setDone()
 
-    if (handle.addToChatCtx && (!userQuestion || handle.userCommitted)) {
-      if (handle.extraToolsMessages) {
-        this.chatCtx.messages.push(...handle.extraToolsMessages);
-      }
-      if (interrupted) {
-        collectedText + '…';
-      }
-
-      const msg = ChatMessage.create({ text: collectedText, role: ChatRole.ASSISTANT });
-      this.chatCtx.messages.push(msg);
-
-      handle.markSpeechCommitted();
-      if (interrupted) {
-        this.emit(VPAEvent.AGENT_SPEECH_INTERRUPTED, msg);
-      } else {
-        this.emit(VPAEvent.AGENT_SPEECH_COMMITTED, msg);
-      }
-
-      this.#logger
-        .child({
-          agentTranscript: collectedText,
-          interrupted,
-          speechId: handle.id,
-        })
-        .debug('committed agent speech');
-
-      handle.setDone();
-    }
   }
 
   #synthesizeAgentSpeech(
