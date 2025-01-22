@@ -81,6 +81,7 @@ export class STT extends stt.STT {
 
   updateOptions(opts: Partial<STTOptions>) {
     if (opts.language !== undefined) this.#opts.language = opts.language;
+    if (opts.detectLanguage !== undefined) this.#opts.language = undefined;
     if (opts.model !== undefined) this.#opts.model = opts.model;
     if (opts.interimResults !== undefined) this.#opts.interimResults = opts.interimResults;
     if (opts.punctuate !== undefined) this.#opts.punctuate = opts.punctuate;
@@ -112,7 +113,7 @@ export class SpeechStream extends stt.SpeechStream {
     this.#opts = opts;
     this.closed = false;
     this.#audioEnergyFilter = new AudioEnergyFilter();
-    this.#ws = new WebSocket(null);
+    this.#ws = this.#connectWs();
 
     this.#run();
   }
@@ -130,7 +131,6 @@ export class SpeechStream extends stt.SpeechStream {
           this.#ws.on('error', (error) => reject(error));
           this.#ws.on('close', (code) => {
             if (code === 4000) {
-              console.log('websocket closed');
               // WebSocket closed to update Deepgram STT options
               reject('4000');
             } else {
@@ -141,20 +141,16 @@ export class SpeechStream extends stt.SpeechStream {
 
         await this.#runWS(this.#ws);
       } catch (e) {
-        if (e === '4000') {
-          this.#logger.info('updating Deepgram STT options');
-        } else {
-          if (retries >= maxRetry) {
-            throw new Error(`failed to connect to Deepgram after ${retries} attempts: ${e}`);
-          }
-
-          const delay = Math.min(retries * 5, 10);
-          retries++;
-          this.#logger.warn(
-            `failed to connect to Deepgram, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
+        if (retries >= maxRetry) {
+          throw new Error(`failed to connect to Deepgram after ${retries} attempts: ${e}`);
         }
+
+        const delay = Math.min(retries * 5, 10);
+        retries++;
+        this.#logger.warn(
+          `failed to connect to Deepgram, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay * 1000));
       }
     }
 
@@ -162,7 +158,7 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   async #runWS(ws: WebSocket) {
-    let closing = false;
+    let shouldExit = false;
 
     const keepalive = setInterval(() => {
       try {
@@ -181,121 +177,138 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
-      for await (const data of this.input) {
-        let frames: AudioFrame[];
-        if (data === SpeechStream.FLUSH_SENTINEL) {
-          frames = stream.flush();
-        } else if (
-          data.sampleRate === this.#opts.sampleRate ||
-          data.channels === this.#opts.numChannels
-        ) {
-          frames = stream.write(data.data.buffer);
-        } else {
-          throw new Error(`sample rate or channel count of frame does not match`);
-        }
+      try {
+        for await (const data of this.input) {
+          if (shouldExit) break;
 
-        for await (const frame of frames) {
-          if (this.#audioEnergyFilter.pushFrame(frame)) {
-            ws.send(frame.data.buffer);
+          let frames: AudioFrame[];
+          if (data === SpeechStream.FLUSH_SENTINEL) {
+            frames = stream.flush();
+          } else if (
+            data.sampleRate === this.#opts.sampleRate ||
+            data.channels === this.#opts.numChannels
+          ) {
+            frames = stream.write(data.data.buffer);
+          } else {
+            throw new Error(`sample rate or channel count of frame does not match`);
+          }
+
+          for await (const frame of frames) {
+            if (shouldExit) break;
+            if (this.#audioEnergyFilter.pushFrame(frame)) {
+              ws.send(frame.data.buffer);
+            }
           }
         }
-      }
 
-      closing = true;
-      ws.send(JSON.stringify({ type: 'CloseStream' }));
+        if (!shouldExit) {
+          ws.send(JSON.stringify({ type: 'CloseStream' }));
+        }
+      } catch (error) {
+        if (!shouldExit) throw error;
+      }
     };
 
     const listenTask = async () => {
-      new Promise<void>((_, reject) =>
-        ws.once('close', (code, reason) => {
-          if (!closing) {
-            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-            reject();
-          }
-        }),
-      );
+      try {
+        while (!this.closed) {
+          if (shouldExit) break;
 
-      while (!this.closed) {
-        try {
-          await new Promise<RawData>((resolve) => {
+          const msg = await new Promise<RawData>((resolve, reject) => {
             ws.once('message', (data) => resolve(data));
-          }).then((msg) => {
-            const json = JSON.parse(msg.toString());
-            switch (json['type']) {
-              case 'SpeechStarted': {
-                // This is a normal case. Deepgram's SpeechStarted events
-                // are not correlated with speech_final or utterance end.
-                // It's possible that we receive two in a row without an endpoint
-                // It's also possible we receive a transcript without a SpeechStarted event.
-                if (this.#speaking) return;
-                this.#speaking = true;
-                this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
-                break;
-              }
-              // see this page:
-              // https://developers.deepgram.com/docs/understand-endpointing-interim-results#using-endpointing-speech_final
-              // for more information about the different types of events
-              case 'Results': {
-                const isFinal = json['is_final'];
-                const isEndpoint = json['speech_final'];
-
-                const alternatives = liveTranscriptionToSpeechData(this.#opts.language!, json);
-
-                // If, for some reason, we didn't get a SpeechStarted event but we got
-                // a transcript with text, we should start speaking. It's rare but has
-                // been observed.
-                if (alternatives[0] && alternatives[0].text) {
-                  if (!this.#speaking) {
-                    this.#speaking = true;
-                    this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
-                  }
-
-                  if (isFinal) {
-                    this.queue.put({
-                      type: stt.SpeechEventType.FINAL_TRANSCRIPT,
-                      alternatives: [alternatives[0], ...alternatives.slice(1)],
-                    });
-                  } else {
-                    this.queue.put({
-                      type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
-                      alternatives: [alternatives[0], ...alternatives.slice(1)],
-                    });
-                  }
-                }
-
-                // if we receive an endpoint, only end the speech if
-                // we either had a SpeechStarted event or we have a seen
-                // a non-empty transcript (deepgram doesn't have a SpeechEnded event)
-                if (isEndpoint && this.#speaking) {
-                  this.#speaking = false;
-                  this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
-                }
-
-                break;
-              }
-              case 'Metadata': {
-                break;
-              }
-              default: {
-                this.#logger.child({ msg: json }).warn('received unexpected message from Deepgram');
-                break;
-              }
-            }
+            ws.once('close', () => reject(new Error('WebSocket closed')));
           });
-        } catch (error) {
+
+          const json = JSON.parse(msg.toString());
+          switch (json['type']) {
+            case 'SpeechStarted': {
+              // This is a normal case. Deepgram's SpeechStarted events
+              // are not correlated with speech_final or utterance end.
+              // It's possible that we receive two in a row without an endpoint
+              // It's also possible we receive a transcript without a SpeechStarted event.
+              if (this.#speaking) return;
+              this.#speaking = true;
+              this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
+              break;
+            }
+            // see this page:
+            // https://developers.deepgram.com/docs/understand-endpointing-interim-results#using-endpointing-speech_final
+            // for more information about the different types of events
+            case 'Results': {
+              const isFinal = json['is_final'];
+              const isEndpoint = json['speech_final'];
+
+              const alternatives = liveTranscriptionToSpeechData(this.#opts.language!, json);
+
+              // If, for some reason, we didn't get a SpeechStarted event but we got
+              // a transcript with text, we should start speaking. It's rare but has
+              // been observed.
+              if (alternatives[0] && alternatives[0].text) {
+                if (!this.#speaking) {
+                  this.#speaking = true;
+                  this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
+                }
+
+                if (isFinal) {
+                  this.queue.put({
+                    type: stt.SpeechEventType.FINAL_TRANSCRIPT,
+                    alternatives: [alternatives[0], ...alternatives.slice(1)],
+                  });
+                } else {
+                  this.queue.put({
+                    type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
+                    alternatives: [alternatives[0], ...alternatives.slice(1)],
+                  });
+                }
+              }
+
+              // if we receive an endpoint, only end the speech if
+              // we either had a SpeechStarted event or we have a seen
+              // a non-empty transcript (deepgram doesn't have a SpeechEnded event)
+              if (isEndpoint && this.#speaking) {
+                this.#speaking = false;
+                this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+              }
+
+              break;
+            }
+            case 'Metadata': {
+              break;
+            }
+            default: {
+              this.#logger.child({ msg: json }).warn('received unexpected message from Deepgram');
+              break;
+            }
+          }
+        }
+      } catch (error) {
+        if (!shouldExit) {
           this.#logger.child({ error }).warn('unrecoverable error, exiting');
-          break;
+          throw error;
         }
       }
     };
 
-    await Promise.all([sendTask(), listenTask()]);
-    clearInterval(keepalive);
+    ws.once('close', (code) => {
+      if (code === 4000) {
+        this.#logger.info('WebSocket closed for updating options, restarting tasks');
+        shouldExit = true;
+      }
+    });
+
+    try {
+      await Promise.all([sendTask(), listenTask()]);
+    } catch (error) {
+      this.#logger.child({ error }).warn('Error during WebSocket tasks');
+    } finally {
+      clearInterval(keepalive);
+    }
   }
 
   updateOptions(opts: Partial<STTOptions>) {
     console.log('called update', opts);
     if (opts.language !== undefined) this.#opts.language = opts.language;
+    if (opts.detectLanguage !== undefined) this.#opts.language = undefined;
     if (opts.model !== undefined) this.#opts.model = opts.model;
     if (opts.interimResults !== undefined) this.#opts.interimResults = opts.interimResults;
     if (opts.punctuate !== undefined) this.#opts.punctuate = opts.punctuate;
