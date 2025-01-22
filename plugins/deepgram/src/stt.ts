@@ -120,9 +120,7 @@ export class SpeechStream extends stt.SpeechStream {
 
   async #run(maxRetry = 32) {
     let retries = 0;
-    // let ws: WebSocket;
     while (!this.input.closed) {
-      console.log('websocket running');
       this.#ws = this.#connectWs();
 
       try {
@@ -306,7 +304,6 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
-    console.log('called update', opts);
     if (opts.language !== undefined) this.#opts.language = opts.language;
     if (opts.detectLanguage !== undefined) this.#opts.language = undefined;
     if (opts.model !== undefined) this.#opts.model = opts.model;
@@ -342,7 +339,6 @@ export class SpeechStream extends stt.SpeechStream {
       profanity_filter: this.#opts.profanityFilter,
       language: this.#opts.language,
     };
-    console.log('params', params);
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined) {
         if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
