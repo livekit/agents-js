@@ -94,9 +94,9 @@ export class ProcJobExecutor extends JobExecutor {
       }
     };
     this.#proc!.on('message', listener);
-    this.#proc!.on('error', (err) => {
+    this.#proc!.on('error', () => {
       if (this.#closing) return;
-      this.#logger.child({ err }).warn('job process exited unexpectedly');
+      this.#logger.warn('job process exited unexpectedly');
       clearTimeout(this.#pongTimeout);
       clearInterval(this.#pingInterval);
       this.#join.resolve();
