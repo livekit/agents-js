@@ -20,7 +20,9 @@ body:
   - type: textarea
     attributes:
       label: Describe your environment
-      description: What OS are you running on? Are you using the latest version of the Agents framework published on npmjs.com?
+      description: |
+        What OS are you running on? Are you using the latest version of the Agents framework published on npmjs.com?
+        You can get all of your relevant environment information by running `npx envinfo --system --binaries --npmPackages "@livekit/*"`.
     validations:
       required: true
   - type: textarea
