@@ -1,0 +1,36 @@
+name: Bug Report
+description: Let us know about an issue so we can fix it
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Hello! Thanks for taking the time to file a bug report.
+
+        Before creating this issue, we kindly ask that you use the search functionality to see if anyone else has already reported this issue.
+  - type: textarea
+    attributes:
+      label: Describe the bug
+      description: What happened? What were you trying to do? How did it break? Which errors were emitted? Provide as much information as possible.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Relevant log output
+  - type: textarea
+    attributes:
+      label: Describe your environment
+      description: |
+        What OS are you running on? Are you using the latest version of the Agents framework published on npmjs.com?
+        You can get all of your relevant environment information by running `npx envinfo --system --binaries --npmPackages "@livekit/*"`.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Minimal reproducible example
+      description: |
+        If possible, provide an example we can run on our end that can reasonably reproduce the issue that you're running into.
+  - type: textarea
+    attributes:
+      label: Additional information
+      description: If you have any other information to provide, such as hunches about where the error could come from, do so here.
