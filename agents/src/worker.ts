@@ -400,7 +400,7 @@ export class Worker {
       );
     };
 
-    let timer: NodeJS.Timeout | undefined
+    let timer: NodeJS.Timeout | undefined;
     if (timeout) {
       timer = setTimeout(() => {
         throw new WorkerError('timed out draining');
