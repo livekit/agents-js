@@ -86,14 +86,12 @@ export class MultimodalLLMError extends Error {
   type?: string;
   reason?: string;
   code?: string;
-  constructor(
-    {
-      type,
-      reason,
-      code,
-      message,
-    }: { type?: string; reason?: string; code?: string; message?: string } = {},
-  ) {
+  constructor({
+    type,
+    reason,
+    code,
+    message,
+  }: { type?: string; reason?: string; code?: string; message?: string } = {}) {
     super(message);
     this.type = type;
     this.reason = reason;
