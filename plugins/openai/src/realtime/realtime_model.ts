@@ -1,18 +1,10 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  AsyncIterableQueue,
-  Future,
-  Queue,
-  llm,
-  log,
-  mergeFrames,
-  metrics,
-  multimodal,
-} from '@livekit/agents';
+import { Future, Queue, llm, log, mergeFrames, metrics, multimodal } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
+import { TransformStream } from 'node:stream/web';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
@@ -62,8 +54,8 @@ export interface RealtimeContent {
   contentIndex: number;
   text: string;
   audio: AudioFrame[];
-  textStream: AsyncIterableQueue<string>;
-  audioStream: AsyncIterableQueue<AudioFrame>;
+  textStream: TransformStream<string, string>;
+  audioStream: TransformStream<AudioFrame, AudioFrame>;
   toolCalls: RealtimeToolCall[];
   contentType: api_proto.Modality;
 }
@@ -1147,8 +1139,8 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const outputIndex = event.output_index;
     const output = response!.output[outputIndex];
 
-    const textStream = new AsyncIterableQueue<string>();
-    const audioStream = new AsyncIterableQueue<AudioFrame>();
+    const textStream = new TransformStream<string, string>();
+    const audioStream = new TransformStream<AudioFrame, AudioFrame>();
 
     const newContent: RealtimeContent = {
       responseId: responseId,
@@ -1187,12 +1179,12 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const transcript = event.delta;
     content.text += transcript;
 
-    content.textStream.put(transcript);
+    content.textStream.writable.getWriter().write(transcript);
   }
 
   #handleResponseAudioTranscriptDone(event: api_proto.ResponseAudioTranscriptDoneEvent): void {
     const content = this.#getContent(event);
-    content.textStream.close();
+    content.textStream.writable.getWriter().close();
   }
 
   #handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
@@ -1206,12 +1198,12 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     );
     content.audio.push(audio);
 
-    content.audioStream.put(audio);
+    content.audioStream.writable.getWriter().write(audio);
   }
 
   #handleResponseAudioDone(event: api_proto.ResponseAudioDoneEvent): void {
     const content = this.#getContent(event);
-    content.audioStream.close();
+    content.audioStream.writable.getWriter().close();
   }
 
   #handleResponseFunctionCallArgumentsDelta(

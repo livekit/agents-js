@@ -233,44 +233,6 @@ export async function gracefullyCancel<T>(promise: CancellablePromise<T>): Promi
 }
 
 /** @internal */
-export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
-  private static readonly CLOSE_SENTINEL = Symbol('CLOSE_SENTINEL');
-  #queue = new Queue<T | typeof AsyncIterableQueue.CLOSE_SENTINEL>();
-  #closed = false;
-
-  get closed(): boolean {
-    return this.#closed;
-  }
-
-  put(item: T): void {
-    if (this.#closed) {
-      throw new Error('Queue is closed');
-    }
-    this.#queue.put(item);
-  }
-
-  close(): void {
-    this.#closed = true;
-    this.#queue.put(AsyncIterableQueue.CLOSE_SENTINEL);
-  }
-
-  async next(): Promise<IteratorResult<T>> {
-    if (this.#closed && this.#queue.items.length === 0) {
-      return { value: undefined, done: true };
-    }
-    const item = await this.#queue.get();
-    if (item === AsyncIterableQueue.CLOSE_SENTINEL && this.#closed) {
-      return { value: undefined, done: true };
-    }
-    return { value: item as T, done: false };
-  }
-
-  [Symbol.asyncIterator](): AsyncIterableQueue<T> {
-    return this;
-  }
-}
-
-/** @internal */
 export class ExpFilter {
   #alpha: number;
   #max?: number;
