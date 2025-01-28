@@ -267,7 +267,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }).then((msg) => {
             const json = JSON.parse(msg.toString());
             if ('audio' in json) {
-              const data = new Int8Array(Buffer.from(json.audio, 'base64').buffer);
+              const data = new Int8Array(Buffer.from(json.audio, 'base64'));
               for (const frame of bstream.write(data)) {
                 sendLastFrame(segmentId, false);
                 lastFrame = frame;
@@ -278,6 +278,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 lastFrame = frame;
               }
               sendLastFrame(segmentId, true);
+              this.queue.put(SynthesizeStream.END_OF_STREAM);
+
+              if (segmentId === requestId) {
+                ws.close();
+                return;
+              }
             }
           });
         } catch {
