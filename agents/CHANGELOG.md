@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 0.6.4
+
+### Patch Changes
+
+- fix(proc): clearer errors on crash - [#271](https://github.com/livekit/agents-js/pull/271) ([@nbsp](https://github.com/nbsp))
+
+- fix(metrics): remove ErrorOptions from MultimodalError - [#278](https://github.com/livekit/agents-js/pull/278) ([@nbsp](https://github.com/nbsp))
+
 ## 0.6.3
 
 ### Patch Changes

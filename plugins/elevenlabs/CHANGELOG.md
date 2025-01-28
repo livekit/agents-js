@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-elevenlabs
 
+## 0.6.1
+
+### Patch Changes
+
+- fix errors capturing frames - [#280](https://github.com/livekit/agents-js/pull/280) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`53092d01560db72abd7ed71e9e93a5217cca4ebd`](https://github.com/livekit/agents-js/commit/53092d01560db72abd7ed71e9e93a5217cca4ebd), [`827cf3e3662020f28cc6059a94045961dc342a53`](https://github.com/livekit/agents-js/commit/827cf3e3662020f28cc6059a94045961dc342a53)]:
+  - @livekit/agents@0.6.4
+
 ## 0.6.0
 
 ### Minor Changes
