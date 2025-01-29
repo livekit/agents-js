@@ -167,10 +167,10 @@ export class VADStream extends baseStream {
           this.#prefixPaddingSamples = Math.trunc(
             (this.#opts.prefixPaddingDuration * this.#inputSampleRate) / 1000,
           );
-
-          this.#speechBuffer = new Int16Array(
-            this.#opts.maxBufferedSpeech * this.#inputSampleRate + this.#prefixPaddingSamples,
-          );
+          const bufferSize =
+            Math.trunc((this.#opts.maxBufferedSpeech * this.#inputSampleRate) / 1000) +
+            this.#prefixPaddingSamples;
+          this.#speechBuffer = new Int16Array(bufferSize);
 
           if (this.#opts.sampleRate !== this.#inputSampleRate) {
             // resampling needed: the input sample rate isn't the same as the model's
@@ -394,7 +394,7 @@ export class VADStream extends baseStream {
         (this.#opts.prefixPaddingDuration * this.#inputSampleRate) / 1000,
       );
       const bufferSize =
-        Math.floor(this.#opts.maxBufferedSpeech * this.#inputSampleRate) +
+        Math.trunc((this.#opts.maxBufferedSpeech * this.#inputSampleRate) / 1000) +
         this.#prefixPaddingSamples;
       const resizedBuffer = new Int16Array(bufferSize);
       resizedBuffer.set(
