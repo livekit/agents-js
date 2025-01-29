@@ -377,9 +377,9 @@ export class VADStream extends baseStream {
   /**
    * Update the VAD options
    *
-   * This method allows you to update the VAD options after the VAD object has been created
-   *
    * @param opts - Partial options object containing the values to update
+   * @remarks
+   * This method allows you to update the VAD options after the VAD object has been created
    */
   updateOptions(opts: Partial<VADOptions>) {
     const oldMaxBufferedSpeech = this.#opts.maxBufferedSpeech;
