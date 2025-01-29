@@ -6,7 +6,7 @@ import type { RunningJobInfo } from '../job.js';
 import { Queue } from '../utils.js';
 import { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
-import { ProcJobExecutor } from './proc_job_executor.js';
+import { JobProcExecutor } from './job_proc_executor.js';
 
 export class ProcPool {
   agent: string;
@@ -62,11 +62,11 @@ export class ProcPool {
         this.procUnlock = undefined;
       }
     } else {
-      proc = new ProcJobExecutor(
+      proc = new JobProcExecutor(
         this.agent,
+        this.inferenceExecutor,
         this.initializeTimeout,
         this.closeTimeout,
-        this.inferenceExecutor,
         2500,
         60000,
         500,
@@ -81,7 +81,7 @@ export class ProcPool {
   }
 
   async procWatchTask() {
-    const proc = new ProcJobExecutor(this.agent, this.initializeTimeout, this.closeTimeout);
+    const proc = new JobProcExecutor(this.agent, this.inferenceExecutor, this.initializeTimeout, this.closeTimeout, this.memoryWarnMB, this.memoryLimitMB, 2500, 60000, 500);
 
     try {
       this.executors.push(proc);

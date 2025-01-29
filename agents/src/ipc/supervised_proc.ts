@@ -6,11 +6,20 @@ import { once } from 'node:events';
 import type { RunningJobInfo } from '../job.js';
 import { log, loggerOptions } from '../log.js';
 import { Future } from '../utils.js';
-import type { ProcOpts } from './job_executor.js';
 import { JobExecutor } from './job_executor.js';
 import type { IPCMessage } from './message.js';
 
-export class SupervisedProc {
+export interface ProcOpts {
+  initializeTimeout: number;
+  closeTimeout: number;
+  memoryWarnMB: number;
+  memoryLimitMB: number;
+  pingInterval: number;
+  pingTimeout: number;
+  highPingThreshold: number;
+}
+
+export abstract class SupervisedProc {
   #opts: ProcOpts;
   #started = false;
   #closing = false;
@@ -18,12 +27,11 @@ export class SupervisedProc {
   #proc?: ChildProcess;
   #pingInterval?: ReturnType<typeof setInterval>;
   #pongTimeout?: ReturnType<typeof setTimeout>;
-  #init = new Future();
+  protected init = new Future();
   #join = new Future();
   #logger = log().child({ runningJob: this.#runningJob });
 
   constructor(
-    agent: string,
     initializeTimeout: number,
     closeTimeout: number,
     // XXX(nbsp): memoryWarnMB and memoryLimitMB are currently stubbed and serve no use
@@ -34,7 +42,6 @@ export class SupervisedProc {
     highPingThreshold: number,
   ) {
     this.#opts = {
-      agent,
       initializeTimeout,
       closeTimeout,
       memoryWarnMB,
@@ -44,6 +51,9 @@ export class SupervisedProc {
       highPingThreshold,
     };
   }
+
+  abstract createProcess(): ChildProcess
+  abstract mainTask(child: ChildProcess): Promise<void>;
 
   get started(): boolean {
     return this.#started;
@@ -60,18 +70,14 @@ export class SupervisedProc {
       throw new Error('runner is closed');
     }
 
-    this.#proc = await import('./job_main.js').then((m) =>
-      m.runProcess({
-        agentFile: this.#opts.agent,
-      }),
-    );
+    this.#proc = this.createProcess()
 
     this.#started = true;
     this.run();
   }
 
   async run() {
-    await this.#init.await;
+    await this.init.await;
 
     this.#pingInterval = setInterval(() => {
       this.#proc!.send({ case: 'pingRequest', value: { timestamp: Date.now() } });
@@ -130,7 +136,7 @@ export class SupervisedProc {
   async initialize() {
     const timer = setTimeout(() => {
       const err = new Error('runner initialization timed out');
-      this.#init.reject(err);
+      this.init.reject(err);
       throw err;
     }, this.#opts.initializeTimeout);
     this.#proc!.send({
@@ -148,7 +154,7 @@ export class SupervisedProc {
         throw new Error('first message must be InitializeResponse');
       }
     });
-    this.#init.resolve();
+    this.init.resolve();
   }
 
   async close() {
