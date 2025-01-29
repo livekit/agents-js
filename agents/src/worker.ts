@@ -284,6 +284,8 @@ export class Worker {
         'API Secret is required: Set LIVEKIT_API_SECRET, run with --api-secret, or pass apiSecret in WorkerOptions',
       );
 
+    
+      
     this.#procPool = new ProcPool(
       opts.agent,
       opts.numIdleProcesses,
