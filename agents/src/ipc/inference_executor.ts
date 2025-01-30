@@ -2,6 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export abstract class InferenceExecutor {
-  abstract doInference(method: string, data: unknown): Promise<unknown>;
+export interface InferenceExecutor {
+  doInference(method: string, data: unknown): Promise<unknown>;
 }

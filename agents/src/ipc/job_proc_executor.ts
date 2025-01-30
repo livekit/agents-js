@@ -1,19 +1,18 @@
 import { ChildProcess, fork } from "node:child_process";
 import { RunningJobInfo } from "../job.js";
 import { InferenceExecutor } from "./inference_executor.js";
-import { JobStatus } from "./job_executor.js";
+import { JobExecutor, JobStatus } from "./job_executor.js";
 import { SupervisedProc } from "./supervised_proc.js";
 import { IPCMessage } from "./message.js";
 import { log } from "../log.js";
 
-export class JobProcExecutor extends SupervisedProc {
+export class JobProcExecutor extends SupervisedProc implements JobExecutor {
   #userArgs?: any;
   #jobStatus?: JobStatus;
   #runningJob?: RunningJobInfo;
   #agent: string
   #inferenceExecutor?: InferenceExecutor;
   #inferenceTasks: Promise<void>[] = [];
-  #proc?: ChildProcess
   #logger = log()
 
   constructor(
@@ -52,32 +51,30 @@ export class JobProcExecutor extends SupervisedProc {
   }
 
   createProcess(): ChildProcess {
-    const proc = fork(new URL(import.meta.resolve('./job_proc_lazy_main.js')), [this.#agent])
-    this.#proc = proc;
-    return proc;
+    return fork(new URL(import.meta.resolve('./job_proc_lazy_main.js')), [this.#agent])
   }
 
-  async mainTask(child: ChildProcess) {
-    child.on('message', (msg: IPCMessage) => {
+  async mainTask(proc: ChildProcess) {
+    proc.on('message', (msg: IPCMessage) => {
       switch (msg.case) {
         case "inferenceRequest":
-          this.#inferenceTasks.push(this.#doInferenceTask(msg.value))
+          this.#inferenceTasks.push(this.#doInferenceTask(proc, msg.value))
       }
     })
   }
 
-  async #doInferenceTask(req: { method: string; requestId: string; data: unknown }) {
+  async #doInferenceTask(proc: ChildProcess, req: { method: string; requestId: string; data: unknown }) {
     if (!this.#inferenceExecutor) {
       this.#logger.warn("inference request received but no inference executor")
-      this.#proc!.send({ case: 'inferenceResponse', value: { requestId: req.requestId, error: new Error('no inference executor') } })
+      proc.send({ case: 'inferenceResponse', value: { requestId: req.requestId, error: new Error('no inference executor') } })
       return
     }
 
     try {
       const data = await this.#inferenceExecutor.doInference(req.method, req.data)
-      this.#proc!.send({ case: 'inferenceResponse', value: { requestId: req.requestId, data } })
+      proc.send({ case: 'inferenceResponse', value: { requestId: req.requestId, data } })
     } catch (error) {
-      this.#proc!.send({ case: 'inferenceResponse', value: { requestId: req.requestId, error } })
+      proc.send({ case: 'inferenceResponse', value: { requestId: req.requestId, error } })
     }
   }
 
@@ -91,6 +88,6 @@ export class JobProcExecutor extends SupervisedProc {
     this.#jobStatus = JobStatus.RUNNING
     this.#runningJob = info
     
-    this.#proc!.send({ case: 'startJobRequest', value: { runningJob: info } })
+    this.proc!.send({ case: 'startJobRequest', value: { runningJob: info } })
   }
 }

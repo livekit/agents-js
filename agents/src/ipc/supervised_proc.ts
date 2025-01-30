@@ -24,7 +24,7 @@ export abstract class SupervisedProc {
   #started = false;
   #closing = false;
   #runningJob?: RunningJobInfo = undefined;
-  #proc?: ChildProcess;
+  proc?: ChildProcess;
   #pingInterval?: ReturnType<typeof setInterval>;
   #pongTimeout?: ReturnType<typeof setTimeout>;
   protected init = new Future();
@@ -70,7 +70,7 @@ export abstract class SupervisedProc {
       throw new Error('runner is closed');
     }
 
-    this.#proc = this.createProcess()
+    this.proc = this.createProcess()
 
     this.#started = true;
     this.run();
@@ -80,14 +80,14 @@ export abstract class SupervisedProc {
     await this.init.await;
 
     this.#pingInterval = setInterval(() => {
-      this.#proc!.send({ case: 'pingRequest', value: { timestamp: Date.now() } });
+      this.proc!.send({ case: 'pingRequest', value: { timestamp: Date.now() } });
     }, this.#opts.pingInterval);
 
     this.#pongTimeout = setTimeout(() => {
       this.#logger.warn('job is unresponsive');
       clearTimeout(this.#pongTimeout);
       clearInterval(this.#pingInterval);
-      this.#proc!.kill();
+      this.proc!.kill();
       this.#join.resolve();
     }, this.#opts.pingTimeout);
 
@@ -107,14 +107,14 @@ export abstract class SupervisedProc {
         }
         case 'done': {
           this.#closing = true;
-          this.#proc!.off('message', listener);
+          this.proc!.off('message', listener);
           this.#join.resolve();
           break;
         }
       }
     };
-    this.#proc!.on('message', listener);
-    this.#proc!.on('error', (err) => {
+    this.proc!.on('message', listener);
+    this.proc!.on('error', (err) => {
       if (this.#closing) return;
       this.#logger.child({ err }).warn('job process exited unexpectedly');
       clearTimeout(this.#pongTimeout);
@@ -139,7 +139,7 @@ export abstract class SupervisedProc {
       this.init.reject(err);
       throw err;
     }, this.#opts.initializeTimeout);
-    this.#proc!.send({
+    this.proc!.send({
       case: 'initializeRequest',
       value: {
         loggerOptions,
@@ -148,7 +148,7 @@ export abstract class SupervisedProc {
         highPingThreshold: this.#opts.highPingThreshold,
       },
     });
-    await once(this.#proc!, 'message').then(([msg]: IPCMessage[]) => {
+    await once(this.proc!, 'message').then(([msg]: IPCMessage[]) => {
       clearTimeout(timer);
       if (msg!.case !== 'initializeResponse') {
         throw new Error('first message must be InitializeResponse');
@@ -164,11 +164,11 @@ export abstract class SupervisedProc {
     this.#closing = true;
 
     if (!this.#runningJob) {
-      this.#proc!.kill();
+      this.proc!.kill();
       this.#join.resolve();
     }
 
-    this.#proc!.send({ case: 'shutdownRequest' });
+    this.proc!.send({ case: 'shutdownRequest' });
 
     const timer = setTimeout(() => {
       this.#logger.error('job shutdown is taking too much time');
@@ -185,6 +185,6 @@ export abstract class SupervisedProc {
       throw new Error('executor already has a running job');
     }
     this.#runningJob = info;
-    this.#proc!.send({ case: 'startJobRequest', value: { runningJob: info } });
+    this.proc!.send({ case: 'startJobRequest', value: { runningJob: info } });
   }
 }
