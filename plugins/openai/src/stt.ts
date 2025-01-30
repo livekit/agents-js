@@ -140,4 +140,9 @@ export class STT extends stt.STT {
   stream(): stt.SpeechStream {
     throw new Error('Streaming is not supported on OpenAI STT');
   }
+
+  update_options(model?: WhisperModels | GroqAudioModels, language?: string): void {
+    this.#opts.model = model || this.#opts.model;
+    this.#opts.language = language || this.#opts.language;
+  }
 }
