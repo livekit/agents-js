@@ -21,7 +21,7 @@ export class ProcPool {
   procMutex?: MultiMutex;
   procUnlock?: () => void;
   warmedProcQueue = new Queue<JobExecutor>();
-  inferenceExecutor: InferenceExecutor;
+  inferenceExecutor?: InferenceExecutor;
   memoryWarnMB: number;
   memoryLimitMB: number;
 
@@ -30,7 +30,7 @@ export class ProcPool {
     numIdleProcesses: number,
     initializeTimeout: number,
     closeTimeout: number,
-    inferenceExecutor: InferenceExecutor,
+    inferenceExecutor: InferenceExecutor | undefined,
     memoryWarnMB: number,
     memoryLimitMB: number,
   ) {

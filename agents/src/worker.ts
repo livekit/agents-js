@@ -26,6 +26,8 @@ import { JobRequest } from './job.js';
 import { log } from './log.js';
 import { Future } from './utils.js';
 import { version } from './version.js';
+import { InferenceRunner } from './inference_runner.js';
+import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
@@ -159,6 +161,8 @@ export class WorkerOptions {
   port: number;
   logLevel: string;
   production: boolean;
+  jobMemoryWarnMB: number;
+  jobMemoryLimitMB: number;
 
   /** @param options */
   constructor({
@@ -180,6 +184,8 @@ export class WorkerOptions {
     port = undefined,
     logLevel = 'info',
     production = false,
+    jobMemoryWarnMB = 300,
+    jobMemoryLimitMB = 0,
   }: {
     /**
      * Path to a file that has {@link Agent} as a default export, dynamically imported later for
@@ -205,6 +211,8 @@ export class WorkerOptions {
     port?: number;
     logLevel?: string;
     production?: boolean;
+    jobMemoryWarnMB?: number,
+    jobMemoryLimitMB?: number
   }) {
     this.agent = agent;
     if (!this.agent) {
@@ -227,6 +235,8 @@ export class WorkerOptions {
     this.port = port || Default.port(production);
     this.logLevel = logLevel;
     this.production = production;
+    this.jobMemoryWarnMB = jobMemoryWarnMB;
+    this.jobMemoryLimitMB = jobMemoryLimitMB
   }
 }
 
@@ -264,6 +274,7 @@ export class Worker {
   #session: WebSocket | undefined = undefined;
   #httpServer: HTTPServer;
   #logger = log().child({ version });
+  #inferenceExecutor?: InferenceProcExecutor;
 
   /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: WorkerOptions) {
@@ -284,13 +295,22 @@ export class Worker {
         'API Secret is required: Set LIVEKIT_API_SECRET, run with --api-secret, or pass apiSecret in WorkerOptions',
       );
 
-    
-      
+
+
+    if (Object.entries(InferenceRunner.registeredRunners).length) {
+      this.#inferenceExecutor = new InferenceProcExecutor(
+        InferenceRunner.registeredRunners, 30000, 5000, 2000, 0, 5000, 60000, 2500
+      )
+    }
+
     this.#procPool = new ProcPool(
       opts.agent,
       opts.numIdleProcesses,
       opts.initializeProcessTimeout,
       opts.shutdownProcessTimeout,
+      this.#inferenceExecutor,
+      opts.jobMemoryWarnMB,
+      opts.jobMemoryLimitMB,
     );
 
     this.#opts = opts;
