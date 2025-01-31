@@ -1,15 +1,17 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame, Room } from '@livekit/rtc-node';
+import { Mutex } from '@livekit/mutex';
+import type { AudioFrame, Room, TextStreamWriter } from '@livekit/rtc-node';
 import { log } from './log.js';
+import { sleep } from './utils.js';
 
 export interface TranscriptionForwarder {
-  start(): void;
-  pushAudio(frame: AudioFrame): void;
-  pushText(text: string): void;
-  markTextComplete(): void;
-  markAudioComplete(): void;
+  start(): Promise<void>;
+  pushAudio(frame: AudioFrame): Promise<void>;
+  pushText(text: string): Promise<void>;
+  markTextComplete(): Promise<void>;
+  markAudioComplete(): Promise<void>;
   close(interrupt: boolean): Promise<void>;
   currentCharacterIndex: number;
   text: string;
@@ -40,7 +42,7 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     return this.#currentText;
   }
 
-  start(): void {
+  async start(): Promise<void> {
     if (!this.#isRunning) {
       this.#isRunning = true;
       this.#startPublishingLoop().catch((error) => {
@@ -50,23 +52,23 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
     }
   }
 
-  pushAudio(frame: AudioFrame): void {
+  async pushAudio(frame: AudioFrame): Promise<void> {
     this.#totalAudioDuration += frame.samplesPerChannel / frame.sampleRate;
   }
 
-  pushText(text: string): void {
+  async pushText(text: string): Promise<void> {
     this.#currentText += text;
   }
 
   #textIsComplete: boolean = false;
   #audioIsComplete: boolean = false;
 
-  markTextComplete(): void {
+  async markTextComplete(): Promise<void> {
     this.#textIsComplete = true;
     this.#adjustTimingIfBothFinished();
   }
 
-  markAudioComplete(): void {
+  async markAudioComplete(): Promise<void> {
     this.#audioIsComplete = true;
     this.#adjustTimingIfBothFinished();
   }
@@ -130,5 +132,82 @@ export class BasicTranscriptionForwarder implements TranscriptionForwarder {
       this.currentCharacterIndex = this.#currentText.length;
     }
     await this.#publishTranscription(true);
+  }
+}
+
+export class StreamTranscriptionForwarder implements TranscriptionForwarder {
+  private room: Room;
+  private participantIdentity: string;
+  private trackSid: string;
+  private messageId: string;
+  private streamWriter?: TextStreamWriter;
+  private writerMutex: Mutex;
+  private charsPerSecond: number = 16;
+  private totalAudioDuration: number = 0;
+
+  constructor(room: Room, participantIdentity: string, trackSid: string, messageId: string) {
+    this.room = room;
+    this.participantIdentity = participantIdentity;
+    this.trackSid = trackSid;
+    this.messageId = messageId;
+    this.writerMutex = new Mutex();
+  }
+
+  private computeSleepInterval(textLength: number): number {
+    const delay = (1 / this.charsPerSecond) * textLength;
+    return Math.min(Math.max(delay, 0.0625), 0.5);
+  }
+
+  async start(): Promise<void> {
+    this.streamWriter = await this.room.localParticipant?.streamText({
+      messageId: this.messageId,
+      extensions: {
+        trackSid: this.trackSid,
+        transcribedParticipant: this.participantIdentity,
+        language: '',
+        startTime: Date.now().toFixed(),
+      },
+    });
+  }
+
+  async pushAudio(frame: AudioFrame): Promise<void> {
+    this.totalAudioDuration += frame.samplesPerChannel / frame.sampleRate;
+  }
+
+  async pushText(text: string): Promise<void> {
+    const unlock = await this.writerMutex.lock();
+    try {
+      await this.streamWriter?.write(text);
+      await sleep(this.computeSleepInterval(text.length));
+    } finally {
+      unlock();
+    }
+  }
+
+  async markTextComplete(): Promise<void> {
+    const unlock = await this.writerMutex.lock();
+    try {
+      await this.streamWriter?.close();
+    } finally {
+      unlock();
+    }
+  }
+
+  async markAudioComplete(): Promise<void> {
+    // once audio is complete, send remaining text as quickly as possible
+    this.charsPerSecond = 1_000_000;
+  }
+
+  async close(interrupt: boolean): Promise<void> {
+    if (interrupt) {
+      this.streamWriter?.close();
+    } else {
+      const unlock = await this.writerMutex.lock();
+      try {
+        await this.streamWriter?.close();
+      } finally {
+        unlock();
+      }
+    }
   }
 }
