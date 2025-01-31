@@ -400,12 +400,16 @@ export class Worker {
       );
     };
 
-    const timer = setTimeout(() => {
-      throw new WorkerError('timed out draining');
-    }, timeout);
-    if (timeout === undefined) clearTimeout(timer);
+    let timer: NodeJS.Timeout | undefined;
+    if (timeout) {
+      timer = setTimeout(() => {
+        throw new WorkerError('timed out draining');
+      }, timeout);
+    }
     await joinJobs().then(() => {
-      clearTimeout(timer);
+      if (timeout) {
+        clearTimeout(timer);
+      }
     });
   }
 
