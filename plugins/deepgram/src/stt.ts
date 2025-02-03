@@ -215,16 +215,16 @@ export class SpeechStream extends stt.SpeechStream {
       ws.send(JSON.stringify({ type: 'CloseStream' }));
     };
 
-    const listenTask = async () => {
-      new Promise<void>((_, reject) =>
-        ws.once('close', (code, reason) => {
-          if (!closing) {
-            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-            reject();
-          }
-        }),
-      );
+    const wsMonitor = new Promise<void>((_, reject) =>
+      ws.once('close', (code, reason) => {
+        if (!closing) {
+          this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+          reject();
+        }
+      }),
+    );
 
+    const listenTask = async () => {
       while (!this.closed) {
         try {
           await new Promise<RawData>((resolve) => {
@@ -299,7 +299,7 @@ export class SpeechStream extends stt.SpeechStream {
       }
     };
 
-    await Promise.all([sendTask(), listenTask()]);
+    await Promise.all([sendTask(), listenTask(), wsMonitor]);
     clearInterval(keepalive);
   }
 }
