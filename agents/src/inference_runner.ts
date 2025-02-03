@@ -4,14 +4,14 @@
 
 /** @internal */
 export abstract class InferenceRunner {
-  abstract INFERENCE_METHOD: string;
-  static registeredRunners: { [id: string]: InferenceRunner } = {};
+  static INFERENCE_METHOD: string;
+  static registeredRunners: { [id: string]: string } = {};
 
-  static registerRunner(runner: InferenceRunner) {
-    if (InferenceRunner.registeredRunners[runner.INFERENCE_METHOD]) {
-      throw new Error(`Inference runner ${runner.INFERENCE_METHOD} already registered`);
+  static registerRunner(method: string, importPath: string) {
+    if (InferenceRunner.registeredRunners[method]) {
+      throw new Error(`Inference runner ${method} already registered`);
     }
-    InferenceRunner.registeredRunners[runner.INFERENCE_METHOD] = runner;
+    InferenceRunner.registeredRunners[method] = importPath;
   }
 
   abstract initialize(): Promise<void>;

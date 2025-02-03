@@ -27,7 +27,7 @@ const softmax = (logits: Float32Array): Float32Array => {
 };
 
 export class EOURunner extends InferenceRunner {
-  INFERENCE_METHOD = 'lk_end_of_utterance';
+  static INFERENCE_METHOD = 'lk_end_of_utterance';
   #tokenizerPromise: Promise<PreTrainedTokenizer>;
   #session: Promise<InferenceSession>;
   #tokenizer?: PreTrainedTokenizer;
@@ -140,3 +140,5 @@ export class EOUModel {
     return result!;
   }
 }
+
+export default EOURunner;

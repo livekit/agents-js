@@ -16,12 +16,12 @@ class PendingInference {
 }
 
 export class InferenceProcExecutor extends SupervisedProc implements InferenceExecutor {
-  #runners: { [id: string]: InferenceRunner; };
+  #runners: { [id: string]: string; };
   #activeRequests: { [id: string]: PendingInference } = {}
   #logger = log();
 
   constructor(
-    runners: { [id: string]: InferenceRunner },
+    runners: { [id: string]: string },
     initializeTimeout: number,
     closeTimeout: number,
     memoryWarnMB: number,
@@ -35,7 +35,7 @@ export class InferenceProcExecutor extends SupervisedProc implements InferenceEx
   }
 
   createProcess(): ChildProcess {
-    return fork(new URL(import.meta.resolve('./inference_proc_lazy_main.js')), [this.#runners]) // TODO(nbsp): runner is not cloneable
+    return fork(new URL(import.meta.resolve('./inference_proc_lazy_main.js')), [JSON.stringify(this.#runners)])
   }
 
   async mainTask(proc: ChildProcess) {
@@ -57,7 +57,7 @@ export class InferenceProcExecutor extends SupervisedProc implements InferenceEx
   async doInference(method: string, data: unknown): Promise<unknown> {
     const requestId = "inference_req_" + randomUUID()
     const fut = new PendingInference()
-    this.proc!.send({ case: 'inferenceRequest', value: { requestId, method, data }})
+    this.proc!.send({ case: 'inferenceRequest', value: { requestId, method, data } })
     this.#activeRequests[requestId] = fut;
 
     const res = await fut.promise
