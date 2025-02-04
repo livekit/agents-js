@@ -20,14 +20,14 @@ import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import { WebSocket } from 'ws';
 import { HTTPServer } from './http_server.js';
+import { InferenceRunner } from './inference_runner.js';
+import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
 import { log } from './log.js';
 import { Future } from './utils.js';
 import { version } from './version.js';
-import { InferenceRunner } from './inference_runner.js';
-import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
@@ -211,8 +211,8 @@ export class WorkerOptions {
     port?: number;
     logLevel?: string;
     production?: boolean;
-    jobMemoryWarnMB?: number,
-    jobMemoryLimitMB?: number
+    jobMemoryWarnMB?: number;
+    jobMemoryLimitMB?: number;
   }) {
     this.agent = agent;
     if (!this.agent) {
@@ -236,7 +236,7 @@ export class WorkerOptions {
     this.logLevel = logLevel;
     this.production = production;
     this.jobMemoryWarnMB = jobMemoryWarnMB;
-    this.jobMemoryLimitMB = jobMemoryLimitMB
+    this.jobMemoryLimitMB = jobMemoryLimitMB;
   }
 }
 
@@ -297,8 +297,15 @@ export class Worker {
 
     if (Object.entries(InferenceRunner.registeredRunners).length) {
       this.#inferenceExecutor = new InferenceProcExecutor(
-        InferenceRunner.registeredRunners, 30000, 5000, 2000, 0, 5000, 60000, 2500
-      )
+        InferenceRunner.registeredRunners,
+        30000,
+        5000,
+        2000,
+        0,
+        5000,
+        60000,
+        2500,
+      );
     }
 
     this.#procPool = new ProcPool(
@@ -323,7 +330,7 @@ export class Worker {
 
     if (this.#inferenceExecutor) {
       await this.#inferenceExecutor.start();
-      await this.#inferenceExecutor.initialize()
+      await this.#inferenceExecutor.initialize();
     }
 
     this.#logger.info('starting worker');

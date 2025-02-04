@@ -4,7 +4,7 @@
 import { MultiMutex, Mutex } from '@livekit/mutex';
 import type { RunningJobInfo } from '../job.js';
 import { Queue } from '../utils.js';
-import { InferenceExecutor } from './inference_executor.js';
+import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
 import { JobProcExecutor } from './job_proc_executor.js';
 
@@ -81,7 +81,17 @@ export class ProcPool {
   }
 
   async procWatchTask() {
-    const proc = new JobProcExecutor(this.agent, this.inferenceExecutor, this.initializeTimeout, this.closeTimeout, this.memoryWarnMB, this.memoryLimitMB, 2500, 60000, 500);
+    const proc = new JobProcExecutor(
+      this.agent,
+      this.inferenceExecutor,
+      this.initializeTimeout,
+      this.closeTimeout,
+      this.memoryWarnMB,
+      this.memoryLimitMB,
+      2500,
+      60000,
+      500,
+    );
 
     try {
       this.executors.push(proc);

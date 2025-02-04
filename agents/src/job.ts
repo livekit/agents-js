@@ -11,7 +11,7 @@ import type {
 } from '@livekit/rtc-node';
 import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import type { Logger } from 'pino';
-import { InferenceExecutor } from './ipc/inference_executor.js';
+import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
 
 export class CurrentJobContext {

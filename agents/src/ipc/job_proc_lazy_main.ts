@@ -2,16 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Room, RoomEvent } from '@livekit/rtc-node';
+import { randomUUID } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
 import { type Agent, isAgent } from '../generator.js';
-import { type RunningJobInfo, JobProcess, CurrentJobContext, JobContext } from '../job.js';
+import { CurrentJobContext, JobContext, JobProcess, type RunningJobInfo } from '../job.js';
 import { initializeLogger, log } from '../log.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
+import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
-import { InferenceExecutor } from './inference_executor.js';
-import { randomUUID } from 'node:crypto';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
 
@@ -30,7 +30,7 @@ class PendingInference {
 }
 
 class InfClient implements InferenceExecutor {
-  #requests: { [id: string]: PendingInference } = {}
+  #requests: { [id: string]: PendingInference } = {};
 
   constructor() {
     process.on('message', (msg: IPCMessage) => {
@@ -39,24 +39,24 @@ class InfClient implements InferenceExecutor {
           const fut = this.#requests[msg.value.requestId];
           delete this.#requests[msg.value.requestId];
           if (!fut) {
-            log().child({ resp: msg.value }).warn("received unexpected inference response")
-            return
+            log().child({ resp: msg.value }).warn('received unexpected inference response');
+            return;
           }
-          fut.resolve(msg.value)
-          break
+          fut.resolve(msg.value);
+          break;
       }
-    })
+    });
   }
 
   async doInference(method: string, data: unknown): Promise<unknown> {
-    const requestId = "inference_job_" + randomUUID;
-    process.send!({ case: "inferenceRequest", value: { requestId, method, data } })
+    const requestId = 'inference_job_' + randomUUID;
+    process.send!({ case: 'inferenceRequest', value: { requestId, method, data } });
     this.#requests[requestId] = new PendingInference();
-    const resp = await this.#requests[requestId]!.promise
+    const resp = await this.#requests[requestId]!.promise;
     if (resp.error) {
-      throw new Error(`inference of ${method} failed: ${resp.error}`)
+      throw new Error(`inference of ${method} failed: ${resp.error}`);
     }
-    return resp.data
+    return resp.data;
   }
 }
 
@@ -84,7 +84,7 @@ const startJob = (
   };
 
   const ctx = new JobContext(proc, info, room, onConnect, onShutdown, new InfClient());
-  new CurrentJobContext(ctx)
+  new CurrentJobContext(ctx);
 
   const task = new Promise<void>(async () => {
     const unconnectedTimeout = setTimeout(() => {
@@ -138,7 +138,7 @@ const startJob = (
 
     // don't do anything on C-c
     // this is handled in cli, triggering a termination of all child processes at once.
-    process.on('SIGINT', () => { });
+    process.on('SIGINT', () => {});
 
     await once(process, 'message').then(([msg]: IPCMessage[]) => {
       msg = msg!;

@@ -6,7 +6,6 @@ import { once } from 'node:events';
 import type { RunningJobInfo } from '../job.js';
 import { log, loggerOptions } from '../log.js';
 import { Future } from '../utils.js';
-import { JobExecutor } from './job_executor.js';
 import type { IPCMessage } from './message.js';
 
 export interface ProcOpts {
@@ -52,7 +51,7 @@ export abstract class SupervisedProc {
     };
   }
 
-  abstract createProcess(): ChildProcess
+  abstract createProcess(): ChildProcess;
   abstract mainTask(child: ChildProcess): Promise<void>;
 
   get started(): boolean {
@@ -70,7 +69,7 @@ export abstract class SupervisedProc {
       throw new Error('runner is closed');
     }
 
-    this.proc = this.createProcess()
+    this.proc = this.createProcess();
 
     this.#started = true;
     this.run();
@@ -123,8 +122,8 @@ export abstract class SupervisedProc {
       clearInterval(this.#pingInterval);
       this.#join.resolve();
     });
-   
-    this.mainTask(this.proc!)
+
+    this.mainTask(this.proc!);
 
     await this.#join.await;
   }

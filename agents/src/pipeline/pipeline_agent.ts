@@ -1058,7 +1058,7 @@ class DeferredReplyValidation {
   }
 
   #run(delay: number) {
-    const runTask = async (delay: number, chatCtx:ChatContext, signal: AbortSignal) => {
+    const runTask = async (delay: number, chatCtx: ChatContext, signal: AbortSignal) => {
       if (this.#lastFinalTranscript && !this.#speaking && this.#turnDetector) {
         const startTime = Date.now();
         const eotProb = await this.#turnDetector.predictEndOfTurn(chatCtx);

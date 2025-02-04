@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { PreTrainedTokenizer } from '@huggingface/transformers';
 import { AutoTokenizer } from '@huggingface/transformers';
-import { InferenceRunner, CurrentJobContext, ipc, llm, log } from '@livekit/agents';
+import type { ipc } from '@livekit/agents';
+import { CurrentJobContext, InferenceRunner, llm, log } from '@livekit/agents';
 import { fileURLToPath } from 'node:url';
 import { InferenceSession, Tensor } from 'onnxruntime-node';
 
