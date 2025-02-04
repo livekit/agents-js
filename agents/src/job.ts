@@ -14,16 +14,15 @@ import type { Logger } from 'pino';
 import { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
 
-// TODO(nbsp): what is this thing
-class JobCallContext {
-  static #current: JobCallContext;
+export class CurrentJobContext {
+  static #current: JobContext;
 
-  constructor() {
-    JobCallContext.#current = this;
+  constructor(proc: JobContext) {
+    CurrentJobContext.#current = proc;
   }
 
-  static getCurrent(): JobCallContext {
-    return JobCallContext.#current;
+  static getCurrent(): JobContext {
+    return CurrentJobContext.#current;
   }
 }
 

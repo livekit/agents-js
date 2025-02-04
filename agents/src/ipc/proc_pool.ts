@@ -67,11 +67,11 @@ export class ProcPool {
         this.inferenceExecutor,
         this.initializeTimeout,
         this.closeTimeout,
+        this.memoryWarnMB,
+        this.memoryLimitMB,
         2500,
         60000,
         500,
-        this.memoryWarnMB,
-        this.memoryLimitMB,
       );
       this.executors.push(proc);
       await proc.start();

@@ -12,10 +12,6 @@ const ORPHANED_TIMEOUT = 15 * 1000;
     // this is handled in cli, triggering a termination of all child processes at once.
     process.on('SIGINT', () => { });
 
-    const runners: { [id: string]: InferenceRunner } = await Promise.all(Object.entries(JSON.parse(process.argv[2]!)).map(async ([k, v]) => {
-      return [k, await import(pathToFileURL(v as string).pathname).then((m) => m.default)];
-    })).then(Object.fromEntries)
-
     await once(process, 'message').then(([msg]: IPCMessage[]) => {
       msg = msg!;
       if (msg.case !== 'initializeRequest') {
@@ -24,6 +20,10 @@ const ORPHANED_TIMEOUT = 15 * 1000;
       initializeLogger(msg.value.loggerOptions);
     });
     let logger = log().child({ pid: process.pid })
+
+    const runners: { [id: string]: InferenceRunner } = await Promise.all(Object.entries(JSON.parse(process.argv[2]!)).map(async ([k, v]) => {
+      return [k, await import(v as string).then((m) => new m.default())];
+    })).then(Object.fromEntries)
 
     await Promise.all(Object.entries(runners).map(async ([runner, v]) => {
       logger.child({ runner }).debug("initializing inference runner");
@@ -46,7 +46,7 @@ const ORPHANED_TIMEOUT = 15 * 1000;
       }
 
       try {
-        const resp = runners[method]!.run(data)
+        const resp = await runners[method]!.run(data)
         process.send!({ case: "inferenceResponse", value: { requestId, data: resp } })
       } catch (error) {
         process.send!({ case: 'inferenceResponse', value: { requestId, error } })

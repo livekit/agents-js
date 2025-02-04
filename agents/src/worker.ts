@@ -295,8 +295,6 @@ export class Worker {
         'API Secret is required: Set LIVEKIT_API_SECRET, run with --api-secret, or pass apiSecret in WorkerOptions',
       );
 
-
-
     if (Object.entries(InferenceRunner.registeredRunners).length) {
       this.#inferenceExecutor = new InferenceProcExecutor(
         InferenceRunner.registeredRunners, 30000, 5000, 2000, 0, 5000, 60000, 2500
@@ -321,6 +319,11 @@ export class Worker {
   async run() {
     if (!this.#closed) {
       throw new WorkerError('worker is already running');
+    }
+
+    if (this.#inferenceExecutor) {
+      await this.#inferenceExecutor.start();
+      await this.#inferenceExecutor.initialize()
     }
 
     this.#logger.info('starting worker');

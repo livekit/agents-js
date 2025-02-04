@@ -1,5 +1,4 @@
 import { ChildProcess, fork } from "node:child_process";
-import { InferenceRunner } from "../inference_runner.js";
 import { IPCMessage } from "./message.js";
 import { log } from "../log.js";
 import { InferenceExecutor } from "./inference_executor.js";

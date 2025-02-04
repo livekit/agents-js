@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { PreTrainedTokenizer } from '@huggingface/transformers';
 import { AutoTokenizer } from '@huggingface/transformers';
-import { InferenceRunner, llm, log } from '@livekit/agents';
+import { InferenceRunner, CurrentJobContext, ipc, llm, log } from '@livekit/agents';
 import { fileURLToPath } from 'node:url';
 import { InferenceSession, Tensor } from 'onnxruntime-node';
 
@@ -97,11 +97,11 @@ export class EOURunner extends InferenceRunner {
 
 export class EOUModel {
   readonly unlikelyThreshold: number;
-  #runner: EOURunner;
+  #executor: ipc.InferenceExecutor;
 
   constructor(unlikelyThreshold = 0.15) {
     this.unlikelyThreshold = unlikelyThreshold;
-    this.#runner = new EOURunner();
+    this.#executor = CurrentJobContext.getCurrent().inferenceExecutor;
   }
 
   supportsLanguage(language?: string) {
@@ -135,9 +135,8 @@ export class EOUModel {
       }
     }
     messages = messages.slice(-MAX_HISTORY);
-    await this.#runner.initialize();
-    const result = await this.#runner.run(messages);
-    return result!;
+    const result = await this.#executor.doInference(EOURunner.INFERENCE_METHOD, messages);
+    return result as any;
   }
 }
 

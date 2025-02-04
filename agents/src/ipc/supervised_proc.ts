@@ -121,6 +121,8 @@ export abstract class SupervisedProc {
       clearInterval(this.#pingInterval);
       this.#join.resolve();
     });
+   
+    this.mainTask(this.proc!)
 
     await this.#join.await;
   }
