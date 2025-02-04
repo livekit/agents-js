@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@livekit/agents": "workspace:^x",
-    "@livekit/rtc-node": "^0.12.1",
+    "@livekit/rtc-node": "^0.13.2",
     "@types/node": "^22.5.5",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
@@ -40,6 +40,6 @@
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:^x",
-    "@livekit/rtc-node": "^0.12.1"
+    "@livekit/rtc-node": "^0.13.2"
   }
 }

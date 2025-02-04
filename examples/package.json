@@ -21,7 +21,8 @@
     "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugin-livekit": "workspace:*",
-    "@livekit/rtc-node": "^0.12.1",
+    "livekit-server-sdk": "^2.9.2",
+    "@livekit/rtc-node": "^0.13.2",
     "zod": "^3.23.8"
   },
   "version": null

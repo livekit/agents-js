@@ -106,8 +106,8 @@ importers:
         version: 3.23.8
     devDependencies:
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.2
+        version: 0.13.2
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -145,8 +145,11 @@ importers:
         specifier: workspace:*
         version: link:../plugins/silero
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.2
+        version: 0.13.2
+      livekit-server-sdk:
+        specifier: ^2.9.2
+        version: 2.9.2
       zod:
         specifier: ^3.23.8
         version: 3.23.8
@@ -157,6 +160,37 @@ importers:
       tsx:
         specifier: ^4.19.2
         version: 4.19.2
+      typescript:
+        specifier: ^5.0.0
+        version: 5.4.5
+
+  plugins/cartesia:
+    dependencies:
+      ws:
+        specifier: ^8.16.0
+        version: 8.17.0
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:^x
+        version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:^x
+        version: link:../openai
+      '@livekit/agents-plugins-test':
+        specifier: workspace:^x
+        version: link:../test
+      '@livekit/rtc-node':
+        specifier: ^0.13.2
+        version: 0.13.2
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@22.5.5)
+      '@types/ws':
+        specifier: ^8.5.10
+        version: 8.5.10
+      tsup:
+        specifier: ^8.3.5
+        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.5.5))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -177,8 +211,8 @@ importers:
         specifier: workspace:^x
         version: link:../test
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.2
+        version: 0.13.2
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -208,8 +242,8 @@ importers:
         specifier: workspace:^x
         version: link:../test
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.2
+        version: 0.13.2
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -270,8 +304,8 @@ importers:
         specifier: workspace:^x
         version: link:../test
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.2
+        version: 0.13.2
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -298,8 +332,8 @@ importers:
         specifier: workspace:^x
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.2
+        version: 0.13.2
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.5.5)
@@ -332,8 +366,8 @@ importers:
         specifier: workspace:^x
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.12.1
-        version: 0.12.1
+        specifier: ^0.13.2
+        version: 0.13.2
       '@types/node':
         specifier: ^22.5.5
         version: 22.5.5
@@ -413,9 +447,6 @@ packages:
 
   '@bufbuild/protobuf@1.10.0':
     resolution: {integrity: sha512-QDdVFLoN93Zjg36NoQPZfsVH9tZew7wKDKyV5qRdj8ntT4wQCOradQjRaTdwMhWUYsgKsvCINKKm87FdEk96Ag==}
-
-  '@bufbuild/protobuf@2.2.1':
-    resolution: {integrity: sha512-gdWzq7eX017a1kZCU/bP/sbk4e0GZ6idjsXOcMrQwODCb/rx985fHJJ8+hCu79KpuG7PfZh7bo3BBjPH37JuZw==}
 
   '@changesets/apply-release-plan@7.0.1':
     resolution: {integrity: sha512-aPdSq/R++HOyfEeBGjEe6LNG8gs0KMSyRETD/J2092OkNq8mOioAxyKjMbvVUdzgr/HTawzMOz7lfw339KnsCA==}
@@ -1086,38 +1117,38 @@ packages:
   '@livekit/protocol@1.29.1':
     resolution: {integrity: sha512-OhxXTZlyM5f4ydnAq1p5azzzOtKWmIoCSVtyVj9rgE42zQI5JM1rR9pubVRZovouGSvEDSJx9yL4Js2IlIyM1Q==}
 
-  '@livekit/rtc-node-darwin-arm64@0.12.1':
-    resolution: {integrity: sha512-GF+QnRp7yBK4AyeG3eZiuAzbQOH4+bkLSyTgb5A1CzGEca2XD5CSgKUeGtIgIglq0XmYzN6bvl260xUWPl0WCQ==}
+  '@livekit/rtc-node-darwin-arm64@0.13.2':
+    resolution: {integrity: sha512-LptM9VYu6Gq8gAdMeRoGbprOqnFq8IXC8qCbUaZIB4wPyBtinw0fVJ4a/xP0LkAHv9Uz6TBxMZyfoX1q5qj3bg==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
 
-  '@livekit/rtc-node-darwin-x64@0.12.1':
-    resolution: {integrity: sha512-uORO+/W5jvCfuFcmzQ4q5WCgJX5EW7eUxgfUHSaIuzcwgxBxG4yagWDl9WkK6MY9V1j6fhAiNlJ3hPl8cYGUjA==}
+  '@livekit/rtc-node-darwin-x64@0.13.2':
+    resolution: {integrity: sha512-xMdPiFSosWOzZNUmjLWarJCfudbGTG0sTAgSQ29q0viGIL8O4LsCJtaeA2bRhvZEE2oPZ0AbNPK5nAFY+8PPwA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
 
-  '@livekit/rtc-node-linux-arm64-gnu@0.12.1':
-    resolution: {integrity: sha512-8LIHq0nSwCjUMVPNfrohupH2ynhEFcYmidYa1KmHLkVlW+gyXBfy+QE7voAbXhTSbLZLDX58N5KGCQa61LSVAA==}
+  '@livekit/rtc-node-linux-arm64-gnu@0.13.2':
+    resolution: {integrity: sha512-Q1Fq/vjSk0DQFKEeniZzLiLEqhGvaSMQLGNSVBqJtsHJVuE4qPu4Q8L7XkCgFonz+vbUO3V4bKd/ccE+Sq+dpA==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
 
-  '@livekit/rtc-node-linux-x64-gnu@0.12.1':
-    resolution: {integrity: sha512-8x5IKzcTmwGyy0I0CU5vzealCl7c0Fp4KMBakq/uUOavbh/Rs1nAsjT8flrXC09F4njXD1E9uYN6CMTN9uZeKw==}
+  '@livekit/rtc-node-linux-x64-gnu@0.13.2':
+    resolution: {integrity: sha512-xT+jdGwuA6aJFFBuR9AGWX1fOupnoTxRbeOdXkJGoonkcB8Vyg1dvUBlN/ulOusUnHlSuMcVXmDJt2IdKkY7rA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@livekit/rtc-node-win32-x64-msvc@0.12.1':
-    resolution: {integrity: sha512-zPbvUnpHdDlkEW3AN8wIqa3Wwae26MV/gQmqmP+3AjZRog8hMZy9Fe48lJgZR6VobjFjw99wSgIytYZCdIOUqQ==}
+  '@livekit/rtc-node-win32-x64-msvc@0.13.2':
+    resolution: {integrity: sha512-V04/buYnTH3Uy+7TUiJZkonRjWq6sHPamya/3xMFUwx+lYZCCKFCDoXP8yN/7WfGe0twkSMR/Vb1fxIKcPxwxw==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
 
-  '@livekit/rtc-node@0.12.1':
-    resolution: {integrity: sha512-VNRobdI/CmZ8mVUV105uqFOH7BMDmK8VsNq4GrpWAdXKnQMVKoAjLmvFU2LVQMKP4qE9BG3aTi59BGYt/PCLiA==}
+  '@livekit/rtc-node@0.13.2':
+    resolution: {integrity: sha512-EtGs6rNSLt1qQSuOXxahF+iRK3da5kscMQdD90Gl68yXgnGWcC0EHf3PIKs4kwCQoBldWhOOeDEAVt1aTZqpew==}
     engines: {node: '>= 18'}
 
   '@livekit/typed-emitter@3.0.0':
@@ -4122,8 +4153,6 @@ snapshots:
 
   '@bufbuild/protobuf@1.10.0': {}
 
-  '@bufbuild/protobuf@2.2.1': {}
-
   '@changesets/apply-release-plan@7.0.1':
     dependencies:
       '@babel/runtime': 7.24.5
@@ -4666,32 +4695,32 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 1.10.0
 
-  '@livekit/rtc-node-darwin-arm64@0.12.1':
+  '@livekit/rtc-node-darwin-arm64@0.13.2':
     optional: true
 
-  '@livekit/rtc-node-darwin-x64@0.12.1':
+  '@livekit/rtc-node-darwin-x64@0.13.2':
     optional: true
 
-  '@livekit/rtc-node-linux-arm64-gnu@0.12.1':
+  '@livekit/rtc-node-linux-arm64-gnu@0.13.2':
     optional: true
 
-  '@livekit/rtc-node-linux-x64-gnu@0.12.1':
+  '@livekit/rtc-node-linux-x64-gnu@0.13.2':
     optional: true
 
-  '@livekit/rtc-node-win32-x64-msvc@0.12.1':
+  '@livekit/rtc-node-win32-x64-msvc@0.13.2':
     optional: true
 
-  '@livekit/rtc-node@0.12.1':
+  '@livekit/rtc-node@0.13.2':
     dependencies:
-      '@bufbuild/protobuf': 2.2.1
+      '@bufbuild/protobuf': 1.10.0
       '@livekit/mutex': 1.1.1
       '@livekit/typed-emitter': 3.0.0
     optionalDependencies:
-      '@livekit/rtc-node-darwin-arm64': 0.12.1
-      '@livekit/rtc-node-darwin-x64': 0.12.1
-      '@livekit/rtc-node-linux-arm64-gnu': 0.12.1
-      '@livekit/rtc-node-linux-x64-gnu': 0.12.1
-      '@livekit/rtc-node-win32-x64-msvc': 0.12.1
+      '@livekit/rtc-node-darwin-arm64': 0.13.2
+      '@livekit/rtc-node-darwin-x64': 0.13.2
+      '@livekit/rtc-node-linux-arm64-gnu': 0.13.2
+      '@livekit/rtc-node-linux-x64-gnu': 0.13.2
+      '@livekit/rtc-node-win32-x64-msvc': 0.13.2
 
   '@livekit/typed-emitter@3.0.0': {}
 

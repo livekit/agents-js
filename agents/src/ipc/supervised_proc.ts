@@ -116,7 +116,9 @@ export abstract class SupervisedProc {
     this.proc!.on('message', listener);
     this.proc!.on('error', (err) => {
       if (this.#closing) return;
-      this.#logger.child({ err }).warn('job process exited unexpectedly');
+      this.#logger
+        .child({ err })
+        .warn('job process exited unexpectedly; this likely means the error above caused a crash');
       clearTimeout(this.#pongTimeout);
       clearInterval(this.#pingInterval);
       this.#join.resolve();

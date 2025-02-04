@@ -1,5 +1,58 @@
 # @livekit/agents-plugin-elevenlabs
 
+## 0.6.1
+
+### Patch Changes
+
+- fix errors capturing frames - [#280](https://github.com/livekit/agents-js/pull/280) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`53092d01560db72abd7ed71e9e93a5217cca4ebd`](https://github.com/livekit/agents-js/commit/53092d01560db72abd7ed71e9e93a5217cca4ebd), [`827cf3e3662020f28cc6059a94045961dc342a53`](https://github.com/livekit/agents-js/commit/827cf3e3662020f28cc6059a94045961dc342a53)]:
+  - @livekit/agents@0.6.4
+
+## 0.6.0
+
+### Minor Changes
+
+- Add support for language code in 11Labs TTS package. - [#262](https://github.com/livekit/agents-js/pull/262) ([@FlorDonnaSanders](https://github.com/FlorDonnaSanders))
+
+### Patch Changes
+
+- Updated dependencies [[`7546a5b76729c90553142159bed0d14247486273`](https://github.com/livekit/agents-js/commit/7546a5b76729c90553142159bed0d14247486273)]:
+  - @livekit/agents@0.6.3
+
+## 0.5.4
+
+### Patch Changes
+
+- update rtc-node to 0.13.2 to fix issue with e2ee - [#258](https://github.com/livekit/agents-js/pull/258) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`dedb1cf139c8af4ce8709c86440c818157f5b475`](https://github.com/livekit/agents-js/commit/dedb1cf139c8af4ce8709c86440c818157f5b475), [`f3258b948539406213c15f8e817449b2588cde84`](https://github.com/livekit/agents-js/commit/f3258b948539406213c15f8e817449b2588cde84)]:
+  - @livekit/agents@0.6.2
+
+## 0.5.3
+
+### Patch Changes
+
+- allow any string for model - [#249](https://github.com/livekit/agents-js/pull/249) ([@nbsp](https://github.com/nbsp))
+
+- add flash models - [#246](https://github.com/livekit/agents-js/pull/246) ([@sam-trost](https://github.com/sam-trost))
+
+- Updated dependencies [[`4a66a82fc2fd0a25e30bdaa0bd095804c65ee101`](https://github.com/livekit/agents-js/commit/4a66a82fc2fd0a25e30bdaa0bd095804c65ee101), [`01aaa85445bbb8f30afe9c16360afb5a45c38e9e`](https://github.com/livekit/agents-js/commit/01aaa85445bbb8f30afe9c16360afb5a45c38e9e), [`4b7504654c73d9111d39e90d325d5f660b2c8ad9`](https://github.com/livekit/agents-js/commit/4b7504654c73d9111d39e90d325d5f660b2c8ad9)]:
+  - @livekit/agents@0.6.1
+
+## 0.5.2
+
+### Patch Changes
+
+- use AudioByteStream for TTS - [#227](https://github.com/livekit/agents-js/pull/227) ([@nbsp](https://github.com/nbsp))
+
+- add metrics monitoring - [#227](https://github.com/livekit/agents-js/pull/227) ([@nbsp](https://github.com/nbsp))
+
+- add testutils, tests for oai, 11labs - [#227](https://github.com/livekit/agents-js/pull/227) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0)]:
+  - @livekit/agents@0.6.0
+
 ## 0.5.1
 
 ### Patch Changes

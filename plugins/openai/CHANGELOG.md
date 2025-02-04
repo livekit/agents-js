@@ -1,5 +1,44 @@
 # @livekit/agents-plugin-openai
 
+## 0.8.1
+
+### Patch Changes
+
+- update rtc-node to 0.13.2 to fix issue with e2ee - [#258](https://github.com/livekit/agents-js/pull/258) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`dedb1cf139c8af4ce8709c86440c818157f5b475`](https://github.com/livekit/agents-js/commit/dedb1cf139c8af4ce8709c86440c818157f5b475), [`f3258b948539406213c15f8e817449b2588cde84`](https://github.com/livekit/agents-js/commit/f3258b948539406213c15f8e817449b2588cde84)]:
+  - @livekit/agents@0.6.2
+
+## 0.8.0
+
+### Minor Changes
+
+- Add support for OpenAI Whisper STT prompt parameter - [#239](https://github.com/livekit/agents-js/pull/239) ([@FlorDonnaSanders](https://github.com/FlorDonnaSanders))
+
+### Patch Changes
+
+- re-request audio response in multimodal agent when text is given - [#243](https://github.com/livekit/agents-js/pull/243) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`4a66a82fc2fd0a25e30bdaa0bd095804c65ee101`](https://github.com/livekit/agents-js/commit/4a66a82fc2fd0a25e30bdaa0bd095804c65ee101), [`01aaa85445bbb8f30afe9c16360afb5a45c38e9e`](https://github.com/livekit/agents-js/commit/01aaa85445bbb8f30afe9c16360afb5a45c38e9e), [`4b7504654c73d9111d39e90d325d5f660b2c8ad9`](https://github.com/livekit/agents-js/commit/4b7504654c73d9111d39e90d325d5f660b2c8ad9)]:
+  - @livekit/agents@0.6.1
+
+## 0.7.3
+
+### Patch Changes
+
+- fix multiple function calls not firing - [#227](https://github.com/livekit/agents-js/pull/227) ([@nbsp](https://github.com/nbsp))
+
+- fix(tts): add missing crypto import to OpenAI tts - [#227](https://github.com/livekit/agents-js/pull/227) ([@nbsp](https://github.com/nbsp))
+
+- groq: add support for llama 3.3 70b - [#227](https://github.com/livekit/agents-js/pull/227) ([@nbsp](https://github.com/nbsp))
+
+- add metrics monitoring - [#227](https://github.com/livekit/agents-js/pull/227) ([@nbsp](https://github.com/nbsp))
+
+- add testutils, tests for oai, 11labs - [#227](https://github.com/livekit/agents-js/pull/227) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0), [`ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0`](https://github.com/livekit/agents-js/commit/ab0b7e81b12c8fcfea35accff8fd72f5cf6c43b0)]:
+  - @livekit/agents@0.6.0
+
 ## 0.7.2
 
 ### Patch Changes

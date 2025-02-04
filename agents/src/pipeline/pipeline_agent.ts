@@ -365,7 +365,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       if (this.#participant) {
         return;
       }
-      this.#linkParticipant.call(this, participant.identity);
+      this.#linkParticipant.call(this, participant.identity!);
     });
 
     this.#room = room;
@@ -375,7 +375,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       if (typeof participant === 'string') {
         this.#linkParticipant(participant);
       } else {
-        this.#linkParticipant(participant.identity);
+        this.#linkParticipant(participant.identity!);
       }
     }
 
@@ -498,7 +498,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       }
     });
     this.#humanInput.on(HumanInputEvent.END_OF_SPEECH, (event) => {
-      this.emit(VPAEvent.USER_STARTED_SPEAKING);
+      this.emit(VPAEvent.USER_STOPPED_SPEAKING);
       this.#deferredValidation.onHumanEndOfSpeech(event);
     });
     this.#humanInput.on(HumanInputEvent.INTERIM_TRANSCRIPT, (event) => {
@@ -706,6 +706,35 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     const isUsingTools = handle.source instanceof LLMStream && !!handle.source.functionCalls.length;
     const interrupted = handle.interrupted;
 
+    if (handle.addToChatCtx && (!userQuestion || handle.userCommitted)) {
+      if (handle.extraToolsMessages) {
+        this.chatCtx.messages.push(...handle.extraToolsMessages);
+      }
+      if (interrupted) {
+        collectedText + '…';
+      }
+
+      const msg = ChatMessage.create({ text: collectedText, role: ChatRole.ASSISTANT });
+      this.chatCtx.messages.push(msg);
+
+      handle.markSpeechCommitted();
+      if (interrupted) {
+        this.emit(VPAEvent.AGENT_SPEECH_INTERRUPTED, msg);
+      } else {
+        this.emit(VPAEvent.AGENT_SPEECH_COMMITTED, msg);
+      }
+
+      this.#logger
+        .child({
+          agentTranscript: collectedText,
+          interrupted,
+          speechId: handle.id,
+        })
+        .debug('committed agent speech');
+
+      handle.setDone();
+    }
+
     const executeFunctionCalls = async () => {
       // if the answer is using tools, execute the functions and automatically generate
       // a response to the user question from the returned values
@@ -718,7 +747,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         return;
       }
 
-      if (!userQuestion || !handle.userCommitted) {
+      if (userQuestion && !handle.userCommitted) {
         throw new Error('user speech should have been committed before using tools');
       }
       const llmStream = handle.source;
@@ -786,8 +815,9 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.emit(VPAEvent.FUNCTION_CALLS_FINISHED, calledFuncs);
     };
 
+    let finished = false;
     const task = executeFunctionCalls().then(() => {
-      handle.markNestedSpeechFinished();
+      finished = true;
     });
     while (!handle.nestedSpeechFinished) {
       const changed = handle.nestedSpeechChanged();
@@ -799,36 +829,13 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         handle.nestedSpeechHandles.shift();
         this.#playingSpeech = handle;
       }
+
+      handle.nestedSpeechHandles.forEach(() => handle.nestedSpeechHandles.pop());
+      if (finished) {
+        handle.markNestedSpeechFinished();
+      }
     }
-
-    if (handle.addToChatCtx && (!userQuestion || handle.userCommitted)) {
-      if (handle.extraToolsMessages) {
-        this.chatCtx.messages.push(...handle.extraToolsMessages);
-      }
-      if (interrupted) {
-        collectedText + '…';
-      }
-
-      const msg = ChatMessage.create({ text: collectedText, role: ChatRole.ASSISTANT });
-      this.chatCtx.messages.push(msg);
-
-      handle.markSpeechCommitted();
-      if (interrupted) {
-        this.emit(VPAEvent.AGENT_SPEECH_INTERRUPTED, msg);
-      } else {
-        this.emit(VPAEvent.AGENT_SPEECH_COMMITTED, msg);
-      }
-
-      this.#logger
-        .child({
-          agentTranscript: collectedText,
-          interrupted,
-          speechId: handle.id,
-        })
-        .debug('committed agent speech');
-
-      handle.setDone();
-    }
+    handle.setDone();
   }
 
   #synthesizeAgentSpeech(
@@ -984,6 +991,7 @@ class DeferredReplyValidation {
   #finalTranscriptDelay: number;
   #turnDetector?: TurnDetector;
   #agent: VoicePipelineAgent;
+  #abort?: AbortController;
 
   constructor(
     validateFunc: () => Promise<void>,
@@ -1017,10 +1025,9 @@ class DeferredReplyValidation {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onHumanStartOfSpeech(_: VADEvent) {
     this.#speaking = true;
-    // TODO(nbsp):
-    // if (this.validating) {
-    //   this.#validatingPromise.cancel()
-    // }
+    if (this.validating) {
+      this.#abort?.abort();
+    }
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1031,7 +1038,7 @@ class DeferredReplyValidation {
     if (this.#lastFinalTranscript) {
       const delay = this.#endWithPunctuation()
         ? this.#endOfSpeechDelay * this.PUNCTUATION_REDUCE_FACTOR
-        : 1;
+        : 1_000;
       this.#run(delay);
     }
   }
@@ -1051,7 +1058,7 @@ class DeferredReplyValidation {
   }
 
   #run(delay: number) {
-    const runTask = async (delay: number, chatCtx: ChatContext) => {
+    const runTask = async (delay: number, chatCtx:ChatContext, signal: AbortSignal) => {
       if (this.#lastFinalTranscript && !this.#speaking && this.#turnDetector) {
         const startTime = Date.now();
         const eotProb = await this.#turnDetector.predictEndOfTurn(chatCtx);
@@ -1062,14 +1069,20 @@ class DeferredReplyValidation {
         }
         delay = Math.max(0, delay - elapsed);
       }
-      await new Promise((resolve) => setTimeout(resolve, delay));
-      this.#resetStates();
-      await this.#validateFunc();
+      const timeout = setTimeout(() => {
+        this.#resetStates();
+        this.#validateFunc();
+      }, delay);
+      signal.addEventListener('abort', () => {
+        clearTimeout(timeout);
+      });
     };
 
+    this.#abort?.abort();
+    this.#abort = new AbortController();
     this.#validatingFuture = new Future();
     const detectCtx = this.#agent.chatCtx.copy();
     detectCtx.append({ text: this.#agent.transcribedText, role: ChatRole.USER });
-    this.#validatingPromise = runTask(delay, detectCtx);
+    this.#validatingPromise = runTask(delay, detectCtx, this.#abort.signal);
   }
 }

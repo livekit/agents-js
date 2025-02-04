@@ -40,7 +40,8 @@ const AUTHORIZATION_HEADER = 'xi-api-key';
 export interface TTSOptions {
   apiKey?: string;
   voice: Voice;
-  modelID: TTSModels;
+  modelID: TTSModels | string;
+  languageCode?: string;
   baseURL: string;
   encoding: TTSEncoding;
   streamingLatency: number;
@@ -52,7 +53,7 @@ export interface TTSOptions {
 const defaultTTSOptions: TTSOptions = {
   apiKey: process.env.ELEVEN_API_KEY,
   voice: DEFAULT_VOICE,
-  modelID: 'eleven_turbo_v2_5',
+  modelID: 'eleven_flash_v2_5',
   baseURL: API_BASE_URL_V1,
   encoding: 'pcm_22050',
   streamingLatency: 3,
@@ -134,6 +135,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       output_format: opts.encoding,
       optimize_streaming_latency: `${opts.streamingLatency}`,
       enable_ssml_parsing: `${opts.enableSsmlParsing}`,
+      ...(opts.languageCode && { language_code: opts.languageCode }),
     };
     Object.entries(params).forEach(([k, v]) => this.streamURL.searchParams.append(k, v));
     this.streamURL.protocol = this.streamURL.protocol.replace('http', 'ws');
@@ -265,7 +267,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }).then((msg) => {
             const json = JSON.parse(msg.toString());
             if ('audio' in json) {
-              const data = new Int8Array(Buffer.from(json.audio, 'base64').buffer);
+              const data = new Int8Array(Buffer.from(json.audio, 'base64'));
               for (const frame of bstream.write(data)) {
                 sendLastFrame(segmentId, false);
                 lastFrame = frame;
@@ -276,6 +278,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 lastFrame = frame;
               }
               sendLastFrame(segmentId, true);
+              this.queue.put(SynthesizeStream.END_OF_STREAM);
+
+              if (segmentId === requestId) {
+                ws.close();
+                return;
+              }
             }
           });
         } catch {

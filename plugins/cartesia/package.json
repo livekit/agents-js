@@ -1,7 +1,7 @@
 {
-  "name": "@livekit/agents-plugin-deepgram",
-  "version": "0.5.3",
-  "description": "Deepgram plugin for LiveKit Agents for Node.js",
+  "name": "@livekit/agents-plugin-cartesia",
+  "version": "0.1.1",
+  "description": "Cartesia plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",
@@ -31,7 +31,7 @@
   },
   "devDependencies": {
     "@livekit/agents": "workspace:^x",
-    "@livekit/agents-plugin-silero": "workspace:^x",
+    "@livekit/agents-plugin-openai": "workspace:^x",
     "@livekit/agents-plugins-test": "workspace:^x",
     "@livekit/rtc-node": "^0.13.2",
     "@microsoft/api-extractor": "^7.35.0",

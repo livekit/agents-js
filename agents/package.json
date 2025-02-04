@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents",
-  "version": "0.5.2",
+  "version": "0.6.4",
   "description": "LiveKit Agents - Node.js",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -30,7 +30,7 @@
     "api:update": "api-extractor run --local --typescript-compiler-folder ../node_modules/typescript --verbose"
   },
   "devDependencies": {
-    "@livekit/rtc-node": "^0.12.1",
+    "@livekit/rtc-node": "^0.13.2",
     "@microsoft/api-extractor": "^7.35.0",
     "@types/node": "^22.5.5",
     "@types/ws": "^8.5.10",
@@ -49,6 +49,6 @@
     "zod": "^3.23.8"
   },
   "peerDependencies": {
-    "@livekit/rtc-node": "^0.12.1"
+    "@livekit/rtc-node": "^0.13.2"
   }
 }
