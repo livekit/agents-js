@@ -186,7 +186,7 @@ const streamSynthesisTask = (
       cancelled = true;
       handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
     }
-    
+
     ttsStream.flush();
     ttsStream.endInput();
 
