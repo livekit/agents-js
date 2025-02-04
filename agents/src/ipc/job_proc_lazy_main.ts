@@ -54,7 +54,7 @@ class InfClient implements InferenceExecutor {
     this.#requests[requestId] = new PendingInference();
     const resp = await this.#requests[requestId]!.promise;
     if (resp.error) {
-      throw new Error(`inference of ${method} failed: ${resp.error}`);
+      throw new Error(`inference of ${method} failed: ${resp.error.message}`);
     }
     return resp.data;
   }

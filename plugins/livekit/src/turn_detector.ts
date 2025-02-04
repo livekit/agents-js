@@ -9,37 +9,24 @@ import { fileURLToPath } from 'node:url';
 import { InferenceSession, Tensor } from 'onnxruntime-node';
 
 const MAX_HISTORY = 4;
-const PUNCS = /['!\."\?]/g;
 
 type RawChatContext = { role: string; content: string }[];
-
-const softmax = (logits: Float32Array): Float32Array => {
-  let maxLogit = Number.NEGATIVE_INFINITY;
-  for (const value of logits) {
-    if (value > maxLogit) {
-      maxLogit = value;
-    }
-  }
-  const shifted = logits.map((value) => value - maxLogit);
-  const expLogits = shifted.map((value) => Math.exp(value));
-  const sumExpLogits = expLogits.reduce((acc, value) => acc + value, 0);
-
-  return expLogits.map((value) => value / sumExpLogits);
-};
 
 export class EOURunner extends InferenceRunner {
   static INFERENCE_METHOD = 'lk_end_of_utterance';
   #tokenizerPromise: Promise<PreTrainedTokenizer>;
   #session: Promise<InferenceSession>;
   #tokenizer?: PreTrainedTokenizer;
-  #eouIndex?: number;
   #logger = log();
 
   constructor() {
     super();
     this.#tokenizerPromise = AutoTokenizer.from_pretrained(
       'livekit/turn-detector',
-      // { local_files_only: true }, // TODO(nbsp): can't find it
+      {
+        revision: "v1.2.0",
+      // local_files_only: true, // TODO(nbsp): can't find it
+      },
     );
     this.#session = InferenceSession.create(
       fileURLToPath(new URL('turn_detector.onnx', import.meta.url).href),
@@ -51,7 +38,6 @@ export class EOURunner extends InferenceRunner {
 
   async initialize() {
     this.#tokenizer = await this.#tokenizerPromise;
-    this.#eouIndex = this.#tokenizer.encode('<|im_end|>').at(-1);
   }
 
   async run(data: RawChatContext): Promise<number | undefined> {
@@ -59,30 +45,20 @@ export class EOURunner extends InferenceRunner {
     const startTime = Date.now();
     const inputs = this.#tokenizer!.encode(text, { add_special_tokens: false });
     const outputs = await this.#session.then((session) =>
-      session.run({ input_ids: new Tensor('int64', inputs, [1, inputs.length]) }, ['logits']),
+      session.run({ input_ids: new Tensor('int64', inputs, [1, inputs.length]) }, ['prob']),
     );
     const endTime = Date.now();
-    const logits = outputs.logits!;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const [_, seqLen, vocabSize] = logits.dims as [number, number, number];
-    const offset = (0 * seqLen + (seqLen - 1)) * vocabSize;
-    const lastTokenLogits = logits.data.slice(offset, offset + vocabSize);
-    const probs = softmax(lastTokenLogits as Float32Array);
-    const eouProbability = probs[this.#eouIndex!];
+    const logits = outputs.prob!;
+    const eouProbability = logits.data[0] as number;
     this.#logger
       .child({ eouProbability, input: text, duration: endTime - startTime })
       .debug('eou prediction');
     return eouProbability;
   }
 
-  #normalize(text: string): string {
-    return text.replaceAll(PUNCS, '').toLowerCase();
-  }
-
   #formatChatContext(ctx: RawChatContext): string {
     const newCtx: RawChatContext = [];
     for (const msg of ctx) {
-      msg.content = this.#normalize(msg.content);
       if (!msg.content) continue;
       newCtx.push(msg);
     }
