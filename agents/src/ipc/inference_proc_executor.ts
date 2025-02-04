@@ -23,16 +23,25 @@ export class InferenceProcExecutor extends SupervisedProc implements InferenceEx
   #activeRequests: { [id: string]: PendingInference } = {};
   #logger = log();
 
-  constructor(
-    runners: { [id: string]: string },
-    initializeTimeout: number,
-    closeTimeout: number,
-    memoryWarnMB: number,
-    memoryLimitMB: number,
-    pingInterval: number,
-    pingTimeout: number,
-    highPingThreshold: number,
-  ) {
+  constructor({
+    runners,
+    initializeTimeout,
+    closeTimeout,
+    memoryWarnMB,
+    memoryLimitMB,
+    pingInterval,
+    pingTimeout,
+    highPingThreshold,
+  }: {
+    runners: { [id: string]: string };
+    initializeTimeout: number;
+    closeTimeout: number;
+    memoryWarnMB: number;
+    memoryLimitMB: number;
+    pingInterval: number;
+    pingTimeout: number;
+    highPingThreshold: number;
+  }) {
     super(
       initializeTimeout,
       closeTimeout,

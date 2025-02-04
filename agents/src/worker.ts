@@ -296,16 +296,16 @@ export class Worker {
       );
 
     if (Object.entries(InferenceRunner.registeredRunners).length) {
-      this.#inferenceExecutor = new InferenceProcExecutor(
-        InferenceRunner.registeredRunners,
-        30000,
-        5000,
-        2000,
-        0,
-        5000,
-        60000,
-        2500,
-      );
+      this.#inferenceExecutor = new InferenceProcExecutor({
+        runners: InferenceRunner.registeredRunners,
+        initializeTimeout: 30000,
+        closeTimeout: 5000,
+        memoryWarnMB: 2000,
+        memoryLimitMB: 0,
+        pingInterval: 5000,
+        pingTimeout: 60000,
+        highPingThreshold: 2500,
+      });
     }
 
     this.#procPool = new ProcPool(
