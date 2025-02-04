@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import EventEmitter, { once } from 'node:events';
 import type { InferenceRunner } from '../inference_runner.js';
 import { initializeLogger, log } from '../log.js';

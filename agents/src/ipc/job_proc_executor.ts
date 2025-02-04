@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import type { ChildProcess } from 'node:child_process';
 import { fork } from 'node:child_process';
 import type { RunningJobInfo } from '../job.js';
