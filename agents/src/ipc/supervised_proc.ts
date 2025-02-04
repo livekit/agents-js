@@ -34,7 +34,6 @@ export abstract class SupervisedProc {
   constructor(
     initializeTimeout: number,
     closeTimeout: number,
-    // XXX(nbsp): memoryWarnMB and memoryLimitMB are currently stubbed and serve no use
     memoryWarnMB: number,
     memoryLimitMB: number,
     pingInterval: number,
