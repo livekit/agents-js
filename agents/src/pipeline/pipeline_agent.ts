@@ -78,6 +78,12 @@ export type VPACallbacks = {
   [VPAEvent.METRICS_COLLECTED]: (metrics: AgentMetrics) => void;
 };
 
+interface TurnDetector {
+  unlikelyThreshold: number;
+  supportsLanguage: (language?: string) => boolean;
+  predictEndOfTurn: (chatCtx: ChatContext) => Promise<number>;
+}
+
 export class AgentCallContext {
   #agent: VoicePipelineAgent;
   #llmStream: LLMStream;
@@ -206,6 +212,8 @@ export interface VPAOptions {
   beforeTTSCallback: BeforeTTSCallback;
   /** Options for assistant transcription. */
   transcription: AgentTranscriptionOptions;
+  /** Turn detection model to use. */
+  turnDetector?: TurnDetector;
 }
 
 const defaultVPAOptions: VPAOptions = {
@@ -238,7 +246,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   #pendingAgentReply?: SpeechHandle;
   #agentReplyTask?: CancellablePromise<void>;
   #playingSpeech?: SpeechHandle;
-  #transcribedText = '';
+  transcribedText = '';
   #transcribedInterimText = '';
   #speechQueueOpen = new Future();
   #speechQueue = new AsyncIterableQueue<SpeechHandle | typeof VoicePipelineAgent.FLUSH_SENTINEL>();
@@ -284,6 +292,8 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     this.#deferredValidation = new DeferredReplyValidation(
       this.#validateReplyIfPossible.bind(this),
       this.#opts.minEndpointingDelay,
+      this,
+      this.#opts.turnDetector,
     );
   }
 
@@ -499,7 +509,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       if (!newTranscript) return;
 
       this.#lastFinalTranscriptTime = Date.now();
-      this.#transcribedText += (this.#transcribedText ? ' ' : '') + newTranscript;
+      this.transcribedText += (this.transcribedText ? ' ' : '') + newTranscript;
 
       if (
         this.#opts.preemptiveSynthesis &&
@@ -564,7 +574,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     this.#pendingAgentReply = SpeechHandle.createAssistantReply(
       this.#opts.allowInterruptions,
       true,
-      this.#transcribedText,
+      this.transcribedText,
     );
     const newHandle = this.#pendingAgentReply;
     this.#agentReplyTask = this.#synthesizeAnswerTask(this.#agentReplyTask, newHandle);
@@ -674,7 +684,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.chatCtx.messages.push(userMsg);
       this.emit(VPAEvent.USER_SPEECH_COMMITTED, userMsg);
 
-      this.#transcribedText = this.#transcribedText.slice(userQuestion.length);
+      this.transcribedText = this.transcribedText.slice(userQuestion.length);
       handle.markUserCommitted();
     };
 
@@ -862,7 +872,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     }
 
     if (!this.#pendingAgentReply) {
-      if (this.#opts.preemptiveSynthesis || !this.#transcribedText) {
+      if (this.#opts.preemptiveSynthesis || !this.transcribedText) {
         return;
       }
       this.#synthesizeAgentReply();
@@ -969,6 +979,7 @@ class DeferredReplyValidation {
   readonly PUNCTUATION = '.!?';
   readonly PUNCTUATION_REDUCE_FACTOR = 0.75;
   readonly LATE_TRANSCRIPT_TOLERANCE = 1.5; // late compared to end of speech
+  readonly UNLIKELY_ENDPOINT_DELAY = 6000;
 
   #validateFunc: () => Promise<void>;
   #validatingPromise?: Promise<void>;
@@ -978,12 +989,21 @@ class DeferredReplyValidation {
   #speaking = false;
   #endOfSpeechDelay: number;
   #finalTranscriptDelay: number;
+  #turnDetector?: TurnDetector;
+  #agent: VoicePipelineAgent;
   #abort?: AbortController;
 
-  constructor(validateFunc: () => Promise<void>, minEndpointingDelay: number) {
+  constructor(
+    validateFunc: () => Promise<void>,
+    minEndpointingDelay: number,
+    agent: VoicePipelineAgent,
+    turnDetector?: TurnDetector,
+  ) {
     this.#validateFunc = validateFunc;
     this.#endOfSpeechDelay = minEndpointingDelay;
     this.#finalTranscriptDelay = minEndpointingDelay;
+    this.#agent = agent;
+    this.#turnDetector = turnDetector;
   }
 
   get validating(): boolean {
@@ -1038,7 +1058,17 @@ class DeferredReplyValidation {
   }
 
   #run(delay: number) {
-    const runTask = async (delay: number, signal: AbortSignal) => {
+    const runTask = async (delay: number, chatCtx: ChatContext, signal: AbortSignal) => {
+      if (this.#lastFinalTranscript && !this.#speaking && this.#turnDetector) {
+        const startTime = Date.now();
+        const eotProb = await this.#turnDetector.predictEndOfTurn(chatCtx);
+        const unlikelyThreshold = this.#turnDetector.unlikelyThreshold;
+        const elapsed = Date.now() - startTime;
+        if (eotProb < unlikelyThreshold) {
+          delay = this.UNLIKELY_ENDPOINT_DELAY;
+        }
+        delay = Math.max(0, delay - elapsed);
+      }
       const timeout = setTimeout(() => {
         this.#resetStates();
         this.#validateFunc();
@@ -1051,6 +1081,8 @@ class DeferredReplyValidation {
     this.#abort?.abort();
     this.#abort = new AbortController();
     this.#validatingFuture = new Future();
-    this.#validatingPromise = runTask(delay, this.#abort.signal);
+    const detectCtx = this.#agent.chatCtx.copy();
+    detectCtx.append({ text: this.#agent.transcribedText, role: ChatRole.USER });
+    this.#validatingPromise = runTask(delay, detectCtx, this.#abort.signal);
   }
 }

@@ -7,7 +7,12 @@ import type { LoggerOptions } from '../log.js';
 export type IPCMessage =
   | {
       case: 'initializeRequest';
-      value: { loggerOptions: LoggerOptions };
+      value: {
+        loggerOptions: LoggerOptions;
+        pingInterval?: number;
+        pingTimeout?: number;
+        highPingThreshold?: number;
+      };
     }
   | {
       case: 'initializeResponse';
@@ -28,6 +33,14 @@ export type IPCMessage =
   | {
       case: 'shutdownRequest';
       value: { reason?: string };
+    }
+  | {
+      case: 'inferenceRequest';
+      value: { method: string; requestId: string; data: unknown };
+    }
+  | {
+      case: 'inferenceResponse';
+      value: { requestId: string; data: unknown; error?: Error };
     }
   | {
       case: 'exiting';

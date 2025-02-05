@@ -10,6 +10,7 @@
  * @packageDocumentation
  */
 import * as cli from './cli.js';
+import * as ipc from './ipc/index.js';
 import * as llm from './llm/index.js';
 import * as metrics from './metrics/index.js';
 import * as multimodal from './multimodal/index.js';
@@ -28,5 +29,6 @@ export * from './log.js';
 export * from './generator.js';
 export * from './audio.js';
 export * from './transcription.js';
+export * from './inference_runner.js';
 
-export { cli, stt, tts, llm, pipeline, multimodal, tokenize, metrics };
+export { cli, stt, tts, llm, pipeline, multimodal, tokenize, metrics, ipc };
