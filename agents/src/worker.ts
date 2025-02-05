@@ -710,6 +710,7 @@ export class Worker {
 
     this.#closed = true;
 
+    await this.#inferenceExecutor?.close();
     await this.#procPool.close();
     await this.#httpServer.close();
     await Promise.allSettled(this.#tasks);
