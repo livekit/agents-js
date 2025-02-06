@@ -23,6 +23,9 @@ export interface STTOptions {
   numChannels: number;
   keywords: [string, number][];
   profanityFilter: boolean;
+  dictation: boolean;
+  diarize: boolean;
+  numerals: boolean;
 }
 
 const defaultSTTOptions: STTOptions = {
@@ -40,6 +43,9 @@ const defaultSTTOptions: STTOptions = {
   numChannels: 1,
   keywords: [],
   profanityFilter: false,
+  dictation: false,
+  diarize: false,
+  numerals: false,
 };
 
 export class STT extends stt.STT {
@@ -119,6 +125,9 @@ export class SpeechStream extends stt.SpeechStream {
         model: this.#opts.model,
         punctuate: this.#opts.punctuate,
         smart_format: this.#opts.smartFormat,
+        dictation: this.#opts.dictation,
+        diarize: this.#opts.diarize,
+        numerals: this.#opts.numerals,
         no_delay: this.#opts.noDelay,
         interim_results: this.#opts.interimResults,
         encoding: 'linear16',
