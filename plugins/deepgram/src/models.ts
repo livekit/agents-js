@@ -2,6 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+export type TTSModels =
+  | 'aura-asteria-en'
+  | 'aura-luna-en'
+  | 'aura-stella-en'
+  | 'aura-athena-en'
+  | 'aura-hera-en'
+  | 'aura-orion-en'
+  | 'aura-arcas-en'
+  | 'aura-perseus-en'
+  | 'aura-angus-en'
+  | 'aura-orpheus-en'
+  | 'aura-helios-en'
+  | 'aura-zeus-en';
+
+export type TTSEncoding = 'linear16' | 'mulaw' | 'alaw' | 'mp3' | 'opus' | 'flac' | 'aac';
+
 export type STTModels =
   | 'nova-general'
   | 'nova-phonecall'
