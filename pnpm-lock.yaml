@@ -205,8 +205,8 @@ importers:
         specifier: workspace:^x
         version: link:../../agents
       '@livekit/agents-plugin-openai':
-        specifier: ^0.8.1
-        version: 0.8.1(@livekit/agents@agents)(@livekit/rtc-node@0.13.2)(zod@3.23.8)
+        specifier: workspace:^x
+        version: link:../openai
       '@livekit/agents-plugin-silero':
         specifier: workspace:^x
         version: link:../silero
@@ -1110,12 +1110,6 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.25':
     resolution: {integrity: sha512-vNk6aEwybGtawWmy/PzwnGDOjCkLWSD2wqvjGGAgOAwCGWySYXfYoxt00IJkTF+8Lb57DwOb3Aa0o9CApepiYQ==}
-
-  '@livekit/agents-plugin-openai@0.8.1':
-    resolution: {integrity: sha512-gvrhhXQkqFixIGYjh/wFwWce/UnEMQ8DccPiGbo44n6eBkIZrndamFT7OSx5avvOnPwT9qLcTJ0BI7b9pQlYtA==}
-    peerDependencies:
-      '@livekit/agents': ^0.6.2x
-      '@livekit/rtc-node': ^0.13.2
 
   '@livekit/changesets-changelog-github@0.0.4':
     resolution: {integrity: sha512-MXaiLYwgkYciZb8G2wkVtZ1pJJzZmVx5cM30Q+ClslrIYyAqQhRbPmZDM79/5CGxb1MTemR/tfOM25tgJgAK0g==}
@@ -2826,11 +2820,9 @@ packages:
 
   lodash.get@4.4.2:
     resolution: {integrity: sha512-z+Uw/vLuy6gQe8cfaFWD7p0wVv8fJl3mbzXh33RS+0oW2wvUqiRXiQ69gLWSLpgB5/6sU+r6BlQR0MBILadqTQ==}
-    deprecated: This package is deprecated. Use the optional chaining (?.) operator instead.
 
   lodash.isequal@4.5.0:
     resolution: {integrity: sha512-pDo3lu8Jhfjqls6GkMgpahsF9kCyayhgykjyLMNFTKWrpVdAQtYyB4muAMWozBB4ig/dtWAmsMxLEI8wuz+DYQ==}
-    deprecated: This package is deprecated. Use require('node:util').isDeepStrictEqual instead.
 
   lodash.merge@4.6.2:
     resolution: {integrity: sha512-0KpjqXRVvrYyCsX1swR/XTK0va6VQkQM6MNo7PqW77ByjAhoARA8EfrP1N4+KlKj8YS0ZUCtRT/YUuhyYDujIQ==}
@@ -4691,19 +4683,6 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.4.15
-
-  '@livekit/agents-plugin-openai@0.8.1(@livekit/agents@agents)(@livekit/rtc-node@0.13.2)(zod@3.23.8)':
-    dependencies:
-      '@livekit/agents': link:agents
-      '@livekit/rtc-node': 0.13.2
-      openai: 4.70.2(zod@3.23.8)
-      sharp: 0.33.5
-      ws: 8.17.0
-    transitivePeerDependencies:
-      - bufferutil
-      - encoding
-      - utf-8-validate
-      - zod
 
   '@livekit/changesets-changelog-github@0.0.4':
     dependencies:
