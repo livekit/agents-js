@@ -180,6 +180,12 @@ const streamSynthesisTask = (
       if (cancelled) break;
       ttsStream.pushText(text);
     }
+
+    // end the audio queue early if there is no actual text to turn into speech
+    if (!fullText || fullText.trim().length === 0) {
+      cancelled = true;
+      handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
+    }
     ttsStream.flush();
     ttsStream.endInput();
 
