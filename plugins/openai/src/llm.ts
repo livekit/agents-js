@@ -607,11 +607,7 @@ const buildMessage = async (msg: llm.ChatMessage, cacheKey: any) => {
 
   if (typeof msg.content === 'string') {
     oaiMsg.content = msg.content;
-  } else if (
-    ((c?: llm.ChatContent | llm.ChatContent[]): c is llm.ChatContent[] => {
-      return (c as llm.ChatContent[]).length !== undefined;
-    })(msg.content)
-  ) {
+  } else if (Array.isArray(msg.content)) {
     oaiMsg.content = (await Promise.all(
       msg.content.map(async (c) => {
         if (typeof c === 'string') {
@@ -628,6 +624,8 @@ const buildMessage = async (msg: llm.ChatMessage, cacheKey: any) => {
         }
       }),
     )) as OpenAI.ChatCompletionContentPart[];
+  } else if (msg.content === undefined) {
+    oaiMsg.content = ''
   }
 
   // make sure to provide when function has been called inside the context

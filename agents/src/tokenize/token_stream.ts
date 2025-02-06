@@ -44,12 +44,15 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
       if (this.#outBuf) this.#outBuf += ' ';
 
       const tok = tokens.shift()!;
-      let tokText = tok as string;
-      if (tok.length > 1 && typeof tok[1] === 'number') {
+      let tokText: string;
+      if (Array.isArray(tok)) {
         tokText = tok[0];
+      } else {
+        tokText = tok
       }
 
       this.#outBuf += tokText;
+
       if (this.#outBuf.length >= this.#minTokenLength) {
         this.queue.put({ token: this.#outBuf, segmentId: this.#currentSegmentId });
         this.#outBuf = '';
@@ -76,7 +79,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
       if (tokens) {
         if (this.#outBuf) this.#outBuf += ' ';
 
-        if (typeof tokens[0] !== 'string') {
+        if (Array.isArray(tokens[0])) {
           this.#outBuf += tokens.map((tok) => tok[0]).join(' ');
         } else {
           this.#outBuf += tokens.join(' ');
