@@ -6,6 +6,7 @@ import type { VAD, VADStream } from '../vad.js';
 import { VADEventType } from '../vad.js';
 import type { SpeechEvent } from './stt.js';
 import { STT, SpeechEventType, SpeechStream } from './stt.js';
+import { log } from '../log.js';
 
 export class StreamAdapter extends STT {
   #stt: STT;
@@ -71,13 +72,18 @@ export class StreamAdapterWrapper extends SpeechStream {
           case VADEventType.END_OF_SPEECH:
             this.output.put({ type: SpeechEventType.END_OF_SPEECH });
 
-            const event = await this.#stt.recognize(ev.frames);
-            if (!event.alternatives![0].text) {
+            try {
+              const event = await this.#stt.recognize(ev.frames);
+              if (!event.alternatives![0].text) {
+                continue;
+              }
+
+              this.output.put(event);
+              break;
+            } catch (error) {
+              log().child({ error: (error as Error).message }).error("STT recognize task failed")
               continue;
             }
-
-            this.output.put(event);
-            break;
         }
       }
     };
