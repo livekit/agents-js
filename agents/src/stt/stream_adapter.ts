@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import { log } from '../log.js';
 import type { VAD, VADStream } from '../vad.js';
 import { VADEventType } from '../vad.js';
 import type { SpeechEvent } from './stt.js';
 import { STT, SpeechEventType, SpeechStream } from './stt.js';
-import { log } from '../log.js';
 
 export class StreamAdapter extends STT {
   #stt: STT;
@@ -81,7 +81,9 @@ export class StreamAdapterWrapper extends SpeechStream {
               this.output.put(event);
               break;
             } catch (error) {
-              log().child({ error: (error as Error).message }).error("STT recognize task failed")
+              log()
+                .child({ error: (error as Error).message })
+                .error('STT recognize task failed');
               continue;
             }
         }
