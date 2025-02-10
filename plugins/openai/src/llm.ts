@@ -625,7 +625,7 @@ const buildMessage = async (msg: llm.ChatMessage, cacheKey: any) => {
       }),
     )) as OpenAI.ChatCompletionContentPart[];
   } else if (msg.content === undefined) {
-    oaiMsg.content = ''
+    oaiMsg.content = '';
   }
 
   // make sure to provide when function has been called inside the context
