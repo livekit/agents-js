@@ -81,9 +81,13 @@ export class StreamAdapterWrapper extends SpeechStream {
               this.output.put(event);
               break;
             } catch (error) {
-              log()
-                .child({ error: (error as Error).message })
-                .error('STT recognize task failed');
+              let logger = log();
+              if (error instanceof Error) {
+                logger = logger.child({ error: error.message });
+              } else {
+                logger = logger.child({ error });
+              }
+              logger.error(`${this.label}: provider recognize task failed`);
               continue;
             }
         }
