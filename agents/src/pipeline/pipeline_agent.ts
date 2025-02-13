@@ -262,6 +262,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   #lastFinalTranscriptTime?: number;
   #lastSpeechTime?: number;
   #transcriptionId?: string;
+  #agentTranscribedText = '';
 
   constructor(
     /** Voice Activity Detection instance. */
@@ -743,7 +744,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     }
     commitUserQuestionIfNeeded();
 
-    let collectedText = handle.synthesisHandle.text;
+    let collectedText = this.#agentTranscribedText;
     const isUsingTools = handle.source instanceof LLMStream && !!handle.source.functionCalls.length;
     const interrupted = handle.interrupted;
 
@@ -886,6 +887,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   ): SynthesisHandle {
     const synchronizer = new TextAudioSynchronizer(defaultTextSyncOptions);
     synchronizer.on('textUpdated', (text) => {
+      this.#agentTranscribedText = text.text;
       this.#room!.localParticipant!.publishTranscription({
         participantIdentity: this.#room!.localParticipant!.identity,
         trackSid: this.#agentPublication!.sid!,
