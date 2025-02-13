@@ -234,7 +234,7 @@ export class AgentPlayout extends EventEmitter {
             handle.totalPlayedTime = handle.pushedDuration - this.#audioSource.queuedDuration;
 
             if (handle.interrupted || captureTask.error) {
-              await handle.synchronizer.close(true)
+              await handle.synchronizer.close(true);
               this.#audioSource.clearQueue(); // make sure to remove any queued frames
             }
 

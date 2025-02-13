@@ -247,8 +247,14 @@ export class MultimodalAgent extends EventEmitter {
 
         const synchronizer = new TextAudioSynchronizer(defaultTextSyncOptions);
         synchronizer.on('textUpdated', (text) => {
-          this.#publishTranscription(this.room!.localParticipant!.identity!, this.#getLocalTrackSid()!, text.text, text.final, text.id);
-        })
+          this.#publishTranscription(
+            this.room!.localParticipant!.identity!,
+            this.#getLocalTrackSid()!,
+            text.text,
+            text.final,
+            text.id,
+          );
+        });
 
         const handle = this.#agentPlayout?.play(
           message.itemId,
@@ -267,9 +273,9 @@ export class MultimodalAgent extends EventEmitter {
           if (this.#textResponseRetries >= this.#maxTextResponseRetries) {
             throw new Error(
               'The OpenAI Realtime API returned a text response ' +
-              `after ${this.#maxTextResponseRetries} retries. ` +
-              'Please try to reduce the number of text system or ' +
-              'assistant messages in the chat context.',
+                `after ${this.#maxTextResponseRetries} retries. ` +
+                'Please try to reduce the number of text system or ' +
+                'assistant messages in the chat context.',
             );
           }
 
@@ -282,7 +288,7 @@ export class MultimodalAgent extends EventEmitter {
             })
             .warn(
               'The OpenAI Realtime API returned a text response instead of audio. ' +
-              'Attempting to recover to audio mode...',
+                'Attempting to recover to audio mode...',
             );
           this.#session!.recoverFromTextResponse(message.itemId);
         } else {

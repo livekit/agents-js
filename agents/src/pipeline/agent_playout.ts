@@ -5,9 +5,9 @@ import type { AudioFrame, AudioSource } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'node:events';
 import { log } from '../log.js';
+import type { TextAudioSynchronizer } from '../transcription.js';
 import { CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 import { SynthesisHandle } from './agent_output.js';
-import { TextAudioSynchronizer } from '../transcription.js';
 
 export enum AgentPlayoutEvent {
   PLAYOUT_STARTED,
@@ -24,7 +24,7 @@ export class PlayoutHandle {
   #audioSource: AudioSource;
   playoutSource: AsyncIterable<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>;
   totalPlayedTime?: number;
-  synchronizer: TextAudioSynchronizer
+  synchronizer: TextAudioSynchronizer;
   #interrupted = false;
   pushedDuration = 0;
   intFut = new Future();
@@ -34,12 +34,12 @@ export class PlayoutHandle {
     speechId: string,
     audioSource: AudioSource,
     playoutSource: AsyncIterable<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>,
-    synchronizer: TextAudioSynchronizer
+    synchronizer: TextAudioSynchronizer,
   ) {
     this.#speechId = speechId;
     this.#audioSource = audioSource;
     this.playoutSource = playoutSource;
-    this.synchronizer = synchronizer
+    this.synchronizer = synchronizer;
   }
 
   get speechId(): string {
@@ -95,7 +95,7 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
   play(
     speechId: string,
     playoutSource: AsyncIterable<AudioFrame | typeof SynthesisHandle.FLUSH_SENTINEL>,
-    synchronizer: TextAudioSynchronizer
+    synchronizer: TextAudioSynchronizer,
   ): PlayoutHandle {
     if (this.#closed) {
       throw new Error('source closed');
@@ -114,7 +114,7 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
         handle.totalPlayedTime = handle.pushedDuration - this.#audioSource.queuedDuration;
 
         if (handle.interrupted || captureTask.error) {
-          handle.synchronizer.close(true)
+          handle.synchronizer.close(true);
           this.#audioSource.clearQueue(); // make sure to remove any queued frames
         }
 
@@ -162,7 +162,7 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
               .child({ speechId: handle.speechId })
               .debug('started playing the first time');
             this.emit(AgentPlayoutEvent.PLAYOUT_STARTED);
-            handle.synchronizer.segmentPlayoutStarted()
+            handle.synchronizer.segmentPlayoutStarted();
             firstFrame = false;
           }
           handle.pushedDuration += (frame.samplesPerChannel / frame.sampleRate) * 1000;
@@ -177,7 +177,7 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
         //   await this.#audioSource.waitForPlayout();
         // }
 
-        handle.synchronizer.close(false)
+        handle.synchronizer.close(false);
         resolve();
       });
 

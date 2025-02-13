@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { log } from '../log.js';
+import type { TextAudioSynchronizer } from '../transcription.js';
 import { SynthesizeStream, type TTS } from '../tts/index.js';
 import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 import type { AgentPlayout, PlayoutHandle } from './agent_playout.js';
-import { TextAudioSynchronizer } from '../transcription.js';
 
 export type SpeechSource = AsyncIterable<string> | string | Promise<string>;
 
@@ -24,12 +24,18 @@ export class SynthesisHandle {
   #logger = log();
   synchronizer: TextAudioSynchronizer;
 
-  constructor(speechId: string, ttsSource: SpeechSource, agentPlayout: AgentPlayout, tts: TTS, synchronizer: TextAudioSynchronizer) {
+  constructor(
+    speechId: string,
+    ttsSource: SpeechSource,
+    agentPlayout: AgentPlayout,
+    tts: TTS,
+    synchronizer: TextAudioSynchronizer,
+  ) {
     this.#speechId = speechId;
     this.ttsSource = ttsSource;
     this.#agentPlayout = agentPlayout;
     this.tts = tts;
-    this.synchronizer = synchronizer
+    this.synchronizer = synchronizer;
   }
 
   get speechId(): string {
@@ -89,8 +95,18 @@ export class AgentOutput {
     await Promise.all(this.#tasks);
   }
 
-  synthesize(speechId: string, ttsSource: SpeechSource, synchronizer: TextAudioSynchronizer): SynthesisHandle {
-    const handle = new SynthesisHandle(speechId, ttsSource, this.#agentPlayout, this.#tts, synchronizer);
+  synthesize(
+    speechId: string,
+    ttsSource: SpeechSource,
+    synchronizer: TextAudioSynchronizer,
+  ): SynthesisHandle {
+    const handle = new SynthesisHandle(
+      speechId,
+      ttsSource,
+      this.#agentPlayout,
+      this.#tts,
+      synchronizer,
+    );
     const task = this.#synthesize(handle);
     this.#tasks.push(task);
     task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
@@ -147,10 +163,10 @@ const stringSynthesisTask = (text: string, handle: SynthesisHandle): Cancellable
       if (cancelled || audio === SynthesizeStream.END_OF_STREAM) {
         break;
       }
-      handle.synchronizer.pushAudio(audio.frame)
+      handle.synchronizer.pushAudio(audio.frame);
       handle.queue.put(audio.frame);
     }
-    handle.synchronizer.markAudioSegmentEnd()
+    handle.synchronizer.markAudioSegmentEnd();
     handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
 
     resolve(text);
@@ -176,10 +192,10 @@ const streamSynthesisTask = (
         if (audio === SynthesizeStream.END_OF_STREAM) {
           break;
         }
-        handle.synchronizer.pushAudio(audio.frame)
+        handle.synchronizer.pushAudio(audio.frame);
         handle.queue.put(audio.frame);
       }
-      handle.synchronizer.markAudioSegmentEnd()
+      handle.synchronizer.markAudioSegmentEnd();
       handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
     };
     readGeneratedAudio();
@@ -190,7 +206,7 @@ const streamSynthesisTask = (
       handle.synchronizer.pushText(text);
       ttsStream.pushText(text);
     }
-    handle.synchronizer.markTextSegmentEnd()
+    handle.synchronizer.markTextSegmentEnd();
 
     // end the audio queue early if there is no actual text to turn into speech
     if (!fullText || fullText.trim().length === 0) {
