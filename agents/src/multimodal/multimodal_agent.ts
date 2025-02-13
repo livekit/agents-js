@@ -22,7 +22,7 @@ import { AudioByteStream } from '../audio.js';
 import * as llm from '../llm/index.js';
 import { log } from '../log.js';
 import type { MultimodalLLMMetrics } from '../metrics/base.js';
-import { BasicTranscriptionForwarder } from '../transcription.js';
+import { TextAudioSynchronizer, defaultTextSyncOptions } from '../transcription.js';
 import { findMicroTrackId } from '../utils.js';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 
@@ -190,7 +190,7 @@ export class MultimodalAgent extends EventEmitter {
         this.emit('agent_stopped_speaking');
         this.#speaking = false;
         if (this.#playingHandle) {
-          let text = this.#playingHandle.transcriptionFwd.text;
+          let text = this.#playingHandle.synchronizer.playedText;
           if (interrupted) {
             text += '…';
           }
@@ -245,17 +245,12 @@ export class MultimodalAgent extends EventEmitter {
         // openai.realtime.RealtimeContent
         if (message.contentType === 'text') return;
 
-        const trFwd = new BasicTranscriptionForwarder(
-          this.room!,
-          this.room!.localParticipant!.identity!,
-          this.#getLocalTrackSid()!,
-          message.responseId,
-        );
+        const synchronizer = new TextAudioSynchronizer(defaultTextSyncOptions);
 
         const handle = this.#agentPlayout?.play(
           message.itemId,
           message.contentIndex,
-          trFwd,
+          synchronizer,
           message.textStream,
           message.audioStream,
         );

@@ -2,4 +2,4 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export { SentenceTokenizer, WordTokenizer, tokenizeParagraphs, hyphenateWord } from './basic.js';
+export { SentenceTokenizer, WordTokenizer, tokenizeParagraphs, hyphenateWord, splitWords } from './basic.js';
