@@ -161,6 +161,7 @@ export class AgentPlayout extends EventEmitter {
                     }
                     handle.synchronizer.pushText(text);
                   }
+                  handle.synchronizer.markTextSegmentEnd();
                   resolveText();
                 } catch (error) {
                   rejectText(error);
@@ -241,10 +242,6 @@ export class AgentPlayout extends EventEmitter {
             }
 
             if (!firstFrame) {
-              if (!handle.interrupted) {
-                handle.synchronizer.markTextSegmentEnd();
-              }
-
               this.emit('playout_stopped', handle.interrupted);
             }
 

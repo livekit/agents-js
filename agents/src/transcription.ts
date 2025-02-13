@@ -121,7 +121,8 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
     }
 
     this.#textData!.done = true;
-    this.#textData!.sentenceStream.close()
+    this.#textData?.sentenceStream.flush()
+    this.#textData?.sentenceStream.close()
     this.#textData = undefined;
   }
 
@@ -208,11 +209,10 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
     const processedWords: string[] = [];
 
     const ogText = this.#playedText
-    let sentText = ''
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     for (const [word, _, end] of words) {
       if (segIndex <= this.#finishedSegIndex) break
-      if (this.#closed) return
+      if (this.#closed) return;
 
       const wordHyphens = this.#opts.hyphenateWord(word).length
       processedWords.push(word)
@@ -247,7 +247,6 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
       }))
 
       this.#playedText = `${ogText} ${text}`
-      sentText = text
       await this.#sleepIfNotClosed((delay - firstDelay) * 1000000)
       textData.forwardedHyphens += wordHyphens
     }
@@ -262,7 +261,6 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
     }))
 
     this.#playedText = `${ogText} ${sentence}`
-    sentText = sentence
 
     await this.#sleepIfNotClosed(this.#opts.newSentenceDelay)
     textData.forwardedSentences++
