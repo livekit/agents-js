@@ -50,6 +50,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
   #speed: number;
 
   #closed = false;
+  #interrupted = false;
   #closeFut = new Future()
 
   #playingSegIndex = -1
@@ -144,11 +145,12 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
     return this.#playedText;
   }
 
-  async close() {
+  async close(interrupt: boolean) {
     if (this.#closed) {
       return
     }
     this.#closed = true
+    this.#interrupted = interrupt
     this.#closeFut.resolve()
 
     for (const textData of this.#textQ) {
@@ -212,7 +214,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     for (const [word, _, end] of words) {
       if (segIndex <= this.#finishedSegIndex) break
-      if (this.#closed) return;
+      if (this.#interrupted) return;
 
       const wordHyphens = this.#opts.hyphenateWord(word).length
       processedWords.push(word)

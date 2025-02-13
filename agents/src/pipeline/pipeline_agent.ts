@@ -37,6 +37,7 @@ import { AgentOutput } from './agent_output.js';
 import { AgentPlayout, AgentPlayoutEvent } from './agent_playout.js';
 import { HumanInput, HumanInputEvent } from './human_input.js';
 import { SpeechHandle } from './speech_handle.js';
+import { TextAudioSynchronizer, defaultTextSyncOptions } from '../transcription.js';
 
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
 export const AGENT_STATE_ATTRIBUTE = 'lk.agent.state';
@@ -702,7 +703,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     }
     commitUserQuestionIfNeeded();
 
-    const collectedText = handle.synthesisHandle.text;
+    let collectedText = handle.synthesisHandle.text
     const isUsingTools = handle.source instanceof LLMStream && !!handle.source.functionCalls.length;
     const interrupted = handle.interrupted;
 
@@ -711,7 +712,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         this.chatCtx.messages.push(...handle.extraToolsMessages);
       }
       if (interrupted) {
-        collectedText + '…';
+        collectedText += '…';
       }
 
       const msg = ChatMessage.create({ text: collectedText, role: ChatRole.ASSISTANT });
@@ -808,6 +809,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         chatCtx,
         fncCtx: this.fncCtx,
       });
+
       const answerSynthesis = this.#synthesizeAgentSpeech(newSpeechHandle.id, answerLLMStream);
       newSpeechHandle.initialize(answerLLMStream, answerSynthesis);
       handle.addNestedSpeech(newSpeechHandle);
@@ -842,6 +844,11 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     speechId: string,
     source: string | LLMStream | AsyncIterable<string>,
   ): SynthesisHandle {
+    const synchronizer = new TextAudioSynchronizer(defaultTextSyncOptions)
+    synchronizer.on('textUpdated', (text) => {
+      console.log(text.text);
+    })
+
     if (!this.#agentOutput) {
       throw new Error('agent output should be initialized when ready');
     }
@@ -860,7 +867,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       throw new Error('beforeTTSCallback must return string or AsyncIterable<string>');
     }
 
-    return this.#agentOutput.synthesize(speechId, ttsSource);
+    return this.#agentOutput.synthesize(speechId, ttsSource, synchronizer);
   }
 
   async #validateReplyIfPossible() {

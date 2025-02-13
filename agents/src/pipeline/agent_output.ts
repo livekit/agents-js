@@ -6,6 +6,7 @@ import { log } from '../log.js';
 import { SynthesizeStream, type TTS } from '../tts/index.js';
 import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 import type { AgentPlayout, PlayoutHandle } from './agent_playout.js';
+import { TextAudioSynchronizer } from '../transcription.js';
 
 export type SpeechSource = AsyncIterable<string> | string | Promise<string>;
 
@@ -21,12 +22,14 @@ export class SynthesisHandle {
   #playHandle?: PlayoutHandle;
   intFut = new Future();
   #logger = log();
+  synchronizer: TextAudioSynchronizer;
 
-  constructor(speechId: string, ttsSource: SpeechSource, agentPlayout: AgentPlayout, tts: TTS) {
+  constructor(speechId: string, ttsSource: SpeechSource, agentPlayout: AgentPlayout, tts: TTS, synchronizer: TextAudioSynchronizer) {
     this.#speechId = speechId;
     this.ttsSource = ttsSource;
     this.#agentPlayout = agentPlayout;
     this.tts = tts;
+    this.synchronizer = synchronizer
   }
 
   get speechId(): string {
@@ -51,7 +54,7 @@ export class SynthesisHandle {
       throw new Error('synthesis was interrupted');
     }
 
-    this.#playHandle = this.#agentPlayout.play(this.#speechId, this.queue);
+    this.#playHandle = this.#agentPlayout.play(this.#speechId, this.queue, this.synchronizer);
     return this.#playHandle;
   }
 
@@ -86,8 +89,8 @@ export class AgentOutput {
     await Promise.all(this.#tasks);
   }
 
-  synthesize(speechId: string, ttsSource: SpeechSource): SynthesisHandle {
-    const handle = new SynthesisHandle(speechId, ttsSource, this.#agentPlayout, this.#tts);
+  synthesize(speechId: string, ttsSource: SpeechSource, synchronizer: TextAudioSynchronizer): SynthesisHandle {
+    const handle = new SynthesisHandle(speechId, ttsSource, this.#agentPlayout, this.#tts, synchronizer);
     const task = this.#synthesize(handle);
     this.#tasks.push(task);
     task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
@@ -136,14 +139,18 @@ const stringSynthesisTask = (text: string, handle: SynthesisHandle): Cancellable
 
     const ttsStream = handle.tts.stream();
     ttsStream.pushText(text);
+    handle.synchronizer.pushText(text);
+    handle.synchronizer.markTextSegmentEnd();
     ttsStream.flush();
     ttsStream.endInput();
     for await (const audio of ttsStream) {
       if (cancelled || audio === SynthesizeStream.END_OF_STREAM) {
         break;
       }
+      handle.synchronizer.pushAudio(audio.frame)
       handle.queue.put(audio.frame);
     }
+    handle.synchronizer.markAudioSegmentEnd()
     handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
 
     resolve(text);
@@ -169,8 +176,10 @@ const streamSynthesisTask = (
         if (audio === SynthesizeStream.END_OF_STREAM) {
           break;
         }
+        handle.synchronizer.pushAudio(audio.frame)
         handle.queue.put(audio.frame);
       }
+      handle.synchronizer.markAudioSegmentEnd()
       handle.queue.put(SynthesisHandle.FLUSH_SENTINEL);
     };
     readGeneratedAudio();
@@ -178,8 +187,10 @@ const streamSynthesisTask = (
     for await (const text of stream) {
       fullText += text;
       if (cancelled) break;
+      handle.synchronizer.pushText(text);
       ttsStream.pushText(text);
     }
+    handle.synchronizer.markTextSegmentEnd()
 
     // end the audio queue early if there is no actual text to turn into speech
     if (!fullText || fullText.trim().length === 0) {
