@@ -7,8 +7,8 @@ import { AudioFrame } from "@livekit/rtc-node";
 import { randomUUID } from "node:crypto";
 import { TranscriptionSegment } from "@livekit/protocol";
 
-// standard speech rate in hyphens/sec
-const STANDARD_SPEECH_RATE = 3.83
+// standard speech rate in hyphens/ms
+const STANDARD_SPEECH_RATE = 3830
 
 export interface TextSyncOptions {
   language: string,
@@ -55,9 +55,9 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
   #playingSegIndex = -1
   #finishedSegIndex = -1
 
-  #textQChanged = new AsyncIterableQueue<void>();
+  #textQChanged = new AsyncIterableQueue<number>();
   #textQ: (TextData | undefined)[] = []
-  #audioQChanged = new AsyncIterableQueue<void>();
+  #audioQChanged = new AsyncIterableQueue<number>();
   #audioQ: (AudioData | undefined)[] = []
 
   #playedText = ""
@@ -78,7 +78,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
     if (!this.#audioData) {
       this.#audioData = { pushedDuration: 0, done: false };
       this.#audioQ.push(this.#audioData)
-      this.#audioQChanged.put()
+      this.#audioQChanged.put(1)
     }
     this.#audioData.pushedDuration += frame.samplesPerChannel / frame.sampleRate
   }
@@ -94,7 +94,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
         forwardedSentences: 0,
       }
       this.#textQ.push(this.#textData)
-      this.#textQChanged.put()
+      this.#textQChanged.put(1)
     }
 
     this.#textData.pushedText += text
@@ -121,7 +121,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
     }
 
     this.#textData!.done = true;
-    this.#textData!.sentenceStream.endInput()
+    this.#textData!.sentenceStream.close()
     this.#textData = undefined;
   }
 
@@ -156,8 +156,8 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
 
     this.#textQ.push(undefined)
     this.#audioQ.push(undefined)
-    this.#textQChanged.put()
-    this.#audioQChanged.put()
+    this.#textQChanged.put(1);
+    this.#audioQChanged.put(1)
 
     await this.#task;
   }
@@ -235,11 +235,11 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
       }
 
       const firstDelay = Math.min(delay/2, 2/speed)
-      await this.#sleepIfNotClosed(firstDelay)
+      await this.#sleepIfNotClosed(firstDelay * 1000000)
 
       this.emit("textUpdated", new TranscriptionSegment({
         id: segId,
-        text: text.slice(sentText.length),
+        text: text,
         startTime: BigInt(0),
         endTime: BigInt(0),
         final: false,
@@ -248,13 +248,13 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
 
       this.#playedText = `${ogText} ${text}`
       sentText = text
-      await this.#sleepIfNotClosed(delay - firstDelay)
+      await this.#sleepIfNotClosed((delay - firstDelay) * 1000000)
       textData.forwardedHyphens += wordHyphens
     }
 
     this.emit('textUpdated', new TranscriptionSegment({
       id: segId,
-      text: sentence.slice(sentText.length),
+      text: sentence,
       startTime: BigInt(0),
       endTime: BigInt(0),
       final: true,

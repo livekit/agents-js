@@ -33,14 +33,14 @@ export class PlayoutHandle extends EventEmitter {
     sampleRate: number,
     itemId: string,
     contentIndex: number,
-    transcriptionFwd: TextAudioSynchronizer,
+    synchronizer: TextAudioSynchronizer,
   ) {
     super();
     this.#audioSource = audioSource;
     this.#sampleRate = sampleRate;
     this.#itemId = itemId;
     this.#contentIndex = contentIndex;
-    this.synchronizer = transcriptionFwd;
+    this.synchronizer = synchronizer;
     this.doneFut = new Future();
     this.intFut = new Future();
     this.#interrupted = false;
@@ -161,7 +161,6 @@ export class AgentPlayout extends EventEmitter {
                     }
                     handle.synchronizer.pushText(text);
                   }
-                  handle.synchronizer.markTextSegmentEnd()
                   resolveText();
                 } catch (error) {
                   rejectText(error);
