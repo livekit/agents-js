@@ -10,6 +10,7 @@ import {
   TrackSource,
 } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { randomUUID } from 'node:crypto';
 import EventEmitter from 'node:events';
 import type {
   CallableFunctionResult,
@@ -260,6 +261,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   #agentPublication?: LocalTrackPublication;
   #lastFinalTranscriptTime?: number;
   #lastSpeechTime?: number;
+  #transcriptionId?: string;
 
   constructor(
     /** Voice Activity Detection instance. */
@@ -503,14 +505,52 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.#deferredValidation.onHumanEndOfSpeech(event);
     });
     this.#humanInput.on(HumanInputEvent.INTERIM_TRANSCRIPT, (event) => {
+      if (!this.#transcriptionId) {
+        this.#transcriptionId = randomUUID();
+      }
       this.#transcribedInterimText = event.alternatives![0].text;
+
+      this.#room!.localParticipant!.publishTranscription({
+        participantIdentity: this.#humanInput!.participant.identity,
+        trackSid: this.#humanInput!.subscribedTrack!.sid!,
+        segments: [
+          {
+            text: this.#transcribedInterimText,
+            id: this.#transcriptionId,
+            final: true,
+            startTime: BigInt(0),
+            endTime: BigInt(0),
+            language: '',
+          },
+        ],
+      });
     });
     this.#humanInput.on(HumanInputEvent.FINAL_TRANSCRIPT, (event) => {
       const newTranscript = event.alternatives![0].text;
       if (!newTranscript) return;
 
+      if (!this.#transcriptionId) {
+        this.#transcriptionId = randomUUID();
+      }
+
       this.#lastFinalTranscriptTime = Date.now();
       this.transcribedText += (this.transcribedText ? ' ' : '') + newTranscript;
+
+      this.#room!.localParticipant!.publishTranscription({
+        participantIdentity: this.#humanInput!.participant.identity,
+        trackSid: this.#humanInput!.subscribedTrack!.sid!,
+        segments: [
+          {
+            text: this.transcribedText,
+            id: this.#transcriptionId,
+            final: true,
+            startTime: BigInt(0),
+            endTime: BigInt(0),
+            language: '',
+          },
+        ],
+      });
+      this.#transcriptionId = undefined;
 
       if (
         this.#opts.preemptiveSynthesis &&
@@ -846,7 +886,11 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   ): SynthesisHandle {
     const synchronizer = new TextAudioSynchronizer(defaultTextSyncOptions);
     synchronizer.on('textUpdated', (text) => {
-      console.log(text.text);
+      this.#room!.localParticipant!.publishTranscription({
+        participantIdentity: this.#room!.localParticipant!.identity,
+        trackSid: this.#agentPublication!.sid!,
+        segments: [text],
+      });
     });
 
     if (!this.#agentOutput) {

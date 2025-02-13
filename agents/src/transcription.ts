@@ -108,7 +108,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
   markAudioSegmentEnd() {
     this.#checkNotClosed();
 
-    if (this.#audioData) {
+    if (!this.#audioData) {
       // create empty audio data if none exists
       this.pushAudio(new AudioFrame(new Int16Array(), 24000, 1, 0));
     }
