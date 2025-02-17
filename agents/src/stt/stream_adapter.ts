@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import { log } from '../log.js';
 import type { VAD, VADStream } from '../vad.js';
 import { VADEventType } from '../vad.js';
 import type { SpeechEvent } from './stt.js';
@@ -71,13 +72,24 @@ export class StreamAdapterWrapper extends SpeechStream {
           case VADEventType.END_OF_SPEECH:
             this.output.put({ type: SpeechEventType.END_OF_SPEECH });
 
-            const event = await this.#stt.recognize(ev.frames);
-            if (!event.alternatives![0].text) {
+            try {
+              const event = await this.#stt.recognize(ev.frames);
+              if (!event.alternatives![0].text) {
+                continue;
+              }
+
+              this.output.put(event);
+              break;
+            } catch (error) {
+              let logger = log();
+              if (error instanceof Error) {
+                logger = logger.child({ error: error.message });
+              } else {
+                logger = logger.child({ error });
+              }
+              logger.error(`${this.label}: provider recognize task failed`);
               continue;
             }
-
-            this.output.put(event);
-            break;
         }
       }
     };

@@ -731,7 +731,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       // Construct query parameters
       const queryParams: Record<string, string> = {};
       if (this.#opts.isAzure) {
-        queryParams['api-version'] = '2024-10-01-preview';
+        queryParams['api-version'] = this.#opts.apiVersion ?? '2024-10-01-preview';
         queryParams['deployment'] = this.#opts.model;
       } else {
         queryParams['model'] = this.#opts.model;

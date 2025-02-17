@@ -48,7 +48,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
       if (Array.isArray(tok)) {
         tokText = tok[0];
       } else {
-        tokText = tok
+        tokText = tok;
       }
 
       this.#outBuf += tokText;
