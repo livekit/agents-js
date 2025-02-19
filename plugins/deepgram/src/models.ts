@@ -16,6 +16,7 @@ export type STTModels =
   | 'nova-2-medical'
   | 'nova-2-drivethru'
   | 'nova-2-automotive'
+  | 'nova-3-general'
   | 'enhanced-general'
   | 'enhanced-meeting'
   | 'enhanced-phonecall'
