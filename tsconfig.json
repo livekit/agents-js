@@ -17,6 +17,7 @@
     "entryPoints": ["agents", "plugins/*"],
     "entryPointStrategy": "packages",
     "name": "LiveKit Agents",
+    "exclude": ["plugins/test"],
     "excludeInternal": true,
     "excludePrivate": true,
     "excludeProtected": true,
