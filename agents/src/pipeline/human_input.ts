@@ -57,6 +57,14 @@ export class HumanInput extends (EventEmitter as new () => TypedEmitter<HumanInp
     this.#subscribeToMicrophone();
   }
 
+  get participant(): RemoteParticipant {
+    return this.#participant;
+  }
+
+  get subscribedTrack(): RemoteAudioTrack | undefined {
+    return this.#subscribedTrack;
+  }
+
   #subscribeToMicrophone(): void {
     if (!this.#participant) {
       this.#logger.error('Participant is not set');

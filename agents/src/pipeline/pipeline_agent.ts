@@ -10,6 +10,7 @@ import {
   TrackSource,
 } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { randomUUID } from 'node:crypto';
 import EventEmitter from 'node:events';
 import type {
   CallableFunctionResult,
@@ -28,6 +29,7 @@ import {
   hyphenateWord,
 } from '../tokenize/basic/index.js';
 import type { SentenceTokenizer, WordTokenizer } from '../tokenize/tokenizer.js';
+import { TextAudioSynchronizer, defaultTextSyncOptions } from '../transcription.js';
 import type { TTS } from '../tts/index.js';
 import { TTSEvent, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import { AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
@@ -259,6 +261,8 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
   #agentPublication?: LocalTrackPublication;
   #lastFinalTranscriptTime?: number;
   #lastSpeechTime?: number;
+  #transcriptionId?: string;
+  #agentTranscribedText = '';
 
   constructor(
     /** Voice Activity Detection instance. */
@@ -502,14 +506,52 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.#deferredValidation.onHumanEndOfSpeech(event);
     });
     this.#humanInput.on(HumanInputEvent.INTERIM_TRANSCRIPT, (event) => {
+      if (!this.#transcriptionId) {
+        this.#transcriptionId = randomUUID();
+      }
       this.#transcribedInterimText = event.alternatives![0].text;
+
+      this.#room!.localParticipant!.publishTranscription({
+        participantIdentity: this.#humanInput!.participant.identity,
+        trackSid: this.#humanInput!.subscribedTrack!.sid!,
+        segments: [
+          {
+            text: this.#transcribedInterimText,
+            id: this.#transcriptionId,
+            final: true,
+            startTime: BigInt(0),
+            endTime: BigInt(0),
+            language: '',
+          },
+        ],
+      });
     });
     this.#humanInput.on(HumanInputEvent.FINAL_TRANSCRIPT, (event) => {
       const newTranscript = event.alternatives![0].text;
       if (!newTranscript) return;
 
+      if (!this.#transcriptionId) {
+        this.#transcriptionId = randomUUID();
+      }
+
       this.#lastFinalTranscriptTime = Date.now();
       this.transcribedText += (this.transcribedText ? ' ' : '') + newTranscript;
+
+      this.#room!.localParticipant!.publishTranscription({
+        participantIdentity: this.#humanInput!.participant.identity,
+        trackSid: this.#humanInput!.subscribedTrack!.sid!,
+        segments: [
+          {
+            text: this.transcribedText,
+            id: this.#transcriptionId,
+            final: true,
+            startTime: BigInt(0),
+            endTime: BigInt(0),
+            language: '',
+          },
+        ],
+      });
+      this.#transcriptionId = undefined;
 
       if (
         this.#opts.preemptiveSynthesis &&
@@ -702,7 +744,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     }
     commitUserQuestionIfNeeded();
 
-    const collectedText = handle.synthesisHandle.text;
+    let collectedText = this.#agentTranscribedText;
     const isUsingTools = handle.source instanceof LLMStream && !!handle.source.functionCalls.length;
     const interrupted = handle.interrupted;
 
@@ -711,7 +753,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         this.chatCtx.messages.push(...handle.extraToolsMessages);
       }
       if (interrupted) {
-        collectedText + '…';
+        collectedText += '…';
       }
 
       const msg = ChatMessage.create({ text: collectedText, role: ChatRole.ASSISTANT });
@@ -808,6 +850,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         chatCtx,
         fncCtx: this.fncCtx,
       });
+
       const answerSynthesis = this.#synthesizeAgentSpeech(newSpeechHandle.id, answerLLMStream);
       newSpeechHandle.initialize(answerLLMStream, answerSynthesis);
       handle.addNestedSpeech(newSpeechHandle);
@@ -842,6 +885,16 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     speechId: string,
     source: string | LLMStream | AsyncIterable<string>,
   ): SynthesisHandle {
+    const synchronizer = new TextAudioSynchronizer(defaultTextSyncOptions);
+    synchronizer.on('textUpdated', (text) => {
+      this.#agentTranscribedText = text.text;
+      this.#room!.localParticipant!.publishTranscription({
+        participantIdentity: this.#room!.localParticipant!.identity,
+        trackSid: this.#agentPublication!.sid!,
+        segments: [text],
+      });
+    });
+
     if (!this.#agentOutput) {
       throw new Error('agent output should be initialized when ready');
     }
@@ -860,7 +913,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       throw new Error('beforeTTSCallback must return string or AsyncIterable<string>');
     }
 
-    return this.#agentOutput.synthesize(speechId, ttsSource);
+    return this.#agentOutput.synthesize(speechId, ttsSource, synchronizer);
   }
 
   async #validateReplyIfPossible() {
