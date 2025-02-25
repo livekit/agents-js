@@ -20,6 +20,8 @@ import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import { WebSocket } from 'ws';
 import { HTTPServer } from './http_server.js';
+import { InferenceRunner } from './inference_runner.js';
+import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
@@ -159,6 +161,8 @@ export class WorkerOptions {
   port: number;
   logLevel: string;
   production: boolean;
+  jobMemoryWarnMB: number;
+  jobMemoryLimitMB: number;
 
   /** @param options */
   constructor({
@@ -180,6 +184,8 @@ export class WorkerOptions {
     port = undefined,
     logLevel = 'info',
     production = false,
+    jobMemoryWarnMB = 300,
+    jobMemoryLimitMB = 0,
   }: {
     /**
      * Path to a file that has {@link Agent} as a default export, dynamically imported later for
@@ -205,6 +211,8 @@ export class WorkerOptions {
     port?: number;
     logLevel?: string;
     production?: boolean;
+    jobMemoryWarnMB?: number;
+    jobMemoryLimitMB?: number;
   }) {
     this.agent = agent;
     if (!this.agent) {
@@ -227,6 +235,8 @@ export class WorkerOptions {
     this.port = port || Default.port(production);
     this.logLevel = logLevel;
     this.production = production;
+    this.jobMemoryWarnMB = jobMemoryWarnMB;
+    this.jobMemoryLimitMB = jobMemoryLimitMB;
   }
 }
 
@@ -264,6 +274,7 @@ export class Worker {
   #session: WebSocket | undefined = undefined;
   #httpServer: HTTPServer;
   #logger = log().child({ version });
+  #inferenceExecutor?: InferenceProcExecutor;
 
   /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: WorkerOptions) {
@@ -284,11 +295,27 @@ export class Worker {
         'API Secret is required: Set LIVEKIT_API_SECRET, run with --api-secret, or pass apiSecret in WorkerOptions',
       );
 
+    if (Object.entries(InferenceRunner.registeredRunners).length) {
+      this.#inferenceExecutor = new InferenceProcExecutor({
+        runners: InferenceRunner.registeredRunners,
+        initializeTimeout: 30000,
+        closeTimeout: 5000,
+        memoryWarnMB: 2000,
+        memoryLimitMB: 0,
+        pingInterval: 5000,
+        pingTimeout: 60000,
+        highPingThreshold: 2500,
+      });
+    }
+
     this.#procPool = new ProcPool(
       opts.agent,
       opts.numIdleProcesses,
       opts.initializeProcessTimeout,
       opts.shutdownProcessTimeout,
+      this.#inferenceExecutor,
+      opts.jobMemoryWarnMB,
+      opts.jobMemoryLimitMB,
     );
 
     this.#opts = opts;
@@ -299,6 +326,11 @@ export class Worker {
   async run() {
     if (!this.#closed) {
       throw new WorkerError('worker is already running');
+    }
+
+    if (this.#inferenceExecutor) {
+      await this.#inferenceExecutor.start();
+      await this.#inferenceExecutor.initialize();
     }
 
     this.#logger.info('starting worker');
@@ -682,6 +714,7 @@ export class Worker {
 
     this.#closed = true;
 
+    await this.#inferenceExecutor?.close();
     await this.#procPool.close();
     await this.#httpServer.close();
     await Promise.allSettled(this.#tasks);

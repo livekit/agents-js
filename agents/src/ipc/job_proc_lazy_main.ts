@@ -2,34 +2,63 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Room, RoomEvent } from '@livekit/rtc-node';
-import type { ChildProcess } from 'node:child_process';
-import { fork } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
 import { type Agent, isAgent } from '../generator.js';
-import type { RunningJobInfo } from '../job.js';
-import { JobContext } from '../job.js';
-import { JobProcess } from '../job.js';
+import { CurrentJobContext, JobContext, JobProcess, type RunningJobInfo } from '../job.js';
 import { initializeLogger, log } from '../log.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
+import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
-
-type StartArgs = {
-  agentFile: string;
-  // userArguments: unknown;
-};
 
 type JobTask = {
   ctx: JobContext;
   task: Promise<void>;
 };
 
-export const runProcess = (args: StartArgs): ChildProcess => {
-  return fork(new URL(import.meta.url), [args.agentFile]);
-};
+class PendingInference {
+  promise = new Promise<{ requestId: string; data: unknown; error?: Error }>((resolve) => {
+    this.resolve = resolve; // this is how JavaScript lets you resolve promises externally
+  });
+  resolve(arg: { requestId: string; data: unknown; error?: Error }) {
+    arg; // useless call to counteract TypeScript E6133
+  }
+}
+
+class InfClient implements InferenceExecutor {
+  #requests: { [id: string]: PendingInference } = {};
+
+  constructor() {
+    process.on('message', (msg: IPCMessage) => {
+      switch (msg.case) {
+        case 'inferenceResponse':
+          const fut = this.#requests[msg.value.requestId];
+          delete this.#requests[msg.value.requestId];
+          if (!fut) {
+            log().child({ resp: msg.value }).warn('received unexpected inference response');
+            return;
+          }
+          fut.resolve(msg.value);
+          break;
+      }
+    });
+  }
+
+  async doInference(method: string, data: unknown): Promise<unknown> {
+    const requestId = 'inference_job_' + randomUUID;
+    process.send!({ case: 'inferenceRequest', value: { requestId, method, data } });
+    this.#requests[requestId] = new PendingInference();
+    const resp = await this.#requests[requestId]!.promise;
+    if (resp.error) {
+      throw new Error(`inference of ${method} failed: ${resp.error.message}`);
+    }
+    return resp.data;
+  }
+}
 
 const startJob = (
   proc: JobProcess,
@@ -54,7 +83,8 @@ const startJob = (
     closeEvent.emit('close', true, reason);
   };
 
-  const ctx = new JobContext(proc, info, room, onConnect, onShutdown);
+  const ctx = new JobContext(proc, info, room, onConnect, onShutdown, new InfClient());
+  new CurrentJobContext(ctx);
 
   const task = new Promise<void>(async () => {
     const unconnectedTimeout = setTimeout(() => {

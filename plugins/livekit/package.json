@@ -1,7 +1,7 @@
 {
-  "name": "@livekit/agents-plugin-silero",
-  "version": "0.5.3",
-  "description": "Silero voice activity detection LiveKit Node Agents",
+  "name": "@livekit/agents-plugin-livekit",
+  "version": "0.0.0",
+  "description": "Additional utilities for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",
@@ -22,7 +22,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\" && cp src/silero_vad.onnx dist/",
+    "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\" && cp src/turn_detector.onnx dist/",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.{ts,js}\"",
@@ -31,19 +31,16 @@
   },
   "devDependencies": {
     "@livekit/agents": "workspace:^x",
-    "@livekit/rtc-node": "^0.13.4",
     "@microsoft/api-extractor": "^7.35.0",
-    "@types/ws": "^8.5.10",
     "onnxruntime-common": "^1.19.2",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
-  "dependencies": {
-    "onnxruntime-node": "^1.19.2",
-    "ws": "^8.16.0"
-  },
   "peerDependencies": {
-    "@livekit/agents": "workspace:^x",
-    "@livekit/rtc-node": "^0.13.4"
+    "@livekit/agents": "workspace:^x"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.2.1",
+    "onnxruntime-node": "^1.19.2"
   }
 }

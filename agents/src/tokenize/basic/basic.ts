@@ -68,6 +68,8 @@ export const hyphenateWord = (word: string): string[] => {
   return hyphenator.hyphenateWord(word);
 };
 
+export { splitWords };
+
 export const tokenizeParagraphs = (text: string): string[] => {
   return splitParagraphs(text).map((tok) => tok[0]);
 };

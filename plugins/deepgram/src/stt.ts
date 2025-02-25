@@ -23,6 +23,9 @@ export interface STTOptions {
   numChannels: number;
   keywords: [string, number][];
   profanityFilter: boolean;
+  dictation: boolean;
+  diarize: boolean;
+  numerals: boolean;
 }
 
 const defaultSTTOptions: STTOptions = {
@@ -40,6 +43,9 @@ const defaultSTTOptions: STTOptions = {
   numChannels: 1,
   keywords: [],
   profanityFilter: false,
+  dictation: false,
+  diarize: false,
+  numerals: false,
 };
 
 export class STT extends stt.STT {
@@ -75,6 +81,7 @@ export class STT extends stt.STT {
         'nova-2-medical',
         'nova-2-drivethru',
         'nova-2-automotive',
+        'nova-3-general',
       ].includes(this.#opts.model)
     ) {
       this.#logger.warn(
@@ -119,6 +126,9 @@ export class SpeechStream extends stt.SpeechStream {
         model: this.#opts.model,
         punctuate: this.#opts.punctuate,
         smart_format: this.#opts.smartFormat,
+        dictation: this.#opts.dictation,
+        diarize: this.#opts.diarize,
+        numerals: this.#opts.numerals,
         no_delay: this.#opts.noDelay,
         interim_results: this.#opts.interimResults,
         encoding: 'linear16',
@@ -215,16 +225,16 @@ export class SpeechStream extends stt.SpeechStream {
       ws.send(JSON.stringify({ type: 'CloseStream' }));
     };
 
-    const listenTask = async () => {
-      new Promise<void>((_, reject) =>
-        ws.once('close', (code, reason) => {
-          if (!closing) {
-            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-            reject();
-          }
-        }),
-      );
+    const wsMonitor = new Promise<void>((_, reject) =>
+      ws.once('close', (code, reason) => {
+        if (!closing) {
+          this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+          reject();
+        }
+      }),
+    );
 
+    const listenTask = async () => {
       while (!this.closed) {
         try {
           await new Promise<RawData>((resolve) => {
@@ -299,7 +309,7 @@ export class SpeechStream extends stt.SpeechStream {
       }
     };
 
-    await Promise.all([sendTask(), listenTask()]);
+    await Promise.all([sendTask(), listenTask(), wsMonitor]);
     clearInterval(keepalive);
   }
 }
