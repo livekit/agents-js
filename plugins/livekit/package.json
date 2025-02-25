@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-livekit",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Additional utilities for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
