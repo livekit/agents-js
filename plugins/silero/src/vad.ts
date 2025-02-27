@@ -294,7 +294,7 @@ export class VADStream extends baseStream {
           const copySpeechBuffer = (): AudioFrame => {
             if (!this.#speechBuffer) throw new Error('speechBuffer is empty');
             return new AudioFrame(
-              this.#speechBuffer.subarray(0, speechBufferIndex),
+              this.#speechBuffer.subarray(this.#prefixPaddingSamples, speechBufferIndex),
               this.#inputSampleRate,
               1,
               speechBufferIndex,
