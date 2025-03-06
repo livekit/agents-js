@@ -335,7 +335,7 @@ export class MultimodalAgent extends EventEmitter {
           this.#session!.conversation.item.truncate(
             this.#playingHandle.itemId,
             this.#playingHandle.contentIndex,
-            Math.floor((this.#playingHandle.audioSamples / 24000) * 1000),
+            Math.max(0, Math.floor((this.#playingHandle.audioSamples / 24000) * 1000)),
           );
 
           this.#playingHandle = undefined;
