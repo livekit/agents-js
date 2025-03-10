@@ -1,10 +1,18 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AsyncIterableQueue, Future, Queue } from '@livekit/agents';
-import { llm, log, multimodal } from '@livekit/agents';
+import {
+  AsyncIterableQueue,
+  Future,
+  Queue,
+  llm,
+  log,
+  mergeFrames,
+  metrics,
+  multimodal,
+} from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
-import { once } from 'events';
+import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
@@ -19,16 +27,22 @@ interface ModelOptions {
   temperature: number;
   maxResponseOutputTokens: number;
   model: api_proto.Model;
-  apiKey: string;
+  apiKey?: string;
   baseURL: string;
+  isAzure: boolean;
+  entraToken?: string;
+  apiVersion?: string;
 }
 
 interface RealtimeResponseBase {
   id: string;
   status: api_proto.ResponseStatus;
   statusDetails: api_proto.ResponseStatusDetails | null;
+  usage: api_proto.ModelUsage | null;
   output: RealtimeOutput[];
   doneFut: Future;
+  createdTimestamp: number;
+  firstTokenTimestamp?: number;
 }
 
 interface KnownRealtimeResponseBase<T extends api_proto.ResponseStatusDetails>
@@ -75,6 +89,7 @@ export interface RealtimeContent {
   textStream: AsyncIterableQueue<string>;
   audioStream: AsyncIterableQueue<AudioFrame>;
   toolCalls: RealtimeToolCall[];
+  contentType: api_proto.Modality;
 }
 
 export interface RealtimeToolCall {
@@ -130,6 +145,7 @@ class InputAudioBuffer {
 
 class ConversationItem {
   #session: RealtimeSession;
+  #logger = log();
 
   constructor(session: RealtimeSession) {
     this.#session = session;
@@ -151,12 +167,126 @@ class ConversationItem {
     });
   }
 
-  create(item: api_proto.ConversationItemCreateContent, previousItemId?: string): void {
-    this.#session.queueMsg({
-      type: 'conversation.item.create',
-      item,
-      previous_item_id: previousItemId,
-    });
+  create(message: llm.ChatMessage, previousItemId?: string): void {
+    if (!message.content) {
+      return;
+    }
+
+    let event: api_proto.ConversationItemCreateEvent;
+
+    if (message.toolCallId) {
+      if (typeof message.content !== 'string') {
+        throw new TypeError('message.content must be a string');
+      }
+
+      event = {
+        type: 'conversation.item.create',
+        previous_item_id: previousItemId,
+        item: {
+          type: 'function_call_output',
+          call_id: message.toolCallId,
+          output: message.content,
+        },
+      };
+    } else {
+      let content = message.content;
+      if (!Array.isArray(content)) {
+        content = [content];
+      }
+
+      if (message.role === llm.ChatRole.USER) {
+        const contents: (api_proto.InputTextContent | api_proto.InputAudioContent)[] = [];
+        for (const c of content) {
+          if (typeof c === 'string') {
+            contents.push({
+              type: 'input_text',
+              text: c,
+            });
+          } else if (
+            // typescript type guard for determining ChatAudio vs ChatImage
+            ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatAudio => {
+              return (c as llm.ChatAudio).frame !== undefined;
+            })(c)
+          ) {
+            contents.push({
+              type: 'input_audio',
+              audio: Buffer.from(mergeFrames(c.frame).data.buffer).toString('base64'),
+            });
+          }
+        }
+
+        event = {
+          type: 'conversation.item.create',
+          previous_item_id: previousItemId,
+          item: {
+            type: 'message',
+            role: 'user',
+            content: contents,
+          },
+        };
+      } else if (message.role === llm.ChatRole.ASSISTANT) {
+        const contents: api_proto.TextContent[] = [];
+        for (const c of content) {
+          if (typeof c === 'string') {
+            contents.push({
+              type: 'text',
+              text: c,
+            });
+          } else if (
+            // typescript type guard for determining ChatAudio vs ChatImage
+            ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatAudio => {
+              return (c as llm.ChatAudio).frame !== undefined;
+            })(c)
+          ) {
+            this.#logger.warn('audio content in assistant message is not supported');
+          }
+        }
+
+        event = {
+          type: 'conversation.item.create',
+          previous_item_id: previousItemId,
+          item: {
+            type: 'message',
+            role: 'assistant',
+            content: contents,
+          },
+        };
+      } else if (message.role === llm.ChatRole.SYSTEM) {
+        const contents: api_proto.InputTextContent[] = [];
+        for (const c of content) {
+          if (typeof c === 'string') {
+            contents.push({
+              type: 'input_text',
+              text: c,
+            });
+          } else if (
+            // typescript type guard for determining ChatAudio vs ChatImage
+            ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatAudio => {
+              return (c as llm.ChatAudio).frame !== undefined;
+            })(c)
+          ) {
+            this.#logger.warn('audio content in system message is not supported');
+          }
+        }
+
+        event = {
+          type: 'conversation.item.create',
+          previous_item_id: previousItemId,
+          item: {
+            type: 'message',
+            role: 'system',
+            content: contents,
+          },
+        };
+      } else {
+        this.#logger
+          .child({ message })
+          .warn('chat message is not supported inside the realtime API');
+        return;
+      }
+    }
+
+    this.#session.queueMsg(event);
   }
 }
 
@@ -207,6 +337,56 @@ export class RealtimeModel extends multimodal.RealtimeModel {
   #defaultOpts: ModelOptions;
   #sessions: RealtimeSession[] = [];
 
+  static withAzure({
+    baseURL,
+    azureDeployment,
+    apiVersion = '2024-10-01-preview',
+    apiKey = undefined,
+    entraToken = undefined,
+    instructions = '',
+    modalities = ['text', 'audio'],
+    voice = 'alloy',
+    inputAudioFormat = 'pcm16',
+    outputAudioFormat = 'pcm16',
+    inputAudioTranscription = { model: 'whisper-1' },
+    turnDetection = { type: 'server_vad' },
+    temperature = 0.8,
+    maxResponseOutputTokens = Infinity,
+  }: {
+    baseURL: string;
+    azureDeployment: string;
+    apiVersion?: string;
+    apiKey?: string;
+    entraToken?: string;
+    instructions?: string;
+    modalities?: ['text', 'audio'] | ['text'];
+    voice?: api_proto.Voice;
+    inputAudioFormat?: api_proto.AudioFormat;
+    outputAudioFormat?: api_proto.AudioFormat;
+    inputAudioTranscription?: api_proto.InputAudioTranscription;
+    turnDetection?: api_proto.TurnDetectionType;
+    temperature?: number;
+    maxResponseOutputTokens?: number;
+  }) {
+    return new RealtimeModel({
+      isAzure: true,
+      baseURL: new URL('openai', baseURL).toString(),
+      model: azureDeployment,
+      apiVersion,
+      apiKey,
+      entraToken,
+      instructions,
+      modalities,
+      voice,
+      inputAudioFormat,
+      outputAudioFormat,
+      inputAudioTranscription,
+      turnDetection,
+      temperature,
+      maxResponseOutputTokens,
+    });
+  }
+
   constructor({
     modalities = ['text', 'audio'],
     instructions = '',
@@ -219,7 +399,11 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     maxResponseOutputTokens = Infinity,
     model = 'gpt-4o-realtime-preview-2024-10-01',
     apiKey = process.env.OPENAI_API_KEY || '',
-    baseURL = api_proto.API_URL,
+    baseURL = api_proto.BASE_URL,
+    // used for microsoft
+    isAzure = false,
+    apiVersion = undefined,
+    entraToken = undefined,
   }: {
     modalities?: ['text', 'audio'] | ['text'];
     instructions?: string;
@@ -233,6 +417,9 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     model?: api_proto.Model;
     apiKey?: string;
     baseURL?: string;
+    isAzure?: boolean;
+    apiVersion?: string;
+    entraToken?: string;
   }) {
     super();
 
@@ -255,6 +442,9 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       model,
       apiKey,
       baseURL,
+      isAzure,
+      apiVersion,
+      entraToken,
     };
   }
 
@@ -264,6 +454,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
 
   session({
     fncCtx,
+    chatCtx,
     modalities = this.#defaultOpts.modalities,
     instructions = this.#defaultOpts.instructions,
     voice = this.#defaultOpts.voice,
@@ -275,6 +466,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     maxResponseOutputTokens = this.#defaultOpts.maxResponseOutputTokens,
   }: {
     fncCtx?: llm.FunctionContext;
+    chatCtx?: llm.ChatContext;
     modalities?: ['text', 'audio'] | ['text'];
     instructions?: string;
     voice?: api_proto.Voice;
@@ -298,9 +490,15 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       model: this.#defaultOpts.model,
       apiKey: this.#defaultOpts.apiKey,
       baseURL: this.#defaultOpts.baseURL,
+      isAzure: this.#defaultOpts.isAzure,
+      apiVersion: this.#defaultOpts.apiVersion,
+      entraToken: this.#defaultOpts.entraToken,
     };
 
-    const newSession = new RealtimeSession(opts, fncCtx);
+    const newSession = new RealtimeSession(opts, {
+      chatCtx: chatCtx || new llm.ChatContext(),
+      fncCtx,
+    });
     this.#sessions.push(newSession);
     return newSession;
   }
@@ -311,6 +509,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
 }
 
 export class RealtimeSession extends multimodal.RealtimeSession {
+  #chatCtx: llm.ChatContext | undefined = undefined;
   #fncCtx: llm.FunctionContext | undefined = undefined;
   #opts: ModelOptions;
   #pendingResponses: { [id: string]: RealtimeResponse } = {};
@@ -322,10 +521,14 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   #closing = true;
   #sendQueue = new Queue<api_proto.ClientEvent>();
 
-  constructor(opts: ModelOptions, fncCtx?: llm.FunctionContext | undefined) {
+  constructor(
+    opts: ModelOptions,
+    { fncCtx, chatCtx }: { fncCtx?: llm.FunctionContext; chatCtx?: llm.ChatContext },
+  ) {
     super();
 
     this.#opts = opts;
+    this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
 
     this.#task = this.#start();
@@ -342,6 +545,10 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       maxResponseOutputTokens: this.#opts.maxResponseOutputTokens,
       toolChoice: 'auto',
     });
+  }
+
+  get chatCtx(): llm.ChatContext | undefined {
+    return this.#chatCtx;
   }
 
   get fncCtx(): llm.FunctionContext | undefined {
@@ -416,6 +623,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     temperature = this.#opts.temperature,
     maxResponseOutputTokens = this.#opts.maxResponseOutputTokens,
     toolChoice = 'auto',
+    selectedTools = Object.keys(this.#fncCtx || {}),
   }: {
     modalities: ['text', 'audio'] | ['text'];
     instructions?: string;
@@ -427,6 +635,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     temperature?: number;
     maxResponseOutputTokens?: number;
     toolChoice?: api_proto.ToolChoice;
+    selectedTools?: string[];
   }) {
     this.#opts = {
       modalities,
@@ -441,18 +650,27 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       model: this.#opts.model,
       apiKey: this.#opts.apiKey,
       baseURL: this.#opts.baseURL,
+      isAzure: this.#opts.isAzure,
+      apiVersion: this.#opts.apiVersion,
+      entraToken: this.#opts.entraToken,
     };
 
     const tools = this.#fncCtx
-      ? Object.entries(this.#fncCtx).map(([name, func]) => ({
-          type: 'function' as const,
-          name,
-          description: func.description,
-          parameters: llm.oaiParams(func.parameters),
-        }))
+      ? Object.entries(this.#fncCtx)
+          .filter(([name]) => selectedTools.includes(name))
+          .map(([name, func]) => ({
+            type: 'function' as const,
+            name,
+            description: func.description,
+            parameters:
+              // don't format parameters if they are raw openai params
+              func.parameters.type == ('object' as const)
+                ? func.parameters
+                : llm.oaiParams(func.parameters),
+          }))
       : [];
 
-    this.queueMsg({
+    const sessionUpdateEvent: api_proto.SessionUpdateEvent = {
       type: 'session.update',
       session: {
         modalities: this.#opts.modalities,
@@ -470,23 +688,94 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         tools,
         tool_choice: toolChoice,
       },
+    };
+
+    if (this.#opts.isAzure && this.#opts.maxResponseOutputTokens === Infinity) {
+      // microsoft doesn't support inf for max_response_output_tokens, but accepts no args
+      sessionUpdateEvent.session.max_response_output_tokens = undefined;
+    }
+
+    this.queueMsg(sessionUpdateEvent);
+  }
+
+  /** Create an empty audio message with the given duration. */
+  #createEmptyUserAudioMessage(duration: number): llm.ChatMessage {
+    const samples = duration * api_proto.SAMPLE_RATE;
+    return new llm.ChatMessage({
+      role: llm.ChatRole.USER,
+      content: {
+        frame: new AudioFrame(
+          new Int16Array(samples * api_proto.NUM_CHANNELS),
+          api_proto.SAMPLE_RATE,
+          api_proto.NUM_CHANNELS,
+          samples,
+        ),
+      },
     });
+  }
+
+  /**
+   * Try to recover from a text response to audio mode.
+   *
+   * @remarks
+   * Sometimes the OpenAI Realtime API returns text instead of audio responses.
+   * This method tries to recover from this by requesting a new response after deleting the text
+   * response and creating an empty user audio message.
+   */
+  recoverFromTextResponse(itemId: string) {
+    if (itemId) {
+      this.conversation.item.delete(itemId);
+    }
+    this.conversation.item.create(this.#createEmptyUserAudioMessage(1));
+    this.response.create();
   }
 
   #start(): Promise<void> {
     return new Promise(async (resolve, reject) => {
-      this.#ws = new WebSocket(
-        `${this.#opts.baseURL}?model=${encodeURIComponent(this.#opts.model)}`,
-        {
-          headers: {
-            Authorization: `Bearer ${this.#opts.apiKey}`,
-            'OpenAI-Beta': 'realtime=v1',
-          },
-        },
-      );
+      const headers: Record<string, string> = {
+        'User-Agent': 'LiveKit-Agents-JS',
+      };
+      if (this.#opts.isAzure) {
+        // Microsoft API has two ways of authentication
+        // 1. Entra token set as `Bearer` token
+        // 2. API key set as `api_key` header (also accepts query string)
+        if (this.#opts.entraToken) {
+          headers.Authorization = `Bearer ${this.#opts.entraToken}`;
+        } else if (this.#opts.apiKey) {
+          headers['api-key'] = this.#opts.apiKey;
+        } else {
+          reject(new Error('Microsoft API key or entraToken is required'));
+          return;
+        }
+      } else {
+        headers.Authorization = `Bearer ${this.#opts.apiKey}`;
+        headers['OpenAI-Beta'] = 'realtime=v1';
+      }
+      const url = new URL([this.#opts.baseURL, 'realtime'].join('/'));
+      if (url.protocol === 'https:') {
+        url.protocol = 'wss:';
+      }
+
+      // Construct query parameters
+      const queryParams: Record<string, string> = {};
+      if (this.#opts.isAzure) {
+        queryParams['api-version'] = this.#opts.apiVersion ?? '2024-10-01-preview';
+        queryParams['deployment'] = this.#opts.model;
+      } else {
+        queryParams['model'] = this.#opts.model;
+      }
+
+      for (const [key, value] of Object.entries(queryParams)) {
+        url.searchParams.set(key, value);
+      }
+
+      console.debug('Connecting to OpenAI Realtime API at ', url.toString());
+      this.#ws = new WebSocket(url.toString(), {
+        headers: headers,
+      });
 
       this.#ws.onerror = (error) => {
-        reject(error);
+        reject(new Error('OpenAI Realtime WebSocket error: ' + error.message));
       };
 
       await once(this.#ws, 'open');
@@ -621,8 +910,8 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   #getContent(ptr: ContentPtr): RealtimeContent {
     const response = this.#pendingResponses[ptr.response_id];
-    const output = response.output[ptr.output_index];
-    const content = output.content[ptr.content_index];
+    const output = response!.output[ptr.output_index];
+    const content = output!.content[ptr.content_index]!;
     return content;
   }
 
@@ -704,8 +993,10 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       id: response.id,
       status: response.status,
       statusDetails: response.status_details,
+      usage: null,
       output: [],
       doneFut: doneFut,
+      createdTimestamp: Date.now(),
     };
     this.#pendingResponses[newResponse.id] = newResponse;
     this.emit('response_created', newResponse);
@@ -714,12 +1005,76 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   #handleResponseDone(event: api_proto.ResponseDoneEvent): void {
     const responseData = event.response;
     const responseId = responseData.id;
-    const response = this.#pendingResponses[responseId];
+    const response = this.#pendingResponses[responseId]!;
     response.status = responseData.status;
     response.statusDetails = responseData.status_details;
+    response.usage = responseData.usage ?? null;
     this.#pendingResponses[responseId] = response;
     response.doneFut.resolve();
+
+    let metricsError: Error | undefined;
+    let cancelled = false;
+    switch (response.status) {
+      case 'failed': {
+        if (response.statusDetails.type !== 'failed') break;
+        const err = response.statusDetails.error;
+        metricsError = new metrics.MultimodalLLMError({
+          type: response.statusDetails.type,
+          code: err?.code,
+          message: err?.message,
+        });
+        this.#logger
+          .child({ code: err?.code, error: err?.message })
+          .error('response generation failed');
+        break;
+      }
+      case 'incomplete': {
+        if (response.statusDetails.type !== 'incomplete') break;
+        const reason = response.statusDetails.reason;
+        metricsError = new metrics.MultimodalLLMError({
+          type: response.statusDetails.type,
+          reason,
+        });
+        this.#logger.child({ reason }).error('response generation incomplete');
+        break;
+      }
+      case 'cancelled': {
+        cancelled = true;
+        break;
+      }
+    }
     this.emit('response_done', response);
+
+    let ttft: number | undefined;
+    if (response.firstTokenTimestamp) {
+      ttft = response.firstTokenTimestamp - response.createdTimestamp;
+    }
+    const duration = Date.now() - response.createdTimestamp;
+
+    const usage = response.usage;
+    const metric: metrics.MultimodalLLMMetrics = {
+      timestamp: response.createdTimestamp,
+      requestId: response.id,
+      ttft: ttft!,
+      duration,
+      cancelled,
+      label: this.constructor.name,
+      completionTokens: usage?.output_tokens || 0,
+      promptTokens: usage?.input_tokens || 0,
+      totalTokens: usage?.total_tokens || 0,
+      tokensPerSecond: ((usage?.output_tokens || 0) / duration) * 1000,
+      error: metricsError,
+      inputTokenDetails: {
+        cachedTokens: usage?.input_token_details.cached_tokens || 0,
+        textTokens: usage?.input_token_details.text_tokens || 0,
+        audioTokens: usage?.input_token_details.audio_tokens || 0,
+      },
+      outputTokenDetails: {
+        textTokens: usage?.output_token_details.text_tokens || 0,
+        audioTokens: usage?.output_token_details.audio_tokens || 0,
+      },
+    };
+    this.emit('metrics_collected', metric);
   }
 
   #handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
@@ -747,7 +1102,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       content: [],
       doneFut: new Future(),
     };
-    response.output.push(newOutput);
+    response?.output.push(newOutput);
     this.emit('response_output_added', newOutput);
   }
 
@@ -755,9 +1110,9 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const responseId = event.response_id;
     const response = this.#pendingResponses[responseId];
     const outputIndex = event.output_index;
-    const output = response.output[outputIndex];
+    const output = response!.output[outputIndex];
 
-    if (output.type === 'function_call') {
+    if (output?.type === 'function_call') {
       if (!this.#fncCtx) {
         this.#logger.error('function call received but no fncCtx is available');
         return;
@@ -767,6 +1122,11 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       const item = event.item;
       if (item.type !== 'function_call') {
         throw new Error('Expected function_call item');
+      }
+      const func = this.#fncCtx[item.name];
+      if (!func) {
+        this.#logger.error(`no function with name ${item.name} in fncCtx`);
+        return;
       }
 
       this.emit('function_call_started', {
@@ -779,18 +1139,18 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         `[Function Call ${item.call_id}] Executing ${item.name} with arguments ${parsedArgs}`,
       );
 
-      this.#fncCtx[item.name].execute(parsedArgs).then(
+      func.execute(parsedArgs).then(
         (content) => {
           this.#logger.debug(`[Function Call ${item.call_id}] ${item.name} returned ${content}`);
           this.emit('function_call_completed', {
             callId: item.call_id,
           });
           this.conversation.item.create(
-            {
-              type: 'function_call_output',
-              call_id: item.call_id,
-              output: content,
-            },
+            llm.ChatMessage.createToolFromFunctionResult({
+              name: item.name,
+              toolCallId: item.call_id,
+              result: content,
+            }),
             output.itemId,
           );
           this.response.create();
@@ -805,7 +1165,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       );
     }
 
-    output.doneFut.resolve();
+    output?.doneFut.resolve();
     this.emit('response_output_done', output);
   }
 
@@ -813,7 +1173,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const responseId = event.response_id;
     const response = this.#pendingResponses[responseId];
     const outputIndex = event.output_index;
-    const output = response.output[outputIndex];
+    const output = response!.output[outputIndex];
 
     const textStream = new AsyncIterableQueue<string>();
     const audioStream = new AsyncIterableQueue<AudioFrame>();
@@ -828,8 +1188,10 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       textStream: textStream,
       audioStream: audioStream,
       toolCalls: [],
+      contentType: event.part.type,
     };
-    output.content.push(newContent);
+    output?.content.push(newContent);
+    response!.firstTokenTimestamp = Date.now();
     this.emit('response_content_added', newContent);
   }
 
@@ -838,11 +1200,15 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     this.emit('response_content_done', content);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  #handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {}
+  #handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
+    this.emit('response_text_delta', event);
+  }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  #handleResponseTextDone(event: api_proto.ResponseTextDoneEvent): void {}
+  #handleResponseTextDone(event: api_proto.ResponseTextDoneEvent): void {
+    const content = this.#getContent(event);
+    content.text = event.text;
+    this.emit('response_text_done', event);
+  }
 
   #handleResponseAudioTranscriptDelta(event: api_proto.ResponseAudioTranscriptDeltaEvent): void {
     const content = this.#getContent(event);

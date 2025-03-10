@@ -2,103 +2,98 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
-import { type AudioBuffer, mergeFrames } from '../utils.js';
-import { VADEventType, type VADStream } from '../vad.js';
-import { STT, SpeechEvent, SpeechEventType, SpeechStream } from './stt.js';
-
-export class StreamAdapterWrapper extends SpeechStream {
-  #closed: boolean;
-  #stt: STT;
-  #vadStream: VADStream;
-  #eventQueue: (SpeechEvent | undefined)[];
-  #language?: string;
-  #task: {
-    run: Promise<void>;
-    cancel: () => void;
-  };
-
-  constructor(stt: STT, vadStream: VADStream, language: string | undefined = undefined) {
-    super();
-    this.#closed = false;
-    this.#stt = stt;
-    this.#vadStream = vadStream;
-    this.#eventQueue = [];
-    this.#language = language;
-    this.#task = {
-      run: new Promise((_, reject) => {
-        this.run(reject);
-      }),
-      cancel: () => {},
-    };
-  }
-
-  async run(reject: (arg: Error) => void) {
-    this.#task.cancel = () => {
-      this.#closed = true;
-      reject(new Error('cancelled'));
-    };
-
-    for (const event of this.#vadStream) {
-      if (event.type == VADEventType.START_OF_SPEECH) {
-        const startEvent = new SpeechEvent(SpeechEventType.START_OF_SPEECH);
-        this.#eventQueue.push(startEvent);
-      } else if (event.type == VADEventType.END_OF_SPEECH) {
-        const mergedFrames = mergeFrames(event.speech);
-        const endEvent = await this.#stt.recognize(mergedFrames, this.#language);
-        this.#eventQueue.push(endEvent);
-      }
-    }
-
-    this.#eventQueue.push(undefined);
-  }
-
-  pushFrame(frame: AudioFrame) {
-    if (this.#closed) {
-      throw new TypeError('cannot push frame to closed stream');
-    }
-
-    this.#vadStream.pushFrame(frame);
-  }
-
-  async close(wait: boolean = true): Promise<void> {
-    this.#closed = true;
-
-    if (!wait) {
-      this.#task.cancel();
-    }
-
-    await this.#vadStream.close(wait);
-    await this.#task.run;
-  }
-
-  next(): IteratorResult<SpeechEvent> {
-    const item = this.#eventQueue.shift();
-    if (item) {
-      return { done: false, value: item };
-    } else {
-      return { done: true, value: undefined };
-    }
-  }
-}
+import { log } from '../log.js';
+import type { VAD, VADStream } from '../vad.js';
+import { VADEventType } from '../vad.js';
+import type { SpeechEvent } from './stt.js';
+import { STT, SpeechEventType, SpeechStream } from './stt.js';
 
 export class StreamAdapter extends STT {
   #stt: STT;
-  #vadStream: VADStream;
+  #vad: VAD;
+  label: string;
 
-  constructor(stt: STT, vadStream: VADStream) {
-    super(true);
+  constructor(stt: STT, vad: VAD) {
+    super({ streaming: true, interimResults: false });
     this.#stt = stt;
-    this.#vadStream = vadStream;
+    this.#vad = vad;
+    this.label = `stt.StreamAdapter<${this.#stt.label}>`;
+
+    this.#stt.on(SpeechEventType.METRICS_COLLECTED, (metrics) => {
+      this.emit(SpeechEventType.METRICS_COLLECTED, metrics);
+    });
   }
 
-  async recognize(
-    buffer: AudioBuffer,
-    language: string | undefined = undefined,
-  ): Promise<SpeechEvent> {
-    return await this.#stt.recognize(buffer, language);
+  _recognize(frame: AudioFrame): Promise<SpeechEvent> {
+    return this.#stt.recognize(frame);
   }
 
-  stream(language: string | undefined = undefined) {
-    return new StreamAdapterWrapper(this.#stt, this.#vadStream, language);
+  stream(): StreamAdapterWrapper {
+    return new StreamAdapterWrapper(this.#stt, this.#vad);
+  }
+}
+
+export class StreamAdapterWrapper extends SpeechStream {
+  #stt: STT;
+  #vadStream: VADStream;
+  label: string;
+
+  constructor(stt: STT, vad: VAD) {
+    super(stt);
+    this.#stt = stt;
+    this.#vadStream = vad.stream();
+    this.label = `stt.StreamAdapterWrapper<${this.#stt.label}>`;
+
+    this.#run();
+  }
+
+  async monitorMetrics() {
+    return; // do nothing
+  }
+
+  async #run() {
+    const forwardInput = async () => {
+      for await (const input of this.input) {
+        if (input === SpeechStream.FLUSH_SENTINEL) {
+          this.#vadStream.flush();
+        } else {
+          this.#vadStream.pushFrame(input);
+        }
+      }
+      this.#vadStream.endInput();
+    };
+
+    const recognize = async () => {
+      for await (const ev of this.#vadStream) {
+        switch (ev.type) {
+          case VADEventType.START_OF_SPEECH:
+            this.output.put({ type: SpeechEventType.START_OF_SPEECH });
+            break;
+          case VADEventType.END_OF_SPEECH:
+            this.output.put({ type: SpeechEventType.END_OF_SPEECH });
+
+            try {
+              const event = await this.#stt.recognize(ev.frames);
+              if (!event.alternatives![0].text) {
+                continue;
+              }
+
+              this.output.put(event);
+              break;
+            } catch (error) {
+              let logger = log();
+              if (error instanceof Error) {
+                logger = logger.child({ error: error.message });
+              } else {
+                logger = logger.child({ error });
+              }
+              logger.error(`${this.label}: provider recognize task failed`);
+              continue;
+            }
+        }
+      }
+    };
+
+    Promise.all([forwardInput(), recognize()]);
   }
 }

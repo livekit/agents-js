@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { type AudioSource } from '@livekit/rtc-node';
-import { EventEmitter } from 'events';
+import { EventEmitter } from 'node:events';
 import { AudioByteStream } from '../audio.js';
-import type { TranscriptionForwarder } from '../transcription.js';
+import type { TextAudioSynchronizer } from '../transcription.js';
 import { type AsyncIterableQueue, CancellablePromise, Future, gracefullyCancel } from '../utils.js';
 
 export const proto = {};
@@ -16,7 +16,7 @@ export class PlayoutHandle extends EventEmitter {
   #itemId: string;
   #contentIndex: number;
   /** @internal */
-  transcriptionFwd: TranscriptionForwarder;
+  synchronizer: TextAudioSynchronizer;
   /** @internal */
   doneFut: Future;
   /** @internal */
@@ -33,14 +33,14 @@ export class PlayoutHandle extends EventEmitter {
     sampleRate: number,
     itemId: string,
     contentIndex: number,
-    transcriptionFwd: TranscriptionForwarder,
+    synchronizer: TextAudioSynchronizer,
   ) {
     super();
     this.#audioSource = audioSource;
     this.#sampleRate = sampleRate;
     this.#itemId = itemId;
     this.#contentIndex = contentIndex;
-    this.transcriptionFwd = transcriptionFwd;
+    this.synchronizer = synchronizer;
     this.doneFut = new Future();
     this.intFut = new Future();
     this.#interrupted = false;
@@ -63,7 +63,7 @@ export class PlayoutHandle extends EventEmitter {
   }
 
   get textChars(): number {
-    return this.transcriptionFwd.currentCharacterIndex;
+    return this.synchronizer.playedText.length;
   }
 
   get contentIndex(): number {
@@ -111,7 +111,7 @@ export class AgentPlayout extends EventEmitter {
   play(
     itemId: string,
     contentIndex: number,
-    transcriptionFwd: TranscriptionForwarder,
+    synchronizer: TextAudioSynchronizer,
     textStream: AsyncIterableQueue<string>,
     audioStream: AsyncIterableQueue<AudioFrame>,
   ): PlayoutHandle {
@@ -120,7 +120,7 @@ export class AgentPlayout extends EventEmitter {
       this.#sampleRate,
       itemId,
       contentIndex,
-      transcriptionFwd,
+      synchronizer,
     );
     this.#playoutTask = this.#makePlayoutTask(this.#playoutTask, handle, textStream, audioStream);
     return handle;
@@ -159,8 +159,9 @@ export class AgentPlayout extends EventEmitter {
                     if (cancelledText || cancelled) {
                       break;
                     }
-                    handle.transcriptionFwd.pushText(text);
+                    handle.synchronizer.pushText(text);
                   }
+                  handle.synchronizer.markTextSegmentEnd();
                   resolveText();
                 } catch (error) {
                   rejectText(error);
@@ -189,12 +190,12 @@ export class AgentPlayout extends EventEmitter {
                       break;
                     }
                     if (firstFrame) {
-                      handle.transcriptionFwd.start();
+                      handle.synchronizer.segmentPlayoutStarted();
                       this.emit('playout_started');
                       firstFrame = false;
                     }
 
-                    handle.transcriptionFwd.pushAudio(frame);
+                    handle.synchronizer.pushAudio(frame);
 
                     for (const f of bstream.write(frame.data.buffer)) {
                       handle.pushedDuration += (f.samplesPerChannel / f.sampleRate) * 1000;
@@ -208,7 +209,7 @@ export class AgentPlayout extends EventEmitter {
                       await this.#audioSource.captureFrame(f);
                     }
 
-                    handle.transcriptionFwd.markAudioComplete();
+                    handle.synchronizer.markAudioSegmentEnd();
 
                     await this.#audioSource.waitForPlayout();
                   }
@@ -233,6 +234,7 @@ export class AgentPlayout extends EventEmitter {
             handle.totalPlayedTime = handle.pushedDuration - this.#audioSource.queuedDuration;
 
             if (handle.interrupted || captureTask.error) {
+              await handle.synchronizer.close(true);
               this.#audioSource.clearQueue(); // make sure to remove any queued frames
             }
 
@@ -241,15 +243,11 @@ export class AgentPlayout extends EventEmitter {
             }
 
             if (!firstFrame) {
-              if (!handle.interrupted) {
-                handle.transcriptionFwd.markTextComplete();
-              }
-
               this.emit('playout_stopped', handle.interrupted);
             }
 
             handle.doneFut.resolve();
-            await handle.transcriptionFwd.close(handle.interrupted);
+            await handle.synchronizer.close(false);
           }
 
           resolve();

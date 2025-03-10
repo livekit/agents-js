@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { MultiMutex, Mutex } from '@livekit/mutex';
 import type { RunningJobInfo } from '../job.js';
-import { Mutex, Queue } from '../utils.js';
+import { Queue } from '../utils.js';
+import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
-import { ProcJobExecutor } from './proc_job_executor.js';
+import { JobProcExecutor } from './job_proc_executor.js';
 
 export class ProcPool {
   agent: string;
@@ -16,20 +18,31 @@ export class ProcPool {
   closed = false;
   controller = new AbortController();
   initMutex = new Mutex();
-  procMutex: Mutex;
+  procMutex?: MultiMutex;
   procUnlock?: () => void;
   warmedProcQueue = new Queue<JobExecutor>();
+  inferenceExecutor?: InferenceExecutor;
+  memoryWarnMB: number;
+  memoryLimitMB: number;
 
   constructor(
     agent: string,
     numIdleProcesses: number,
     initializeTimeout: number,
     closeTimeout: number,
+    inferenceExecutor: InferenceExecutor | undefined,
+    memoryWarnMB: number,
+    memoryLimitMB: number,
   ) {
     this.agent = agent;
-    this.procMutex = new Mutex(numIdleProcesses);
+    if (numIdleProcesses > 0) {
+      this.procMutex = new MultiMutex(numIdleProcesses);
+    }
     this.initializeTimeout = initializeTimeout;
     this.closeTimeout = closeTimeout;
+    this.inferenceExecutor = inferenceExecutor;
+    this.memoryWarnMB = memoryWarnMB;
+    this.memoryLimitMB = memoryLimitMB;
   }
 
   get processes(): JobExecutor[] {
@@ -41,16 +54,44 @@ export class ProcPool {
   }
 
   async launchJob(info: RunningJobInfo) {
-    const proc = await this.warmedProcQueue.get();
-    if (this.procUnlock) {
-      this.procUnlock();
-      this.procUnlock = undefined;
+    let proc: JobExecutor;
+    if (this.procMutex) {
+      proc = await this.warmedProcQueue.get();
+      if (this.procUnlock) {
+        this.procUnlock();
+        this.procUnlock = undefined;
+      }
+    } else {
+      proc = new JobProcExecutor(
+        this.agent,
+        this.inferenceExecutor,
+        this.initializeTimeout,
+        this.closeTimeout,
+        this.memoryWarnMB,
+        this.memoryLimitMB,
+        2500,
+        60000,
+        500,
+      );
+      this.executors.push(proc);
+      await proc.start();
+      await proc.initialize();
     }
     await proc.launchJob(info);
   }
 
   async procWatchTask() {
-    const proc = new ProcJobExecutor(this.agent, this.initializeTimeout, this.closeTimeout);
+    const proc = new JobProcExecutor(
+      this.agent,
+      this.inferenceExecutor,
+      this.initializeTimeout,
+      this.closeTimeout,
+      this.memoryWarnMB,
+      this.memoryLimitMB,
+      2500,
+      60000,
+      500,
+    );
 
     try {
       this.executors.push(proc);
@@ -88,11 +129,13 @@ export class ProcPool {
   }
 
   async run(signal: AbortSignal) {
-    while (!signal.aborted) {
-      this.procUnlock = await this.procMutex.lock();
-      const task = this.procWatchTask();
-      this.tasks.push(task);
-      task.finally(() => this.tasks.splice(this.tasks.indexOf(task)));
+    if (this.procMutex) {
+      while (!signal.aborted) {
+        this.procUnlock = await this.procMutex.lock();
+        const task = this.procWatchTask();
+        this.tasks.push(task);
+        task.finally(() => this.tasks.splice(this.tasks.indexOf(task)));
+      }
     }
   }
 

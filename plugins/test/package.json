@@ -1,0 +1,45 @@
+{
+  "name": "@livekit/agents-plugins-test",
+  "version": "0.0.0",
+  "description": "Testing suite for LiveKit Agents plugins",
+  "author": "LiveKit",
+  "type": "module",
+  "private": true,
+  "repository": "git@github.com:livekit/agents-js.git",
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "require": "dist/index.cjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "src",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\" && cp src/long.wav dist/",
+    "lint": "eslint -f unix \"src/**/*.{ts,js}\""
+  },
+  "devDependencies": {
+    "@livekit/agents": "workspace:^x",
+    "@livekit/rtc-node": "^0.13.4",
+    "@types/node": "^22.5.5",
+    "tsup": "^8.3.5",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "fastest-levenshtein": "^1.0.16",
+    "vitest": "^1.6.0",
+    "zod": "^3.23.8"
+  },
+  "peerDependencies": {
+    "@livekit/agents": "workspace:^x",
+    "@livekit/rtc-node": "^0.13.4"
+  }
+}
