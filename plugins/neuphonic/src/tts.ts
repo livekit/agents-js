@@ -103,7 +103,7 @@ export class ChunkedStream extends tts.ChunkedStream {
           const messages = buffer.split('\n'); // wait until a full message has been recv
 
           if (messages.length > 1) {
-            buffer = messages.pop();
+            buffer = messages.pop() || '';
 
             for (const message of messages) {
               if (message) {
@@ -159,12 +159,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const requestData = { [requestId]: { sent: '', recv: '' } };
 
     const isAllAudioReceived = () => {
-      const recvText = requestData[requestId].recv
+      const recvText = requestData[requestId]!.recv
         .toLowerCase()
         .replace(/ /g, '')
         .replace('<stop>', '');
 
-      const sentText = requestData[requestId].sent
+      const sentText = requestData[requestId]!.sent
         .toLowerCase()
         .replace(/ /g, '')
         .replace('<stop>', '');
@@ -179,7 +179,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           continue;
         }
 
-        requestData[requestId].sent += data;
+        requestData[requestId]!.sent += data;
         ws.send(JSON.stringify({ text: data }));
       }
     };
@@ -200,7 +200,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
         if (json?.data?.audio) {
           const audio = new Int8Array(Buffer.from(json.data.audio, 'base64'));
-          requestData[requestId].recv += json.data?.text || '';
+          requestData[requestId]!.recv += json.data?.text || '';
           for (const frame of bstream.write(audio)) {
             sendLastFrame(requestId, false);
             lastFrame = frame;
