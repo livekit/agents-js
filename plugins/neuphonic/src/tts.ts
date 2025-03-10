@@ -1,16 +1,12 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, log, tokenize, tts } from '@livekit/agents';
+import { AudioByteStream, log, tts } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
 import { request } from 'node:https';
 import { WebSocket } from 'ws';
-import {
-  type TTSEncodings,
-  type TTSModels,
-  type TTSLangCodes
-} from './models.js';
+import { type TTSEncodings, type TTSLangCodes, type TTSModels } from './models.js';
 
 const AUTHORIZATION_HEADER = 'X-API-KEY';
 const NUM_CHANNELS = 1;
@@ -26,15 +22,14 @@ export interface TTSOptions {
   langCode: TTSLangCodes | string;
 }
 
-
 const defaultTTSOptions: TTSOptions = {
   model: 'neu_hq',
   encoding: 'pcm_linear',
   sampleRate: 22050,
   langCode: 'en',
   speed: 1.0,
-  apiKey: process.env.NEUPHONIC_API_TOKEN
-}
+  apiKey: process.env.NEUPHONIC_API_TOKEN,
+};
 
 export class TTS extends tts.TTS {
   #opts: TTSOptions;
@@ -85,11 +80,11 @@ export class ChunkedStream extends tts.ChunkedStream {
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const json = {
       text: this.#text,
-      ...getModelParams(this.#opts)
-    }
+      ...getModelParams(this.#opts),
+    };
 
     let buffer = '';
-    
+
     const req = request(
       {
         hostname: API_BASE_URL,
@@ -99,20 +94,20 @@ export class ChunkedStream extends tts.ChunkedStream {
         headers: {
           [AUTHORIZATION_HEADER]: this.#opts.apiKey!,
           'Content-Type': 'application/json',
-          'Accept': 'text/event-stream',
+          Accept: 'text/event-stream',
         },
       },
       (res) => {
         res.on('data', (chunk) => {
-          buffer += chunk.toString()
-          const messages = buffer.split('\n')  // wait until a full message has been recv
+          buffer += chunk.toString();
+          const messages = buffer.split('\n'); // wait until a full message has been recv
 
           if (messages.length > 1) {
             buffer = messages.pop();
 
             for (const message of messages) {
               if (message) {
-                const parsedMessage = parseSSEMessage(message)
+                const parsedMessage = parseSSEMessage(message);
 
                 if (parsedMessage?.data?.audio) {
                   for (const frame of bstream.write(parsedMessage.data.audio)) {
@@ -161,31 +156,31 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   async #run() {
     const requestId = randomUUID();
     let closing = false;
-    const requestData = {[requestId]: {sent: '', recv: ''}}
+    const requestData = { [requestId]: { sent: '', recv: '' } };
 
     const isAllAudioReceived = () => {
       const recvText = requestData[requestId].recv
         .toLowerCase()
         .replace(/ /g, '')
         .replace('<stop>', '');
-      
+
       const sentText = requestData[requestId].sent
         .toLowerCase()
         .replace(/ /g, '')
         .replace('<stop>', '');
-      
-      return sentText === recvText;
-    }
 
-    const sendTask = async(ws: WebSocket) => {
+      return sentText === recvText;
+    };
+
+    const sendTask = async (ws: WebSocket) => {
       for await (const data of this.input) {
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
-          ws.send(JSON.stringify({text: '<STOP>'}));
+          ws.send(JSON.stringify({ text: '<STOP>' }));
           continue;
         }
-        
+
         requestData[requestId].sent += data;
-        ws.send(JSON.stringify({text: data}));
+        ws.send(JSON.stringify({ text: data }));
       }
     };
 
@@ -204,7 +199,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         const json = JSON.parse(data.toString());
 
         if (json?.data?.audio) {
-          const audio = new Int8Array(Buffer.from(json.data.audio, 'base64'))
+          const audio = new Int8Array(Buffer.from(json.data.audio, 'base64'));
           requestData[requestId].recv += json.data?.text || '';
           for (const frame of bstream.write(audio)) {
             sendLastFrame(requestId, false);
@@ -253,32 +248,32 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
 /**
  * Returns all model paramters as a query parameter string ready to be sent to the Neuphonic API.
- * @param opts The TTSOptions object.
+ * @param opts - The TTSOptions object.
  */
 const getQueryParamString = (opts: TTSOptions): string => {
   const params = getModelParams(opts);
-  
+
   return Object.entries(params)
     .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
     .join('&');
-}
+};
 
 /**
  * Returns all model paramters as an object in snake_case.
- * @param opts The TTSOptions object.
+ * @param opts - The TTSOptions object.
  */
 const getModelParams = (opts: TTSOptions): Partial<TTSOptions> => {
-  const params: Record<string, any> = {};
-  
+  const params: Record<string, string | number> = {};
+
   if (opts.voiceId) params.voice_id = opts.voiceId;
   if (opts.model) params.model = opts.model;
   if (opts.langCode) params.lang_code = opts.langCode;
   if (opts.encoding) params.encoding = opts.encoding;
   if (opts.sampleRate) params.sampling_rate = opts.sampleRate;
   if (opts.speed) params.speed = opts.speed;
-  
+
   return params;
-}
+};
 
 /**
  * Parse each response from the SSE endpoint.
@@ -287,20 +282,22 @@ const getModelParams = (opts: TTSOptions): Partial<TTSOptions> => {
  * - `event: error`
  * - `event: message`
  * - `data: { "status_code": 200, "data": {"audio": ... } }`
- * 
- * @param message The SSE message to parse
+ *
+ * @param message - The SSE message to parse
  * @returns The parsed message or null if invalid
  */
-const parseSSEMessage = (message: string): {
+const parseSSEMessage = (
+  message: string,
+): {
   status_code: number;
   data: {
     text: string;
     audio: Int8Array;
-  }
+  };
 } | null => {
   message = message.trim();
 
-  if (!message || !message.includes("data: ")) {
+  if (!message || !message.includes('data: ')) {
     return null;
   }
 
@@ -308,13 +305,11 @@ const parseSSEMessage = (message: string): {
   const parsedMessage = JSON.parse(value);
 
   if (parsedMessage?.errors) {
-    throw new Error(
-      `Status ${parsedMessage.status_code} error received: ${parsedMessage.errors}.`
-    );
+    throw new Error(`Status ${parsedMessage.status_code} error received: ${parsedMessage.errors}.`);
   }
 
   if (parsedMessage?.data?.audio) {
-    parsedMessage.data.audio = new Int8Array(Buffer.from(parsedMessage.data.audio, 'base64'))
+    parsedMessage.data.audio = new Int8Array(Buffer.from(parsedMessage.data.audio, 'base64'));
   }
 
   return parsedMessage;
