@@ -1,93 +1,76 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { SentenceStream, SentenceTokenizer } from '../tokenize.js';
+import type { SentenceStream, SentenceTokenizer } from '../tokenize/index.js';
 import type { ChunkedStream } from './tts.js';
-import { SynthesisEvent, SynthesisEventType, SynthesizeStream, TTS } from './tts.js';
-
-export class StreamAdapterWrapper extends SynthesizeStream {
-  #closed: boolean;
-  #tts: TTS;
-  #sentenceStream: SentenceStream;
-  #eventQueue: (SynthesisEvent | undefined)[];
-  #task: {
-    run: Promise<void>;
-    cancel: () => void;
-  };
-
-  constructor(tts: TTS, sentenceStream: SentenceStream) {
-    super();
-    this.#closed = false;
-    this.#tts = tts;
-    this.#sentenceStream = sentenceStream;
-    this.#eventQueue = [];
-    this.#task = {
-      run: new Promise((_, reject) => {
-        this.run(reject);
-      }),
-      cancel: () => {},
-    };
-  }
-
-  async run(reject: (arg: Error) => void) {
-    while (!this.#closed) {
-      this.#task.cancel = () => {
-        this.#closed = true;
-        reject(new Error('cancelled'));
-      };
-      for await (const sentence of this.#sentenceStream) {
-        const audio = await this.#tts.synthesize(sentence.text).then((data) => data.next());
-        if (!audio.done) {
-          this.#eventQueue.push(new SynthesisEvent(SynthesisEventType.STARTED));
-          this.#eventQueue.push(new SynthesisEvent(SynthesisEventType.AUDIO, audio.value));
-          this.#eventQueue.push(new SynthesisEvent(SynthesisEventType.FINISHED));
-        }
-      }
-    }
-  }
-
-  pushText(token: string) {
-    this.#sentenceStream.pushText(token);
-  }
-
-  async flush() {
-    await this.#sentenceStream.flush();
-  }
-
-  next(): IteratorResult<SynthesisEvent> {
-    const event = this.#eventQueue.shift();
-    if (event) {
-      return { done: false, value: event };
-    } else {
-      return { done: true, value: undefined };
-    }
-  }
-
-  async close(): Promise<void> {
-    this.#task.cancel();
-    try {
-      await this.#task.run;
-    } finally {
-      this.#eventQueue.push(undefined);
-    }
-  }
-}
+import { SynthesizeStream, TTS, TTSEvent } from './tts.js';
 
 export class StreamAdapter extends TTS {
   #tts: TTS;
-  #tokenizer: SentenceTokenizer;
+  #sentenceTokenizer: SentenceTokenizer;
+  label: string;
 
-  constructor(tts: TTS, tokenizer: SentenceTokenizer) {
-    super(true);
+  constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer) {
+    super(tts.sampleRate, tts.numChannels, { streaming: true });
     this.#tts = tts;
-    this.#tokenizer = tokenizer;
+    this.#sentenceTokenizer = sentenceTokenizer;
+    this.label = this.#tts.label;
+    this.label = `tts.StreamAdapter<${this.#tts.label}>`;
+
+    this.#tts.on(TTSEvent.METRICS_COLLECTED, (metrics) => {
+      this.emit(TTSEvent.METRICS_COLLECTED, metrics);
+    });
   }
 
-  synthesize(text: string): Promise<ChunkedStream> {
+  synthesize(text: string): ChunkedStream {
     return this.#tts.synthesize(text);
   }
 
-  stream() {
-    return new StreamAdapterWrapper(this.#tts, this.#tokenizer.stream(undefined));
+  stream(): StreamAdapterWrapper {
+    return new StreamAdapterWrapper(this.#tts, this.#sentenceTokenizer);
+  }
+}
+
+export class StreamAdapterWrapper extends SynthesizeStream {
+  #tts: TTS;
+  #sentenceStream: SentenceStream;
+  label: string;
+
+  constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer) {
+    super(tts);
+    this.#tts = tts;
+    this.#sentenceStream = sentenceTokenizer.stream();
+    this.label = `tts.StreamAdapterWrapper<${this.#tts.label}>`;
+
+    this.#run();
+  }
+
+  async monitorMetrics() {
+    return; // do nothing
+  }
+
+  async #run() {
+    const forwardInput = async () => {
+      for await (const input of this.input) {
+        if (input === SynthesizeStream.FLUSH_SENTINEL) {
+          this.#sentenceStream.flush();
+        } else {
+          this.#sentenceStream.pushText(input);
+        }
+      }
+      this.#sentenceStream.endInput();
+      this.#sentenceStream.close();
+    };
+
+    const synthesize = async () => {
+      for await (const ev of this.#sentenceStream) {
+        for await (const audio of this.#tts.synthesize(ev.token)) {
+          this.output.put(audio);
+        }
+      }
+      this.output.put(SynthesizeStream.END_OF_STREAM);
+    };
+
+    Promise.all([forwardInput(), synthesize()]);
   }
 }

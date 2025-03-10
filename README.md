@@ -27,23 +27,18 @@ originally written in Python.
 
 <!--END_DESCRIPTION-->
 
-## ✨ [NEW] OpenAI Realtime API support
+## ✨ [NEW] In-house phrase endpointing model
 
-We're partnering with OpenAI on a new MultimodalAgent API in the Agents framework. This class
-completely wraps OpenAI’s Realtime API, abstract away the raw wire protocol, and provide an
-ultra-low latency WebRTC transport between GPT-4o and your users’ devices. This same stack powers
-Advanced Voice in the ChatGPT app.
-
-- Try the Realtime API in our [playground](https://playground.livekit.io/)
-  [[code](https://github.com/livekit-examples/realtime-playground)]
-- Check out our [guide](https://docs.livekit.io/agents/openai) to building your first app with this new API
+We’ve trained a new, open weights phrase endpointing model that significantly improves end-of-turn
+detection and conversational flow between voice agents and users by reducing agent interruptions.
+Optimized to run on CPUs, it’s available via [`@livekit/agents-plugin-livekit`](plugins/livekit)
+package.
 
 > [!WARNING]
-> This SDK is in Developer Preview. During this period, you may encounter bugs, and the APIs may
-> change. Currently, only the OpenAI Realtime voice assistant is available as a plugin.
+> This SDK is in beta. During this period, you may encounter bugs, and the APIs may change.
 >
 > For production, we recommend using the [more mature version](https://github.com/livekit/agents)
-> of this framework, built with Python, which also supports other integrations.
+> of this framework, built with Python, which supports a larger number of integrations.
 >
 > We welcome and appreciate any feedback or contributions. You can create issues here or chat live
 > with us in the [LiveKit Community Slack](https://livekit.io/join-slack).
@@ -56,11 +51,23 @@ To install the core Agents library:
 pnpm install @livekit/agents
 ```
 
-To install the OpenAI plugin, for optional support for realtime voice assistants:
+The framework includes a variety of plugins that make it easy to process streaming input or generate
+output. For example, there are plugins for converting text-to-speech or running inference with
+popular LLMs. To install a plugin:
 
 ```bash
 pnpm install @livekit/agents-plugin-openai
 ```
+
+The following plugins are available today:
+
+| Plugin                                                                                               | Features                    |
+|------------------------------------------------------------------------------------------------------|-----------------------------|
+| [@livekit/agents-plugin-openai](https://www.npmjs.com/package/@livekit/agents-plugin-openai)         | STT, LLM, TTS, Realtime API |
+| [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT                         |
+| [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS                         |
+| [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD                         |
+| [@livekit/agents-plugin-livekit](https://www.npmjs.com/package/@livekit/agents-plugin-livekit)       | End-of-turn detection       |
 
 ## Usage
 
@@ -79,7 +86,7 @@ Your main file for an agent is built of two parts:
 - The code that is exported when this file is imported into Agents, to be ran on all jobs (which
   includes your entrypoint function, and an optional prewarm function)
 
-Refer to the [minimal voice assistant](/examples/src/minimal_assistant.ts) example to understand
+Refer to the [minimal voice assistant](/examples/src/multimodal_agent.ts) example to understand
 how to build a simple voice assistant with function calling using OpenAI's model.
 
 ## Running
@@ -90,7 +97,7 @@ environment variables set:
 - `LIVEKIT_URL`
 - `LIVEKIT_API_KEY`
 - `LIVEKIT_API_SECRET`
-- `OPENAI_API_KEY`
+- any additional provider API keys (e.g. `OPENAI_API_KEY`)
 
 The following command will start the worker and wait for users to connect to your LiveKit server:
 
@@ -159,8 +166,8 @@ Refer to [the license](LICENSES/Apache-2.0.txt) for details.
 <br/><table>
 <thead><tr><th colspan="2">LiveKit Ecosystem</th></tr></thead>
 <tbody>
-<tr><td>Realtime SDKs</td><td><a href="https://github.com/livekit/client-sdk-js">Browser</a> · <a href="https://github.com/livekit/client-sdk-swift">iOS/macOS/visionOS</a> · <a href="https://github.com/livekit/client-sdk-android">Android</a> · <a href="https://github.com/livekit/client-sdk-flutter">Flutter</a> · <a href="https://github.com/livekit/client-sdk-react-native">React Native</a> · <a href="https://github.com/livekit/rust-sdks">Rust</a> · <a href="https://github.com/livekit/node-sdks">Node.js</a> · <a href="https://github.com/livekit/python-sdks">Python</a> · <a href="https://github.com/livekit/client-sdk-unity">Unity</a> · <a href="https://github.com/livekit/client-sdk-unity-web">Unity (WebGL)</a></td></tr><tr></tr>
-<tr><td>Server APIs</td><td><a href="https://github.com/livekit/node-sdks">Node.js</a> · <a href="https://github.com/livekit/server-sdk-go">Golang</a> · <a href="https://github.com/livekit/server-sdk-ruby">Ruby</a> · <a href="https://github.com/livekit/server-sdk-kotlin">Java/Kotlin</a> · <a href="https://github.com/livekit/python-sdks">Python</a> · <a href="https://github.com/livekit/rust-sdks">Rust</a> · <a href="https://github.com/agence104/livekit-server-sdk-php">PHP (community)</a></td></tr><tr></tr>
+<tr><td>LiveKit SDKs</td><td><a href="https://github.com/livekit/client-sdk-js">Browser</a> · <a href="https://github.com/livekit/client-sdk-swift">iOS/macOS/visionOS</a> · <a href="https://github.com/livekit/client-sdk-android">Android</a> · <a href="https://github.com/livekit/client-sdk-flutter">Flutter</a> · <a href="https://github.com/livekit/client-sdk-react-native">React Native</a> · <a href="https://github.com/livekit/rust-sdks">Rust</a> · <a href="https://github.com/livekit/node-sdks">Node.js</a> · <a href="https://github.com/livekit/python-sdks">Python</a> · <a href="https://github.com/livekit/client-sdk-unity">Unity</a> · <a href="https://github.com/livekit/client-sdk-unity-web">Unity (WebGL)</a></td></tr><tr></tr>
+<tr><td>Server APIs</td><td><a href="https://github.com/livekit/node-sdks">Node.js</a> · <a href="https://github.com/livekit/server-sdk-go">Golang</a> · <a href="https://github.com/livekit/server-sdk-ruby">Ruby</a> · <a href="https://github.com/livekit/server-sdk-kotlin">Java/Kotlin</a> · <a href="https://github.com/livekit/python-sdks">Python</a> · <a href="https://github.com/livekit/rust-sdks">Rust</a> · <a href="https://github.com/agence104/livekit-server-sdk-php">PHP (community)</a> · <a href="https://github.com/pabloFuente/livekit-server-sdk-dotnet">.NET (community)</a></td></tr><tr></tr>
 <tr><td>UI Components</td><td><a href="https://github.com/livekit/components-js">React</a> · <a href="https://github.com/livekit/components-android">Android Compose</a> · <a href="https://github.com/livekit/components-swift">SwiftUI</a></td></tr><tr></tr>
 <tr><td>Agents Frameworks</td><td><a href="https://github.com/livekit/agents">Python</a> · <b>Node.js</b> · <a href="https://github.com/livekit/agent-playground">Playground</a></td></tr><tr></tr>
 <tr><td>Services</td><td><a href="https://github.com/livekit/livekit">LiveKit server</a> · <a href="https://github.com/livekit/egress">Egress</a> · <a href="https://github.com/livekit/ingress">Ingress</a> · <a href="https://github.com/livekit/sip">SIP</a></td></tr><tr></tr>

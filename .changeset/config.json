@@ -7,9 +7,12 @@
     }
   ],
   "commit": false,
-  "fixed": [],
+  "ignore": ["livekit-agents-examples"],
   "linked": [],
-  "access": "restricted",
+  "access": "public",
   "baseBranch": "main",
-  "updateInternalDependencies": "patch"
+  "updateInternalDependencies": "patch",
+  "___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH": {
+    "onlyUpdatePeerDependentsWhenOutOfRange": true
+  }
 }

@@ -17,8 +17,8 @@
     "lint:fix": "turbo lint -- --fix",
     "test": "vitest run",
     "test:watch": "vitest",
-    "doc": "typedoc",
-    "examples:minimal": "pnpm exec tsx examples/src/minimal_assistant.ts"
+    "doc": "typedoc && mkdir -p docs/assets/github && cp .github/*.png docs/assets/github/ && find docs -name '*.html' -type f -exec sed -i.bak 's|=\"/.github/|=\"assets/github/|g' {} + && find docs -name '*.bak' -delete",
+    "examples:minimal": "pnpm exec tsx examples/src/multimodal_agent.ts"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.1",
@@ -44,5 +44,5 @@
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"
   },
-  "packageManager": "pnpm@9.2.0"
+  "packageManager": "pnpm@9.7.0"
 }

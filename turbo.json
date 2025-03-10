@@ -1,12 +1,28 @@
 {
   "$schema": "https://turborepo.org/schema.json",
   "globalEnv": [
+    "AZURE_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "AZURE_OPENAI_DEPLOYMENT",
+    "AZURE_OPENAI_ENDPOINT",
+    "AZURE_OPENAI_ENTRA_TOKEN",
+    "CARTESIA_API_KEY",
+    "CEREBRAS_API_KEY",
+    "DEEPGRAM_API_KEY",
+    "DEEPSEEK_API_KEY",
     "ELEVEN_API_KEY",
-    "OPENAI_API_KEY",
-    "LIVEKIT_URL",
+    "FIREWORKS_API_KEY",
+    "GROQ_API_KEY",
     "LIVEKIT_API_KEY",
     "LIVEKIT_API_SECRET",
-    "LOG_LEVEL"
+    "LIVEKIT_URL",
+    "LOG_LEVEL",
+    "OCTOAI_TOKEN",
+    "OPENAI_API_KEY",
+    "PERPLEXITY_API_KEY",
+    "TELNYX_API_KEY",
+    "TOGETHER_API_KEY",
+    "XAI_API_KEY"
   ],
   "pipeline": {
     "build": {

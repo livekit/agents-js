@@ -5,6 +5,8 @@ import type {
   LocalTrackPublication,
   RemoteAudioTrack,
   RemoteParticipant,
+  RemoteTrack,
+  RemoteTrackPublication,
   Room,
 } from '@livekit/rtc-node';
 import {
@@ -15,11 +17,12 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
-import { EventEmitter } from 'events';
+import { EventEmitter } from 'node:events';
 import { AudioByteStream } from '../audio.js';
-import type * as llm from '../llm/index.js';
+import * as llm from '../llm/index.js';
 import { log } from '../log.js';
-import { BasicTranscriptionForwarder } from '../transcription.js';
+import type { MultimodalLLMMetrics } from '../metrics/base.js';
+import { TextAudioSynchronizer, defaultTextSyncOptions } from '../transcription.js';
 import { findMicroTrackId } from '../utils.js';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 
@@ -33,6 +36,7 @@ export abstract class RealtimeSession extends EventEmitter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   abstract inputAudioBuffer: any; // openai.realtime.InputAudioBuffer
   abstract fncCtx: llm.FunctionContext | undefined;
+  abstract recoverFromTextResponse(itemId: string): void;
 }
 
 /**
@@ -58,18 +62,27 @@ export class MultimodalAgent extends EventEmitter {
   room: Room | null = null;
   linkedParticipant: RemoteParticipant | null = null;
   subscribedTrack: RemoteAudioTrack | null = null;
-  readMicroTask: { promise: Promise<void>; cancel: () => void } | null = null;
+  readMicroTask: Promise<void> | null = null;
+
+  #textResponseRetries = 0;
+  #maxTextResponseRetries: number;
 
   constructor({
     model,
+    chatCtx,
     fncCtx,
+    maxTextResponseRetries = 5,
   }: {
     model: RealtimeModel;
-    fncCtx?: llm.FunctionContext | undefined;
+    chatCtx?: llm.ChatContext;
+    fncCtx?: llm.FunctionContext;
+    maxTextResponseRetries?: number;
   }) {
     super();
     this.model = model;
+    this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
+    this.#maxTextResponseRetries = maxTextResponseRetries;
   }
 
   #participant: RemoteParticipant | string | null = null;
@@ -81,6 +94,7 @@ export class MultimodalAgent extends EventEmitter {
   #logger = log();
   #session: RealtimeSession | null = null;
   #fncCtx: llm.FunctionContext | undefined = undefined;
+  #chatCtx: llm.ChatContext | undefined = undefined;
 
   #_started: boolean = false;
   #_pendingFunctionCalls: Set<string> = new Set();
@@ -135,12 +149,26 @@ export class MultimodalAgent extends EventEmitter {
       this.#updateState();
 
       room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
-        if (!this.linkedParticipant) {
+        // automatically link to the first participant that connects, if not already linked
+        if (this.linkedParticipant) {
           return;
         }
-
-        this.#linkParticipant(participant.identity);
+        this.#linkParticipant(participant.identity!);
       });
+      room.on(
+        RoomEvent.TrackPublished,
+        (trackPublication: RemoteTrackPublication, participant: RemoteParticipant) => {
+          if (
+            this.linkedParticipant &&
+            participant.identity === this.linkedParticipant.identity &&
+            trackPublication.source === TrackSource.SOURCE_MICROPHONE &&
+            !trackPublication.subscribed
+          ) {
+            trackPublication.setSubscribed(true);
+          }
+        },
+      );
+      room.on(RoomEvent.TrackSubscribed, this.#handleTrackSubscription.bind(this));
 
       this.room = room;
       this.#participant = participant;
@@ -158,10 +186,26 @@ export class MultimodalAgent extends EventEmitter {
         this.#speaking = true;
       };
 
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const onPlayoutStopped = (interrupted: boolean) => {
         this.emit('agent_stopped_speaking');
         this.#speaking = false;
+        if (this.#playingHandle) {
+          let text = this.#playingHandle.synchronizer.playedText;
+          if (interrupted) {
+            text += '…';
+          }
+          const msg = llm.ChatMessage.create({
+            role: llm.ChatRole.ASSISTANT,
+            text,
+          });
+
+          if (interrupted) {
+            this.emit('agent_speech_interrupted', msg);
+          } else {
+            this.emit('agent_speech_committed', msg);
+          }
+          this.#logger.child({ transcription: text, interrupted }).debug('committed agent speech');
+        }
       };
 
       this.#agentPlayout.on('playout_started', onPlayoutStarted);
@@ -183,37 +227,73 @@ export class MultimodalAgent extends EventEmitter {
         if (typeof participant === 'string') {
           this.#linkParticipant(participant);
         } else {
-          this.#linkParticipant(participant.identity);
+          this.#linkParticipant(participant.identity!);
         }
       } else {
         // No participant specified, try to find the first participant in the room
         for (const participant of room.remoteParticipants.values()) {
-          this.#linkParticipant(participant.identity);
+          this.#linkParticipant(participant.identity!);
           break;
         }
       }
 
-      this.#session = this.model.session({ fncCtx: this.#fncCtx });
+      this.#session = this.model.session({ fncCtx: this.#fncCtx, chatCtx: this.#chatCtx });
       this.#started = true;
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('response_content_added', (message: any) => {
         // openai.realtime.RealtimeContent
-        const trFwd = new BasicTranscriptionForwarder(
-          this.room!,
-          this.room!.localParticipant!.identity,
-          this.#getLocalTrackSid()!,
-          message.responseId,
-        );
+        if (message.contentType === 'text') return;
+
+        const synchronizer = new TextAudioSynchronizer(defaultTextSyncOptions);
+        synchronizer.on('textUpdated', (text) => {
+          this.#publishTranscription(
+            this.room!.localParticipant!.identity!,
+            this.#getLocalTrackSid()!,
+            text.text,
+            text.final,
+            text.id,
+          );
+        });
 
         const handle = this.#agentPlayout?.play(
           message.itemId,
           message.contentIndex,
-          trFwd,
+          synchronizer,
           message.textStream,
           message.audioStream,
         );
         this.#playingHandle = handle;
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.#session.on('response_content_done', (message: any) => {
+        // openai.realtime.RealtimeContent
+        if (message.contentType === 'text') {
+          if (this.#textResponseRetries >= this.#maxTextResponseRetries) {
+            throw new Error(
+              'The OpenAI Realtime API returned a text response ' +
+                `after ${this.#maxTextResponseRetries} retries. ` +
+                'Please try to reduce the number of text system or ' +
+                'assistant messages in the chat context.',
+            );
+          }
+
+          this.#textResponseRetries++;
+          this.#logger
+            .child({
+              itemId: message.itemId,
+              text: message.text,
+              retries: this.#textResponseRetries,
+            })
+            .warn(
+              'The OpenAI Realtime API returned a text response instead of audio. ' +
+                'Attempting to recover to audio mode...',
+            );
+          this.#session!.recoverFromTextResponse(message.itemId);
+        } else {
+          this.#textResponseRetries = 0;
+        }
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -239,9 +319,16 @@ export class MultimodalAgent extends EventEmitter {
         } else {
           this.#logger.error('Participant or track not set');
         }
+        const userMsg = llm.ChatMessage.create({
+          role: llm.ChatRole.USER,
+          text: transcription,
+        });
+        this.emit('user_speech_committed', userMsg);
+        this.#logger.child({ transcription }).debug('committed user speech');
       });
 
       this.#session.on('input_speech_started', (ev: any) => {
+        this.emit('user_started_speaking');
         if (this.#playingHandle && !this.#playingHandle.done) {
           this.#playingHandle.interrupt();
 
@@ -259,6 +346,11 @@ export class MultimodalAgent extends EventEmitter {
         if (participantIdentity && trackSid) {
           this.#publishTranscription(participantIdentity, trackSid, '…', false, ev.itemId);
         }
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      this.#session.on('input_speech_stopped', (ev: any) => {
+        this.emit('user_stopped_speaking');
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -279,6 +371,10 @@ export class MultimodalAgent extends EventEmitter {
         this.#updateState();
       });
 
+      this.#session.on('metrics_collected', (metrics: MultimodalLLMMetrics) => {
+        this.emit('metrics_collected', metrics);
+      });
+
       resolve(this.#session);
     });
   }
@@ -297,14 +393,50 @@ export class MultimodalAgent extends EventEmitter {
 
     if (this.linkedParticipant.trackPublications.size > 0) {
       this.#subscribeToMicrophone();
-    } else {
-      this.room.on(RoomEvent.TrackPublished, () => {
-        this.#subscribeToMicrophone();
-      });
+    }
+
+    // also check if already subscribed
+    for (const publication of this.linkedParticipant.trackPublications.values()) {
+      if (publication.source === TrackSource.SOURCE_MICROPHONE && publication.track) {
+        this.#handleTrackSubscription(publication.track, publication, this.linkedParticipant);
+        break;
+      }
     }
   }
 
   #subscribeToMicrophone(): void {
+    if (!this.linkedParticipant) {
+      this.#logger.error('Participant is not set');
+      return;
+    }
+
+    let microphonePublication: RemoteTrackPublication | undefined = undefined;
+    for (const publication of this.linkedParticipant.trackPublications.values()) {
+      if (publication.source === TrackSource.SOURCE_MICROPHONE) {
+        microphonePublication = publication;
+        break;
+      }
+    }
+    if (!microphonePublication) {
+      return;
+    }
+
+    if (!microphonePublication.subscribed) {
+      microphonePublication.setSubscribed(true);
+    }
+  }
+
+  #handleTrackSubscription(
+    track: RemoteTrack,
+    publication: RemoteTrackPublication,
+    participant: RemoteParticipant,
+  ) {
+    if (
+      publication.source !== TrackSource.SOURCE_MICROPHONE ||
+      participant.identity !== this.linkedParticipant?.identity
+    ) {
+      return;
+    }
     const readAudioStreamTask = async (audioStream: AudioStream) => {
       const bstream = new AudioByteStream(
         this.model.sampleRate,
@@ -319,51 +451,18 @@ export class MultimodalAgent extends EventEmitter {
         }
       }
     };
+    this.subscribedTrack = track;
 
-    if (!this.linkedParticipant) {
-      this.#logger.error('Participant is not set');
-      return;
-    }
-
-    for (const publication of this.linkedParticipant.trackPublications.values()) {
-      if (publication.source !== TrackSource.SOURCE_MICROPHONE) {
-        continue;
-      }
-
-      if (!publication.subscribed) {
-        publication.setSubscribed(true);
-      }
-
-      const track = publication.track;
-
-      if (track && track !== this.subscribedTrack) {
-        this.subscribedTrack = track;
-
-        if (this.readMicroTask) {
-          this.readMicroTask.cancel();
-        }
-
-        let cancel: () => void;
-        this.readMicroTask = {
-          promise: new Promise<void>((resolve, reject) => {
-            cancel = () => {
-              reject(new Error('Task cancelled'));
-            };
-            readAudioStreamTask(
-              new AudioStream(track, this.model.sampleRate, this.model.numChannels),
-            )
-              .then(resolve)
-              .catch(reject);
-          }),
-          cancel: () => cancel(),
-        };
-      }
-    }
+    this.readMicroTask = new Promise<void>((resolve, reject) => {
+      readAudioStreamTask(new AudioStream(track, this.model.sampleRate, this.model.numChannels))
+        .then(resolve)
+        .catch(reject);
+    });
   }
 
   #getLocalTrackSid(): string | null {
     if (!this.#localTrackSid && this.room && this.room.localParticipant) {
-      this.#localTrackSid = findMicroTrackId(this.room, this.room.localParticipant?.identity);
+      this.#localTrackSid = findMicroTrackId(this.room, this.room.localParticipant!.identity!);
     }
     return this.#localTrackSid;
   }
@@ -414,7 +513,7 @@ export class MultimodalAgent extends EventEmitter {
 
   #setState(state: AgentState) {
     if (this.room?.isConnected && this.room.localParticipant) {
-      const currentState = this.room.localParticipant.attributes[AGENT_STATE_ATTRIBUTE];
+      const currentState = this.room.localParticipant.attributes![AGENT_STATE_ATTRIBUTE];
       if (currentState !== state) {
         this.room.localParticipant.setAttributes({
           [AGENT_STATE_ATTRIBUTE]: state,

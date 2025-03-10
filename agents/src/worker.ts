@@ -15,11 +15,13 @@ import {
   WorkerMessage,
   WorkerStatus,
 } from '@livekit/protocol';
-import { EventEmitter } from 'events';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
-import os from 'os';
+import { EventEmitter } from 'node:events';
+import os from 'node:os';
 import { WebSocket } from 'ws';
 import { HTTPServer } from './http_server.js';
+import { InferenceRunner } from './inference_runner.js';
+import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
@@ -89,8 +91,8 @@ const defaultCpuLoad = async (): Promise<number> => {
       let total = 0;
 
       for (let i = 0; i < cpus1.length; i++) {
-        const cpu1 = cpus1[i].times;
-        const cpu2 = cpus2[i].times;
+        const cpu1 = cpus1[i]!.times;
+        const cpu2 = cpus2[i]!.times;
 
         idle += cpu2.idle - cpu1.idle;
 
@@ -159,6 +161,8 @@ export class WorkerOptions {
   port: number;
   logLevel: string;
   production: boolean;
+  jobMemoryWarnMB: number;
+  jobMemoryLimitMB: number;
 
   /** @param options */
   constructor({
@@ -180,6 +184,8 @@ export class WorkerOptions {
     port = undefined,
     logLevel = 'info',
     production = false,
+    jobMemoryWarnMB = 300,
+    jobMemoryLimitMB = 0,
   }: {
     /**
      * Path to a file that has {@link Agent} as a default export, dynamically imported later for
@@ -205,6 +211,8 @@ export class WorkerOptions {
     port?: number;
     logLevel?: string;
     production?: boolean;
+    jobMemoryWarnMB?: number;
+    jobMemoryLimitMB?: number;
   }) {
     this.agent = agent;
     if (!this.agent) {
@@ -227,6 +235,8 @@ export class WorkerOptions {
     this.port = port || Default.port(production);
     this.logLevel = logLevel;
     this.production = production;
+    this.jobMemoryWarnMB = jobMemoryWarnMB;
+    this.jobMemoryLimitMB = jobMemoryLimitMB;
   }
 }
 
@@ -264,6 +274,7 @@ export class Worker {
   #session: WebSocket | undefined = undefined;
   #httpServer: HTTPServer;
   #logger = log().child({ version });
+  #inferenceExecutor?: InferenceProcExecutor;
 
   /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: WorkerOptions) {
@@ -284,11 +295,27 @@ export class Worker {
         'API Secret is required: Set LIVEKIT_API_SECRET, run with --api-secret, or pass apiSecret in WorkerOptions',
       );
 
+    if (Object.entries(InferenceRunner.registeredRunners).length) {
+      this.#inferenceExecutor = new InferenceProcExecutor({
+        runners: InferenceRunner.registeredRunners,
+        initializeTimeout: 30000,
+        closeTimeout: 5000,
+        memoryWarnMB: 2000,
+        memoryLimitMB: 0,
+        pingInterval: 5000,
+        pingTimeout: 60000,
+        highPingThreshold: 2500,
+      });
+    }
+
     this.#procPool = new ProcPool(
       opts.agent,
       opts.numIdleProcesses,
       opts.initializeProcessTimeout,
       opts.shutdownProcessTimeout,
+      this.#inferenceExecutor,
+      opts.jobMemoryWarnMB,
+      opts.jobMemoryLimitMB,
     );
 
     this.#opts = opts;
@@ -299,6 +326,11 @@ export class Worker {
   async run() {
     if (!this.#closed) {
       throw new WorkerError('worker is already running');
+    }
+
+    if (this.#inferenceExecutor) {
+      await this.#inferenceExecutor.start();
+      await this.#inferenceExecutor.initialize();
     }
 
     this.#logger.info('starting worker');
@@ -322,15 +354,19 @@ export class Worker {
         try {
           await new Promise((resolve, reject) => {
             this.#session!.on('open', resolve);
-            this.#session!.on('error', (error) => reject(error));
-            this.#session!.on('close', (code) => reject(new Error(`WebSocket returned ${code}`)));
+            this.#session!.on('error', (error) => reject(error.message));
+            this.#session!.on('close', (code) => reject(`WebSocket returned ${code}`));
           });
 
           retries = 0;
           this.#logger.debug('connected to LiveKit server');
           this.#runWS(this.#session);
           return;
-        } catch (e) {
+        } catch (e: unknown) {
+          if (e instanceof Error || e instanceof ErrorEvent) {
+            e = e.message;
+          }
+
           if (this.#closed) return;
           if (retries >= this.#opts.maxRetry) {
             throw new WorkerError(
@@ -495,7 +531,7 @@ export class Worker {
           if (job.id in this.#pending) {
             const task = this.#pending[job.id];
             delete this.#pending[job.id];
-            task.resolve(msg.message.value);
+            task?.resolve(msg.message.value);
           } else {
             this.#logger.child({ job }).warn('received assignment for unknown job ' + job.id);
           }
@@ -600,6 +636,7 @@ export class Worker {
               participantIdentity: args.identity,
               participantName: args.name,
               participantMetadata: args.metadata,
+              participantAttributes: args.attributes,
             },
           },
         }),
@@ -610,17 +647,21 @@ export class Worker {
         this.#logger.child({ req }).warn(`assignment for job ${req.id} timed out`);
         return;
       }, ASSIGNMENT_TIMEOUT);
-      const asgn = await this.#pending[req.id].promise.then(async (asgn) => {
+      const asgn = await this.#pending[req.id]?.promise.then(async (asgn) => {
         clearTimeout(timer);
         return asgn;
       });
 
-      await this.#procPool.launchJob({
-        acceptArguments: args,
-        job: msg.job!,
-        url: asgn.url || this.#opts.wsURL,
-        token: asgn.token,
-      });
+      if (asgn) {
+        await this.#procPool.launchJob({
+          acceptArguments: args,
+          job: msg.job!,
+          url: asgn.url || this.#opts.wsURL,
+          token: asgn.token,
+        });
+      } else {
+        this.#logger.child({ requestId: req.id }).warn('pending assignment not found');
+      }
     };
 
     const req = new JobRequest(msg.job!, onReject, onAccept);
@@ -669,6 +710,7 @@ export class Worker {
 
     this.#closed = true;
 
+    await this.#inferenceExecutor?.close();
     await this.#procPool.close();
     await this.#httpServer.close();
     await Promise.allSettled(this.#tasks);

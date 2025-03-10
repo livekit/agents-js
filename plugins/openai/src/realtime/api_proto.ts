@@ -7,10 +7,19 @@ export const NUM_CHANNELS = 1;
 export const IN_FRAME_SIZE = 2400; // 100ms
 export const OUT_FRAME_SIZE = 1200; // 50ms
 
-export const API_URL = 'wss://api.openai.com/v1/realtime';
+export const BASE_URL = 'wss://api.openai.com/v1';
 
 export type Model = 'gpt-4o-realtime-preview-2024-10-01' | string; // Open-ended, for future models
-export type Voice = 'alloy' | 'shimmer' | 'echo' | string;
+export type Voice =
+  | 'alloy'
+  | 'shimmer'
+  | 'echo'
+  | 'ash'
+  | 'ballad'
+  | 'coral'
+  | 'sage'
+  | 'verse'
+  | string;
 export type AudioFormat = 'pcm16'; // TODO: 'g711-ulaw' | 'g711-alaw'
 export type Role = 'system' | 'assistant' | 'user' | 'tool';
 export type GenerationFinishedReason = 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
@@ -79,7 +88,7 @@ export interface Tool {
         [prop: string]: any;
       };
     };
-    required_properties: string[];
+    required: string[];
   };
 }
 
@@ -208,17 +217,32 @@ export type ResponseStatusDetails =
       reason: 'turn_detected' | 'client_cancelled' | string;
     };
 
+export interface ModelUsage {
+  total_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  input_token_details: {
+    text_tokens: number;
+    audio_tokens: number;
+    cached_tokens: number;
+    cached_tokens_details: {
+      text_tokens: number;
+      audio_tokens: number;
+    };
+  };
+  output_token_details: {
+    text_tokens: number;
+    audio_tokens: number;
+  };
+}
+
 export interface ResponseResource {
   id: string;
   object: 'realtime.response';
   status: ResponseStatus;
   status_details: ResponseStatusDetails;
   output: ItemResource[];
-  usage?: {
-    total_tokens: number;
-    input_tokens: number;
-    output_tokens: number;
-  };
+  usage?: ModelUsage;
 }
 
 // Client Events
@@ -240,7 +264,7 @@ export interface SessionUpdateEvent extends BaseClientEvent {
     tools: Tool[];
     tool_choice: ToolChoice;
     temperature: number;
-    max_response_output_tokens: number | 'inf';
+    max_response_output_tokens?: number | 'inf';
   }>;
 }
 

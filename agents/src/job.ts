@@ -11,7 +11,20 @@ import type {
 } from '@livekit/rtc-node';
 import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import type { Logger } from 'pino';
+import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
+
+export class CurrentJobContext {
+  static #current: JobContext;
+
+  constructor(proc: JobContext) {
+    CurrentJobContext.#current = proc;
+  }
+
+  static getCurrent(): JobContext {
+    return CurrentJobContext.#current;
+  }
+}
 
 /** Which tracks, if any, should the agent automatically subscribe to? */
 export enum AutoSubscribe {
@@ -25,6 +38,7 @@ export type JobAcceptArguments = {
   name: string;
   identity: string;
   metadata: string;
+  attributes?: { [key: string]: string };
 };
 
 export type RunningJobInfo = {
@@ -59,6 +73,7 @@ export class JobContext {
     };
   } = {};
   #logger: Logger;
+  #inferenceExecutor: InferenceExecutor;
 
   constructor(
     proc: JobProcess,
@@ -66,6 +81,7 @@ export class JobContext {
     room: Room,
     onConnect: () => void,
     onShutdown: (s: string) => void,
+    inferenceExecutor: InferenceExecutor,
   ) {
     this.#proc = proc;
     this.#info = info;
@@ -75,6 +91,7 @@ export class JobContext {
     this.onParticipantConnected = this.onParticipantConnected.bind(this);
     this.#room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
     this.#logger = log().child({ info: this.#info });
+    this.#inferenceExecutor = inferenceExecutor;
   }
 
   get proc(): JobProcess {
@@ -93,6 +110,11 @@ export class JobContext {
   /** @returns The agent's participant if connected to the room, otherwise `undefined` */
   get agent(): LocalParticipant | undefined {
     return this.#room.localParticipant;
+  }
+
+  /** @returns The global inference executor */
+  get inferenceExecutor(): InferenceExecutor {
+    return this.#inferenceExecutor;
   }
 
   /** Adds a promise to be awaited when {@link JobContext.shutdown | shutdown} is called. */
@@ -189,18 +211,15 @@ export class JobContext {
   /** @internal */
   onParticipantConnected(p: RemoteParticipant) {
     for (const callback of this.#participantEntrypoints) {
-      if (
-        p.identity in this.#participantTasks &&
-        this.#participantTasks[p.identity].callback == callback
-      ) {
+      if (this.#participantTasks[p.identity!]?.callback == callback) {
         this.#logger.warn(
           'a participant has joined before a prior prticipant task matching the same identity has finished:',
           p.identity,
         );
       }
       const result = callback(this, p);
-      result.finally(() => delete this.#participantTasks[p.identity]);
-      this.#participantTasks[p.identity] = { callback, result };
+      result.finally(() => delete this.#participantTasks[p.identity!]);
+      this.#participantTasks[p.identity!] = { callback, result };
     }
   }
 
@@ -282,9 +301,9 @@ export class JobRequest {
   }
 
   /** Accepts the job, launching it on an idle child process. */
-  async accept(name = '', identity = '', metadata = '') {
+  async accept(name = '', identity = '', metadata = '', attributes?: { [key: string]: string }) {
     if (identity === '') identity = 'agent-' + this.id;
 
-    this.#onAccept({ name, identity, metadata });
+    this.#onAccept({ name, identity, metadata, attributes });
   }
 }

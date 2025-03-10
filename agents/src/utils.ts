@@ -8,7 +8,7 @@ import type {
   TrackPublication,
 } from '@livekit/rtc-node';
 import { AudioFrame, TrackSource } from '@livekit/rtc-node';
-import { EventEmitter, once } from 'events';
+import { EventEmitter, once } from 'node:events';
 
 /** Union of a single and a list of {@link AudioFrame}s */
 export type AudioBuffer = AudioFrame[] | AudioFrame;
@@ -28,8 +28,8 @@ export const mergeFrames = (buffer: AudioBuffer): AudioFrame => {
       throw new TypeError('buffer is empty');
     }
 
-    const sampleRate = buffer[0].sampleRate;
-    const channels = buffer[0].channels;
+    const sampleRate = buffer[0]!.sampleRate;
+    const channels = buffer[0]!.channels;
     let samplesPerChannel = 0;
     let data = new Int16Array();
 
@@ -80,41 +80,6 @@ export const findMicroTrackId = (room: Room, identity: string): string => {
 };
 
 /** @internal */
-export class Mutex {
-  #locking: Promise<void>;
-  #locks: number;
-  #limit: number;
-
-  constructor(limit = 1) {
-    this.#locking = Promise.resolve();
-    this.#locks = 0;
-    this.#limit = limit;
-  }
-
-  isLocked(): boolean {
-    return this.#locks >= this.#limit;
-  }
-
-  async lock(): Promise<() => void> {
-    this.#locks += 1;
-
-    let unlockNext: () => void;
-
-    const willLock = new Promise<void>(
-      (resolve) =>
-        (unlockNext = () => {
-          this.#locks -= 1;
-          resolve();
-        }),
-    );
-
-    const willUnlock = this.#locking.then(() => unlockNext);
-    this.#locking = this.#locking.then(() => willLock);
-    return willUnlock;
-  }
-}
-
-/** @internal */
 export class Queue<T> {
   /** @internal */
   items: T[] = [];
@@ -126,10 +91,18 @@ export class Queue<T> {
   }
 
   async get(): Promise<T> {
-    if (this.items.length === 0) {
-      await once(this.#events, 'put');
-    }
-    const item = this.items.shift()!;
+    const _get = async (): Promise<T> => {
+      if (this.items.length === 0) {
+        await once(this.#events, 'put');
+      }
+      let item = this.items.shift();
+      if (!item) {
+        item = await _get();
+      }
+      return item;
+    };
+
+    const item = _get();
     this.#events.emit('get');
     return item;
   }
@@ -260,39 +233,109 @@ export async function gracefullyCancel<T>(promise: CancellablePromise<T>): Promi
 }
 
 /** @internal */
-export class AsyncIterableQueue<T> implements AsyncIterable<T> {
-  private queue: Queue<T | typeof AsyncIterableQueue.QUEUE_END_MARKER>;
-  private closed = false;
-  private static readonly QUEUE_END_MARKER = Symbol('QUEUE_END_MARKER');
+export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
+  private static readonly CLOSE_SENTINEL = Symbol('CLOSE_SENTINEL');
+  #queue = new Queue<T | typeof AsyncIterableQueue.CLOSE_SENTINEL>();
+  #closed = false;
 
-  constructor() {
-    this.queue = new Queue<T | typeof AsyncIterableQueue.QUEUE_END_MARKER>();
+  get closed(): boolean {
+    return this.#closed;
   }
 
   put(item: T): void {
-    if (this.closed) {
+    if (this.#closed) {
       throw new Error('Queue is closed');
     }
-    this.queue.put(item);
+    this.#queue.put(item);
   }
 
   close(): void {
-    this.closed = true;
-    this.queue.put(AsyncIterableQueue.QUEUE_END_MARKER);
+    this.#closed = true;
+    this.#queue.put(AsyncIterableQueue.CLOSE_SENTINEL);
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<T> {
-    return {
-      next: async (): Promise<IteratorResult<T>> => {
-        if (this.closed && this.queue.items.length === 0) {
-          return { value: undefined, done: true };
-        }
-        const item = await this.queue.get();
-        if (item === AsyncIterableQueue.QUEUE_END_MARKER && this.closed) {
-          return { value: undefined, done: true };
-        }
-        return { value: item as T, done: false };
-      },
-    };
+  async next(): Promise<IteratorResult<T>> {
+    if (this.#closed && this.#queue.items.length === 0) {
+      return { value: undefined, done: true };
+    }
+    const item = await this.#queue.get();
+    if (item === AsyncIterableQueue.CLOSE_SENTINEL && this.#closed) {
+      return { value: undefined, done: true };
+    }
+    return { value: item as T, done: false };
+  }
+
+  [Symbol.asyncIterator](): AsyncIterableQueue<T> {
+    return this;
+  }
+}
+
+/** @internal */
+export class ExpFilter {
+  #alpha: number;
+  #max?: number;
+  #filtered?: number = undefined;
+
+  constructor(alpha: number, max?: number) {
+    this.#alpha = alpha;
+    this.#max = max;
+  }
+
+  reset(alpha?: number) {
+    if (alpha) {
+      this.#alpha = alpha;
+    }
+    this.#filtered = undefined;
+  }
+
+  apply(exp: number, sample: number): number {
+    if (this.#filtered) {
+      const a = this.#alpha ** exp;
+      this.#filtered = a * this.#filtered + (1 - a) * sample;
+    } else {
+      this.#filtered = sample;
+    }
+
+    if (this.#max && this.#filtered > this.#max) {
+      this.#filtered = this.#max;
+    }
+
+    return this.#filtered;
+  }
+
+  get filtered(): number | undefined {
+    return this.#filtered;
+  }
+
+  set alpha(alpha: number) {
+    this.#alpha = alpha;
+  }
+}
+
+/** @internal */
+export class AudioEnergyFilter {
+  #cooldownSeconds: number;
+  #cooldown: number;
+
+  constructor(cooldownSeconds = 1) {
+    this.#cooldownSeconds = cooldownSeconds;
+    this.#cooldown = cooldownSeconds;
+  }
+
+  pushFrame(frame: AudioFrame): boolean {
+    const arr = Float32Array.from(frame.data, (x) => x / 32768);
+    const rms = (arr.map((x) => x ** 2).reduce((acc, x) => acc + x) / arr.length) ** 0.5;
+    if (rms > 0.004) {
+      this.#cooldown = this.#cooldownSeconds;
+      return true;
+    }
+
+    const durationSeconds = frame.samplesPerChannel / frame.sampleRate;
+    this.#cooldown -= durationSeconds;
+    if (this.#cooldown > 0) {
+      return true;
+    }
+
+    return false;
   }
 }

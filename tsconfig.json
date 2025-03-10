@@ -1,20 +1,23 @@
 {
   "compilerOptions": {
-    "target": "ES2017",
-    "module": "ES2022",
-    "moduleResolution": "node",
+    "target": "ES2022",
+    "module": "node16",
+    "moduleResolution": "node16",
     "declaration": true,
     "declarationMap": true,
     "allowJs": false,
     "strict": true,
+    "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "composite": true
   },
   "typedocOptions": {
     "entryPoints": ["agents", "plugins/*"],
     "entryPointStrategy": "packages",
     "name": "LiveKit Agents",
+    "exclude": ["plugins/test"],
     "excludeInternal": true,
     "excludePrivate": true,
     "excludeProtected": true,
@@ -22,5 +25,11 @@
     "includeVersion": true,
     "out": "docs",
     "theme": "default"
+  },
+  "rootDir": ".",
+  "baseUrl": ".",
+  "paths": {
+    "@livekit/agents": ["agents/src"],
+    "@livekit/agents-plugin-openai": ["plugins/openai/src"]
   }
 }

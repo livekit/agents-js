@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Command, Option } from 'commander';
-import type { EventEmitter } from 'events';
+import type { EventEmitter } from 'node:events';
 import { initializeLogger, log } from './log.js';
 import { version } from './version.js';
 import { Worker, WorkerOptions } from './worker.js';
@@ -93,7 +93,7 @@ export const runApp = (opts: WorkerOptions) => {
     .action(() => {
       if (
         // do not run CLI if origin file is agents/ipc/job_main.js
-        process.argv[1] !== new URL('ipc/job_main.js', import.meta.url).pathname ||
+        process.argv[1] !== new URL('ipc/job_main.js', import.meta.url).pathname &&
         process.argv.length < 3
       ) {
         program.help();
