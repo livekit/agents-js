@@ -57,8 +57,11 @@ export class PlayoutHandle extends EventEmitter {
       return Math.floor(this.totalPlayedTime * this.#sampleRate);
     }
 
-    return Math.floor(
-      (this.pushedDuration - this.#audioSource.queuedDuration) * (this.#sampleRate / 1000),
+    return Math.max(
+      0,
+      Math.floor(
+        (this.pushedDuration - this.#audioSource.queuedDuration) * (this.#sampleRate / 1000),
+      ),
     );
   }
 
