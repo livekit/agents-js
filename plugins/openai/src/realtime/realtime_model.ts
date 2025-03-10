@@ -599,6 +599,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     temperature = this.#opts.temperature,
     maxResponseOutputTokens = this.#opts.maxResponseOutputTokens,
     toolChoice = 'auto',
+    selectedTools = Object.keys(this.#fncCtx || {}),
   }: {
     modalities: ['text', 'audio'] | ['text'];
     instructions?: string;
@@ -610,6 +611,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     temperature?: number;
     maxResponseOutputTokens?: number;
     toolChoice?: api_proto.ToolChoice;
+    selectedTools?: string[];
   }) {
     this.#opts = {
       modalities,
@@ -630,16 +632,18 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     };
 
     const tools = this.#fncCtx
-      ? Object.entries(this.#fncCtx).map(([name, func]) => ({
-          type: 'function' as const,
-          name,
-          description: func.description,
-          parameters:
-            // don't format parameters if they are raw openai params
-            func.parameters.type == ('object' as const)
-              ? func.parameters
-              : llm.oaiParams(func.parameters),
-        }))
+      ? Object.entries(this.#fncCtx)
+          .filter(([name]) => selectedTools.includes(name))
+          .map(([name, func]) => ({
+            type: 'function' as const,
+            name,
+            description: func.description,
+            parameters:
+              // don't format parameters if they are raw openai params
+              func.parameters.type == ('object' as const)
+                ? func.parameters
+                : llm.oaiParams(func.parameters),
+          }))
       : [];
 
     const sessionUpdateEvent: api_proto.SessionUpdateEvent = {
