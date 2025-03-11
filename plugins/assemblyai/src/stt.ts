@@ -20,16 +20,8 @@ const defaultSTTOptions: STTOptions = {
   interimResults: true,
   sampleRate: 16000,
   keywords: [],
-  // NOTE:
-  // The default is 700ms from AssemblyAI.
-  // I use a low default of 300ms here because I also use
-  // the new end-of-utterance model from LiveKit to handle
-  // turn detection in my agent. Which means that even though
-  // this will quickly return a final transcript EVEN THOUGH
-  // USER IS NOT DONE SPEAKING, the EOU model from LiveKit
-  // DOES properly differentiate and doesn't interrupt (magically!)
-  // Ref: https://blog.livekit.io/using-a-transformer-to-improve-end-of-turn-detection/
-  endUtteranceSilenceThreshold: 200,
+  // AssemblyAI default is 700ms
+  endUtteranceSilenceThreshold: 700,
 };
 
 export class STT extends stt.STT {
@@ -96,11 +88,11 @@ export class SpeechStream extends stt.SpeechStream {
       this.#transcriber.on('open', (data) => {
         this.#logger
           .child({ sessionId: data.sessionId, expiresAt: data.expiresAt })
-          .debug(`AssemblyAI session opened`);
+          .debug('AssemblyAI session opened');
       });
 
       this.#transcriber.on('close', (code, reason) => {
-        this.#logger.child({ code, reason }).debug(`AssemblyAI session closed`);
+        this.#logger.child({ code, reason }).debug('AssemblyAI session closed');
         if (!this.closed) {
           // Try to reconnect if not intentionally closed
           this.#run();
@@ -108,7 +100,7 @@ export class SpeechStream extends stt.SpeechStream {
       });
 
       this.#transcriber.on('error', (error) => {
-        this.#logger.child({ error: error.message }).error(`AssemblyAI error`);
+        this.#logger.child({ error: error.message }).error('AssemblyAI error');
       });
 
       this.#transcriber.on('transcript', (transcript) => {
@@ -155,7 +147,7 @@ export class SpeechStream extends stt.SpeechStream {
           } else if (data.sampleRate === this.#opts.sampleRate) {
             frames = stream.write(data.data.buffer);
           } else {
-            throw new Error(`Sample rate or channel count of frame does not match`);
+            throw new Error('Sample rate or channel count of frame does not match');
           }
 
           for await (const frame of frames) {
@@ -175,7 +167,7 @@ export class SpeechStream extends stt.SpeechStream {
       // Start processing audio
       await sendTask();
     } catch (error: any) {
-      this.#logger.child({ error: error.message }).error(`Error in AssemblyAI STT`);
+      this.#logger.child({ error: error.message }).error('Error in AssemblyAI STT');
 
       // Try to reconnect after a delay if not intentionally closed
       if (!this.closed) {
@@ -191,7 +183,7 @@ const assemblyTranscriptToSpeechData = (transcript: any): stt.SpeechData => {
     language: 'en-US',
     startTime: transcript.audio_start || 0,
     endTime: transcript.audio_end || 0,
-    confidence: transcript.confidence || 1.0,
+    confidence: transcript.confidence ?? 1.0,
     text: transcript.text || '',
   };
 };
