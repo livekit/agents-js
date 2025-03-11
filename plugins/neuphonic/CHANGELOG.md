@@ -1,1 +1,0 @@
-# @livekit/agents-plugin-neuphonic

@@ -64,10 +64,8 @@ export class TTS extends tts.TTS {
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'neuphonic.ChunkedStream';
   #opts: TTSOptions;
-  #logger = log();
   #text: string;
 
-  // set Promise<T> to any because OpenAI returns an annoying Response type
   constructor(tts: TTS, text: string, opts: TTSOptions) {
     super(text, tts);
     this.#text = text;
@@ -276,6 +274,7 @@ const getModelParams = (opts: TTSOptions): Partial<TTSOptions> => {
 /**
  * Parse each response from the SSE endpoint.
  *
+ * @remarks
  * The incoming message will be a string reading either one of:
  * - `event: error`
  * - `event: message`
