@@ -150,6 +150,10 @@ const startJob = (
     const proc = new JobProcess();
     let logger = log().child({ pid: proc.pid });
 
+    process.on('unhandledRejection', (reason) => {
+      logger.error(reason);
+    });
+
     logger.debug('initializing job runner');
     agent.prewarm(proc);
     logger.debug('job runner initialized');
