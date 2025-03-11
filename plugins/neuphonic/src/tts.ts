@@ -160,11 +160,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     const isAllAudioReceived = () => {
       const recvText = requestData[requestId]!.recv.toLowerCase()
-        .replace(/ /g, '')
+        .replace(/[ \n]/g, '')
         .replace('<stop>', '');
 
       const sentText = requestData[requestId]!.sent.toLowerCase()
-        .replace(/ /g, '')
+        .replace(/[ \n]/g, '')
         .replace('<stop>', '');
 
       return sentText === recvText;
