@@ -14,6 +14,10 @@ const ORPHANED_TIMEOUT = 15 * 1000;
     // this is handled in cli, triggering a termination of all child processes at once.
     process.on('SIGINT', () => {});
 
+    // don't do anything on SIGTERM
+    // Render uses SIGTERM in autoscale, this ensures the processes are properly drained if needed
+    process.on('SIGTERM', () => {});
+
     await once(process, 'message').then(([msg]: IPCMessage[]) => {
       msg = msg!;
       if (msg.case !== 'initializeRequest') {
