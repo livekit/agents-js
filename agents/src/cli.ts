@@ -45,6 +45,15 @@ const runWorker = async (args: CliArgs) => {
     process.exit(130); // SIGINT exit code
   });
 
+  process.once('SIGTERM', async () => {
+    if (args.production) {
+      await worker.drain();
+    }
+    await worker.close();
+    logger.info('worker closed');
+    process.exit(143); // SIGTERM exit code
+  });
+
   try {
     await worker.run();
   } catch {
