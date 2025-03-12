@@ -1105,11 +1105,13 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         return;
       }
 
-      this.emit('function_call_started', {
-        callId: item.call_id,
-      });
-
       const parsedArgs = JSON.parse(item.arguments);
+
+      this.emit('function_call_started', {
+        name: item.name,
+        callId: item.call_id,
+        arguments: parsedArgs,
+      });
 
       this.#logger.debug(
         `[Function Call ${item.call_id}] Executing ${item.name} with arguments ${parsedArgs}`,
@@ -1119,7 +1121,10 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         (content) => {
           this.#logger.debug(`[Function Call ${item.call_id}] ${item.name} returned ${content}`);
           this.emit('function_call_completed', {
+            name: item.name,
             callId: item.call_id,
+            arguments: parsedArgs,
+            result: content,
           });
           this.conversation.item.create(
             llm.ChatMessage.createToolFromFunctionResult({
@@ -1135,7 +1140,10 @@ export class RealtimeSession extends multimodal.RealtimeSession {
           this.#logger.error(`[Function Call ${item.call_id}] ${item.name} failed with ${error}`);
           // TODO: send it back up as failed?
           this.emit('function_call_failed', {
+            name: item.name,
             callId: item.call_id,
+            arguments: parsedArgs,
+            error: error,
           });
         },
       );
