@@ -140,6 +140,10 @@ const startJob = (
     // this is handled in cli, triggering a termination of all child processes at once.
     process.on('SIGINT', () => {});
 
+    // don't do anything on SIGTERM
+    // Render uses SIGTERM in autoscale, this ensures the processes are properly drained if needed
+    process.on('SIGTERM', () => {});
+
     await once(process, 'message').then(([msg]: IPCMessage[]) => {
       msg = msg!;
       if (msg.case !== 'initializeRequest') {
@@ -149,6 +153,10 @@ const startJob = (
     });
     const proc = new JobProcess();
     let logger = log().child({ pid: proc.pid });
+
+    process.on('unhandledRejection', (reason) => {
+      logger.error(reason);
+    });
 
     logger.debug('initializing job runner');
     agent.prewarm(proc);
