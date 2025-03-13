@@ -1,13 +1,19 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, log, tts } from '@livekit/agents';
+import { AudioByteStream, log, tokenize, tts } from '@livekit/agents';
+import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
 import { request } from 'node:https';
+import { WebSocket } from 'ws';
 import { OutputFormat, Precision } from './models.js';
 
-const RESEMBLE_REST_API_URL = 'https://f.cluster.resemble.ai/synthesize';
+// Define types needed for Resemble's API
+export const TTSDefaultVoiceId = ''; // Set your default voice ID here
+
+const RESEMBLE_WEBSOCKET_URL = 'wss://websocket.cluster.resemble.ai/stream';
 const NUM_CHANNELS = 1;
+const BUFFERED_WORDS_COUNT = 8;
 
 export interface TTSOptions {
   voiceUuid: string;
@@ -15,17 +21,15 @@ export interface TTSOptions {
   precision: Precision;
   outputFormat: OutputFormat;
   binaryResponse: boolean;
-  noAudioHeader: boolean;
   apiKey?: string;
 }
 
 const defaultTTSOptions: TTSOptions = {
-  voiceUuid: '',
+  voiceUuid: TTSDefaultVoiceId,
   sampleRate: 44100,
   precision: 'PCM_16',
   outputFormat: 'wav',
-  binaryResponse: true,
-  noAudioHeader: true,
+  binaryResponse: false,
   apiKey: process.env.RESEMBLE_API_KEY,
 };
 
@@ -35,17 +39,13 @@ export class TTS extends tts.TTS {
 
   constructor(opts: Partial<TTSOptions> = {}) {
     super(opts.sampleRate || defaultTTSOptions.sampleRate, NUM_CHANNELS, {
-      streaming: false, // Set to false for now to use chunked approach
+      streaming: true,
     });
 
     this.#opts = {
       ...defaultTTSOptions,
       ...opts,
     };
-
-    if (!this.#opts.voiceUuid) {
-      throw new Error('Resemble voice UUID is required');
-    }
 
     if (this.#opts.apiKey === undefined) {
       throw new Error(
@@ -54,20 +54,12 @@ export class TTS extends tts.TTS {
     }
   }
 
-  updateOptions(opts: Partial<TTSOptions>): void {
-    this.#opts = {
-      ...this.#opts,
-      ...opts,
-    };
-  }
-
   synthesize(text: string): tts.ChunkedStream {
     return new ChunkedStream(this, text, this.#opts);
   }
 
   stream(): tts.SynthesizeStream {
-    // Use a simple implementation that just collects text and uses the chunked API
-    return new SimpleSynthesizeStream(this, this.#opts);
+    return new SynthesizeStream(this, this.#opts);
   }
 }
 
@@ -75,7 +67,6 @@ export class ChunkedStream extends tts.ChunkedStream {
   label = 'resemble.ChunkedStream';
   #opts: TTSOptions;
   #text: string;
-  #logger = log();
 
   constructor(tts: TTS, text: string, opts: TTSOptions) {
     super(text, tts);
@@ -86,300 +77,248 @@ export class ChunkedStream extends tts.ChunkedStream {
 
   async #run() {
     const requestId = randomUUID();
-    const segmentId = randomUUID();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
+    const json = toResembleOptions(this.#opts);
+    json.data = this.#text;
 
-    try {
-      // Prepare request payload
-      const payload = {
-        voice_uuid: this.#opts.voiceUuid,
-        data: this.#text,
-        sample_rate: this.#opts.sampleRate,
-        output_format: this.#opts.outputFormat.toLowerCase(),
-        precision: this.#opts.precision,
-        binary_response: this.#opts.binaryResponse,
-        no_audio_header: this.#opts.noAudioHeader,
-      };
+    const req = request(
+      {
+        hostname: 'f.cluster.resemble.ai',
+        port: 443,
+        path: '/synthesize',
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.#opts.apiKey!}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+      },
+      (res) => {
+        let data = '';
 
-      // Parse the URL to get the hostname, path, etc.
-      const url = new URL(RESEMBLE_REST_API_URL);
-
-      this.#logger.info(`Sending HTTP request to Resemble API: ${url.toString()}`);
-      this.#logger.debug(`Request payload: ${JSON.stringify(payload)}`);
-
-      // Add this right before sending the request
-      this.#logger.info(`Sending payload: ${JSON.stringify(payload)}`);
-
-      // Create a promise that will resolve or reject based on the HTTP response
-      await new Promise<void>((resolve, reject) => {
-        // Make the HTTP request
-        const req = request(
-          {
-            hostname: url.hostname,
-            port: 443,
-            path: url.pathname,
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${this.#opts.apiKey}`,
-              'Content-Type': 'application/json',
-              Accept: 'application/json',
-            },
-          },
-          (res) => {
-            let data = '';
-            let audioBuffer: Buffer | null = null;
-
-            res.on('data', (chunk) => {
-              if (this.#opts.binaryResponse && res.headers['content-type']?.includes('audio/')) {
-                // Handle binary response
-                if (!audioBuffer) {
-                  audioBuffer = Buffer.from(chunk);
-                } else {
-                  audioBuffer = Buffer.concat([audioBuffer, chunk]);
-                }
-              } else {
-                // Handle JSON response
-                data += chunk;
-              }
-            });
-
-            res.on('end', () => {
-              this.#logger.info(
-                `Received response from Resemble API with status: ${res.statusCode}`,
-              );
-
-              try {
-                // Check for HTTP error status
-                if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
-                  reject(new Error(`HTTP error ${res.statusCode}: ${data}`));
-                  return;
-                }
-
-                if (audioBuffer) {
-                  // Process binary audio data
-                  this.#logger.info(`Processing binary audio data: ${audioBuffer.length} bytes`);
-                  for (const frame of bstream.write(audioBuffer)) {
-                    this.queue.put({
-                      requestId,
-                      frame,
-                      final: false,
-                      segmentId,
-                    });
-                  }
-
-                  // Flush any remaining frames
-                  for (const frame of bstream.flush()) {
-                    this.queue.put({
-                      requestId,
-                      frame,
-                      final: false,
-                      segmentId,
-                    });
-                  }
-
-                  // Mark the last frame as final
-                  this.queue.put({
-                    requestId,
-                    frame: null as any, // This will be ignored if null
-                    final: true,
-                    segmentId,
-                  });
-
-                  resolve();
-                  return;
-                }
-
-                // Parse JSON response
-                let response;
-                try {
-                  response = JSON.parse(data);
-                } catch (parseError: unknown) {
-                  reject(
-                    new Error(
-                      `Failed to parse response: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-                    ),
-                  );
-                  return;
-                }
-
-                if (!response.success) {
-                  const issues = response.issues || ['Unknown error'];
-                  const errorMsg = issues.join('; ');
-                  reject(new Error(`Resemble API returned failure: ${errorMsg}`));
-                  return;
-                }
-
-                // Decode base64 audio content
-                let audioBytes;
-                try {
-                  audioBytes = Buffer.from(response.audio_content, 'base64');
-                } catch (decodeError: unknown) {
-                  reject(
-                    new Error(
-                      `Failed to decode audio content: ${decodeError instanceof Error ? decodeError.message : String(decodeError)}`,
-                    ),
-                  );
-                  return;
-                }
-
-                // Process audio frames
-                this.#logger.info(
-                  `Processing audio frames from JSON response: ${audioBytes.length} bytes`,
-                );
-                for (const frame of bstream.write(audioBytes)) {
-                  this.queue.put({
-                    requestId,
-                    frame,
-                    final: false,
-                    segmentId,
-                  });
-                }
-
-                // Flush any remaining frames
-                for (const frame of bstream.flush()) {
-                  this.queue.put({
-                    requestId,
-                    frame,
-                    final: false,
-                    segmentId,
-                  });
-                }
-
-                // Mark the last frame as final
-                this.queue.put({
-                  requestId,
-                  frame: null as any, // This will be ignored if null
-                  final: true,
-                  segmentId,
-                });
-
-                resolve();
-              } catch (error: unknown) {
-                reject(
-                  new Error(
-                    `Failed to process Resemble API response: ${error instanceof Error ? error.message : String(error)}`,
-                  ),
-                );
-              }
-            });
-
-            res.on('error', (error) => {
-              reject(new Error(`Resemble API request error: ${error.message}`));
-            });
-          },
-        );
-
-        req.on('error', (error) => {
-          reject(new Error(`Resemble API connection error: ${error.message}`));
+        res.on('data', (chunk) => {
+          data += chunk;
         });
 
-        req.on('timeout', () => {
-          req.destroy();
-          reject(new Error('Resemble API request timed out'));
+        res.on('end', () => {
+          try {
+            const response = JSON.parse(data);
+
+            if (!response.success) {
+              const issues = response.issues || ['Unknown error'];
+              const errorMsg = issues.join('; ');
+              throw new Error(`Resemble API returned failure: ${errorMsg}`);
+            }
+
+            const audioContentB64 = response.audio_content;
+            if (!audioContentB64) {
+              throw new Error('No audio content in response');
+            }
+
+            const audioBytes = Buffer.from(audioContentB64, 'base64');
+
+            for (const frame of bstream.write(audioBytes)) {
+              this.queue.put({
+                requestId,
+                frame,
+                final: false,
+                segmentId: requestId,
+              });
+            }
+
+            for (const frame of bstream.flush()) {
+              this.queue.put({
+                requestId,
+                frame,
+                final: false,
+                segmentId: requestId,
+              });
+            }
+
+            this.queue.close();
+          } catch (error) {
+            console.error('Error processing Resemble API response:', error);
+            this.queue.close();
+          }
         });
 
-        // Write request body and end
-        req.write(JSON.stringify(payload));
-        req.end();
-      });
-    } catch (error: unknown) {
-      this.#logger.error(
-        `Error in Resemble TTS synthesis: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      this.queue.close();
-      throw error;
-    }
+        res.on('error', (error) => {
+          console.error('Resemble API error:', error);
+          this.queue.close();
+        });
+      },
+    );
+
+    req.write(JSON.stringify(json));
+    req.end();
   }
 }
 
-// A simple implementation that just collects text and uses the chunked API
-export class SimpleSynthesizeStream extends tts.SynthesizeStream {
+export class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
   #logger = log();
-  #ttsInstance: TTS;
-  #buffer: string = '';
-  label = 'resemble.SimpleSynthesizeStream';
-  closed = false;
+  #tokenizer = new tokenize.basic.SentenceTokenizer(undefined, BUFFERED_WORDS_COUNT).stream();
+  #websocket: WebSocket | null = null;
+  #requestId = 0;
+  label = 'resemble.SynthesizeStream';
 
   constructor(tts: TTS, opts: TTSOptions) {
     super(tts);
     this.#opts = opts;
-    this.#ttsInstance = tts;
-    this.#logger.info('SimpleSynthesizeStream constructor called');
-    this.#run().catch((error) => {
-      this.#logger.error(
-        `Unhandled error in SimpleSynthesizeStream: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    });
+    this.#run();
   }
 
   async #run() {
-    this.#logger.info('SimpleSynthesizeStream #run method started');
+    const requestId = randomUUID();
+    let closing = false;
+
+    const sentenceStreamTask = async (ws: WebSocket) => {
+      const packet = toResembleOptions(this.#opts, true);
+
+      for await (const event of this.#tokenizer) {
+        packet.data = event.token + ' ';
+        packet.request_id = this.#requestId++;
+        packet.binary_response = this.#opts.binaryResponse;
+        packet.continue = true;
+        this.#logger.info(`Sending packet: ${JSON.stringify(packet)}`);
+        ws.send(JSON.stringify(packet));
+      }
+    };
+
+    const inputTask = async () => {
+      for await (const data of this.input) {
+        if (data === SynthesizeStream.FLUSH_SENTINEL) {
+          this.#tokenizer.flush();
+          continue;
+        }
+        this.#tokenizer.pushText(data);
+      }
+      this.#tokenizer.endInput();
+      this.#tokenizer.close();
+    };
+
+    const recvTask = async (ws: WebSocket) => {
+      const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
+
+      let lastFrame: AudioFrame | undefined;
+      const sendLastFrame = (segmentId: string, final: boolean) => {
+        if (lastFrame) {
+          this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+          lastFrame = undefined;
+        }
+      };
+
+      ws.on('message', (data) => {
+        try {
+          const json = JSON.parse(data.toString());
+          const segmentId = json.context_id;
+          this.#logger.info(`Received message: ${JSON.stringify(json).substring(0, 100)}`);
+
+          if ('audio_content' in json) {
+            try {
+              const audioData = Buffer.from(json.audio_content, 'base64');
+              for (const frame of bstream.write(audioData)) {
+                sendLastFrame(segmentId, false);
+                lastFrame = frame;
+              }
+            } catch (audioError) {
+              this.#logger.error(`Error processing audio content: ${audioError}`);
+            }
+          } else if ('type' in json && json.type === 'done') {
+            for (const frame of bstream.flush()) {
+              sendLastFrame(segmentId, false);
+              lastFrame = frame;
+            }
+            sendLastFrame(segmentId, true);
+            this.queue.put(SynthesizeStream.END_OF_STREAM);
+
+            if (segmentId === requestId) {
+              closing = true;
+              ws.close();
+              return;
+            }
+          } else if ('success' in json && json.success === false) {
+            // Handle error response from Resemble
+            const errorName = json.error_name || 'Unknown';
+            const explanation = json.error_params?.explanation || 'No details provided';
+            this.#logger.error(`Resemble API error: ${errorName} - ${explanation}`);
+
+            // Close the WebSocket and end the stream
+            closing = true;
+            ws.close();
+            this.queue.put(SynthesizeStream.END_OF_STREAM);
+          }
+        } catch (error) {
+          this.#logger.error(`Error parsing WebSocket message: ${error}`);
+          // Don't terminate on message parsing errors
+        }
+      });
+
+      ws.on('error', (error) => {
+        this.#logger.error(`WebSocket error: ${error}`);
+        if (!closing) {
+          closing = true;
+          this.queue.put(SynthesizeStream.END_OF_STREAM);
+          ws.close();
+        }
+      });
+
+      ws.on('close', (code, reason) => {
+        if (!closing) {
+          this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+          this.queue.put(SynthesizeStream.END_OF_STREAM);
+        }
+        ws.removeAllListeners();
+      });
+    };
+
+    const url = `${RESEMBLE_WEBSOCKET_URL}`;
+    const ws = new WebSocket(url, {
+      headers: {
+        Authorization: `Bearer ${this.#opts.apiKey}`,
+      },
+    });
+    this.#websocket = ws;
 
     try {
-      // Process input text
-      for await (const text of this.input) {
-        if (this.closed) break;
+      await new Promise((resolve, reject) => {
+        ws.on('open', resolve);
+        ws.on('error', (error) => reject(error));
+        ws.on('close', (code) => reject(`WebSocket returned ${code}`));
+      });
 
-        if (text === SimpleSynthesizeStream.FLUSH_SENTINEL) {
-          this.#logger.info('Received flush sentinel, synthesizing buffered text');
-          await this.#synthesizeBuffer();
-          continue;
-        }
-
-        if (typeof text !== 'string') {
-          this.#logger.warn(`Received non-string input: ${typeof text}`);
-          continue;
-        }
-
-        this.#logger.info(`Adding text to buffer: ${text.substring(0, 50)}`);
-        this.#buffer += text;
-      }
-
-      // Synthesize any remaining text
-      if (this.#buffer.trim().length > 0) {
-        this.#logger.info('Input ended, synthesizing remaining text');
-        await this.#synthesizeBuffer();
-      }
-    } catch (error: unknown) {
-      this.#logger.error(
-        `Error in run method: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    } finally {
-      this.queue.close();
+      await Promise.all([inputTask(), sentenceStreamTask(ws), recvTask(ws)]);
+    } catch (e) {
+      throw new Error(`failed to connect to Resemble: ${e}`);
     }
   }
 
-  async #synthesizeBuffer() {
-    if (!this.#buffer.trim()) {
-      this.#logger.info('Buffer is empty, nothing to synthesize');
-      return;
+  override close(): void {
+    if (this.#websocket) {
+      this.#websocket.close();
+      this.#websocket = null;
     }
 
-    this.#logger.info(`Synthesizing buffer: ${this.#buffer.substring(0, 50)}`);
+    this.#tokenizer.close();
 
-    try {
-      const chunkedStream = new ChunkedStream(this.#ttsInstance, this.#buffer, this.#opts);
-      for await (const audio of chunkedStream) {
-        this.queue.put(audio);
-      }
-
-      // Send END_OF_STREAM to signal completion
-      this.queue.put(SimpleSynthesizeStream.END_OF_STREAM);
-      this.#logger.info('Sent END_OF_STREAM after synthesizing buffer');
-
-      // Clear the buffer
-      this.#buffer = '';
-    } catch (error: unknown) {
-      this.#logger.error(
-        `Error synthesizing buffer: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  close() {
-    this.#logger.info('Closing SimpleSynthesizeStream');
-    this.closed = true;
     super.close();
   }
 }
+
+const toResembleOptions = (
+  opts: TTSOptions,
+  stream: boolean = false,
+): { [id: string]: unknown } => {
+  const options: { [id: string]: unknown } = {
+    voice_uuid: opts.voiceUuid,
+    sample_rate: opts.sampleRate,
+    output_format: opts.outputFormat.toLowerCase(),
+    precision: opts.precision,
+  };
+
+  if (stream) {
+    options.no_audio_header = true;
+  }
+
+  return options;
+};
