@@ -28,7 +28,7 @@ const defaultTTSOptions: TTSOptions = {
   sampleRate: 22050,
   langCode: 'en',
   speed: 1.0,
-  apiKey: process.env.NEUPHONIC_API_TOKEN,
+  apiKey: process.env.NEUPHONIC_API_KEY,
 };
 
 export class TTS extends tts.TTS {
@@ -47,7 +47,7 @@ export class TTS extends tts.TTS {
 
     if (this.#opts.apiKey === undefined) {
       throw new Error(
-        'Neuphonic API key is required, whether as an argument or as $NEUPHONIC_API_TOKEN',
+        'Neuphonic API key is required, whether as an argument or as $NEUPHONIC_API_KEY',
       );
     }
   }
