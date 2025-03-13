@@ -1,6 +1,7 @@
 {
   "$schema": "https://turborepo.org/schema.json",
   "globalEnv": [
+    "ASSEMBLY_AI_KEY",
     "AZURE_API_KEY",
     "AZURE_OPENAI_API_KEY",
     "AZURE_OPENAI_DEPLOYMENT",
