@@ -8,8 +8,7 @@ import { request } from 'node:https';
 import { WebSocket } from 'ws';
 import { OutputFormat, Precision } from './models.js';
 
-// Define types needed for Resemble's API
-export const TTSDefaultVoiceId = ''; // Set your default voice ID here
+export const TTSDefaultVoiceId = '55592656';
 
 const RESEMBLE_WEBSOCKET_URL = 'wss://websocket.cluster.resemble.ai/stream';
 const NUM_CHANNELS = 1;
