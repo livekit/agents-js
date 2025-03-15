@@ -316,9 +316,9 @@ export class SpeechStream extends stt.SpeechStream {
 
 const liveTranscriptionToSpeechData = (
   language: STTLanguages | string,
-  data: { [id: string]: any },
+  data: { [id: string]: unknown },
 ): stt.SpeechData[] => {
-  const alts: any[] = data['channel']['alternatives'];
+  const alts: unknown[] = data['channel']['alternatives'];
 
   return alts.map((alt) => {
     // Check if words array exists and has speaker information
@@ -337,4 +337,3 @@ const liveTranscriptionToSpeechData = (
     };
   });
 };
-
