@@ -6,7 +6,7 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
 import { request } from 'node:https';
 import { WebSocket } from 'ws';
-import { OutputFormat, Precision } from './models.js';
+import type { OutputFormat, Precision } from './models.js';
 
 export const TTSDefaultVoiceId = '55592656';
 
