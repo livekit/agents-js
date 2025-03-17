@@ -159,35 +159,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #tokenizer = new tokenize.basic.SentenceTokenizer(undefined, BUFFERED_WORDS_COUNT).stream();
   #websocket: WebSocket | null = null;
   #requestId = 0;
-  #connectionTimeout: NodeJS.Timeout | null = null;
-  #isProcessing = false;
   label = 'resemble.SynthesizeStream';
 
   constructor(tts: TTS, opts: TTSOptions) {
     super(tts);
     this.#opts = opts;
     this.#run();
-  }
-
-  #resetConnectionTimeout(ws: WebSocket) {
-    if (this.#connectionTimeout) {
-      clearTimeout(this.#connectionTimeout);
-    }
-
-    this.#connectionTimeout = setTimeout(() => {
-      if (this.#isProcessing) {
-        this.#logger.warn('Connection appears to be stuck, attempting recovery');
-        this.#isProcessing = false;
-
-        // Force a done event if we're stuck
-        this.queue.put(SynthesizeStream.END_OF_STREAM);
-
-        // Attempt to gracefully close and reconnect
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.close(1000, 'Timeout - forcing reconnection');
-        }
-      }
-    }, 10000); // 10 second timeout
   }
 
   async #run() {
@@ -202,12 +179,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         packet.request_id = this.#requestId++;
         packet.binary_response = this.#opts.binaryResponse;
         packet.continue = true;
-        this.#isProcessing = true;
         this.#logger.info(`Sending packet: ${JSON.stringify(packet)}`);
         ws.send(JSON.stringify(packet));
-
-        // Set timeout to detect stuck connections
-        this.#resetConnectionTimeout(ws);
       }
     };
 
@@ -236,9 +209,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       ws.on('message', (data) => {
         try {
-          // Reset timeout on each message received
-          this.#resetConnectionTimeout(ws);
-
           const json = JSON.parse(data.toString());
           const segmentId = json.context_id;
           this.#logger.info(`Received message: ${JSON.stringify(json).substring(0, 100)}`);
@@ -250,8 +220,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 sendLastFrame(segmentId, false);
                 lastFrame = frame;
               }
-              // Mark that we're still actively processing
-              this.#isProcessing = true;
             } catch (audioError) {
               this.#logger.error(`Error processing audio content: ${audioError}`);
             }
@@ -262,7 +230,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             }
             sendLastFrame(segmentId, true);
             this.queue.put(SynthesizeStream.END_OF_STREAM);
-            this.#isProcessing = false;
 
             if (segmentId === requestId) {
               closing = true;
@@ -279,7 +246,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             closing = true;
             ws.close();
             this.queue.put(SynthesizeStream.END_OF_STREAM);
-            this.#isProcessing = false;
           }
         } catch (error) {
           this.#logger.error(`Error parsing WebSocket message: ${error}`);
@@ -292,7 +258,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (!closing) {
           closing = true;
           this.queue.put(SynthesizeStream.END_OF_STREAM);
-          this.#isProcessing = false;
           ws.close();
         }
       });
@@ -301,15 +266,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (!closing) {
           this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
           this.queue.put(SynthesizeStream.END_OF_STREAM);
-          this.#isProcessing = false;
         }
         ws.removeAllListeners();
-
-        // Clear the timeout when connection closes
-        if (this.#connectionTimeout) {
-          clearTimeout(this.#connectionTimeout);
-          this.#connectionTimeout = null;
-        }
       });
     };
 
@@ -328,41 +286,19 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         ws.on('close', (code) => reject(`WebSocket returned ${code}`));
       });
 
-      // Set initial timeout
-      this.#resetConnectionTimeout(ws);
-
       await Promise.all([inputTask(), sentenceStreamTask(ws), recvTask(ws)]);
     } catch (e) {
-      this.#logger.error(`WebSocket connection failed: ${e}`);
-      // Ensure we always send an end of stream signal when things fail
-      this.queue.put(SynthesizeStream.END_OF_STREAM);
-      this.#isProcessing = false;
       throw new Error(`failed to connect to Resemble: ${e}`);
     }
   }
 
   override close(): void {
-    // Clear timeout if it exists
-    if (this.#connectionTimeout) {
-      clearTimeout(this.#connectionTimeout);
-      this.#connectionTimeout = null;
-    }
-
     if (this.#websocket) {
-      // Force a closing frame to be sent
-      if (this.#websocket.readyState === WebSocket.OPEN) {
-        this.#websocket.close(1000, 'Stream closed by client');
-      }
+      this.#websocket.close();
       this.#websocket = null;
     }
 
     this.#tokenizer.close();
-
-    // Ensure the queue gets an end signal if we're still processing
-    if (this.#isProcessing) {
-      this.queue.put(SynthesizeStream.END_OF_STREAM);
-      this.#isProcessing = false;
-    }
 
     super.close();
   }
