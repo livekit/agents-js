@@ -360,8 +360,7 @@ export class Worker {
 
           retries = 0;
           this.#logger.debug('connected to LiveKit server');
-          this.#runWS(this.#session);
-          return;
+          await this.#runWS(this.#session);
         } catch (e: unknown) {
           if (e instanceof Error || e instanceof ErrorEvent) {
             e = e.message;
@@ -471,7 +470,7 @@ export class Worker {
     );
   }
 
-  #runWS(ws: WebSocket) {
+  async #runWS(ws: WebSocket) {
     let closingWS = false;
 
     const send = (msg: WorkerMessage) => {
@@ -483,10 +482,14 @@ export class Worker {
     };
     this.event.on('worker_msg', send);
 
-    ws.addEventListener('close', () => {
-      closingWS = true;
-      this.#logger.error('worker connection closed unexpectedly');
-      this.close();
+    const close = new Promise<void>((resolve) => {
+      ws.addEventListener('close', () => {
+        closingWS = true;
+        if (!this.#closed) {
+          this.#logger.error('worker connection closed unexpectedly');
+        }
+        resolve();
+      });
     });
 
     ws.addEventListener('message', (event) => {
@@ -601,6 +604,9 @@ export class Worker {
         );
       });
     }, UPDATE_LOAD_INTERVAL);
+
+    await close;
+    ws.removeAllListeners();
   }
 
   async #availability(msg: AvailabilityRequest) {
