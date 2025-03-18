@@ -7,5 +7,5 @@ import { describe } from 'vitest';
 import { TTS } from './tts.js';
 
 describe('Resemble', async () => {
-  await tts(new TTS(), new STT(), { nonStreaming: false });
+  await tts(new TTS(), new STT(), { nonStreaming: true });
 });
