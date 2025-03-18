@@ -137,7 +137,8 @@ export class SpeechStream extends stt.SpeechStream {
         channels: this.#opts.numChannels,
         endpointing: this.#opts.endpointing || false,
         filler_words: this.#opts.fillerWords,
-        keywords: this.#opts.keywords.map((x) => x.join(':')),
+        keywords: this.#opts.model === 'nova-3-general' ? undefined : this.#opts.keywords.map((x) => x.join(':')),
+        keyterm: this.#opts.model === 'nova-3-general' ? this.#opts.keywords.map((x) => x[0]) : undefined,
         profanity_filter: this.#opts.profanityFilter,
         language: this.#opts.language,
       };
@@ -146,7 +147,7 @@ export class SpeechStream extends stt.SpeechStream {
           if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
             streamURL.searchParams.append(k, encodeURIComponent(v));
           } else {
-            v.forEach((x) => streamURL.searchParams.append('keywords', encodeURIComponent(x)));
+            v.forEach((x) => streamURL.searchParams.append(k, encodeURIComponent(x)));
           }
         }
       });
