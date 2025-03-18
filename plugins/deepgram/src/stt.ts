@@ -137,8 +137,12 @@ export class SpeechStream extends stt.SpeechStream {
         channels: this.#opts.numChannels,
         endpointing: this.#opts.endpointing || false,
         filler_words: this.#opts.fillerWords,
-        keywords: this.#opts.model === 'nova-3-general' ? undefined : this.#opts.keywords.map((x) => x.join(':')),
-        keyterm: this.#opts.model === 'nova-3-general' ? this.#opts.keywords.map((x) => x[0]) : undefined,
+        keywords:
+          this.#opts.model === 'nova-3-general'
+            ? undefined
+            : this.#opts.keywords.map((x) => x.join(':')),
+        keyterm:
+          this.#opts.model === 'nova-3-general' ? this.#opts.keywords.map((x) => x[0]) : undefined,
         profanity_filter: this.#opts.profanityFilter,
         language: this.#opts.language,
       };
