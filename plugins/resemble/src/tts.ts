@@ -169,14 +169,19 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   async #run() {
     const requestId = randomUUID();
     let closing = false;
+    const activeRequests = new Set<number>();
 
     const sentenceStreamTask = async (ws: WebSocket) => {
       const packet = toResembleOptions(this.#opts, true);
 
       for await (const event of this.#tokenizer) {
+        const reqId = this.#requestId++;
         packet.data = event.token + ' ';
-        packet.request_id = this.#requestId++;
+        packet.request_id = reqId;
         packet.continue = true;
+
+        activeRequests.add(reqId);
+
         this.#logger.info(`Sending packet: ${JSON.stringify(packet)}`);
         ws.send(JSON.stringify(packet));
       }
@@ -208,7 +213,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       ws.on('message', (data) => {
         try {
           const json = JSON.parse(data.toString());
-          const segmentId = json.context_id;
+          const segmentId = json.request_id;
           this.#logger.info(`Received message: ${JSON.stringify(json).substring(0, 100)}`);
 
           if ('audio_content' in json) {
@@ -221,33 +226,31 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             } catch (audioError) {
               this.#logger.error(`Error processing audio content: ${audioError}`);
             }
-          } else if ('type' in json && json.type === 'done') {
+          } else if ('type' in json && json.type === 'audio_end') {
             for (const frame of bstream.flush()) {
               sendLastFrame(segmentId, false);
               lastFrame = frame;
             }
             sendLastFrame(segmentId, true);
-            this.queue.put(SynthesizeStream.END_OF_STREAM);
 
-            if (segmentId === requestId) {
+            activeRequests.delete(Number(segmentId));
+
+            if (activeRequests.size === 0 && this.#tokenizer.closed) {
+              this.queue.put(SynthesizeStream.END_OF_STREAM);
               closing = true;
               ws.close();
-              return;
             }
           } else if ('success' in json && json.success === false) {
-            // Handle error response from Resemble
             const errorName = json.error_name || 'Unknown';
             const explanation = json.error_params?.explanation || 'No details provided';
             this.#logger.child({ error: errorName }).error(`Resemble API error: ${explanation}`);
 
-            // Close the WebSocket and end the stream
             closing = true;
             ws.close();
             this.queue.put(SynthesizeStream.END_OF_STREAM);
           }
         } catch (error) {
           this.#logger.error(`Error parsing WebSocket message: ${error}`);
-          // Don't terminate on message parsing errors
         }
       });
 
