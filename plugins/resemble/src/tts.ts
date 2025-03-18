@@ -182,7 +182,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
         activeRequests.add(reqId);
 
-        this.#logger.info(`Sending packet: ${JSON.stringify(packet)}`);
         ws.send(JSON.stringify(packet));
       }
     };
@@ -214,7 +213,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         try {
           const json = JSON.parse(data.toString());
           const segmentId = json.request_id;
-          this.#logger.info(`Received message: ${JSON.stringify(json).substring(0, 100)}`);
 
           if ('audio_content' in json) {
             try {
