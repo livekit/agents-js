@@ -5,6 +5,6 @@
 /**
  * Output format for Resemble TTS
  */
-export type OutputFormat = 'wav' | 'mp3';
+export type OutputFormat = 'wav';
 
-export type Precision = 'PCM_16' | 'PCM_24' | 'PCM_32' | 'MULAW';
+export type Precision = 'PCM_16';
