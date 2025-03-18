@@ -64,6 +64,7 @@ export class TTS extends tts.TTS {
 
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'resemble.ChunkedStream';
+  #logger = log();
   #opts: TTSOptions;
   #text: string;
 
@@ -136,13 +137,13 @@ export class ChunkedStream extends tts.ChunkedStream {
 
             this.queue.close();
           } catch (error) {
-            console.error('Error processing Resemble API response:', error);
+            this.#logger.error('Error processing Resemble API response:', error);
             this.queue.close();
           }
         });
 
         res.on('error', (error) => {
-          console.error('Resemble API error:', error);
+          this.#logger.error('Resemble API error:', error);
           this.queue.close();
         });
       },
