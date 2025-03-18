@@ -238,7 +238,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             // Handle error response from Resemble
             const errorName = json.error_name || 'Unknown';
             const explanation = json.error_params?.explanation || 'No details provided';
-            this.#logger.error(`Resemble API error: ${errorName} - ${explanation}`);
+            this.#logger.child({ error: errorName }).error(`Resemble API error: ${explanation}`);
 
             // Close the WebSocket and end the stream
             closing = true;
