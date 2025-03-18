@@ -270,8 +270,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
     };
 
-    const url = `${RESEMBLE_WEBSOCKET_URL}`;
-    const ws = new WebSocket(url, {
+    const ws = new WebSocket(RESEMBLE_WEBSOCKET_URL, {
       headers: {
         Authorization: `Bearer ${this.#opts.apiKey}`,
       },
