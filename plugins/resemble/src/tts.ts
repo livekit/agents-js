@@ -18,8 +18,7 @@ export interface TTSOptions {
   voiceUuid: string;
   sampleRate: number;
   precision: Precision;
-  outputFormat: OutputFormat;
-  binaryResponse: boolean;
+  outputFormat?: OutputFormat;
   apiKey?: string;
 }
 
@@ -27,8 +26,6 @@ const defaultTTSOptions: TTSOptions = {
   voiceUuid: TTSDefaultVoiceId,
   sampleRate: 44100,
   precision: 'PCM_16',
-  outputFormat: 'wav',
-  binaryResponse: false,
   apiKey: process.env.RESEMBLE_API_KEY,
 };
 
@@ -79,6 +76,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     const requestId = randomUUID();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const json = toResembleOptions(this.#opts);
+
     json.data = this.#text;
 
     const req = request(
@@ -178,7 +176,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       for await (const event of this.#tokenizer) {
         packet.data = event.token + ' ';
         packet.request_id = this.#requestId++;
-        packet.binary_response = this.#opts.binaryResponse;
         packet.continue = true;
         ws.send(JSON.stringify(packet));
       }
@@ -309,12 +306,13 @@ const toResembleOptions = (
   const options: { [id: string]: unknown } = {
     voice_uuid: opts.voiceUuid,
     sample_rate: opts.sampleRate,
-    output_format: opts.outputFormat.toLowerCase(),
     precision: opts.precision,
   };
 
   if (stream) {
     options.no_audio_header = true;
+  } else {
+    options.output_format = opts.outputFormat?.toLowerCase();
   }
 
   return options;
