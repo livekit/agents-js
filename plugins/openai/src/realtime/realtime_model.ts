@@ -399,7 +399,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
   }) {
     super();
 
-    if (apiKey === '') {
+    if (apiKey === '' && !(isAzure && entraToken)) {
       throw new Error(
         'OpenAI API key is required, either using the argument or by setting the OPENAI_API_KEY environmental variable',
       );
