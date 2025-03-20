@@ -492,6 +492,10 @@ export class Worker {
       });
     });
 
+    ws.addEventListener('error', (event) => {
+      this.#logger.error('worker error:', event.message);
+    });
+
     ws.addEventListener('message', (event) => {
       if (event.type !== 'message') {
         this.#logger.warn('unexpected message type: ' + event.type);
