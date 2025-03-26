@@ -187,20 +187,20 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             lastFrame = frame;
             // this.queue.put({frame, requestId, segmentId: requestId, final: false})
           }
-        }
 
-        if (json?.data?.stop) {
-          // This is a bool flag, it is True when audio reaches "<STOP>"
-          for (const frame of bstream.flush()) {
-            sendLastFrame(requestId, false);
-            lastFrame = frame;
+          if (json?.data?.stop) {
+            // This is a bool flag, it is True when audio reaches "<STOP>"
+            for (const frame of bstream.flush()) {
+              sendLastFrame(requestId, false);
+              lastFrame = frame;
+            }
+            sendLastFrame(requestId, true);
+            this.queue.put(SynthesizeStream.END_OF_STREAM);
+
+            closing = true;
+            ws.close();
+            return;
           }
-          sendLastFrame(requestId, true);
-          this.queue.put(SynthesizeStream.END_OF_STREAM);
-
-          closing = true;
-          ws.close();
-          return;
         }
       });
       ws.on('close', (code, reason) => {
