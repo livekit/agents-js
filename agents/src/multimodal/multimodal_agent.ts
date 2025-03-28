@@ -19,6 +19,9 @@ import {
 } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
 import { AudioByteStream } from '../audio.js';
+import { TOPIC_TRANSCRIPTION } from '../constants.js';
+import { ATTRIBUTE_TRANSCRIPTION_FINAL } from '../constants.js';
+import { ATTRIBUTE_TRANSCRIPTION_TRACK_ID } from '../constants.js';
 import * as llm from '../llm/index.js';
 import { log } from '../log.js';
 import type { MultimodalLLMMetrics } from '../metrics/base.js';
@@ -467,13 +470,13 @@ export class MultimodalAgent extends EventEmitter {
     return this.#localTrackSid;
   }
 
-  #publishTranscription(
+  async #publishTranscription(
     participantIdentity: string,
     trackSid: string,
     text: string,
     isFinal: boolean,
     id: string,
-  ): void {
+  ): Promise<void> {
     this.#logger.debug(
       `Publishing transcription ${participantIdentity} ${trackSid} ${text} ${isFinal} ${id}`,
     );
@@ -496,6 +499,17 @@ export class MultimodalAgent extends EventEmitter {
         },
       ],
     });
+
+    const stream = await this.room.localParticipant.streamText({
+      topic: TOPIC_TRANSCRIPTION,
+      senderIdentity: participantIdentity,
+      attributes: {
+        [ATTRIBUTE_TRANSCRIPTION_TRACK_ID]: this.#agentPublication!.sid!,
+        [ATTRIBUTE_TRANSCRIPTION_FINAL]: isFinal.toString(),
+      },
+    });
+    await stream.write(text);
+    await stream.close();
   }
 
   #updateState() {

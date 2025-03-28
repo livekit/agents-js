@@ -12,6 +12,9 @@ import {
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { randomUUID } from 'node:crypto';
 import EventEmitter from 'node:events';
+import { TOPIC_TRANSCRIPTION } from '../constants.js';
+import { ATTRIBUTE_TRANSCRIPTION_TRACK_ID } from '../constants.js';
+import { ATTRIBUTE_TRANSCRIPTION_FINAL } from '../constants.js';
 import type {
   CallableFunctionResult,
   FunctionCallInfo,
@@ -886,13 +889,23 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     source: string | LLMStream | AsyncIterable<string>,
   ): SynthesisHandle {
     const synchronizer = new TextAudioSynchronizer(defaultTextSyncOptions);
-    synchronizer.on('textUpdated', (text) => {
+    // TODO: where possible we would want to use deltas instead of full text segments, esp for LLM streams over the streamText API
+    synchronizer.on('textUpdated', async (text) => {
       this.#agentTranscribedText = text.text;
       this.#room!.localParticipant!.publishTranscription({
         participantIdentity: this.#room!.localParticipant!.identity,
         trackSid: this.#agentPublication!.sid!,
         segments: [text],
       });
+      const stream = await this.#room!.localParticipant!.streamText({
+        topic: TOPIC_TRANSCRIPTION,
+        attributes: {
+          [ATTRIBUTE_TRANSCRIPTION_TRACK_ID]: this.#agentPublication!.sid!,
+          [ATTRIBUTE_TRANSCRIPTION_FINAL]: text.final.toString(),
+        },
+      });
+      await stream.write(text.text);
+      await stream.close();
     });
 
     if (!this.#agentOutput) {
