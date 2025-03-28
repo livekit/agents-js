@@ -19,9 +19,11 @@ import {
 } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
 import { AudioByteStream } from '../audio.js';
-import { TOPIC_TRANSCRIPTION } from '../constants.js';
-import { ATTRIBUTE_TRANSCRIPTION_FINAL } from '../constants.js';
-import { ATTRIBUTE_TRANSCRIPTION_TRACK_ID } from '../constants.js';
+import {
+  ATTRIBUTE_TRANSCRIPTION_FINAL,
+  ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
+  TOPIC_TRANSCRIPTION,
+} from '../constants.js';
 import * as llm from '../llm/index.js';
 import { log } from '../log.js';
 import type { MultimodalLLMMetrics } from '../metrics/base.js';

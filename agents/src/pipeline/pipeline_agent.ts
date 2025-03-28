@@ -12,9 +12,11 @@ import {
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { randomUUID } from 'node:crypto';
 import EventEmitter from 'node:events';
-import { TOPIC_TRANSCRIPTION } from '../constants.js';
-import { ATTRIBUTE_TRANSCRIPTION_TRACK_ID } from '../constants.js';
-import { ATTRIBUTE_TRANSCRIPTION_FINAL } from '../constants.js';
+import {
+  ATTRIBUTE_TRANSCRIPTION_FINAL,
+  ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
+  TOPIC_TRANSCRIPTION,
+} from '../constants.js';
 import type {
   CallableFunctionResult,
   FunctionCallInfo,
