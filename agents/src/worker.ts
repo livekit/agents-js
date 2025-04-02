@@ -321,7 +321,7 @@ export class Worker {
     this.#opts = opts;
     this.#httpServer = new HTTPServer(opts.host, opts.port, () => ({
       agent_name: opts.agentName,
-      worker_type: opts.workerType,
+      worker_type: JobType[opts.workerType],
       active_jobs: this.activeJobs.length,
     }));
   }

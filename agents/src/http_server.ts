@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
-import { JobType } from '@livekit/protocol';
 import { log } from './log.js';
 
 const healthCheck = async (res: ServerResponse) => {
@@ -12,7 +11,7 @@ const healthCheck = async (res: ServerResponse) => {
 
 interface WorkerResponse {
   agent_name: string;
-  worker_type: JobType;
+  worker_type: string;
   active_jobs: number;
 }
 
