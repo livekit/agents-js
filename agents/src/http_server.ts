@@ -10,7 +10,7 @@ const healthCheck = async (res: ServerResponse) => {
   res.end('OK');
 };
 
-interface WorkerResponse{
+interface WorkerResponse {
   agent_name: string;
   worker_type: JobType;
   active_jobs: number;
