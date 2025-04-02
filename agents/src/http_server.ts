@@ -30,9 +30,11 @@ export class HTTPServer {
       switch (req.url) {
         case '/':
           healthCheck(res);
+          break;
         case '/worker':
           res.writeHead(200, {'Contet-Type': 'application/json'});
           res.end(JSON.stringify(workerCallback()));
+          break;
         default:
           res.writeHead(404);
           res.end('not found');
