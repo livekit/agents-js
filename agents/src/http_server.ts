@@ -26,15 +26,12 @@ export class HTTPServer {
     this.port = port;
 
     this.app = createServer((req: IncomingMessage, res: ServerResponse) => {
-      switch (req.url) {
-        case '/':
+      if (req.url === '/') {
           healthCheck(res);
-          break;
-        case '/worker':
+      } else if (req.url === '/worker') {
           res.writeHead(200, {'Contet-Type': 'application/json'});
           res.end(JSON.stringify(workerCallback()));
-          break;
-        default:
+      } else {
           res.writeHead(404);
           res.end('not found');
       }
