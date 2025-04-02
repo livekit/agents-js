@@ -9,22 +9,32 @@ const healthCheck = async (res: ServerResponse) => {
   res.end('OK');
 };
 
+interface WorkerResponse{
+  agent_name: string;
+  worker_type: string;
+  active_jobs: number;
+}
+
 export class HTTPServer {
   host: string;
   port: number;
   app: Server;
   #logger = log();
 
-  constructor(host: string, port: number) {
+  constructor(host: string, port: number, workerCallback: () => WorkerResponse) {
     this.host = host;
     this.port = port;
 
     this.app = createServer((req: IncomingMessage, res: ServerResponse) => {
-      if (req.url === '/') {
-        healthCheck(res);
-      } else {
-        res.writeHead(404);
-        res.end('not found');
+      switch (req.url) {
+        case '/':
+          healthCheck(res);
+        case '/worker':
+          res.writeHead(200, {'Contet-Type': 'application/json'});
+          res.end(JSON.stringify(workerCallback()));
+        default:
+          res.writeHead(404);
+          res.end('not found');
       }
     });
   }
