@@ -21,7 +21,7 @@ export class HTTPServer {
   app: Server;
   #logger = log();
 
-  constructor(host: string, port: number, workerCallback: () => WorkerResponse) {
+  constructor(host: string, port: number, workerListener: () => WorkerResponse) {
     this.host = host;
     this.port = port;
 
@@ -30,7 +30,7 @@ export class HTTPServer {
         healthCheck(res);
       } else if (req.url === '/worker') {
         res.writeHead(200, { 'Contet-Type': 'application/json' });
-        res.end(JSON.stringify(workerCallback()));
+        res.end(JSON.stringify(workerListener()));
       } else {
         res.writeHead(404);
         res.end('not found');
