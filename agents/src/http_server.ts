@@ -27,13 +27,13 @@ export class HTTPServer {
 
     this.app = createServer((req: IncomingMessage, res: ServerResponse) => {
       if (req.url === '/') {
-          healthCheck(res);
+        healthCheck(res);
       } else if (req.url === '/worker') {
-          res.writeHead(200, {'Contet-Type': 'application/json'});
-          res.end(JSON.stringify(workerCallback()));
+        res.writeHead(200, { 'Contet-Type': 'application/json' });
+        res.end(JSON.stringify(workerCallback()));
       } else {
-          res.writeHead(404);
-          res.end('not found');
+        res.writeHead(404);
+        res.end('not found');
       }
     });
   }
