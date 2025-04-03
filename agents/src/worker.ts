@@ -319,7 +319,11 @@ export class Worker {
     );
 
     this.#opts = opts;
-    this.#httpServer = new HTTPServer(opts.host, opts.port);
+    this.#httpServer = new HTTPServer(opts.host, opts.port, () => ({
+      agent_name: opts.agentName,
+      worker_type: JobType[opts.workerType],
+      active_jobs: this.activeJobs.length,
+    }));
   }
 
   /* @throws {@link WorkerError} if worker failed to connect or already running */
