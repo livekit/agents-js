@@ -154,19 +154,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   async #run() {
     const requestId = randomUUID();
     let closing = false;
-    const requestData = { [requestId]: { sent: '', recv: '' } };
-
-    const isAllAudioReceived = () => {
-      const recvText = requestData[requestId]!.recv.toLowerCase()
-        .replace(/[ \n]/g, '')
-        .replace('<stop>', '');
-
-      const sentText = requestData[requestId]!.sent.toLowerCase()
-        .replace(/[ \n]/g, '')
-        .replace('<stop>', '');
-
-      return sentText === recvText;
-    };
 
     const sendTask = async (ws: WebSocket) => {
       for await (const data of this.input) {
@@ -175,7 +162,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           continue;
         }
 
-        requestData[requestId]!.sent += data;
         ws.send(JSON.stringify({ text: data }));
       }
     };
@@ -196,25 +182,25 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
         if (json?.data?.audio) {
           const audio = new Int8Array(Buffer.from(json.data.audio, 'base64'));
-          requestData[requestId]!.recv += json.data?.text || '';
           for (const frame of bstream.write(audio)) {
             sendLastFrame(requestId, false);
             lastFrame = frame;
             // this.queue.put({frame, requestId, segmentId: requestId, final: false})
           }
-        }
 
-        if (isAllAudioReceived()) {
-          for (const frame of bstream.flush()) {
-            sendLastFrame(requestId, false);
-            lastFrame = frame;
+          if (json?.data?.stop) {
+            // This is a bool flag, it is True when audio reaches "<STOP>"
+            for (const frame of bstream.flush()) {
+              sendLastFrame(requestId, false);
+              lastFrame = frame;
+            }
+            sendLastFrame(requestId, true);
+            this.queue.put(SynthesizeStream.END_OF_STREAM);
+
+            closing = true;
+            ws.close();
+            return;
           }
-          sendLastFrame(requestId, true);
-          this.queue.put(SynthesizeStream.END_OF_STREAM);
-
-          closing = true;
-          ws.close();
-          return;
         }
       });
       ws.on('close', (code, reason) => {
