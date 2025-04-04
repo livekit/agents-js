@@ -14,6 +14,7 @@ export interface TTSOptions {
   model: TTSModels | string;
   voice: TTSVoices;
   speed: number;
+  instructions?: string;
   baseURL?: string;
   client?: OpenAI;
   apiKey?: string;
@@ -66,6 +67,7 @@ export class TTS extends tts.TTS {
         input: text,
         model: this.#opts.model,
         voice: this.#opts.voice,
+        instructions: this.#opts.instructions,
         response_format: 'pcm',
         speed: this.#opts.speed,
       }),
