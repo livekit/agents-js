@@ -2,4 +2,4 @@
 '@livekit/agents': patch
 ---
 
-update logging when process exists
+update logging when processes exist
