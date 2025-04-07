@@ -138,11 +138,15 @@ const startJob = (
 
     // don't do anything on C-c
     // this is handled in cli, triggering a termination of all child processes at once.
-    process.on('SIGINT', () => {});
+    process.on('SIGINT', () => {
+      logger.debug('SIGINT received');
+    });
 
     // don't do anything on SIGTERM
     // Render uses SIGTERM in autoscale, this ensures the processes are properly drained if needed
-    process.on('SIGTERM', () => {});
+    process.on('SIGTERM', () => {
+      logger.debug('SIGTERM received');
+    });
 
     await once(process, 'message').then(([msg]: IPCMessage[]) => {
       msg = msg!;
