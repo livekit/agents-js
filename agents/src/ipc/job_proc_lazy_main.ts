@@ -112,7 +112,7 @@ const startJob = (
     await Promise.all(shutdownTasks).catch(() => logger.error('error while shutting down the job'));
 
     process.send!({ case: 'done' });
-    logger.info('job completed calling process.exit()');
+    logger.info('job completed.');
     process.exit();
   });
 
@@ -172,7 +172,7 @@ const startJob = (
     const closeEvent = new EventEmitter();
 
     const orphanedTimeout = setTimeout(() => {
-      logger.warn('process orphaned, shutting down. Calling process.exit()');
+      logger.warn('process orphaned, shutting down.');
       process.exit();
     }, ORPHANED_TIMEOUT);
 

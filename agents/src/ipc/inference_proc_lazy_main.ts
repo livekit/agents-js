@@ -49,7 +49,7 @@ const ORPHANED_TIMEOUT = 15 * 1000;
     const closeEvent = new EventEmitter();
 
     const orphanedTimeout = setTimeout(() => {
-      logger.warn('process orphaned, shutting down. Calling process.exit()');
+      logger.warn('process orphaned, shutting down.');
       process.exit();
     }, ORPHANED_TIMEOUT);
 
