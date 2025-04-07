@@ -172,7 +172,7 @@ const startJob = (
     const closeEvent = new EventEmitter();
 
     const orphanedTimeout = setTimeout(() => {
-      logger.warn('process orphaned, shutting down.');
+      logger.warn('job process orphaned, shutting down.');
       process.exit();
     }, ORPHANED_TIMEOUT);
 
