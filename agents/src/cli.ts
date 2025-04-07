@@ -32,6 +32,7 @@ const runWorker = async (args: CliArgs) => {
   }
 
   process.once('SIGINT', async () => {
+    logger.info('SIGINT received in CLI');
     // allow C-c C-c for force interrupt
     process.once('SIGINT', () => {
       logger.info('worker closed forcefully');
@@ -46,6 +47,7 @@ const runWorker = async (args: CliArgs) => {
   });
 
   process.once('SIGTERM', async () => {
+    logger.info('SIGTERM received in CLI');
     if (args.production) {
       await worker.drain();
     }
