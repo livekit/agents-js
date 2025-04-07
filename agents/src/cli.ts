@@ -35,31 +35,31 @@ const runWorker = async (args: CliArgs) => {
     logger.info('SIGINT received in CLI');
     // allow C-c C-c for force interrupt
     process.once('SIGINT', () => {
-      logger.info('worker closed forcefully');
+      logger.info('worker closed forcefully due to SIGINT. Calling process.exit()');
       process.exit(130); // SIGINT exit code
     });
     if (args.production) {
       await worker.drain();
     }
     await worker.close();
-    logger.info('worker closed');
+    logger.info('worker closed due to SIGINT. Calling process.exit()');
     process.exit(130); // SIGINT exit code
   });
 
   process.once('SIGTERM', async () => {
-    logger.info('SIGTERM received in CLI');
+    logger.info('SIGTERM received in CLI.');
     if (args.production) {
       await worker.drain();
     }
     await worker.close();
-    logger.info('worker closed');
+    logger.info('worker closed from SIGTERM. Calling process.exit()');
     process.exit(143); // SIGTERM exit code
   });
 
   try {
     await worker.run();
   } catch {
-    logger.fatal('worker failed');
+    logger.fatal('closing worker due to error. Calling process.exit()');
     process.exit(1);
   }
 };
