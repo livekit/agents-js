@@ -59,7 +59,7 @@ const runWorker = async (args: CliArgs) => {
   try {
     await worker.run();
   } catch {
-    logger.fatal('closing worker due to error. Calling process.exit()');
+    logger.fatal('closing worker due to error.');
     process.exit(1);
   }
 };
