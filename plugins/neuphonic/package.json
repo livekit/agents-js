@@ -1,7 +1,7 @@
 {
-  "name": "@livekit/agents-plugin-openai",
-  "version": "0.9.0",
-  "description": "OpenAI plugin for LiveKit Node Agents",
+  "name": "@livekit/agents-plugin-neuphonic",
+  "version": "0.0.0",
+  "description": "Neuphonic plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",
@@ -31,7 +31,7 @@
   },
   "devDependencies": {
     "@livekit/agents": "workspace:^x",
-    "@livekit/agents-plugin-silero": "workspace:^x",
+    "@livekit/agents-plugin-openai": "workspace:^x",
     "@livekit/agents-plugins-test": "workspace:^x",
     "@livekit/rtc-node": "^0.13.4",
     "@microsoft/api-extractor": "^7.35.0",
@@ -40,8 +40,6 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "openai": "^4.91.1",
-    "sharp": "^0.33.5",
     "ws": "^8.16.0"
   },
   "peerDependencies": {

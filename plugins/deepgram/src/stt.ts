@@ -22,6 +22,7 @@ export interface STTOptions {
   sampleRate: number;
   numChannels: number;
   keywords: [string, number][];
+  keyterm: string[];
   profanityFilter: boolean;
   dictation: boolean;
   diarize: boolean;
@@ -42,6 +43,7 @@ const defaultSTTOptions: STTOptions = {
   sampleRate: 16000,
   numChannels: 1,
   keywords: [],
+  keyterm: [],
   profanityFilter: false,
   dictation: false,
   diarize: false,
@@ -138,6 +140,7 @@ export class SpeechStream extends stt.SpeechStream {
         endpointing: this.#opts.endpointing || false,
         filler_words: this.#opts.fillerWords,
         keywords: this.#opts.keywords.map((x) => x.join(':')),
+        keyterm: this.#opts.keyterm,
         profanity_filter: this.#opts.profanityFilter,
         language: this.#opts.language,
       };
@@ -146,7 +149,7 @@ export class SpeechStream extends stt.SpeechStream {
           if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
             streamURL.searchParams.append(k, encodeURIComponent(v));
           } else {
-            v.forEach((x) => streamURL.searchParams.append('keywords', encodeURIComponent(x)));
+            v.forEach((x) => streamURL.searchParams.append(k, encodeURIComponent(x)));
           }
         }
       });
