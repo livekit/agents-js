@@ -1,5 +1,17 @@
 # @livekit/agents
 
+## 0.7.2
+
+### Patch Changes
+
+- fix: fix race condition in TextAudioSynchronizer causing "TextAudioSynchronizer is closed" errors in AgentPlayout - [#342](https://github.com/livekit/agents-js/pull/342) ([@xavierroma](https://github.com/xavierroma))
+
+- fix(worker): reconnect on severed websocket conn - [#332](https://github.com/livekit/agents-js/pull/332) ([@nbsp](https://github.com/nbsp))
+
+- update logging when processes exist - [#353](https://github.com/livekit/agents-js/pull/353) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- add worker endpoint for hosted agents - [#350](https://github.com/livekit/agents-js/pull/350) ([@paulwe](https://github.com/paulwe))
+
 ## 0.7.1
 
 ### Patch Changes
