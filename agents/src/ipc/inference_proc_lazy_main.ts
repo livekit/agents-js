@@ -12,11 +12,15 @@ const ORPHANED_TIMEOUT = 15 * 1000;
   if (process.send) {
     // don't do anything on C-c
     // this is handled in cli, triggering a termination of all child processes at once.
-    process.on('SIGINT', () => {});
+    process.on('SIGINT', () => {
+      logger.info('SIGINT received in inference proc');
+    });
 
     // don't do anything on SIGTERM
     // Render uses SIGTERM in autoscale, this ensures the processes are properly drained if needed
-    process.on('SIGTERM', () => {});
+    process.on('SIGTERM', () => {
+      logger.info('SIGTERM received in inference proc');
+    });
 
     await once(process, 'message').then(([msg]: IPCMessage[]) => {
       msg = msg!;
@@ -45,7 +49,7 @@ const ORPHANED_TIMEOUT = 15 * 1000;
     const closeEvent = new EventEmitter();
 
     const orphanedTimeout = setTimeout(() => {
-      logger.warn('process orphaned, shutting down');
+      logger.warn('inference process orphaned, shutting down.');
       process.exit();
     }, ORPHANED_TIMEOUT);
 

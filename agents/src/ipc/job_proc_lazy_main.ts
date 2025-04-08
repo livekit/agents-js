@@ -112,6 +112,7 @@ const startJob = (
     await Promise.all(shutdownTasks).catch(() => logger.error('error while shutting down the job'));
 
     process.send!({ case: 'done' });
+    logger.info('job completed.');
     process.exit();
   });
 
@@ -138,11 +139,15 @@ const startJob = (
 
     // don't do anything on C-c
     // this is handled in cli, triggering a termination of all child processes at once.
-    process.on('SIGINT', () => {});
+    process.on('SIGINT', () => {
+      logger.info('SIGINT received in job proc');
+    });
 
     // don't do anything on SIGTERM
     // Render uses SIGTERM in autoscale, this ensures the processes are properly drained if needed
-    process.on('SIGTERM', () => {});
+    process.on('SIGTERM', () => {
+      logger.info('SIGTERM received in job proc');
+    });
 
     await once(process, 'message').then(([msg]: IPCMessage[]) => {
       msg = msg!;
@@ -167,7 +172,7 @@ const startJob = (
     const closeEvent = new EventEmitter();
 
     const orphanedTimeout = setTimeout(() => {
-      logger.warn('process orphaned, shutting down');
+      logger.warn('job process orphaned, shutting down.');
       process.exit();
     }, ORPHANED_TIMEOUT);
 
