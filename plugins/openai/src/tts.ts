@@ -55,7 +55,12 @@ export class TTS extends tts.TTS {
       });
   }
 
-  updateOptions(opts: { model?: TTSModels | string; voice?: TTSVoices; speed?: number, instructions?: string }) {
+  updateOptions(opts: {
+    model?: TTSModels | string;
+    voice?: TTSVoices;
+    speed?: number;
+    instructions?: string;
+  }) {
     this.#opts = { ...this.#opts, ...opts };
   }
 
