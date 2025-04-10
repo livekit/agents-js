@@ -7,7 +7,8 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { distance } from 'fastest-levenshtein';
 import { describe, expect, it } from 'vitest';
 
-const TEXT = 'The people who are crazy enough to think they can change the world are the ones who do.'
+const TEXT =
+  'The people who are crazy enough to think they can change the world are the ones who do.';
 
 const validate = async (frames: AudioBuffer, stt: stt.STT, text: string, threshold: number) => {
   console.time('STT Recognition');
