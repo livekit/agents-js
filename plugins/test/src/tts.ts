@@ -11,9 +11,7 @@ const TEXT =
   'The people who are crazy enough to think they can change the world are the ones who do.';
 
 const validate = async (frames: AudioBuffer, stt: stt.STT, text: string, threshold: number) => {
-  console.time('STT Recognition');
   const event = await stt.recognize(frames);
-  console.timeEnd('STT Recognition');
   const eventText = event.alternatives![0].text.toLowerCase().replace(/\s/g, ' ').trim();
   text = text.toLowerCase().replace(/\s/g, ' ').trim();
   expect(distance(text, eventText) / text.length).toBeLessThanOrEqual(threshold);
