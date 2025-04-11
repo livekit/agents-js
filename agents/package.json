@@ -30,7 +30,7 @@
     "api:update": "api-extractor run --local --typescript-compiler-folder ../node_modules/typescript --verbose"
   },
   "devDependencies": {
-    "@livekit/rtc-node": "^0.13.4",
+    "@livekit/rtc-node": "^0.13.11",
     "@microsoft/api-extractor": "^7.35.0",
     "@types/node": "^22.5.5",
     "@types/ws": "^8.5.10",
