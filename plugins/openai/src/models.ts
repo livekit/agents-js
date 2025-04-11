@@ -28,6 +28,7 @@ export type ChatModels =
   | 'gpt-3.5-turbo-16k-0613';
 
 export type WhisperModels = 'whisper-1';
+export type OpenAISTTModels = 'whisper-1' | 'gpt-4o-transcribe' | 'gpt-4o-mini-transcribe';
 
 export type TTSModels = 'tts-1' | 'tts-1-hd' | 'gpt-4o-mini-tts';
 

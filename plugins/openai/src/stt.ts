@@ -1,31 +1,87 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type AudioBuffer, mergeFrames, stt } from '@livekit/agents';
+import {
+  type AudioBuffer,
+  AudioByteStream,
+  AudioEnergyFilter,
+  log,
+  mergeFrames,
+  stt,
+} from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { OpenAI } from 'openai';
-import type { GroqAudioModels, WhisperModels } from './models.js';
+import { type RawData, WebSocket } from 'ws';
+import type { GroqAudioModels, OpenAISTTModels, WhisperModels } from './models.js';
+
+const SAMPLE_RATE = 24000;
+const NUM_CHANNELS = 1;
+const MAX_SESSION_DURATION = 10 * 60 * 1000; // 10 minutes
+const DELTA_TRANSCRIPT_INTERVAL = 500; // 0.5 seconds in ms
 
 export interface STTOptions {
   apiKey?: string;
-  language: string;
+  language?: string;
   prompt?: string;
-  detectLanguage: boolean;
-  model: WhisperModels | string;
+  model: OpenAISTTModels | WhisperModels | (string & {});
   baseURL?: string;
   client?: OpenAI;
+  turnDetection?: {
+    type: string;
+    threshold: number;
+    prefix_padding_ms: number;
+    silence_duration_ms: number;
+  };
+  noiseReductionType?: string;
+  sampleRate?: number;
+  numChannels?: number;
+}
+
+// Interfaces for OpenAI Realtime API session configuration
+interface InputAudioTranscription {
+  model: string;
+  prompt: string;
+  language?: string;
+}
+
+interface InputAudioNoiseReduction {
+  type: string;
+}
+
+interface TranscriptionSession {
+  input_audio_format: string;
+  input_audio_transcription: InputAudioTranscription;
+  input_audio_noise_reduction?: InputAudioNoiseReduction;
+  turn_detection?: {
+    type: string;
+    threshold: number;
+    prefix_padding_ms: number;
+    silence_duration_ms: number;
+  };
+}
+
+interface SessionConfig {
+  type: string;
+  session: TranscriptionSession;
 }
 
 const defaultSTTOptions: STTOptions = {
   apiKey: process.env.OPENAI_API_KEY,
-  language: 'en',
-  detectLanguage: false,
-  model: 'whisper-1',
+  model: 'gpt-4o-transcribe',
+  sampleRate: SAMPLE_RATE,
+  numChannels: NUM_CHANNELS,
+  turnDetection: {
+    type: 'server_vad',
+    threshold: 0.5,
+    prefix_padding_ms: 600,
+    silence_duration_ms: 350,
+  },
 };
 
 export class STT extends stt.STT {
   #opts: STTOptions;
   #client: OpenAI;
+  #streams = new Set<SpeechStream>();
   label = 'openai.STT';
 
   /**
@@ -36,7 +92,10 @@ export class STT extends stt.STT {
    * `OPENAI_API_KEY` environmental variable.
    */
   constructor(opts: Partial<STTOptions> = defaultSTTOptions) {
-    super({ streaming: false, interimResults: false });
+    super({
+      streaming: true,
+      interimResults: true,
+    });
 
     this.#opts = { ...defaultSTTOptions, ...opts };
     if (this.#opts.apiKey === undefined) {
@@ -136,8 +195,326 @@ export class STT extends stt.STT {
     };
   }
 
-  /** This method throws an error; streaming is unsupported on OpenAI STT. */
-  stream(): stt.SpeechStream {
-    throw new Error('Streaming is not supported on OpenAI STT');
+  /**
+   * Creates a stream for real-time speech to text processing.
+   */
+  stream(language?: string): stt.SpeechStream {
+    const opts = this.#sanitizeOptions(language);
+    const stream = new SpeechStream(this, opts);
+    this.#streams.add(stream);
+    return stream;
+  }
+
+  updateOptions(options: Partial<STTOptions>): void {
+    this.#opts = { ...this.#opts, ...options };
+
+    // Update all active streams with the new options
+    for (const stream of this.#streams) {
+      if (stream instanceof SpeechStream) {
+        stream.updateOptions(this.#opts);
+      }
+    }
+  }
+}
+
+export class SpeechStream extends stt.SpeechStream {
+  #opts: STTOptions;
+  #audioEnergyFilter: AudioEnergyFilter;
+  #logger = log();
+  #speaking = false;
+  #ws?: WebSocket;
+  #currentText = '';
+  #lastInterimAt = 0;
+  #connectedAt = 0;
+  #closed = false;
+  #reconnectTimeout?: NodeJS.Timeout;
+  label = 'openai.SpeechStream';
+
+  constructor(stt: STT, opts: STTOptions) {
+    super(stt);
+    this.#opts = opts;
+    this.closed = false;
+    this.#audioEnergyFilter = new AudioEnergyFilter();
+
+    this.#run();
+  }
+
+  updateOptions(options: Partial<STTOptions>): void {
+    this.#opts = { ...this.#opts, ...options };
+
+    // Reconnect to apply new options
+    if (this.#ws) {
+      this.#reconnect();
+    }
+  }
+
+  #reconnect(): void {
+    if (this.#reconnectTimeout) {
+      clearTimeout(this.#reconnectTimeout);
+    }
+
+    if (this.#ws) {
+      try {
+        this.#ws.close();
+      } catch (e) {
+        this.#logger.warn('Error closing WebSocket:', e);
+      }
+      this.#ws = undefined;
+    }
+
+    // Reconnect after a brief delay
+    this.#reconnectTimeout = setTimeout(() => {
+      this.#run();
+    }, 100);
+  }
+
+  async #run(maxRetry = 32) {
+    let retries = 0;
+
+    while (!this.input.closed && !this.#closed) {
+      try {
+        if (!this.#ws) {
+          const apiKey = this.#opts.apiKey;
+          if (!apiKey) {
+            throw new Error('API key is required for OpenAI STT');
+          }
+
+          // Create WebSocket URL for OpenAI's realtime API
+          const url = 'wss://api.openai.com/v1/realtime?intent=transcription'; // TODO: make this configurable
+
+          // Create WebSocket connection
+          this.#ws = new WebSocket(url.toString(), {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'OpenAI-Beta': 'realtime=v1',
+              'User-Agent': 'LiveKit Agents',
+            },
+          });
+
+          // Setup event handlers
+          await new Promise<void>((resolve, reject) => {
+            if (!this.#ws) return reject(new Error('WebSocket was closed'));
+
+            this.#ws.on('open', () => {
+              this.#connectedAt = Date.now();
+              resolve();
+            });
+
+            this.#ws.on('error', (error) => reject(error));
+            this.#ws.on('close', (code) => reject(`WebSocket closed with code ${code}`));
+          });
+
+          // Configure the transcription session
+          const sessionConfig: SessionConfig = {
+            type: 'transcription_session.update',
+            session: {
+              input_audio_format: 'pcm16',
+              input_audio_transcription: {
+                model: this.#opts.model,
+                prompt: this.#opts.prompt || '',
+              },
+              turn_detection: this.#opts.turnDetection,
+            },
+          };
+
+          if (this.#opts.language) {
+            sessionConfig.session.input_audio_transcription.language = this.#opts.language;
+          }
+
+          if (this.#opts.noiseReductionType) {
+            sessionConfig.session.input_audio_noise_reduction = {
+              type: this.#opts.noiseReductionType,
+            };
+          }
+
+          // Send config to initialize the session
+          this.#ws.send(JSON.stringify(sessionConfig));
+        }
+
+        // Run the WebSocket
+        await this.#runWS(this.#ws);
+      } catch (e) {
+        if (retries >= maxRetry) {
+          throw new Error(
+            `Failed to connect to OpenAI realtime API after ${retries} attempts: ${e}`,
+          );
+        }
+
+        const delay = Math.min(retries * 5, 10);
+        retries++;
+
+        this.#logger.warn(
+          `Failed to connect to OpenAI, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
+        );
+
+        // Close the existing WebSocket if any
+        if (this.#ws) {
+          try {
+            this.#ws.close();
+          } catch {}
+          this.#ws = undefined;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, delay * 1000));
+      }
+    }
+
+    this.closed = true;
+  }
+
+  async #runWS(ws: WebSocket) {
+    let closing = false;
+
+    // Keep the connection alive
+    const keepalive = setInterval(() => {
+      try {
+        ws.send(JSON.stringify({ type: 'KeepAlive' }));
+      } catch {
+        clearInterval(keepalive);
+        return;
+      }
+    }, 5000);
+
+    // Function to handle sending audio data
+    const sendTask = async () => {
+      const samples100Ms = Math.floor((this.#opts.sampleRate || SAMPLE_RATE) / 10);
+      const stream = new AudioByteStream(
+        this.#opts.sampleRate || SAMPLE_RATE,
+        this.#opts.numChannels || NUM_CHANNELS,
+        samples100Ms,
+      );
+
+      for await (const data of this.input) {
+        if (this.#closed) break;
+
+        let frames: AudioFrame[];
+        if (data === SpeechStream.FLUSH_SENTINEL) {
+          frames = stream.flush();
+        } else if (
+          data.sampleRate === (this.#opts.sampleRate || SAMPLE_RATE) &&
+          data.channels === (this.#opts.numChannels || NUM_CHANNELS)
+        ) {
+          frames = stream.write(Buffer.from(data.data.buffer));
+        } else {
+          throw new Error(`Sample rate or channel count of frame does not match`);
+        }
+
+        for (const frame of frames) {
+          if (this.#audioEnergyFilter.pushFrame(frame)) {
+            // Base64 encode audio data for OpenAI realtime API
+            const base64Audio = Buffer.from(frame.data.buffer).toString('base64');
+            ws.send(
+              JSON.stringify({
+                type: 'input_audio_buffer.append',
+                audio: base64Audio,
+              }),
+            );
+          }
+        }
+
+        // Check if we need to restart the session due to duration limitation
+        if (Date.now() - this.#connectedAt > MAX_SESSION_DURATION) {
+          this.#logger.info('Resetting realtime STT session due to timeout');
+          this.#reconnect();
+          break;
+        }
+      }
+
+      closing = true;
+      ws.close();
+    };
+
+    // Monitor WebSocket for closure
+    const wsMonitor = new Promise<void>((_, reject) => {
+      ws.once('close', (code, reason) => {
+        if (!closing && !this.#closed) {
+          this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+          reject(new Error(`WebSocket closed with code ${code}: ${reason}`));
+        }
+      });
+    });
+
+    // Listen for transcription results
+    const listenTask = async () => {
+      ws.on('message', (data: RawData) => {
+        try {
+          const json = JSON.parse(data.toString()); //todo type this
+          const msgType = json.type;
+
+          if (msgType === 'conversation.item.input_audio_transcription.delta') {
+            // Handle interim transcription results
+            const delta = json.delta || '';
+            if (delta) {
+              this.#currentText += delta;
+              const now = Date.now();
+              if (now - this.#lastInterimAt > DELTA_TRANSCRIPT_INTERVAL) {
+                this.queue.put({
+                  type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
+                  alternatives: [
+                    {
+                      text: this.#currentText,
+                      language: this.#opts.language || '',
+                      startTime: 0,
+                      endTime: 0,
+                      confidence: 0,
+                    },
+                  ],
+                });
+                this.#lastInterimAt = now;
+              }
+            }
+          } else if (msgType === 'conversation.item.input_audio_transcription.completed') {
+            // Handle final transcription results
+            // todo handle ordering here
+            this.#currentText = '';
+            const transcript = json.transcript || '';
+            if (transcript) {
+              this.queue.put({
+                type: stt.SpeechEventType.FINAL_TRANSCRIPT,
+                alternatives: [
+                  {
+                    text: transcript,
+                    language: this.#opts.language || '',
+                    startTime: 0,
+                    endTime: 0,
+                    confidence: 0,
+                  },
+                ],
+              });
+            }
+          }
+        } catch (error) {
+          this.#logger.error('Failed to process message:', error);
+        }
+      });
+
+      // Wait until the WebSocket is closed or the send task completes
+      await new Promise<void>((resolve) => {
+        ws.once('close', () => resolve());
+      });
+    };
+
+    // Run all tasks in parallel
+    await Promise.all([sendTask(), listenTask(), wsMonitor]);
+    clearInterval(keepalive);
+  }
+
+  close(): void {
+    this.#closed = true;
+    if (this.#ws) {
+      try {
+        this.#ws.close();
+      } catch (e) {
+        this.#logger.warn('Error closing WebSocket', e);
+      }
+      this.#ws = undefined;
+    }
+
+    if (this.#reconnectTimeout) {
+      clearTimeout(this.#reconnectTimeout);
+      this.#reconnectTimeout = undefined;
+    }
+
+    super.close();
   }
 }
