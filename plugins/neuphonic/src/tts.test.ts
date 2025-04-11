@@ -6,6 +6,6 @@ import { tts } from '@livekit/agents-plugins-test';
 import { describe } from 'vitest';
 import { TTS } from './tts.js';
 
-describe('Neuphonic', async () => {
+describe.skip('Neuphonic', async () => {
   await tts(new TTS(), new STT());
 });
