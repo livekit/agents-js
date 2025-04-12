@@ -7,5 +7,5 @@ import { describe } from 'vitest';
 import { STT } from './stt.js';
 
 describe('OpenAI', async () => {
-  await stt(new STT(), await VAD.load(), { streaming: false });
+  await stt(new STT(), await VAD.load(), { streaming: true });
 });
