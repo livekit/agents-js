@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { LocalTrackPublication, NoiseCancellationOptions, RemoteParticipant, Room } from '@livekit/rtc-node';
+import type {
+  LocalTrackPublication,
+  NoiseCancellationOptions,
+  RemoteParticipant,
+  Room,
+} from '@livekit/rtc-node';
 import {
   AudioSource,
   LocalAudioTrack,
@@ -481,7 +486,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.#vad,
       this.#stt,
       this.#participant,
-      this.#opts.noiseCancellation
+      this.#opts.noiseCancellation,
     );
     this.#humanInput.on(HumanInputEvent.START_OF_SPEECH, (event) => {
       this.emit(VPAEvent.USER_STARTED_SPEAKING);

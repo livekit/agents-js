@@ -462,11 +462,9 @@ export class MultimodalAgent extends EventEmitter {
       const audioStreamOptions = {
         sampleRate: this.model.sampleRate,
         numChannels: this.model.numChannels,
-        ...(this.#noiseCancellation ? { noiseCancellation: this.#noiseCancellation } : {})
+        ...(this.#noiseCancellation ? { noiseCancellation: this.#noiseCancellation } : {}),
       };
-      readAudioStreamTask(new AudioStream(track, audioStreamOptions))
-        .then(resolve)
-        .catch(reject);
+      readAudioStreamTask(new AudioStream(track, audioStreamOptions)).then(resolve).catch(reject);
     });
   }
 

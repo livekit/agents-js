@@ -52,7 +52,7 @@ export class HumanInput extends (EventEmitter as new () => TypedEmitter<HumanInp
     vad: VAD,
     stt: STT,
     participant: RemoteParticipant,
-    noiseCancellation?: NoiseCancellationOptions
+    noiseCancellation?: NoiseCancellationOptions,
   ) {
     super();
     this.#room = room;
@@ -105,7 +105,7 @@ export class HumanInput extends (EventEmitter as new () => TypedEmitter<HumanInp
       const audioStreamOptions = {
         sampleRate: 16000,
         numChannels: 1,
-        ...(this.#noiseCancellation ? { noiseCancellation: this.#noiseCancellation } : {})
+        ...(this.#noiseCancellation ? { noiseCancellation: this.#noiseCancellation } : {}),
       };
       const audioStream = new AudioStream(track, audioStreamOptions);
 
