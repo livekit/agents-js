@@ -23,7 +23,7 @@ export interface STTOptions {
   apiKey?: string;
   language?: string;
   prompt?: string;
-  model: OpenAISTTModels | WhisperModels | (string & {});
+  model: OpenAISTTModels | WhisperModels | (string & NonNullable<unknown>);
   baseURL?: string;
   client?: OpenAI;
   turnDetection?: {
