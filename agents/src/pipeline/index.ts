@@ -13,3 +13,15 @@ export {
   VoicePipelineAgent,
   AgentCallContext,
 } from './pipeline_agent.js';
+
+import * as agentOutput from './agent_output.js'
+import * as agentPlayout from './agent_playout.js'
+import * as humanInput from './human_input.js'
+import * as speechHandle from './speech_handle.js'
+
+export {
+  agentOutput,
+  agentPlayout,
+  humanInput,
+  speechHandle,
+}
