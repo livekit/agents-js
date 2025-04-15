@@ -35,10 +35,6 @@
       "dependsOn": ["^clean"],
       "outputs": [""]
     },
-    "clean:build": {
-      "dependsOn": ["^clean:build"],
-      "outputs": ["dist/**"]
-    },
     "lint": {
       "outputs": []
     },

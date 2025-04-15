@@ -5,7 +5,7 @@
   "scripts": {
     "build": "turbo run build",
     "clean": "turbo run clean",
-    "clean:build": "turbo run clean:build",
+    "clean:build": "turbo run clean && turbo run build",
     "build:agents": "turbo run build --filter=@livekit/agents...",
     "build:plugins": "turbo run build --filter=@livekit/agents-plugin-*...",
     "ci:publish": "pnpm build && changeset publish",
