@@ -180,7 +180,7 @@ export class WorkerOptions {
     wsURL = 'ws://localhost:7880',
     apiKey = undefined,
     apiSecret = undefined,
-    host = 'localhost',
+    host = '0.0.0.0',
     port = undefined,
     logLevel = 'info',
     production = false,
