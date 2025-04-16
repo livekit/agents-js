@@ -66,23 +66,27 @@ export class MultimodalAgent extends EventEmitter {
 
   #textResponseRetries = 0;
   #maxTextResponseRetries: number;
+  #allowTextReplies: boolean;
 
   constructor({
     model,
     chatCtx,
     fncCtx,
     maxTextResponseRetries = 5,
+    allowTextReplies = false,
   }: {
     model: RealtimeModel;
     chatCtx?: llm.ChatContext;
     fncCtx?: llm.FunctionContext;
     maxTextResponseRetries?: number;
+    allowTextReplies?: boolean;
   }) {
     super();
     this.model = model;
     this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
     this.#maxTextResponseRetries = maxTextResponseRetries;
+    this.#allowTextReplies = allowTextReplies;
   }
 
   #participant: RemoteParticipant | string | null = null;
@@ -269,7 +273,7 @@ export class MultimodalAgent extends EventEmitter {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('response_content_done', (message: any) => {
         // openai.realtime.RealtimeContent
-        if (message.contentType === 'text') {
+        if (message.contentType === 'text' && !this.#allowTextReplies) {
           if (this.#textResponseRetries >= this.#maxTextResponseRetries) {
             throw new Error(
               'The OpenAI Realtime API returned a text response ' +
