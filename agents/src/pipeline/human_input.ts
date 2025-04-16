@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type {
+  NoiseCancellationOptions,
   RemoteAudioTrack,
   RemoteParticipant,
   RemoteTrackPublication,
@@ -44,13 +45,21 @@ export class HumanInput extends (EventEmitter as new () => TypedEmitter<HumanInp
   #speaking = false;
   #speechProbability = 0;
   #logger = log();
+  #noiseCancellation?: NoiseCancellationOptions;
 
-  constructor(room: Room, vad: VAD, stt: STT, participant: RemoteParticipant) {
+  constructor(
+    room: Room,
+    vad: VAD,
+    stt: STT,
+    participant: RemoteParticipant,
+    noiseCancellation?: NoiseCancellationOptions,
+  ) {
     super();
     this.#room = room;
     this.#vad = vad;
     this.#stt = stt;
     this.#participant = participant;
+    this.#noiseCancellation = noiseCancellation;
 
     this.#room.on(RoomEvent.TrackPublished, this.#subscribeToMicrophone.bind(this));
     this.#room.on(RoomEvent.TrackSubscribed, this.#subscribeToMicrophone.bind(this));
@@ -93,7 +102,12 @@ export class HumanInput extends (EventEmitter as new () => TypedEmitter<HumanInp
         this.#recognizeTask.cancel();
       }
 
-      const audioStream = new AudioStream(track, 16000);
+      const audioStreamOptions = {
+        sampleRate: 16000,
+        numChannels: 1,
+        ...(this.#noiseCancellation ? { noiseCancellation: this.#noiseCancellation } : {}),
+      };
+      const audioStream = new AudioStream(track, audioStreamOptions);
 
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       this.#recognizeTask = new CancellablePromise(async (resolve, _, onCancel) => {

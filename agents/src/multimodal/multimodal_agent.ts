@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type {
   LocalTrackPublication,
+  NoiseCancellationOptions,
   RemoteAudioTrack,
   RemoteParticipant,
   RemoteTrack,
@@ -72,17 +73,20 @@ export class MultimodalAgent extends EventEmitter {
     chatCtx,
     fncCtx,
     maxTextResponseRetries = 5,
+    noiseCancellation,
   }: {
     model: RealtimeModel;
     chatCtx?: llm.ChatContext;
     fncCtx?: llm.FunctionContext;
     maxTextResponseRetries?: number;
+    noiseCancellation?: NoiseCancellationOptions;
   }) {
     super();
     this.model = model;
     this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
     this.#maxTextResponseRetries = maxTextResponseRetries;
+    this.#noiseCancellation = noiseCancellation;
   }
 
   #participant: RemoteParticipant | string | null = null;
@@ -95,6 +99,7 @@ export class MultimodalAgent extends EventEmitter {
   #session: RealtimeSession | null = null;
   #fncCtx: llm.FunctionContext | undefined = undefined;
   #chatCtx: llm.ChatContext | undefined = undefined;
+  #noiseCancellation: NoiseCancellationOptions | undefined = undefined;
 
   #_started: boolean = false;
   #_pendingFunctionCalls: Set<string> = new Set();
@@ -454,9 +459,12 @@ export class MultimodalAgent extends EventEmitter {
     this.subscribedTrack = track;
 
     this.readMicroTask = new Promise<void>((resolve, reject) => {
-      readAudioStreamTask(new AudioStream(track, this.model.sampleRate, this.model.numChannels))
-        .then(resolve)
-        .catch(reject);
+      const audioStreamOptions = {
+        sampleRate: this.model.sampleRate,
+        numChannels: this.model.numChannels,
+        ...(this.#noiseCancellation ? { noiseCancellation: this.#noiseCancellation } : {}),
+      };
+      readAudioStreamTask(new AudioStream(track, audioStreamOptions)).then(resolve).catch(reject);
     });
   }
 
