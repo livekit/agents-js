@@ -180,7 +180,7 @@ importers:
         specifier: workspace:^x
         version: link:../test
       '@livekit/rtc-node':
-        specifier: ^0.13.4
+        specifier: ^0.13.11
         version: 0.13.11
       '@microsoft/api-extractor':
         specifier: ^7.35.0
@@ -211,7 +211,7 @@ importers:
         specifier: workspace:^x
         version: link:../test
       '@livekit/rtc-node':
-        specifier: ^0.13.4
+        specifier: ^0.13.11
         version: 0.13.11
       '@microsoft/api-extractor':
         specifier: ^7.35.0
@@ -242,7 +242,7 @@ importers:
         specifier: workspace:^x
         version: link:../test
       '@livekit/rtc-node':
-        specifier: ^0.13.4
+        specifier: ^0.13.11
         version: 0.13.11
       '@microsoft/api-extractor':
         specifier: ^7.35.0
@@ -298,7 +298,7 @@ importers:
         specifier: workspace:^x
         version: link:../test
       '@livekit/rtc-node':
-        specifier: ^0.13.4
+        specifier: ^0.13.11
         version: 0.13.11
       '@microsoft/api-extractor':
         specifier: ^7.35.0
@@ -335,7 +335,7 @@ importers:
         specifier: workspace:^x
         version: link:../test
       '@livekit/rtc-node':
-        specifier: ^0.13.4
+        specifier: ^0.13.11
         version: 0.13.11
       '@microsoft/api-extractor':
         specifier: ^7.35.0
@@ -366,7 +366,7 @@ importers:
         specifier: workspace:^
         version: link:../test
       '@livekit/rtc-node':
-        specifier: ^0.13.4
+        specifier: ^0.13.11
         version: 0.13.11
       '@microsoft/api-extractor':
         specifier: ^7.35.0
@@ -394,7 +394,7 @@ importers:
         specifier: workspace:^x
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.13.4
+        specifier: ^0.13.11
         version: 0.13.11
       '@microsoft/api-extractor':
         specifier: ^7.35.0
