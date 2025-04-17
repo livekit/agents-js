@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 0.7.3
+
+### Patch Changes
+
+- add inbound noise cancellation support - [#358](https://github.com/livekit/agents-js/pull/358) ([@typester](https://github.com/typester))
+
+- fix(worker): default healthcheck to listen on 0 - [#363](https://github.com/livekit/agents-js/pull/363) ([@nbsp](https://github.com/nbsp))
+
 ## 0.7.2
 
 ### Patch Changes
