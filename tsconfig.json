@@ -17,9 +17,10 @@
     "noUncheckedIndexedAccess": true,
     "paths": {
       "@livekit/agents": ["agents/src"],
-      "@livekit/agents-plugin-openai": ["plugins/openai/src"]
+      "@livekit/agents-plugin-*": ["plugins/*/src"]
     }
   },
+
   "typedocOptions": {
     "entryPoints": ["agents", "plugins/*"],
     "entryPointStrategy": "packages",
