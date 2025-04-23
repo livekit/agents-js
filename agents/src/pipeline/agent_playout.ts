@@ -167,7 +167,6 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
           }
           handle.pushedDuration += (frame.samplesPerChannel / frame.sampleRate) * 1000;
           handle.synchronizer.pushAudio(frame);
-          console.log('captureFrame with frame duration (ms)', frame.samplesPerChannel / frame.sampleRate * 1000);
           await this.#audioSource.captureFrame(frame);
         }
 
