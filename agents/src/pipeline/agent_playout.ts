@@ -172,7 +172,6 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
 
         await this.#audioSource.waitForPlayout();
 
-
         handle.synchronizer.close(false);
         resolve();
       });
