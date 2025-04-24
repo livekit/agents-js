@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type AudioBuffer, AudioByteStream, AudioEnergyFilter, log, stt } from '@livekit/agents';
+import {
+  type AudioBuffer,
+  AudioByteStream,
+  AudioEnergyFilter,
+  Future,
+  log,
+  stt,
+} from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
 import type { STTLanguages, STTModels } from './models.js';
@@ -98,7 +105,11 @@ export class STT extends stt.STT {
     throw new Error('Recognize is not supported on Deepgram STT');
   }
 
-  stream(): stt.SpeechStream {
+  updateOptions(opts: Partial<STTOptions>) {
+    this.#opts = { ...this.#opts, ...opts };
+  }
+
+  stream(): SpeechStream {
     return new SpeechStream(this, this.#opts);
   }
 }
@@ -108,6 +119,7 @@ export class SpeechStream extends stt.SpeechStream {
   #audioEnergyFilter: AudioEnergyFilter;
   #logger = log();
   #speaking = false;
+  #resetWS = new Future();
   label = 'deepgram.SpeechStream';
 
   constructor(stt: STT, opts: STTOptions) {
@@ -184,7 +196,13 @@ export class SpeechStream extends stt.SpeechStream {
     this.closed = true;
   }
 
+  updateOptions(opts: Partial<STTOptions>) {
+    this.#opts = { ...this.#opts, ...opts };
+    this.#resetWS.resolve();
+  }
+
   async #runWS(ws: WebSocket) {
+    this.#resetWS = new Future();
     let closing = false;
 
     const keepalive = setInterval(() => {
@@ -238,7 +256,7 @@ export class SpeechStream extends stt.SpeechStream {
     );
 
     const listenTask = async () => {
-      while (!this.closed) {
+      while (!this.closed && !closing) {
         try {
           await new Promise<RawData>((resolve) => {
             ws.once('message', (data) => resolve(data));
@@ -312,7 +330,9 @@ export class SpeechStream extends stt.SpeechStream {
       }
     };
 
-    await Promise.all([sendTask(), listenTask(), wsMonitor]);
+    await Promise.race([this.#resetWS.await, Promise.all([sendTask(), listenTask(), wsMonitor])]);
+    closing = true;
+    ws.close();
     clearInterval(keepalive);
   }
 }
