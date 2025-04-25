@@ -84,14 +84,8 @@ const ORPHANED_TIMEOUT = 15 * 1000;
         case 'shutdownRequest':
           logger.info('inference process received shutdown request');
           process.send!({ case: 'done' });
-    
           clearTimeout(orphanedTimeout);
-
-          // Wait for message to be sent before exiting
-          setTimeout(() => {
-            process.exit(0);
-          }, 100);
-          break;
+          process.exit(0);
         case 'inferenceRequest':
           handleInferenceRequest(msg.value);
       }

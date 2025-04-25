@@ -125,7 +125,6 @@ export abstract class SupervisedProc {
         case 'done': {
           this.#closing = true;
           this.proc!.off('message', listener);
-          this.#join.resolve();
           break;
         }
       }
@@ -139,6 +138,10 @@ export abstract class SupervisedProc {
       clearTimeout(this.#pongTimeout);
       clearInterval(this.#pingInterval);
       clearInterval(this.#memoryWatch);
+      this.#join.resolve();
+    });
+
+    this.proc!.on('exit', (code, signal) => {
       this.#join.resolve();
     });
 
