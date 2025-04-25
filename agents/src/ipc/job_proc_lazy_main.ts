@@ -102,6 +102,7 @@ const startJob = (
     func(ctx).finally(() => clearTimeout(unconnectedTimeout));
 
     await once(closeEvent, 'close').then((close) => {
+      logger.debug('shutting down');
       shutdown = true;
       process.send!({ case: 'exiting', value: { reason: close[1] } });
     });
@@ -220,7 +221,7 @@ const startJob = (
 
     await join.await;
 
-    logger.info('Shutting down job process');
+    logger.info('Job process shutdown');
     return process.exitCode;
   }
 })();

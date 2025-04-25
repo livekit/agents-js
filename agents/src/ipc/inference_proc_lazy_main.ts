@@ -102,7 +102,7 @@ const ORPHANED_TIMEOUT = 15 * 1000;
 
     await join.await;
 
-    logger.info('Shutting down inference process');
+    logger.info('Inference process shutdown');
 
     return process.exitCode;
   }
