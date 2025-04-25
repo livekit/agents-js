@@ -4,8 +4,8 @@
 import { once } from 'node:events';
 import type { InferenceRunner } from '../inference_runner.js';
 import { initializeLogger, log } from '../log.js';
-import type { IPCMessage } from './message.js';
 import { Future } from '../utils.js';
+import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
 
@@ -99,11 +99,11 @@ const ORPHANED_TIMEOUT = 15 * 1000;
     };
 
     process.on('message', messageHandler);
-    
+
     await join.await;
-    
+
     logger.info('Shutting down inference process');
-    
+
     return process.exitCode;
   }
 })();
