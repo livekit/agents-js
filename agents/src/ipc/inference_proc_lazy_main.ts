@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import EventEmitter, { once } from 'node:events';
+import { once } from 'node:events';
 import type { InferenceRunner } from '../inference_runner.js';
 import { initializeLogger, log } from '../log.js';
 import type { IPCMessage } from './message.js';
@@ -85,7 +85,7 @@ const ORPHANED_TIMEOUT = 15 * 1000;
           logger.info('inference process received shutdown request');
           process.send!({ case: 'done' });
           clearTimeout(orphanedTimeout);
-          process.exit(0);
+          process.exit();
         case 'inferenceRequest':
           handleInferenceRequest(msg.value);
       }
