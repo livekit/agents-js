@@ -5,11 +5,14 @@ import { once } from 'node:events';
 import type { InferenceRunner } from '../inference_runner.js';
 import { initializeLogger, log } from '../log.js';
 import type { IPCMessage } from './message.js';
+import { Future } from '../utils.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
 
 (async () => {
   if (process.send) {
+    const join = new Future();
+
     // don't do anything on C-c
     // this is handled in cli, triggering a termination of all child processes at once.
     process.on('SIGINT', () => {
@@ -72,7 +75,7 @@ const ORPHANED_TIMEOUT = 15 * 1000;
       }
     };
 
-    process.on('message', (msg: IPCMessage) => {
+    const messageHandler = (msg: IPCMessage) => {
       switch (msg.case) {
         case 'pingRequest':
           orphanedTimeout.refresh();
@@ -85,11 +88,22 @@ const ORPHANED_TIMEOUT = 15 * 1000;
           logger.info('inference process received shutdown request');
           process.send!({ case: 'done' });
           clearTimeout(orphanedTimeout);
-          process.off('message', handleInferenceRequest);
-          process.exit();
+          // Remove our message handler to stop processing new messages
+          process.off('message', messageHandler);
+          // Resolve the future to allow the process to continue to completion
+          join.resolve();
+          break;
         case 'inferenceRequest':
           handleInferenceRequest(msg.value);
       }
-    });
+    };
+
+    process.on('message', messageHandler);
+    
+    await join.await;
+    
+    logger.info('Shutting down inference process');
+    
+    return process.exitCode;
   }
 })();

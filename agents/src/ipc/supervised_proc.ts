@@ -141,8 +141,7 @@ export abstract class SupervisedProc {
       this.#join.resolve();
     });
 
-    this.proc!.on('exit', (code, signal) => {
-      this.#logger.child({ code, signal }).debug('job process exited');
+    this.proc!.on('exit', () => {
       this.#join.resolve();
     });
 
