@@ -46,8 +46,6 @@ const ORPHANED_TIMEOUT = 15 * 1000;
     logger.debug('all inference runners initialized');
     process.send({ case: 'initializeResponse' });
 
-    const closeEvent = new EventEmitter();
-
     const orphanedTimeout = setTimeout(() => {
       logger.warn('inference process orphaned, shutting down.');
       process.exit();
@@ -84,7 +82,15 @@ const ORPHANED_TIMEOUT = 15 * 1000;
           });
           break;
         case 'shutdownRequest':
-          closeEvent.emit('close');
+          logger.info('inference process received shutdown request');
+          process.send!({ case: 'done' });
+    
+          clearTimeout(orphanedTimeout);
+
+          // Wait for message to be sent before exiting
+          setTimeout(() => {
+            process.exit(0);
+          }, 100);
           break;
         case 'inferenceRequest':
           handleInferenceRequest(msg.value);
