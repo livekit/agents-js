@@ -61,13 +61,15 @@ export class TTS extends tts.TTS {
     }
   }
 
-  // TODO(nbsp): updateOptions
+  updateOptions(opts: Partial<TTSOptions>) {
+    this.#opts = { ...this.#opts, ...opts };
+  }
 
   synthesize(text: string): tts.ChunkedStream {
     return new ChunkedStream(this, text, this.#opts);
   }
 
-  stream(): tts.SynthesizeStream {
+  stream(): SynthesizeStream {
     return new SynthesizeStream(this, this.#opts);
   }
 }
@@ -142,6 +144,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     super(tts);
     this.#opts = opts;
     this.#run();
+  }
+
+  updateOptions(opts: Partial<TTSOptions>) {
+    this.#opts = { ...this.#opts, ...opts };
   }
 
   async #run() {
