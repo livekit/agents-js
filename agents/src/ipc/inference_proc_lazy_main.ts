@@ -1,15 +1,18 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import EventEmitter, { once } from 'node:events';
+import { once } from 'node:events';
 import type { InferenceRunner } from '../inference_runner.js';
 import { initializeLogger, log } from '../log.js';
+import { Future } from '../utils.js';
 import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
 
 (async () => {
   if (process.send) {
+    const join = new Future();
+
     // don't do anything on C-c
     // this is handled in cli, triggering a termination of all child processes at once.
     process.on('SIGINT', () => {
@@ -46,8 +49,6 @@ const ORPHANED_TIMEOUT = 15 * 1000;
     logger.debug('all inference runners initialized');
     process.send({ case: 'initializeResponse' });
 
-    const closeEvent = new EventEmitter();
-
     const orphanedTimeout = setTimeout(() => {
       logger.warn('inference process orphaned, shutting down.');
       process.exit();
@@ -74,7 +75,7 @@ const ORPHANED_TIMEOUT = 15 * 1000;
       }
     };
 
-    process.on('message', (msg: IPCMessage) => {
+    const messageHandler = (msg: IPCMessage) => {
       switch (msg.case) {
         case 'pingRequest':
           orphanedTimeout.refresh();
@@ -84,11 +85,25 @@ const ORPHANED_TIMEOUT = 15 * 1000;
           });
           break;
         case 'shutdownRequest':
-          closeEvent.emit('close');
+          logger.info('inference process received shutdown request');
+          process.send!({ case: 'done' });
+          clearTimeout(orphanedTimeout);
+          // Remove our message handler to stop processing new messages
+          process.off('message', messageHandler);
+          // Resolve the future to allow the process to continue to completion
+          join.resolve();
           break;
         case 'inferenceRequest':
           handleInferenceRequest(msg.value);
       }
-    });
+    };
+
+    process.on('message', messageHandler);
+
+    await join.await;
+
+    logger.info('Inference process shutdown');
+
+    return process.exitCode;
   }
 })();
