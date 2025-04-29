@@ -17,7 +17,7 @@ export class AudioByteStream {
     this.#numChannels = numChannels;
 
     if (samplesPerChannel === null) {
-      samplesPerChannel = Math.floor(sampleRate / 50); // 20ms by default
+      samplesPerChannel = Math.floor(sampleRate / 10); // 100ms by default
     }
 
     this.#bytesPerFrame = numChannels * samplesPerChannel * 2; // 2 bytes per sample (Int16)

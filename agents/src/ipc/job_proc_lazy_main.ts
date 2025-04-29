@@ -9,6 +9,7 @@ import type { Logger } from 'pino';
 import { type Agent, isAgent } from '../generator.js';
 import { CurrentJobContext, JobContext, JobProcess, type RunningJobInfo } from '../job.js';
 import { initializeLogger, log } from '../log.js';
+import { Future } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
@@ -66,13 +67,16 @@ const startJob = (
   info: RunningJobInfo,
   closeEvent: EventEmitter,
   logger: Logger,
+  joinFuture: Future,
 ): JobTask => {
   let connect = false;
   let shutdown = false;
 
   const room = new Room();
   room.on(RoomEvent.Disconnected, () => {
-    closeEvent.emit('close', false);
+    if (!shutdown) {
+      closeEvent.emit('close', false);
+    }
   });
 
   const onConnect = () => {
@@ -99,6 +103,7 @@ const startJob = (
 
     await once(closeEvent, 'close').then((close) => {
       logger.debug('shutting down');
+      shutdown = true;
       process.send!({ case: 'exiting', value: { reason: close[1] } });
     });
 
@@ -109,10 +114,13 @@ const startJob = (
     for (const callback of ctx.shutdownCallbacks) {
       shutdownTasks.push(callback());
     }
-    await Promise.all(shutdownTasks).catch(() => logger.error('error while shutting down the job'));
+    await Promise.all(shutdownTasks).catch((error) =>
+      logger.error('error while shutting down the job', error),
+    );
 
     process.send!({ case: 'done' });
-    process.exit();
+    logger.info('job completed.');
+    joinFuture.resolve();
   });
 
   return { ctx, task };
@@ -120,6 +128,8 @@ const startJob = (
 
 (async () => {
   if (process.send) {
+    const join = new Future();
+
     // process.argv:
     //   [0] `node'
     //   [1] import.meta.filename
@@ -138,11 +148,15 @@ const startJob = (
 
     // don't do anything on C-c
     // this is handled in cli, triggering a termination of all child processes at once.
-    process.on('SIGINT', () => {});
+    process.on('SIGINT', () => {
+      logger.info('SIGINT received in job proc');
+    });
 
     // don't do anything on SIGTERM
     // Render uses SIGTERM in autoscale, this ensures the processes are properly drained if needed
-    process.on('SIGTERM', () => {});
+    process.on('SIGTERM', () => {
+      logger.info('SIGTERM received in job proc');
+    });
 
     await once(process, 'message').then(([msg]: IPCMessage[]) => {
       msg = msg!;
@@ -167,11 +181,11 @@ const startJob = (
     const closeEvent = new EventEmitter();
 
     const orphanedTimeout = setTimeout(() => {
-      logger.warn('process orphaned, shutting down');
-      process.exit();
+      logger.warn('job process orphaned, shutting down.');
+      join.resolve();
     }, ORPHANED_TIMEOUT);
 
-    process.on('message', (msg: IPCMessage) => {
+    const messageHandler = (msg: IPCMessage) => {
       switch (msg.case) {
         case 'pingRequest': {
           orphanedTimeout.refresh();
@@ -188,17 +202,26 @@ const startJob = (
 
           logger = logger.child({ jobID: msg.value.runningJob.job.id });
 
-          job = startJob(proc, agent.entry, msg.value.runningJob, closeEvent, logger);
+          job = startJob(proc, agent.entry, msg.value.runningJob, closeEvent, logger, join);
           logger.debug('job started');
           break;
         }
         case 'shutdownRequest': {
           if (!job) {
-            break;
+            join.resolve();
           }
-          closeEvent.emit('close', '');
+          closeEvent.emit('close', 'shutdownRequest');
+          clearTimeout(orphanedTimeout);
+          process.off('message', messageHandler);
         }
       }
-    });
+    };
+
+    process.on('message', messageHandler);
+
+    await join.await;
+
+    logger.info('Job process shutdown');
+    return process.exitCode;
   }
 })();

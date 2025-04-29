@@ -180,7 +180,7 @@ export class WorkerOptions {
     wsURL = 'ws://localhost:7880',
     apiKey = undefined,
     apiSecret = undefined,
-    host = 'localhost',
+    host = '0.0.0.0',
     port = undefined,
     logLevel = 'info',
     production = false,
@@ -319,7 +319,11 @@ export class Worker {
     );
 
     this.#opts = opts;
-    this.#httpServer = new HTTPServer(opts.host, opts.port);
+    this.#httpServer = new HTTPServer(opts.host, opts.port, () => ({
+      agent_name: opts.agentName,
+      worker_type: JobType[opts.workerType],
+      active_jobs: this.activeJobs.length,
+    }));
   }
 
   /* @throws {@link WorkerError} if worker failed to connect or already running */

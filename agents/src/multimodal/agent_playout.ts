@@ -164,7 +164,9 @@ export class AgentPlayout extends EventEmitter {
                     }
                     handle.synchronizer.pushText(text);
                   }
-                  handle.synchronizer.markTextSegmentEnd();
+                  if (!cancelled) {
+                    handle.synchronizer.markTextSegmentEnd();
+                  }
                   resolveText();
                 } catch (error) {
                   rejectText(error);
@@ -234,15 +236,14 @@ export class AgentPlayout extends EventEmitter {
               await gracefullyCancel(captureTask);
             }
 
+            if (!readTextTask.isCancelled) {
+              await gracefullyCancel(readTextTask);
+            }
+
             handle.totalPlayedTime = handle.pushedDuration - this.#audioSource.queuedDuration;
 
             if (handle.interrupted || captureTask.error) {
-              await handle.synchronizer.close(true);
               this.#audioSource.clearQueue(); // make sure to remove any queued frames
-            }
-
-            if (!readTextTask.isCancelled) {
-              await gracefullyCancel(readTextTask);
             }
 
             if (!firstFrame) {
@@ -250,7 +251,9 @@ export class AgentPlayout extends EventEmitter {
             }
 
             handle.doneFut.resolve();
-            await handle.synchronizer.close(false);
+
+            const isInterrupted = handle.interrupted || !!captureTask.error;
+            await handle.synchronizer.close(isInterrupted);
           }
 
           resolve();

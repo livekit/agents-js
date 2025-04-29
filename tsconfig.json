@@ -1,18 +1,26 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "rootDir": ".",
+    "baseUrl": ".",
+    "target": "es2022",
     "module": "node16",
-    "moduleResolution": "node16",
     "declaration": true,
     "declarationMap": true,
-    "allowJs": false,
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "skipLibCheck": true,
-    "esModuleInterop": true,
     "sourceMap": true,
-    "composite": true
+    "moduleResolution": "node16",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "noUncheckedIndexedAccess": true,
+    "paths": {
+      "@livekit/agents": ["agents/src"],
+      "@livekit/agents-plugin-*": ["plugins/*/src"]
+    }
   },
+
   "typedocOptions": {
     "entryPoints": ["agents", "plugins/*"],
     "entryPointStrategy": "packages",
@@ -25,11 +33,5 @@
     "includeVersion": true,
     "out": "docs",
     "theme": "default"
-  },
-  "rootDir": ".",
-  "baseUrl": ".",
-  "paths": {
-    "@livekit/agents": ["agents/src"],
-    "@livekit/agents-plugin-openai": ["plugins/openai/src"]
   }
 }

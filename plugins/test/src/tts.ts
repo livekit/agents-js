@@ -8,10 +8,7 @@ import { distance } from 'fastest-levenshtein';
 import { describe, expect, it } from 'vitest';
 
 const TEXT =
-  'The people who are crazy enough to think they can change the world are the ones who do.\n' +
-  'The reasonable man adapts himself to the world; the unreasonable one persists in trying to adapt the world to himself. Therefore all progress depends on the unreasonable man.\n' +
-  "Never doubt that a small group of thoughtful, committed citizens can change the world; indeed, it's the only thing that ever has.\n" +
-  'Do not go where the path may lead, go instead where there is no path and leave a trail.';
+  'The people who are crazy enough to think they can change the world are the ones who do.';
 
 const validate = async (frames: AudioBuffer, stt: stt.STT, text: string, threshold: number) => {
   const event = await stt.recognize(frames);

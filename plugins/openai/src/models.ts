@@ -29,9 +29,20 @@ export type ChatModels =
 
 export type WhisperModels = 'whisper-1';
 
-export type TTSModels = 'tts-1' | 'tts-1-hd';
+export type TTSModels = 'tts-1' | 'tts-1-hd' | 'gpt-4o-mini-tts';
 
-export type TTSVoices = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
+export type TTSVoices =
+  | 'alloy'
+  | 'ash'
+  | 'ballad'
+  | 'coral'
+  | 'echo'
+  | 'fable'
+  | 'nova'
+  | 'onyx'
+  | 'sage'
+  | 'shimmer'
+  | 'verse';
 
 // adapters for OpenAI-compatible LLMs, TTSs, STTs
 
