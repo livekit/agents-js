@@ -20,6 +20,11 @@ import {
 } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
 import { AudioByteStream } from '../audio.js';
+import {
+  ATTRIBUTE_TRANSCRIPTION_FINAL,
+  ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
+  TOPIC_TRANSCRIPTION,
+} from '../constants.js';
 import * as llm from '../llm/index.js';
 import { log } from '../log.js';
 import type { MultimodalLLMMetrics } from '../metrics/base.js';
@@ -251,8 +256,8 @@ export class MultimodalAgent extends EventEmitter {
         if (message.contentType === 'text') return;
 
         const synchronizer = new TextAudioSynchronizer(defaultTextSyncOptions);
-        synchronizer.on('textUpdated', (text) => {
-          this.#publishTranscription(
+        synchronizer.on('textUpdated', async (text) => {
+          await this.#publishTranscription(
             this.room!.localParticipant!.identity!,
             this.#getLocalTrackSid()!,
             text.text,
@@ -302,25 +307,31 @@ export class MultimodalAgent extends EventEmitter {
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.#session.on('input_speech_committed', (ev: any) => {
+      this.#session.on('input_speech_committed', async (ev: any) => {
         // openai.realtime.InputSpeechCommittedEvent
         const participantIdentity = this.linkedParticipant?.identity;
         const trackSid = this.subscribedTrack?.sid;
         if (participantIdentity && trackSid) {
-          this.#publishTranscription(participantIdentity, trackSid, '…', false, ev.itemId);
+          await this.#publishTranscription(participantIdentity, trackSid, '…', false, ev.itemId);
         } else {
           this.#logger.error('Participant or track not set');
         }
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.#session.on('input_speech_transcription_completed', (ev: any) => {
+      this.#session.on('input_speech_transcription_completed', async (ev: any) => {
         // openai.realtime.InputSpeechTranscriptionCompletedEvent
         const transcription = ev.transcript;
         const participantIdentity = this.linkedParticipant?.identity;
         const trackSid = this.subscribedTrack?.sid;
         if (participantIdentity && trackSid) {
-          this.#publishTranscription(participantIdentity, trackSid, transcription, true, ev.itemId);
+          await this.#publishTranscription(
+            participantIdentity,
+            trackSid,
+            transcription,
+            true,
+            ev.itemId,
+          );
         } else {
           this.#logger.error('Participant or track not set');
         }
@@ -332,7 +343,7 @@ export class MultimodalAgent extends EventEmitter {
         this.#logger.child({ transcription }).debug('committed user speech');
       });
 
-      this.#session.on('input_speech_started', (ev: any) => {
+      this.#session.on('input_speech_started', async (ev: any) => {
         this.emit('user_started_speaking');
         if (this.#playingHandle && !this.#playingHandle.done) {
           this.#playingHandle.interrupt();
@@ -349,7 +360,7 @@ export class MultimodalAgent extends EventEmitter {
         const participantIdentity = this.linkedParticipant?.identity;
         const trackSid = this.subscribedTrack?.sid;
         if (participantIdentity && trackSid) {
-          this.#publishTranscription(participantIdentity, trackSid, '…', false, ev.itemId);
+          await this.#publishTranscription(participantIdentity, trackSid, '…', false, ev.itemId);
         }
       });
 
@@ -475,13 +486,13 @@ export class MultimodalAgent extends EventEmitter {
     return this.#localTrackSid;
   }
 
-  #publishTranscription(
+  async #publishTranscription(
     participantIdentity: string,
     trackSid: string,
     text: string,
     isFinal: boolean,
     id: string,
-  ): void {
+  ): Promise<void> {
     this.#logger.debug(
       `Publishing transcription ${participantIdentity} ${trackSid} ${text} ${isFinal} ${id}`,
     );
@@ -504,6 +515,17 @@ export class MultimodalAgent extends EventEmitter {
         },
       ],
     });
+
+    const stream = await this.room.localParticipant.streamText({
+      topic: TOPIC_TRANSCRIPTION,
+      senderIdentity: participantIdentity,
+      attributes: {
+        [ATTRIBUTE_TRANSCRIPTION_TRACK_ID]: trackSid,
+        [ATTRIBUTE_TRANSCRIPTION_FINAL]: isFinal.toString(),
+      },
+    });
+    await stream.write(text);
+    await stream.close();
   }
 
   #updateState() {
