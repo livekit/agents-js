@@ -34,7 +34,7 @@ interface ModelOptions {
   apiVersion?: string;
 }
 
-export interface RealtimeResponse {
+interface RealtimeResponseBase {
   id: string;
   status: api_proto.ResponseStatus;
   statusDetails: api_proto.ResponseStatusDetails | null;
@@ -44,6 +44,30 @@ export interface RealtimeResponse {
   createdTimestamp: number;
   firstTokenTimestamp?: number;
 }
+
+interface KnownRealtimeResponseBase<T extends api_proto.ResponseStatusDetails>
+  extends RealtimeResponseBase {
+  status: T['type'];
+  statusDetails: T;
+}
+
+export interface UnknownRealtimeResponse extends RealtimeResponseBase {
+  status: string;
+  statusDetails: null;
+}
+
+export type IncompleteRealtimeResponse =
+  KnownRealtimeResponseBase<api_proto.IncompleteResponseStatusDetails>;
+export type FailedRealtimeResponse =
+  KnownRealtimeResponseBase<api_proto.FailedResponseStatusDetails>;
+export type CancelledRealtimeResponse =
+  KnownRealtimeResponseBase<api_proto.CancelledResponseStatusDetails>;
+export type KnownRealtimeResponse =
+  | IncompleteRealtimeResponse
+  | FailedRealtimeResponse
+  | CancelledRealtimeResponse;
+
+export type RealtimeResponse = KnownRealtimeResponse | UnknownRealtimeResponse;
 
 export interface RealtimeOutput {
   responseId: string;
