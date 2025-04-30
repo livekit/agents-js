@@ -86,12 +86,18 @@ const ORPHANED_TIMEOUT = 15 * 1000;
           break;
         case 'shutdownRequest':
           logger.info('inference process received shutdown request');
-          process.send!({ case: 'done' });
           clearTimeout(orphanedTimeout);
           // Remove our message handler to stop processing new messages
           process.off('message', messageHandler);
-          // Resolve the future to allow the process to continue to completion
-          join.resolve();
+          Promise.all(Object.values(runners).map((r) => r.close()))
+            .then(() => {
+              logger.info('Inference runners closed');
+              process.send!({ case: 'done' });
+              join.resolve();
+            })
+            .catch((err) => {
+              logger.error('Error closing inference runners:', err);
+            });
           break;
         case 'inferenceRequest':
           handleInferenceRequest(msg.value);

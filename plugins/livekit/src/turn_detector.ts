@@ -67,6 +67,10 @@ export class EOURunner extends InferenceRunner {
     // remove EOU token from current utterance
     return convoText.slice(0, convoText.lastIndexOf('<|im_end|>'));
   }
+
+  async close() {
+    await this.#session.then((session) => session.release());
+  }
 }
 
 export class EOUModel {
