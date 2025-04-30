@@ -4,4 +4,4 @@
 '@livekit/agents': patch
 ---
 
-Update onnx runtime and cleanup resources
+cleanup resources with onnx runtime 
