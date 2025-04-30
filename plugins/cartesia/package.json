@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-cartesia",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Cartesia plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

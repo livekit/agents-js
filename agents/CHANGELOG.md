@@ -1,5 +1,15 @@
 # @livekit/agents
 
+## 0.7.4
+
+### Patch Changes
+
+- bugfix: don't wait to queue audio frames before they are sent to the room - [#371](https://github.com/livekit/agents-js/pull/371) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- Publish transcriptions additionally via text stream APIs - [#348](https://github.com/livekit/agents-js/pull/348) ([@lukasIO](https://github.com/lukasIO))
+
+- clean up job processes correctly - [#376](https://github.com/livekit/agents-js/pull/376) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
 ## 0.7.3
 
 ### Patch Changes
