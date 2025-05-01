@@ -83,10 +83,19 @@ export class Agent {
    return null;
   }
 
-  // realtime_audio_output_nod
-  // transcription_node
+  // realtime_audio_output_node
 
 
-  
+  static default = {
+    
+    async sttNode(
+        audio: ReadableStream<AudioFrame>,
+        modelSettings: any, // TODO(shubhra): add type
+    ): Promise<AsyncIterable<SpeechEvent | string> | null> {
+        return null;
+    },
+
+  }
+
   
 }
