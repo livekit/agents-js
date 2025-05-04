@@ -1,31 +1,31 @@
+import { AudioFrame } from '@livekit/rtc-node';
 import type { ChatChunk, LLM } from '../llm/index.js';
 import { ChatContext, ChatMessage } from '../llm/index.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import type { TTS } from '../tts/index.js';
 import type { VAD } from '../vad.js';
-import { AudioFrame } from '@livekit/rtc-node';
 
 export class Agent {
-    private instructions: string;
-	private chatCtx: ChatContext;
-	private tools: any; // TODO(shubhra): add type
-	private turnDetection: any; // TODO(shubhra): add type
-	private stt: STT | undefined;
-	private vad: VAD | undefined;
-	private llm: LLM | any;
-	private tts: TTS | undefined;
-    private agentActivity: any; // TODO(shubhra): add type
-	
-	constructor(
-      instructions: string,
-      chatCtx?: ChatContext,
-      tools?: any, // TODO(shubhra): add type
-      turnDetection?: any, // TODO(shubhra): add type   
-      stt?: STT,
-      vad?: VAD,
-      llm?: LLM | any,
-      tts?: TTS,
-      allowInterruptions?: boolean,
+  private instructions: string;
+  private chatCtx: ChatContext;
+  private tools: any; // TODO(shubhra): add type
+  private turnDetection: any; // TODO(shubhra): add type
+  private stt: STT | undefined;
+  private vad: VAD | undefined;
+  private llm: LLM | any;
+  private tts: TTS | undefined;
+  private agentActivity: any; // TODO(shubhra): add type
+
+  constructor(
+    instructions: string,
+    chatCtx?: ChatContext,
+    tools?: any, // TODO(shubhra): add type
+    turnDetection?: any, // TODO(shubhra): add type
+    stt?: STT,
+    vad?: VAD,
+    llm?: LLM | any,
+    tts?: TTS,
+    allowInterruptions?: boolean,
   ) {
     this.instructions = instructions;
     this.chatCtx = chatCtx || new ChatContext();
@@ -35,16 +35,12 @@ export class Agent {
     this.vad = vad;
     this.llm = llm;
     this.tts = tts;
-    this.agentActivity = undefined;  // TODO(shubhra): add type
+    this.agentActivity = undefined; // TODO(shubhra): add type
   }
 
-  async onEnter(): Promise<void> {
-    
-  }
+  async onEnter(): Promise<void> {}
 
-  async onExit(): Promise<void> {
-    
-  }
+  async onExit(): Promise<void> {}
 
   async transcriptionNode(
     text: ReadableStream<string>,
@@ -53,18 +49,13 @@ export class Agent {
     return null;
   }
 
-  async onUserTurnCompleted(
-    chatCtx: ChatContext,
-    newMessage: ChatMessage,
-  ): Promise<void> {
-    
-  }
-  
+  async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage): Promise<void> {}
+
   async sttNode(
     audio: ReadableStream<AudioFrame>,
     modelSettings: any, // TODO(shubhra): add type
   ): Promise<AsyncIterable<SpeechEvent | string> | null> {
-   return null;
+    return null;
   }
 
   async llmNode(
@@ -75,27 +66,21 @@ export class Agent {
     return null;
   }
 
-
   async ttsNode(
     text: ReadableStream<string>,
     modelSettings: any, // TODO(shubhra): add type
   ): Promise<ReadableStream<AudioFrame> | null> {
-   return null;
+    return null;
   }
 
   // realtime_audio_output_node
 
-
   static default = {
-    
     async sttNode(
-        audio: ReadableStream<AudioFrame>,
-        modelSettings: any, // TODO(shubhra): add type
+      audio: ReadableStream<AudioFrame>,
+      modelSettings: any, // TODO(shubhra): add type
     ): Promise<AsyncIterable<SpeechEvent | string> | null> {
-        return null;
+      return null;
     },
-
-  }
-
-  
+  };
 }
