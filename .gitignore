@@ -185,3 +185,7 @@ docs
 
 # direnv
 .direnv
+
+
+# cursor
+.cursor/*
