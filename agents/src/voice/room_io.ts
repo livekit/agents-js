@@ -76,13 +76,9 @@ export class ParticipantAudioInputStream {
     publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ): boolean {
-    this.logger.debug('++++++ onTrackAvailable +++++', track, publication, participant);
     if (this.participantIdentity && participant.identity !== this.participantIdentity) {
       return false;
     }
-
-    this.logger.debug(' +++++++ setting up audio stream');
-
     this.audioStream = new AudioStream(track);
     this.audioStreamAvailiableResolver(this.audioStream);
     return true;
@@ -123,20 +119,14 @@ export class RoomIO {
     this.participantAudioInputStream = new ParticipantAudioInputStream(room, {
       sampleRate: 16000,
       numChannels: 1,
-      noiseCancellation: {
-        moduleId: 'default',
-        options: {},
-      },
     });
   }
 
   start() {
-    this.logger.debug('++++++ starting roomIO +++++');
     this.agentSession.audioInput = this.participantAudioInputStream;
   }
 
   get audioInput(): ParticipantAudioInputStream | undefined {
-    this.logger.debug('++++++ getting audioInput +++++');
     return this.audioInput;
   }
 }

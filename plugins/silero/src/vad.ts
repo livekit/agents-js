@@ -47,6 +47,7 @@ export class VAD extends baseVAD {
   #session: InferenceSession;
   #opts: VADOptions;
   #streams: VADStream[];
+  #logger = log();
   label = 'silero.VAD';
 
   constructor(session: InferenceSession, opts: VADOptions) {

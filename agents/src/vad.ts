@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame } from '@livekit/rtc-node';
+import type { AudioFrame, AudioStream } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import { log } from './log.js';
 import type { VADMetrics } from './metrics/base.js';
 import { AsyncIterableQueue } from './utils.js';
 
@@ -83,10 +84,28 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected closed = false;
   #vad: VAD;
   #lastActivityTime = BigInt(0);
+  private logger = log();
+  private inputAudioStream: Promise<AudioStream>;
+  private inputAudioStreamResolver: (value: AudioStream) => void = () => {};
 
   constructor(vad: VAD) {
     this.#vad = vad;
+    this.inputAudioStream = new Promise((resolve) => {
+      this.inputAudioStreamResolver = resolve;
+    });
     this.monitorMetrics();
+    this.main_task();
+  }
+
+  protected async main_task() {
+    try {
+      const inputStream = await this.inputAudioStream;
+      for await (const frame of inputStream) {
+        this.pushFrame(frame);
+      }
+    } catch (error) {
+      this.logger.error('Error in VADStream main_task:', error);
+    }
   }
 
   protected async monitorMetrics() {
@@ -120,6 +139,10 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
       }
     }
     this.output.close();
+  }
+
+  updateInputStream(audioStream: AudioStream) {
+    this.inputAudioStreamResolver(audioStream);
   }
 
   pushFrame(frame: AudioFrame) {

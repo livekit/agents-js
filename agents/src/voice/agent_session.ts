@@ -70,26 +70,13 @@ export interface UserInputTranscribedEvent extends AgentEvent {
 }
 
 export class AgentSession<T = any> extends EventEmitter {
-  //   private _options: VoiceOptions;
-  private _started = false;
-  private _turnDetection: TurnDetectionMode | null;
-  private _stt?: STT | null;
-  private _vad?: VAD | null;
-  private _llm?: LLM | null;
-  private _tts?: TTS | null;
-  private _userdata?: T | null;
+  vad?: VAD;
 
-  //   private _input: AgentInput;
-
-  private _forwardAudioTask: Promise<void> | null = null;
   private _updateActivityTask: Promise<void> | null = null;
-  private _userState: UserState = 'listening';
-  private _agentState: AgentState = 'initializing';
-  private _agent: Agent | null = null;
-  private _activity: AgentActivity | null = null;
-  private _nextActivity: AgentActivity | null = null;
-  private _chatCtx = new ChatContext();
-  private _closingTask: Promise<void> | null = null;
+  private _agent?: Agent;
+  private _activity?: AgentActivity;
+  private _nextActivity?: AgentActivity;
+  private started = false;
 
   private roomIO: RoomIO | null = null;
   private logger = log();
@@ -98,6 +85,7 @@ export class AgentSession<T = any> extends EventEmitter {
   audioInput: ParticipantAudioInputStream | null = null;
 
   constructor(
+    vad: VAD,
     options: {
       turnDetection?: TurnDetectionMode;
       stt?: STT;
@@ -114,23 +102,15 @@ export class AgentSession<T = any> extends EventEmitter {
     } = {},
   ) {
     super();
-
-    this._turnDetection = options.turnDetection || null;
-    this._stt = options.stt || null;
-    this._vad = options.vad || null;
-    this._llm = options.llm || null;
-    this._tts = options.tts || null;
-    this._userdata = options.userdata || null;
+    this.vad = vad;
   }
 
   async start(agent: Agent, room: Room, participant: RemoteParticipant): Promise<void> {
-    if (this._started) {
+    if (this.started) {
       return;
     }
 
     this._agent = agent;
-
-    this.logger.debug('++++++ starting agent session +++++', agent, room, participant);
 
     // Update activity with the new agent
     if (this._agent) {
@@ -138,37 +118,22 @@ export class AgentSession<T = any> extends EventEmitter {
       await this._updateActivityTask;
     }
 
-    this.logger.debug('++++++ creating roomIO +++++');
-
     this.roomIO = new RoomIO(this, room, participant);
     this.roomIO.start();
-
     // Start audio forwarding if audio input is available
     if (this.audioInput) {
-      this.logger.debug('++++++ starting forward audio +++++');
-      this._forwardAudioTask = this._doForwardAudio(this.audioInput);
+      const audioStream = await this.audioInput.getAudioStream();
+      this._activity?.updateAudioInput(audioStream);
     }
-  }
 
-  // Audio input handling
-  private async _doForwardAudio(audioInput: ParticipantAudioInputStream): Promise<void> {
-    try {
-      this.logger.debug('++++++ getting audio stream +++++');
-      const audioStream = await audioInput.getAudioStream();
-      for await (const frame of audioStream) {
-        if (this._activity) {
-          this._activity.pushAudio(frame);
-        }
-      }
-    } catch (error) {
-      console.error('Error in audio forwarding:', error);
-    }
+    this.logger.info('AgentSession started');
+    this.started = true;
   }
 
   // Activity management
   private async _doUpdateActivity(agent: Agent): Promise<void> {
     // Create a new DefaultAgentActivity with the agent
-    this._nextActivity = new AgentActivity(agent);
+    this._nextActivity = new AgentActivity(agent, this);
 
     // Close the current activity if it exists
     if (this._activity) {
@@ -178,7 +143,7 @@ export class AgentSession<T = any> extends EventEmitter {
 
     // Switch to the new activity
     this._activity = this._nextActivity;
-    this._nextActivity = null;
+    this._nextActivity = undefined;
 
     // Start the new activity
     if (this._activity) {
