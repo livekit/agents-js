@@ -53,7 +53,7 @@ class ParticipantAudioSource implements UnderlyingSource<AudioFrame> {
 
   private cleanup(): void {
     this.isCancelled = true;
-    this.logger.debug('Audio stream cancelled');
+    this.logger.debug('Participant audio source cancelled');
 
     if (this.audioStream) {
       this.audioStream.cancel();
@@ -75,12 +75,11 @@ class ParticipantAudioSource implements UnderlyingSource<AudioFrame> {
       return false;
     }
 
-    if (this.audioStream || this.isCancelled || !this.controller) {
-      this.logger.warn('Audio stream already exists or cancelled');
+    if (track.kind !== TrackKind.KIND_AUDIO) {
       return false;
     }
 
-    if (track.kind !== TrackKind.KIND_AUDIO) {
+    if (this.audioStream || this.isCancelled || !this.controller) {
       return false;
     }
 
@@ -108,7 +107,7 @@ class ParticipantAudioSource implements UnderlyingSource<AudioFrame> {
     }
 
     try {
-      for await (const frame of this.audioStream) {
+      for await (const frame of asCompatibleStream(this.audioStream)) {
         if (this.isCancelled) {
           break;
         }
