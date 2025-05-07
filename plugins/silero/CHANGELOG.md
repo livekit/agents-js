@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-silero
 
+## 0.5.6
+
+### Patch Changes
+
+- cleanup resources with onnx runtime - [#377](https://github.com/livekit/agents-js/pull/377) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- Updated dependencies [[`ae508d76d6b521218f8320f8dba1b1d0fdad79a2`](https://github.com/livekit/agents-js/commit/ae508d76d6b521218f8320f8dba1b1d0fdad79a2), [`e1dd8f86660b4f96585833dc896b719dd3ad54b2`](https://github.com/livekit/agents-js/commit/e1dd8f86660b4f96585833dc896b719dd3ad54b2)]:
+  - @livekit/agents@0.7.5
+
 ## 0.5.5
 
 ### Patch Changes
