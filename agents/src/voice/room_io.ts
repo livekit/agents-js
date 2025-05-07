@@ -33,10 +33,14 @@ export class ParticipantAudioInputStream {
     _publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ): boolean {
+    // TODO(shubhra): this can be flaky? sometimes this isn't called?
+    // might be when we haven't disconnected from the last session in playground and hit Ctrl+c?
+    this.logger.debug('Audio stream available resolving promise');
     if (this.participantIdentity && participant.identity !== this.participantIdentity) {
       return false;
     }
     this.audioStream = new AudioStream(track);
+
     this.audioStreamAvailiableResolver(this.audioStream);
     return true;
   }
@@ -52,11 +56,8 @@ export class ParticipantAudioInputStream {
 
   async getAudioStream(): Promise<AudioStream> {
     if (!this.audioStream) {
-      // TODO(shubhra): getting rid of these logs? doesn't start the audio stream? wtf?
-      this.logger.debug('Waiting for audio stream');
       await this.audioStreamPromise;
     }
-    this.logger.debug('Audio stream available');
     return this.audioStream!;
   }
 
