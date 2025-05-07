@@ -20,7 +20,6 @@ export interface RecognitionHooks {
 }
 
 export class AudioRecognition {
-  private spreaking: boolean = false;
   private inputAudioStream: Promise<AudioStream>;
   private inputAudioStreamResolver: (value: AudioStream) => void = () => {};
   private vadStream?: VADStream;
@@ -28,7 +27,6 @@ export class AudioRecognition {
   private logger = log();
   constructor(
     private hooks: RecognitionHooks,
-    private stt?: STTNode,
     private vad?: VAD,
   ) {
     this.inputAudioStream = new Promise((resolve) => {
@@ -47,16 +45,13 @@ export class AudioRecognition {
       this.vadStream = this.vad.stream();
       this.vadStream.updateInputStream(inputStream);
 
-      // Set up frame forwarding directly
       this.vadStreamProcessor = (async () => {
         for await (const ev of this.vadStream!) {
           switch (ev.type) {
             case VADEventType.START_OF_SPEECH:
-              this.spreaking = true;
               this.hooks.onStartOfSpeech(ev);
               break;
             case VADEventType.END_OF_SPEECH:
-              this.spreaking = false;
               this.hooks.onEndOfSpeech(ev);
               break;
             case VADEventType.INFERENCE_DONE:

@@ -29,7 +29,7 @@ export class AgentActivity implements RecognitionHooks {
     if (this.started) {
       return;
     }
-    this.audioRecognition = new AudioRecognition(this, this.agent.sttNode, this.agentSession.vad);
+    this.audioRecognition = new AudioRecognition(this, this.agentSession.vad);
     this.audioRecognition.start();
     this.started = true;
   }
