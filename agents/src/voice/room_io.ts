@@ -52,8 +52,11 @@ export class ParticipantAudioInputStream {
 
   async getAudioStream(): Promise<AudioStream> {
     if (!this.audioStream) {
+      // TODO(shubhra): getting rid of these logs? doesn't start the audio stream? wtf?
+      this.logger.debug('Waiting for audio stream');
       await this.audioStreamPromise;
     }
+    this.logger.debug('Audio stream available');
     return this.audioStream!;
   }
 

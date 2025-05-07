@@ -18,11 +18,12 @@ export default defineAgent({
     const agent = new voice.Agent('test');
     await ctx.connect(undefined, AutoSubscribe.AUDIO_ONLY);
     const participant = await ctx.waitForParticipant();
+    console.log('participant joined: ', participant.identity);
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
 
     const session = new voice.AgentSession(vad);
-    session.start(agent, ctx.room, participant);
+    session.start(agent, ctx.room);
   },
 });
 
