@@ -67,7 +67,6 @@ class ParticipantAudioSource implements UnderlyingSource<AudioFrame> {
       return false;
     }
 
-    // Make sure it's an audio track
     if (track.kind !== TrackKind.KIND_AUDIO) {
       return false;
     }
@@ -79,7 +78,6 @@ class ParticipantAudioSource implements UnderlyingSource<AudioFrame> {
     this.logger.debug('Setting up audio stream for participant', participant.identity);
     this.audioStream = new AudioStream(track);
 
-    // Start reading from the audio stream and enqueueing frames
     this.readAudioFrames().catch((err) => {
       this.logger.error('Error reading audio frames', err);
       if (this.controller && !this.isCancelled) {
