@@ -94,10 +94,10 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
       this.inputAudioStreamResolver = resolve;
     });
     this.monitorMetrics();
-    this.main_task();
+    this.mainTask();
   }
 
-  protected async main_task() {
+  protected async mainTask() {
     // This is just a placeholder since VAD isn't implemented with the streams API yet.
     try {
       const inputStream = (await this.inputAudioStream) as any;
@@ -105,7 +105,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
         this.pushFrame(frame);
       }
     } catch (error) {
-      this.logger.error('Error in VADStream main_task:', error);
+      this.logger.error('Error in VADStream mainTask:', error);
     }
   }
 
