@@ -6,14 +6,14 @@ import { AgentActivity } from './agent_activity.js';
 import { RoomIO } from './room_io.js';
 
 export class AgentSession {
-  vad?: VAD;
+  vad: VAD;
 
   private agent?: Agent;
   private activity?: AgentActivity;
   private nextActivity?: AgentActivity;
   private started = false;
 
-  private roomIO: RoomIO | null = null;
+  private roomIO?: RoomIO;
   private logger = log();
 
   /** @internal */
