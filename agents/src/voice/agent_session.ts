@@ -3,7 +3,7 @@ import { log } from '../log.js';
 import { VAD } from '../vad.js';
 import { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
-import { ParticipantAudioInputStream, RoomIO } from './room_io.js';
+import { RoomIO } from './room_io.js';
 
 export class AgentSession {
   vad?: VAD;

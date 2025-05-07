@@ -22,12 +22,11 @@ export interface RecognitionHooks {
 export class AudioRecognition {
   private inputAudioStream: Promise<ReadableStream<AudioFrame>>;
   private inputAudioStreamResolver: (value: ReadableStream<AudioFrame>) => void = () => {};
-  private vadStream?: VADStream;
   private vadStreamProcessor?: Promise<void>;
   private logger = log();
   constructor(
     private hooks: RecognitionHooks,
-    private vad?: VAD,
+    private vad: VAD,
   ) {
     this.inputAudioStream = new Promise((resolve) => {
       this.inputAudioStreamResolver = resolve;
@@ -35,33 +34,28 @@ export class AudioRecognition {
   }
 
   start() {
-    this.updateVad(this.vad);
+    this.vadStreamProcessor = this.vadTask().catch((err) => {
+      this.logger.error('Error in VAD task', err);
+    });
   }
 
-  async updateVad(vad?: VAD) {
-    this.vad = vad;
-    if (this.vad) {
-      const inputStream = await this.inputAudioStream;
-      this.vadStream = this.vad.stream();
-      this.vadStream.updateInputStream(inputStream);
+  private async vadTask() {
+    const inputStream = await this.inputAudioStream;
+    const vadStream = this.vad.stream();
+    vadStream.updateInputStream(inputStream);
 
-      this.vadStreamProcessor = (async () => {
-        for await (const ev of this.vadStream!) {
-          switch (ev.type) {
-            case VADEventType.START_OF_SPEECH:
-              this.hooks.onStartOfSpeech(ev);
-              break;
-            case VADEventType.END_OF_SPEECH:
-              this.hooks.onEndOfSpeech(ev);
-              break;
-            case VADEventType.INFERENCE_DONE:
-              this.hooks.onVADInferenceDone(ev);
-              break;
-          }
-        }
-      })();
-    } else {
-      this.logger.warn('No VAD instance provided to updateVad - VAD functionality disabled');
+    for await (const ev of vadStream) {
+      switch (ev.type) {
+        case VADEventType.START_OF_SPEECH:
+          this.hooks.onStartOfSpeech(ev);
+          break;
+        case VADEventType.END_OF_SPEECH:
+          this.hooks.onEndOfSpeech(ev);
+          break;
+        case VADEventType.INFERENCE_DONE:
+          this.hooks.onVADInferenceDone(ev);
+          break;
+      }
     }
   }
 
