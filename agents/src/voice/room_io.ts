@@ -40,7 +40,6 @@ class ParticipantAudioSource implements UnderlyingSource<AudioFrame> {
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackAvailable.bind(this));
 
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackAvailable.bind(this));
-    this.room.on(RoomEvent.TrackUnpublished, this.onTrackUnavailable.bind(this));
   }
 
   start(controller: ReadableStreamDefaultController<AudioFrame>): void | Promise<void> {
@@ -61,7 +60,6 @@ class ParticipantAudioSource implements UnderlyingSource<AudioFrame> {
     }
 
     this.room.off(RoomEvent.TrackSubscribed, this.onTrackAvailable.bind(this));
-    this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnavailable.bind(this));
   }
 
   private onTrackAvailable(
@@ -124,19 +122,6 @@ class ParticipantAudioSource implements UnderlyingSource<AudioFrame> {
         this.controller.close();
       }
     }
-  }
-
-  private onTrackUnavailable(
-    _publication: RemoteTrackPublication,
-    participant: RemoteParticipant,
-  ): void {
-    if (this.participantIdentity && participant.identity !== this.participantIdentity) {
-      return;
-    }
-
-    this.logger.debug('Track unavailable for participant', participant.identity);
-    // We don't close the stream immediately - we'll let it end naturally
-    // when the for-await loop completes or errors out
   }
 }
 
