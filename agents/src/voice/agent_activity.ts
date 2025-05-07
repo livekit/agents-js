@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame, AudioStream } from '@livekit/rtc-node';
-import { assert } from 'node:console';
+import { AudioStream } from '@livekit/rtc-node';
 import { log } from '../log.js';
 import type { SpeechEvent } from '../stt/stt.js';
 import type { VADEvent } from '../vad.js';
@@ -16,8 +15,6 @@ import {
 
 export class AgentActivity implements RecognitionHooks {
   private started = false;
-  private inputAudioStream: Promise<AudioStream>;
-  private inputAudioStreamResolver: (value: AudioStream) => void = () => {};
   private audioRecognition?: AudioRecognition;
   private logger = log();
   agent: Agent;
@@ -26,9 +23,6 @@ export class AgentActivity implements RecognitionHooks {
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
     this.agentSession = agentSession;
-    this.inputAudioStream = new Promise((resolve) => {
-      this.inputAudioStreamResolver = resolve;
-    });
   }
 
   async start(): Promise<void> {
@@ -41,7 +35,6 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   updateAudioInput(audioStream: AudioStream): void {
-    this.inputAudioStreamResolver(audioStream);
     this.audioRecognition?.setInputAudioStream(audioStream);
   }
 
