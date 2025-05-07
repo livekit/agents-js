@@ -12,6 +12,19 @@ import { ReadableStream, type UnderlyingSource } from 'node:stream/web';
 import { log } from '../log.js';
 import { AgentSession } from './agent_session.js';
 
+/**
+ * Typescript has removed the type definition that generates the async
+ * iterator for ReadableStream, because Chrome has not implemented it yet.
+ *
+ * See https://github.com/DefinitelyTyped/DefinitelyTyped/discussions/65542#discussioncomment-6071004
+ * for more details.
+ *
+ * Since we are only running this in node, we can use the any type to get around this.
+ */
+function asCompatibleStream<T>(stream: ReadableStream<T>): any {
+  return stream;
+}
+
 class ParticipantAudioSource implements UnderlyingSource<AudioFrame> {
   private room: Room;
   private participantIdentity?: string;
@@ -145,10 +158,6 @@ export class RoomIO {
   }
 
   start() {
-    this.agentSession.audioInput = this.participantAudioInputStream as any;
-  }
-
-  get audioInput(): ParticipantAudioInputStream {
-    return this.participantAudioInputStream;
+    this.agentSession.audioInput = asCompatibleStream(this.participantAudioInputStream);
   }
 }
