@@ -1,9 +1,5 @@
 import {
-  AudioFrame,
   AudioStream,
-  ConnectionState,
-  type NoiseCancellationOptions,
-  ParticipantKind,
   type RemoteParticipant,
   type RemoteTrack,
   RemoteTrackPublication,
@@ -13,55 +9,16 @@ import {
 import { log } from '../log.js';
 import { AgentSession } from './agent_session.js';
 
-// Constants
-const DEFAULT_PARTICIPANT_KINDS: ParticipantKind[] = [
-  ParticipantKind.SIP,
-  ParticipantKind.STANDARD,
-];
-
-const ATTRIBUTE_AGENT_STATE = 'agent-state';
-const ATTRIBUTE_PUBLISH_ON_BEHALF = 'publish-on-behalf';
-
-export interface AudioInput {
-  track: MediaStreamTrack;
-  sampleRate: number;
-  numChannels: number;
-}
-
-// Input options
-export interface RoomInputOptions {
-  audioEnabled: boolean;
-  audioSampleRate: number;
-  audioNumChannels: number;
-  noiseCancellation?: NoiseCancellationOptions;
-  participantKinds?: ParticipantKind[];
-  participantIdentity?: string;
-}
-
-// Participant audio input stream
 export class ParticipantAudioInputStream {
   private room: Room;
-  private sampleRate: number;
-  private numChannels: number;
-  private noiseCancellation?: NoiseCancellationOptions;
   private participantIdentity?: string;
   private audioStream?: AudioStream = undefined;
   private audioStreamPromise: Promise<AudioStream> | null = null;
   private audioStreamAvailiableResolver: (value: AudioStream) => void = () => {};
   private logger = log();
 
-  constructor(
-    room: Room,
-    options: {
-      sampleRate: number;
-      numChannels: number;
-      noiseCancellation?: NoiseCancellationOptions;
-    },
-  ) {
+  constructor(room: Room) {
     this.room = room;
-    this.sampleRate = options.sampleRate;
-    this.numChannels = options.numChannels;
-    this.noiseCancellation = options.noiseCancellation;
 
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackAvailable.bind(this));
     this.room.on(RoomEvent.TrackUnpublished, this.onTrackUnavailable.bind(this));
@@ -73,7 +30,7 @@ export class ParticipantAudioInputStream {
 
   private onTrackAvailable(
     track: RemoteTrack,
-    publication: RemoteTrackPublication,
+    _publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ): boolean {
     if (this.participantIdentity && participant.identity !== this.participantIdentity) {
@@ -85,7 +42,7 @@ export class ParticipantAudioInputStream {
   }
 
   private onTrackUnavailable(
-    publication: RemoteTrackPublication,
+    _publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ): void {
     if (this.participantIdentity && participant.identity !== this.participantIdentity) {
@@ -107,26 +64,19 @@ export class ParticipantAudioInputStream {
 
 export class RoomIO {
   private agentSession: AgentSession;
-  private room: Room;
-  private participant: RemoteParticipant;
   private participantAudioInputStream: ParticipantAudioInputStream;
   private logger = log();
 
-  constructor(agentSession: AgentSession, room: Room, participant: RemoteParticipant) {
+  constructor(agentSession: AgentSession, room: Room) {
     this.agentSession = agentSession;
-    this.room = room;
-    this.participant = participant;
-    this.participantAudioInputStream = new ParticipantAudioInputStream(room, {
-      sampleRate: 16000,
-      numChannels: 1,
-    });
+    this.participantAudioInputStream = new ParticipantAudioInputStream(room);
   }
 
   start() {
     this.agentSession.audioInput = this.participantAudioInputStream;
   }
 
-  get audioInput(): ParticipantAudioInputStream | undefined {
-    return this.audioInput;
+  get audioInput(): ParticipantAudioInputStream {
+    return this.participantAudioInputStream;
   }
 }
