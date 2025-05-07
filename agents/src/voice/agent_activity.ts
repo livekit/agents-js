@@ -1,6 +1,3 @@
-// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
-//
-// SPDX-License-Identifier: Apache-2.0
 import { AudioStream } from '@livekit/rtc-node';
 import { log } from '../log.js';
 import type { SpeechEvent } from '../stt/stt.js';
