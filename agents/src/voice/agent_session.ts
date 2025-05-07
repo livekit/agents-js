@@ -1,4 +1,4 @@
-import { Room } from '@livekit/rtc-node';
+import { AudioFrame, Room } from '@livekit/rtc-node';
 import { log } from '../log.js';
 import { VAD } from '../vad.js';
 import { Agent } from './agent.js';
@@ -17,7 +17,7 @@ export class AgentSession {
   private logger = log();
 
   /** @internal */
-  audioInput: ParticipantAudioInputStream | null = null;
+  audioInput?: ReadableStream<AudioFrame>;
 
   constructor(vad: VAD) {
     this.vad = vad;
@@ -38,8 +38,7 @@ export class AgentSession {
     this.roomIO.start();
 
     if (this.audioInput) {
-      const audioStream = await this.audioInput.getAudioStream();
-      this.activity?.updateAudioInput(audioStream);
+      this.activity?.updateAudioInput(this.audioInput);
     }
 
     this.logger.debug('AgentSession started');

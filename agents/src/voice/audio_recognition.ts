@@ -20,8 +20,8 @@ export interface RecognitionHooks {
 }
 
 export class AudioRecognition {
-  private inputAudioStream: Promise<AudioStream>;
-  private inputAudioStreamResolver: (value: AudioStream) => void = () => {};
+  private inputAudioStream: Promise<ReadableStream<AudioFrame>>;
+  private inputAudioStreamResolver: (value: ReadableStream<AudioFrame>) => void = () => {};
   private vadStream?: VADStream;
   private vadStreamProcessor?: Promise<void>;
   private logger = log();
@@ -65,7 +65,7 @@ export class AudioRecognition {
     }
   }
 
-  setInputAudioStream(audioStream: AudioStream) {
+  setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {
     this.inputAudioStreamResolver(audioStream);
   }
 }

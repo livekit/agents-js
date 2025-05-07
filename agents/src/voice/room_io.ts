@@ -1,31 +1,54 @@
 import {
+  AudioFrame,
   AudioStream,
   type RemoteParticipant,
   type RemoteTrack,
   RemoteTrackPublication,
   Room,
   RoomEvent,
+  TrackKind,
 } from '@livekit/rtc-node';
+import { ReadableStream, type UnderlyingSource } from 'node:stream/web';
 import { log } from '../log.js';
 import { AgentSession } from './agent_session.js';
 
-export class ParticipantAudioInputStream {
+class ParticipantAudioSource implements UnderlyingSource<AudioFrame> {
   private room: Room;
   private participantIdentity?: string;
-  private audioStream?: AudioStream = undefined;
-  private audioStreamPromise: Promise<AudioStream> | null = null;
-  private audioStreamAvailiableResolver: (value: AudioStream) => void = () => {};
+  private audioStream?: AudioStream;
+  private controller?: ReadableStreamDefaultController<AudioFrame>;
+  private isCancelled = false;
   private logger = log();
 
-  constructor(room: Room) {
+  constructor(room: Room, participantIdentity?: string) {
     this.room = room;
+    this.participantIdentity = participantIdentity;
+
+    this.room.on(RoomEvent.TrackSubscribed, this.onTrackAvailable.bind(this));
 
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackAvailable.bind(this));
     this.room.on(RoomEvent.TrackUnpublished, this.onTrackUnavailable.bind(this));
+  }
 
-    this.audioStreamPromise = new Promise((resolve, reject) => {
-      this.audioStreamAvailiableResolver = resolve;
-    });
+  start(controller: ReadableStreamDefaultController<AudioFrame>): void | Promise<void> {
+    this.controller = controller;
+  }
+
+  cancel(_reason?: any): void | Promise<void> {
+    this.cleanup();
+  }
+
+  private cleanup(): void {
+    this.isCancelled = true;
+    this.logger.debug('Audio stream cancelled');
+
+    if (this.audioStream) {
+      this.audioStream.cancel();
+      this.audioStream = undefined;
+    }
+
+    this.room.off(RoomEvent.TrackSubscribed, this.onTrackAvailable.bind(this));
+    this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnavailable.bind(this));
   }
 
   private onTrackAvailable(
@@ -33,16 +56,64 @@ export class ParticipantAudioInputStream {
     _publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ): boolean {
-    // TODO(shubhra): this can be flaky? sometimes this isn't called?
-    // might be when we haven't disconnected from the last session in playground and hit Ctrl+c?
-    this.logger.debug('Audio stream available resolving promise');
+    this.logger.debug('Track available for participant', participant.identity);
+
     if (this.participantIdentity && participant.identity !== this.participantIdentity) {
       return false;
     }
+
+    if (this.audioStream || this.isCancelled || !this.controller) {
+      this.logger.warn('Audio stream already exists or cancelled');
+      return false;
+    }
+
+    // Make sure it's an audio track
+    if (track.kind !== TrackKind.KIND_AUDIO) {
+      return false;
+    }
+
+    return this.setupAudioStream(track, participant);
+  }
+
+  private setupAudioStream(track: RemoteTrack, participant: RemoteParticipant): boolean {
+    this.logger.debug('Setting up audio stream for participant', participant.identity);
     this.audioStream = new AudioStream(track);
 
-    this.audioStreamAvailiableResolver(this.audioStream);
+    // Start reading from the audio stream and enqueueing frames
+    this.readAudioFrames().catch((err) => {
+      this.logger.error('Error reading audio frames', err);
+      if (this.controller && !this.isCancelled) {
+        this.controller.error(err);
+      }
+    });
+
     return true;
+  }
+
+  private async readAudioFrames(): Promise<void> {
+    if (!this.audioStream || !this.controller || this.isCancelled) {
+      this.logger.warn('Audio stream not available');
+      return;
+    }
+
+    try {
+      for await (const frame of this.audioStream) {
+        if (this.isCancelled) {
+          break;
+        }
+
+        this.controller.enqueue(frame);
+      }
+    } catch (err) {
+      this.logger.error('Error while reading audio frames', err);
+      if (!this.isCancelled && this.controller) {
+        this.controller.error(err);
+      }
+    } finally {
+      if (!this.isCancelled && this.controller) {
+        this.controller.close();
+      }
+    }
   }
 
   private onTrackUnavailable(
@@ -52,23 +123,22 @@ export class ParticipantAudioInputStream {
     if (this.participantIdentity && participant.identity !== this.participantIdentity) {
       return;
     }
-  }
 
-  async getAudioStream(): Promise<AudioStream> {
-    if (!this.audioStream) {
-      await this.audioStreamPromise;
-    }
-    return this.audioStream!;
+    this.logger.debug('Track unavailable for participant', participant.identity);
+    // We don't close the stream immediately - we'll let it end naturally
+    // when the for-await loop completes or errors out
   }
+}
 
-  async close(): Promise<void> {
-    this.audioStream?.cancel();
+export class ParticipantAudioInputStream extends ReadableStream<AudioFrame> {
+  constructor(room: Room, participantIdentity?: string) {
+    super(new ParticipantAudioSource(room, participantIdentity));
   }
 }
 
 export class RoomIO {
   private agentSession: AgentSession;
-  private participantAudioInputStream: ParticipantAudioInputStream;
+  private participantAudioInputStream: ReadableStream<AudioFrame>;
   private logger = log();
 
   constructor(agentSession: AgentSession, room: Room) {
@@ -77,7 +147,7 @@ export class RoomIO {
   }
 
   start() {
-    this.agentSession.audioInput = this.participantAudioInputStream;
+    this.agentSession.audioInput = this.participantAudioInputStream as any;
   }
 
   get audioInput(): ParticipantAudioInputStream {

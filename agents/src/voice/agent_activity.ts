@@ -1,4 +1,4 @@
-import { AudioStream } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { log } from '../log.js';
 import type { SpeechEvent } from '../stt/stt.js';
 import type { VADEvent } from '../vad.js';
@@ -31,7 +31,7 @@ export class AgentActivity implements RecognitionHooks {
     this.started = true;
   }
 
-  updateAudioInput(audioStream: AudioStream): void {
+  updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
     this.audioRecognition?.setInputAudioStream(audioStream);
   }
 
