@@ -61,7 +61,7 @@ export class ParticipantAudioInputStream {
   }
 
   async close(): Promise<void> {
-    this.audioStream?.close();
+    this.audioStream?.cancel();
   }
 }
 
