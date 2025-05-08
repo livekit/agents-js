@@ -45,7 +45,7 @@ export class Agent {
   async transcriptionNode(
     text: ReadableStream<string>,
     modelSettings: any, // TODO(shubhra): add type
-  ): Promise<AsyncIterable<string> | null> {
+  ): Promise<ReadableStream<string> | null> {
     return null;
   }
 
@@ -54,7 +54,7 @@ export class Agent {
   async sttNode(
     audio: ReadableStream<AudioFrame>,
     modelSettings: any, // TODO(shubhra): add type
-  ): Promise<AsyncIterable<SpeechEvent | string> | null> {
+  ): Promise<ReadableStream<SpeechEvent | string> | null> {
     return null;
   }
 
@@ -62,7 +62,7 @@ export class Agent {
     chatCtx: ChatContext,
     tools: Array<any>, // TODO(shubhra): add type
     modelSettings: any, // TODO(shubhra): add type
-  ): Promise<AsyncIterable<ChatChunk | string> | null> {
+  ): Promise<ReadableStream<ChatChunk | string> | null> {
     return null;
   }
 
@@ -79,7 +79,7 @@ export class Agent {
     async sttNode(
       audio: ReadableStream<AudioFrame>,
       modelSettings: any, // TODO(shubhra): add type
-    ): Promise<AsyncIterable<SpeechEvent | string> | null> {
+    ): Promise<ReadableStream<SpeechEvent | string> | null> {
       return null;
     },
   };
