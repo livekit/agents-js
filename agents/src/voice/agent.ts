@@ -1,9 +1,10 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import type { ChatChunk, LLM } from '../llm/index.js';
 import { ChatContext, ChatMessage } from '../llm/index.js';
-import type { STT, SpeechEvent } from '../stt/index.js';
+import { type STT, StreamAdapter as STTStreamAdapter, type SpeechEvent } from '../stt/index.js';
 import type { TTS } from '../tts/index.js';
 import type { VAD } from '../vad.js';
+import type { AgentActivity } from './agent_activity.js';
 
 export class Agent {
   private instructions: string;
@@ -55,7 +56,7 @@ export class Agent {
     audio: ReadableStream<AudioFrame>,
     modelSettings: any, // TODO(shubhra): add type
   ): Promise<ReadableStream<SpeechEvent | string> | null> {
-    return null;
+    return Agent.default.sttNode(this, audio, modelSettings);
   }
 
   async llmNode(
@@ -75,12 +76,34 @@ export class Agent {
 
   // realtime_audio_output_node
 
+  private getActivityOrThrow(): AgentActivity {
+    if (!this.agentActivity) {
+      throw new Error('Agent activity not found');
+    }
+    return this.agentActivity;
+  }
+
   static default = {
     async sttNode(
+      agent: Agent,
       audio: ReadableStream<AudioFrame>,
       modelSettings: any, // TODO(shubhra): add type
     ): Promise<ReadableStream<SpeechEvent | string> | null> {
-      return null;
+      const activity = agent.getActivityOrThrow();
+
+      const wrapped_stt = activity.stt;
+
+      if (!wrapped_stt.capabilities.streaming && !agent.vad) {
+        throw new Error(
+          'STT does not support streaming, add a VAD to the AgentTask/VoiceAgent to enable streaming',
+        );
+      }
+
+      if (!wrapped_stt.capabilities.streaming) {
+        wrapped_stt = new STTStreamAdapter(wrapped_stt, agent.vad);
+      }
+
+      return {};
     },
   };
 }

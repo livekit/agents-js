@@ -7,6 +7,7 @@ import {
   defineAgent,
   voice,
 } from '@livekit/agents';
+import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 
@@ -22,7 +23,7 @@ export default defineAgent({
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
 
-    const session = new voice.AgentSession(vad);
+    const session = new voice.AgentSession(vad, new deepgram.STT());
     session.start(agent, ctx.room);
   },
 });

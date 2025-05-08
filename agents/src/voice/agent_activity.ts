@@ -1,6 +1,6 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import { log } from '../log.js';
-import type { SpeechEvent } from '../stt/stt.js';
+import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { VADEvent } from '../vad.js';
 import type { Agent } from './agent.js';
 import type { AgentSession } from './agent_session.js';
@@ -25,9 +25,8 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async start(): Promise<void> {
-    if (this.started) {
-      return;
-    }
+    // @ts-ignore
+    this.agent.agentActivity = this;
     this.audioRecognition = new AudioRecognition(
       this,
       this.agentSession.vad,
@@ -38,6 +37,11 @@ export class AgentActivity implements RecognitionHooks {
     this.started = true;
 
     // TODO(shubhra): Add turn detection mode
+  }
+
+  get stt(): STT {
+    // TODO(shubhra): Allow components to be defined in Agent class
+    return this.agentSession.stt;
   }
 
   updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
