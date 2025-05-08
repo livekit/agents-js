@@ -14,6 +14,8 @@ export class AgentActivity implements RecognitionHooks {
   private started = false;
   private audioRecognition?: AudioRecognition;
   private logger = log();
+  private turnDetectionMode?: string;
+
   agent: Agent;
   agentSession: AgentSession;
 
@@ -26,9 +28,16 @@ export class AgentActivity implements RecognitionHooks {
     if (this.started) {
       return;
     }
-    this.audioRecognition = new AudioRecognition(this, this.agentSession.vad);
+    this.audioRecognition = new AudioRecognition(
+      this,
+      this.agentSession.vad,
+      this.agent.sttNode,
+      this.turnDetectionMode === 'manual',
+    );
     this.audioRecognition.start();
     this.started = true;
+
+    // TODO(shubhra): Add turn detection mode
   }
 
   updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
