@@ -162,7 +162,6 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
       const inputStream = (await this.inputAudioStream) as any;
       this.logger.debug('Input stream to STT starting');
       for await (const frame of inputStream) {
-        this.logger.debug('Pushing frame to STT');
         this.pushFrame(frame);
       }
     } catch (error) {
