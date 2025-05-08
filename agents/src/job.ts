@@ -255,9 +255,19 @@ export class JobProcess {
  * requests should fill idle processes and which should be outright rejected.
  */
 export class JobRequest {
-  #job: proto.Job;
   #onReject: () => Promise<void>;
   #onAccept: (args: JobAcceptArguments) => Promise<void>;
+
+  /** @see {@link https://www.npmjs.com/package/@livekit/protocol | @livekit/protocol} */
+  readonly job: proto.Job;
+  /** @returns The ID of the job, set by the LiveKit server */
+  readonly id: string;
+  /** @see {@link https://www.npmjs.com/package/@livekit/protocol | @livekit/protocol} */
+  readonly room?: proto.Room;
+  /** @see {@link https://www.npmjs.com/package/@livekit/protocol | @livekit/protocol} */
+  readonly publisher?: proto.ParticipantInfo;
+  /** @returns The agent's name, as set in {@link WorkerOptions} */
+  readonly agentName: string;
 
   /** @internal */
   constructor(
@@ -265,34 +275,13 @@ export class JobRequest {
     onReject: () => Promise<void>,
     onAccept: (args: JobAcceptArguments) => Promise<void>,
   ) {
-    this.#job = job;
+    this.job = job;
+    this.id = job.id;
+    this.room = job.room;
+    this.publisher = job.participant;
+    this.agentName = job.agentName;
     this.#onReject = onReject;
     this.#onAccept = onAccept;
-  }
-
-  /** @returns The ID of the job, set by the LiveKit server */
-  get id(): string {
-    return this.#job.id;
-  }
-
-  /** @see {@link https://www.npmjs.com/package/@livekit/protocol | @livekit/protocol} */
-  get job(): proto.Job {
-    return this.#job;
-  }
-
-  /** @see {@link https://www.npmjs.com/package/@livekit/protocol | @livekit/protocol} */
-  get room(): proto.Room | undefined {
-    return this.#job.room;
-  }
-
-  /** @see {@link https://www.npmjs.com/package/@livekit/protocol | @livekit/protocol} */
-  get publisher(): proto.ParticipantInfo | undefined {
-    return this.#job.participant;
-  }
-
-  /** @returns The agent's name, as set in {@link WorkerOptions} */
-  get agentName(): string {
-    return this.#job.agentName;
   }
 
   /** Rejects the job. */
