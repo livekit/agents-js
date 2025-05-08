@@ -16,7 +16,7 @@ export default defineAgent({
   },
   entry: async (ctx: JobContext) => {
     const agent = new voice.Agent('test');
-    await ctx.connect(undefined, AutoSubscribe.AUDIO_ONLY);
+    await ctx.connect();
     const participant = await ctx.waitForParticipant();
     console.log('participant joined: ', participant.identity);
 
