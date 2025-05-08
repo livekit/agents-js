@@ -4,6 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
 import type { AudioBuffer } from '../utils.js';
 import { AsyncIterableQueue } from '../utils.js';
@@ -143,10 +144,30 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   abstract label: string;
   protected closed = false;
   #stt: STT;
-
+  protected inputAudioStream: Promise<ReadableStream<AudioFrame>>;
+  protected inputAudioStreamResolver: (value: ReadableStream<AudioFrame>) => void = () => {};
+  private logger = log();
   constructor(stt: STT) {
     this.#stt = stt;
+    this.inputAudioStream = new Promise((resolve) => {
+      this.inputAudioStreamResolver = resolve;
+    });
     this.monitorMetrics();
+    this.mainTask();
+  }
+
+  protected async mainTask() {
+    // This is just a placeholder since STT isn't implemented with the streams API yet.
+    try {
+      const inputStream = (await this.inputAudioStream) as any;
+      this.logger.debug('Input stream to STT starting');
+      for await (const frame of inputStream) {
+        this.logger.debug('Pushing frame to STT');
+        this.pushFrame(frame);
+      }
+    } catch (error) {
+      this.logger.error('Error in STTStream mainTask:', error);
+    }
   }
 
   protected async monitorMetrics() {
@@ -167,6 +188,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
       this.#stt.emit(SpeechEventType.METRICS_COLLECTED, metrics);
     }
     this.output.close();
+  }
+
+  updateInputStream(audioStream: ReadableStream<AudioFrame>) {
+    this.logger.debug('Updating input stream to STT');
+    this.inputAudioStreamResolver(audioStream);
   }
 
   /** Push an audio frame to the STT */

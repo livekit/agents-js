@@ -47,10 +47,10 @@ export class AudioRecognition {
     const inputStream = await this.inputAudioStream;
     const [vadInputStream, sttInputStream] = inputStream.tee();
     this.vadStreamProcessor = this.vadTask(vadInputStream).catch((err) => {
-      this.logger.error('Error in VAD task', err);
+      throw err;
     });
     this.sttStreamProcessor = this.sttTask(sttInputStream).catch((err) => {
-      this.logger.error('Error in STT task', err);
+      throw err;
     });
   }
 

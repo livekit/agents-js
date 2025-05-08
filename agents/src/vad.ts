@@ -101,7 +101,9 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     // This is just a placeholder since VAD isn't implemented with the streams API yet.
     try {
       const inputStream = (await this.inputAudioStream) as any;
+      this.logger.debug('Input stream to VAD starting');
       for await (const frame of inputStream) {
+        this.logger.debug('Pushing frame to VAD');
         this.pushFrame(frame);
       }
     } catch (error) {
@@ -143,6 +145,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   }
 
   updateInputStream(audioStream: ReadableStream<AudioFrame>) {
+    this.logger.debug('Updating input stream to VAD');
     this.inputAudioStreamResolver(audioStream);
   }
 

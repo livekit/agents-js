@@ -76,7 +76,7 @@ export class Agent {
 
   // realtime_audio_output_node
 
-  private getActivityOrThrow(): AgentActivity {
+  getActivityOrThrow(): AgentActivity {
     if (!this.agentActivity) {
       throw new Error('Agent activity not found');
     }
@@ -91,19 +91,27 @@ export class Agent {
     ): Promise<ReadableStream<SpeechEvent | string> | null> {
       const activity = agent.getActivityOrThrow();
 
-      const wrapped_stt = activity.stt;
-
-      if (!wrapped_stt.capabilities.streaming && !agent.vad) {
-        throw new Error(
-          'STT does not support streaming, add a VAD to the AgentTask/VoiceAgent to enable streaming',
-        );
-      }
+      let wrapped_stt = activity.stt;
 
       if (!wrapped_stt.capabilities.streaming) {
+        if (!agent.vad) {
+          throw new Error(
+            'STT does not support streaming, add a VAD to the AgentTask/VoiceAgent to enable streaming',
+          );
+        }
         wrapped_stt = new STTStreamAdapter(wrapped_stt, agent.vad);
       }
 
-      return {};
+      const stream = wrapped_stt.stream();
+      stream.updateInputStream(audio);
+
+      return new ReadableStream({
+        async start(controller) {
+          for await (const event of stream) {
+            controller.enqueue(event);
+          }
+        },
+      });
     },
   };
 }
