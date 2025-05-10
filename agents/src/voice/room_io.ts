@@ -84,7 +84,10 @@ class ParticipantAudioSource implements UnderlyingSource<AudioFrame> {
 
   private setupAudioStream(track: RemoteTrack, participant: RemoteParticipant): boolean {
     this.logger.debug('Setting up audio stream for participant', participant.identity);
-    this.audioStream = new AudioStream(track);
+    this.audioStream = new AudioStream(track, {
+      sampleRate: 16000,
+      numChannels: 1,
+    });
 
     this.readAudioFrames().catch((err) => {
       this.logger.error('Error reading audio frames', err);
