@@ -4,6 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import { log } from './log.js';
 import type { VADMetrics } from './metrics/base.js';
 import { AsyncIterableQueue } from './utils.js';
 
@@ -83,10 +84,29 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected closed = false;
   #vad: VAD;
   #lastActivityTime = BigInt(0);
+  private logger = log();
+  private inputAudioStream: Promise<ReadableStream<AudioFrame>>;
+  private inputAudioStreamResolver: (value: ReadableStream<AudioFrame>) => void = () => {};
 
   constructor(vad: VAD) {
     this.#vad = vad;
+    this.inputAudioStream = new Promise((resolve) => {
+      this.inputAudioStreamResolver = resolve;
+    });
     this.monitorMetrics();
+    this.mainTask();
+  }
+
+  protected async mainTask() {
+    // This is just a placeholder since VAD isn't implemented with the streams API yet.
+    try {
+      const inputStream = (await this.inputAudioStream) as any;
+      for await (const frame of inputStream) {
+        this.pushFrame(frame);
+      }
+    } catch (error) {
+      this.logger.error('Error in VADStream mainTask:', error);
+    }
   }
 
   protected async monitorMetrics() {
@@ -120,6 +140,10 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
       }
     }
     this.output.close();
+  }
+
+  updateInputStream(audioStream: ReadableStream<AudioFrame>) {
+    this.inputAudioStreamResolver(audioStream);
   }
 
   pushFrame(frame: AudioFrame) {
