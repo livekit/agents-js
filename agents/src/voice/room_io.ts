@@ -38,8 +38,6 @@ class ParticipantAudioSource implements UnderlyingSource<AudioFrame> {
     this.participantIdentity = participantIdentity;
 
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackAvailable.bind(this));
-
-    this.room.on(RoomEvent.TrackSubscribed, this.onTrackAvailable.bind(this));
   }
 
   start(controller: ReadableStreamDefaultController<AudioFrame>): void | Promise<void> {
