@@ -2,4 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export * from './tts.js';
+export * as realtime from './realtime/index.js';
+export * from './models.js';
+export { type TTSOptions, TTS, SynthesizeStream } from './tts.js';
