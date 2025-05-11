@@ -27,7 +27,6 @@ export default defineAgent({
           },
         },
       },
-      apiKey: 'ANYTHING_FOR_PUBLIC_AGENTS',
     });
 
     const agent = new multimodal.MultimodalAgent({

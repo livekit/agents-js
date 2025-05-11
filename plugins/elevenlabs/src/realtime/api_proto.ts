@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const BASE_URL = 'wss://api.elevenlabs.io/v1/convai/conversation';
+export const AUTHORIZATION_HEADER = 'xi-api-key';
 
 export const DEFAULT_SAMPLE_RATE = 16000;
 export const NUM_CHANNELS = 1;

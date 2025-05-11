@@ -64,7 +64,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       inFrameSize: api_proto.DEFAULT_IN_FRAME_SIZE,
       outFrameSize: api_proto.DEFAULT_OUT_FRAME_SIZE,
     },
-    apiKey = process.env.ELEVEN_API_KEY || '',
+    apiKey = process.env.ELEVEN_API_KEY,
   }: ModelOptions) {
     super();
 
@@ -75,8 +75,8 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     this.outFrameSize = audioOptions.outFrameSize;
 
     if (!apiKey) {
-      throw new Error(
-        'ElevenLabs API key is required, either using the argument or by setting the ELEVEN_API_KEY environment variable',
+      console.debug(
+        'ElevenLabs API key is required in order to use private agents. Access restricted to public agents.',
       );
     }
 
@@ -182,17 +182,41 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     throw new Error('Recovery from text is not supported on this model');
   }
 
+  async #getSignedURL(): Promise<string> {
+    const url = new URL(api_proto.BASE_URL + '/get_signed_url');
+    url.protocol = 'https:';
+    url.searchParams.set('agent_id', this.#opts.agentId);
+
+    const response = await fetch(url.toString(), {
+      headers: {
+        [api_proto.AUTHORIZATION_HEADER]: this.#opts.apiKey || '',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch signed URL: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.signed_url;
+  }
+
+  #getPublicURL(): string {
+    const url = new URL(api_proto.BASE_URL);
+    url.searchParams.set('agent_id', this.#opts.agentId);
+    return url.toString();
+  }
+
   #start(): Promise<void> {
     return new Promise(async (resolve, reject) => {
       const headers: Record<string, string> = {
         'User-Agent': 'LiveKit-Agents-JS',
       };
 
-      const url = new URL(api_proto.BASE_URL);
-      url.searchParams.set('agent_id', this.#opts.agentId);
+      const url = this.#opts.apiKey ? await this.#getSignedURL() : this.#getPublicURL();
 
-      console.debug('Connecting to ElevenLabs Conversational AI API at', url.toString());
-      this.#ws = new WebSocket(url.toString(), {
+      console.debug('Connecting to ElevenLabs Conversational AI API at', url);
+      this.#ws = new WebSocket(url, {
         headers,
       });
 
@@ -325,6 +349,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   #handleAgentTextResponse(event: api_proto.AgentResponseEvent): void {
     const content = this.#getContent(); // get the first remaining content
+
     //Ignore, is a silence that doesn't have an audio content,
     //but ElevenLabs sends '...'
     if (!content) return;
