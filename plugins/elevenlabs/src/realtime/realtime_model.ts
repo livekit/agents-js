@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AsyncIterableQueue, Queue, log, multimodal } from '@livekit/agents';
+import { AsyncIterableQueue, Queue, type llm, log, multimodal } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -92,8 +92,8 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     return this.#sessions;
   }
 
-  session(): multimodal.RealtimeSession {
-    const newSession = new RealtimeSession(this.#defaultOpts);
+  session({ fncCtx }: { fncCtx?: llm.FunctionContext }): multimodal.RealtimeSession {
+    const newSession = new RealtimeSession(this.#defaultOpts, { fncCtx });
     this.#sessions.push(newSession);
     return newSession;
   }
@@ -104,21 +104,28 @@ export class RealtimeModel extends multimodal.RealtimeModel {
 }
 
 export class RealtimeSession extends multimodal.RealtimeSession {
-  // This is undefined until we add support for local tool calls
-  fncCtx = undefined;
-
   #pendingContent: { [id: number]: RealtimeContent } = {};
+  #fncCtx: llm.FunctionContext | undefined = undefined;
   #opts: ModelOptions;
   #ws: WebSocket | null = null;
   #task: Promise<void>;
   #logger = log();
   #sendQueue = new Queue<api_proto.ClientEvent>();
 
-  constructor(opts: ModelOptions) {
+  constructor(opts: ModelOptions, { fncCtx }: { fncCtx?: llm.FunctionContext }) {
     super();
     this.#opts = opts;
+    this.#fncCtx = fncCtx;
 
     this.#task = this.#start();
+  }
+
+  get fncCtx(): llm.FunctionContext | undefined {
+    return this.#fncCtx;
+  }
+
+  set fncCtx(ctx: llm.FunctionContext | undefined) {
+    this.#fncCtx = ctx;
   }
 
   get conversation() {
@@ -258,8 +265,10 @@ export class RealtimeSession extends multimodal.RealtimeSession {
           case 'ping':
             this.#handlePing(event);
             break;
-          //NOTE: Not supported yet
           case 'client_tool_call':
+            this.#handleClientToolCall(event);
+            break;
+          //NOTE: Not supported yet
           case 'contextual_update':
           case 'vad_score':
           //NOTE: defug events
@@ -378,6 +387,50 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     });
   }
 
+  /**
+   * Handles client-side tools for ElevenLabs Conversational AI.
+   * ElevenLabs supports multiple types of tools, most of which are executed server-side.
+   * This method is specifically for handling client-side tools.
+   * For more details, see:
+   * https://elevenlabs.io/docs/conversational-ai/customization/tools/client-tools
+   */
+  #handleClientToolCall(event: api_proto.ClientToolCallEvent) {
+    if (!this.#fncCtx) {
+      this.#logger.error('function call received but no fncCtx is available');
+      return;
+    }
+
+    const toolName = event.client_tool_call.tool_name;
+    const callId = event.client_tool_call.tool_call_id;
+    const params = event.client_tool_call.parameters || {};
+
+    const func = this.#fncCtx?.[toolName];
+    if (!func) {
+      this.#logger.error(`no function with name ${toolName} in fncCtx`);
+      return;
+    }
+    this.#logger.debug(`[Function Call ${callId}] Executing ${toolName} with arguments ${params}`);
+
+    func.execute(params).then(
+      (content) => {
+        this.#logger.debug(`[Function Call ${callId}] ${toolName} returned ${content}`);
+        this.queueMsg({
+          type: 'client_tool_result',
+          tool_call_id: callId,
+          result: content || '',
+          is_error: false,
+        });
+      },
+      (error) => {
+        this.#logger.error(`[Function Call ${callId}] ${toolName} failed with ${error}`);
+        this.queueMsg({
+          type: 'client_tool_result',
+          tool_call_id: callId,
+          is_error: true,
+        });
+      },
+    );
+  }
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   #handleConversationInitialization(event: api_proto.ConversationInitiationMetadataEvent): void {}
 
