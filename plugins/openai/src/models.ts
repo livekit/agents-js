@@ -128,3 +128,9 @@ export type OctoChatModels =
   | 'wizardlm-2-8x22bllamaguard-2-7b';
 
 export type XAIChatModels = 'grok-2' | 'grok-2-mini' | 'grok-2-mini-public' | 'grok-2-public';
+
+export type MetaChatModels =
+  | 'Llama-4-Scout-17B-16E-Instruct-FP8'
+  | 'Llama-4-Maverick-17B-128E-Instruct-FP8'
+  | 'Llama-3.3-70B-Instruct'
+  | 'Llama-3.3-8B-Instruct';
