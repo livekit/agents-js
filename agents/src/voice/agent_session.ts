@@ -1,4 +1,5 @@
 import { AudioFrame, Room } from '@livekit/rtc-node';
+import type { ReadableStream } from 'node:stream/web';
 import { log } from '../log.js';
 import { VAD } from '../vad.js';
 import { Agent } from './agent.js';
