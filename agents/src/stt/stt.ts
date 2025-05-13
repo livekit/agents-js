@@ -4,6 +4,8 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import type { ReadableStream } from 'node:stream/web';
+import { DeferredReadableStream } from '../deferred_stream.js';
 import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
 import type { AudioBuffer } from '../utils.js';
@@ -144,14 +146,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   abstract label: string;
   protected closed = false;
   #stt: STT;
-  protected inputAudioStream: Promise<ReadableStream<AudioFrame>>;
-  protected inputAudioStreamResolver: (value: ReadableStream<AudioFrame>) => void = () => {};
+  private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
   constructor(stt: STT) {
     this.#stt = stt;
-    this.inputAudioStream = new Promise((resolve) => {
-      this.inputAudioStreamResolver = resolve;
-    });
+    this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.monitorMetrics();
     this.mainTask();
   }
@@ -159,10 +158,12 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   protected async mainTask() {
     // This is just a placeholder since STT isn't implemented with the streams API yet.
     try {
-      const inputStream = (await this.inputAudioStream) as any;
-      this.logger.debug('Input stream to STT starting');
-      for await (const frame of inputStream) {
-        this.pushFrame(frame);
+      const inputStream = this.deferredInputStream.stream;
+      const reader = inputStream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        this.pushFrame(value);
       }
     } catch (error) {
       this.logger.error('Error in STTStream mainTask:', error);
@@ -190,8 +191,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   updateInputStream(audioStream: ReadableStream<AudioFrame>) {
-    this.logger.debug('Updating input stream to STT');
-    this.inputAudioStreamResolver(audioStream);
+    this.deferredInputStream.setSource(audioStream);
   }
 
   /** Push an audio frame to the STT */
