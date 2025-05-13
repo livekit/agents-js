@@ -1,8 +1,9 @@
-import type { AudioFrame, AudioStream } from '@livekit/rtc-node';
+import type { AudioFrame } from '@livekit/rtc-node';
+import type { ReadableStream } from 'node:stream/web';
+import { DeferredReadableStream } from '../deferred_stream.js';
 import { log } from '../log.js';
 import type { SpeechEvent } from '../stt/stt.js';
-import { type VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
-import type { STTNode } from './io.js';
+import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 
 export interface EndOfTurnInfo {
   newTranscript: string;
@@ -20,17 +21,15 @@ export interface RecognitionHooks {
 }
 
 export class AudioRecognition {
-  private inputAudioStream: Promise<ReadableStream<AudioFrame>>;
-  private inputAudioStreamResolver: (value: ReadableStream<AudioFrame>) => void = () => {};
+  private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private vadStreamProcessor?: Promise<void>;
   private logger = log();
+
   constructor(
     private hooks: RecognitionHooks,
     private vad: VAD,
   ) {
-    this.inputAudioStream = new Promise((resolve) => {
-      this.inputAudioStreamResolver = resolve;
-    });
+    this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
   }
 
   start() {
@@ -40,7 +39,7 @@ export class AudioRecognition {
   }
 
   private async vadTask() {
-    const inputStream = await this.inputAudioStream;
+    const inputStream = this.deferredInputStream.stream;
     const vadStream = this.vad.stream();
     vadStream.updateInputStream(inputStream);
 
@@ -60,6 +59,6 @@ export class AudioRecognition {
   }
 
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {
-    this.inputAudioStreamResolver(audioStream);
+    this.deferredInputStream.setSource(audioStream);
   }
 }

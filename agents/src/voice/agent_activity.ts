@@ -1,4 +1,5 @@
 import { AudioFrame } from '@livekit/rtc-node';
+import type { ReadableStream } from 'node:stream/web';
 import { log } from '../log.js';
 import type { SpeechEvent } from '../stt/stt.js';
 import type { VADEvent } from '../vad.js';
