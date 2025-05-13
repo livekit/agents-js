@@ -1,6 +1,9 @@
-import { AudioFrame } from '@livekit/rtc-node';
-import type { ChatChunk, LLM } from '../llm/index.js';
-import { ChatContext, ChatMessage } from '../llm/index.js';
+/* eslint-disable @typescript-eslint/no-unused-vars */
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { AudioFrame } from '@livekit/rtc-node';
+import type { ChatChunk, ChatMessage, LLM } from '../llm/index.js';
+import { ChatContext } from '../llm/index.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import type { TTS } from '../tts/index.js';
 import type { VAD } from '../vad.js';

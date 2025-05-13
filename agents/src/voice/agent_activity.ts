@@ -1,4 +1,4 @@
-import { AudioFrame } from '@livekit/rtc-node';
+import type { AudioFrame } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
 import { log } from '../log.js';
 import type { SpeechEvent } from '../stt/stt.js';
@@ -45,7 +45,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onVADInferenceDone(ev: VADEvent): void {
-    //this.logger.info('VAD inference done', ev);
+    this.logger.info('VAD inference done', ev);
   }
 
   onInterimTranscript(ev: SpeechEvent): void {

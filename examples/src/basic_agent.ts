@@ -1,7 +1,6 @@
 import {
-  AutoSubscribe,
   type JobContext,
-  JobProcess,
+  type JobProcess,
   WorkerOptions,
   cli,
   defineAgent,
