@@ -57,6 +57,5 @@ export class DeferredReadableStream<T> {
       this._sourceFuture.reject(reason);
     }
     await this._reader?.cancel();
-    this.stream.cancel(reason);
   }
 }
