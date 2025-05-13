@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import { AudioStream, type RemoteTrack, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
