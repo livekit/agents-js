@@ -1,4 +1,8 @@
-import { AudioFrame } from '@livekit/rtc-node';
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import type { AudioFrame } from '@livekit/rtc-node';
+import type { ReadableStream } from 'node:stream/web';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { VADEvent } from '../vad.js';
@@ -58,7 +62,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onVADInferenceDone(ev: VADEvent): void {
-    //this.logger.info('VAD inference done', ev);
+    this.logger.info('VAD inference done', ev);
   }
 
   onInterimTranscript(ev: SpeechEvent): void {

@@ -1,7 +1,9 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import {
-  AutoSubscribe,
   type JobContext,
-  JobProcess,
+  type JobProcess,
   WorkerOptions,
   cli,
   defineAgent,

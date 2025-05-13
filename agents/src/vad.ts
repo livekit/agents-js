@@ -4,6 +4,8 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import type { ReadableStream } from 'node:stream/web';
+import { DeferredReadableStream } from './deferred_stream.js';
 import { log } from './log.js';
 import type { VADMetrics } from './metrics/base.js';
 import { AsyncIterableQueue } from './utils.js';
@@ -85,14 +87,11 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   #vad: VAD;
   #lastActivityTime = BigInt(0);
   private logger = log();
-  private inputAudioStream: Promise<ReadableStream<AudioFrame>>;
-  private inputAudioStreamResolver: (value: ReadableStream<AudioFrame>) => void = () => {};
+  private deferredInputStream: DeferredReadableStream<AudioFrame>;
 
   constructor(vad: VAD) {
     this.#vad = vad;
-    this.inputAudioStream = new Promise((resolve) => {
-      this.inputAudioStreamResolver = resolve;
-    });
+    this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.monitorMetrics();
     this.mainTask();
   }
@@ -100,10 +99,14 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected async mainTask() {
     // This is just a placeholder since VAD isn't implemented with the streams API yet.
     try {
-      const inputStream = (await this.inputAudioStream) as any;
-      this.logger.debug('Input stream to VAD starting');
-      for await (const frame of inputStream) {
-        this.pushFrame(frame);
+      const inputStream = this.deferredInputStream.stream;
+      const reader = inputStream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        this.pushFrame(value);
       }
     } catch (error) {
       this.logger.error('Error in VADStream mainTask:', error);
@@ -144,8 +147,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   }
 
   updateInputStream(audioStream: ReadableStream<AudioFrame>) {
-    this.logger.debug('Updating input stream to VAD');
-    this.inputAudioStreamResolver(audioStream);
+    this.deferredInputStream.setSource(audioStream);
   }
 
   pushFrame(frame: AudioFrame) {

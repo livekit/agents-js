@@ -1,8 +1,12 @@
-import { AudioFrame, Room } from '@livekit/rtc-node';
+// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import type { AudioFrame, Room } from '@livekit/rtc-node';
+import type { ReadableStream } from 'node:stream/web';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
-import { VAD } from '../vad.js';
-import { Agent } from './agent.js';
+import type { VAD } from '../vad.js';
+import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import { RoomIO } from './room_io.js';
 

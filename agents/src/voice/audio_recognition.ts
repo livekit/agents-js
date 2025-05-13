@@ -1,7 +1,12 @@
-import type { AudioFrame, AudioStream } from '@livekit/rtc-node';
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import type { AudioFrame } from '@livekit/rtc-node';
+import { ReadableStream } from 'node:stream/web';
+import { DeferredReadableStream } from '../deferred_stream.js';
 import { log } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import { type VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
+import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { STTNode } from './io.js';
 
 export interface EndOfTurnInfo {
@@ -20,8 +25,7 @@ export interface RecognitionHooks {
 }
 
 export class AudioRecognition {
-  private inputAudioStream: Promise<ReadableStream<AudioFrame>>;
-  private inputAudioStreamResolver: (value: ReadableStream<AudioFrame>) => void = () => {};
+  private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private vadStreamProcessor?: Promise<void>;
   private sttStreamProcessor?: Promise<void>;
   private logger = log();
@@ -38,14 +42,11 @@ export class AudioRecognition {
     private stt: STTNode,
     private manualTurnDetection = false,
   ) {
-    this.inputAudioStream = new Promise((resolve) => {
-      this.inputAudioStreamResolver = resolve;
-    });
+    this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
   }
 
   async start() {
-    const inputStream = await this.inputAudioStream;
-    const [vadInputStream, sttInputStream] = inputStream.tee();
+    const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
     this.vadStreamProcessor = this.vadTask(vadInputStream).catch((err) => {
       throw err;
     });
@@ -100,8 +101,8 @@ export class AudioRecognition {
   private async sttTask(inputStream: ReadableStream<AudioFrame>) {
     const sttStream = await this.stt(inputStream, {});
     if (sttStream instanceof ReadableStream) {
-      // @ts-ignore for some reason we can't export asCompatibleStream
       for await (const ev of sttStream) {
+        // TODO(shubhra) remove this once we have a proper type for STT node
         if (typeof ev === 'string') throw new Error('STT node must yield SpeechEvent');
         await this.onSTTEvent(ev);
       }
@@ -132,6 +133,6 @@ export class AudioRecognition {
   }
 
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {
-    this.inputAudioStreamResolver(audioStream);
+    this.deferredInputStream.setSource(audioStream);
   }
 }
