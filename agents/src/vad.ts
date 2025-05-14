@@ -4,6 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import { type UnderlyingSource } from 'node:stream/web';
 import type { ReadableStream } from 'node:stream/web';
 import { DeferredReadableStream } from './deferred_stream.js';
 import { log } from './log.js';
@@ -76,6 +77,25 @@ export abstract class VAD extends (EventEmitter as new () => TypedEmitter<VADCal
    * Returns a {@link VADStream} that can be used to push audio frames and receive VAD events.
    */
   abstract stream(): VADStream;
+}
+
+export abstract class VADStreamSource implements UnderlyingSource<VADEvent> {
+  protected controller?: ReadableStreamDefaultController<VADEvent>;
+  protected inputStream: ReadableStream<AudioFrame>;
+
+  constructor(inputStream: ReadableStream<AudioFrame>) {
+    this.inputStream = inputStream;
+  }
+
+  start(controller: ReadableStreamDefaultController<VADEvent>) {
+    this.controller = controller;
+  }
+
+  cancel() {
+    this.controller?.close();
+  }
+
+  abstract mainTask(): Promise<void>;
 }
 
 export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
