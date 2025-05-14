@@ -89,6 +89,7 @@ export abstract class VADStreamSource implements UnderlyingSource<VADEvent> {
 
   start(controller: ReadableStreamDefaultController<VADEvent>) {
     this.controller = controller;
+    this.mainTask();
   }
 
   cancel() {
@@ -100,14 +101,12 @@ export abstract class VADStreamSource implements UnderlyingSource<VADEvent> {
 
 export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
-  protected input = new AsyncIterableQueue<AudioFrame | typeof VADStream.FLUSH_SENTINEL>();
-  protected queue = new AsyncIterableQueue<VADEvent>();
-  protected output = new AsyncIterableQueue<VADEvent>();
   protected closed = false;
   #vad: VAD;
   #lastActivityTime = BigInt(0);
   private logger = log();
-  private deferredInputStream: DeferredReadableStream<AudioFrame>;
+  protected deferredInputStream: DeferredReadableStream<AudioFrame>;
+  abstract outputStream: ReadableStream<VADEvent>;
 
   constructor(vad: VAD) {
     this.#vad = vad;
@@ -181,7 +180,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   }
 
   flush() {
-    if (this.input.closed) {
+    if (this.deferredInputStream.stream.cancel()) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
@@ -205,9 +204,8 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   }
 
   close() {
-    this.input.close();
-    this.queue.close();
-    this.output.close();
+    this.deferredInputStream.stream.cancel();
+    this.outputStream.cancel();
     this.closed = true;
   }
 
