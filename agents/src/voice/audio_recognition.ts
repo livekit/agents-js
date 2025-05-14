@@ -101,11 +101,16 @@ export class AudioRecognition {
 
   private async sttTask(inputStream: ReadableStream<AudioFrame>) {
     const sttStream = await this.stt(inputStream, {});
+    if (sttStream === null) {
+      return;
+    }
     if (sttStream instanceof ReadableStream) {
       for await (const ev of sttStream) {
-        // TODO(shubhra) remove this once we have a proper type for STT node
-        if (typeof ev === 'string') throw new Error('STT node must yield SpeechEvent');
-        await this.onSTTEvent(ev);
+        if (typeof ev === 'string') {
+          throw new Error('STT node must yield SpeechEvent');
+        } else {
+          await this.onSTTEvent(ev);
+        }
       }
     }
   }
