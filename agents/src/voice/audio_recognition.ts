@@ -94,6 +94,7 @@ export class AudioRecognition {
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
         this.hooks.onInterimTranscript(ev);
+        this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
         break;
     }
   }

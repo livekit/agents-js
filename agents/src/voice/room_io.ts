@@ -35,7 +35,12 @@ export class RoomIO {
 
   private onTrackSubscribed = (track: RemoteTrack) => {
     if (track.kind === TrackKind.KIND_AUDIO) {
-      this._deferredAudioInputStream.setSource(new AudioStream(track));
+      this._deferredAudioInputStream.setSource(
+        new AudioStream(track, {
+          sampleRate: 16000,
+          numChannels: 1,
+        }),
+      );
     }
   };
 

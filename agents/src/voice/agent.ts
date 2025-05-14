@@ -24,7 +24,9 @@ export class Agent {
   private vad: VAD | undefined;
   private llm: LLM | any;
   private tts: TTS | undefined;
-  private agentActivity: any; // TODO(shubhra): add type
+
+  /** @internal */
+  agentActivity?: AgentActivity;
 
   constructor(
     instructions: string,
@@ -45,7 +47,6 @@ export class Agent {
     this.vad = vad;
     this.llm = llm;
     this.tts = tts;
-    this.agentActivity = undefined; // TODO(shubhra): add type
   }
 
   async onEnter(): Promise<void> {}
