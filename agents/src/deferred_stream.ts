@@ -55,10 +55,9 @@ export class DeferredReadableStream<T> {
     this._sourceFuture.resolve(source);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async cancel(reason?: any) {
+  async cancel(reason?: Error) {
     if (!this._sourceFuture.done) {
-      this._sourceFuture.reject(reason);
+      this._sourceFuture.reject(reason ?? new Error('Stream cancelled without reason'));
     }
     await this._reader?.cancel(reason);
   }
