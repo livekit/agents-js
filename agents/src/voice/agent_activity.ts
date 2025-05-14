@@ -33,8 +33,8 @@ export class AgentActivity implements RecognitionHooks {
     this.audioRecognition = new AudioRecognition(
       this,
       this.agentSession.vad,
-      // This makes sure the "this" in Agent.default.sttNode(this, ...) refers to the Agent instance
-      this.agent.sttNode.bind(this.agent),
+      // Arrow function preserves the Agent context
+      (...args) => this.agent.sttNode(...args),
       this.turnDetectionMode === 'manual',
     );
     this.audioRecognition.start();
