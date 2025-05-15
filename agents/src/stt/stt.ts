@@ -156,7 +156,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   protected async mainTask() {
-    // This is just a placeholder since STT isn't implemented with the streams API yet.
+    // TODO(AJS-35): Implement STT with webstreams API
     try {
       const inputStream = this.deferredInputStream.stream;
       const reader = inputStream.getReader();
