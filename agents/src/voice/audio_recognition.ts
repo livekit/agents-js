@@ -37,8 +37,6 @@ export class AudioRecognition {
 
   start() {
     this.vadStreamProcessor = this.vadTask().catch((err) => {
-      // raise the error
-      throw err;
       this.logger.error(`Error in VAD task: ${err}`);
     });
   }

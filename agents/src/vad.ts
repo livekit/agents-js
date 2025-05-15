@@ -98,9 +98,9 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
 
   #vad: VAD;
   #lastActivityTime = BigInt(0);
-
   private logger = log();
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
+
   private metricsStream: ReadableStream<VADEvent>;
   constructor(vad: VAD) {
     this.#vad = vad;
