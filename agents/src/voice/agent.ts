@@ -47,10 +47,7 @@ export class Agent {
     this.vad = vad;
     this.llm = llm;
     this.tts = tts;
-<<<<<<< HEAD
-=======
     this.agentActivity = undefined; // TODO(shubhra): add type
->>>>>>> dev-1.0
   }
 
   async onEnter(): Promise<void> {}
