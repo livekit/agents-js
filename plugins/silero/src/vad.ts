@@ -3,16 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   ExpFilter,
-  type VADEvent,
   VADEventType,
   VADStream as baseStream,
   VAD as baseVAD,
-  VADStreamSource as baseVADStreamSource,
   log,
   mergeFrames,
 } from '@livekit/agents';
 import { AudioFrame, AudioResampler, AudioResamplerQuality } from '@livekit/rtc-node';
-import { ReadableStream } from 'node:stream/web';
 import type { InferenceSession } from 'onnxruntime-node';
 import type { SampleRate } from './onnx_model.js';
 import { OnnxModel, newInferenceSession } from './onnx_model.js';
@@ -117,313 +114,269 @@ export class VAD extends baseVAD {
   }
 }
 
-class VADStreamSource extends baseVADStreamSource {
-  private vad: VAD;
-  private opts: VADOptions;
-  private model: OnnxModel;
-
-  private inputSampleRate: number;
-  private speechBuffer: Int16Array | null;
-  private speechBufferMaxReached: boolean;
-  private prefixPaddingSamples: number;
-  private expFilter = new ExpFilter(0.35);
-  private extraInferenceTime = 0;
-  private logger = log();
-
-  constructor(
-    vad: VAD,
-    opts: VADOptions,
-    model: OnnxModel,
-    inputStream: ReadableStream<AudioFrame>,
-  ) {
-    super(inputStream);
-    this.vad = vad;
-    this.opts = opts;
-    this.model = model;
-    this.inputSampleRate = 0;
-    this.speechBuffer = null;
-    this.speechBufferMaxReached = false;
-    this.prefixPaddingSamples = 0;
-  }
-
-  async mainTask() {
-    const reader = this.inputStream.getReader();
-
-    let inferenceData = new Float32Array(this.model.windowSizeSamples);
-
-    // a copy is exposed to the user in END_OF_SPEECH
-    let speechBufferIndex = 0;
-
-    // "pub" means public, these values are exposed to the users through events
-    let pubSpeaking = false;
-    let pubSpeechDuration = 0;
-    let pubSilenceDuration = 0;
-    let pubCurrentSample = 0;
-    let pubTimestamp = 0;
-    let speechThresholdDuration = 0;
-    let silenceThresholdDuration = 0;
-
-    let inputFrames = [];
-    let inferenceFrames: AudioFrame[] = [];
-    let resampler: AudioResampler | null = null;
-
-    // used to avoid drift when the sampleRate ratio is not an integer
-    let inputCopyRemainingFrac = 0.0;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const frame = value;
-      if (typeof frame === 'symbol') {
-        continue; // ignore flush sentinel for now
-      }
-
-      if (!this.inputSampleRate || !this.speechBuffer) {
-        this.inputSampleRate = frame.sampleRate;
-        this.prefixPaddingSamples = Math.trunc(
-          (this.opts.prefixPaddingDuration * this.inputSampleRate) / 1000,
-        );
-        const bufferSize =
-          Math.trunc((this.opts.maxBufferedSpeech * this.inputSampleRate) / 1000) +
-          this.prefixPaddingSamples;
-        this.speechBuffer = new Int16Array(bufferSize);
-
-        if (this.opts.sampleRate !== this.inputSampleRate) {
-          // resampling needed: the input sample rate isn't the same as the model's
-          // sample rate used for inference
-          resampler = new AudioResampler(
-            this.inputSampleRate,
-            this.opts.sampleRate,
-            1,
-            AudioResamplerQuality.QUICK, // VAD doesn't need high quality
-          );
-        }
-      } else if (frame.sampleRate !== this.inputSampleRate) {
-        this.logger.error('a frame with a different sample rate was already published');
-        continue;
-      }
-
-      inputFrames.push(frame);
-      if (resampler) {
-        inferenceFrames.push(...resampler.push(frame));
-      } else {
-        inferenceFrames.push(frame);
-      }
-
-      while (true) {
-        const startTime = process.hrtime.bigint();
-        const availableInferenceSamples = inferenceFrames
-          .map((x) => x.samplesPerChannel)
-          .reduce((acc, x) => acc + x, 0);
-
-        if (availableInferenceSamples < this.model.windowSizeSamples) {
-          break; // not enough samples to run inference
-        }
-
-        const inputFrame = mergeFrames(inputFrames);
-        const inferenceFrame = mergeFrames(inferenceFrames);
-
-        // convert data to f32
-        inferenceData = Float32Array.from(
-          inferenceFrame.data.subarray(0, this.model.windowSizeSamples),
-          (x) => x / 32767,
-        );
-
-        const p = await this.model.run(inferenceData).then((data) => this.expFilter.apply(1, data));
-
-        const windowDuration = (this.model.windowSizeSamples / this.opts.sampleRate) * 1000;
-        pubCurrentSample += this.model.windowSizeSamples;
-        pubTimestamp += windowDuration;
-        const resamplingRatio = this.inputSampleRate / this.model.sampleRate;
-        const toCopy = this.model.windowSizeSamples * resamplingRatio + inputCopyRemainingFrac;
-        const toCopyInt = Math.trunc(toCopy);
-        inputCopyRemainingFrac = toCopy - toCopyInt;
-
-        // copy the inference window to the speech buffer
-        const availableSpace = this.speechBuffer.length - speechBufferIndex;
-        const toCopyBuffer = Math.min(this.model.windowSizeSamples, availableSpace);
-        if (toCopyBuffer > 0) {
-          this.speechBuffer.set(inputFrame.data.subarray(0, toCopyBuffer), speechBufferIndex);
-          speechBufferIndex += toCopyBuffer;
-        } else if (!this.speechBufferMaxReached) {
-          this.speechBufferMaxReached = true;
-          this.logger.warn(
-            'maxBufferedSpeech reached, ignoring further data for the current speech input',
-          );
-        }
-
-        const inferenceDuration = Number((process.hrtime.bigint() - startTime) / BigInt(1000000));
-        this.extraInferenceTime = Math.max(
-          0,
-          this.extraInferenceTime + inferenceDuration - windowDuration,
-        );
-        if (this.extraInferenceTime > SLOW_INFERENCE_THRESHOLD) {
-          this.logger
-            .child({ delay: this.extraInferenceTime })
-            .warn('inference is slower than realtime');
-        }
-
-        if (pubSpeaking) {
-          pubSpeechDuration += inferenceDuration;
-        } else {
-          pubSilenceDuration += inferenceDuration;
-        }
-
-        this.controller?.enqueue({
-          type: VADEventType.INFERENCE_DONE,
-          samplesIndex: pubCurrentSample,
-          timestamp: pubTimestamp,
-          silenceDuration: pubSilenceDuration,
-          speechDuration: pubSpeechDuration,
-          probability: p,
-          inferenceDuration,
-          frames: [
-            new AudioFrame(
-              inputFrame.data.subarray(0, toCopyInt),
-              this.inputSampleRate,
-              1,
-              toCopyInt,
-            ),
-          ],
-          speaking: pubSpeaking,
-          rawAccumulatedSilence: silenceThresholdDuration,
-          rawAccumulatedSpeech: speechThresholdDuration,
-        });
-
-        const resetWriteCursor = () => {
-          if (!this.speechBuffer) throw new Error('speechBuffer is empty');
-          if (speechBufferIndex <= this.prefixPaddingSamples) {
-            return;
-          }
-
-          const paddingData = this.speechBuffer.subarray(
-            speechBufferIndex - this.prefixPaddingSamples,
-            speechBufferIndex,
-          );
-          this.speechBuffer.set(paddingData, 0);
-          speechBufferIndex = this.prefixPaddingSamples;
-          this.speechBufferMaxReached = false;
-        };
-
-        const copySpeechBuffer = (): AudioFrame => {
-          if (!this.speechBuffer) throw new Error('speechBuffer is empty');
-          return new AudioFrame(
-            this.speechBuffer.subarray(this.prefixPaddingSamples, speechBufferIndex),
-            this.inputSampleRate,
-            1,
-            speechBufferIndex,
-          );
-        };
-
-        if (p > this.opts.activationThreshold) {
-          speechThresholdDuration += windowDuration;
-          silenceThresholdDuration = 0;
-          if (!pubSpeaking && speechThresholdDuration >= this.opts.minSpeechDuration) {
-            pubSpeaking = true;
-            pubSilenceDuration = 0;
-            pubSpeechDuration = speechThresholdDuration;
-
-            this.controller?.enqueue({
-              type: VADEventType.START_OF_SPEECH,
-              samplesIndex: pubCurrentSample,
-              timestamp: pubTimestamp,
-              silenceDuration: pubSilenceDuration,
-              speechDuration: pubSpeechDuration,
-              probability: p,
-              inferenceDuration,
-              frames: [copySpeechBuffer()],
-              speaking: pubSpeaking,
-              rawAccumulatedSilence: 0,
-              rawAccumulatedSpeech: 0,
-            });
-          }
-        } else {
-          silenceThresholdDuration += windowDuration;
-          speechThresholdDuration = 0;
-
-          if (!pubSpeaking) {
-            resetWriteCursor();
-          }
-
-          if (pubSpeaking && silenceThresholdDuration > this.opts.minSilenceDuration) {
-            pubSpeaking = false;
-            pubSpeechDuration = 0;
-            pubSilenceDuration = silenceThresholdDuration;
-
-            this.controller?.enqueue({
-              type: VADEventType.END_OF_SPEECH,
-              samplesIndex: pubCurrentSample,
-              timestamp: pubTimestamp,
-              silenceDuration: pubSilenceDuration,
-              speechDuration: pubSpeechDuration,
-              probability: p,
-              inferenceDuration,
-              frames: [copySpeechBuffer()],
-              speaking: pubSpeaking,
-              rawAccumulatedSilence: 0,
-              rawAccumulatedSpeech: 0,
-            });
-
-            resetWriteCursor();
-          }
-        }
-
-        inputFrames = [];
-        inferenceFrames = [];
-
-        if (inputFrame.data.length > toCopyInt) {
-          const data = inputFrame.data.subarray(toCopyInt);
-          inputFrames.push(
-            new AudioFrame(data, this.inputSampleRate, 1, Math.trunc(data.length / 2)),
-          );
-        }
-        if (inferenceFrame.data.length > this.model.windowSizeSamples) {
-          const data = inferenceFrame.data.subarray(this.model.windowSizeSamples);
-          inferenceFrames.push(
-            new AudioFrame(data, this.opts.sampleRate, 1, Math.trunc(data.length / 2)),
-          );
-        }
-      }
-    }
-  }
-
-  updateOptions(opts: Partial<VADOptions>) {
-    const oldMaxBufferedSpeech = this.opts.maxBufferedSpeech;
-    this.opts = { ...this.opts, ...opts };
-
-    if (this.inputSampleRate) {
-      // Assert speech buffer exists
-      if (this.speechBuffer === null) throw new Error('speechBuffer is null');
-
-      // Resize speech buffer
-      this.prefixPaddingSamples = Math.trunc(
-        (this.opts.prefixPaddingDuration * this.inputSampleRate) / 1000,
-      );
-      const bufferSize =
-        Math.trunc((this.opts.maxBufferedSpeech * this.inputSampleRate) / 1000) +
-        this.prefixPaddingSamples;
-      const resizedBuffer = new Int16Array(bufferSize);
-      resizedBuffer.set(
-        this.speechBuffer.subarray(0, Math.min(this.speechBuffer.length, bufferSize)),
-      );
-      this.speechBuffer = resizedBuffer;
-
-      // Determine if max has been reached
-      if (this.opts.maxBufferedSpeech > oldMaxBufferedSpeech) {
-        this.speechBufferMaxReached = false;
-      }
-    }
-  }
-}
-
 export class VADStream extends baseStream {
-  outputStream: ReadableStream<VADEvent>;
-  private underlyingSource: VADStreamSource;
+  #opts: VADOptions;
+  #model: OnnxModel;
+  #inputSampleRate: number;
+  #speechBuffer: Int16Array | null;
+  #speechBufferMaxReached: boolean;
+  #prefixPaddingSamples: number;
+  #task: Promise<void>;
+  #expFilter = new ExpFilter(0.35);
+  #extraInferenceTime = 0;
+  #logger = log();
 
   constructor(vad: VAD, opts: VADOptions, model: OnnxModel) {
     super(vad);
-    this.underlyingSource = new VADStreamSource(vad, opts, model, this.deferredInputStream.stream);
-    this.outputStream = new ReadableStream<VADEvent>(this.underlyingSource);
+    this.#opts = opts;
+    this.#model = model;
+    this.#inputSampleRate = 0;
+    this.#speechBuffer = null;
+    this.#speechBufferMaxReached = false;
+    this.#prefixPaddingSamples = 0;
+
+    this.#task = new Promise(async () => {
+      let inferenceData = new Float32Array(this.#model.windowSizeSamples);
+
+      // a copy is exposed to the user in END_OF_SPEECH
+      let speechBufferIndex = 0;
+
+      // "pub" means public, these values are exposed to the users through events
+      let pubSpeaking = false;
+      let pubSpeechDuration = 0;
+      let pubSilenceDuration = 0;
+      let pubCurrentSample = 0;
+      let pubTimestamp = 0;
+      let speechThresholdDuration = 0;
+      let silenceThresholdDuration = 0;
+
+      let inputFrames = [];
+      let inferenceFrames: AudioFrame[] = [];
+      let resampler: AudioResampler | null = null;
+
+      // used to avoid drift when the sampleRate ratio is not an integer
+      let inputCopyRemainingFrac = 0.0;
+
+      while (true) {
+        const { done, value: frame } = await this.inputReader.read();
+        if (done) {
+          break;
+        }
+
+        if (typeof frame === 'symbol') {
+          continue; // ignore flush sentinel for now
+        }
+
+        if (!this.#inputSampleRate || !this.#speechBuffer) {
+          this.#inputSampleRate = frame.sampleRate;
+          this.#prefixPaddingSamples = Math.trunc(
+            (this.#opts.prefixPaddingDuration * this.#inputSampleRate) / 1000,
+          );
+          const bufferSize =
+            Math.trunc((this.#opts.maxBufferedSpeech * this.#inputSampleRate) / 1000) +
+            this.#prefixPaddingSamples;
+          this.#speechBuffer = new Int16Array(bufferSize);
+
+          if (this.#opts.sampleRate !== this.#inputSampleRate) {
+            // resampling needed: the input sample rate isn't the same as the model's
+            // sample rate used for inference
+            resampler = new AudioResampler(
+              this.#inputSampleRate,
+              this.#opts.sampleRate,
+              1,
+              AudioResamplerQuality.QUICK, // VAD doesn't need high quality
+            );
+          }
+        } else if (frame.sampleRate !== this.#inputSampleRate) {
+          this.#logger.error('a frame with a different sample rate was already published');
+          continue;
+        }
+
+        inputFrames.push(frame);
+        if (resampler) {
+          inferenceFrames.push(...resampler.push(frame));
+        } else {
+          inferenceFrames.push(frame);
+        }
+
+        while (true) {
+          const startTime = process.hrtime.bigint();
+          const availableInferenceSamples = inferenceFrames
+            .map((x) => x.samplesPerChannel)
+            .reduce((acc, x) => acc + x, 0);
+
+          if (availableInferenceSamples < this.#model.windowSizeSamples) {
+            break; // not enough samples to run inference
+          }
+
+          const inputFrame = mergeFrames(inputFrames);
+          const inferenceFrame = mergeFrames(inferenceFrames);
+
+          // convert data to f32
+          inferenceData = Float32Array.from(
+            inferenceFrame.data.subarray(0, this.#model.windowSizeSamples),
+            (x) => x / 32767,
+          );
+
+          const p = await this.#model
+            .run(inferenceData)
+            .then((data) => this.#expFilter.apply(1, data));
+
+          const windowDuration = (this.#model.windowSizeSamples / this.#opts.sampleRate) * 1000;
+          pubCurrentSample += this.#model.windowSizeSamples;
+          pubTimestamp += windowDuration;
+          const resamplingRatio = this.#inputSampleRate / this.#model.sampleRate;
+          const toCopy = this.#model.windowSizeSamples * resamplingRatio + inputCopyRemainingFrac;
+          const toCopyInt = Math.trunc(toCopy);
+          inputCopyRemainingFrac = toCopy - toCopyInt;
+
+          // copy the inference window to the speech buffer
+          const availableSpace = this.#speechBuffer.length - speechBufferIndex;
+          const toCopyBuffer = Math.min(this.#model.windowSizeSamples, availableSpace);
+          if (toCopyBuffer > 0) {
+            this.#speechBuffer.set(inputFrame.data.subarray(0, toCopyBuffer), speechBufferIndex);
+            speechBufferIndex += toCopyBuffer;
+          } else if (!this.#speechBufferMaxReached) {
+            this.#speechBufferMaxReached = true;
+            this.#logger.warn(
+              'maxBufferedSpeech reached, ignoring further data for the current speech input',
+            );
+          }
+
+          const inferenceDuration = Number((process.hrtime.bigint() - startTime) / BigInt(1000000));
+          this.#extraInferenceTime = Math.max(
+            0,
+            this.#extraInferenceTime + inferenceDuration - windowDuration,
+          );
+          if (this.#extraInferenceTime > SLOW_INFERENCE_THRESHOLD) {
+            this.#logger
+              .child({ delay: this.#extraInferenceTime })
+              .warn('inference is slower than realtime');
+          }
+
+          if (pubSpeaking) {
+            pubSpeechDuration += inferenceDuration;
+          } else {
+            pubSilenceDuration += inferenceDuration;
+          }
+
+          this.outputWriter.write({
+            type: VADEventType.INFERENCE_DONE,
+            samplesIndex: pubCurrentSample,
+            timestamp: pubTimestamp,
+            silenceDuration: pubSilenceDuration,
+            speechDuration: pubSpeechDuration,
+            probability: p,
+            inferenceDuration,
+            frames: [
+              new AudioFrame(
+                inputFrame.data.subarray(0, toCopyInt),
+                this.#inputSampleRate,
+                1,
+                toCopyInt,
+              ),
+            ],
+            speaking: pubSpeaking,
+            rawAccumulatedSilence: silenceThresholdDuration,
+            rawAccumulatedSpeech: speechThresholdDuration,
+          });
+
+          const resetWriteCursor = () => {
+            if (!this.#speechBuffer) throw new Error('speechBuffer is empty');
+            if (speechBufferIndex <= this.#prefixPaddingSamples) {
+              return;
+            }
+
+            const paddingData = this.#speechBuffer.subarray(
+              speechBufferIndex - this.#prefixPaddingSamples,
+              speechBufferIndex,
+            );
+            this.#speechBuffer.set(paddingData, 0);
+            speechBufferIndex = this.#prefixPaddingSamples;
+            this.#speechBufferMaxReached = false;
+          };
+
+          const copySpeechBuffer = (): AudioFrame => {
+            if (!this.#speechBuffer) throw new Error('speechBuffer is empty');
+            return new AudioFrame(
+              this.#speechBuffer.subarray(this.#prefixPaddingSamples, speechBufferIndex),
+              this.#inputSampleRate,
+              1,
+              speechBufferIndex,
+            );
+          };
+
+          if (p > this.#opts.activationThreshold) {
+            speechThresholdDuration += windowDuration;
+            silenceThresholdDuration = 0;
+            if (!pubSpeaking && speechThresholdDuration >= this.#opts.minSpeechDuration) {
+              pubSpeaking = true;
+              pubSilenceDuration = 0;
+              pubSpeechDuration = speechThresholdDuration;
+
+              this.outputWriter.write({
+                type: VADEventType.START_OF_SPEECH,
+                samplesIndex: pubCurrentSample,
+                timestamp: pubTimestamp,
+                silenceDuration: pubSilenceDuration,
+                speechDuration: pubSpeechDuration,
+                probability: p,
+                inferenceDuration,
+                frames: [copySpeechBuffer()],
+                speaking: pubSpeaking,
+                rawAccumulatedSilence: 0,
+                rawAccumulatedSpeech: 0,
+              });
+            }
+          } else {
+            silenceThresholdDuration += windowDuration;
+            speechThresholdDuration = 0;
+
+            if (!pubSpeaking) {
+              resetWriteCursor();
+            }
+
+            if (pubSpeaking && silenceThresholdDuration > this.#opts.minSilenceDuration) {
+              pubSpeaking = false;
+              pubSpeechDuration = 0;
+              pubSilenceDuration = silenceThresholdDuration;
+
+              this.outputWriter.write({
+                type: VADEventType.END_OF_SPEECH,
+                samplesIndex: pubCurrentSample,
+                timestamp: pubTimestamp,
+                silenceDuration: pubSilenceDuration,
+                speechDuration: pubSpeechDuration,
+                probability: p,
+                inferenceDuration,
+                frames: [copySpeechBuffer()],
+                speaking: pubSpeaking,
+                rawAccumulatedSilence: 0,
+                rawAccumulatedSpeech: 0,
+              });
+
+              resetWriteCursor();
+            }
+          }
+
+          inputFrames = [];
+          inferenceFrames = [];
+
+          if (inputFrame.data.length > toCopyInt) {
+            const data = inputFrame.data.subarray(toCopyInt);
+            inputFrames.push(
+              new AudioFrame(data, this.#inputSampleRate, 1, Math.trunc(data.length / 2)),
+            );
+          }
+          if (inferenceFrame.data.length > this.#model.windowSizeSamples) {
+            const data = inferenceFrame.data.subarray(this.#model.windowSizeSamples);
+            inferenceFrames.push(
+              new AudioFrame(data, this.#opts.sampleRate, 1, Math.trunc(data.length / 2)),
+            );
+          }
+        }
+      }
+    });
   }
 
   /**
@@ -434,6 +387,30 @@ export class VADStream extends baseStream {
    * This method allows you to update the VAD options after the VAD object has been created
    */
   updateOptions(opts: Partial<VADOptions>) {
-    this.underlyingSource.updateOptions(opts);
+    const oldMaxBufferedSpeech = this.#opts.maxBufferedSpeech;
+    this.#opts = { ...this.#opts, ...opts };
+
+    if (this.#inputSampleRate) {
+      // Assert speech buffer exists
+      if (this.#speechBuffer === null) throw new Error('speechBuffer is null');
+
+      // Resize speech buffer
+      this.#prefixPaddingSamples = Math.trunc(
+        (this.#opts.prefixPaddingDuration * this.#inputSampleRate) / 1000,
+      );
+      const bufferSize =
+        Math.trunc((this.#opts.maxBufferedSpeech * this.#inputSampleRate) / 1000) +
+        this.#prefixPaddingSamples;
+      const resizedBuffer = new Int16Array(bufferSize);
+      resizedBuffer.set(
+        this.#speechBuffer.subarray(0, Math.min(this.#speechBuffer.length, bufferSize)),
+      );
+      this.#speechBuffer = resizedBuffer;
+
+      // Determine if max has been reached
+      if (this.#opts.maxBufferedSpeech > oldMaxBufferedSpeech) {
+        this.#speechBufferMaxReached = false;
+      }
+    }
   }
 }

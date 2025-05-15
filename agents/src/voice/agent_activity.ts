@@ -47,8 +47,9 @@ export class AgentActivity implements RecognitionHooks {
     this.logger.info('End of speech', ev);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onVADInferenceDone(ev: VADEvent): void {
-    this.logger.info('VAD inference done', ev);
+    // this.logger.info('VAD inference done', ev);
   }
 
   onInterimTranscript(ev: SpeechEvent): void {
