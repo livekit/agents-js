@@ -56,7 +56,7 @@ export class AudioRecognition {
   }
 
   private async onSTTEvent(ev: SpeechEvent) {
-    // TODO(shubhra) ignore stt event if user turn already committed and EOU task is done
+    // TODO(AJS-30) ignore stt event if user turn already committed and EOU task is done
     // or it's an interim transcript
 
     switch (ev.type) {
