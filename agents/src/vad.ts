@@ -4,6 +4,9 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import type { ReadableStream } from 'node:stream/web';
+import { DeferredReadableStream } from './deferred_stream.js';
+import { log } from './log.js';
 import type { VADMetrics } from './metrics/base.js';
 import { AsyncIterableQueue } from './utils.js';
 
@@ -83,10 +86,31 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected closed = false;
   #vad: VAD;
   #lastActivityTime = BigInt(0);
+  private logger = log();
+  private deferredInputStream: DeferredReadableStream<AudioFrame>;
 
   constructor(vad: VAD) {
     this.#vad = vad;
+    this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.monitorMetrics();
+    this.mainTask();
+  }
+
+  protected async mainTask() {
+    // This is just a placeholder since VAD isn't implemented with the streams API yet.
+    try {
+      const inputStream = this.deferredInputStream.stream;
+      const reader = inputStream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        this.pushFrame(value);
+      }
+    } catch (error) {
+      this.logger.error('Error in VADStream mainTask:', error);
+    }
   }
 
   protected async monitorMetrics() {
@@ -120,6 +144,10 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
       }
     }
     this.output.close();
+  }
+
+  updateInputStream(audioStream: ReadableStream<AudioFrame>) {
+    this.deferredInputStream.setSource(audioStream);
   }
 
   pushFrame(frame: AudioFrame) {
