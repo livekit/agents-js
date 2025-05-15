@@ -35,7 +35,13 @@ export class RoomIO {
 
   private onTrackSubscribed = (track: RemoteTrack) => {
     if (track.kind === TrackKind.KIND_AUDIO) {
-      this._deferredAudioInputStream.setSource(new AudioStream(track));
+      this._deferredAudioInputStream.setSource(
+        new AudioStream(track, {
+          // TODO(AJS-41) remove hardcoded sample rate
+          sampleRate: 16000,
+          numChannels: 1,
+        }),
+      );
     }
   };
 

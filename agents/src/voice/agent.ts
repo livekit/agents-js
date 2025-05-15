@@ -6,11 +6,14 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { AudioFrame } from '@livekit/rtc-node';
+import { ReadableStream } from 'node:stream/web';
 import type { ChatChunk, ChatMessage, LLM } from '../llm/index.js';
 import { ChatContext } from '../llm/index.js';
+import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import type { TTS } from '../tts/index.js';
 import type { VAD } from '../vad.js';
+import type { AgentActivity } from './agent_activity.js';
 
 export class Agent {
   private instructions: string;
@@ -21,7 +24,9 @@ export class Agent {
   private vad: VAD | undefined;
   private llm: LLM | any;
   private tts: TTS | undefined;
-  private agentActivity: any; // TODO(shubhra): add type
+
+  /** @internal */
+  agentActivity?: AgentActivity;
 
   constructor(
     instructions: string,
@@ -62,7 +67,7 @@ export class Agent {
     audio: ReadableStream<AudioFrame>,
     modelSettings: any, // TODO(shubhra): add type
   ): Promise<ReadableStream<SpeechEvent | string> | null> {
-    return null;
+    return Agent.default.sttNode(this, audio, modelSettings);
   }
 
   async llmNode(
@@ -82,12 +87,42 @@ export class Agent {
 
   // realtime_audio_output_node
 
+  getActivityOrThrow(): AgentActivity {
+    if (!this.agentActivity) {
+      throw new Error('Agent activity not found');
+    }
+    return this.agentActivity;
+  }
+
   static default = {
     async sttNode(
+      agent: Agent,
       audio: ReadableStream<AudioFrame>,
       modelSettings: any, // TODO(shubhra): add type
     ): Promise<ReadableStream<SpeechEvent | string> | null> {
-      return null;
+      const activity = agent.getActivityOrThrow();
+
+      let wrapped_stt = activity.stt;
+
+      if (!wrapped_stt.capabilities.streaming) {
+        if (!agent.vad) {
+          throw new Error(
+            'STT does not support streaming, add a VAD to the AgentTask/VoiceAgent to enable streaming',
+          );
+        }
+        wrapped_stt = new STTStreamAdapter(wrapped_stt, agent.vad);
+      }
+
+      const stream = wrapped_stt.stream();
+      stream.updateInputStream(audio);
+
+      return new ReadableStream({
+        async start(controller) {
+          for await (const event of stream) {
+            controller.enqueue(event);
+          }
+        },
+      });
     },
   };
 }

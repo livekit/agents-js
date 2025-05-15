@@ -4,6 +4,7 @@
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
 import { log } from '../log.js';
+import type { STT } from '../stt/index.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
@@ -11,6 +12,7 @@ import { RoomIO } from './room_io.js';
 
 export class AgentSession {
   vad: VAD;
+  stt: STT;
 
   private agent?: Agent;
   private activity?: AgentActivity;
@@ -23,8 +25,9 @@ export class AgentSession {
   /** @internal */
   audioInput?: ReadableStream<AudioFrame>;
 
-  constructor(vad: VAD) {
+  constructor(vad: VAD, stt: STT) {
     this.vad = vad;
+    this.stt = stt;
   }
 
   async start(agent: Agent, room: Room): Promise<void> {
