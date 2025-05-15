@@ -114,24 +114,30 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     this.metricsStream = metricsStream;
     this.outputReader = outputStream.getReader();
 
+    this.pumpDeferredStream();
     this.monitorMetrics();
-    this.mainTask();
   }
 
-  protected async mainTask() {
-    // This is just a placeholder since VAD isn't implemented with the streams API yet.
+  /**
+   * Reads from the deferred input stream and forwards chunks to the input writer.
+   *
+   * Note: we can't just do this.deferredInputStream.stream.pipeTo(this.input.writable)
+   * because the inputWriter locks the this.input.writable stream. All writes must go through
+   * the inputWriter.
+   */
+  private async pumpDeferredStream() {
+    const reader = this.deferredInputStream.stream.getReader();
     try {
-      const inputStream = this.deferredInputStream.stream;
-      const reader = inputStream.getReader();
       while (true) {
         const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        this.pushFrame(value);
+        if (done) break;
+        await this.inputWriter.write(value);
       }
-    } catch (error) {
-      this.logger.error('Error in VADStream mainTask:', error);
+    } catch (e) {
+      this.logger.error(`Error pumping deferred stream: ${e}`);
+      throw e;
+    } finally {
+      reader.releaseLock();
     }
   }
 
@@ -174,7 +180,9 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     this.deferredInputStream.setSource(audioStream);
   }
 
+  /** @deprecated Use `updateInputStream` instead */
   pushFrame(frame: AudioFrame) {
+    // TODO(AJS-395): remove this method
     if (this.inputClosed) {
       throw new Error('Input is closed');
     }
