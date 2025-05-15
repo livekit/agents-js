@@ -105,13 +105,20 @@ export class AudioRecognition {
       return;
     }
     if (sttStream instanceof ReadableStream) {
-      for await (const ev of sttStream) {
+      const reader = sttStream.getReader();
+      while (true) {
+        const { done, value: ev } = await reader.read();
+        if (done) {
+          break;
+        }
         if (typeof ev === 'string') {
           throw new Error('STT node must yield SpeechEvent');
         } else {
           await this.onSTTEvent(ev);
         }
       }
+      reader.releaseLock();
+      sttStream.cancel();
     }
   }
 
