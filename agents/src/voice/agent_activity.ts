@@ -62,7 +62,7 @@ export class AgentActivity implements RecognitionHooks {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onVADInferenceDone(ev: VADEvent): void {
-    // this.logger.info('VAD inference done', ev);
+    // TODO(AJS-40): Implement this
   }
 
   onInterimTranscript(ev: SpeechEvent): void {
