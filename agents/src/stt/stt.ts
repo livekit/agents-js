@@ -4,7 +4,10 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import type { ReadableStream } from 'node:stream/web';
+import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
+import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import type { AudioBuffer } from '../utils.js';
 import { AsyncIterableQueue } from '../utils.js';
 
@@ -143,10 +146,28 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   abstract label: string;
   protected closed = false;
   #stt: STT;
-
+  private deferredInputStream: DeferredReadableStream<AudioFrame>;
+  private logger = log();
   constructor(stt: STT) {
     this.#stt = stt;
+    this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.monitorMetrics();
+    this.mainTask();
+  }
+
+  protected async mainTask() {
+    // TODO(AJS-35): Implement STT with webstreams API
+    try {
+      const inputStream = this.deferredInputStream.stream;
+      const reader = inputStream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        this.pushFrame(value);
+      }
+    } catch (error) {
+      this.logger.error('Error in STTStream mainTask:', error);
+    }
   }
 
   protected async monitorMetrics() {
@@ -167,6 +188,10 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
       this.#stt.emit(SpeechEventType.METRICS_COLLECTED, metrics);
     }
     this.output.close();
+  }
+
+  updateInputStream(audioStream: ReadableStream<AudioFrame>) {
+    this.deferredInputStream.setSource(audioStream);
   }
 
   /** Push an audio frame to the STT */

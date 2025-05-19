@@ -10,9 +10,9 @@ import type {
   ReadableStreamDefaultReader,
   WritableStreamDefaultWriter,
 } from 'node:stream/web';
-import { DeferredReadableStream } from './deferred_stream.js';
 import { log } from './log.js';
 import type { VADMetrics } from './metrics/base.js';
+import { DeferredReadableStream } from './stream/deferred_stream.js';
 
 export enum VADEventType {
   START_OF_SPEECH,
