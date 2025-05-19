@@ -4,11 +4,15 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
+import type {
+  ReadableStream,
+  ReadableStreamDefaultReader,
+  WritableStreamDefaultWriter,
+} from 'node:stream/web';
 import { log } from './log.js';
 import type { VADMetrics } from './metrics/base.js';
 import { DeferredReadableStream } from './stream/deferred_stream.js';
-import { AsyncIterableQueue } from './utils.js';
+import { IdentityTransform } from './stream/identity_transform.js';
 
 export enum VADEventType {
   START_OF_SPEECH,
@@ -80,46 +84,70 @@ export abstract class VAD extends (EventEmitter as new () => TypedEmitter<VADCal
 
 export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
-  protected input = new AsyncIterableQueue<AudioFrame | typeof VADStream.FLUSH_SENTINEL>();
-  protected queue = new AsyncIterableQueue<VADEvent>();
-  protected output = new AsyncIterableQueue<VADEvent>();
+  protected input = new IdentityTransform<AudioFrame | typeof VADStream.FLUSH_SENTINEL>();
+  protected output = new IdentityTransform<VADEvent>();
+  protected inputWriter: WritableStreamDefaultWriter<AudioFrame | typeof VADStream.FLUSH_SENTINEL>;
+  protected inputReader: ReadableStreamDefaultReader<AudioFrame | typeof VADStream.FLUSH_SENTINEL>;
+  protected outputWriter: WritableStreamDefaultWriter<VADEvent>;
+  protected outputReader: ReadableStreamDefaultReader<VADEvent>;
   protected closed = false;
+  protected inputClosed = false;
+
   #vad: VAD;
   #lastActivityTime = BigInt(0);
   private logger = log();
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
 
+  private metricsStream: ReadableStream<VADEvent>;
   constructor(vad: VAD) {
     this.#vad = vad;
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
+
+    this.inputWriter = this.input.writable.getWriter();
+    this.inputReader = this.input.readable.getReader();
+    this.outputWriter = this.output.writable.getWriter();
+
+    const [outputStream, metricsStream] = this.output.readable.tee();
+    this.metricsStream = metricsStream;
+    this.outputReader = outputStream.getReader();
+
+    this.pumpDeferredStream();
     this.monitorMetrics();
-    this.mainTask();
   }
 
-  protected async mainTask() {
-    // This is just a placeholder since VAD isn't implemented with the streams API yet.
+  /**
+   * Reads from the deferred input stream and forwards chunks to the input writer.
+   *
+   * Note: we can't just do this.deferredInputStream.stream.pipeTo(this.input.writable)
+   * because the inputWriter locks the this.input.writable stream. All writes must go through
+   * the inputWriter.
+   */
+  private async pumpDeferredStream() {
+    const reader = this.deferredInputStream.stream.getReader();
     try {
-      const inputStream = this.deferredInputStream.stream;
-      const reader = inputStream.getReader();
       while (true) {
         const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        this.pushFrame(value);
+        if (done) break;
+        await this.inputWriter.write(value);
       }
-    } catch (error) {
-      this.logger.error('Error in VADStream mainTask:', error);
+    } catch (e) {
+      this.logger.error(`Error pumping deferred stream: ${e}`);
+      throw e;
+    } finally {
+      reader.releaseLock();
     }
   }
 
   protected async monitorMetrics() {
     let inferenceDurationTotal = 0;
     let inferenceCount = 0;
-
-    for await (const event of this.queue) {
-      this.output.put(event);
-      switch (event.type) {
+    const metricsReader = this.metricsStream.getReader();
+    while (true) {
+      const { done, value } = await metricsReader.read();
+      if (done) {
+        break;
+      }
+      switch (value.type) {
         case VADEventType.START_OF_SPEECH:
           inferenceCount++;
           if (inferenceCount >= 1 / this.#vad.capabilities.updateInterval) {
@@ -143,51 +171,56 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
           break;
       }
     }
-    this.output.close();
   }
 
   updateInputStream(audioStream: ReadableStream<AudioFrame>) {
     this.deferredInputStream.setSource(audioStream);
   }
 
+  /** @deprecated Use `updateInputStream` instead */
   pushFrame(frame: AudioFrame) {
-    if (this.input.closed) {
+    // TODO(AJS-395): remove this method
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(frame);
+    this.inputWriter.write(frame);
   }
 
   flush() {
-    if (this.input.closed) {
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(VADStream.FLUSH_SENTINEL);
+    this.inputWriter.write(VADStream.FLUSH_SENTINEL);
   }
 
   endInput() {
-    if (this.input.closed) {
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.close();
+    this.inputClosed = true;
+    this.input.writable.close();
   }
 
-  next(): Promise<IteratorResult<VADEvent>> {
-    return this.output.next();
+  async next(): Promise<IteratorResult<VADEvent>> {
+    return this.outputReader.read().then(({ done, value }) => {
+      if (done) {
+        return { done: true, value: undefined };
+      }
+      return { done: false, value };
+    });
   }
 
   close() {
-    this.input.close();
-    this.queue.close();
-    this.output.close();
+    this.input.writable.close();
     this.closed = true;
   }
 

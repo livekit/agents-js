@@ -48,10 +48,10 @@ export class AudioRecognition {
   async start() {
     const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
     this.vadStreamProcessor = this.vadTask(vadInputStream).catch((err) => {
-      throw err;
+      this.logger.error(`Error in VAD task: ${err}`);
     });
     this.sttStreamProcessor = this.sttTask(sttInputStream).catch((err) => {
-      throw err;
+      this.logger.error(`Error in STT task: ${err}`);
     });
   }
 
