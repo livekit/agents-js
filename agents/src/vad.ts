@@ -4,7 +4,6 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
-import { TransformStream } from 'node:stream/web';
 import type {
   ReadableStream,
   ReadableStreamDefaultReader,
