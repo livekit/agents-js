@@ -13,6 +13,7 @@ import type {
 import { log } from './log.js';
 import type { VADMetrics } from './metrics/base.js';
 import { DeferredReadableStream } from './stream/deferred_stream.js';
+import { IdentityTransform } from './stream/identity_transform.js';
 
 export enum VADEventType {
   START_OF_SPEECH,
@@ -84,11 +85,8 @@ export abstract class VAD extends (EventEmitter as new () => TypedEmitter<VADCal
 
 export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
-  protected input = new TransformStream<
-    AudioFrame | typeof VADStream.FLUSH_SENTINEL,
-    AudioFrame | typeof VADStream.FLUSH_SENTINEL
-  >();
-  protected output = new TransformStream<VADEvent, VADEvent>();
+  protected input = new IdentityTransform<AudioFrame | typeof VADStream.FLUSH_SENTINEL>();
+  protected output = new IdentityTransform<VADEvent>();
   protected inputWriter: WritableStreamDefaultWriter<AudioFrame | typeof VADStream.FLUSH_SENTINEL>;
   protected inputReader: ReadableStreamDefaultReader<AudioFrame | typeof VADStream.FLUSH_SENTINEL>;
   protected outputWriter: WritableStreamDefaultWriter<VADEvent>;
