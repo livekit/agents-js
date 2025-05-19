@@ -4,8 +4,8 @@
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import { AudioStream, type RemoteTrack, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
-import { DeferredReadableStream } from '../deferred_stream.js';
 import { log } from '../log.js';
+import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import type { AgentSession } from './agent_session.js';
 
 export class RoomIO {
