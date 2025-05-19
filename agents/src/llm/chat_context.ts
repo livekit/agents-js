@@ -34,6 +34,7 @@ const defaultCreateChatMessage = {
   role: ChatRole.SYSTEM,
 };
 
+// TODO(AJS-41): update with 1.0 changes
 export class ChatMessage {
   readonly role: ChatRole;
   readonly id?: string;
@@ -128,6 +129,7 @@ export class ChatMessage {
   }
 }
 
+// TODO()
 export class ChatContext {
   messages: ChatMessage[] = [];
   metadata: { [id: string]: any } = {};
