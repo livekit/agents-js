@@ -45,22 +45,19 @@ export class AudioRecognition {
   private lastSpeakingTime = 0;
   private userTurnCommitted = false;
   private speaking = false;
-  private minEndpointingDelay: number;
-  private maxEndpointingDelay: number;
   private bounceEOUAbortController?: AbortController;
+  private eouTaskDone = false;
 
   constructor(
-    minEndpointingDelay: number,
-    maxEndpointingDelay: number,
     private hooks: RecognitionHooks,
     private vad: VAD,
+    private minEndpointingDelay: number,
+    private maxEndpointingDelay: number,
     private stt?: STTNode,
     private manualTurnDetection = false,
     private turnDetector?: _TurnDetector,
     private lastLanguage?: string,
   ) {
-    this.minEndpointingDelay = minEndpointingDelay;
-    this.maxEndpointingDelay = maxEndpointingDelay;
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
   }
 
@@ -75,8 +72,17 @@ export class AudioRecognition {
   }
 
   private async onSTTEvent(ev: SpeechEvent) {
-    // TODO(AJS-30) ignore stt event if user turn already committed and EOU task is done
-    // or it's an interim transcript
+    if (
+      this.manualTurnDetection &&
+      this.userTurnCommitted &&
+      (this.bounceEOUAbortController === undefined ||
+        this.eouTaskDone ||
+        ev.type == SpeechEventType.INTERIM_TRANSCRIPT)
+    ) {
+      // ignore stt event if user turn already committed and EOU task is done
+      // or it's an interim transcript
+      return;
+    }
 
     switch (ev.type) {
       case SpeechEventType.FINAL_TRANSCRIPT:
@@ -86,14 +92,17 @@ export class AudioRecognition {
 
         if (!transcript) return;
 
-        this.logger.debug('received user transcript', {
-          user_transcript: transcript,
-          language: this.lastLanguage,
-        });
+        this.logger.debug(
+          {
+            user_transcript: transcript,
+            language: this.lastLanguage,
+          },
+          'received user transcript',
+        );
 
         this.lastFinalTranscriptTime = Date.now();
         this.audioTranscript += ` ${transcript}`;
-        this.audioTranscript = this.audioTranscript.trim();
+        this.audioTranscript = this.audioTranscript.trimStart();
         this.audioInterimTranscript = '';
 
         if (!this.speaking) {
@@ -168,6 +177,7 @@ export class AudioRecognition {
         // clear the transcript if the user turn was committed
         this.audioTranscript = '';
       }
+      this.eouTaskDone = true;
     };
 
     if (this.bounceEOUAbortController) {
@@ -175,7 +185,7 @@ export class AudioRecognition {
     }
 
     this.bounceEOUAbortController = new AbortController();
-
+    this.eouTaskDone = false;
     bounceEOUTask(this.lastSpeakingTime, this.bounceEOUAbortController.signal);
   }
 
@@ -215,6 +225,9 @@ export class AudioRecognition {
         case VADEventType.START_OF_SPEECH:
           this.hooks.onStartOfSpeech(ev);
           this.speaking = true;
+          if (this.bounceEOUAbortController) {
+            this.bounceEOUAbortController.abort();
+          }
           break;
         case VADEventType.INFERENCE_DONE:
           this.hooks.onVADInferenceDone(ev);
@@ -224,6 +237,11 @@ export class AudioRecognition {
           this.speaking = false;
           // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
           this.lastSpeakingTime = Date.now() - ev.silenceDuration;
+
+          if (!this.manualTurnDetection) {
+            const chatCtx = this.hooks.retrieveChatCtx();
+            this.runEOUDetection(chatCtx);
+          }
           break;
       }
     }

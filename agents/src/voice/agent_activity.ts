@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
+import type { ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { VADEvent } from '../vad.js';
@@ -33,6 +34,8 @@ export class AgentActivity implements RecognitionHooks {
     this.audioRecognition = new AudioRecognition(
       this,
       this.agentSession.vad,
+      this.agentSession.options.min_endpointing_delay,
+      this.agentSession.options.max_endpointing_delay,
       // Arrow function preserves the Agent context
       (...args) => this.agent.sttNode(...args),
       this.turnDetectionMode === 'manual',
@@ -73,7 +76,12 @@ export class AgentActivity implements RecognitionHooks {
     this.logger.info(`Final transcript ${ev.alternatives![0].text}`);
   }
 
-  onEndOfTurn(ev: EndOfTurnInfo): void {
-    this.logger.info('End of turn', ev);
+  async onEndOfTurn(ev: EndOfTurnInfo): Promise<boolean> {
+    this.logger.info(ev, 'End of turn');
+    return true;
+  }
+
+  retrieveChatCtx(): ChatContext {
+    return this.agentSession.chatCtx;
   }
 }
