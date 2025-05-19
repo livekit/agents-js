@@ -5,9 +5,9 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
-import { DeferredReadableStream } from './deferred_stream.js';
 import { log } from './log.js';
 import type { VADMetrics } from './metrics/base.js';
+import { DeferredReadableStream } from './stream/deferred_stream.js';
 import { AsyncIterableQueue } from './utils.js';
 
 export enum VADEventType {
