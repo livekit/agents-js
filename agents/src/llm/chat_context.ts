@@ -129,7 +129,6 @@ export class ChatMessage {
   }
 }
 
-// TODO()
 export class ChatContext {
   messages: ChatMessage[] = [];
   metadata: { [id: string]: any } = {};
