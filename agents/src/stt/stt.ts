@@ -5,9 +5,9 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
-import { DeferredReadableStream } from '../deferred_stream.js';
 import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
+import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import type { AudioBuffer } from '../utils.js';
 import { AsyncIterableQueue } from '../utils.js';
 

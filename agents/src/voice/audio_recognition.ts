@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
-import { DeferredReadableStream } from '../deferred_stream.js';
 import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
+import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { STTNode } from './io.js';
@@ -67,10 +67,10 @@ export class AudioRecognition {
   async start() {
     const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
     this.vadStreamProcessor = this.vadTask(vadInputStream).catch((err) => {
-      throw err;
+      this.logger.error(`Error in VAD task: ${err}`);
     });
     this.sttStreamProcessor = this.sttTask(sttInputStream).catch((err) => {
-      throw err;
+      this.logger.error(`Error in STT task: ${err}`);
     });
   }
 
