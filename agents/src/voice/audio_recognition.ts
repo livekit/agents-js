@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
-import { DeferredReadableStream } from '../deferred_stream.js';
 import { log } from '../log.js';
+import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import type { SpeechEvent } from '../stt/stt.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 
