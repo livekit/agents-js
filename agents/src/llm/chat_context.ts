@@ -133,8 +133,15 @@ export class ChatContext {
   messages: ChatMessage[] = [];
   metadata: { [id: string]: any } = {};
 
+  /** @deprecated Use insertItem for 1.0 changes. */
   append(msg: { text?: string; images?: ChatImage[]; role: ChatRole }): ChatContext {
     this.messages.push(ChatMessage.create(msg));
+    return this;
+  }
+
+  insertItem(msg: ChatMessage): ChatContext {
+    // TODO(AJS-41): insert at the correct position
+    this.messages.push(msg);
     return this;
   }
 

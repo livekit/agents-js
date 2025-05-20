@@ -4,8 +4,11 @@
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
 import { ChatContext } from '../llm/chat_context.js';
+import type { ChatMessage } from '../llm/chat_context.js';
+import type { LLM } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
+import type { TTS } from '../tts/tts.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
@@ -34,6 +37,8 @@ const defaultVoiceOptions: VoiceOptions = {
 export class AgentSession {
   vad: VAD;
   stt: STT;
+  llm: LLM;
+  tts: TTS;
 
   private agent?: Agent;
   private activity?: AgentActivity;
@@ -47,9 +52,17 @@ export class AgentSession {
   /** @internal */
   audioInput?: ReadableStream<AudioFrame>;
 
-  constructor(vad: VAD, stt: STT, options?: Partial<VoiceOptions>) {
+  constructor(
+    vad: VAD,
+    stt: STT,
+    llm: LLM,
+    tts: TTS,
+    options: Partial<VoiceOptions> = defaultVoiceOptions,
+  ) {
     this.vad = vad;
     this.stt = stt;
+    this.llm = llm;
+    this.tts = tts;
     // TODO(shubhra): Add tools to chat context initalzation
     this._chatCtx = new ChatContext();
     this._options = { ...defaultVoiceOptions, ...options };
@@ -88,6 +101,11 @@ export class AgentSession {
     if (this.activity) {
       await this.activity.start();
     }
+  }
+
+  /** @internal */
+  _conversationItemAdded(item: ChatMessage): void {
+    this._chatCtx.insertItem(item);
   }
 
   get chatCtx(): ChatContext {
