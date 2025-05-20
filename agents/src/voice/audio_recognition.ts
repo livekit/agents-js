@@ -49,10 +49,10 @@ export class AudioRecognition {
   private eouTaskDone = false;
 
   constructor(
-    private hooks: RecognitionHooks,
+    private readonly hooks: RecognitionHooks,
     private vad: VAD,
-    private minEndpointingDelay: number,
-    private maxEndpointingDelay: number,
+    private readonly minEndpointingDelay: number,
+    private readonly maxEndpointingDelay: number,
     private stt?: STTNode,
     private manualTurnDetection = false,
     private turnDetector?: _TurnDetector,
