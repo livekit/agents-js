@@ -177,7 +177,9 @@ export class AudioRecognition {
         // clear the transcript if the user turn was committed
         this.audioTranscript = '';
       }
-      this.eouTaskDone = true;
+      if (!abortSignal.aborted) {
+        this.eouTaskDone = true;
+      }
     };
 
     if (this.bounceEOUAbortController) {
