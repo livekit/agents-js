@@ -4,6 +4,7 @@
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
 import { ChatContext } from '../llm/chat_context.js';
+import type { LLM } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
 import type { VAD } from '../vad.js';
@@ -34,6 +35,7 @@ const defaultVoiceOptions: VoiceOptions = {
 export class AgentSession {
   vad: VAD;
   stt: STT;
+  llm: LLM;
 
   private agent?: Agent;
   private activity?: AgentActivity;
@@ -47,9 +49,10 @@ export class AgentSession {
   /** @internal */
   audioInput?: ReadableStream<AudioFrame>;
 
-  constructor(vad: VAD, stt: STT, options: Partial<VoiceOptions> = defaultVoiceOptions) {
+  constructor(vad: VAD, stt: STT, llm: LLM, options: Partial<VoiceOptions> = defaultVoiceOptions) {
     this.vad = vad;
     this.stt = stt;
+    this.llm = llm;
     // TODO(shubhra): Add tools to chat context initalzation
     this._chatCtx = new ChatContext();
     this._options = { ...defaultVoiceOptions, ...options };

@@ -15,9 +15,11 @@ import type { TTS } from '../tts/index.js';
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
 
+export class StopResponse extends Error {}
+
 export class Agent {
-  private instructions: string;
-  private chatCtx: ChatContext;
+  private _instructions: string;
+  private _chatCtx: ChatContext;
   private tools: any; // TODO(shubhra): add type
   private turnDetection: any; // TODO(shubhra): add type
   private stt: STT | undefined;
@@ -39,9 +41,9 @@ export class Agent {
     tts?: TTS,
     allowInterruptions?: boolean,
   ) {
-    this.instructions = instructions;
+    this._instructions = instructions;
     // TODO(AJS-42): copy tools when provided
-    this.chatCtx = chatCtx || new ChatContext();
+    this._chatCtx = chatCtx || new ChatContext();
     this.tools = tools;
     this.turnDetection = turnDetection;
     this.stt = stt;
@@ -49,6 +51,14 @@ export class Agent {
     this.llm = llm;
     this.tts = tts;
     this.agentActivity = undefined; // TODO(shubhra): add type
+  }
+
+  get chatCtx(): ChatContext {
+    return this._chatCtx;
+  }
+
+  get instructions(): string {
+    return this._instructions;
   }
 
   async onEnter(): Promise<void> {}
@@ -73,10 +83,9 @@ export class Agent {
 
   async llmNode(
     chatCtx: ChatContext,
-    tools: Array<any>, // TODO(shubhra): add type
     modelSettings: any, // TODO(shubhra): add type
   ): Promise<ReadableStream<ChatChunk | string> | null> {
-    return null;
+    return Agent.default.llmNode(this, chatCtx, modelSettings);
   }
 
   async ttsNode(
@@ -121,6 +130,22 @@ export class Agent {
         async start(controller) {
           for await (const event of stream) {
             controller.enqueue(event);
+          }
+        },
+      });
+    },
+
+    async llmNode(
+      agent: Agent,
+      chatCtx: ChatContext,
+      modelSettings: any, // TODO(shubhra): add type
+    ): Promise<ReadableStream<ChatChunk | string> | null> {
+      const activity = agent.getActivityOrThrow();
+      const stream = activity.llm.chat({ chatCtx });
+      return new ReadableStream({
+        async start(controller) {
+          for await (const chunk of stream) {
+            controller.enqueue(chunk);
           }
         },
       });

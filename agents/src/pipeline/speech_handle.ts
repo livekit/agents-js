@@ -6,6 +6,7 @@ import type { ChatMessage, LLMStream } from '../llm/index.js';
 import { AsyncIterableQueue, Future } from '../utils.js';
 import type { SynthesisHandle } from './agent_output.js';
 
+// TODO(AJS-50): Update speech handle to 1.0
 export class SpeechHandle {
   #id: string;
   #allowInterruptions: boolean;
@@ -24,6 +25,7 @@ export class SpeechHandle {
   #nestedSpeechHandles: SpeechHandle[] = [];
   #nestedSpeechChanged = new AsyncIterableQueue<void>();
   #nestedSpeechFinished = false;
+  private parent?: SpeechHandle;
 
   constructor(
     id: string,
@@ -33,6 +35,7 @@ export class SpeechHandle {
     userQuestion: string,
     fncNestedDepth = 0,
     extraToolsMessages: ChatMessage[] | undefined = undefined,
+    parent?: SpeechHandle,
   ) {
     this.#id = id;
     this.#allowInterruptions = allowInterruptions;
@@ -41,6 +44,20 @@ export class SpeechHandle {
     this.#userQuestion = userQuestion;
     this.#fncNestedDepth = fncNestedDepth;
     this.#fncExtraToolsMesages = extraToolsMessages;
+    this.parent = parent;
+  }
+
+  static create(allowInterruptions: boolean = false, stepIndex: number = 0, parent?: SpeechHandle) {
+    return new SpeechHandle(
+      randomUUID(),
+      allowInterruptions,
+      false,
+      false,
+      '',
+      stepIndex,
+      undefined,
+      parent,
+    );
   }
 
   static createAssistantReply(
