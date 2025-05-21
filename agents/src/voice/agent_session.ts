@@ -4,10 +4,12 @@
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
 import { log } from '../log.js';
+import type { AgentState } from '../pipeline/index.js';
 import type { STT } from '../stt/index.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
+import type { UserState } from './events.js';
 import { RoomIO } from './room_io.js';
 
 export class AgentSession {
@@ -18,6 +20,8 @@ export class AgentSession {
   private activity?: AgentActivity;
   private nextActivity?: AgentActivity;
   private started = false;
+  private userState: UserState = 'listening';
+  private agentState: AgentState = 'initializing';
 
   private roomIO?: RoomIO;
   private logger = log();
@@ -63,5 +67,15 @@ export class AgentSession {
     if (this.activity) {
       await this.activity.start();
     }
+  }
+
+  /** @internal */
+  _updateAgentState(state: AgentState) {
+    this.agentState = state;
+  }
+
+  /** @internal */
+  _updateUserState(state: UserState) {
+    this.userState = state;
   }
 }
