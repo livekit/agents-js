@@ -141,9 +141,11 @@ export abstract class SynthesizeStream
         if (done || value === SynthesizeStream.FLUSH_SENTINEL) {
           break;
         }
-        this.logger.debug(`++ sending text to tts: ${value}`);
-        this.input.put(value);
+        this.logger.debug(`++ sending text to tts: ${String(value)}`);
+        this.pushText(value);
       }
+      this.flush();
+      this.endInput();
     } catch (error) {
       this.logger.error(error, 'Error reading deferred input stream');
     }

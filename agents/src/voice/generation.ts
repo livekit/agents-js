@@ -23,8 +23,7 @@ export function performLLMInference(
 ): [Promise<void>, _LLMGenerationData] {
   const textStream = new IdentityTransform<string>();
   const writer = textStream.writable.getWriter();
-  const textOutputStream = textStream.readable;
-  const data = new _LLMGenerationData(textOutputStream);
+  const data = new _LLMGenerationData(textStream.readable);
 
   const inferenceTask = async () => {
     const llmStream = await node(chatCtx, modelSettings);
@@ -35,7 +34,10 @@ export function performLLMInference(
       const reader = llmStream.getReader();
       while (true) {
         const { done, value: chunk } = await reader.read();
-        if (done) break;
+        if (done) {
+          console.log('+++++++++++++ LLM stream ended in performLLMInference');
+          break;
+        }
         if (typeof chunk === 'string') {
           data.generatedText += chunk;
           writer.write(chunk);
@@ -51,9 +53,8 @@ export function performLLMInference(
         }
       }
     } finally {
-      llmStream.cancel();
+      console.log('+++++++++++++ Closing writer in performLLMInference');
       writer.close();
-      textOutputStream.cancel();
     }
   };
   return [inferenceTask(), data];
@@ -77,11 +78,13 @@ export async function performTTSInference(
 
     const reader = ttsNode.getReader();
     while (true) {
+      console.log('+++++++++++++ reading tts node');
       const { done, value: chunk } = await reader.read();
       if (done) break;
       writer.write(chunk);
     }
   } finally {
+    console.log('+++++++++++++ closing writer in performTTSInference');
     writer.close();
   }
 

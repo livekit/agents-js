@@ -150,6 +150,8 @@ export class Agent {
           for await (const chunk of stream) {
             controller.enqueue(chunk);
           }
+          console.log('+++++++++++++ LLM stream ended in llmNode');
+          controller.close();
         },
       });
     },
@@ -173,6 +175,8 @@ export class Agent {
         async start(controller) {
           for await (const chunk of stream) {
             if (chunk === SynthesizeStream.END_OF_STREAM) {
+              console.log('++ END_OF_STREAM');
+              controller.close();
               break;
             }
             console.log(`++ sending audio to playout: ${chunk.frame}`);

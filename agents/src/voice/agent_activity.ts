@@ -234,7 +234,8 @@ export class AgentActivity implements RecognitionHooks {
       {},
     );
     tasks.push(llmTask);
-    const [ttsTextInput, llmOutput] = llmGenData.textStream.tee();
+    // const [ttsTextInput, llmOutput] = llmGenData.textStream.tee();
+    const ttsTextInput = llmGenData.textStream;
 
     const ttsStream = performTTSInference(
       (...args) => this.agent.ttsNode(...args),
