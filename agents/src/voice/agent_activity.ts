@@ -141,7 +141,7 @@ export class AgentActivity implements RecognitionHooks {
       instructions = `${this.agent.instructions}\n${instructions}`;
     }
 
-    this.pipelineReplyTask(handle, chatCtx || this.agent.chatCtx); // add instructions
+    this.pipelineReplyTask(handle, chatCtx || this.agent.chatCtx, userMessage?.copy()); // add instructions
     // this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
     return handle;
   }
@@ -206,7 +206,7 @@ export class AgentActivity implements RecognitionHooks {
     handle: SpeechHandle,
     chatCtx: ChatContext,
     // instructions?: string,
-    // newMessage?: ChatMessage,
+    newMessage?: ChatMessage,
   ): Promise<void> {
     this.logger.info('++++ pipelineReplyTask');
     // audioOutput = ''; //TODO
@@ -215,14 +215,20 @@ export class AgentActivity implements RecognitionHooks {
     chatCtx = chatCtx.copy();
 
     // TODO(shubhra): handle new message
+    if (newMessage) {
+      chatCtx.insertItem(newMessage);
+      this.agent._chatCtx.insertItem(newMessage);
+      this.agentSession._conversationItemAdded(newMessage);
+    }
 
     // TODO(shubhra): handle instructions
 
     // TODO(shubhra): update agent state
 
     const tasks: Array<() => Promise<void>> = [];
+    this.logger.info(chatCtx, '++++ starting inference llm');
     const [llmTask, llmGenData] = performLLMInference(
-      this.agent.llmNode.bind(this.agent),
+      (...args) => this.agent.llmNode(...args),
       chatCtx,
       {},
     );

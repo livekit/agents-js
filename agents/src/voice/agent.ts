@@ -19,7 +19,6 @@ export class StopResponse extends Error {}
 
 export class Agent {
   private _instructions: string;
-  private _chatCtx: ChatContext;
   private tools: any; // TODO(shubhra): add type
   private turnDetection: any; // TODO(shubhra): add type
   private stt: STT | undefined;
@@ -29,6 +28,8 @@ export class Agent {
 
   /** @internal */
   agentActivity?: AgentActivity;
+  /** @internal */
+  _chatCtx: ChatContext;
 
   constructor(
     instructions: string,

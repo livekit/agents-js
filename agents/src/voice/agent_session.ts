@@ -4,6 +4,7 @@
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
 import { ChatContext } from '../llm/chat_context.js';
+import type { ChatMessage } from '../llm/chat_context.js';
 import type { LLM } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
@@ -91,6 +92,11 @@ export class AgentSession {
     if (this.activity) {
       await this.activity.start();
     }
+  }
+
+  /** @internal */
+  _conversationItemAdded(item: ChatMessage): void {
+    this._chatCtx.insertItem(item);
   }
 
   get chatCtx(): ChatContext {
