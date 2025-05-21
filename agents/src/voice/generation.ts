@@ -35,7 +35,6 @@ export function performLLMInference(
       while (true) {
         const { done, value: chunk } = await reader.read();
         if (done) {
-          console.log('+++++++++++++ LLM stream ended in performLLMInference');
           break;
         }
         if (typeof chunk === 'string') {
@@ -60,33 +59,33 @@ export function performLLMInference(
   return [inferenceTask(), data];
 }
 
-export async function performTTSInference(
+export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string>,
   modelSettings: any, // TODO(shubhra): add type
-): Promise<ReadableStream<AudioFrame>> {
+): [Promise<void>, ReadableStream<AudioFrame>] {
   const audioStream = new IdentityTransform<AudioFrame>();
   const writer = audioStream.writable.getWriter();
   const audioOutputStream = audioStream.readable;
 
-  try {
-    const ttsNode = await node(text, modelSettings);
-    if (ttsNode === null) {
+  const inferenceTask = async () => {
+    try {
+      const ttsNode = await node(text, modelSettings);
+      if (ttsNode === null) {
+        writer.close();
+        return;
+      }
+
+      const reader = ttsNode.getReader();
+      while (true) {
+        const { done, value: chunk } = await reader.read();
+        if (done) break;
+        writer.write(chunk);
+      }
+    } finally {
       writer.close();
-      return audioOutputStream;
     }
+  };
 
-    const reader = ttsNode.getReader();
-    while (true) {
-      console.log('+++++++++++++ reading tts node');
-      const { done, value: chunk } = await reader.read();
-      if (done) break;
-      writer.write(chunk);
-    }
-  } finally {
-    console.log('+++++++++++++ closing writer in performTTSInference');
-    writer.close();
-  }
-
-  return audioOutputStream;
+  return [inferenceTask(), audioOutputStream];
 }

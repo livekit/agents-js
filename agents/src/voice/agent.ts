@@ -72,7 +72,7 @@ export class Agent {
     text: ReadableStream<string>,
     modelSettings: any, // TODO(shubhra): add type
   ): Promise<ReadableStream<string> | null> {
-    return null;
+    return Agent.default.transcriptionNode(this, text, modelSettings);
   }
 
   async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage): Promise<void> {}
@@ -175,15 +175,21 @@ export class Agent {
         async start(controller) {
           for await (const chunk of stream) {
             if (chunk === SynthesizeStream.END_OF_STREAM) {
-              console.log('++ END_OF_STREAM');
               controller.close();
               break;
             }
-            console.log(`++ sending audio to playout: ${chunk.frame}`);
             controller.enqueue(chunk.frame);
           }
         },
       });
+    },
+
+    async transcriptionNode(
+      agent: Agent,
+      text: ReadableStream<string>,
+      modelSettings: any, // TODO(shubhra): add type
+    ): Promise<ReadableStream<string> | null> {
+      return text;
     },
   };
 }

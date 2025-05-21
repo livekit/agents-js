@@ -152,13 +152,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async userTurnCompleted(info: EndOfTurnInfo): Promise<void> {
-    // if (oldTask) {
-    //   // We never cancel user code as this is very confusing.
-    //   // So we wait for the old execution of on_user_turn_completed to finish.
-    //   // In practice this is OK because most speeches will be interrupted if a new turn
-    //   // is detected. So the previous execution should complete quickly.
-    //   await oldTask();
-    // }
+    // TODO(shubhra) handle old task cancellation
 
     // When the audio recognition detects the end of a user turn:
     //  - check if realtime model server-side turn detection is enabled
@@ -211,7 +205,6 @@ export class AgentActivity implements RecognitionHooks {
     // instructions?: string,
     newMessage?: ChatMessage,
   ): Promise<void> {
-    // audioOutput = ''; //TODO
     // TODO(shubhra): add transcription/text output
 
     chatCtx = chatCtx.copy();
@@ -234,23 +227,16 @@ export class AgentActivity implements RecognitionHooks {
       {},
     );
     tasks.push(llmTask);
-    // const [ttsTextInput, llmOutput] = llmGenData.textStream.tee();
-    const ttsTextInput = llmGenData.textStream;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [ttsTextInput, llmOutput] = llmGenData.textStream.tee();
 
-    const ttsStream = performTTSInference(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [ttsTask, ttsStream] = performTTSInference(
       (...args) => this.agent.ttsNode(...args),
       ttsTextInput,
       {},
     );
-    tasks.push(ttsStream);
-
-    (async () => {
-      for await (const audio of await ttsStream) {
-        this.logger.info(`++ sending audio to playout: ${audio}`);
-      }
-    })();
-
-    // TODO(AJS-40): handle interrupts before playout
+    tasks.push(ttsTask);
   }
 
   // private scheduleSpeech(handle: SpeechHandle, priority: number): void {
