@@ -7,6 +7,7 @@ import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { sleep } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { STTNode } from './io.js';
 
@@ -161,7 +162,7 @@ export class AudioRecognition {
       if (abortSignal.aborted) {
         return;
       }
-      await new Promise((resolve) => setTimeout(resolve, Math.max(extraSleep, 0)));
+      await sleep(Math.max(extraSleep, 0));
 
       this.logger.debug('end of user turn', {
         transcript: this.audioTranscript,

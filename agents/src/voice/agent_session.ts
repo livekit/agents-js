@@ -29,7 +29,7 @@ const defaultVoiceOptions: VoiceOptions = {
   min_endpointing_delay: 0.5,
   max_endpointing_delay: 6.0,
   max_tool_steps: 3,
-};
+} as const;
 
 export class AgentSession {
   vad: VAD;
@@ -47,7 +47,7 @@ export class AgentSession {
   /** @internal */
   audioInput?: ReadableStream<AudioFrame>;
 
-  constructor(vad: VAD, stt: STT, options: Partial<VoiceOptions> = defaultVoiceOptions) {
+  constructor(vad: VAD, stt: STT, options?: Partial<VoiceOptions>) {
     this.vad = vad;
     this.stt = stt;
     // TODO(shubhra): Add tools to chat context initalzation
