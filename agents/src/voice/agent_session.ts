@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame, Room } from '@livekit/rtc-node';
+import type { AudioFrame, AudioSource, Room } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
 import { log } from '../log.js';
 import type { AgentState } from '../pipeline/index.js';
@@ -28,6 +28,8 @@ export class AgentSession {
 
   /** @internal */
   audioInput?: ReadableStream<AudioFrame>;
+  /** @internal */
+  audioOutput?: AudioSource;
 
   constructor(vad: VAD, stt: STT) {
     this.vad = vad;
@@ -45,7 +47,8 @@ export class AgentSession {
       await this.updateActivity(this.agent);
     }
 
-    this.roomIO = new RoomIO(this, room);
+    // TODO(AJS-38): update with TTS sample rate and num channels
+    this.roomIO = new RoomIO(this, room, 0, 0);
     this.roomIO.start();
 
     if (this.audioInput) {
