@@ -7,7 +7,7 @@ import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import { sleep } from '../utils.js';
+import { Future, sleep } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { STTNode } from './io.js';
 
@@ -47,7 +47,7 @@ export class AudioRecognition {
   private userTurnCommitted = false;
   private speaking = false;
   private bounceEOUAbortController?: AbortController;
-  private eouTaskDone = false;
+  private eouTaskDone?: Future;
 
   constructor(
     private readonly hooks: RecognitionHooks,
@@ -76,8 +76,8 @@ export class AudioRecognition {
     if (
       this.manualTurnDetection &&
       this.userTurnCommitted &&
-      (this.bounceEOUAbortController === undefined ||
-        this.eouTaskDone ||
+      (this.eouTaskDone === undefined ||
+        this.eouTaskDone.done ||
         ev.type == SpeechEventType.INTERIM_TRANSCRIPT)
     ) {
       // ignore stt event if user turn already committed and EOU task is done
@@ -178,9 +178,6 @@ export class AudioRecognition {
         // clear the transcript if the user turn was committed
         this.audioTranscript = '';
       }
-      if (!abortSignal.aborted) {
-        this.eouTaskDone = true;
-      }
     };
 
     if (this.bounceEOUAbortController) {
@@ -188,8 +185,10 @@ export class AudioRecognition {
     }
 
     this.bounceEOUAbortController = new AbortController();
-    this.eouTaskDone = false;
-    bounceEOUTask(this.lastSpeakingTime, this.bounceEOUAbortController.signal);
+    this.eouTaskDone = new Future();
+    bounceEOUTask(this.lastSpeakingTime, this.bounceEOUAbortController.signal).then(() => {
+      this.eouTaskDone?.resolve();
+    });
   }
 
   private async sttTask(inputStream: ReadableStream<AudioFrame>) {
