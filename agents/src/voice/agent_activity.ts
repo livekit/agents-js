@@ -8,6 +8,7 @@ import type { LLM } from '../llm/index.js';
 import { log } from '../log.js';
 import { SpeechHandle } from '../pipeline/speech_handle.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
+import type { TTS } from '../tts/tts.js';
 import type { VADEvent } from '../vad.js';
 import { StopResponse } from './agent.js';
 import type { Agent } from './agent.js';
@@ -17,7 +18,7 @@ import {
   type EndOfTurnInfo,
   type RecognitionHooks,
 } from './audio_recognition.js';
-import { performLLMInference } from './generation.js';
+import { performLLMInference, performTTSInference } from './generation.js';
 
 export class AgentActivity implements RecognitionHooks {
   private started = false;
@@ -59,6 +60,11 @@ export class AgentActivity implements RecognitionHooks {
   get llm(): LLM {
     // TODO(AJS-51): Allow components to be defined in Agent class
     return this.agentSession.llm;
+  }
+
+  get tts(): TTS {
+    // TODO(AJS-51): Allow components to be defined in Agent class
+    return this.agentSession.tts;
   }
 
   get draining(): boolean {
@@ -127,7 +133,6 @@ export class AgentActivity implements RecognitionHooks {
     instructions?: string,
     allowInterruptions?: boolean,
   ): SpeechHandle {
-    this.logger.info('++++ generateReply');
     // TODO(AJS-32): Add realtime model support for generating a reply
 
     // TODO(shubhra) handle tool calls
@@ -163,8 +168,6 @@ export class AgentActivity implements RecognitionHooks {
     //  - generate a reply to the user input
 
     // TODO(AJS-32): Add realtime model supppourt
-
-    this.logger.info('++++ user turn completed');
 
     if (this.currentSpeech) {
       if (!this.currentSpeech.allowInterruptions) {
@@ -208,7 +211,6 @@ export class AgentActivity implements RecognitionHooks {
     // instructions?: string,
     newMessage?: ChatMessage,
   ): Promise<void> {
-    this.logger.info('++++ pipelineReplyTask');
     // audioOutput = ''; //TODO
     // TODO(shubhra): add transcription/text output
 
@@ -225,18 +227,29 @@ export class AgentActivity implements RecognitionHooks {
 
     // TODO(shubhra): update agent state
 
-    const tasks: Array<() => Promise<void>> = [];
-    this.logger.info(chatCtx, '++++ starting inference llm');
+    const tasks: Array<Promise<any>> = [];
     const [llmTask, llmGenData] = performLLMInference(
       (...args) => this.agent.llmNode(...args),
       chatCtx,
       {},
     );
     tasks.push(llmTask);
-    llmTask();
-    for await (const chunk of llmGenData.textStream) {
-      this.logger.info(`LLM output: ${chunk}`);
-    }
+    const [ttsTextInput, llmOutput] = llmGenData.textStream.tee();
+
+    const ttsStream = performTTSInference(
+      (...args) => this.agent.ttsNode(...args),
+      ttsTextInput,
+      {},
+    );
+    tasks.push(ttsStream);
+
+    (async () => {
+      for await (const audio of await ttsStream) {
+        this.logger.info(`++ sending audio to playout: ${audio}`);
+      }
+    })();
+
+    // TODO(AJS-40): handle interrupts before playout
   }
 
   // private scheduleSpeech(handle: SpeechHandle, priority: number): void {

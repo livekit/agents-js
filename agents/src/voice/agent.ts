@@ -11,7 +11,9 @@ import type { ChatChunk, ChatMessage, LLM } from '../llm/index.js';
 import { ChatContext } from '../llm/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
+import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
 import type { TTS } from '../tts/index.js';
+import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
 
@@ -93,7 +95,7 @@ export class Agent {
     text: ReadableStream<string>,
     modelSettings: any, // TODO(shubhra): add type
   ): Promise<ReadableStream<AudioFrame> | null> {
-    return null;
+    return Agent.default.ttsNode(this, text, modelSettings);
   }
 
   // realtime_audio_output_node
@@ -147,6 +149,34 @@ export class Agent {
         async start(controller) {
           for await (const chunk of stream) {
             controller.enqueue(chunk);
+          }
+        },
+      });
+    },
+
+    async ttsNode(
+      agent: Agent,
+      text: ReadableStream<string>,
+      modelSettings: any, // TODO(shubhra): add type
+    ): Promise<ReadableStream<AudioFrame> | null> {
+      const activity = agent.getActivityOrThrow();
+      let wrapped_tts = activity.tts;
+
+      if (!activity.tts.capabilities.streaming) {
+        wrapped_tts = new TTSStreamAdapter(wrapped_tts, new BasicSentenceTokenizer());
+      }
+
+      const stream = wrapped_tts.stream();
+      stream.updateInputStream(text);
+
+      return new ReadableStream({
+        async start(controller) {
+          for await (const chunk of stream) {
+            if (chunk === SynthesizeStream.END_OF_STREAM) {
+              break;
+            }
+            console.log(`++ sending audio to playout: ${chunk.frame}`);
+            controller.enqueue(chunk.frame);
           }
         },
       });

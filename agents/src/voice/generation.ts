@@ -1,8 +1,9 @@
+import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
 import type { ReadableStream } from 'stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
-import type { LLMNode } from './io.js';
+import type { LLMNode, TTSNode } from './io.js';
 
 /* @internal */
 export class _LLMGenerationData {
@@ -19,11 +20,11 @@ export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
   modelSettings: any, // TODO(shubhra): add type
-): [() => Promise<void>, _LLMGenerationData] {
-  const text_stream = new IdentityTransform<string>();
-  const writer = text_stream.writable.getWriter();
-  const text_output_stream = text_stream.readable;
-  const data = new _LLMGenerationData(text_output_stream);
+): [Promise<void>, _LLMGenerationData] {
+  const textStream = new IdentityTransform<string>();
+  const writer = textStream.writable.getWriter();
+  const textOutputStream = textStream.readable;
+  const data = new _LLMGenerationData(textOutputStream);
 
   const inferenceTask = async () => {
     const llmStream = await node(chatCtx, modelSettings);
@@ -31,7 +32,10 @@ export function performLLMInference(
       return;
     }
     try {
-      for await (const chunk of llmStream) {
+      const reader = llmStream.getReader();
+      while (true) {
+        const { done, value: chunk } = await reader.read();
+        if (done) break;
         if (typeof chunk === 'string') {
           data.generatedText += chunk;
           writer.write(chunk);
@@ -49,8 +53,37 @@ export function performLLMInference(
     } finally {
       llmStream.cancel();
       writer.close();
-      text_output_stream.cancel();
+      textOutputStream.cancel();
     }
   };
-  return [inferenceTask, data];
+  return [inferenceTask(), data];
+}
+
+export async function performTTSInference(
+  node: TTSNode,
+  text: ReadableStream<string>,
+  modelSettings: any, // TODO(shubhra): add type
+): Promise<ReadableStream<AudioFrame>> {
+  const audioStream = new IdentityTransform<AudioFrame>();
+  const writer = audioStream.writable.getWriter();
+  const audioOutputStream = audioStream.readable;
+
+  try {
+    const ttsNode = await node(text, modelSettings);
+    if (ttsNode === null) {
+      writer.close();
+      return audioOutputStream;
+    }
+
+    const reader = ttsNode.getReader();
+    while (true) {
+      const { done, value: chunk } = await reader.read();
+      if (done) break;
+      writer.write(chunk);
+    }
+  } finally {
+    writer.close();
+  }
+
+  return audioOutputStream;
 }

@@ -16,3 +16,8 @@ export type LLMNode = (
   chatCtx: ChatContext,
   modelSettings: any, // TODO(shubhra): add type
 ) => Promise<ReadableStream<ChatChunk | string> | null>;
+
+export type TTSNode = (
+  text: ReadableStream<string>,
+  modelSettings: any, // TODO(shubhra): add type
+) => Promise<ReadableStream<AudioFrame> | null>;

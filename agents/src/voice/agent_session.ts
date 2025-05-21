@@ -8,6 +8,7 @@ import type { ChatMessage } from '../llm/chat_context.js';
 import type { LLM } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
+import type { TTS } from '../tts/tts.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
@@ -37,6 +38,7 @@ export class AgentSession {
   vad: VAD;
   stt: STT;
   llm: LLM;
+  tts: TTS;
 
   private agent?: Agent;
   private activity?: AgentActivity;
@@ -50,10 +52,17 @@ export class AgentSession {
   /** @internal */
   audioInput?: ReadableStream<AudioFrame>;
 
-  constructor(vad: VAD, stt: STT, llm: LLM, options: Partial<VoiceOptions> = defaultVoiceOptions) {
+  constructor(
+    vad: VAD,
+    stt: STT,
+    llm: LLM,
+    tts: TTS,
+    options: Partial<VoiceOptions> = defaultVoiceOptions,
+  ) {
     this.vad = vad;
     this.stt = stt;
     this.llm = llm;
+    this.tts = tts;
     // TODO(shubhra): Add tools to chat context initalzation
     this._chatCtx = new ChatContext();
     this._options = { ...defaultVoiceOptions, ...options };
