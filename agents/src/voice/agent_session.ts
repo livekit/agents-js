@@ -1,14 +1,16 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame, Room } from '@livekit/rtc-node';
+import type { AudioFrame, AudioSource, Room } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
 import { ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
+import type { AgentState } from '../pipeline/index.js';
 import type { STT } from '../stt/index.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
+import type { UserState } from './events.js';
 import { RoomIO } from './room_io.js';
 
 export interface VoiceOptions {
@@ -39,6 +41,8 @@ export class AgentSession {
   private activity?: AgentActivity;
   private nextActivity?: AgentActivity;
   private started = false;
+  private userState: UserState = 'listening';
+  private agentState: AgentState = 'initializing';
 
   private roomIO?: RoomIO;
   private logger = log();
@@ -46,6 +50,8 @@ export class AgentSession {
   private _options: VoiceOptions;
   /** @internal */
   audioInput?: ReadableStream<AudioFrame>;
+  /** @internal */
+  audioOutput?: AudioSource;
 
   constructor(vad: VAD, stt: STT, options?: Partial<VoiceOptions>) {
     this.vad = vad;
@@ -66,7 +72,8 @@ export class AgentSession {
       await this.updateActivity(this.agent);
     }
 
-    this.roomIO = new RoomIO(this, room);
+    // TODO(AJS-38): update with TTS sample rate and num channels
+    this.roomIO = new RoomIO(this, room, 0, 0);
     this.roomIO.start();
 
     if (this.audioInput) {
@@ -97,5 +104,15 @@ export class AgentSession {
 
   get options(): VoiceOptions {
     return this._options;
+  }
+
+  /** @internal */
+  _updateAgentState(state: AgentState) {
+    this.agentState = state;
+  }
+
+  /** @internal */
+  _updateUserState(state: UserState) {
+    this.userState = state;
   }
 }
