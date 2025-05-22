@@ -157,6 +157,7 @@ export class WorkerOptions {
   wsURL: string;
   apiKey?: string;
   apiSecret?: string;
+  workerToken?: string;
   host: string;
   port: number;
   logLevel: string;
@@ -180,6 +181,7 @@ export class WorkerOptions {
     wsURL = 'ws://localhost:7880',
     apiKey = undefined,
     apiSecret = undefined,
+    workerToken = undefined,
     host = '0.0.0.0',
     port = undefined,
     logLevel = 'info',
@@ -207,6 +209,7 @@ export class WorkerOptions {
     wsURL?: string;
     apiKey?: string;
     apiSecret?: string;
+    workerToken?: string;
     host?: string;
     port?: number;
     logLevel?: string;
@@ -231,6 +234,7 @@ export class WorkerOptions {
     this.wsURL = wsURL;
     this.apiKey = apiKey;
     this.apiSecret = apiSecret;
+    this.workerToken = workerToken;
     this.host = host;
     this.port = port || Default.port(production);
     this.logLevel = logLevel;
@@ -351,7 +355,11 @@ export class Worker {
         const token = new AccessToken(this.#opts.apiKey, this.#opts.apiSecret);
         token.addGrant({ agent: true });
         const jwt = await token.toJwt();
-        this.#session = new WebSocket(url + 'agent', {
+        const wsUrl = new URL(url + 'agent');
+        if (this.#opts.workerToken) {
+          wsUrl.searchParams.append('worker_token', this.#opts.workerToken);
+        }
+        this.#session = new WebSocket(wsUrl, {
           headers: { authorization: 'Bearer ' + jwt },
         });
 
