@@ -18,7 +18,12 @@ import {
   type EndOfTurnInfo,
   type RecognitionHooks,
 } from './audio_recognition.js';
-import { performLLMInference, performTTSInference } from './generation.js';
+import {
+  performAudioForwarding,
+  performLLMInference,
+  performTTSInference,
+  performTextForwarding,
+} from './generation.js';
 
 export class AgentActivity implements RecognitionHooks {
   private started = false;
@@ -200,12 +205,14 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async pipelineReplyTask(
-    handle: SpeechHandle,
+    speechHandle: SpeechHandle,
     chatCtx: ChatContext,
     // instructions?: string,
     newMessage?: ChatMessage,
   ): Promise<void> {
     // TODO(shubhra): add transcription/text output
+
+    const audioOutput = this.agentSession.audioOutput;
 
     chatCtx = chatCtx.copy();
 
@@ -220,6 +227,7 @@ export class AgentActivity implements RecognitionHooks {
 
     // TODO(shubhra): update agent state
 
+    this.agentSession._updateAgentState('thinking');
     const tasks: Array<Promise<any>> = [];
     const [llmTask, llmGenData] = performLLMInference(
       (...args) => this.agent.llmNode(...args),
@@ -227,16 +235,50 @@ export class AgentActivity implements RecognitionHooks {
       {},
     );
     tasks.push(llmTask);
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
+    // llmOutput will be use for the transcripton node
     const [ttsTextInput, llmOutput] = llmGenData.textStream.tee();
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const [ttsTask, ttsStream] = performTTSInference(
-      (...args) => this.agent.ttsNode(...args),
-      ttsTextInput,
-      {},
-    );
-    tasks.push(ttsTask);
+    let ttsTask: Promise<void> | null = null;
+    let ttsStream: ReadableStream<AudioFrame> | null = null;
+    if (audioOutput) {
+      [ttsTask, ttsStream] = performTTSInference(
+        (...args) => this.agent.ttsNode(...args),
+        ttsTextInput,
+        {},
+      );
+      tasks.push(ttsTask);
+    }
+
+    // TODO(shubhra): wait for playout authorization
+
+    const [textForwardTask, textOutput] = performTextForwarding(null, llmOutput);
+    tasks.push(textForwardTask);
+
+    const onFirstFrame = () => {
+      this.agentSession._updateAgentState('speaking');
+    };
+
+    if (audioOutput) {
+      if (ttsStream) {
+        const [forwardTask, audioOut] = performAudioForwarding(ttsStream, audioOutput);
+        tasks.push(forwardTask);
+        audioOut.firstFrameFut.await.then(onFirstFrame);
+      } else {
+        throw Error('ttsStream is null when audioOutput is enabled');
+      }
+    } else {
+      textOutput.firstTextFut.await.then(onFirstFrame);
+    }
+    // TODO(shubhra): handle tool calls
+
+    const message = ChatMessage.create({
+      role: ChatRole.ASSISTANT,
+      text: textOutput.text,
+    });
+    chatCtx.insertItem(message);
+    this.agent._chatCtx.insertItem(message);
+    this.agentSession._conversationItemAdded(message);
   }
 
   // private scheduleSpeech(handle: SpeechHandle, priority: number): void {

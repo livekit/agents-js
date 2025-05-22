@@ -80,13 +80,13 @@ export class AgentSession {
     }
 
     this.agent = agent;
+    this._updateAgentState('initializing');
 
     if (this.agent) {
       await this.updateActivity(this.agent);
     }
 
-    // TODO(AJS-38): update with TTS sample rate and num channels
-    this.roomIO = new RoomIO(this, room, 0, 0);
+    this.roomIO = new RoomIO(this, room, this.tts.sampleRate, this.tts.numChannels);
     this.roomIO.start();
 
     if (this.audioInput) {
@@ -95,6 +95,7 @@ export class AgentSession {
 
     this.logger.debug('AgentSession started');
     this.started = true;
+    this._updateAgentState('listening');
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
