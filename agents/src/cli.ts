@@ -102,10 +102,9 @@ export const runApp = (opts: WorkerOptions) => {
       ),
     )
     .addOption(
-      new Option('--worker-token <string>', 'Internal use only').env(
-        'LIVEKIT_WORKER_TOKEN'
-      )
-      .hideHelp(),
+      new Option('--worker-token <string>', 'Internal use only')
+        .env('LIVEKIT_WORKER_TOKEN')
+        .hideHelp(),
     )
     .action(() => {
       if (
