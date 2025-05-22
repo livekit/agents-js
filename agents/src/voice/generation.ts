@@ -139,7 +139,7 @@ async function forwardAudio(
     const { done, value: frame } = await reader.read();
     if (done) break;
     // TODO(AJS-56) handle resampling
-    audioOuput.captureFrame(frame);
+    await audioOuput.captureFrame(frame);
     out.audio.push(frame);
     if (!out.firstFrameFut.done) {
       out.firstFrameFut.resolve();
