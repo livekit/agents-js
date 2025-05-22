@@ -36,6 +36,7 @@ const defaultVoiceOptions: VoiceOptions = {
 export class AgentSession {
   vad: VAD;
   stt: STT;
+  readonly options: VoiceOptions;
 
   private agent?: Agent;
   private activity?: AgentActivity;
@@ -47,7 +48,6 @@ export class AgentSession {
   private roomIO?: RoomIO;
   private logger = log();
   private _chatCtx: ChatContext;
-  private _options: VoiceOptions;
   /** @internal */
   audioInput?: ReadableStream<AudioFrame>;
   /** @internal */
@@ -58,7 +58,7 @@ export class AgentSession {
     this.stt = stt;
     // TODO(shubhra): Add tools to chat context initalzation
     this._chatCtx = new ChatContext();
-    this._options = { ...defaultVoiceOptions, ...options };
+    this.options = { ...defaultVoiceOptions, ...options };
   }
 
   async start(agent: Agent, room: Room): Promise<void> {
@@ -100,10 +100,6 @@ export class AgentSession {
   get chatCtx(): ChatContext {
     // TODO(shubhra): Return a readonly object
     return this._chatCtx;
-  }
-
-  get options(): VoiceOptions {
-    return this._options;
   }
 
   /** @internal */
