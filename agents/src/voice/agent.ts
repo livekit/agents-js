@@ -11,13 +11,21 @@ import type { ChatChunk, ChatMessage, LLM } from '../llm/index.js';
 import { ChatContext } from '../llm/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
+import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
 import type { TTS } from '../tts/index.js';
+import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
 
+export class StopResponse extends Error {
+  constructor() {
+    super();
+    this.name = 'StopResponse';
+  }
+}
+
 export class Agent {
-  private instructions: string;
-  private chatCtx: ChatContext;
+  private _instructions: string;
   private tools: any; // TODO(shubhra): add type
   private turnDetection: any; // TODO(shubhra): add type
   private stt: STT | undefined;
@@ -27,6 +35,8 @@ export class Agent {
 
   /** @internal */
   agentActivity?: AgentActivity;
+  /** @internal */
+  _chatCtx: ChatContext;
 
   constructor(
     instructions: string,
@@ -39,9 +49,9 @@ export class Agent {
     tts?: TTS,
     allowInterruptions?: boolean,
   ) {
-    this.instructions = instructions;
+    this._instructions = instructions;
     // TODO(AJS-42): copy tools when provided
-    this.chatCtx = chatCtx || new ChatContext();
+    this._chatCtx = chatCtx || new ChatContext();
     this.tools = tools;
     this.turnDetection = turnDetection;
     this.stt = stt;
@@ -49,6 +59,14 @@ export class Agent {
     this.llm = llm;
     this.tts = tts;
     this.agentActivity = undefined; // TODO(shubhra): add type
+  }
+
+  get chatCtx(): ChatContext {
+    return this._chatCtx;
+  }
+
+  get instructions(): string {
+    return this._instructions;
   }
 
   async onEnter(): Promise<void> {}
@@ -59,31 +77,30 @@ export class Agent {
     text: ReadableStream<string>,
     modelSettings: any, // TODO(shubhra): add type
   ): Promise<ReadableStream<string> | null> {
-    return null;
+    return Agent.default.transcriptionNode(this, text, modelSettings);
   }
 
   async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage): Promise<void> {}
 
   async sttNode(
     audio: ReadableStream<AudioFrame>,
-    modelSettings: any, // TODO(shubhra): add type
+    modelSettings: any, // TODO(AJS-59): add type
   ): Promise<ReadableStream<SpeechEvent | string> | null> {
     return Agent.default.sttNode(this, audio, modelSettings);
   }
 
   async llmNode(
     chatCtx: ChatContext,
-    tools: Array<any>, // TODO(shubhra): add type
-    modelSettings: any, // TODO(shubhra): add type
+    modelSettings: any, // TODO(AJS-59): add type
   ): Promise<ReadableStream<ChatChunk | string> | null> {
-    return null;
+    return Agent.default.llmNode(this, chatCtx, modelSettings);
   }
 
   async ttsNode(
     text: ReadableStream<string>,
-    modelSettings: any, // TODO(shubhra): add type
+    modelSettings: any, // TODO(AJS-59): add type
   ): Promise<ReadableStream<AudioFrame> | null> {
-    return null;
+    return Agent.default.ttsNode(this, text, modelSettings);
   }
 
   // realtime_audio_output_node
@@ -99,7 +116,7 @@ export class Agent {
     async sttNode(
       agent: Agent,
       audio: ReadableStream<AudioFrame>,
-      modelSettings: any, // TODO(shubhra): add type
+      modelSettings: any, // TODO(AJS-59): add type
     ): Promise<ReadableStream<SpeechEvent | string> | null> {
       const activity = agent.getActivityOrThrow();
 
@@ -122,8 +139,62 @@ export class Agent {
           for await (const event of stream) {
             controller.enqueue(event);
           }
+          controller.close();
         },
       });
+    },
+
+    async llmNode(
+      agent: Agent,
+      chatCtx: ChatContext,
+      modelSettings: any, // TODO(AJS-59): add type
+    ): Promise<ReadableStream<ChatChunk | string> | null> {
+      const activity = agent.getActivityOrThrow();
+      const stream = activity.llm.chat({ chatCtx });
+      return new ReadableStream({
+        async start(controller) {
+          for await (const chunk of stream) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        },
+      });
+    },
+
+    async ttsNode(
+      agent: Agent,
+      text: ReadableStream<string>,
+      modelSettings: any, // TODO(AJS-59): add type
+    ): Promise<ReadableStream<AudioFrame> | null> {
+      const activity = agent.getActivityOrThrow();
+      let wrapped_tts = activity.tts;
+
+      if (!activity.tts.capabilities.streaming) {
+        wrapped_tts = new TTSStreamAdapter(wrapped_tts, new BasicSentenceTokenizer());
+      }
+
+      const stream = wrapped_tts.stream();
+      stream.updateInputStream(text);
+
+      return new ReadableStream({
+        async start(controller) {
+          for await (const chunk of stream) {
+            if (chunk === SynthesizeStream.END_OF_STREAM) {
+              controller.close();
+              break;
+            }
+            controller.enqueue(chunk.frame);
+          }
+        },
+      });
+    },
+
+    async transcriptionNode(
+      agent: Agent,
+      text: ReadableStream<string>,
+      modelSettings: any, // TODO(shubhra): add type
+    ): Promise<ReadableStream<string> | null> {
+      return text;
     },
   };
 }

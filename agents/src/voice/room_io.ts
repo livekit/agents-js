@@ -26,14 +26,18 @@ export class RoomIO {
   private room: Room;
 
   private _deferredAudioInputStream = new DeferredReadableStream<AudioFrame>();
-  private audioSource: AudioSource;
+  private audioSource?: AudioSource;
   private publication?: LocalTrackPublication;
 
-  constructor(agentSession: AgentSession, room: Room, sampleRate: number, numChannels: number) {
+  constructor(
+    agentSession: AgentSession,
+    room: Room,
+    private readonly sampleRate: number,
+    private readonly numChannels: number,
+  ) {
     this.agentSession = agentSession;
     this.room = room;
     this.participantAudioInputStream = this._deferredAudioInputStream.stream;
-    this.audioSource = new AudioSource(sampleRate, numChannels);
 
     this.setupEventListeners();
   }
@@ -58,8 +62,8 @@ export class RoomIO {
     }
   };
 
-  private async publishTrack() {
-    const track = LocalAudioTrack.createAudioTrack('roomio_audio', this.audioSource);
+  private async publishTrack(audioSource: AudioSource) {
+    const track = LocalAudioTrack.createAudioTrack('roomio_audio', audioSource);
     this.publication = await this.room.localParticipant?.publishTrack(
       track,
       new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
@@ -67,7 +71,8 @@ export class RoomIO {
   }
 
   start() {
-    this.publishTrack();
+    this.audioSource = new AudioSource(this.sampleRate, this.numChannels);
+    this.publishTrack(this.audioSource);
     this.agentSession.audioInput = this.participantAudioInputStream;
     this.agentSession.audioOutput = this.audioSource;
   }
