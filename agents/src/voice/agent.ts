@@ -40,6 +40,7 @@ export class Agent {
     allowInterruptions?: boolean,
   ) {
     this.instructions = instructions;
+    // TODO(AJS-42): copy tools when provided
     this.chatCtx = chatCtx || new ChatContext();
     this.tools = tools;
     this.turnDetection = turnDetection;

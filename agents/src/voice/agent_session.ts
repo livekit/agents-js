@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, AudioSource, Room } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
+import { ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import type { AgentState } from '../pipeline/index.js';
 import type { STT } from '../stt/index.js';
@@ -12,9 +13,30 @@ import { AgentActivity } from './agent_activity.js';
 import type { UserState } from './events.js';
 import { RoomIO } from './room_io.js';
 
+export interface VoiceOptions {
+  allow_interruptions: boolean;
+  discard_audio_if_uninterruptible: boolean;
+  min_interruption_duration: number;
+  min_interruption_words: number;
+  min_endpointing_delay: number;
+  max_endpointing_delay: number;
+  max_tool_steps: number;
+}
+
+const defaultVoiceOptions: VoiceOptions = {
+  allow_interruptions: true,
+  discard_audio_if_uninterruptible: true,
+  min_interruption_duration: 0.5,
+  min_interruption_words: 0,
+  min_endpointing_delay: 0.5,
+  max_endpointing_delay: 6.0,
+  max_tool_steps: 3,
+} as const;
+
 export class AgentSession {
   vad: VAD;
   stt: STT;
+  readonly options: VoiceOptions;
 
   private agent?: Agent;
   private activity?: AgentActivity;
@@ -25,15 +47,18 @@ export class AgentSession {
 
   private roomIO?: RoomIO;
   private logger = log();
-
+  private _chatCtx: ChatContext;
   /** @internal */
   audioInput?: ReadableStream<AudioFrame>;
   /** @internal */
   audioOutput?: AudioSource;
 
-  constructor(vad: VAD, stt: STT) {
+  constructor(vad: VAD, stt: STT, options?: Partial<VoiceOptions>) {
     this.vad = vad;
     this.stt = stt;
+    // TODO(shubhra): Add tools to chat context initalzation
+    this._chatCtx = new ChatContext();
+    this.options = { ...defaultVoiceOptions, ...options };
   }
 
   async start(agent: Agent, room: Room): Promise<void> {
@@ -70,6 +95,11 @@ export class AgentSession {
     if (this.activity) {
       await this.activity.start();
     }
+  }
+
+  get chatCtx(): ChatContext {
+    // TODO(shubhra): Return a readonly object
+    return this._chatCtx;
   }
 
   /** @internal */
