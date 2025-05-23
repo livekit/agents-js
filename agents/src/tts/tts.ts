@@ -133,6 +133,7 @@ export abstract class SynthesizeStream
     this.mainTask();
   }
 
+  // TODO(AJS-37) Remove when refactoring TTS to use streams
   protected async mainTask() {
     const reader = this.deferredInputStream.stream.getReader();
     try {
@@ -141,7 +142,6 @@ export abstract class SynthesizeStream
         if (done || value === SynthesizeStream.FLUSH_SENTINEL) {
           break;
         }
-        this.logger.debug(`++ sending text to tts: ${String(value)}`);
         this.pushText(value);
       }
       this.flush();

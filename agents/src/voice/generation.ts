@@ -12,7 +12,7 @@ export class _LLMGenerationData {
   id: string;
 
   constructor(public readonly textStream: ReadableStream<string>) {
-    // TODO(shubhra): standardize id generation - same as python
+    // TODO(AJS-60): standardize id generation - same as python
     this.id = randomUUID();
   }
 }
@@ -20,7 +20,7 @@ export class _LLMGenerationData {
 export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
-  modelSettings: any, // TODO(shubhra): add type
+  modelSettings: any, // TODO(AJS-59): add type
 ): [Promise<void>, _LLMGenerationData] {
   const textStream = new IdentityTransform<string>();
   const writer = textStream.writable.getWriter();
@@ -48,12 +48,10 @@ export function performLLMInference(
           data.generatedText += content;
           writer.write(content);
         } else {
-          //TODO(shubhra): get access to logger instance
-          console.error('Unexpected chunk type:', chunk);
+          throw new Error(`Unexpected chunk type: ${JSON.stringify(chunk)}`);
         }
       }
     } finally {
-      console.log('+++++++++++++ Closing writer in performLLMInference');
       writer.close();
     }
   };
@@ -63,7 +61,7 @@ export function performLLMInference(
 export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string>,
-  modelSettings: any, // TODO(shubhra): add type
+  modelSettings: any, // TODO(AJS-59): add type
 ): [Promise<void>, ReadableStream<AudioFrame>] {
   const audioStream = new IdentityTransform<AudioFrame>();
   const writer = audioStream.writable.getWriter();
@@ -91,11 +89,9 @@ export function performTTSInference(
   return [inferenceTask(), audioOutputStream];
 }
 
-export class _TextOutput {
-  constructor(
-    public text: string,
-    public readonly firstTextFut: Future,
-  ) {}
+export interface _TextOutput {
+  text: string;
+  firstTextFut: Future;
 }
 
 async function forwardText(
@@ -118,15 +114,16 @@ export function performTextForwarding(
   textOutput: _TextOutput | null,
   source: ReadableStream<string>,
 ): [Promise<void>, _TextOutput] {
-  const out = new _TextOutput('', new Future());
+  const out = {
+    text: '',
+    firstTextFut: new Future(),
+  };
   return [forwardText(textOutput, source, out), out];
 }
 
-export class _AudioOutput {
-  constructor(
-    public readonly audio: Array<AudioFrame>,
-    public readonly firstFrameFut: Future,
-  ) {}
+export interface _AudioOutput {
+  audio: Array<AudioFrame>;
+  firstFrameFut: Future;
 }
 
 async function forwardAudio(
@@ -151,6 +148,9 @@ export function performAudioForwarding(
   ttsStream: ReadableStream<AudioFrame>,
   audioOutput: AudioSource,
 ): [Promise<void>, _AudioOutput] {
-  const out = new _AudioOutput([], new Future());
+  const out = {
+    audio: [],
+    firstFrameFut: new Future(),
+  };
   return [forwardAudio(ttsStream, audioOutput, out), out];
 }

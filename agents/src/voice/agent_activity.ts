@@ -151,13 +151,17 @@ export class AgentActivity implements RecognitionHooks {
       instructions = `${this.agent.instructions}\n${instructions}`;
     }
 
-    this.pipelineReplyTask(handle, chatCtx || this.agent.chatCtx, userMessage?.copy()); // add instructions
-    // this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+    this.pipelineReplyTask(
+      handle,
+      chatCtx || this.agent.chatCtx,
+      instructions,
+      userMessage?.copy(),
+    );
     return handle;
   }
 
   private async userTurnCompleted(info: EndOfTurnInfo): Promise<void> {
-    // TODO(shubhra) handle old task cancellation
+    // TODO(AJS-40) handle old task cancellation
 
     // When the audio recognition detects the end of a user turn:
     //  - check if realtime model server-side turn detection is enabled
@@ -207,25 +211,22 @@ export class AgentActivity implements RecognitionHooks {
   private async pipelineReplyTask(
     speechHandle: SpeechHandle,
     chatCtx: ChatContext,
-    // instructions?: string,
+    instructions?: string,
     newMessage?: ChatMessage,
   ): Promise<void> {
-    // TODO(shubhra): add transcription/text output
+    // TODO(AJS-54): add transcription/text output
 
     const audioOutput = this.agentSession.audioOutput;
 
     chatCtx = chatCtx.copy();
 
-    // TODO(shubhra): handle new message
     if (newMessage) {
       chatCtx.insertItem(newMessage);
       this.agent._chatCtx.insertItem(newMessage);
       this.agentSession._conversationItemAdded(newMessage);
     }
 
-    // TODO(shubhra): handle instructions
-
-    // TODO(shubhra): update agent state
+    // TODO(AJS-57): handle instructions
 
     this.agentSession._updateAgentState('thinking');
     const tasks: Array<Promise<any>> = [];
@@ -236,7 +237,6 @@ export class AgentActivity implements RecognitionHooks {
     );
     tasks.push(llmTask);
 
-    // llmOutput will be use for the transcripton node
     const [ttsTextInput, llmOutput] = llmGenData.textStream.tee();
 
     let ttsTask: Promise<void> | null = null;
@@ -250,7 +250,7 @@ export class AgentActivity implements RecognitionHooks {
       tasks.push(ttsTask);
     }
 
-    // TODO(shubhra): wait for playout authorization
+    // TODO(AJS-40): wait for playout authorization
 
     const [textForwardTask, textOutput] = performTextForwarding(null, llmOutput);
     tasks.push(textForwardTask);
@@ -280,8 +280,4 @@ export class AgentActivity implements RecognitionHooks {
     this.agent._chatCtx.insertItem(message);
     this.agentSession._conversationItemAdded(message);
   }
-
-  // private scheduleSpeech(handle: SpeechHandle, priority: number): void {
-  //   // TODO(AJS-40) implement this
-  // }
 }

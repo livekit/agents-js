@@ -17,7 +17,12 @@ import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/inde
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
 
-export class StopResponse extends Error {}
+export class StopResponse extends Error {
+  constructor() {
+    super();
+    this.name = 'StopResponse';
+  }
+}
 
 export class Agent {
   private _instructions: string;
@@ -79,21 +84,21 @@ export class Agent {
 
   async sttNode(
     audio: ReadableStream<AudioFrame>,
-    modelSettings: any, // TODO(shubhra): add type
+    modelSettings: any, // TODO(AJS-59): add type
   ): Promise<ReadableStream<SpeechEvent | string> | null> {
     return Agent.default.sttNode(this, audio, modelSettings);
   }
 
   async llmNode(
     chatCtx: ChatContext,
-    modelSettings: any, // TODO(shubhra): add type
+    modelSettings: any, // TODO(AJS-59): add type
   ): Promise<ReadableStream<ChatChunk | string> | null> {
     return Agent.default.llmNode(this, chatCtx, modelSettings);
   }
 
   async ttsNode(
     text: ReadableStream<string>,
-    modelSettings: any, // TODO(shubhra): add type
+    modelSettings: any, // TODO(AJS-59): add type
   ): Promise<ReadableStream<AudioFrame> | null> {
     return Agent.default.ttsNode(this, text, modelSettings);
   }
@@ -111,7 +116,7 @@ export class Agent {
     async sttNode(
       agent: Agent,
       audio: ReadableStream<AudioFrame>,
-      modelSettings: any, // TODO(shubhra): add type
+      modelSettings: any, // TODO(AJS-59): add type
     ): Promise<ReadableStream<SpeechEvent | string> | null> {
       const activity = agent.getActivityOrThrow();
 
@@ -134,6 +139,7 @@ export class Agent {
           for await (const event of stream) {
             controller.enqueue(event);
           }
+          controller.close();
         },
       });
     },
@@ -141,7 +147,7 @@ export class Agent {
     async llmNode(
       agent: Agent,
       chatCtx: ChatContext,
-      modelSettings: any, // TODO(shubhra): add type
+      modelSettings: any, // TODO(AJS-59): add type
     ): Promise<ReadableStream<ChatChunk | string> | null> {
       const activity = agent.getActivityOrThrow();
       const stream = activity.llm.chat({ chatCtx });
@@ -150,7 +156,6 @@ export class Agent {
           for await (const chunk of stream) {
             controller.enqueue(chunk);
           }
-          console.log('+++++++++++++ LLM stream ended in llmNode');
           controller.close();
         },
       });
@@ -159,7 +164,7 @@ export class Agent {
     async ttsNode(
       agent: Agent,
       text: ReadableStream<string>,
-      modelSettings: any, // TODO(shubhra): add type
+      modelSettings: any, // TODO(AJS-59): add type
     ): Promise<ReadableStream<AudioFrame> | null> {
       const activity = agent.getActivityOrThrow();
       let wrapped_tts = activity.tts;

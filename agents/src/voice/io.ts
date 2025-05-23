@@ -9,15 +9,15 @@ import type { SpeechEvent } from '../stt/stt.js';
 
 export type STTNode = (
   audio: ReadableStream<AudioFrame>,
-  modelSettings: any, // TODO(shubhra): add type
+  modelSettings: any, // TODO(AJS-59): add type
 ) => Promise<ReadableStream<SpeechEvent | string> | null>;
 
 export type LLMNode = (
   chatCtx: ChatContext,
-  modelSettings: any, // TODO(shubhra): add type
+  modelSettings: any, // TODO(AJS-59): add type
 ) => Promise<ReadableStream<ChatChunk | string> | null>;
 
 export type TTSNode = (
   text: ReadableStream<string>,
-  modelSettings: any, // TODO(shubhra): add type
+  modelSettings: any, // TODO(AJS-59): add type
 ) => Promise<ReadableStream<AudioFrame> | null>;
