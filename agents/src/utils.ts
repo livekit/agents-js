@@ -339,7 +339,3 @@ export class AudioEnergyFilter {
     return false;
   }
 }
-
-export async function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}

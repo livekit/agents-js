@@ -2,12 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import { delay } from '@std/async';
 import { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import { Future, sleep } from '../utils.js';
+import { Future } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { STTNode } from './io.js';
 
@@ -162,7 +163,7 @@ export class AudioRecognition {
       if (abortSignal.aborted) {
         return;
       }
-      await sleep(Math.max(extraSleep, 0));
+      await delay(Math.max(extraSleep, 0));
 
       this.logger.debug('end of user turn', {
         transcript: this.audioTranscript,
