@@ -30,23 +30,23 @@
     "api:update": "api-extractor run --local --typescript-compiler-folder ../node_modules/typescript --verbose"
   },
   "devDependencies": {
-    "@livekit/rtc-node": "^0.13.14",
-    "@microsoft/api-extractor": "^7.52.8",
-    "@types/node": "^22.15.21",
-    "@types/ws": "^8.18.1",
-    "tsup": "^8.5.0",
-    "typescript": "^5.8.3"
+    "@livekit/rtc-node": "^0.13.12",
+    "@microsoft/api-extractor": "^7.35.0",
+    "@types/node": "^22.5.5",
+    "@types/ws": "^8.5.10",
+    "tsup": "^8.4.0",
+    "typescript": "^5.0.0"
   },
   "dependencies": {
     "@livekit/mutex": "^1.1.1",
     "@livekit/protocol": "^1.39.0",
     "@livekit/typed-emitter": "^3.0.0",
-    "commander": "^12.1.0",
-    "livekit-server-sdk": "^2.13.0",
-    "pino": "^8.21.0",
-    "pino-pretty": "^11.3.0",
-    "ws": "^8.18.2",
-    "zod": "^3.25.30"
+    "commander": "^12.0.0",
+    "livekit-server-sdk": "^2.9.2",
+    "pino": "^8.19.0",
+    "pino-pretty": "^11.0.0",
+    "ws": "^8.16.0",
+    "zod": "^3.23.8"
   },
   "peerDependencies": {
     "@livekit/rtc-node": "^0.13.12"
