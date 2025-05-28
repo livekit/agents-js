@@ -181,8 +181,7 @@ const startJob = (
     const closeEvent = new EventEmitter();
 
     const orphanedTimeout = setTimeout(() => {
-      logger.warn('job process orphaned, shutting down.');
-      join.resolve();
+      logger.warn('worker process is not responding.. worker crashed?');
     }, ORPHANED_TIMEOUT);
 
     const messageHandler = (msg: IPCMessage) => {
