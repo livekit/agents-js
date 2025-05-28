@@ -14,23 +14,23 @@ import type { UserState } from './events.js';
 import { RoomIO } from './room_io.js';
 
 export interface VoiceOptions {
-  allow_interruptions: boolean;
-  discard_audio_if_uninterruptible: boolean;
-  min_interruption_duration: number;
-  min_interruption_words: number;
-  min_endpointing_delay: number;
-  max_endpointing_delay: number;
-  max_tool_steps: number;
+  allowInterruptions: boolean;
+  discardAudioIfUninterruptible: boolean;
+  minInterruptionDuration: number;
+  minInterruptionWords: number;
+  minEndpointingDelay: number;
+  maxEndpointingDelay: number;
+  maxToolSteps: number;
 }
 
 const defaultVoiceOptions: VoiceOptions = {
-  allow_interruptions: true,
-  discard_audio_if_uninterruptible: true,
-  min_interruption_duration: 0.5,
-  min_interruption_words: 0,
-  min_endpointing_delay: 0.5,
-  max_endpointing_delay: 6.0,
-  max_tool_steps: 3,
+  allowInterruptions: true,
+  discardAudioIfUninterruptible: true,
+  minInterruptionDuration: 500,
+  minInterruptionWords: 0,
+  minEndpointingDelay: 500,
+  maxEndpointingDelay: 6000,
+  maxToolSteps: 3,
 } as const;
 
 export class AgentSession {
