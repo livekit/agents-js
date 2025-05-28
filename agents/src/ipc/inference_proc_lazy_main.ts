@@ -50,8 +50,7 @@ const ORPHANED_TIMEOUT = 15 * 1000;
     process.send({ case: 'initializeResponse' });
 
     const orphanedTimeout = setTimeout(() => {
-      logger.warn('inference process orphaned, shutting down.');
-      process.exit();
+      logger.warn('worker process is not responding.. worker crashed?');
     }, ORPHANED_TIMEOUT);
 
     const handleInferenceRequest = async ({
