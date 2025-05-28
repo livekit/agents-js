@@ -159,8 +159,8 @@ export class AudioRecognition {
         }
       }
 
-      // const extraSleep = lastSpeakingTime + endpointingDelay - Date.now();
-      await delay(2000, { signal: abortSignal });
+      const extraSleep = lastSpeakingTime + endpointingDelay - Date.now();
+      await delay(extraSleep, { signal: abortSignal });
       if (abortSignal.aborted) {
         this.logger.debug('bounceEOUAbortController aborted');
         return;
