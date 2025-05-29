@@ -84,12 +84,9 @@ export abstract class VAD extends (EventEmitter as new () => TypedEmitter<VADCal
 
 export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
-  protected input = new IdentityTransform<AudioFrame | typeof VADStream.FLUSH_SENTINEL>();
-  protected output = new IdentityTransform<VADEvent>();
-  protected inputWriter: WritableStreamDefaultWriter<AudioFrame | typeof VADStream.FLUSH_SENTINEL>;
+
   protected inputReader: ReadableStreamDefaultReader<AudioFrame | typeof VADStream.FLUSH_SENTINEL>;
   protected outputWriter: WritableStreamDefaultWriter<VADEvent>;
-  protected outputReader: ReadableStreamDefaultReader<VADEvent>;
   protected closed = false;
   protected inputClosed = false;
 
@@ -97,8 +94,12 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   #lastActivityTime = BigInt(0);
   private logger = log();
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
-
+  private input = new IdentityTransform<AudioFrame | typeof VADStream.FLUSH_SENTINEL>();
+  private output = new IdentityTransform<VADEvent>();
   private metricsStream: ReadableStream<VADEvent>;
+  private outputReader: ReadableStreamDefaultReader<VADEvent>;
+  private inputWriter: WritableStreamDefaultWriter<AudioFrame | typeof VADStream.FLUSH_SENTINEL>;
+
   constructor(vad: VAD) {
     this.#vad = vad;
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
@@ -207,7 +208,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
       throw new Error('Stream is closed');
     }
     this.inputClosed = true;
-    this.input.writable.close();
+    this.inputWriter.close();
   }
 
   async next(): Promise<IteratorResult<VADEvent>> {
@@ -220,7 +221,9 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   }
 
   close() {
-    this.input.writable.close();
+    if (!this.inputClosed) {
+      this.inputWriter.close();
+    }
     this.closed = true;
   }
 
