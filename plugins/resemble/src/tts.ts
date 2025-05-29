@@ -187,7 +187,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     const inputTask = async () => {
-      for await (const data of this.input) {
+      while (true) {
+        const { done, value: data } = await this.inputReader.read();
+        if (done) break;
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
           this.#tokenizer.flush();
           continue;
@@ -204,7 +206,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       let lastFrame: AudioFrame | undefined;
       const sendLastFrame = (segmentId: string, final: boolean) => {
         if (lastFrame) {
-          this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+          this.outputWriter.write({ requestId, segmentId, frame: lastFrame, final });
           lastFrame = undefined;
         }
       };
@@ -234,7 +236,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             activeRequests.delete(Number(segmentId));
 
             if (activeRequests.size === 0 && this.#tokenizer.closed) {
-              this.queue.put(SynthesizeStream.END_OF_STREAM);
+              this.outputWriter.write(SynthesizeStream.END_OF_STREAM);
               closing = true;
               ws.close();
             }
@@ -245,7 +247,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
             closing = true;
             ws.close();
-            this.queue.put(SynthesizeStream.END_OF_STREAM);
+            this.outputWriter.write(SynthesizeStream.END_OF_STREAM);
           }
         } catch (error) {
           this.#logger.error(`Error parsing WebSocket message: ${error}`);
@@ -256,7 +258,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         this.#logger.error(`WebSocket error: ${error}`);
         if (!closing) {
           closing = true;
-          this.queue.put(SynthesizeStream.END_OF_STREAM);
+          this.outputWriter.write(SynthesizeStream.END_OF_STREAM);
           ws.close();
         }
       });
@@ -264,7 +266,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       ws.on('close', (code, reason) => {
         if (!closing) {
           this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-          this.queue.put(SynthesizeStream.END_OF_STREAM);
+          this.outputWriter.write(SynthesizeStream.END_OF_STREAM);
         }
         ws.removeAllListeners();
       });

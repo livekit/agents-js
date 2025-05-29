@@ -178,7 +178,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     const inputTask = async () => {
-      for await (const data of this.input) {
+      while (true) {
+        const { done, value: data } = await this.inputReader.read();
+        if (done) break;
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
           this.#tokenizer.flush();
           continue;
@@ -195,7 +197,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       let lastFrame: AudioFrame | undefined;
       const sendLastFrame = (segmentId: string, final: boolean) => {
         if (lastFrame) {
-          this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+          this.outputWriter.write({ requestId, segmentId, frame: lastFrame, final });
           lastFrame = undefined;
         }
       };
@@ -215,7 +217,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             lastFrame = frame;
           }
           sendLastFrame(segmentId, true);
-          this.queue.put(SynthesizeStream.END_OF_STREAM);
+          this.outputWriter.write(SynthesizeStream.END_OF_STREAM);
 
           if (segmentId === requestId) {
             closing = true;

@@ -84,10 +84,9 @@ export abstract class VAD extends (EventEmitter as new () => TypedEmitter<VADCal
 
 export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
-  protected inputWriter: WritableStreamDefaultWriter<AudioFrame | typeof VADStream.FLUSH_SENTINEL>;
+
   protected inputReader: ReadableStreamDefaultReader<AudioFrame | typeof VADStream.FLUSH_SENTINEL>;
   protected outputWriter: WritableStreamDefaultWriter<VADEvent>;
-  protected outputReader: ReadableStreamDefaultReader<VADEvent>;
   protected closed = false;
   protected inputClosed = false;
 
@@ -98,6 +97,9 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   private input = new IdentityTransform<AudioFrame | typeof VADStream.FLUSH_SENTINEL>();
   private output = new IdentityTransform<VADEvent>();
   private metricsStream: ReadableStream<VADEvent>;
+  private outputReader: ReadableStreamDefaultReader<VADEvent>;
+  private inputWriter: WritableStreamDefaultWriter<AudioFrame | typeof VADStream.FLUSH_SENTINEL>;
+
   constructor(vad: VAD) {
     this.#vad = vad;
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();

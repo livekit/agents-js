@@ -156,7 +156,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     let closing = false;
 
     const sendTask = async (ws: WebSocket) => {
-      for await (const data of this.input) {
+      while (true) {
+        const { done, value: data } = await this.inputReader.read();
+        if (done) break;
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
           ws.send(JSON.stringify({ text: '<STOP>' }));
           continue;
@@ -172,7 +174,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       let lastFrame: AudioFrame | undefined;
       const sendLastFrame = (segmentId: string, final: boolean) => {
         if (lastFrame) {
-          this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+          this.outputWriter.write({ requestId, segmentId, frame: lastFrame, final });
           lastFrame = undefined;
         }
       };
@@ -195,7 +197,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               lastFrame = frame;
             }
             sendLastFrame(requestId, true);
-            this.queue.put(SynthesizeStream.END_OF_STREAM);
+            this.outputWriter.write(SynthesizeStream.END_OF_STREAM);
 
             closing = true;
             ws.close();

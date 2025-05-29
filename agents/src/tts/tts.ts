@@ -109,16 +109,10 @@ export abstract class SynthesizeStream
 {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
   static readonly END_OF_STREAM = Symbol('END_OF_STREAM');
-  protected inputWriter: WritableStreamDefaultWriter<
-    string | typeof SynthesizeStream.FLUSH_SENTINEL
-  >;
   protected inputReader: ReadableStreamDefaultReader<
     string | typeof SynthesizeStream.FLUSH_SENTINEL
   >;
   protected outputWriter: WritableStreamDefaultWriter<
-    SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
-  >;
-  protected outputReader: ReadableStreamDefaultReader<
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
   >;
   protected closed = false;
@@ -136,6 +130,10 @@ export abstract class SynthesizeStream
   private output = new IdentityTransform<
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
   >();
+  private inputWriter: WritableStreamDefaultWriter<string | typeof SynthesizeStream.FLUSH_SENTINEL>;
+  private outputReader: ReadableStreamDefaultReader<
+    SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
+  >;
   private logger = log();
   private inputClosed = false;
 
@@ -286,7 +284,6 @@ export abstract class SynthesizeStream
   /** Close both the input and output of the TTS stream */
   close() {
     this.inputWriter.close();
-    this.outputWriter.close();
     this.closed = true;
   }
 
