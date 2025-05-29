@@ -469,12 +469,12 @@ export class LLMStream extends llm.LLMStream {
         for (const choice of chunk.choices) {
           const chatChunk = this.#parseChoice(chunk.id, choice);
           if (chatChunk) {
-            this.queue.put(chatChunk);
+            this.outputWriter.write(chatChunk);
           }
 
           if (chunk.usage) {
             const usage = chunk.usage;
-            this.queue.put({
+            this.outputWriter.write({
               requestId: chunk.id,
               choices: [],
               usage: {
@@ -487,7 +487,7 @@ export class LLMStream extends llm.LLMStream {
         }
       }
     } finally {
-      this.queue.close();
+      this.close();
     }
   }
 
