@@ -125,7 +125,6 @@ export class SpeechStream extends stt.SpeechStream {
   constructor(stt: STT, opts: STTOptions) {
     super(stt);
     this.#opts = opts;
-    this.closed = false;
     this.#audioEnergyFilter = new AudioEnergyFilter();
 
     this.#run();
@@ -134,7 +133,7 @@ export class SpeechStream extends stt.SpeechStream {
   async #run(maxRetry = 32) {
     let retries = 0;
     let ws: WebSocket;
-    while (!this.input.closed) {
+    while (!this.inputClosed) {
       const streamURL = new URL(API_BASE_URL_V1);
       const params = {
         model: this.#opts.model,
@@ -193,7 +192,7 @@ export class SpeechStream extends stt.SpeechStream {
       }
     }
 
-    this.closed = true;
+    this.close();
   }
 
   updateOptions(opts: Partial<STTOptions>) {
@@ -222,7 +221,10 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
-      for await (const data of this.input) {
+      while (true) {
+        const { done, value: data } = await this.inputReader.read();
+        if (done) break;
+
         let frames: AudioFrame[];
         if (data === SpeechStream.FLUSH_SENTINEL) {
           frames = stream.flush();
@@ -270,7 +272,7 @@ export class SpeechStream extends stt.SpeechStream {
                 // It's also possible we receive a transcript without a SpeechStarted event.
                 if (this.#speaking) return;
                 this.#speaking = true;
-                this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
+                this.outputWriter.write({ type: stt.SpeechEventType.START_OF_SPEECH });
                 break;
               }
               // see this page:
@@ -288,16 +290,16 @@ export class SpeechStream extends stt.SpeechStream {
                 if (alternatives[0] && alternatives[0].text) {
                   if (!this.#speaking) {
                     this.#speaking = true;
-                    this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
+                    this.outputWriter.write({ type: stt.SpeechEventType.START_OF_SPEECH });
                   }
 
                   if (isFinal) {
-                    this.queue.put({
+                    this.outputWriter.write({
                       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
                       alternatives: [alternatives[0], ...alternatives.slice(1)],
                     });
                   } else {
-                    this.queue.put({
+                    this.outputWriter.write({
                       type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
                       alternatives: [alternatives[0], ...alternatives.slice(1)],
                     });
@@ -309,7 +311,7 @@ export class SpeechStream extends stt.SpeechStream {
                 // a non-empty transcript (deepgram doesn't have a SpeechEnded event)
                 if (isEndpoint && this.#speaking) {
                   this.#speaking = false;
-                  this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+                  this.outputWriter.write({ type: stt.SpeechEventType.END_OF_SPEECH });
                 }
 
                 break;

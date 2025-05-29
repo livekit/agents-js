@@ -53,11 +53,14 @@ export class StreamAdapterWrapper extends SpeechStream {
 
   async #run() {
     const forwardInput = async () => {
-      for await (const input of this.input) {
-        if (input === SpeechStream.FLUSH_SENTINEL) {
+      while (true) {
+        const { done, value } = await this.inputReader.read();
+        if (done) break;
+
+        if (value === SpeechStream.FLUSH_SENTINEL) {
           this.#vadStream.flush();
         } else {
-          this.#vadStream.pushFrame(input);
+          this.#vadStream.pushFrame(value);
         }
       }
       this.#vadStream.endInput();
@@ -67,10 +70,10 @@ export class StreamAdapterWrapper extends SpeechStream {
       for await (const ev of this.#vadStream) {
         switch (ev.type) {
           case VADEventType.START_OF_SPEECH:
-            this.output.put({ type: SpeechEventType.START_OF_SPEECH });
+            this.outputWriter.write({ type: SpeechEventType.START_OF_SPEECH });
             break;
           case VADEventType.END_OF_SPEECH:
-            this.output.put({ type: SpeechEventType.END_OF_SPEECH });
+            this.outputWriter.write({ type: SpeechEventType.END_OF_SPEECH });
 
             try {
               const event = await this.#stt.recognize(ev.frames);
@@ -78,7 +81,7 @@ export class StreamAdapterWrapper extends SpeechStream {
                 continue;
               }
 
-              this.output.put(event);
+              this.outputWriter.write(event);
               break;
             } catch (error) {
               let logger = log();

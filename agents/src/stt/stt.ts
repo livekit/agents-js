@@ -151,7 +151,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     AudioFrame | typeof SpeechStream.FLUSH_SENTINEL
   >;
   protected outputWriter: WritableStreamDefaultWriter<SpeechEvent>;
-
+  protected closed = false;
+  protected inputClosed = false;
   abstract label: string;
   #stt: STT;
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
@@ -159,8 +160,6 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   private inputWriter: WritableStreamDefaultWriter<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
   private outputReader: ReadableStreamDefaultReader<SpeechEvent>;
   private metricsStream: ReadableStream<SpeechEvent>;
-  private closed = false;
-  private inputClosed = false;
 
   constructor(stt: STT) {
     this.#stt = stt;
