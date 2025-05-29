@@ -4,12 +4,16 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
+import type {
+  ReadableStream,
+  ReadableStreamDefaultReader,
+  WritableStreamDefaultWriter,
+} from 'node:stream/web';
 import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
+import { IdentityTransform } from '../stream/identity_transform.js';
 import type { AudioBuffer } from '../utils.js';
-import { AsyncIterableQueue } from '../utils.js';
 
 /** Indicates start/middle/end of speech */
 export enum SpeechEventType {
@@ -140,102 +144,139 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
  */
 export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent> {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
-  protected input = new AsyncIterableQueue<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>();
-  protected output = new AsyncIterableQueue<SpeechEvent>();
-  protected queue = new AsyncIterableQueue<SpeechEvent>();
+  protected input = new IdentityTransform<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>();
+  protected output = new IdentityTransform<SpeechEvent>();
+
+  protected inputReader: ReadableStreamDefaultReader<
+    AudioFrame | typeof SpeechStream.FLUSH_SENTINEL
+  >;
+  protected outputWriter: WritableStreamDefaultWriter<SpeechEvent>;
+
   abstract label: string;
-  protected closed = false;
   #stt: STT;
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
+  private inputWriter: WritableStreamDefaultWriter<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
+  private outputReader: ReadableStreamDefaultReader<SpeechEvent>;
+  private metricsStream: ReadableStream<SpeechEvent>;
+  private closed = false;
+  private inputClosed = false;
+
   constructor(stt: STT) {
     this.#stt = stt;
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
+
+    this.inputWriter = this.input.writable.getWriter();
+    this.inputReader = this.input.readable.getReader();
+    this.outputWriter = this.output.writable.getWriter();
+
+    const [outputStream, metricsStream] = this.output.readable.tee();
+    this.metricsStream = metricsStream;
+    this.outputReader = outputStream.getReader();
+
+    this.pumpDeferredStream();
     this.monitorMetrics();
-    this.mainTask();
   }
 
-  protected async mainTask() {
-    // TODO(AJS-35): Implement STT with webstreams API
+  /**
+   * Reads from the deferred input stream and forwards chunks to the input writer.
+   *
+   * Note: we can't just do this.deferredInputStream.stream.pipeTo(this.input.writable)
+   * because the inputWriter locks the this.input.writable stream. All writes must go through
+   * the inputWriter.
+   */
+  private async pumpDeferredStream() {
+    const reader = this.deferredInputStream.stream.getReader();
     try {
-      const inputStream = this.deferredInputStream.stream;
-      const reader = inputStream.getReader();
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        this.pushFrame(value);
+        await this.inputWriter.write(value);
       }
-    } catch (error) {
-      this.logger.error('Error in STTStream mainTask:', error);
+    } catch (e) {
+      this.logger.error(`Error pumping deferred stream: ${e}`);
+      throw e;
+    } finally {
+      reader.releaseLock();
     }
   }
 
   protected async monitorMetrics() {
     const startTime = process.hrtime.bigint();
+    const metricsReader = this.metricsStream.getReader();
 
-    for await (const event of this.queue) {
-      this.output.put(event);
-      if (event.type !== SpeechEventType.RECOGNITION_USAGE) continue;
+    while (true) {
+      const { done, value } = await metricsReader.read();
+      if (done) {
+        break;
+      }
+
+      if (value.type !== SpeechEventType.RECOGNITION_USAGE) continue;
+
       const duration = process.hrtime.bigint() - startTime;
       const metrics: STTMetrics = {
         timestamp: Date.now(),
-        requestId: event.requestId!,
+        requestId: value.requestId!,
         duration: Math.trunc(Number(duration / BigInt(1000000))),
         label: this.label,
-        audioDuration: event.recognitionUsage!.audioDuration,
+        audioDuration: value.recognitionUsage!.audioDuration,
         streamed: true,
       };
       this.#stt.emit(SpeechEventType.METRICS_COLLECTED, metrics);
     }
-    this.output.close();
   }
 
   updateInputStream(audioStream: ReadableStream<AudioFrame>) {
     this.deferredInputStream.setSource(audioStream);
   }
 
-  /** Push an audio frame to the STT */
+  /** @deprecated Use `updateInputStream` instead */
   pushFrame(frame: AudioFrame) {
-    if (this.input.closed) {
+    // TODO: remove this method in future version
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(frame);
+    this.inputWriter.write(frame);
   }
 
   /** Flush the STT, causing it to process all pending text */
   flush() {
-    if (this.input.closed) {
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(SpeechStream.FLUSH_SENTINEL);
+    this.inputWriter.write(SpeechStream.FLUSH_SENTINEL);
   }
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
-    if (this.input.closed) {
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.close();
+    this.inputClosed = true;
+    this.inputWriter.close();
   }
 
-  next(): Promise<IteratorResult<SpeechEvent>> {
-    return this.output.next();
+  async next(): Promise<IteratorResult<SpeechEvent>> {
+    return this.outputReader.read().then(({ done, value }) => {
+      if (done) {
+        return { done: true, value: undefined };
+      }
+      return { done: false, value };
+    });
   }
 
   /** Close both the input and output of the STT stream */
   close() {
-    this.input.close();
-    this.queue.close();
-    this.output.close();
+    this.input.writable.close();
     this.closed = true;
   }
 
