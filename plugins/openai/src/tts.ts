@@ -108,6 +108,6 @@ export class ChunkedStream extends tts.ChunkedStream {
     }
     sendLastFrame(requestId, true);
 
-    this.outputWriter.close();
+    this.close();
   }
 }

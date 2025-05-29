@@ -124,7 +124,7 @@ export class ChunkedStream extends tts.ChunkedStream {
               segmentId: requestId,
             });
           }
-          this.outputWriter.close();
+          this.close();
         });
       },
     );

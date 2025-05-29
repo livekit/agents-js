@@ -381,7 +381,9 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
 
   /** Close both the input and output of the TTS stream */
   close() {
-    this.outputWriter.close();
+    if (!this.closed) {
+      this.outputWriter.close();
+    }
     this.closed = true;
   }
 

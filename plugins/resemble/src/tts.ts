@@ -133,16 +133,16 @@ export class ChunkedStream extends tts.ChunkedStream {
               });
             }
 
-            this.outputWriter.close();
+            this.close();
           } catch (error) {
             this.#logger.error('Error processing Resemble API response:', error);
-            this.outputWriter.close();
+            this.close();
           }
         });
 
         res.on('error', (error) => {
           this.#logger.error('Resemble API error:', error);
-          this.outputWriter.close();
+          this.close();
         });
       },
     );
