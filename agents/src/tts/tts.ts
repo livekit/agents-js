@@ -120,7 +120,6 @@ export abstract class SynthesizeStream
   #tts: TTS;
   #metricsPendingTexts: string[] = [];
   #metricsText = '';
-  #monitorMetricsTask?: Promise<void>;
 
   private deferredInputStream: DeferredReadableStream<
     string | typeof SynthesizeStream.FLUSH_SENTINEL
@@ -231,9 +230,6 @@ export abstract class SynthesizeStream
   /** Push a string of text to the TTS */
   /** @deprecated Use `updateInputStream` instead */
   pushText(text: string) {
-    if (!this.#monitorMetricsTask) {
-      this.#monitorMetricsTask = this.monitorMetrics();
-    }
     this.#metricsText += text;
 
     if (this.inputClosed) {
@@ -283,7 +279,9 @@ export abstract class SynthesizeStream
 
   /** Close both the input and output of the TTS stream */
   close() {
-    this.inputWriter.close();
+    if (!this.inputClosed) {
+      this.inputWriter.close();
+    }
     this.closed = true;
   }
 
