@@ -68,7 +68,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   #llm: LLM;
   #chatCtx: ChatContext;
   #fncCtx?: FunctionContext;
-  protected output: IdentityTransform<ChatChunk>;
+  private output: IdentityTransform<ChatChunk>;
   private outputReader: ReadableStreamDefaultReader<ChatChunk>;
   private metricsStream: ReadableStream<ChatChunk>;
 
