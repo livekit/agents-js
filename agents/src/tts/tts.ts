@@ -115,12 +115,12 @@ export abstract class SynthesizeStream
   protected outputWriter: WritableStreamDefaultWriter<
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
   >;
+  protected closed = false;
   abstract label: string;
   #tts: TTS;
   #metricsPendingTexts: string[] = [];
   #metricsText = '';
 
-  private closed = false;
   private deferredInputStream: DeferredReadableStream<
     string | typeof SynthesizeStream.FLUSH_SENTINEL
   >;
