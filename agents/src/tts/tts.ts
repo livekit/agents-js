@@ -4,7 +4,11 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import type { ReadableStream } from 'node:stream/web';
+import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
+import { DeferredReadableStream } from '../stream/deferred_stream.js';
+import { IdentityTransform } from '../stream/identity_transform.js';
 import { AsyncIterableQueue, mergeFrames } from '../utils.js';
 
 /** SynthesizedAudio is a packet of speech synthesis as returned by the TTS. */
@@ -105,13 +109,18 @@ export abstract class SynthesizeStream
 {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
   static readonly END_OF_STREAM = Symbol('END_OF_STREAM');
-  protected input = new AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
-  protected queue = new AsyncIterableQueue<
+  protected inputWriter: WritableStreamDefaultWriter<
+    string | typeof SynthesizeStream.FLUSH_SENTINEL
+  >;
+  protected inputReader: ReadableStreamDefaultReader<
+    string | typeof SynthesizeStream.FLUSH_SENTINEL
+  >;
+  protected outputWriter: WritableStreamDefaultWriter<
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
-  >();
-  protected output = new AsyncIterableQueue<
+  >;
+  protected outputReader: ReadableStreamDefaultReader<
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
-  >();
+  >;
   protected closed = false;
   abstract label: string;
   #tts: TTS;
@@ -119,8 +128,57 @@ export abstract class SynthesizeStream
   #metricsText = '';
   #monitorMetricsTask?: Promise<void>;
 
+  private deferredInputStream: DeferredReadableStream<
+    string | typeof SynthesizeStream.FLUSH_SENTINEL
+  >;
+  protected metricsStream: ReadableStream<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>;
+  private input = new IdentityTransform<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
+  private output = new IdentityTransform<
+    SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
+  >();
+  private logger = log();
+  private inputClosed = false;
+
   constructor(tts: TTS) {
     this.#tts = tts;
+    this.deferredInputStream = new DeferredReadableStream();
+
+    this.inputWriter = this.input.writable.getWriter();
+    this.inputReader = this.input.readable.getReader();
+    this.outputWriter = this.output.writable.getWriter();
+
+    const [outputStream, metricsStream] = this.output.readable.tee();
+    this.outputReader = outputStream.getReader();
+    this.metricsStream = metricsStream;
+
+    this.pumpDeferredStream();
+    this.monitorMetrics();
+  }
+
+  /**
+   * Reads from the deferred input stream and forwards chunks to the input writer.
+   *
+   * Note: we can't just do this.deferredInputStream.stream.pipeTo(this.input.writable)
+   * because the inputWriter locks the this.input.writable stream. All writes must go through
+   * the inputWriter.
+   */
+  private async pumpDeferredStream() {
+    const reader = this.deferredInputStream.stream.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done || value === SynthesizeStream.FLUSH_SENTINEL) {
+          break;
+        }
+        this.inputWriter.write(value);
+      }
+    } catch (error) {
+      this.logger.error(error, 'Error reading deferred input stream');
+    } finally {
+      reader.releaseLock();
+      this.flush();
+      this.endInput();
+    }
   }
 
   protected async monitorMetrics() {
@@ -148,9 +206,11 @@ export abstract class SynthesizeStream
       }
     };
 
-    for await (const audio of this.queue) {
-      this.output.put(audio);
-      if (audio === SynthesizeStream.END_OF_STREAM) continue;
+    const metricsReader = this.metricsStream.getReader();
+
+    while (true) {
+      const { done, value: audio } = await metricsReader.read();
+      if (done || audio === SynthesizeStream.END_OF_STREAM) break;
       requestId = audio.requestId;
       if (!ttfb) {
         ttfb = process.hrtime.bigint() - startTime;
@@ -164,23 +224,27 @@ export abstract class SynthesizeStream
     if (requestId) {
       emit();
     }
-    this.output.close();
+  }
+
+  updateInputStream(text: ReadableStream<string>) {
+    this.deferredInputStream.setSource(text);
   }
 
   /** Push a string of text to the TTS */
+  /** @deprecated Use `updateInputStream` instead */
   pushText(text: string) {
     if (!this.#monitorMetricsTask) {
       this.#monitorMetricsTask = this.monitorMetrics();
     }
     this.#metricsText += text;
 
-    if (this.input.closed) {
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(text);
+    this.inputWriter.write(text);
   }
 
   /** Flush the TTS, causing it to process all pending text */
@@ -189,34 +253,40 @@ export abstract class SynthesizeStream
       this.#metricsPendingTexts.push(this.#metricsText);
       this.#metricsText = '';
     }
-    if (this.input.closed) {
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(SynthesizeStream.FLUSH_SENTINEL);
+    this.inputWriter.write(SynthesizeStream.FLUSH_SENTINEL);
   }
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
-    if (this.input.closed) {
+    if (this.inputClosed) {
       throw new Error('Input is closed');
     }
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.close();
+    this.inputClosed = true;
+    this.inputWriter.close();
   }
 
   next(): Promise<IteratorResult<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>> {
-    return this.output.next();
+    return this.outputReader.read().then(({ done, value }) => {
+      if (done) {
+        return { done: true, value: undefined };
+      }
+      return { done: false, value };
+    });
   }
 
   /** Close both the input and output of the TTS stream */
   close() {
-    this.input.close();
-    this.output.close();
+    this.inputWriter.close();
+    this.outputWriter.close();
     this.closed = true;
   }
 
