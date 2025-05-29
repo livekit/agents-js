@@ -97,7 +97,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     let lastFrame: AudioFrame | undefined;
     const sendLastFrame = (segmentId: string, final: boolean) => {
       if (lastFrame) {
-        this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+        this.outputWriter.write({ requestId, segmentId, frame: lastFrame, final });
         lastFrame = undefined;
       }
     };
@@ -108,6 +108,6 @@ export class ChunkedStream extends tts.ChunkedStream {
     }
     sendLastFrame(requestId, true);
 
-    this.queue.close();
+    this.outputWriter.close();
   }
 }

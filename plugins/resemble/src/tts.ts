@@ -116,7 +116,7 @@ export class ChunkedStream extends tts.ChunkedStream {
             const audioBytes = Buffer.from(audioContentB64, 'base64');
 
             for (const frame of bstream.write(audioBytes)) {
-              this.queue.put({
+              this.outputWriter.write({
                 requestId,
                 frame,
                 final: false,
@@ -125,7 +125,7 @@ export class ChunkedStream extends tts.ChunkedStream {
             }
 
             for (const frame of bstream.flush()) {
-              this.queue.put({
+              this.outputWriter.write({
                 requestId,
                 frame,
                 final: false,
@@ -133,16 +133,16 @@ export class ChunkedStream extends tts.ChunkedStream {
               });
             }
 
-            this.queue.close();
+            this.outputWriter.close();
           } catch (error) {
             this.#logger.error('Error processing Resemble API response:', error);
-            this.queue.close();
+            this.outputWriter.close();
           }
         });
 
         res.on('error', (error) => {
           this.#logger.error('Resemble API error:', error);
-          this.queue.close();
+          this.outputWriter.close();
         });
       },
     );

@@ -107,7 +107,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       (res) => {
         res.on('data', (chunk) => {
           for (const frame of bstream.write(chunk)) {
-            this.queue.put({
+            this.outputWriter.write({
               requestId,
               frame,
               final: false,
@@ -117,14 +117,14 @@ export class ChunkedStream extends tts.ChunkedStream {
         });
         res.on('close', () => {
           for (const frame of bstream.flush()) {
-            this.queue.put({
+            this.outputWriter.write({
               requestId,
               frame,
               final: false,
               segmentId: requestId,
             });
           }
-          this.queue.close();
+          this.outputWriter.close();
         });
       },
     );

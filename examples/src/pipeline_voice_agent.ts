@@ -12,7 +12,6 @@ import {
   pipeline,
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
-import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
@@ -60,7 +59,7 @@ export default defineAgent({
       vad,
       new deepgram.STT(),
       new openai.LLM(),
-      new elevenlabs.TTS(),
+      new openai.TTS(),
       { chatCtx: initialContext, fncCtx, turnDetector: new livekit.turnDetector.EOUModel() },
     );
     agent.start(ctx.room, participant);
