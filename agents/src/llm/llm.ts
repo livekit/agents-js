@@ -97,7 +97,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       const { done, value: ev } = await metricsReader.read();
       if (done) break;
 
-      this.outputWriter.write(ev);
       requestId = ev.requestId;
       if (!ttft) {
         ttft = process.hrtime.bigint() - startTime;
@@ -106,7 +105,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         usage = ev.usage;
       }
     }
-    this.outputWriter.close();
+    metricsReader.releaseLock();
 
     const duration = process.hrtime.bigint() - startTime;
     const metrics: LLMMetrics = {
