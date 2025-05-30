@@ -4,9 +4,12 @@
 import type { AudioFrame, AudioSource, Room } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
 import { ChatContext } from '../llm/chat_context.js';
+import type { ChatMessage } from '../llm/chat_context.js';
+import type { LLM } from '../llm/index.js';
 import { log } from '../log.js';
 import type { AgentState } from '../pipeline/index.js';
 import type { STT } from '../stt/index.js';
+import type { TTS } from '../tts/tts.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
@@ -36,6 +39,8 @@ const defaultVoiceOptions: VoiceOptions = {
 export class AgentSession {
   vad: VAD;
   stt: STT;
+  llm: LLM;
+  tts: TTS;
   readonly options: VoiceOptions;
 
   private agent?: Agent;
@@ -53,9 +58,17 @@ export class AgentSession {
   /** @internal */
   audioOutput?: AudioSource;
 
-  constructor(vad: VAD, stt: STT, options?: Partial<VoiceOptions>) {
+  constructor(
+    vad: VAD,
+    stt: STT,
+    llm: LLM,
+    tts: TTS,
+    options: Partial<VoiceOptions> = defaultVoiceOptions,
+  ) {
     this.vad = vad;
     this.stt = stt;
+    this.llm = llm;
+    this.tts = tts;
     // TODO(shubhra): Add tools to chat context initalzation
     this._chatCtx = new ChatContext();
     this.options = { ...defaultVoiceOptions, ...options };
@@ -67,13 +80,13 @@ export class AgentSession {
     }
 
     this.agent = agent;
+    this._updateAgentState('initializing');
 
     if (this.agent) {
       await this.updateActivity(this.agent);
     }
 
-    // TODO(AJS-38): update with TTS sample rate and num channels
-    this.roomIO = new RoomIO(this, room, 0, 0);
+    this.roomIO = new RoomIO(this, room, this.tts.sampleRate, this.tts.numChannels);
     this.roomIO.start();
 
     if (this.audioInput) {
@@ -82,6 +95,7 @@ export class AgentSession {
 
     this.logger.debug('AgentSession started');
     this.started = true;
+    this._updateAgentState('listening');
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
@@ -100,6 +114,11 @@ export class AgentSession {
   get chatCtx(): ChatContext {
     // TODO(shubhra): Return a readonly object
     return this._chatCtx;
+  }
+
+  /** @internal */
+  _conversationItemAdded(item: ChatMessage): void {
+    this._chatCtx.insertItem(item);
   }
 
   /** @internal */
