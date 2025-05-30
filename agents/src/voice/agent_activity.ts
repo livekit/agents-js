@@ -144,15 +144,16 @@ export class AgentActivity implements RecognitionHooks {
     while (true) {
       await once(this.queueEvents, 'updated');
       while (this.speechQueue.size() > 0) {
-      const heapItem = this.speechQueue.pop();
-      if (!heapItem) {
-        throw new Error('Speech queue is empty');
+        const heapItem = this.speechQueue.pop();
+        if (!heapItem) {
+          throw new Error('Speech queue is empty');
+        }
+        const speechHandle = heapItem[2];
+        this.currentSpeech = speechHandle;
+        speechHandle.authorizePlayout();
+        await speechHandle.waitForPlayout();
+        this.currentSpeech = undefined;
       }
-      const speechHandle = heapItem[2];
-      this.currentSpeech = speechHandle;
-      speechHandle.authorizePlayout();
-      await speechHandle.waitForPlayout();
-      this.currentSpeech = undefined;
     }
   }
 
