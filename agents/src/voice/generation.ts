@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, AudioSource } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
 import type { ReadableStream } from 'stream/web';
