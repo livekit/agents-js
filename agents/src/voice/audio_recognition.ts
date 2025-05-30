@@ -160,10 +160,7 @@ export class AudioRecognition {
       }
 
       const extraSleep = lastSpeakingTime + endpointingDelay - Date.now();
-      if (abortSignal.aborted) {
-        return;
-      }
-      await delay(Math.max(extraSleep, 0));
+      await delay(extraSleep, { signal: abortSignal });
 
       this.logger.debug('end of user turn', {
         transcript: this.audioTranscript,
@@ -187,9 +184,19 @@ export class AudioRecognition {
 
     this.bounceEOUAbortController = new AbortController();
     this.eouTaskDone = new Future();
-    bounceEOUTask(this.lastSpeakingTime, this.bounceEOUAbortController.signal).then(() => {
-      this.eouTaskDone?.resolve();
-    });
+    bounceEOUTask(this.lastSpeakingTime, this.bounceEOUAbortController.signal)
+      .then(() => {
+        this.eouTaskDone?.resolve();
+      })
+      .catch((err) => {
+        // Handle AbortError gracefully - these are expected when cancelling EOU detection
+        if (err.name === 'AbortError') {
+          this.logger.debug('EOU detection task was aborted');
+        } else {
+          this.logger.error('Error in EOU detection task:', err);
+        }
+        this.eouTaskDone?.resolve();
+      });
   }
 
   private async sttTask(inputStream: ReadableStream<AudioFrame>) {

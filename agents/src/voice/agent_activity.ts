@@ -45,8 +45,8 @@ export class AgentActivity implements RecognitionHooks {
     this.audioRecognition = new AudioRecognition(
       this,
       this.agentSession.vad,
-      this.agentSession.options.min_endpointing_delay,
-      this.agentSession.options.max_endpointing_delay,
+      this.agentSession.options.minEndpointingDelay,
+      this.agentSession.options.maxEndpointingDelay,
       // Arrow function preserves the Agent context
       (...args) => this.agent.sttNode(...args),
       this.turnDetectionMode === 'manual',
