@@ -22,6 +22,7 @@ export class SpeechHandle {
   #userQuestion: string;
   #userCommitted = false;
   #initFut = new Future();
+  private interruptFut = new Future();
   private authorizeFut = new Future();
   private playoutDoneFut = new Future();
   #speechCommitted = false;
@@ -105,7 +106,7 @@ export class SpeechHandle {
   }
 
   initialize(source: string | LLMStream | AsyncIterable<string>, synthesisHandle: SynthesisHandle) {
-    if (this.interrupted) {
+    if (this.legacyInterrupted) {
       throw new Error('speech was interrupted');
     }
 
@@ -173,8 +174,13 @@ export class SpeechHandle {
     return this.#userQuestion;
   }
 
-  get interrupted(): boolean {
+  /** @deprecated Use interrupted instead */
+  get legacyInterrupted(): boolean {
     return !!this.#synthesisHandle?.interrupted;
+  }
+
+  get interrupted(): boolean {
+    return this.interruptFut.done;
   }
 
   get fncNestedDepth(): number {
@@ -226,11 +232,16 @@ export class SpeechHandle {
     return this.playoutDoneFut.done;
   }
 
-  interrupt() {
+  /** @deprecated Use interrupt instead */
+  legacyInterrupt() {
     if (!this.#allowInterruptions) {
       throw new Error('interruptions are not allowed');
     }
     this.cancel();
+  }
+
+  interrupt() {
+    this.interruptFut.resolve();
   }
 
   cancel() {

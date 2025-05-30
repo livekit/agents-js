@@ -127,7 +127,7 @@ export class AgentActivity implements RecognitionHooks {
       this.turnDetectionMode !== 'manual' &&
       this.currentSpeech &&
       this.currentSpeech.allowInterruptions &&
-      !this.currentSpeech.interrupted &&
+      !this.currentSpeech.legacyInterrupted &&
       this.agentSession.options.minInterruptionWords > 0 &&
       info.newTranscript.split(' ').length < this.agentSession.options.minInterruptionWords
     ) {
@@ -220,7 +220,7 @@ export class AgentActivity implements RecognitionHooks {
         return;
       }
 
-      // this.currentSpeech.interrupt();
+      this.currentSpeech.interrupt();
       // TODO(AJS-32): Add realtime model support for interrupting the current generation
     }
 
