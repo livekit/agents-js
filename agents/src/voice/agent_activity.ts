@@ -78,7 +78,7 @@ export class AgentActivity implements RecognitionHooks {
 
   get allowInterruptions(): boolean {
     // TODO(AJS-51): Allow options to be defined in Agent class
-    return this.agentSession.options.allow_interruptions;
+    return this.agentSession.options.allowInterruptions;
   }
 
   updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
@@ -119,8 +119,8 @@ export class AgentActivity implements RecognitionHooks {
       this.currentSpeech &&
       this.currentSpeech.allowInterruptions &&
       !this.currentSpeech.interrupted &&
-      this.agentSession.options.min_interruption_words > 0 &&
-      info.newTranscript.split(' ').length < this.agentSession.options.min_interruption_words
+      this.agentSession.options.minInterruptionWords > 0 &&
+      info.newTranscript.split(' ').length < this.agentSession.options.minInterruptionWords
     ) {
       return false;
     }
