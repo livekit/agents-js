@@ -34,7 +34,7 @@ export class AgentActivity implements RecognitionHooks {
   private turnDetectionMode?: string;
   private _draining = false;
   private currentSpeech?: SpeechHandle;
-  private speechQueue: Heap<[number, number, SpeechHandle]>;
+  private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private queueEvents: EventEmitter;
   agent: Agent;
   agentSession: AgentSession;
