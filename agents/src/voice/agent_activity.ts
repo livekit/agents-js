@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { Heap } from 'heap-js';
+import { EventEmitter, once } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage, ChatRole } from '../llm/chat_context.js';
 import type { LLM } from '../llm/index.js';
@@ -10,7 +11,6 @@ import { log } from '../log.js';
 import { SpeechHandle } from '../pipeline/speech_handle.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
-import { AsyncEvent } from '../utils.js';
 import type { VADEvent } from '../vad.js';
 import { StopResponse } from './agent.js';
 import type { Agent } from './agent.js';
@@ -35,7 +35,7 @@ export class AgentActivity implements RecognitionHooks {
   private _draining = false;
   private currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>;
-  private q_updated: AsyncEvent;
+  private queueEvents: EventEmitter;
   agent: Agent;
   agentSession: AgentSession;
 
@@ -43,7 +43,7 @@ export class AgentActivity implements RecognitionHooks {
     this.agent = agent;
     this.agentSession = agentSession;
     this.speechQueue = new Heap<[number, number, SpeechHandle]>(Heap.maxComparator);
-    this.q_updated = new AsyncEvent();
+    this.queueEvents = new EventEmitter();
   }
 
   async start(): Promise<void> {
@@ -142,7 +142,8 @@ export class AgentActivity implements RecognitionHooks {
 
   private async mainTask(): Promise<void> {
     while (true) {
-      await this.q_updated.wait;
+      await once(this.queueEvents, 'updated');
+      while (this.speechQueue.size() > 0) {
       const heapItem = this.speechQueue.pop();
       if (!heapItem) {
         throw new Error('Speech queue is empty');
@@ -152,13 +153,11 @@ export class AgentActivity implements RecognitionHooks {
       speechHandle.authorizePlayout();
       await speechHandle.waitForPlayout();
       this.currentSpeech = undefined;
-
-      this.q_updated.clear();
     }
   }
 
   private wakeupMainTask(): void {
-    this.q_updated.set();
+    this.queueEvents.emit('updated');
   }
 
   private generateReply(
