@@ -2,10 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import { delay } from '@std/async';
 import { ReadableStream } from 'node:stream/web';
+import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { Future } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { STTNode } from './io.js';
 
@@ -21,7 +24,16 @@ export interface RecognitionHooks {
   onVADInferenceDone: (ev: VADEvent) => void;
   onInterimTranscript: (ev: SpeechEvent) => void;
   onFinalTranscript: (ev: SpeechEvent) => void;
-  onEndOfTurn: (info: EndOfTurnInfo) => void;
+  onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
+
+  retrieveChatCtx: () => ChatContext;
+}
+
+interface _TurnDetector {
+  unlikelyThreshold: (language?: string) => number | null;
+  supportsLanguage: (language?: string) => boolean;
+
+  predictEndOfTurn(chatCtx: ChatContext): Promise<number>;
 }
 
 export class AudioRecognition {
@@ -29,18 +41,24 @@ export class AudioRecognition {
   private vadStreamProcessor?: Promise<void>;
   private sttStreamProcessor?: Promise<void>;
   private logger = log();
-  private lastLanguage?: string;
   private lastFinalTranscriptTime = 0;
   private audioTranscript = '';
   private audioInterimTranscript = '';
   private lastSpeakingTime = 0;
   private userTurnCommitted = false;
   private speaking = false;
+  private bounceEOUAbortController?: AbortController;
+  private eouTaskDone?: Future;
+
   constructor(
-    private hooks: RecognitionHooks,
+    private readonly hooks: RecognitionHooks,
     private vad: VAD,
-    private stt: STTNode,
+    private readonly minEndpointingDelay: number,
+    private readonly maxEndpointingDelay: number,
+    private stt?: STTNode,
     private manualTurnDetection = false,
+    private turnDetector?: _TurnDetector,
+    private lastLanguage?: string,
   ) {
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
   }
@@ -56,8 +74,17 @@ export class AudioRecognition {
   }
 
   private async onSTTEvent(ev: SpeechEvent) {
-    // TODO(AJS-30) ignore stt event if user turn already committed and EOU task is done
-    // or it's an interim transcript
+    if (
+      this.manualTurnDetection &&
+      this.userTurnCommitted &&
+      (this.eouTaskDone === undefined ||
+        this.eouTaskDone.done ||
+        ev.type == SpeechEventType.INTERIM_TRANSCRIPT)
+    ) {
+      // ignore stt event if user turn already committed and EOU task is done
+      // or it's an interim transcript
+      return;
+    }
 
     switch (ev.type) {
       case SpeechEventType.FINAL_TRANSCRIPT:
@@ -67,30 +94,35 @@ export class AudioRecognition {
 
         if (!transcript) return;
 
-        this.logger.debug('received user transcript', {
-          user_transcript: transcript,
-          language: this.lastLanguage,
-        });
+        this.logger.debug(
+          {
+            user_transcript: transcript,
+            language: this.lastLanguage,
+          },
+          'received user transcript',
+        );
 
         this.lastFinalTranscriptTime = Date.now();
         this.audioTranscript += ` ${transcript}`;
-        this.audioTranscript = this.audioTranscript.trim();
+        this.audioTranscript = this.audioTranscript.trimStart();
         this.audioInterimTranscript = '';
 
         if (!this.speaking) {
           if (!this.vad) {
+            // Copied from python agents:
+            // vad disabled, use stt timestamp
+            // TODO: this would screw up transcription latency metrics
+            // but we'll live with it for now.
+            // the correct way is to ensure STT fires SpeechEventType.END_OF_SPEECH
+            // and using that timestamp for _last_speaking_time
             this.lastSpeakingTime = Date.now();
           }
         }
 
         if (!this.manualTurnDetection || this.userTurnCommitted) {
-          this.hooks.onEndOfTurn({
-            newTranscript: transcript,
-            transcriptionDelay: this.lastFinalTranscriptTime - this.lastSpeakingTime,
-            endOfUtteranceDelay: this.lastFinalTranscriptTime - Date.now(),
-          });
+          const chatCtx = this.hooks.retrieveChatCtx();
+          this.runEOUDetection(chatCtx);
         }
-
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
         this.hooks.onInterimTranscript(ev);
@@ -99,7 +131,79 @@ export class AudioRecognition {
     }
   }
 
+  private async runEOUDetection(chatCtx: ChatContext) {
+    if (this.stt && !this.audioTranscript && !this.manualTurnDetection) {
+      // stt enabled but no transcript yet
+      return;
+    }
+
+    chatCtx = chatCtx.copy();
+    chatCtx.append({ role: ChatRole.USER, text: this.audioTranscript });
+
+    const turnDetector =
+      // disable EOU model if manual turn detection enabled
+      this.audioTranscript && !this.manualTurnDetection ? this.turnDetector : null;
+
+    const bounceEOUTask = async (lastSpeakingTime: number, abortSignal: AbortSignal) => {
+      let endpointingDelay = this.minEndpointingDelay;
+
+      if (turnDetector) {
+        if (!turnDetector.supportsLanguage(this.lastLanguage)) {
+          this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
+        } else {
+          const endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
+          const unlikelyThreshold = turnDetector.unlikelyThreshold(this.lastLanguage);
+          if (unlikelyThreshold && endOfTurnProbability < unlikelyThreshold) {
+            endpointingDelay = this.maxEndpointingDelay;
+          }
+        }
+      }
+
+      const extraSleep = lastSpeakingTime + endpointingDelay - Date.now();
+      await delay(extraSleep, { signal: abortSignal });
+
+      this.logger.debug('end of user turn', {
+        transcript: this.audioTranscript,
+      });
+
+      const committed = await this.hooks.onEndOfTurn({
+        newTranscript: this.audioTranscript,
+        transcriptionDelay: Math.max(this.lastFinalTranscriptTime - lastSpeakingTime, 0),
+        endOfUtteranceDelay: Date.now() - lastSpeakingTime,
+      });
+
+      if (committed) {
+        // clear the transcript if the user turn was committed
+        this.audioTranscript = '';
+      }
+    };
+
+    if (this.bounceEOUAbortController) {
+      this.bounceEOUAbortController.abort();
+    }
+
+    this.bounceEOUAbortController = new AbortController();
+    this.eouTaskDone = new Future();
+    bounceEOUTask(this.lastSpeakingTime, this.bounceEOUAbortController.signal)
+      .then(() => {
+        this.eouTaskDone?.resolve();
+      })
+      .catch((err) => {
+        // Handle AbortError gracefully - these are expected when cancelling EOU detection
+        if (err.name === 'AbortError') {
+          this.logger.debug('EOU detection task was aborted');
+        } else {
+          this.logger.error('Error in EOU detection task:', err);
+        }
+        this.eouTaskDone?.resolve();
+      });
+  }
+
   private async sttTask(inputStream: ReadableStream<AudioFrame>) {
+    if (!this.stt) {
+      return;
+    }
+
     const sttStream = await this.stt(inputStream, {});
     if (sttStream === null) {
       return;
@@ -131,6 +235,9 @@ export class AudioRecognition {
         case VADEventType.START_OF_SPEECH:
           this.hooks.onStartOfSpeech(ev);
           this.speaking = true;
+          if (this.bounceEOUAbortController) {
+            this.bounceEOUAbortController.abort();
+          }
           break;
         case VADEventType.INFERENCE_DONE:
           this.hooks.onVADInferenceDone(ev);
@@ -140,6 +247,11 @@ export class AudioRecognition {
           this.speaking = false;
           // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
           this.lastSpeakingTime = Date.now() - ev.silenceDuration;
+
+          if (!this.manualTurnDetection) {
+            const chatCtx = this.hooks.retrieveChatCtx();
+            this.runEOUDetection(chatCtx);
+          }
           break;
       }
     }
