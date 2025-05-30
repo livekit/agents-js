@@ -15,7 +15,9 @@ export class InjectableStream<T> {
   async inject(value: T) {
     // note this will still fail for parallel writes
     // we can acquire the writer in the constructor but this will lead to the problem with multiple sync loops blocking when trying to write
-    this.identityStream.writable.getWriter().write(value);
+    const writer = this.identityStream.writable.getWriter();
+    await writer.write(value);
+    await writer.close();
   }
 
   async close() {
