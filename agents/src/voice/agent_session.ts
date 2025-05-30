@@ -121,11 +121,6 @@ export class AgentSession {
     this._chatCtx.insertItem(item);
   }
 
-  get chatCtx(): ChatContext {
-    // TODO(shubhra): Return a readonly object
-    return this._chatCtx;
-  }
-
   /** @internal */
   _updateAgentState(state: AgentState) {
     this.agentState = state;
