@@ -160,7 +160,7 @@ export class AudioRecognition {
       }
 
       const extraSleep = lastSpeakingTime + endpointingDelay - Date.now();
-      await delay(extraSleep, { signal: abortSignal });
+      await delay(Math.max(extraSleep, 0), { signal: abortSignal });
 
       this.logger.debug('end of user turn', {
         transcript: this.audioTranscript,
