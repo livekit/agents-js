@@ -10,9 +10,9 @@ import { SpeechHandle } from '../pipeline/speech_handle.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
 import type { VADEvent } from '../vad.js';
-import { StopResponse } from './agent.js';
 import type { Agent } from './agent.js';
-import type { AgentSession } from './agent_session.js';
+import { StopResponse } from './agent.js';
+import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 import {
   AudioRecognition,
   type EndOfTurnInfo,
@@ -29,7 +29,7 @@ export class AgentActivity implements RecognitionHooks {
   private started = false;
   private audioRecognition?: AudioRecognition;
   private logger = log();
-  private turnDetectionMode?: string;
+  private turnDetectionMode?: TurnDetectionMode;
   private _draining = false;
   private currentSpeech?: SpeechHandle;
   agent: Agent;
@@ -49,7 +49,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession.options.maxEndpointingDelay,
       // Arrow function preserves the Agent context
       (...args) => this.agent.sttNode(...args),
-      this.turnDetectionMode === 'manual',
+      this.turnDetectionMode,
     );
     this.audioRecognition.start();
     this.started = true;
