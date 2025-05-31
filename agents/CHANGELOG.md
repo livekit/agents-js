@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 0.7.6
+
+### Patch Changes
+
+- add termiante to JobRequest - [#399](https://github.com/livekit/agents-js/pull/399) ([@paulwe](https://github.com/paulwe))
+
 ## 0.7.5
 
 ### Patch Changes
