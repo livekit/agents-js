@@ -24,19 +24,26 @@ export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
   modelSettings: any, // TODO(AJS-59): add type
+  signal?: AbortSignal,
 ): [Promise<void>, _LLMGenerationData] {
   const textStream = new IdentityTransform<string>();
   const writer = textStream.writable.getWriter();
   const data = new _LLMGenerationData(textStream.readable);
 
   const inferenceTask = async () => {
-    const llmStream = await node(chatCtx, modelSettings);
-    if (llmStream === null) {
-      return;
-    }
+    let reader: ReadableStreamDefaultReader<any> | null = null;
     try {
-      const reader = llmStream.getReader();
+      signal?.throwIfAborted();
+
+      const llmStream = await node(chatCtx, modelSettings);
+      if (llmStream === null) {
+        return;
+      }
+
+      reader = llmStream.getReader();
       while (true) {
+        signal?.throwIfAborted();
+
         const { done, value: chunk } = await reader.read();
         if (done) {
           break;
@@ -54,8 +61,25 @@ export function performLLMInference(
           throw new Error(`Unexpected chunk type: ${JSON.stringify(chunk)}`);
         }
       }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        // Cancel the reader if it exists
+        if (reader) {
+          reader.cancel().catch(() => {});
+        }
+        throw error;
+      }
+      throw error;
     } finally {
-      writer.close();
+      // Release reader lock safely
+      if (reader) {
+        try {
+          reader.releaseLock();
+        } catch {
+          // Ignore errors if reader is already released
+        }
+      }
+      writer.close().catch(() => {});
     }
   };
   return [inferenceTask(), data];
@@ -65,27 +89,50 @@ export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string>,
   modelSettings: any, // TODO(AJS-59): add type
+  signal?: AbortSignal,
 ): [Promise<void>, ReadableStream<AudioFrame>] {
   const audioStream = new IdentityTransform<AudioFrame>();
   const writer = audioStream.writable.getWriter();
   const audioOutputStream = audioStream.readable;
 
   const inferenceTask = async () => {
+    let reader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     try {
+      signal?.throwIfAborted();
+
       const ttsNode = await node(text, modelSettings);
       if (ttsNode === null) {
         writer.close();
         return;
       }
 
-      const reader = ttsNode.getReader();
+      reader = ttsNode.getReader();
       while (true) {
+        signal?.throwIfAborted();
+
         const { done, value: chunk } = await reader.read();
         if (done) break;
         writer.write(chunk);
       }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        // Cancel the reader if it exists
+        if (reader) {
+          reader.cancel().catch(() => {});
+        }
+        throw error;
+      }
+      throw error;
     } finally {
-      writer.close();
+      // Release reader lock safely
+      if (reader) {
+        try {
+          reader.releaseLock();
+        } catch {
+          // Ignore errors if reader is already released
+        }
+      }
+      writer.close().catch(() => {});
     }
   };
 
@@ -101,14 +148,31 @@ async function forwardText(
   textOutput: _TextOutput | null,
   source: ReadableStream<string>,
   out: _TextOutput,
+  signal?: AbortSignal,
 ): Promise<void> {
   const reader = source.getReader();
-  while (true) {
-    const { done, value: delta } = await reader.read();
-    if (done) break;
-    out.text += delta;
-    if (!out.firstTextFut.done) {
-      out.firstTextFut.resolve();
+  try {
+    while (true) {
+      signal?.throwIfAborted();
+
+      const { done, value: delta } = await reader.read();
+      if (done) break;
+      out.text += delta;
+      if (!out.firstTextFut.done) {
+        out.firstTextFut.resolve();
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      reader.cancel().catch(() => {});
+      throw error;
+    }
+    throw error;
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // Ignore errors if reader is already released
     }
   }
 }
@@ -116,12 +180,13 @@ async function forwardText(
 export function performTextForwarding(
   textOutput: _TextOutput | null,
   source: ReadableStream<string>,
+  signal?: AbortSignal,
 ): [Promise<void>, _TextOutput] {
   const out = {
     text: '',
     firstTextFut: new Future(),
   };
-  return [forwardText(textOutput, source, out), out];
+  return [forwardText(textOutput, source, out, signal), out];
 }
 
 export interface _AudioOutput {
@@ -133,16 +198,33 @@ async function forwardAudio(
   ttsStream: ReadableStream<AudioFrame>,
   audioOuput: AudioSource,
   out: _AudioOutput,
+  signal?: AbortSignal,
 ): Promise<void> {
   const reader = ttsStream.getReader();
-  while (true) {
-    const { done, value: frame } = await reader.read();
-    if (done) break;
-    // TODO(AJS-56) handle resampling
-    await audioOuput.captureFrame(frame);
-    out.audio.push(frame);
-    if (!out.firstFrameFut.done) {
-      out.firstFrameFut.resolve();
+  try {
+    while (true) {
+      signal?.throwIfAborted();
+
+      const { done, value: frame } = await reader.read();
+      if (done) break;
+      // TODO(AJS-56) handle resampling
+      await audioOuput.captureFrame(frame);
+      out.audio.push(frame);
+      if (!out.firstFrameFut.done) {
+        out.firstFrameFut.resolve();
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      reader.cancel().catch(() => {});
+      throw error;
+    }
+    throw error;
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // Ignore errors if reader is already released
     }
   }
 }
@@ -150,10 +232,11 @@ async function forwardAudio(
 export function performAudioForwarding(
   ttsStream: ReadableStream<AudioFrame>,
   audioOutput: AudioSource,
+  signal?: AbortSignal,
 ): [Promise<void>, _AudioOutput] {
   const out = {
     audio: [],
     firstFrameFut: new Future(),
   };
-  return [forwardAudio(ttsStream, audioOutput, out), out];
+  return [forwardAudio(ttsStream, audioOutput, out, signal), out];
 }

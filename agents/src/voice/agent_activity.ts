@@ -127,7 +127,7 @@ export class AgentActivity implements RecognitionHooks {
       this.turnDetectionMode !== 'manual' &&
       this.currentSpeech &&
       this.currentSpeech.allowInterruptions &&
-      !this.currentSpeech.legacyInterrupted &&
+      !this.currentSpeech.interrupted &&
       this.agentSession.options.minInterruptionWords > 0 &&
       info.newTranscript.split(' ').length < this.agentSession.options.minInterruptionWords
     ) {
@@ -253,6 +253,10 @@ export class AgentActivity implements RecognitionHooks {
     instructions?: string,
     newMessage?: ChatMessage,
   ): Promise<void> {
+    // Create abort controller for this speech generation
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+
     // TODO(AJS-54): add transcription/text output
 
     const audioOutput = this.agentSession.audioOutput;
@@ -268,11 +272,12 @@ export class AgentActivity implements RecognitionHooks {
     // TODO(AJS-57): handle instructions
 
     this.agentSession._updateAgentState('thinking');
-    const tasks: Array<Promise<any>> = [];
+    const tasks: Array<Promise<void>> = [];
     const [llmTask, llmGenData] = performLLMInference(
       (...args) => this.agent.llmNode(...args),
       chatCtx,
       {},
+      signal, // Pass abort signal
     );
     tasks.push(llmTask);
 
@@ -285,14 +290,20 @@ export class AgentActivity implements RecognitionHooks {
         (...args) => this.agent.ttsNode(...args),
         ttsTextInput,
         {},
+        signal, // Pass abort signal
       );
       tasks.push(ttsTask);
     }
 
-    // TODO(AJS-40): handle interrupted authorization
-    await speechHandle.waitForAuthorization();
+    await speechHandle.waitIfNotInterrupted([speechHandle.waitForAuthorization()]);
+    if (speechHandle.interrupted) {
+      this.logger.info({ speech_id: speechHandle.id }, 'speech interrupted');
+      abortController.abort(); // Abort all tasks
+      await Promise.allSettled(tasks); // Wait for tasks to complete
+      return;
+    }
 
-    const [textForwardTask, textOutput] = performTextForwarding(null, llmOutput);
+    const [textForwardTask, textOutput] = performTextForwarding(null, llmOutput, signal);
     tasks.push(textForwardTask);
 
     const onFirstFrame = () => {
@@ -301,7 +312,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (audioOutput) {
       if (ttsStream) {
-        const [forwardTask, audioOut] = performAudioForwarding(ttsStream, audioOutput);
+        const [forwardTask, audioOut] = performAudioForwarding(ttsStream, audioOutput, signal);
         tasks.push(forwardTask);
         audioOut.firstFrameFut.await.then(onFirstFrame);
       } else {
@@ -312,18 +323,35 @@ export class AgentActivity implements RecognitionHooks {
     }
     // TODO(shubhra): handle tool calls
 
-    const message = ChatMessage.create({
-      role: ChatRole.ASSISTANT,
-      text: textOutput.text,
-    });
-    chatCtx.insertItem(message);
-    this.agent._chatCtx.insertItem(message);
-    this.agentSession._conversationItemAdded(message);
+    try {
+      // Race between task completion and interruption
+      await Promise.race([Promise.all(tasks), speechHandle.waitIfNotInterrupted([])]);
 
-    await Promise.all(tasks);
+      if (!speechHandle.interrupted) {
+        const message = ChatMessage.create({
+          role: ChatRole.ASSISTANT,
+          text: textOutput.text,
+        });
+        chatCtx.insertItem(message);
+        this.agent._chatCtx.insertItem(message);
+        this.agentSession._conversationItemAdded(message);
 
-    this.logger.info({ speech_id: speechHandle.id }, 'playout completed');
-    speechHandle.markPlayoutDone();
+        this.logger.info({ speech_id: speechHandle.id }, 'playout completed');
+        speechHandle.markPlayoutDone();
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        this.logger.info({ speech_id: speechHandle.id }, 'speech generation aborted');
+      } else {
+        throw error;
+      }
+    } finally {
+      // Ensure all tasks are cancelled and cleaned up
+      if (!signal.aborted) {
+        abortController.abort();
+      }
+      await Promise.allSettled(tasks);
+    }
   }
 
   private scheduleSpeech(speechHandle: SpeechHandle, priority: number): void {

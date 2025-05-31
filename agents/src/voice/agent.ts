@@ -136,10 +136,18 @@ export class Agent {
 
       return new ReadableStream({
         async start(controller) {
-          for await (const event of stream) {
-            controller.enqueue(event);
+          try {
+            for await (const event of stream) {
+              controller.enqueue(event);
+            }
+            controller.close();
+          } catch (error) {
+            controller.error(error);
           }
-          controller.close();
+        },
+        cancel() {
+          // Properly close the underlying STT stream when cancelled
+          stream.close();
         },
       });
     },
@@ -153,10 +161,18 @@ export class Agent {
       const stream = activity.llm.chat({ chatCtx });
       return new ReadableStream({
         async start(controller) {
-          for await (const chunk of stream) {
-            controller.enqueue(chunk);
+          try {
+            for await (const chunk of stream) {
+              controller.enqueue(chunk);
+            }
+            controller.close();
+          } catch (error) {
+            controller.error(error);
           }
-          controller.close();
+        },
+        cancel() {
+          // Properly close the underlying LLM stream when cancelled
+          stream.close();
         },
       });
     },
@@ -178,13 +194,21 @@ export class Agent {
 
       return new ReadableStream({
         async start(controller) {
-          for await (const chunk of stream) {
-            if (chunk === SynthesizeStream.END_OF_STREAM) {
-              controller.close();
-              break;
+          try {
+            for await (const chunk of stream) {
+              if (chunk === SynthesizeStream.END_OF_STREAM) {
+                controller.close();
+                break;
+              }
+              controller.enqueue(chunk.frame);
             }
-            controller.enqueue(chunk.frame);
+          } catch (error) {
+            controller.error(error);
           }
+        },
+        cancel() {
+          // Properly close the underlying TTS stream when cancelled
+          stream.close();
         },
       });
     },

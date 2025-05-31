@@ -224,6 +224,11 @@ export class SpeechHandle {
     return this.playoutDoneFut.await;
   }
 
+  async waitIfNotInterrupted(aw: Promise<void>[]): Promise<void> {
+    const fs: Promise<void>[] = [...aw, this.interruptFut.await];
+    await Promise.race(fs);
+  }
+
   markPlayoutDone() {
     this.playoutDoneFut.resolve();
   }
@@ -241,6 +246,9 @@ export class SpeechHandle {
   }
 
   interrupt() {
+    if (!this.#allowInterruptions) {
+      throw new Error('interruptions are not allowed');
+    }
     this.interruptFut.resolve();
   }
 
