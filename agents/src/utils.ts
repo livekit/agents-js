@@ -159,7 +159,6 @@ export class Future<T = void> {
   }
 }
 
-
 /** @internal */
 export class Event {
   #isSet = false;
@@ -168,7 +167,7 @@ export class Event {
   async wait() {
     if (this.#isSet) return true;
 
-    let resolve: (() => void) = noop;
+    let resolve: () => void = noop;
     const waiter = new Promise<void>((r) => {
       resolve = r;
       this.#waiters.push(resolve);
