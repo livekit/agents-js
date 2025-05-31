@@ -632,7 +632,7 @@ export class Worker {
   async #availability(msg: AvailabilityRequest) {
     let answered = false;
 
-    const onReject = async () => {
+    const onReject = async (terminate: boolean = false) => {
       answered = true;
       this.event.emit(
         'worker_msg',
@@ -642,6 +642,7 @@ export class Worker {
             value: {
               jobId: msg.job!.id,
               available: false,
+              terminate,
             },
           },
         }),
