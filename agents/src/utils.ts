@@ -117,14 +117,14 @@ export class Queue<T> {
 }
 
 /** @internal */
-export class Future {
-  #await: Promise<void>;
-  #resolvePromise!: () => void;
+export class Future<T = void> {
+  #await: Promise<T>;
+  #resolvePromise!: (value: T) => void;
   #rejectPromise!: (error: Error) => void;
   #done: boolean = false;
 
   constructor() {
-    this.#await = new Promise<void>((resolve, reject) => {
+    this.#await = new Promise<T>((resolve, reject) => {
       this.#resolvePromise = resolve;
       this.#rejectPromise = reject;
     });
@@ -138,9 +138,9 @@ export class Future {
     return this.#done;
   }
 
-  resolve() {
+  resolve(value: T) {
     this.#done = true;
-    this.#resolvePromise();
+    this.#resolvePromise(value);
   }
 
   reject(error: Error) {

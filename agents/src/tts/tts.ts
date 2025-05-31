@@ -4,7 +4,10 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import type { ReadableStream } from 'node:stream/web';
+import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
+import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { AsyncIterableQueue, mergeFrames } from '../utils.js';
 
 /** SynthesizedAudio is a packet of speech synthesis as returned by the TTS. */
@@ -119,8 +122,33 @@ export abstract class SynthesizeStream
   #metricsText = '';
   #monitorMetricsTask?: Promise<void>;
 
+  private deferredInputStream: DeferredReadableStream<
+    string | typeof SynthesizeStream.FLUSH_SENTINEL
+  >;
+  private logger = log();
+
   constructor(tts: TTS) {
     this.#tts = tts;
+    this.deferredInputStream = new DeferredReadableStream();
+    this.mainTask();
+  }
+
+  // TODO(AJS-37) Remove when refactoring TTS to use streams
+  protected async mainTask() {
+    const reader = this.deferredInputStream.stream.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done || value === SynthesizeStream.FLUSH_SENTINEL) {
+          break;
+        }
+        this.pushText(value);
+      }
+      this.flush();
+      this.endInput();
+    } catch (error) {
+      this.logger.error(error, 'Error reading deferred input stream');
+    }
   }
 
   protected async monitorMetrics() {
@@ -167,7 +195,12 @@ export abstract class SynthesizeStream
     this.output.close();
   }
 
+  updateInputStream(text: ReadableStream<string>) {
+    this.deferredInputStream.setSource(text);
+  }
+
   /** Push a string of text to the TTS */
+  /** @deprecated Use `updateInputStream` instead */
   pushText(text: string) {
     if (!this.#monitorMetricsTask) {
       this.#monitorMetricsTask = this.monitorMetrics();

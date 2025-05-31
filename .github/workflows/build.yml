@@ -5,9 +5,9 @@
 name: Build
 on:
   push:
-    branches: [next, main]
+    branches: [next, main, dev-1.0]
   pull_request:
-    branches: [next, main]
+    branches: [next, main, dev-1.0]
 
 jobs:
   reuse:

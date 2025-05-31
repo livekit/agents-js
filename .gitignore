@@ -185,3 +185,6 @@ docs
 
 # direnv
 .direnv
+
+# vscode workspace config
+agents-js.code-workspace
