@@ -117,11 +117,11 @@ export class AudioRecognition {
             // and using that timestamp for _last_speaking_time
             this.lastSpeakingTime = Date.now();
           }
-        }
 
-        if (!this.manualTurnDetection || this.userTurnCommitted) {
-          const chatCtx = this.hooks.retrieveChatCtx();
-          this.runEOUDetection(chatCtx);
+          if (!this.manualTurnDetection || this.userTurnCommitted) {
+            const chatCtx = this.hooks.retrieveChatCtx();
+            this.runEOUDetection(chatCtx);
+          }
         }
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
