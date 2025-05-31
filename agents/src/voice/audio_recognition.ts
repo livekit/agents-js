@@ -10,6 +10,7 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { Future } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
+import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
 
 export interface EndOfTurnInfo {
@@ -29,7 +30,7 @@ export interface RecognitionHooks {
   retrieveChatCtx: () => ChatContext;
 }
 
-interface _TurnDetector {
+export interface _TurnDetector {
   unlikelyThreshold: (language?: string) => number | null;
   supportsLanguage: (language?: string) => boolean;
 
@@ -56,7 +57,7 @@ export class AudioRecognition {
     private readonly minEndpointingDelay: number,
     private readonly maxEndpointingDelay: number,
     private stt?: STTNode,
-    private manualTurnDetection = false,
+    private turnDetectionMode?: TurnDetectionMode,
     private turnDetector?: _TurnDetector,
     private lastLanguage?: string,
   ) {
@@ -75,7 +76,7 @@ export class AudioRecognition {
 
   private async onSTTEvent(ev: SpeechEvent) {
     if (
-      this.manualTurnDetection &&
+      this.turnDetectionMode === 'manual' &&
       this.userTurnCommitted &&
       (this.eouTaskDone === undefined ||
         this.eouTaskDone.done ||
@@ -117,11 +118,11 @@ export class AudioRecognition {
             // and using that timestamp for _last_speaking_time
             this.lastSpeakingTime = Date.now();
           }
+        }
 
-          if (!this.manualTurnDetection || this.userTurnCommitted) {
-            const chatCtx = this.hooks.retrieveChatCtx();
-            this.runEOUDetection(chatCtx);
-          }
+        if (this.turnDetectionMode !== 'manual' || this.userTurnCommitted) {
+          const chatCtx = this.hooks.retrieveChatCtx();
+          this.runEOUDetection(chatCtx);
         }
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
@@ -131,9 +132,11 @@ export class AudioRecognition {
     }
   }
 
+
   private async runEOUDetection(chatCtx: ChatContext) {
-    if (this.stt && !this.audioTranscript && !this.manualTurnDetection) {
+    if (this.stt && !this.audioTranscript && this.turnDetectionMode !== 'manual') {
       // stt enabled but no transcript yet
+      this.logger.debug('skipping EOU detection');
       return;
     }
 
@@ -142,7 +145,7 @@ export class AudioRecognition {
 
     const turnDetector =
       // disable EOU model if manual turn detection enabled
-      this.audioTranscript && !this.manualTurnDetection ? this.turnDetector : null;
+      this.audioTranscript && this.turnDetectionMode !== 'manual' ? this.turnDetector : undefined;
 
     const bounceEOUTask = async (lastSpeakingTime: number, abortSignal: AbortSignal) => {
       let endpointingDelay = this.minEndpointingDelay;
@@ -248,7 +251,7 @@ export class AudioRecognition {
           // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
           this.lastSpeakingTime = Date.now() - ev.silenceDuration;
 
-          if (!this.manualTurnDetection) {
+          if (this.turnDetectionMode !== 'manual') {
             const chatCtx = this.hooks.retrieveChatCtx();
             this.runEOUDetection(chatCtx);
           }
