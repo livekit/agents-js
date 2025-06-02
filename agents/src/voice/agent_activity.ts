@@ -104,7 +104,13 @@ export class AgentActivity implements RecognitionHooks {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onVADInferenceDone(ev: VADEvent): void {
+    // skip speech handle interruption for manual and realtime model
+    if (this.turnDetectionMode === 'manual' || this.turnDetectionMode === 'realtime_llm') {
+      return;
+    }
+
     // TODO(AJS-40): Implement this
+
   }
 
   onInterimTranscript(ev: SpeechEvent): void {

@@ -74,6 +74,10 @@ export class AudioRecognition {
     });
   }
 
+  private get vadBaseTurnDetection() {
+    return this.turnDetectionMode === undefined || this.turnDetectionMode === 'vad';
+  }
+
   private async onSTTEvent(ev: SpeechEvent) {
     if (
       this.turnDetectionMode === 'manual' &&
@@ -118,11 +122,12 @@ export class AudioRecognition {
             // and using that timestamp for _last_speaking_time
             this.lastSpeakingTime = Date.now();
           }
-        }
 
-        if (this.turnDetectionMode !== 'manual' || this.userTurnCommitted) {
-          const chatCtx = this.hooks.retrieveChatCtx();
-          this.runEOUDetection(chatCtx);
+          if (this.vadBaseTurnDetection || this.userTurnCommitted) {
+            const chatCtx = this.hooks.retrieveChatCtx();
+            this.logger.debug('running EOU detection on stt FINAL_TRANSCRIPT');
+            this.runEOUDetection(chatCtx);
+          }
         }
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
@@ -136,7 +141,10 @@ export class AudioRecognition {
   private async runEOUDetection(chatCtx: ChatContext) {
     if (this.stt && !this.audioTranscript && this.turnDetectionMode !== 'manual') {
       // stt enabled but no transcript yet
-      this.logger.debug('skipping EOU detection');
+      this.logger.debug(
+        { turnDetectionMode: this.turnDetectionMode, audioTranscript: this.audioTranscript },
+        'skipping EOU detection',
+      );
       return;
     }
 
@@ -253,6 +261,7 @@ export class AudioRecognition {
 
           if (this.turnDetectionMode !== 'manual') {
             const chatCtx = this.hooks.retrieveChatCtx();
+            this.logger.debug('running EOU detection on vad END_OF_SPEECH');
             this.runEOUDetection(chatCtx);
           }
           break;
