@@ -172,6 +172,7 @@ export class Agent {
         },
         cancel() {
           // Properly close the underlying LLM stream when cancelled
+          console.log('++++++ cancelling llm stream');
           stream.close();
         },
       });

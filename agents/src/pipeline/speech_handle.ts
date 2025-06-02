@@ -245,11 +245,12 @@ export class SpeechHandle {
     this.cancel();
   }
 
-  interrupt() {
+  interrupt(): SpeechHandle {
     if (!this.#allowInterruptions) {
       throw new Error('interruptions are not allowed');
     }
     this.interruptFut.resolve();
+    return this;
   }
 
   cancel() {

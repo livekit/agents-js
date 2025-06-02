@@ -5,7 +5,7 @@ import type { AudioFrame, AudioSource } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
 import type { ReadableStream } from 'stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
-import type { ChatChunk, LLMStream } from '../llm/llm.js';
+import type { ChatChunk } from '../llm/llm.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future } from '../utils.js';
 import type { LLMNode, TTSNode } from './io.js';

@@ -104,7 +104,10 @@ export class AgentActivity implements RecognitionHooks {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onVADInferenceDone(ev: VADEvent): void {
-    // TODO(AJS-40): Implement this
+    if (this.currentSpeech && !this.currentSpeech.interrupted && this.currentSpeech.done) {
+      this.logger.info({ 'speech id': this.currentSpeech.id }, 'speech interrupted by VAD');
+      this.currentSpeech.interrupt();
+    }
   }
 
   onInterimTranscript(ev: SpeechEvent): void {
@@ -131,6 +134,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession.options.minInterruptionWords > 0 &&
       info.newTranscript.split(' ').length < this.agentSession.options.minInterruptionWords
     ) {
+      // avoid interruption if the new transcript is too short
       return false;
     }
     this.userTurnCompleted(info);
@@ -221,7 +225,12 @@ export class AgentActivity implements RecognitionHooks {
         return;
       }
 
-      // this.currentSpeech.interrupt();
+      this.logger.info(
+        { 'speech id': this.currentSpeech.id },
+        'speech interrupted, new user turn detected',
+      );
+
+      this.currentSpeech.interrupt();
       // TODO(AJS-32): Add realtime model support for interrupting the current generation
     }
 
