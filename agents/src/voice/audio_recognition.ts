@@ -79,13 +79,7 @@ export class AudioRecognition {
   }
 
   private async onSTTEvent(ev: SpeechEvent) {      
-    this.logger.debug({
-      userTurnCommitted: this.userTurnCommitted,
-      eouTaskDone: this.eouTaskDone?.done,
-      evType: ev.type,
-      turnDetectionMode: this.turnDetectionMode,
-    }, 'on stt event');
-
+    
     if (
       this.turnDetectionMode === 'manual' &&
       this.userTurnCommitted &&
@@ -95,7 +89,12 @@ export class AudioRecognition {
     ) {
       // ignore stt event if user turn already committed and EOU task is done
       // or it's an interim transcript
-      this.logger.debug('ignoring stt event');
+      this.logger.debug({
+        userTurnCommitted: this.userTurnCommitted,
+        eouTaskDone: this.eouTaskDone?.done,
+        evType: ev.type,
+        turnDetectionMode: this.turnDetectionMode,
+      }, 'ignoring stt event');
       return;
     }
 
@@ -171,7 +170,7 @@ export class AudioRecognition {
     const bounceEOUTask = async (lastSpeakingTime: number, abortSignal: AbortSignal) => {
       let endpointingDelay = this.minEndpointingDelay;
 
-      // TODO (brian): need to support actual turn detection model for following code to work
+      // TODO(AJS-74): need to support actual turn detection model plugins for following code to run
       if (turnDetector) {
         this.logger.debug('Running turn detector model');
         if (!turnDetector.supportsLanguage(this.lastLanguage)) {

@@ -128,6 +128,7 @@ export class AgentActivity implements RecognitionHooks {
       // TODO(shubhra): should we "forward" this new turn to the next agent/activity?
       return true;
     }
+    
     if (
       this.stt &&
       this.turnDetectionMode !== 'manual' &&
@@ -137,6 +138,8 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession.options.minInterruptionWords > 0 &&
       info.newTranscript.split(' ').length < this.agentSession.options.minInterruptionWords
     ) {
+      // avoid interruption if the new_transcript is too short
+      this.logger.info('skipping user input, new_transcript is too short');
       return false;
     }
     this.userTurnCompleted(info);
@@ -207,6 +210,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async userTurnCompleted(info: EndOfTurnInfo): Promise<void> {
+    this.logger.info('userTurnCompleted', info);
     // TODO(AJS-40) handle old task cancellation
 
     // When the audio recognition detects the end of a user turn:
