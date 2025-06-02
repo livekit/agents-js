@@ -5,6 +5,7 @@ import type { AudioFrame, AudioSource } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
 import type { ReadableStream } from 'stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
+import type { ChatChunk, LLMStream } from '../llm/llm.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future } from '../utils.js';
 import type { LLMNode, TTSNode } from './io.js';
@@ -32,10 +33,11 @@ export function performLLMInference(
 
   const inferenceTask = async () => {
     let reader: ReadableStreamDefaultReader<any> | null = null;
+    let llmStream: ReadableStream<string | ChatChunk> | null = null;
     try {
       signal?.throwIfAborted();
 
-      const llmStream = await node(chatCtx, modelSettings);
+      llmStream = await node(chatCtx, modelSettings);
       if (llmStream === null) {
         return;
       }
@@ -71,15 +73,11 @@ export function performLLMInference(
       }
       throw error;
     } finally {
-      // Release reader lock safely
       if (reader) {
-        try {
-          reader.releaseLock();
-        } catch {
-          // Ignore errors if reader is already released
-        }
+        reader.releaseLock();
       }
-      writer.close().catch(() => {});
+      writer.close();
+      llmStream?.cancel();
     }
   };
   return [inferenceTask(), data];
