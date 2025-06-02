@@ -78,7 +78,14 @@ export class AudioRecognition {
     return this.turnDetectionMode === undefined || this.turnDetectionMode === 'vad';
   }
 
-  private async onSTTEvent(ev: SpeechEvent) {
+  private async onSTTEvent(ev: SpeechEvent) {      
+    this.logger.debug({
+      userTurnCommitted: this.userTurnCommitted,
+      eouTaskDone: this.eouTaskDone?.done,
+      evType: ev.type,
+      turnDetectionMode: this.turnDetectionMode,
+    }, 'on stt event');
+
     if (
       this.turnDetectionMode === 'manual' &&
       this.userTurnCommitted &&
@@ -88,6 +95,7 @@ export class AudioRecognition {
     ) {
       // ignore stt event if user turn already committed and EOU task is done
       // or it's an interim transcript
+      this.logger.debug('ignoring stt event');
       return;
     }
 
@@ -97,7 +105,10 @@ export class AudioRecognition {
         const transcript = ev.alternatives?.[0]?.text;
         this.lastLanguage = ev.alternatives?.[0]?.language;
 
-        if (!transcript) return;
+        if (!transcript) {
+          this.logger.debug('stt final transcript received but no transcript');
+          return;
+        }
 
         this.logger.debug(
           {
@@ -137,14 +148,16 @@ export class AudioRecognition {
     }
   }
 
-
   private async runEOUDetection(chatCtx: ChatContext) {
+    this.logger.debug({
+      stt: this.stt,
+      audioTranscript: this.audioTranscript,
+      turnDetectionMode: this.turnDetectionMode,
+    }, 'running EOU detection');
+
     if (this.stt && !this.audioTranscript && this.turnDetectionMode !== 'manual') {
       // stt enabled but no transcript yet
-      this.logger.debug(
-        { turnDetectionMode: this.turnDetectionMode, audioTranscript: this.audioTranscript },
-        'skipping EOU detection',
-      );
+      this.logger.debug('skipping EOU detection');
       return;
     }
 
@@ -171,6 +184,7 @@ export class AudioRecognition {
       }
 
       const extraSleep = lastSpeakingTime + endpointingDelay - Date.now();
+      // add delay to see if there's a potential upcoming EOU task that cancels this one
       await delay(Math.max(extraSleep, 0), { signal: abortSignal });
 
       this.logger.debug('end of user turn', {
