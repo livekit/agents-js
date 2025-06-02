@@ -171,7 +171,9 @@ export class AudioRecognition {
     const bounceEOUTask = async (lastSpeakingTime: number, abortSignal: AbortSignal) => {
       let endpointingDelay = this.minEndpointingDelay;
 
+      // TODO (brian): need to support actual turn detection model for following code to work
       if (turnDetector) {
+        this.logger.debug('Running turn detector model');
         if (!turnDetector.supportsLanguage(this.lastLanguage)) {
           this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
         } else {
