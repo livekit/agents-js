@@ -8,6 +8,13 @@ import type { SynthesisHandle } from './agent_output.js';
 
 // TODO(AJS-50): Update speech handle to 1.0
 export class SpeechHandle {
+  /** Priority for messages that should be played after all other messages in the queue */
+  static SPEECH_PRIORITY_LOW = 0;
+  /** Every speech generates by the VoiceAgent defaults to this priority. */
+  static SPEECH_PRIORITY_NORMAL = 5;
+  /** Priority for important messages that should be played before others. */
+  static SPEECH_PRIORITY_HIGH = 10;
+
   #id: string;
   #allowInterruptions: boolean;
   #addToChatCtx: boolean;
@@ -15,7 +22,8 @@ export class SpeechHandle {
   #userQuestion: string;
   #userCommitted = false;
   #initFut = new Future();
-  #doneFut = new Future();
+  private authorizeFut = new Future();
+  private playoutDoneFut = new Future();
   #speechCommitted = false;
   #source?: string | LLMStream | AsyncIterable<string>;
   #synthesisHandle?: SynthesisHandle;
@@ -60,6 +68,7 @@ export class SpeechHandle {
     );
   }
 
+  /** @deprecated Use SpeechHandle.create instead */
   static createAssistantReply(
     allowInterruptions: boolean,
     addToChatCtx: boolean,
@@ -68,10 +77,12 @@ export class SpeechHandle {
     return new SpeechHandle(randomUUID(), allowInterruptions, addToChatCtx, true, userQuestion);
   }
 
+  /** @deprecated Use SpeechHandle.create instead */
   static createAssistantSpeech(allowInterruptions: boolean, addToChatCtx: boolean): SpeechHandle {
     return new SpeechHandle(randomUUID(), allowInterruptions, addToChatCtx, false, '');
   }
 
+  /** @deprecated Use SpeechHandle.create instead */
   static createToolSpeech(
     allowInterruptions: boolean,
     addToChatCtx: boolean,
@@ -195,12 +206,24 @@ export class SpeechHandle {
     this.#nestedSpeechFinished = true;
   }
 
-  join() {
-    return this.#doneFut.await;
+  authorizePlayout() {
+    this.authorizeFut.resolve();
   }
 
-  setDone() {
-    this.#doneFut.resolve();
+  async waitForAuthorization() {
+    return this.authorizeFut.await;
+  }
+
+  async waitForPlayout() {
+    return this.playoutDoneFut.await;
+  }
+
+  markPlayoutDone() {
+    this.playoutDoneFut.resolve();
+  }
+
+  get done(): boolean {
+    return this.playoutDoneFut.done;
   }
 
   interrupt() {

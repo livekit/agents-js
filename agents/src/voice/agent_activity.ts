@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import { Heap } from 'heap-js';
 import type { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage, ChatRole } from '../llm/chat_context.js';
 import type { LLM } from '../llm/index.js';
@@ -9,6 +10,7 @@ import { log } from '../log.js';
 import { SpeechHandle } from '../pipeline/speech_handle.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
+import { Future } from '../utils.js';
 import type { VADEvent } from '../vad.js';
 import { StopResponse } from './agent.js';
 import type { Agent } from './agent.js';
@@ -32,12 +34,17 @@ export class AgentActivity implements RecognitionHooks {
   private turnDetectionMode?: string;
   private _draining = false;
   private currentSpeech?: SpeechHandle;
+  private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
+  private q_updated: Future;
   agent: Agent;
   agentSession: AgentSession;
 
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
     this.agentSession = agentSession;
+    // relies on JavaScript's built-in lexicographic array comparison behavior, which checks elements of the array one by one
+    this.speechQueue = new Heap<[number, number, SpeechHandle]>(Heap.maxComparator);
+    this.q_updated = new Future();
   }
 
   async start(): Promise<void> {
@@ -53,6 +60,8 @@ export class AgentActivity implements RecognitionHooks {
     );
     this.audioRecognition.start();
     this.started = true;
+
+    this.mainTask();
 
     // TODO(shubhra): Add turn detection mode
   }
@@ -132,6 +141,28 @@ export class AgentActivity implements RecognitionHooks {
     return this.agentSession.chatCtx;
   }
 
+  private async mainTask(): Promise<void> {
+    while (true) {
+      await this.q_updated.await;
+      while (this.speechQueue.size() > 0) {
+        const heapItem = this.speechQueue.pop();
+        if (!heapItem) {
+          throw new Error('Speech queue is empty');
+        }
+        const speechHandle = heapItem[2];
+        this.currentSpeech = speechHandle;
+        speechHandle.authorizePlayout();
+        await speechHandle.waitForPlayout();
+        this.currentSpeech = undefined;
+        this.q_updated = new Future();
+      }
+    }
+  }
+
+  private wakeupMainTask(): void {
+    this.q_updated.resolve();
+  }
+
   private generateReply(
     userMessage?: ChatMessage,
     chatCtx?: ChatContext,
@@ -156,8 +187,17 @@ export class AgentActivity implements RecognitionHooks {
       chatCtx || this.agent.chatCtx,
       instructions,
       userMessage?.copy(),
-    );
+    ).then(() => {
+      this.onPipelineReplyDone();
+    });
+    this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
     return handle;
+  }
+
+  private onPipelineReplyDone(): void {
+    if (!this.speechQueue.peek() && (!this.currentSpeech || this.currentSpeech.done)) {
+      this.agentSession._updateAgentState('listening');
+    }
   }
 
   private async userTurnCompleted(info: EndOfTurnInfo): Promise<void> {
@@ -181,7 +221,7 @@ export class AgentActivity implements RecognitionHooks {
         return;
       }
 
-      this.currentSpeech.interrupt();
+      // this.currentSpeech.interrupt();
       // TODO(AJS-32): Add realtime model support for interrupting the current generation
     }
 
@@ -250,7 +290,8 @@ export class AgentActivity implements RecognitionHooks {
       tasks.push(ttsTask);
     }
 
-    // TODO(AJS-40): wait for playout authorization
+    // TODO(AJS-40): handle interrupted authorization
+    await speechHandle.waitForAuthorization();
 
     const [textForwardTask, textOutput] = performTextForwarding(null, llmOutput);
     tasks.push(textForwardTask);
@@ -279,5 +320,16 @@ export class AgentActivity implements RecognitionHooks {
     chatCtx.insertItem(message);
     this.agent._chatCtx.insertItem(message);
     this.agentSession._conversationItemAdded(message);
+
+    await Promise.all(tasks);
+
+    this.logger.info({ speech_id: speechHandle.id }, 'playout completed');
+    speechHandle.markPlayoutDone();
+  }
+
+  private scheduleSpeech(speechHandle: SpeechHandle, priority: number): void {
+    // Monotonic time to avoid near 0 collisions
+    this.speechQueue.push([priority, Number(process.hrtime.bigint()), speechHandle]);
+    this.wakeupMainTask();
   }
 }
