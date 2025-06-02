@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { Heap } from 'heap-js';
-import { EventEmitter, once } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage, ChatRole } from '../llm/chat_context.js';
 import type { LLM } from '../llm/index.js';
