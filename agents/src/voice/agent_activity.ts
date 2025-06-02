@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { Heap } from 'heap-js';
-import { EventEmitter, once } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage, ChatRole } from '../llm/chat_context.js';
 import type { LLM } from '../llm/index.js';
@@ -11,6 +10,7 @@ import { log } from '../log.js';
 import { SpeechHandle } from '../pipeline/speech_handle.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
+import { Future } from '../utils.js';
 import type { VADEvent } from '../vad.js';
 import { StopResponse } from './agent.js';
 import type { Agent } from './agent.js';
@@ -35,7 +35,7 @@ export class AgentActivity implements RecognitionHooks {
   private _draining = false;
   private currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
-  private queueEvents: EventEmitter;
+  private q_updated: Future;
   agent: Agent;
   agentSession: AgentSession;
 
@@ -44,7 +44,7 @@ export class AgentActivity implements RecognitionHooks {
     this.agentSession = agentSession;
     // relies on JavaScript's built-in lexicographic array comparison behavior, which checks elements of the array one by one
     this.speechQueue = new Heap<[number, number, SpeechHandle]>(Heap.maxComparator);
-    this.queueEvents = new EventEmitter();
+    this.q_updated = new Future();
   }
 
   async start(): Promise<void> {
@@ -143,7 +143,7 @@ export class AgentActivity implements RecognitionHooks {
 
   private async mainTask(): Promise<void> {
     while (true) {
-      await once(this.queueEvents, 'updated');
+      await this.q_updated.await;
       while (this.speechQueue.size() > 0) {
         const heapItem = this.speechQueue.pop();
         if (!heapItem) {
@@ -154,12 +154,13 @@ export class AgentActivity implements RecognitionHooks {
         speechHandle.authorizePlayout();
         await speechHandle.waitForPlayout();
         this.currentSpeech = undefined;
+        this.q_updated = new Future();
       }
     }
   }
 
   private wakeupMainTask(): void {
-    this.queueEvents.emit('updated');
+    this.q_updated.resolve();
   }
 
   private generateReply(
@@ -220,7 +221,7 @@ export class AgentActivity implements RecognitionHooks {
         return;
       }
 
-      this.currentSpeech.interrupt();
+      // this.currentSpeech.interrupt();
       // TODO(AJS-32): Add realtime model support for interrupting the current generation
     }
 
