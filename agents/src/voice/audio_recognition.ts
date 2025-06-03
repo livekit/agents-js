@@ -52,6 +52,7 @@ export class AudioRecognition {
 
   // all abortable tasks
   private bounceEOUTask?: AbortableTask<void>;
+  private commitUserTurnTask?: AbortableTask<void>;
 
   constructor(
     private readonly hooks: RecognitionHooks,
@@ -215,15 +216,15 @@ export class AudioRecognition {
     this.bounceEOUTask?.cancel();
     this.bounceEOUTask = createTask(bounceEOUTask(this.lastSpeakingTime));
 
-    try {
-      await this.bounceEOUTask.result;
-    } catch (err: any) {
+    this.bounceEOUTask.result.then(() => {
+      this.logger.debug('EOU detection task completed');
+    }).catch((err: any) => {
       if (err.name === 'AbortError') {
         this.logger.debug('EOU detection task was aborted');
       } else {
         this.logger.error('Error in EOU detection task:', err);
       }
-    }
+    });
   }
 
   private async sttTask(inputStream: ReadableStream<AudioFrame>) {
@@ -289,7 +290,31 @@ export class AudioRecognition {
   }
 
   commitUserTurn(audioDetached: boolean) {
-    // ...
-    console.log('commitUserTurn', audioDetached);
+    const commitUserTurnTask = (delay: number = 0.5) => async (controller: AbortController) => {
+      // TODO(brian): push silence to stt to flush the buffer
+
+      if (this.audioInterimTranscript) {
+        this.audioTranscript = `${this.audioTranscript} ${this.audioInterimTranscript}`.trim();
+      }
+      this.audioInterimTranscript = '';
+
+      const chatCtx = this.hooks.retrieveChatCtx();
+      this.runEOUDetection(chatCtx);
+      this.userTurnCommitted = true;
+    };
+
+    // cancel any existing commit user turn task
+    this.commitUserTurnTask?.cancel();
+    this.commitUserTurnTask = createTask(commitUserTurnTask());
+
+    this.commitUserTurnTask.result.then(() => {
+      this.logger.debug('User turn committed');
+    }).catch((err: any) => {
+      if (err.name === 'AbortError') {
+        this.logger.debug('User turn commit task was aborted');
+      } else {
+        this.logger.error('Error in user turn commit task:', err);
+      }
+    });
   }
 }
