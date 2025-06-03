@@ -222,6 +222,6 @@ const startJob = (
     await join.await;
 
     logger.info('Job process shutdown');
-    return process.exitCode;
+    process.exit(0);
   }
 })();
