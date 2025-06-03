@@ -101,6 +101,14 @@ export class AgentSession {
     this._updateAgentState('listening');
   }
 
+  commitUserTurn() {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
+    }
+
+    this.activity.commitUserTurn();
+  }
+
   private async updateActivity(agent: Agent): Promise<void> {
     this.nextActivity = new AgentActivity(agent, this);
 

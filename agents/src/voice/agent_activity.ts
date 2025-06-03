@@ -94,6 +94,17 @@ export class AgentActivity implements RecognitionHooks {
     this.audioRecognition?.setInputAudioStream(audioStream);
   }
 
+  commitUserTurn() {
+    if (!this.audioRecognition) {
+      throw new Error('AudioRecognition is not initialized');
+    }
+
+    // TODO(brian): add audio_detached flag
+    const audioDetached = false;
+    this.audioRecognition.commitUserTurn(audioDetached);
+  }
+
+
   onStartOfSpeech(ev: VADEvent): void {
     this.logger.info('Start of speech', ev);
   }
@@ -128,7 +139,7 @@ export class AgentActivity implements RecognitionHooks {
       // TODO(shubhra): should we "forward" this new turn to the next agent/activity?
       return true;
     }
-    
+
     if (
       this.stt &&
       this.turnDetectionMode !== 'manual' &&

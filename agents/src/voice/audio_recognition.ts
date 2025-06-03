@@ -78,8 +78,7 @@ export class AudioRecognition {
     return this.turnDetectionMode === undefined || this.turnDetectionMode === 'vad';
   }
 
-  private async onSTTEvent(ev: SpeechEvent) {      
-    
+  private async onSTTEvent(ev: SpeechEvent) {
     if (
       this.turnDetectionMode === 'manual' &&
       this.userTurnCommitted &&
@@ -89,12 +88,15 @@ export class AudioRecognition {
     ) {
       // ignore stt event if user turn already committed and EOU task is done
       // or it's an interim transcript
-      this.logger.debug({
-        userTurnCommitted: this.userTurnCommitted,
-        eouTaskDone: this.eouTaskDone?.done,
-        evType: ev.type,
-        turnDetectionMode: this.turnDetectionMode,
-      }, 'ignoring stt event');
+      this.logger.debug(
+        {
+          userTurnCommitted: this.userTurnCommitted,
+          eouTaskDone: this.eouTaskDone?.done,
+          evType: ev.type,
+          turnDetectionMode: this.turnDetectionMode,
+        },
+        'ignoring stt event',
+      );
       return;
     }
 
@@ -148,11 +150,14 @@ export class AudioRecognition {
   }
 
   private async runEOUDetection(chatCtx: ChatContext) {
-    this.logger.debug({
-      stt: this.stt,
-      audioTranscript: this.audioTranscript,
-      turnDetectionMode: this.turnDetectionMode,
-    }, 'running EOU detection');
+    this.logger.debug(
+      {
+        stt: this.stt,
+        audioTranscript: this.audioTranscript,
+        turnDetectionMode: this.turnDetectionMode,
+      },
+      'running EOU detection',
+    );
 
     if (this.stt && !this.audioTranscript && this.turnDetectionMode !== 'manual') {
       // stt enabled but no transcript yet
@@ -286,5 +291,9 @@ export class AudioRecognition {
 
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {
     this.deferredInputStream.setSource(audioStream);
+  }
+
+  commitUserTurn(audioDetached: boolean) {
+    // ...
   }
 }
