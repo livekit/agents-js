@@ -341,39 +341,37 @@ export class AudioEnergyFilter {
 }
 
 export class AbortableTask<T> {
-  #controller: AbortController;
-  #resultFuture: Future<T>;
-  #fn: (controller: AbortController) => Promise<T>;
+  private resultFuture: Future<T>;
 
-  constructor(fn: (controller: AbortController) => Promise<T>, controller: AbortController) {
-    this.#controller = controller;
-    this.#fn = fn;
-    this.#resultFuture = new Future();
-
-    this.#runTask();
+  constructor(
+    private readonly fn: (controller: AbortController) => Promise<T>,
+    private readonly controller: AbortController,
+  ) {
+    this.resultFuture = new Future();
+    this.runTask();
   }
 
-  #runTask() {
-    return this.#fn(this.#controller)
+  private async runTask() {
+    return this.fn(this.controller)
       .then((value) => {
-        this.#resultFuture.resolve(value);
+        this.resultFuture.resolve(value);
         return value;
       })
       .catch((error) => {
-        this.#resultFuture.reject(error);
+        this.resultFuture.reject(error);
       });
   }
 
   cancel() {
-    this.#controller.abort();
+    this.controller.abort();
   }
 
   get result(): Promise<T> {
-    return this.#resultFuture.await;
+    return this.resultFuture.await;
   }
 
   get done(): boolean {
-    return this.#resultFuture.done;
+    return this.resultFuture.done;
   }
 }
 
