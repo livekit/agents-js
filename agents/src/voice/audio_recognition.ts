@@ -8,8 +8,7 @@ import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import type { AbortableTask } from '../utils.js';
-import { createTask } from '../utils.js';
+import { Task } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
@@ -52,10 +51,10 @@ export class AudioRecognition {
   private sttInputStream: ReadableStream<AudioFrame>;
 
   // all abortable tasks
-  private bounceEOUTask?: AbortableTask<void>;
-  private commitUserTurnTask?: AbortableTask<void>;
-  private vadTask?: AbortableTask<void>;
-  private sttTask?: AbortableTask<void>;
+  private bounceEOUTask?: Task<void>;
+  private commitUserTurnTask?: Task<void>;
+  private vadTask?: Task<void>;
+  private sttTask?: Task<void>;
 
   constructor(
     private readonly hooks: RecognitionHooks,
@@ -85,7 +84,7 @@ export class AudioRecognition {
       this.logger.error(`Error cancelling VAD task: ${err}`);
     });
 
-    this.vadTask = createTask(this.createVadTask(this.vadInputStream));
+    this.vadTask = Task.from(this.createVadTask());
     this.vadTask.result.catch((err) => {
       this.logger.error(`Error running VAD task: ${err}`);
     });
@@ -97,7 +96,7 @@ export class AudioRecognition {
       this.logger.error(`Error cancelling STT task: ${err}`);
     });
 
-    this.sttTask = createTask(this.createSttTask(this.sttInputStream));
+    this.sttTask = Task.from(this.createSttTask());
     this.sttTask.result.catch((err) => {
       this.logger.error(`Error running STT task: ${err}`);
     });
@@ -236,7 +235,7 @@ export class AudioRecognition {
 
     // cancel any existing EOU task
     this.bounceEOUTask?.cancel();
-    this.bounceEOUTask = createTask(bounceEOUTask(this.lastSpeakingTime));
+    this.bounceEOUTask = Task.from(bounceEOUTask(this.lastSpeakingTime));
 
     this.bounceEOUTask.result
       .then(() => {
@@ -251,13 +250,13 @@ export class AudioRecognition {
       });
   }
 
-  private createSttTask(inputStream: ReadableStream<AudioFrame>) {
+  private createSttTask() {
     return async (controller: AbortController) => {
       if (!this.stt) {
         return;
       }
 
-      const sttStream = await this.stt(inputStream, {});
+      const sttStream = await this.stt(this.sttInputStream, {});
       if (controller.signal.aborted) return;
       if (sttStream === null) return;
 
@@ -282,10 +281,10 @@ export class AudioRecognition {
     };
   }
 
-  private createVadTask(inputStream: ReadableStream<AudioFrame>) {
+  private createVadTask() {
     return async (controller: AbortController) => {
       const vadStream = this.vad.stream();
-      vadStream.updateInputStream(inputStream);
+      vadStream.updateInputStream(this.vadInputStream);
 
       for await (const ev of vadStream) {
         if (controller.signal.aborted) {
@@ -357,7 +356,7 @@ export class AudioRecognition {
 
     // cancel any existing commit user turn task
     this.commitUserTurnTask?.cancel();
-    this.commitUserTurnTask = createTask(commitUserTurnTask());
+    this.commitUserTurnTask = Task.from(commitUserTurnTask());
 
     this.commitUserTurnTask.result
       .then(() => {

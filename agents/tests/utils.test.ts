@@ -3,13 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { delay } from '@std/async';
 import { describe, expect, it } from 'vitest';
-import { createTask, TASK_TIMEOUT_ERROR, TaskResult } from '../src/utils.js';
+import { Task, TASK_TIMEOUT_ERROR, TaskResult } from '../src/utils.js';
 
 describe('AbortableTask', () => {
-  describe('createTask', () => {
+  describe('AbortableTask.from', () => {
     it('should execute task successfully and return result', async () => {
       const expectedResult = 'task completed';
-      const task = createTask(async () => {
+      const task = Task.from(async () => {
         await delay(10);
         return expectedResult;
       });
@@ -22,7 +22,7 @@ describe('AbortableTask', () => {
 
     it('should handle task errors properly', async () => {
       const expectedError = new Error('Task failed');
-      const task = createTask(async () => {
+      const task = Task.from(async () => {
         await delay(10);
         throw expectedError;
       });
@@ -36,7 +36,7 @@ describe('AbortableTask', () => {
       let taskStarted = false;
       let taskCompleted = false;
 
-      const task = createTask(async (controller) => {
+      const task = Task.from(async (controller) => {
         taskStarted = true;
         await delay(100, { signal: controller.signal });
         taskCompleted = true;
@@ -64,7 +64,7 @@ describe('AbortableTask', () => {
 
     it('should use provided AbortController', async () => {
       const controller = new AbortController();
-      const task = createTask(async (ctrl) => {
+      const task = Task.from(async (ctrl) => {
         expect(ctrl).toBe(controller);
         await delay(100, { signal: ctrl.signal });
         return 'completed';
@@ -83,7 +83,7 @@ describe('AbortableTask', () => {
     });
 
     it('should handle immediate resolution', async () => {
-      const task = createTask(async () => {
+      const task = Task.from(async () => {
         return 'immediate';
       });
 
@@ -94,7 +94,7 @@ describe('AbortableTask', () => {
 
     it('should handle immediate rejection', async () => {
       const expectedError = new Error('Immediate error');
-      const task = createTask(async () => {
+      const task = Task.from(async () => {
         throw expectedError;
       });
 
@@ -108,7 +108,7 @@ describe('AbortableTask', () => {
     });
 
     it('should handle multiple calls to cancel', async () => {
-      const task = createTask(async (controller) => {
+      const task = Task.from(async (controller) => {
         await delay(100, { signal: controller.signal });
         return 'should not complete';
       });
@@ -131,7 +131,7 @@ describe('AbortableTask', () => {
 
     it('should handle task that checks abort signal manually', async () => {
       const arr: number[] = [];
-      const task = createTask(async (controller) => {
+      const task = Task.from(async (controller) => {
         for (let i = 0; i < 10; i++) {
           if (controller.signal.aborted) {
             throw new Error('Task was aborted');
@@ -158,7 +158,7 @@ describe('AbortableTask', () => {
     it('should handle cleanup in finally block', async () => {
       let cleanupExecuted = false;
 
-      const task = createTask(async (controller) => {
+      const task = Task.from(async (controller) => {
         try {
           await delay(100, { signal: controller.signal });
           return 'completed';
@@ -181,7 +181,7 @@ describe('AbortableTask', () => {
     });
 
     it('should handle accessing result multiple times', async () => {
-      const task = createTask(async () => {
+      const task = Task.from(async () => {
         await delay(10);
         return 'result';
       });
@@ -197,7 +197,7 @@ describe('AbortableTask', () => {
     });
 
     it('should handle accessing result promise before completion', async () => {
-      const task = createTask(async () => {
+      const task = Task.from(async () => {
         await delay(50);
         return 'delayed result';
       });
@@ -227,18 +227,18 @@ describe('AbortableTask', () => {
       let child1Task: any;
       let child2Task: any;
 
-      const parentTask = createTask(async (controller) => {
+      const parentTask = Task.from(async (controller) => {
         parentStarted = true;
 
         // Create two child tasks using the parent's controller
-        child1Task = createTask(async (childController) => {
+        child1Task = Task.from(async (childController) => {
           child1Started = true;
           await delay(100, { signal: childController.signal });
           child1Completed = true;
           return 'child1';
         }, controller);
 
-        child2Task = createTask(async (childController) => {
+        child2Task = Task.from(async (childController) => {
           child2Started = true;
           await delay(100, { signal: childController.signal });
           child2Completed = true;
@@ -291,11 +291,11 @@ describe('AbortableTask', () => {
     it('should handle nested tasks that complete successfully', async () => {
       const results: string[] = [];
 
-      const parentTask = createTask(async (controller) => {
+      const parentTask = Task.from(async (controller) => {
         results.push('parent-start');
 
         // Create first child task
-        const child1Task = createTask(async (childController) => {
+        const child1Task = Task.from(async (childController) => {
           results.push('child1-start');
           await delay(25);
           results.push('child1-end');
@@ -303,11 +303,11 @@ describe('AbortableTask', () => {
         }, controller);
 
         // Create second child task that depends on first
-        const child2Task = createTask(async (childController) => {
+        const child2Task = Task.from(async (childController) => {
           results.push('child2-start');
           
           // Create a grandchild task
-          const grandchildTask = createTask(async (grandController) => {
+          const grandchildTask = Task.from(async (grandController) => {
             results.push('grandchild-start');
             await delay(10);
             results.push('grandchild-end');
@@ -366,13 +366,13 @@ describe('AbortableTask', () => {
       let child1Completed = false;
       let child2Started = false;
 
-      const parentTask = createTask(async (controller) => {
-        const child1Task = createTask(async (childController) => {
+      const parentTask = Task.from(async (controller) => {
+        const child1Task = Task.from(async (childController) => {
           await delay(20);
           throw new Error('child1 error');
         }, controller);
 
-        const child2Task = createTask(async (childController) => {
+        const child2Task = Task.from(async (childController) => {
           child2Started = true;
           await delay(30);
           child1Completed = true;
@@ -402,7 +402,7 @@ describe('AbortableTask', () => {
     it('should cancel and wait for task completion', async () => {
       let taskCompleted = false;
       
-      const task = createTask(async (controller) => {
+      const task = Task.from(async (controller) => {
         await delay(5000, { signal: controller.signal });
         taskCompleted = true;
         return 'should not complete';
@@ -420,7 +420,7 @@ describe('AbortableTask', () => {
     });
 
     it('should timeout if task does not respond to cancellation', async () => {
-      const task = createTask(async (controller) => {
+      const task = Task.from(async (controller) => {
         await delay(1000);
       });
 
@@ -434,7 +434,7 @@ describe('AbortableTask', () => {
     });
 
     it('should handle task that completes before timeout', async () => {
-      const task = createTask(async () => {
+      const task = Task.from(async () => {
         await delay(50);
       });
 
@@ -450,7 +450,7 @@ describe('AbortableTask', () => {
     });
 
     it('should propagate non-abort errors from cancelAndWait', async () => {
-      const task = createTask(async () => {
+      const task = Task.from(async () => {
         await delay(10);
         throw new TypeError('Custom error');
       });

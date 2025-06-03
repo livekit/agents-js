@@ -349,7 +349,13 @@ export enum TaskResult {
   Aborted = "aborted",
 }
 
-export class AbortableTask<T> {
+/** @internal */
+/**
+ * A task that can be cancelled.
+ *
+ * @param T - The type of the task result
+ */
+export class Task<T> {
   private resultFuture: Future<T>;
 
   constructor(
@@ -358,6 +364,18 @@ export class AbortableTask<T> {
   ) {
     this.resultFuture = new Future();
     this.runTask();
+  }
+
+  /**
+   * Creates a new task from a function.
+   *
+   * @param fn - The function to run
+   * @param controller - The abort controller to use
+   * @returns A new task
+   */
+  static from<T>(fn: (controller: AbortController) => Promise<T>, controller?: AbortController) {
+    const abortController = controller ?? new AbortController();
+    return new Task(fn, abortController);
   }
 
   private async runTask() {
@@ -371,10 +389,20 @@ export class AbortableTask<T> {
       });
   }
 
+  /**
+   * Cancels the task.
+   */
   cancel() {
     this.controller.abort();
   }
 
+  /**
+   * Cancels the task and waits for it to complete.
+   *
+   * @param timeout - The timeout in milliseconds
+   * @returns The result of the task
+   * @throws {@link TASK_TIMEOUT_ERROR} if the task times out
+   */
   async cancelAndWait(timeout: number = 2000) {
     this.cancel();
 
@@ -402,21 +430,18 @@ export class AbortableTask<T> {
     }
   }
 
+  /**
+   * The result of the task.
+   */
   get result(): Promise<T> {
     return this.resultFuture.await;
   }
 
+  /**
+   * Whether the task has completed.
+   */
   get done(): boolean {
     return this.resultFuture.done;
   }
-}
-
-export function createTask<T>(
-  fn: (controller: AbortController) => Promise<T>,
-  controller?: AbortController,
-) {
-  const abortController = controller ?? new AbortController();
-  const task = new AbortableTask(fn, abortController);
-  return task;
 }
 
