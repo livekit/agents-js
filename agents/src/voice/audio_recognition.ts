@@ -295,5 +295,6 @@ export class AudioRecognition {
 
   commitUserTurn(audioDetached: boolean) {
     // ...
+    console.log('commitUserTurn', audioDetached);
   }
 }

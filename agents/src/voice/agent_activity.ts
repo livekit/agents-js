@@ -104,7 +104,6 @@ export class AgentActivity implements RecognitionHooks {
     this.audioRecognition.commitUserTurn(audioDetached);
   }
 
-
   onStartOfSpeech(ev: VADEvent): void {
     this.logger.info('Start of speech', ev);
   }
@@ -121,7 +120,6 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     // TODO(AJS-40): Implement this
-
   }
 
   onInterimTranscript(ev: SpeechEvent): void {
