@@ -39,7 +39,7 @@
   },
   "dependencies": {
     "@livekit/mutex": "^1.1.1",
-    "@livekit/protocol": "^1.39.0",
+    "@livekit/protocol": "^1.29.1",
     "@livekit/typed-emitter": "^3.0.0",
     "commander": "^12.0.0",
     "livekit-server-sdk": "^2.9.2",
