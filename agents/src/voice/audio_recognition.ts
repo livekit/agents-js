@@ -50,7 +50,7 @@ export class AudioRecognition {
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
 
-  // all abortable tasks
+  // all cancellable tasks
   private bounceEOUTask?: Task<void>;
   private commitUserTurnTask?: Task<void>;
   private vadTask?: Task<void>;
