@@ -339,3 +339,47 @@ export class AudioEnergyFilter {
     return false;
   }
 }
+
+export class AbortableTask<T> {
+  private resultFuture: Future<T>;
+
+  constructor(
+    private readonly fn: (controller: AbortController) => Promise<T>,
+    private readonly controller: AbortController,
+  ) {
+    this.resultFuture = new Future();
+    this.runTask();
+  }
+
+  private async runTask() {
+    return this.fn(this.controller)
+      .then((value) => {
+        this.resultFuture.resolve(value);
+        return value;
+      })
+      .catch((error) => {
+        this.resultFuture.reject(error);
+      });
+  }
+
+  cancel() {
+    this.controller.abort();
+  }
+
+  get result(): Promise<T> {
+    return this.resultFuture.await;
+  }
+
+  get done(): boolean {
+    return this.resultFuture.done;
+  }
+}
+
+export function createTask<T>(
+  fn: (controller: AbortController) => Promise<T>,
+  controller?: AbortController,
+) {
+  const abortController = controller ?? new AbortController();
+  const task = new AbortableTask(fn, abortController);
+  return task;
+}

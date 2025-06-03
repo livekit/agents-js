@@ -101,6 +101,11 @@ export const runApp = (opts: WorkerOptions) => {
         'LIVEKIT_API_SECRET',
       ),
     )
+    .addOption(
+      new Option('--worker-token <string>', 'Internal use only')
+        .env('LIVEKIT_WORKER_TOKEN')
+        .hideHelp(),
+    )
     .action(() => {
       if (
         // do not run CLI if origin file is agents/ipc/job_main.js
@@ -120,6 +125,7 @@ export const runApp = (opts: WorkerOptions) => {
       opts.apiKey = options.apiKey || opts.apiKey;
       opts.apiSecret = options.apiSecret || opts.apiSecret;
       opts.logLevel = options.logLevel || opts.logLevel;
+      opts.workerToken = options.workerToken || opts.workerToken;
       runWorker({
         opts,
         production: true,
@@ -142,6 +148,7 @@ export const runApp = (opts: WorkerOptions) => {
       opts.apiKey = options.apiKey || opts.apiKey;
       opts.apiSecret = options.apiSecret || opts.apiSecret;
       opts.logLevel = options.logLevel || opts.logLevel;
+      opts.workerToken = options.workerToken || opts.workerToken;
       runWorker({
         opts,
         production: false,
@@ -166,6 +173,7 @@ export const runApp = (opts: WorkerOptions) => {
       opts.apiKey = options.apiKey || opts.apiKey;
       opts.apiSecret = options.apiSecret || opts.apiSecret;
       opts.logLevel = options.logLevel || opts.logLevel;
+      opts.workerToken = options.workerToken || opts.workerToken;
       runWorker({
         opts,
         production: false,
