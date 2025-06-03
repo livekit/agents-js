@@ -333,35 +333,28 @@ export class AgentActivity implements RecognitionHooks {
     }
     // TODO(shubhra): handle tool calls
 
-    try {
-      // Race between task completion and interruption
-      await speechHandle.waitIfNotInterrupted([]);
+    await speechHandle.waitIfNotInterrupted(tasks);
 
-      if (!speechHandle.interrupted) {
-        const message = ChatMessage.create({
-          role: ChatRole.ASSISTANT,
-          text: textOutput.text,
-        });
-        chatCtx.insertItem(message);
-        this.agent._chatCtx.insertItem(message);
-        this.agentSession._conversationItemAdded(message);
+    // TODO(shubhra): add waiting for audio playout in audio output
 
-        this.logger.info({ speech_id: speechHandle.id }, 'playout completed');
-        speechHandle.markPlayoutDone();
-      }
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        this.logger.info({ speech_id: speechHandle.id }, 'speech generation aborted');
-      } else {
-        throw error;
-      }
-    } finally {
-      // Ensure all tasks are cancelled and cleaned up
-      if (!signal.aborted) {
-        abortController.abort();
-      }
+    if (speechHandle.interrupted) {
+      abortController.abort();
       await Promise.allSettled(tasks);
+      return;
     }
+
+    const message = ChatMessage.create({
+      role: ChatRole.ASSISTANT,
+      text: textOutput.text,
+    });
+    chatCtx.insertItem(message);
+    this.agent._chatCtx.insertItem(message);
+    this.agentSession._conversationItemAdded(message);
+
+    await Promise.all(tasks);
+
+    this.logger.info({ speech_id: speechHandle.id }, 'playout completed');
+    speechHandle.markPlayoutDone();
   }
 
   private scheduleSpeech(speechHandle: SpeechHandle, priority: number): void {

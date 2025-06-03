@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import { AsyncIterableQueue } from '../utils.js';
 import type { ChatContext, ChatRole } from './chat_context.js';
@@ -64,6 +65,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected closed = false;
   protected _functionCalls: FunctionCallInfo[] = [];
   protected abortController = new AbortController();
+  protected logger = log();
   abstract label: string;
 
   #llm: LLM;
@@ -145,7 +147,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
 
   close() {
     this.abortController.abort();
-    this.queue.close();
     this.closed = true;
   }
 

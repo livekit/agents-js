@@ -171,14 +171,7 @@ export class Agent {
           }
         },
         cancel() {
-          // Properly close the underlying LLM stream when cancelled
-          console.log('++++++ cancelling llm stream');
-          try {
-            stream.close();
-          } catch (error) {
-            // Ignore errors during cancellation
-            console.log('Error closing LLM stream:', error);
-          }
+          stream.close();
         },
       });
     },
@@ -214,7 +207,6 @@ export class Agent {
           }
         },
         cancel() {
-          // Properly close the underlying TTS stream when cancelled
           stream.close();
         },
       });

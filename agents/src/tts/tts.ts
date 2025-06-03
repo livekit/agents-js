@@ -139,6 +139,9 @@ export abstract class SynthesizeStream
     const reader = this.deferredInputStream.stream.getReader();
     try {
       while (true) {
+        if (this.abortController.signal.aborted) {
+          break;
+        }
         const { done, value } = await reader.read();
         if (
           done ||
@@ -149,8 +152,9 @@ export abstract class SynthesizeStream
         }
         this.pushText(value);
       }
-      this.flush();
-      this.endInput();
+      if (!this.abortController.signal.aborted) {
+        this.endInput();
+      }
     } catch (error) {
       this.logger.error(error, 'Error reading deferred input stream');
     }
@@ -241,6 +245,7 @@ export abstract class SynthesizeStream
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
+    this.flush();
     if (this.input.closed) {
       throw new Error('Input is closed');
     }

@@ -25,7 +25,7 @@ export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
   modelSettings: any, // TODO(AJS-59): add type
-  signal?: AbortSignal,
+  signal: AbortSignal,
 ): [Promise<void>, _LLMGenerationData] {
   const textStream = new IdentityTransform<string>();
   const writer = textStream.writable.getWriter();
@@ -44,18 +44,12 @@ export function performLLMInference(
 
       reader = llmStream.getReader();
       while (true) {
-        // Check abort signal before each read
         if (signal?.aborted) {
           break;
         }
 
         const { done, value: chunk } = await reader.read();
         if (done) {
-          break;
-        }
-
-        // Check abort signal after receiving chunk
-        if (signal?.aborted) {
           break;
         }
 
@@ -72,34 +66,10 @@ export function performLLMInference(
           throw new Error(`Unexpected chunk type: ${JSON.stringify(chunk)}`);
         }
       }
-    } catch (error) {
-      if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
-        // Silently handle abort - this is expected
-        console.log('+++++llm stream aborted in performLLMInference');
-        return;
-      }
-      throw error;
     } finally {
-      // Cleanup
-      if (reader) {
-        try {
-          reader.releaseLock();
-        } catch (e) {
-          console.log('+++++llm reader release lock failed', e);
-        }
-      }
-      if (llmStream) {
-        try {
-          await llmStream.cancel();
-        } catch (e) {
-          console.log('+++++llm stream cancel failed', e);
-        }
-      }
-      try {
-        await writer.close();
-      } catch (e) {
-        console.log('+++++llm writer close failed', e);
-      }
+      reader?.releaseLock();
+      await llmStream?.cancel();
+      await writer.close();
     }
   };
 
@@ -129,48 +99,20 @@ export function performTTSInference(
 
       reader = ttsStream.getReader();
       while (true) {
-        // Check abort signal before each read
-        if (signal?.aborted) {
-          break;
-        }
-
         const { done, value: chunk } = await reader.read();
         if (done) break;
-
-        // Check abort signal after receiving chunk
-        if (signal?.aborted) {
-          break;
-        }
 
         await writer.write(chunk);
       }
     } catch (error) {
-      if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
-        // Silently handle abort - this is expected
+      if (signal?.aborted) {
         return;
       }
       throw error;
     } finally {
-      // Cleanup
-      if (reader) {
-        try {
-          reader.releaseLock();
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-      }
-      if (ttsStream) {
-        try {
-          await ttsStream.cancel();
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-      }
-      try {
-        await writer.close();
-      } catch (e) {
-        // Ignore cleanup errors
-      }
+      reader?.releaseLock();
+      await ttsStream?.cancel();
+      await writer.close();
     }
   };
 
@@ -191,8 +133,9 @@ async function forwardText(
   const reader = source.getReader();
   try {
     while (true) {
-      signal?.throwIfAborted();
-
+      if (signal?.aborted) {
+        break;
+      }
       const { done, value: delta } = await reader.read();
       if (done) break;
       out.text += delta;
@@ -200,18 +143,8 @@ async function forwardText(
         out.firstTextFut.resolve();
       }
     }
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      reader.cancel().catch(() => {});
-      throw error;
-    }
-    throw error;
   } finally {
-    try {
-      reader.releaseLock();
-    } catch {
-      // Ignore errors if reader is already released
-    }
+    reader?.releaseLock();
   }
 }
 
@@ -241,7 +174,9 @@ async function forwardAudio(
   const reader = ttsStream.getReader();
   try {
     while (true) {
-      signal?.throwIfAborted();
+      if (signal?.aborted) {
+        break;
+      }
 
       const { done, value: frame } = await reader.read();
       if (done) break;
@@ -252,18 +187,8 @@ async function forwardAudio(
         out.firstFrameFut.resolve();
       }
     }
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      reader.cancel().catch(() => {});
-      throw error;
-    }
-    throw error;
   } finally {
-    try {
-      reader.releaseLock();
-    } catch {
-      // Ignore errors if reader is already released
-    }
+    reader?.releaseLock();
   }
 }
 
