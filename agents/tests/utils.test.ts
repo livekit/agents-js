@@ -287,5 +287,116 @@ describe('AbortableTask', () => {
       expect(child1Task.done).toBe(true);
       expect(child2Task.done).toBe(true);
     });
+
+    it('should handle nested tasks that complete successfully', async () => {
+      const results: string[] = [];
+
+      const parentTask = createTask(async (controller) => {
+        results.push('parent-start');
+
+        // Create first child task
+        const child1Task = createTask(async (childController) => {
+          results.push('child1-start');
+          await delay(25);
+          results.push('child1-end');
+          return 'child1-result';
+        }, controller);
+
+        // Create second child task that depends on first
+        const child2Task = createTask(async (childController) => {
+          results.push('child2-start');
+          
+          // Create a grandchild task
+          const grandchildTask = createTask(async (grandController) => {
+            results.push('grandchild-start');
+            await delay(10);
+            results.push('grandchild-end');
+            return 'grandchild-result';
+          }, childController);
+
+          const grandchildResult = await grandchildTask.result;
+          await delay(10);
+          results.push('child2-end');
+          return `child2-result-with-${grandchildResult}`;
+        }, controller);
+
+        // Wait for all tasks
+        const [child1Result, child2Result] = await Promise.all([
+          child1Task.result,
+          child2Task.result
+        ]);
+
+        results.push('parent-end');
+        return {
+          parent: 'parent-result',
+          child1: child1Result,
+          child2: child2Result
+        };
+      });
+
+      // Wait for everything to complete
+      const finalResult = await parentTask.result;
+
+      // Verify results
+      expect(finalResult).toEqual({
+        parent: 'parent-result',
+        child1: 'child1-result',
+        child2: 'child2-result-with-grandchild-result'
+      });
+
+      // Verify execution order
+      // Check important ordering constraints without being strict about parallel task ordering
+      expect(results).toEqual([
+        'parent-start',
+        'child1-start',
+        'child2-start',
+        'grandchild-start',
+        'grandchild-end',
+        'child2-end',
+        'child1-end',
+        'parent-end',
+      ]);
+      
+      // All tasks should be done
+      expect(parentTask.done).toBe(true);
+    });
+
+    it('should propagate errors from nested tasks', async () => {
+      let parentError: Error | null = null;
+      let child1Completed = false;
+      let child2Started = false;
+
+      const parentTask = createTask(async (controller) => {
+        const child1Task = createTask(async (childController) => {
+          await delay(20);
+          throw new Error('child1 error');
+        }, controller);
+
+        const child2Task = createTask(async (childController) => {
+          child2Started = true;
+          await delay(30);
+          child1Completed = true;
+          return 'child2-result';
+        }, controller);
+
+        // This will throw when child1 fails
+        const results = await Promise.all([child1Task.result, child2Task.result]);
+        return results;
+      });
+
+      // Wait for the parent task to fail
+      try {
+        await parentTask.result;
+        expect.fail('Parent task should have thrown');
+      } catch (error: any) {
+        parentError = error;
+      }
+
+      // Verify the error propagated correctly
+      expect(parentError?.message).toBe('child1 error');
+      expect(child1Completed).toBe(false);
+      expect(child2Started).toBe(true);
+      expect(parentTask.done).toBe(true);
+    });
   });
 });
