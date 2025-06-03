@@ -8,6 +8,7 @@ import type {
   TrackPublication,
 } from '@livekit/rtc-node';
 import { AudioFrame, TrackSource } from '@livekit/rtc-node';
+import { delay } from '@std/async';
 import { EventEmitter, once } from 'node:events';
 
 /** Union of a single and a list of {@link AudioFrame}s */
@@ -340,6 +341,14 @@ export class AudioEnergyFilter {
   }
 }
 
+export const TASK_TIMEOUT_ERROR = new Error('Task cancellation timed out');
+
+export enum TaskResult {
+  Timeout = "timeout",
+  Completed = "completed",
+  Aborted = "aborted",
+}
+
 export class AbortableTask<T> {
   private resultFuture: Future<T>;
 
@@ -364,6 +373,33 @@ export class AbortableTask<T> {
 
   cancel() {
     this.controller.abort();
+  }
+
+  async cancelAndWait(timeout: number = 2000) {
+    this.cancel();
+
+    try {
+      // Race between task completion and timeout
+      // delay() resolves to undefined, so we need to handle this properly
+      const result = await Promise.race([
+        this.result.then(() => TaskResult.Completed).catch((error) => {
+          if (error.name === 'AbortError') {
+            return TaskResult.Aborted;
+          }
+          throw error;
+        }),
+        delay(timeout).then(() => TaskResult.Timeout),
+      ]);
+
+      // Check what happened
+      if (result === TaskResult.Timeout) {
+        throw TASK_TIMEOUT_ERROR;
+      }
+
+      return result;
+    } catch (error) {
+      throw error;
+    }
   }
 
   get result(): Promise<T> {

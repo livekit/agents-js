@@ -298,6 +298,15 @@ export class AudioRecognition {
     this.deferredInputStream.setSource(audioStream);
   }
 
+  clearUserTurn() {
+    this.audioTranscript = '';
+    this.audioInterimTranscript = '';
+    this.userTurnCommitted = false;
+
+    // reset stt to clear the buffer from previous user turn
+    // TODO: implement this
+  }
+
   commitUserTurn(audioDetached: boolean) {
     const commitUserTurnTask =
       (delayDuration: number = 500) =>
