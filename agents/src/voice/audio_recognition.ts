@@ -333,6 +333,8 @@ export class AudioRecognition {
   }
 
   commitUserTurn(audioDetached: boolean) {
+    console.log('commitUserTurn', audioDetached);
+
     const commitUserTurnTask =
       (delayDuration: number = 500) =>
       async (controller: AbortController) => {
