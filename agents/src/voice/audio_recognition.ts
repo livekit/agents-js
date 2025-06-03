@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
-import { ReadableStream } from 'node:stream/web';
+import { ReadableStream, TransformStream } from 'node:stream/web';
 import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
@@ -13,7 +13,6 @@ import { createTask } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
-
 export interface EndOfTurnInfo {
   newTranscript: string;
   transcriptionDelay: number;
@@ -50,6 +49,10 @@ export class AudioRecognition {
   private userTurnCommitted = false;
   private speaking = false;
 
+  // TODO(brian): need to abstract these
+  private silenceAudioStream = new TransformStream<AudioFrame, AudioFrame>();
+  private silenceAudioWriter: WritableStreamDefaultWriter<AudioFrame>;
+
   // all abortable tasks
   private bounceEOUTask?: AbortableTask<void>;
   private commitUserTurnTask?: AbortableTask<void>;
@@ -65,7 +68,12 @@ export class AudioRecognition {
     private lastLanguage?: string,
   ) {
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
+
+    // TODO(brian): need to abstract these
+    this.silenceAudioWriter = this.silenceAudioStream.writable.getWriter();
   }
+
+
 
   async start() {
     const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
@@ -290,10 +298,16 @@ export class AudioRecognition {
   }
 
   commitUserTurn(audioDetached: boolean) {
-    const commitUserTurnTask = (delay: number = 0.5) => async (controller: AbortController) => {
-      // TODO(brian): push silence to stt to flush the buffer
+    const commitUserTurnTask = (delayDuration: number = 500) => async (controller: AbortController) => {
+      if (Date.now() - this.lastFinalTranscriptTime > delayDuration) {
+        // TODO(brian): push silence to stt to flush the buffer
+        // ...
+
+        await delay(delayDuration, { signal: controller.signal });
+      }
 
       if (this.audioInterimTranscript) {
+        // append interim transcript in case the final transcript is not ready
         this.audioTranscript = `${this.audioTranscript} ${this.audioInterimTranscript}`.trim();
       }
       this.audioInterimTranscript = '';
