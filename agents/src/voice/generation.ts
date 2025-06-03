@@ -34,37 +34,73 @@ export function performLLMInference(
   const inferenceTask = async () => {
     let reader: ReadableStreamDefaultReader<any> | null = null;
     let llmStream: ReadableStream<string | ChatChunk> | null = null;
-    llmStream = await node(chatCtx, modelSettings);
-    if (llmStream === null) {
-      return;
-    }
 
-    reader = llmStream.getReader();
-    while (true) {
-      if (signal?.aborted) {
-        break;
+    try {
+      llmStream = await node(chatCtx, modelSettings);
+      if (llmStream === null) {
+        await writer.close();
+        return;
       }
 
-      const { done, value: chunk } = await reader.read();
-      if (done) {
-        break;
+      reader = llmStream.getReader();
+      while (true) {
+        // Check abort signal before each read
+        if (signal?.aborted) {
+          break;
+        }
+
+        const { done, value: chunk } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        // Check abort signal after receiving chunk
+        if (signal?.aborted) {
+          break;
+        }
+
+        if (typeof chunk === 'string') {
+          data.generatedText += chunk;
+          await writer.write(chunk);
+          // TODO(shubhra): better way to check??
+        } else if ('choices' in chunk) {
+          const content = chunk.choices[0]?.delta.content;
+          if (!content) continue;
+          data.generatedText += content;
+          await writer.write(content);
+        } else {
+          throw new Error(`Unexpected chunk type: ${JSON.stringify(chunk)}`);
+        }
       }
-      if (typeof chunk === 'string') {
-        data.generatedText += chunk;
-        writer.write(chunk);
-        // TODO(shubhra): better way to check??
-      } else if ('choices' in chunk) {
-        const content = chunk.choices[0]?.delta.content;
-        if (!content) continue;
-        data.generatedText += content;
-        writer.write(content);
-      } else {
-        throw new Error(`Unexpected chunk type: ${JSON.stringify(chunk)}`);
+    } catch (error) {
+      if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+        // Silently handle abort - this is expected
+        console.log('+++++llm stream aborted in performLLMInference');
+        return;
+      }
+      throw error;
+    } finally {
+      // Cleanup
+      if (reader) {
+        try {
+          reader.releaseLock();
+        } catch (e) {
+          console.log('+++++llm reader release lock failed', e);
+        }
+      }
+      if (llmStream) {
+        try {
+          await llmStream.cancel();
+        } catch (e) {
+          console.log('+++++llm stream cancel failed', e);
+        }
+      }
+      try {
+        await writer.close();
+      } catch (e) {
+        console.log('+++++llm writer close failed', e);
       }
     }
-    reader.releaseLock();
-    await writer.close();
-    await llmStream?.cancel();
   };
 
   return [inferenceTask(), data];
@@ -84,21 +120,58 @@ export function performTTSInference(
     let reader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
 
-    ttsStream = await node(text, modelSettings);
-    if (ttsStream === null) {
-      writer.close();
-      return;
-    }
+    try {
+      ttsStream = await node(text, modelSettings);
+      if (ttsStream === null) {
+        await writer.close();
+        return;
+      }
 
-    reader = ttsStream.getReader();
-    while (true) {
-      const { done, value: chunk } = await reader.read();
-      if (done) break;
-      writer.write(chunk);
+      reader = ttsStream.getReader();
+      while (true) {
+        // Check abort signal before each read
+        if (signal?.aborted) {
+          break;
+        }
+
+        const { done, value: chunk } = await reader.read();
+        if (done) break;
+
+        // Check abort signal after receiving chunk
+        if (signal?.aborted) {
+          break;
+        }
+
+        await writer.write(chunk);
+      }
+    } catch (error) {
+      if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+        // Silently handle abort - this is expected
+        return;
+      }
+      throw error;
+    } finally {
+      // Cleanup
+      if (reader) {
+        try {
+          reader.releaseLock();
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }
+      if (ttsStream) {
+        try {
+          await ttsStream.cancel();
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }
+      try {
+        await writer.close();
+      } catch (e) {
+        // Ignore cleanup errors
+      }
     }
-    reader.releaseLock();
-    await writer.close();
-    await ttsStream?.cancel();
   };
 
   return [inferenceTask(), audioOutputStream];

@@ -159,7 +159,6 @@ export class Agent {
     ): Promise<ReadableStream<ChatChunk | string> | null> {
       const activity = agent.getActivityOrThrow();
       const stream = activity.llm.chat({ chatCtx });
-      stream.start();
       return new ReadableStream({
         async start(controller) {
           try {
@@ -174,7 +173,12 @@ export class Agent {
         cancel() {
           // Properly close the underlying LLM stream when cancelled
           console.log('++++++ cancelling llm stream');
-          stream.close();
+          try {
+            stream.close();
+          } catch (error) {
+            // Ignore errors during cancellation
+            console.log('Error closing LLM stream:', error);
+          }
         },
       });
     },

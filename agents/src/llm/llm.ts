@@ -63,6 +63,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected queue = new AsyncIterableQueue<ChatChunk>();
   protected closed = false;
   protected _functionCalls: FunctionCallInfo[] = [];
+  protected abortController = new AbortController();
   abstract label: string;
 
   #llm: LLM;
@@ -143,7 +144,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   }
 
   close() {
-    this.output.close();
+    this.abortController.abort();
     this.queue.close();
     this.closed = true;
   }
