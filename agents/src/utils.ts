@@ -344,9 +344,9 @@ export class AudioEnergyFilter {
 export const TASK_TIMEOUT_ERROR = new Error('Task cancellation timed out');
 
 export enum TaskResult {
-  Timeout = "timeout",
-  Completed = "completed",
-  Aborted = "aborted",
+  Timeout = 'timeout',
+  Completed = 'completed',
+  Aborted = 'aborted',
 }
 
 /** @internal */
@@ -410,12 +410,14 @@ export class Task<T> {
       // Race between task completion and timeout
       // delay() resolves to undefined, so we need to handle this properly
       const result = await Promise.race([
-        this.result.then(() => TaskResult.Completed).catch((error) => {
-          if (error.name === 'AbortError') {
-            return TaskResult.Aborted;
-          }
-          throw error;
-        }),
+        this.result
+          .then(() => TaskResult.Completed)
+          .catch((error) => {
+            if (error.name === 'AbortError') {
+              return TaskResult.Aborted;
+            }
+            throw error;
+          }),
         delay(timeout).then(() => TaskResult.Timeout),
       ]);
 
