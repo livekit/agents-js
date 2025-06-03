@@ -256,13 +256,13 @@ export class JobProcess {
  */
 export class JobRequest {
   #job: proto.Job;
-  #onReject: (terminate?: boolean) => Promise<void>;
+  #onReject: () => Promise<void>;
   #onAccept: (args: JobAcceptArguments) => Promise<void>;
 
   /** @internal */
   constructor(
     job: proto.Job,
-    onReject: (terminate?: boolean) => Promise<void>,
+    onReject: () => Promise<void>,
     onAccept: (args: JobAcceptArguments) => Promise<void>,
   ) {
     this.#job = job;
@@ -298,11 +298,6 @@ export class JobRequest {
   /** Rejects the job. */
   async reject() {
     await this.#onReject();
-  }
-
-  /** Terminate the job. */
-  async terminate() {
-    await this.#onReject(true);
   }
 
   /** Accepts the job, launching it on an idle child process. */
