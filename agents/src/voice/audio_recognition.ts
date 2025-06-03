@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
-import { ReadableStream, TransformStream } from 'node:stream/web';
+import { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
@@ -40,8 +40,6 @@ export interface _TurnDetector {
 
 export class AudioRecognition {
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
-  private vadStreamProcessor?: Promise<void>;
-  private sttStreamProcessor?: Promise<void>;
   private logger = log();
   private lastFinalTranscriptTime = 0;
   private audioTranscript = '';
@@ -50,13 +48,14 @@ export class AudioRecognition {
   private userTurnCommitted = false;
   private speaking = false;
 
-  // TODO(brian): need to abstract these
-  private silenceAudioStream = new TransformStream<AudioFrame, AudioFrame>();
-  private silenceAudioWriter: WritableStreamDefaultWriter<AudioFrame>;
+  private vadInputStream: ReadableStream<AudioFrame>;
+  private sttInputStream: ReadableStream<AudioFrame>;
 
   // all abortable tasks
   private bounceEOUTask?: AbortableTask<void>;
   private commitUserTurnTask?: AbortableTask<void>;
+  private vadTask?: AbortableTask<void>;
+  private sttTask?: AbortableTask<void>;
 
   constructor(
     private readonly hooks: RecognitionHooks,
@@ -70,22 +69,38 @@ export class AudioRecognition {
   ) {
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
 
-    // TODO(brian): need to abstract these
-    this.silenceAudioWriter = this.silenceAudioStream.writable.getWriter();
+    const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
+    this.vadInputStream = vadInputStream;
+    this.sttInputStream = sttInputStream;
   }
 
   async start() {
-    const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
-    this.vadStreamProcessor = this.vadTask(vadInputStream).catch((err) => {
-      this.logger.error(`Error in VAD task: ${err}`);
+    this.updateVad();
+    this.updateStt();
+  }
+
+  private updateVad() {
+    // cancel any existing vad task
+    this.vadTask?.cancelAndWait().catch((err) => {
+      this.logger.error(`Error cancelling VAD task: ${err}`);
     });
-    this.sttStreamProcessor = this.sttTask(sttInputStream).catch((err) => {
-      this.logger.error(`Error in STT task: ${err}`);
+
+    this.vadTask = createTask(this.createVadTask(this.vadInputStream));
+    this.vadTask.result.catch((err) => {
+      this.logger.error(`Error running VAD task: ${err}`);
     });
   }
 
-  private get vadBaseTurnDetection() {
-    return this.turnDetectionMode === undefined || this.turnDetectionMode === 'vad';
+  private updateStt() {
+    // cancel any existing stt task
+    this.sttTask?.cancelAndWait().catch((err) => {
+      this.logger.error(`Error cancelling STT task: ${err}`);
+    });
+
+    this.sttTask = createTask(this.createSttTask(this.sttInputStream));
+    this.sttTask.result.catch((err) => {
+      this.logger.error(`Error running STT task: ${err}`);
+    });
   }
 
   private async onSTTEvent(ev: SpeechEvent) {
@@ -236,62 +251,73 @@ export class AudioRecognition {
       });
   }
 
-  private async sttTask(inputStream: ReadableStream<AudioFrame>) {
-    if (!this.stt) {
-      return;
-    }
-
-    const sttStream = await this.stt(inputStream, {});
-    if (sttStream === null) {
-      return;
-    }
-    if (sttStream instanceof ReadableStream) {
-      const reader = sttStream.getReader();
-      while (true) {
-        const { done, value: ev } = await reader.read();
-        if (done) {
-          break;
-        }
-        if (typeof ev === 'string') {
-          throw new Error('STT node must yield SpeechEvent');
-        } else {
-          await this.onSTTEvent(ev);
-        }
+  private createSttTask(inputStream: ReadableStream<AudioFrame>) {
+    return async (controller: AbortController) => {
+      if (!this.stt) {
+        return;
       }
-      reader.releaseLock();
-      sttStream.cancel();
-    }
+
+      const sttStream = await this.stt(inputStream, {});
+      if (controller.signal.aborted) return;
+      if (sttStream === null) return;
+
+      if (sttStream instanceof ReadableStream) {
+        const reader = sttStream.getReader();
+        while (!controller.signal.aborted) {
+          const { done, value: ev } = await reader.read();
+          if (done) {
+            break;
+          }
+          if (typeof ev === 'string') {
+            throw new Error('STT node must yield SpeechEvent');
+          } else {
+            await this.onSTTEvent(ev);
+          }
+        }
+
+        this.logger.debug('STT task cancelled');
+        reader.releaseLock();
+        sttStream.cancel();
+      }
+    };
   }
 
-  private async vadTask(inputStream: ReadableStream<AudioFrame>) {
-    const vadStream = this.vad.stream();
-    vadStream.updateInputStream(inputStream);
+  private createVadTask(inputStream: ReadableStream<AudioFrame>) {
+    return async (controller: AbortController) => {
+      const vadStream = this.vad.stream();
+      vadStream.updateInputStream(inputStream);
 
-    for await (const ev of vadStream) {
-      switch (ev.type) {
-        case VADEventType.START_OF_SPEECH:
-          this.hooks.onStartOfSpeech(ev);
-          this.speaking = true;
+      for await (const ev of vadStream) {
+        if (controller.signal.aborted) {
+          this.logger.debug('VAD task cancelled');
+          break;
+        }
 
-          this.bounceEOUTask?.cancel();
-          break;
-        case VADEventType.INFERENCE_DONE:
-          this.hooks.onVADInferenceDone(ev);
-          break;
-        case VADEventType.END_OF_SPEECH:
-          this.hooks.onEndOfSpeech(ev);
-          this.speaking = false;
-          // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
-          this.lastSpeakingTime = Date.now() - ev.silenceDuration;
+        switch (ev.type) {
+          case VADEventType.START_OF_SPEECH:
+            this.hooks.onStartOfSpeech(ev);
+            this.speaking = true;
 
-          if (this.turnDetectionMode !== 'manual') {
-            const chatCtx = this.hooks.retrieveChatCtx();
-            this.logger.debug('running EOU detection on vad END_OF_SPEECH');
-            this.runEOUDetection(chatCtx);
-          }
-          break;
+            this.bounceEOUTask?.cancel();
+            break;
+          case VADEventType.INFERENCE_DONE:
+            this.hooks.onVADInferenceDone(ev);
+            break;
+          case VADEventType.END_OF_SPEECH:
+            this.hooks.onEndOfSpeech(ev);
+            this.speaking = false;
+            // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
+            this.lastSpeakingTime = Date.now() - ev.silenceDuration;
+
+            if (this.turnDetectionMode !== 'manual') {
+              const chatCtx = this.hooks.retrieveChatCtx();
+              this.logger.debug('running EOU detection on vad END_OF_SPEECH');
+              this.runEOUDetection(chatCtx);
+            }
+            break;
+        }
       }
-    }
+    };
   }
 
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {
@@ -304,7 +330,7 @@ export class AudioRecognition {
     this.userTurnCommitted = false;
 
     // reset stt to clear the buffer from previous user turn
-    // TODO: implement this
+    this.updateStt();
   }
 
   commitUserTurn(audioDetached: boolean) {
@@ -344,5 +370,9 @@ export class AudioRecognition {
           this.logger.error('Error in user turn commit task:', err);
         }
       });
+  }
+
+  private get vadBaseTurnDetection() {
+    return this.turnDetectionMode === undefined || this.turnDetectionMode === 'vad';
   }
 }
