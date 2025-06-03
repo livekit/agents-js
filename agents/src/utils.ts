@@ -354,12 +354,14 @@ export class AbortableTask<T> {
   }
 
   #runTask() {
-    return this.#fn(this.#controller).then((value) => {
-      this.#resultFuture.resolve(value);
-      return value;
-    }).catch((error) => {
-      this.#resultFuture.reject(error);
-    });
+    return this.#fn(this.#controller)
+      .then((value) => {
+        this.#resultFuture.resolve(value);
+        return value;
+      })
+      .catch((error) => {
+        this.#resultFuture.reject(error);
+      });
   }
 
   cancel() {
@@ -375,7 +377,10 @@ export class AbortableTask<T> {
   }
 }
 
-export function createTask<T>(fn: (controller: AbortController) => Promise<T>, controller?: AbortController) {
+export function createTask<T>(
+  fn: (controller: AbortController) => Promise<T>,
+  controller?: AbortController,
+) {
   const abortController = controller ?? new AbortController();
   const task = new AbortableTask(fn, abortController);
   return task;

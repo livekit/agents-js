@@ -8,7 +8,8 @@ import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import { AbortableTask, createTask } from '../utils.js';
+import type { AbortableTask } from '../utils.js';
+import { createTask } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { STTNode } from './io.js';
 
@@ -145,7 +146,7 @@ export class AudioRecognition {
       // disable EOU model if manual turn detection enabled
       this.audioTranscript && !this.manualTurnDetection ? this.turnDetector : null;
 
-    const bounceEOUTask =(lastSpeakingTime: number) => async (controller: AbortController) => {
+    const bounceEOUTask = (lastSpeakingTime: number) => async (controller: AbortController) => {
       let endpointingDelay = this.minEndpointingDelay;
 
       if (turnDetector) {

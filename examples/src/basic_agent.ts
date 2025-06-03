@@ -20,7 +20,9 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    const agent = new voice.Agent('You are a helpful assistant, you can hear the user\'s message and respond to it.');
+    const agent = new voice.Agent(
+      "You are a helpful assistant, you can hear the user's message and respond to it.",
+    );
     await ctx.connect();
     const participant = await ctx.waitForParticipant();
     console.log('participant joined: ', participant.identity);
