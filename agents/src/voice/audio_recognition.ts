@@ -183,6 +183,16 @@ export class AudioRecognition {
     // cancel any existing EOU task
     this.bounceEOUTask?.cancel();
     this.bounceEOUTask = createTask(bounceEOUTask(this.lastSpeakingTime));
+
+    try {
+      await this.bounceEOUTask.result;
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        this.logger.debug('EOU detection task was aborted');
+      } else {
+        this.logger.error('Error in EOU detection task:', err);
+      }
+    }
   }
 
   private async sttTask(inputStream: ReadableStream<AudioFrame>) {
