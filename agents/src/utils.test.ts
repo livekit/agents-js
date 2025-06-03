@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { delay } from '@std/async';
 import { describe, expect, it } from 'vitest';
-import { createTask } from '../src/utils.js';
+import { createTask, TASK_TIMEOUT_ERROR, TaskResult } from '../src/utils.js';
 
 describe('AbortableTask', () => {
   describe('createTask', () => {
@@ -397,6 +397,71 @@ describe('AbortableTask', () => {
       expect(child1Completed).toBe(false);
       expect(child2Started).toBe(true);
       expect(parentTask.done).toBe(true);
+    });
+
+    it('should cancel and wait for task completion', async () => {
+      let taskCompleted = false;
+      
+      const task = createTask(async (controller) => {
+        await delay(5000, { signal: controller.signal });
+        taskCompleted = true;
+        return 'should not complete';
+      });
+
+      // Cancel and wait should complete quickly when task is aborted
+      const start = Date.now();
+      const result = await task.cancelAndWait(1000);
+      const duration = Date.now() - start;
+
+      expect(result).toBe(TaskResult.Aborted);
+      expect(duration).toBeLessThan(100); // Should not wait for full timeout
+      expect(taskCompleted).toBe(false);
+      expect(task.done).toBe(true);
+    });
+
+    it('should timeout if task does not respond to cancellation', async () => {
+      const task = createTask(async (controller) => {
+        await delay(1000);
+      });
+
+      // This should timeout because the task ignores cancellation
+      try {
+        await task.cancelAndWait(200);
+        expect.fail('Task should have timed out');
+      } catch (error: any) {
+        expect(error).toBe(TASK_TIMEOUT_ERROR);
+      }
+    });
+
+    it('should handle task that completes before timeout', async () => {
+      const task = createTask(async () => {
+        await delay(50);
+      });
+
+      // Start the task
+      await delay(10);
+
+      // Cancel and wait - but task will complete normally before being canceled
+      const result = await task.cancelAndWait(1000);
+      
+      // Task should have completed normally
+      expect(result).toBe(TaskResult.Completed);
+      expect(task.done).toBe(true);
+    });
+
+    it('should propagate non-abort errors from cancelAndWait', async () => {
+      const task = createTask(async () => {
+        await delay(10);
+        throw new TypeError('Custom error');
+      });
+
+      try {
+        await task.cancelAndWait(1000);
+        expect.fail('Task should have thrown');
+      } catch (error: any) {
+        expect(error.message).toBe('Custom error');
+        expect(error.name).toBe('TypeError');
+      }
     });
   });
 });
