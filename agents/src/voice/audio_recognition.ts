@@ -13,6 +13,7 @@ import { createTask } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
+
 export interface EndOfTurnInfo {
   newTranscript: string;
   transcriptionDelay: number;
@@ -72,8 +73,6 @@ export class AudioRecognition {
     // TODO(brian): need to abstract these
     this.silenceAudioWriter = this.silenceAudioStream.writable.getWriter();
   }
-
-
 
   async start() {
     const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
@@ -224,15 +223,17 @@ export class AudioRecognition {
     this.bounceEOUTask?.cancel();
     this.bounceEOUTask = createTask(bounceEOUTask(this.lastSpeakingTime));
 
-    this.bounceEOUTask.result.then(() => {
-      this.logger.debug('EOU detection task completed');
-    }).catch((err: any) => {
-      if (err.name === 'AbortError') {
-        this.logger.debug('EOU detection task was aborted');
-      } else {
-        this.logger.error('Error in EOU detection task:', err);
-      }
-    });
+    this.bounceEOUTask.result
+      .then(() => {
+        this.logger.debug('EOU detection task completed');
+      })
+      .catch((err: any) => {
+        if (err.name === 'AbortError') {
+          this.logger.debug('EOU detection task was aborted');
+        } else {
+          this.logger.error('Error in EOU detection task:', err);
+        }
+      });
   }
 
   private async sttTask(inputStream: ReadableStream<AudioFrame>) {
@@ -298,37 +299,41 @@ export class AudioRecognition {
   }
 
   commitUserTurn(audioDetached: boolean) {
-    const commitUserTurnTask = (delayDuration: number = 500) => async (controller: AbortController) => {
-      if (Date.now() - this.lastFinalTranscriptTime > delayDuration) {
-        // TODO(brian): push silence to stt to flush the buffer
-        // ...
+    const commitUserTurnTask =
+      (delayDuration: number = 500) =>
+      async (controller: AbortController) => {
+        if (Date.now() - this.lastFinalTranscriptTime > delayDuration) {
+          // TODO(brian): push silence to stt to flush the buffer
+          // ...
 
-        await delay(delayDuration, { signal: controller.signal });
-      }
+          await delay(delayDuration, { signal: controller.signal });
+        }
 
-      if (this.audioInterimTranscript) {
-        // append interim transcript in case the final transcript is not ready
-        this.audioTranscript = `${this.audioTranscript} ${this.audioInterimTranscript}`.trim();
-      }
-      this.audioInterimTranscript = '';
+        if (this.audioInterimTranscript) {
+          // append interim transcript in case the final transcript is not ready
+          this.audioTranscript = `${this.audioTranscript} ${this.audioInterimTranscript}`.trim();
+        }
+        this.audioInterimTranscript = '';
 
-      const chatCtx = this.hooks.retrieveChatCtx();
-      this.runEOUDetection(chatCtx);
-      this.userTurnCommitted = true;
-    };
+        const chatCtx = this.hooks.retrieveChatCtx();
+        this.runEOUDetection(chatCtx);
+        this.userTurnCommitted = true;
+      };
 
     // cancel any existing commit user turn task
     this.commitUserTurnTask?.cancel();
     this.commitUserTurnTask = createTask(commitUserTurnTask());
 
-    this.commitUserTurnTask.result.then(() => {
-      this.logger.debug('User turn committed');
-    }).catch((err: any) => {
-      if (err.name === 'AbortError') {
-        this.logger.debug('User turn commit task was aborted');
-      } else {
-        this.logger.error('Error in user turn commit task:', err);
-      }
-    });
+    this.commitUserTurnTask.result
+      .then(() => {
+        this.logger.debug('User turn committed');
+      })
+      .catch((err: any) => {
+        if (err.name === 'AbortError') {
+          this.logger.debug('User turn commit task was aborted');
+        } else {
+          this.logger.error('Error in user turn commit task:', err);
+        }
+      });
   }
 }
