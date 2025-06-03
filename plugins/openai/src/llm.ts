@@ -445,13 +445,9 @@ export class LLMStream extends llm.LLMStream {
   #toolCallId?: string;
   #fncName?: string;
   #fncRawArguments?: string;
-  private client!: OpenAI;
+  #client: OpenAI;
   #logger = log();
   #id = randomUUID();
-  private opts!: LLMOptions;
-  private n?: number;
-  private parallelToolCalls?: boolean;
-  private temperature?: number;
   label = 'openai.LLMStream';
 
   constructor(
@@ -465,14 +461,11 @@ export class LLMStream extends llm.LLMStream {
     n?: number,
   ) {
     super(llm, chatCtx, fncCtx);
-    this.client = client;
-    this.opts = opts;
-    this.n = n;
-    this.parallelToolCalls = parallelToolCalls;
-    this.temperature = temperature;
+    this.#client = client;
+    this.#run(opts, n, parallelToolCalls, temperature);
   }
 
-  protected async *run() {
+  async #run(opts: LLMOptions, n?: number, parallelToolCalls?: boolean, temperature?: number) {
     const tools = this.fncCtx
       ? Object.entries(this.fncCtx).map(([name, func]) => ({
           type: 'function' as const,
@@ -488,40 +481,44 @@ export class LLMStream extends llm.LLMStream {
         }))
       : undefined;
 
-    const stream = await this.client.chat.completions.create({
-      model: this.opts.model,
-      user: this.opts.user,
-      n: this.n,
-      messages: await Promise.all(
-        this.chatCtx.messages.map(async (m) => await buildMessage(m, this.#id)),
-      ),
-      temperature: this.temperature || this.opts.temperature,
-      stream_options: { include_usage: true },
-      stream: true,
-      tools,
-      parallel_tool_calls: this.fncCtx && this.parallelToolCalls,
-    });
+    try {
+      const stream = await this.#client.chat.completions.create({
+        model: opts.model,
+        user: opts.user,
+        n,
+        messages: await Promise.all(
+          this.chatCtx.messages.map(async (m) => await buildMessage(m, this.#id)),
+        ),
+        temperature: temperature || opts.temperature,
+        stream_options: { include_usage: true },
+        stream: true,
+        tools,
+        parallel_tool_calls: this.fncCtx && parallelToolCalls,
+      });
 
-    for await (const chunk of stream) {
-      for (const choice of chunk.choices) {
-        const chatChunk = this.#parseChoice(chunk.id, choice);
-        if (chatChunk) {
-          yield chatChunk;
-        }
+      for await (const chunk of stream) {
+        for (const choice of chunk.choices) {
+          const chatChunk = this.#parseChoice(chunk.id, choice);
+          if (chatChunk) {
+            this.queue.put(chatChunk);
+          }
 
-        if (chunk.usage) {
-          const usage = chunk.usage;
-          yield {
-            requestId: chunk.id,
-            choices: [],
-            usage: {
-              completionTokens: usage.completion_tokens,
-              promptTokens: usage.prompt_tokens,
-              totalTokens: usage.total_tokens,
-            },
-          };
+          if (chunk.usage) {
+            const usage = chunk.usage;
+            this.queue.put({
+              requestId: chunk.id,
+              choices: [],
+              usage: {
+                completionTokens: usage.completion_tokens,
+                promptTokens: usage.prompt_tokens,
+                totalTokens: usage.total_tokens,
+              },
+            });
+          }
         }
       }
+    } finally {
+      this.queue.close();
     }
   }
 
