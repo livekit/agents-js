@@ -60,9 +60,9 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
 
 export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected output = new AsyncIterableQueue<ChatChunk>();
-  protected queue = new AsyncIterableQueue<ChatChunk>();
   protected closed = false;
   protected _functionCalls: FunctionCallInfo[] = [];
+  private abortController = new AbortController();
   abstract label: string;
 
   #llm: LLM;
@@ -73,7 +73,24 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     this.#llm = llm;
     this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
-    this.monitorMetrics();
+  }
+
+  start() {
+    this.mainTask();
+    // this.monitorMetrics();
+  }
+
+  protected abstract run(): AsyncIterableIterator<ChatChunk>;
+
+  private async mainTask() {
+    const signal = this.abortController.signal;
+    for await (const chunk of this.run()) {
+      if (signal.aborted) {
+        return;
+      }
+      this.output.put(chunk);
+    }
+    this.output.close();
   }
 
   protected async monitorMetrics() {
@@ -82,8 +99,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     let requestId = '';
     let usage: CompletionUsage | undefined;
 
-    for await (const ev of this.queue) {
-      this.output.put(ev);
+    for await (const ev of this.output) {
       requestId = ev.requestId;
       if (!ttft) {
         ttft = process.hrtime.bigint() - startTime;
@@ -143,8 +159,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   }
 
   close() {
-    this.output.close();
-    this.queue.close();
+    this.abortController.abort();
     this.closed = true;
   }
 

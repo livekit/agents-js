@@ -106,7 +106,7 @@ export class AgentActivity implements RecognitionHooks {
   onVADInferenceDone(ev: VADEvent): void {
     if (this.currentSpeech && !this.currentSpeech.interrupted && this.currentSpeech.done) {
       this.logger.info({ 'speech id': this.currentSpeech.id }, 'speech interrupted by VAD');
-      this.currentSpeech.interrupt();
+      // this.currentSpeech.interrupt();
     }
   }
 
@@ -335,7 +335,7 @@ export class AgentActivity implements RecognitionHooks {
 
     try {
       // Race between task completion and interruption
-      await Promise.race([Promise.all(tasks), speechHandle.waitIfNotInterrupted([])]);
+      await speechHandle.waitIfNotInterrupted([]);
 
       if (!speechHandle.interrupted) {
         const message = ChatMessage.create({

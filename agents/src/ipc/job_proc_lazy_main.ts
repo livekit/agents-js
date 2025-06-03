@@ -169,7 +169,19 @@ const startJob = (
     let logger = log().child({ pid: proc.pid });
 
     process.on('unhandledRejection', (reason) => {
-      logger.error(reason);
+      // Don't log AbortErrors as errors since they're expected during interruptions
+      if (reason instanceof Error && reason.name === 'AbortError') {
+        logger.debug('Task aborted (expected during interruption)', { reason: reason.message });
+        return;
+      }
+
+      logger.error(
+        {
+          reason: reason instanceof Error ? reason.message : reason,
+          stack: reason instanceof Error ? reason.stack : undefined,
+        },
+        'Unhandled promise rejection ++',
+      );
     });
 
     logger.debug('initializing job runner');

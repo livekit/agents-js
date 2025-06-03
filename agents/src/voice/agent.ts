@@ -159,6 +159,7 @@ export class Agent {
     ): Promise<ReadableStream<ChatChunk | string> | null> {
       const activity = agent.getActivityOrThrow();
       const stream = activity.llm.chat({ chatCtx });
+      stream.start();
       return new ReadableStream({
         async start(controller) {
           try {
@@ -205,6 +206,7 @@ export class Agent {
             }
           } catch (error) {
             controller.error(error);
+            stream.close();
           }
         },
         cancel() {

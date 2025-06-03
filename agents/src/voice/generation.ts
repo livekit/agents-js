@@ -34,52 +34,39 @@ export function performLLMInference(
   const inferenceTask = async () => {
     let reader: ReadableStreamDefaultReader<any> | null = null;
     let llmStream: ReadableStream<string | ChatChunk> | null = null;
-    try {
-      signal?.throwIfAborted();
-
-      llmStream = await node(chatCtx, modelSettings);
-      if (llmStream === null) {
-        return;
-      }
-
-      reader = llmStream.getReader();
-      while (true) {
-        signal?.throwIfAborted();
-
-        const { done, value: chunk } = await reader.read();
-        if (done) {
-          break;
-        }
-        if (typeof chunk === 'string') {
-          data.generatedText += chunk;
-          writer.write(chunk);
-          // TODO(shubhra): better way to check??
-        } else if ('choices' in chunk) {
-          const content = chunk.choices[0]?.delta.content;
-          if (!content) continue;
-          data.generatedText += content;
-          writer.write(content);
-        } else {
-          throw new Error(`Unexpected chunk type: ${JSON.stringify(chunk)}`);
-        }
-      }
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        // Cancel the reader if it exists
-        if (reader) {
-          reader.cancel().catch(() => {});
-        }
-        throw error;
-      }
-      throw error;
-    } finally {
-      if (reader) {
-        reader.releaseLock();
-      }
-      writer.close();
-      llmStream?.cancel();
+    llmStream = await node(chatCtx, modelSettings);
+    if (llmStream === null) {
+      return;
     }
+
+    reader = llmStream.getReader();
+    while (true) {
+      if (signal?.aborted) {
+        break;
+      }
+
+      const { done, value: chunk } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (typeof chunk === 'string') {
+        data.generatedText += chunk;
+        writer.write(chunk);
+        // TODO(shubhra): better way to check??
+      } else if ('choices' in chunk) {
+        const content = chunk.choices[0]?.delta.content;
+        if (!content) continue;
+        data.generatedText += content;
+        writer.write(content);
+      } else {
+        throw new Error(`Unexpected chunk type: ${JSON.stringify(chunk)}`);
+      }
+    }
+    reader.releaseLock();
+    await writer.close();
+    await llmStream?.cancel();
   };
+
   return [inferenceTask(), data];
 }
 
@@ -95,43 +82,23 @@ export function performTTSInference(
 
   const inferenceTask = async () => {
     let reader: ReadableStreamDefaultReader<AudioFrame> | null = null;
-    try {
-      signal?.throwIfAborted();
+    let ttsStream: ReadableStream<AudioFrame> | null = null;
 
-      const ttsNode = await node(text, modelSettings);
-      if (ttsNode === null) {
-        writer.close();
-        return;
-      }
-
-      reader = ttsNode.getReader();
-      while (true) {
-        signal?.throwIfAborted();
-
-        const { done, value: chunk } = await reader.read();
-        if (done) break;
-        writer.write(chunk);
-      }
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        // Cancel the reader if it exists
-        if (reader) {
-          reader.cancel().catch(() => {});
-        }
-        throw error;
-      }
-      throw error;
-    } finally {
-      // Release reader lock safely
-      if (reader) {
-        try {
-          reader.releaseLock();
-        } catch {
-          // Ignore errors if reader is already released
-        }
-      }
-      writer.close().catch(() => {});
+    ttsStream = await node(text, modelSettings);
+    if (ttsStream === null) {
+      writer.close();
+      return;
     }
+
+    reader = ttsStream.getReader();
+    while (true) {
+      const { done, value: chunk } = await reader.read();
+      if (done) break;
+      writer.write(chunk);
+    }
+    reader.releaseLock();
+    await writer.close();
+    await ttsStream?.cancel();
   };
 
   return [inferenceTask(), audioOutputStream];

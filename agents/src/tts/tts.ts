@@ -121,6 +121,7 @@ export abstract class SynthesizeStream
   #metricsPendingTexts: string[] = [];
   #metricsText = '';
   #monitorMetricsTask?: Promise<void>;
+  protected abortController = new AbortController();
 
   private deferredInputStream: DeferredReadableStream<
     string | typeof SynthesizeStream.FLUSH_SENTINEL
@@ -139,7 +140,11 @@ export abstract class SynthesizeStream
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done || value === SynthesizeStream.FLUSH_SENTINEL) {
+        if (
+          done ||
+          value === SynthesizeStream.FLUSH_SENTINEL ||
+          this.abortController.signal.aborted
+        ) {
           break;
         }
         this.pushText(value);
@@ -177,6 +182,9 @@ export abstract class SynthesizeStream
     };
 
     for await (const audio of this.queue) {
+      if (this.abortController.signal.aborted) {
+        break;
+      }
       this.output.put(audio);
       if (audio === SynthesizeStream.END_OF_STREAM) continue;
       requestId = audio.requestId;
@@ -248,6 +256,7 @@ export abstract class SynthesizeStream
 
   /** Close both the input and output of the TTS stream */
   close() {
+    this.abortController.abort();
     this.input.close();
     this.output.close();
     this.closed = true;
@@ -294,7 +303,6 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     let requestId = '';
 
     for await (const audio of this.queue) {
-      this.output.put(audio);
       requestId = audio.requestId;
       if (!ttfb) {
         ttfb = process.hrtime.bigint() - startTime;

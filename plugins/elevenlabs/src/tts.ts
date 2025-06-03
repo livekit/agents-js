@@ -149,6 +149,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const tokenizeInput = async () => {
       let stream: tokenize.WordStream | null = null;
       for await (const text of this.input) {
+        if (this.abortController.signal.aborted) {
+          break;
+        }
         if (text === SynthesizeStream.FLUSH_SENTINEL) {
           stream?.endInput();
           stream = null;
@@ -165,6 +168,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     const runStream = async () => {
       for await (const stream of segments) {
+        if (this.abortController.signal.aborted) {
+          break;
+        }
         await this.#runWS(stream);
         this.queue.put(SynthesizeStream.END_OF_STREAM);
       }
@@ -220,6 +226,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const sendTask = async () => {
       let xmlContent: string[] = [];
       for await (const data of stream) {
+        if (this.abortController.signal.aborted) {
+          break;
+        }
         let text = data.token;
 
         if ((this.#opts.enableSsmlParsing && text.startsWith('<phoneme')) || xmlContent.length) {
@@ -253,7 +262,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     const listenTask = async () => {
       const bstream = new AudioByteStream(sampleRateFromFormat(this.#opts.encoding), 1);
-      while (!this.closed) {
+      while (!this.closed && !this.abortController.signal.aborted) {
         try {
           await new Promise<RawData>((resolve, reject) => {
             ws.removeAllListeners();
@@ -262,7 +271,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               if (!eosSent) {
                 this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
               }
-              reject();
+              reject(new Error('WebSocket closed'));
             });
           }).then((msg) => {
             const json = JSON.parse(msg.toString());
