@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 0.7.6
+
+### Patch Changes
+
+- fix memory leak when job completed - [#418](https://github.com/livekit/agents-js/pull/418) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
 ## 0.7.5
 
 ### Patch Changes
