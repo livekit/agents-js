@@ -15,7 +15,7 @@ describe('AbortableTask', () => {
       });
 
       expect(task.done).toBe(false);
-      const result = await task.result();
+      const result = await task.result;
       expect(result).toBe(expectedResult);
       expect(task.done).toBe(true);
     });
@@ -28,7 +28,7 @@ describe('AbortableTask', () => {
       });
 
       expect(task.done).toBe(false);
-      await expect(task.result()).rejects.toThrow(expectedError);
+      await expect(task.result).rejects.toThrow(expectedError);
       expect(task.done).toBe(true);
     });
 
@@ -53,7 +53,7 @@ describe('AbortableTask', () => {
 
       // The task should reject with AbortError
       try {
-        await task.result();
+        await task.result;
       } catch (error: any) {
         expect(error.name).toBe('AbortError');
       }
@@ -74,7 +74,7 @@ describe('AbortableTask', () => {
       controller.abort();
 
       try {
-        await task.result();
+        await task.result;
       } catch (error: any) {
         expect(error.name).toBe('AbortError');
       }
@@ -87,21 +87,21 @@ describe('AbortableTask', () => {
         return 'immediate';
       });
 
-      const result = await task.result();
+      const result = await task.result;
       expect(result).toBe('immediate');
       expect(task.done).toBe(true);
     });
 
     it('should handle immediate rejection', async () => {
-      const error = new Error('Immediate error');
+      const expectedError = new Error('Immediate error');
       const task = createTask(async () => {
-        throw error;
+        throw expectedError;
       });
 
       try {
-        await task.result();
+        await task.result;
       } catch (error: any) {
-        expect(error).toBe(error);
+        expect(error).toBe(expectedError);
       }
 
       expect(task.done).toBe(true);
@@ -121,7 +121,7 @@ describe('AbortableTask', () => {
       task.cancel();
 
       try {
-        await task.result();
+        await task.result;
       } catch (error: any) {
         expect(error.name).toBe('AbortError');
       }
@@ -147,9 +147,9 @@ describe('AbortableTask', () => {
 
       expect(arr).toEqual([0, 1, 2]);
       try {
-        await task.result();
+        await task.result;
       } catch (error: any) {
-        expect(error.name).toBe('Error');
+        expect(error.message).toBe('Task was aborted');
       }
 
       expect(task.done).toBe(true);
@@ -171,7 +171,7 @@ describe('AbortableTask', () => {
       task.cancel();
 
       try {
-        await task.result();
+        await task.result;
       } catch {
         // Ignore the abort error
       }
@@ -186,9 +186,9 @@ describe('AbortableTask', () => {
         return 'result';
       });
 
-      const result1 = await task.result();
-      const result2 = await task.result();
-      const result3 = await task.result();
+      const result1 = await task.result;
+      const result2 = await task.result;
+      const result3 = await task.result;
 
       expect(result1).toBe('result');
       expect(result2).toBe('result');
@@ -203,8 +203,8 @@ describe('AbortableTask', () => {
       });
 
       // Get references to result promise before completion
-      const resultPromise1 = task.result();
-      const resultPromise2 = task.result();
+      const resultPromise1 = task.result;
+      const resultPromise2 = task.result;
 
       expect(task.done).toBe(false);
 
@@ -214,6 +214,78 @@ describe('AbortableTask', () => {
       expect(result1).toBe('delayed result');
       expect(result2).toBe('delayed result');
       expect(task.done).toBe(true);
+    });
+
+    it('should cancel child tasks when parent task is canceled', async () => {
+      let parentStarted = false;
+      let child1Started = false;
+      let child2Started = false;
+      let parentCompleted = false;
+      let child1Completed = false;
+      let child2Completed = false;
+
+      let child1Task: any;
+      let child2Task: any;
+
+      const parentTask = createTask(async (controller) => {
+        parentStarted = true;
+
+        // Create two child tasks using the parent's controller
+        child1Task = createTask(async (childController) => {
+          child1Started = true;
+          await delay(100, { signal: childController.signal });
+          child1Completed = true;
+          return 'child1';
+        }, controller);
+
+        child2Task = createTask(async (childController) => {
+          child2Started = true;
+          await delay(100, { signal: childController.signal });
+          child2Completed = true;
+          return 'child2';
+        }, controller);
+
+        // Wait for both child tasks
+        const results = await Promise.all([child1Task.result, child2Task.result]);
+        parentCompleted = true;
+        return results;
+      });
+
+      // Let tasks start
+      await delay(20);
+
+      // Verify tasks have started
+      expect(parentStarted).toBe(true);
+      expect(child1Started).toBe(true);
+      expect(child2Started).toBe(true);
+
+      // Cancel parent task
+      parentTask.cancel();
+
+      // Use Promise.allSettled to handle all promise settlements
+      const [parentResult, child1Result, child2Result] = await Promise.allSettled([
+        parentTask.result,
+        child1Task.result,
+        child2Task.result
+      ]);
+
+      // Verify all tasks were rejected with AbortError
+      expect(parentResult.status).toBe('rejected');
+      expect((parentResult as any).reason.name).toBe('AbortError');
+
+      expect(child1Result.status).toBe('rejected');
+      expect((child1Result as any).reason.name).toBe('AbortError');
+
+      expect(child2Result.status).toBe('rejected');
+      expect((child2Result as any).reason.name).toBe('AbortError');
+
+      // Verify none of the tasks completed
+      expect(parentCompleted).toBe(false);
+      expect(child1Completed).toBe(false);
+      expect(child2Completed).toBe(false);
+      expect(parentTask.done).toBe(true);
+      expect(child1Task.done).toBe(true);
+      expect(child2Task.done).toBe(true);
     });
   });
 });

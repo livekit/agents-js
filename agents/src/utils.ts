@@ -359,7 +359,6 @@ export class AbortableTask<T> {
       return value;
     }).catch((error) => {
       this.#resultFuture.reject(error);
-      throw error;
     });
   }
 
@@ -367,7 +366,7 @@ export class AbortableTask<T> {
     this.#controller.abort();
   }
 
-  result(): Promise<T> {
+  get result(): Promise<T> {
     return this.#resultFuture.await;
   }
 
