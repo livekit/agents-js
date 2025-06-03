@@ -408,7 +408,6 @@ export class Task<T> {
 
     try {
       // Race between task completion and timeout
-      // delay() resolves to undefined, so we need to handle this properly
       const result = await Promise.race([
         this.result
           .then(() => TaskResult.Completed)
