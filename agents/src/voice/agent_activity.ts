@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { Heap } from 'heap-js';
-import type { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage, ChatRole } from '../llm/chat_context.js';
 import type { LLM } from '../llm/index.js';
 import { log } from '../log.js';
@@ -12,8 +11,8 @@ import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
 import { Future } from '../utils.js';
 import type { VADEvent } from '../vad.js';
-import { StopResponse } from './agent.js';
 import type { Agent } from './agent.js';
+import { StopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import {
   AudioRecognition,

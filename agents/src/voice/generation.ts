@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, AudioSource } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
-import type { ReadableStream } from 'stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future } from '../utils.js';
