@@ -114,7 +114,7 @@ describe('AbortableTask', () => {
       });
 
       await delay(10);
-      
+
       // Multiple cancellations should not cause issues
       task.cancel();
       task.cancel();

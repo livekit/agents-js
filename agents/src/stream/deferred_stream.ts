@@ -24,9 +24,4 @@ export class DeferredReadableStream<T> {
     }
     source.pipeTo(this.transform.writable);
   }
-
-  cancel() {
-    // cancel the pipeTo so the source stream reader lock is released
-    this.transform.writable.close();
-  }
 }

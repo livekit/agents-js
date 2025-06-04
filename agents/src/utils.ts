@@ -400,8 +400,7 @@ export class Task<T> {
    * Cancels the task and waits for it to complete.
    *
    * @param timeout - The timeout in milliseconds
-   * @returns The result of the task
-   * @throws {@link TASK_TIMEOUT_ERROR} if the task times out
+   * @returns The result status of the task (timeout, completed, aborted)
    */
   async cancelAndWait(timeout: number = 2000) {
     this.cancel();
