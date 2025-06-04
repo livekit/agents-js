@@ -108,7 +108,7 @@ export class AgentActivity implements RecognitionHooks {
     if (!this.audioRecognition) {
       throw new Error('AudioRecognition is not initialized');
     }
-    
+
     this.audioRecognition.clearUserTurn();
   }
 
