@@ -33,6 +33,11 @@ export class InjectableStream<T> {
 
   async close() {
     const unlock = await this.injectMutex.lock();
+
+    if (this.closed) {
+      return;
+    }
+
     try {
       // this will not cancel the source stream but instead keep the readable open until the source finishes
       this.writer.releaseLock();
@@ -44,6 +49,7 @@ export class InjectableStream<T> {
   }
 
   async cancel(reason?: any) {
+    await this.close();
     await Promise.all([
       this.mergedStream.cancel(reason),
       this.identityStream.writable.abort(reason),

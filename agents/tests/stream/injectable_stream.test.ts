@@ -176,6 +176,7 @@ describe('InjectableStream', () => {
       const injectable = new InjectableStream(controlled.stream);
       
       const reader = injectable.readable.getReader();
+      reader.releaseLock();
       
       // Cancel the stream
       await injectable.cancel('test cancellation');
