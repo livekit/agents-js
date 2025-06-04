@@ -104,6 +104,14 @@ export class AgentActivity implements RecognitionHooks {
     this.audioRecognition.commitUserTurn(audioDetached);
   }
 
+  clearUserTurn() {
+    if (!this.audioRecognition) {
+      throw new Error('AudioRecognition is not initialized');
+    }
+    
+    this.audioRecognition.clearUserTurn();
+  }
+
   onStartOfSpeech(ev: VADEvent): void {
     this.logger.info('Start of speech', ev);
   }

@@ -109,6 +109,13 @@ export class AgentSession {
     this.activity.commitUserTurn();
   }
 
+  clearUserTurn() {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
+    }
+    this.activity.clearUserTurn();
+  }
+
   private async updateActivity(agent: Agent): Promise<void> {
     this.nextActivity = new AgentActivity(agent, this);
 
