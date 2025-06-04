@@ -56,7 +56,7 @@ export class RoomIO {
           // TODO(AJS-41) remove hardcoded sample rate
           sampleRate: 16000,
           numChannels: 1,
-        }),
+        }) as ReadableStream<AudioFrame>,
       );
     }
   };
