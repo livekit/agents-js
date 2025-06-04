@@ -142,6 +142,7 @@ export class Agent {
             }
             controller.close();
           } catch (error) {
+            console.log('++++ stt node error', error);
             controller.error(error);
           }
         },
@@ -189,17 +190,12 @@ export class Agent {
 
       return new ReadableStream({
         async start(controller) {
-          try {
-            for await (const chunk of stream) {
-              if (chunk === SynthesizeStream.END_OF_STREAM) {
-                console.log('++++ tts node end of stream');
-                break;
-              }
-              controller.enqueue(chunk.frame);
+          for await (const chunk of stream) {
+            if (chunk === SynthesizeStream.END_OF_STREAM) {
+              console.log('++++ tts node end of stream');
+              break;
             }
-          } catch (error) {
-            controller.error(error);
-            console.log('++++ tts node error', error);
+            controller.enqueue(chunk.frame);
           }
           console.log('++++ tts node close');
           controller.close();

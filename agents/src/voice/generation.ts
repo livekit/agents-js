@@ -71,7 +71,6 @@ export function performLLMInference(
       await llmStream?.cancel();
       await writer.close();
     }
-    console.log('++++ llm inference task done');
   };
 
   return [inferenceTask(), data];
@@ -107,12 +106,12 @@ export function performTTSInference(
         }
 
         const { done, value: chunk } = await reader.read();
-        console.log('++++ tts inference task read result:', {
-          done,
-          chunk: chunk ? 'chunk' : 'no chunk',
-        });
         if (done) {
-          console.log('++++ tts inference task breaking loop');
+          console.log('++++ tts inference task breaking loop due to DONE');
+          break;
+        }
+        if (signal.aborted) {
+          console.log('++++ tts inference task aborted in loop before write ABORTED');
           break;
         }
         await writer.write(chunk);
@@ -121,9 +120,9 @@ export function performTTSInference(
       reader?.releaseLock();
       console.log('++++ tts inference task cancelling tts stream');
       await ttsStream?.cancel();
-      console.log('++++ tts inference task closing writer');
+      console.log(`++++ tts inference task ${signal.aborted ? 'aborting' : 'closing'} writer`);
       await writer.close();
-      console.log('++++ tts inference task closed writer');
+      console.log('++++ tts inference task writer cleanup done');
     }
     console.log('++++ tts inference task done');
   };
@@ -188,7 +187,6 @@ async function forwardAudio(
   try {
     while (true) {
       if (signal?.aborted) {
-        console.log('++++ audio forwarder aborted');
         break;
       }
 
@@ -196,7 +194,6 @@ async function forwardAudio(
       if (done) break;
       // TODO(AJS-56) handle resampling
       if (signal?.aborted) {
-        console.log('++++ audio forwarder aborted in loop');
         break;
       }
       await audioOuput.captureFrame(frame);
@@ -208,7 +205,6 @@ async function forwardAudio(
   } finally {
     reader?.releaseLock();
   }
-  console.log('++++ audio forwarder done');
 }
 
 export function performAudioForwarding(
