@@ -181,6 +181,7 @@ export class AgentActivity implements RecognitionHooks {
       0,
       this.currentSpeech,
     );
+    this.logger.info({ speech_id: handle.id }, '++++ creating speech handle');
 
     if (instructions) {
       instructions = `${this.agent.instructions}\n${instructions}`;
@@ -307,7 +308,10 @@ export class AgentActivity implements RecognitionHooks {
 
     await speechHandle.waitIfNotInterrupted([speechHandle.waitForAuthorization()]);
     if (speechHandle.interrupted) {
-      this.logger.info({ speech_id: speechHandle.id }, 'speech interrupted');
+      this.logger.info(
+        { speech_id: speechHandle.id },
+        '++++ speech interrupted after tts and llm tasks',
+      );
       abortController.abort(); // Abort all tasks
       await Promise.allSettled(tasks); // Wait for tasks to complete
       return;
@@ -322,6 +326,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (audioOutput) {
       if (ttsStream) {
+        this.logger.info({ speech_id: speechHandle.id }, '++++ forwarding audio');
         const [forwardTask, audioOut] = performAudioForwarding(ttsStream, audioOutput, signal);
         tasks.push(forwardTask);
         audioOut.firstFrameFut.await.then(onFirstFrame);
@@ -338,23 +343,42 @@ export class AgentActivity implements RecognitionHooks {
     // TODO(shubhra): add waiting for audio playout in audio output
 
     if (speechHandle.interrupted) {
+      this.logger.info(
+        { speech_id: speechHandle.id },
+        '++++ aborting tasks after interrupt after forwarding',
+      );
       abortController.abort();
       await Promise.allSettled(tasks);
+      // TODO(shubhra): add waiting for audio playout in audio output and syncronizher transcripts
+      this.logger.info({ speech_id: speechHandle.id }, '++++ creating message');
+      const message = ChatMessage.create({
+        role: ChatRole.ASSISTANT,
+        text: textOutput.text,
+      });
+      chatCtx.insertItem(message);
+      this.agent._chatCtx.insertItem(message);
+      if (this.agentSession.agentState === 'speaking') {
+        this.agentSession._updateAgentState('listening');
+      }
+      this.agentSession._conversationItemAdded(message);
+
+      this.logger.info({ speech_id: speechHandle.id }, 'playout completed with interrupt');
+      // TODO(shubhra) add chat message to speech handle
+      speechHandle.markPlayoutDone();
       return;
     }
-
-    const message = ChatMessage.create({
-      role: ChatRole.ASSISTANT,
-      text: textOutput.text,
-    });
-    chatCtx.insertItem(message);
-    this.agent._chatCtx.insertItem(message);
-    this.agentSession._conversationItemAdded(message);
-
-    await Promise.all(tasks);
-
-    this.logger.info({ speech_id: speechHandle.id }, 'playout completed');
-    speechHandle.markPlayoutDone();
+    if (textOutput && textOutput.text) {
+      const message = ChatMessage.create({
+        role: ChatRole.ASSISTANT,
+        text: textOutput.text,
+      });
+      chatCtx.insertItem(message);
+      this.agent._chatCtx.insertItem(message);
+      this.agentSession._conversationItemAdded(message);
+      this.logger.info({ speech_id: speechHandle.id }, 'playout completed without interruption');
+      speechHandle.markPlayoutDone();
+      return;
+    }
   }
 
   private scheduleSpeech(speechHandle: SpeechHandle, priority: number): void {

@@ -177,7 +177,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     await Promise.all([tokenizeInput(), runStream()]);
-    this.close();
   }
 
   async #runWS(stream: tokenize.WordStream, maxRetry = 3) {
@@ -298,6 +297,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         } catch {
           break;
         }
+      }
+      if (this.abortController.signal.aborted) {
+        console.log('++++ closing ws for tts stream');
+        ws.close();
       }
     };
 

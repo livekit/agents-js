@@ -140,6 +140,7 @@ export abstract class SynthesizeStream
     try {
       while (true) {
         if (this.abortController.signal.aborted) {
+          console.log('++++ tts stream main task aborted');
           break;
         }
         const { done, value } = await reader.read();
@@ -261,6 +262,7 @@ export abstract class SynthesizeStream
 
   /** Close both the input and output of the TTS stream */
   close() {
+    console.log('++++ tts stream close');
     this.abortController.abort();
     this.input.close();
     this.output.close();

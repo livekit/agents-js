@@ -71,6 +71,7 @@ export function performLLMInference(
       await llmStream?.cancel();
       await writer.close();
     }
+    console.log('++++ llm inference task done');
   };
 
   return [inferenceTask(), data];
@@ -80,7 +81,7 @@ export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string>,
   modelSettings: any, // TODO(AJS-59): add type
-  signal?: AbortSignal,
+  signal: AbortSignal,
 ): [Promise<void>, ReadableStream<AudioFrame>] {
   const audioStream = new IdentityTransform<AudioFrame>();
   const writer = audioStream.writable.getWriter();
@@ -91,6 +92,7 @@ export function performTTSInference(
     let ttsStream: ReadableStream<AudioFrame> | null = null;
 
     try {
+      console.log('++++ tts inference task starting');
       ttsStream = await node(text, modelSettings);
       if (ttsStream === null) {
         await writer.close();
@@ -99,21 +101,31 @@ export function performTTSInference(
 
       reader = ttsStream.getReader();
       while (true) {
-        const { done, value: chunk } = await reader.read();
-        if (done) break;
+        if (signal.aborted) {
+          console.log('++++ tts inference task aborted');
+          break;
+        }
 
+        const { done, value: chunk } = await reader.read();
+        console.log('++++ tts inference task read result:', {
+          done,
+          chunk: chunk ? 'chunk' : 'no chunk',
+        });
+        if (done) {
+          console.log('++++ tts inference task breaking loop');
+          break;
+        }
         await writer.write(chunk);
       }
-    } catch (error) {
-      if (signal?.aborted) {
-        return;
-      }
-      throw error;
     } finally {
       reader?.releaseLock();
+      console.log('++++ tts inference task cancelling tts stream');
       await ttsStream?.cancel();
+      console.log('++++ tts inference task closing writer');
       await writer.close();
+      console.log('++++ tts inference task closed writer');
     }
+    console.log('++++ tts inference task done');
   };
 
   return [inferenceTask(), audioOutputStream];
@@ -146,6 +158,7 @@ async function forwardText(
   } finally {
     reader?.releaseLock();
   }
+  console.log('++++ text forwarder done');
 }
 
 export function performTextForwarding(
@@ -175,12 +188,17 @@ async function forwardAudio(
   try {
     while (true) {
       if (signal?.aborted) {
+        console.log('++++ audio forwarder aborted');
         break;
       }
 
       const { done, value: frame } = await reader.read();
       if (done) break;
       // TODO(AJS-56) handle resampling
+      if (signal?.aborted) {
+        console.log('++++ audio forwarder aborted in loop');
+        break;
+      }
       await audioOuput.captureFrame(frame);
       out.audio.push(frame);
       if (!out.firstFrameFut.done) {
@@ -190,6 +208,7 @@ async function forwardAudio(
   } finally {
     reader?.releaseLock();
   }
+  console.log('++++ audio forwarder done');
 }
 
 export function performAudioForwarding(

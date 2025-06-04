@@ -14,7 +14,7 @@ import { defaultInitializeProcessFunc } from '../worker.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
 
-const ORPHANED_TIMEOUT = 15 * 1000;
+const ORPHANED_TIMEOUT = 15 * 10000000;
 
 type JobTask = {
   ctx: JobContext;

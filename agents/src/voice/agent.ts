@@ -161,14 +161,10 @@ export class Agent {
       const stream = activity.llm.chat({ chatCtx });
       return new ReadableStream({
         async start(controller) {
-          try {
-            for await (const chunk of stream) {
-              controller.enqueue(chunk);
-            }
-            controller.close();
-          } catch (error) {
-            controller.error(error);
+          for await (const chunk of stream) {
+            controller.enqueue(chunk);
           }
+          controller.close();
         },
         cancel() {
           stream.close();
@@ -196,17 +192,20 @@ export class Agent {
           try {
             for await (const chunk of stream) {
               if (chunk === SynthesizeStream.END_OF_STREAM) {
-                controller.close();
+                console.log('++++ tts node end of stream');
                 break;
               }
               controller.enqueue(chunk.frame);
             }
           } catch (error) {
             controller.error(error);
-            stream.close();
+            console.log('++++ tts node error', error);
           }
+          console.log('++++ tts node close');
+          controller.close();
         },
         cancel() {
+          console.log('++++ tts node cancel');
           stream.close();
         },
       });
