@@ -37,7 +37,6 @@ export interface _TurnDetector {
   predictEndOfTurn(chatCtx: ChatContext): Promise<number>;
 }
 
-
 export class AudioRecognition {
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
@@ -190,7 +189,7 @@ export class AudioRecognition {
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
         break;
       case SpeechEventType.END_OF_SPEECH:
-        if (this.turnDetectionMode !== "stt") break;
+        if (this.turnDetectionMode !== 'stt') break;
         this.userTurnCommitted = true;
         if (!this.speaking) {
           const chatCtx = this.hooks.retrieveChatCtx();
