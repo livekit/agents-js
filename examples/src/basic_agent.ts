@@ -10,6 +10,8 @@ import {
   voice,
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
+import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
+import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 
@@ -18,14 +20,21 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    const agent = new voice.Agent('test');
+    const agent = new voice.Agent(
+      "You are a helpful assistant, you can hear the user's message and respond to it.",
+    );
     await ctx.connect();
     const participant = await ctx.waitForParticipant();
     console.log('participant joined: ', participant.identity);
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
 
-    const session = new voice.AgentSession(vad, new deepgram.STT());
+    const session = new voice.AgentSession(
+      vad,
+      new deepgram.STT(),
+      new openai.LLM(),
+      new elevenlabs.TTS(),
+    );
     session.start(agent, ctx.room);
   },
 });

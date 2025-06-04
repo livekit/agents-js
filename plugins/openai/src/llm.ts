@@ -10,6 +10,7 @@ import type {
   ChatModels,
   DeepSeekChatModels,
   GroqChatModels,
+  MetaChatModels,
   OctoChatModels,
   PerplexityChatModels,
   TelnyxChatModels,
@@ -380,6 +381,36 @@ export class LLM extends llm.LLM {
       baseURL: 'https://api.telnyx.com/v2/ai',
       ...opts,
     });
+  }
+
+  /**
+   * Create a new instance of Meta Llama LLM.
+   *
+   * @remarks
+   * `apiKey` must be set to your Meta Llama API key, either using the argument or by setting the
+   * `LLAMA_API_KEY` environmental variable.
+   */
+  static withMeta(
+    opts: Partial<{
+      apiKey?: string;
+      baseURL?: string;
+      client?: OpenAI;
+      model?: string | MetaChatModels;
+      temperature?: number;
+      user?: string;
+    }> = {},
+  ): LLM {
+    opts.apiKey = opts.apiKey || process.env.LLAMA_API_KEY;
+    opts.baseURL = opts.baseURL || 'https://api.llama.com/compat/v1/';
+    opts.model = opts.model || 'Llama-4-Maverick-17B-128E-Instruct-FP8';
+
+    if (opts.apiKey === undefined) {
+      throw new Error(
+        'Meta Llama API key is required, either as argument or set LLAMA_API_KEY environmental variable',
+      );
+    }
+
+    return new LLM(opts);
   }
 
   chat({

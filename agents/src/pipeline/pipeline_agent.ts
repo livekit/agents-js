@@ -778,8 +778,6 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
           speechId: handle.id,
         })
         .debug('committed agent speech');
-
-      handle.setDone();
     }
 
     const executeFunctionCalls = async () => {
@@ -883,7 +881,6 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         handle.markNestedSpeechFinished();
       }
     }
-    handle.setDone();
   }
 
   async #publishTranscription(
