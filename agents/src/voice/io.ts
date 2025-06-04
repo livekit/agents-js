@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
-import type { ReadableStream } from 'node:stream/web';
 import type { SpeechEvent } from '../stt/stt.js';
 
 export type STTNode = (

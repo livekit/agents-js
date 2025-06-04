@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
-import { ReadableStream } from 'node:stream/web';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';

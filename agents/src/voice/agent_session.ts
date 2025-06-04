@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, AudioSource, Room } from '@livekit/rtc-node';
-import type { ReadableStream } from 'node:stream/web';
 import { log } from '../log.js';
 import type { AgentState } from '../pipeline/index.js';
 import type { STT } from '../stt/index.js';

@@ -6,11 +6,10 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { AudioFrame } from '@livekit/rtc-node';
-import { ReadableStream } from 'node:stream/web';
 import type { ChatChunk, ChatMessage, LLM } from '../llm/index.js';
 import { ChatContext } from '../llm/index.js';
-import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
+import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import type { TTS } from '../tts/index.js';
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
