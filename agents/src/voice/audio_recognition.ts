@@ -80,20 +80,24 @@ export class AudioRecognition {
 
     // every 1 second, print interm transcript and audio transcript and lastFinalTranscriptTime and userTurnCommitted
     (async () => {
-      const secondAgo = (time: number) => (Date.now() - time) / 1000;
-
       while (true) {
-        console.log('===============================================');
-        const debugObject = {
-          interimTranscript: this.audioInterimTranscript,
-          audioTranscript: this.audioTranscript,
-          lastFinalTranscriptTime: `${secondAgo(this.lastFinalTranscriptTime)}s ago`,
-          userTurnCommitted: this.userTurnCommitted,
-        };
-        console.log('debugObject: ', debugObject);
+        this.printDebugObject();
         await delay(500);
       }
     })();
+  }
+
+  private printDebugObject() {
+    const secondAgo = (time: number) => (Date.now() - time) / 1000;
+
+    console.log('===============================================');
+    const debugObject = {
+      interimTranscript: this.audioInterimTranscript,
+      audioTranscript: this.audioTranscript,
+      lastFinalTranscriptTime: `${secondAgo(this.lastFinalTranscriptTime)}s ago`,
+      userTurnCommitted: this.userTurnCommitted,
+    };
+    console.log('debugObject: ', debugObject);
   }
 
   private async updateVad() {
@@ -191,6 +195,8 @@ export class AudioRecognition {
       case SpeechEventType.END_OF_SPEECH:
         if (this.turnDetectionMode !== 'stt') break;
         this.userTurnCommitted = true;
+        this.printDebugObject();
+
         if (!this.speaking) {
           const chatCtx = this.hooks.retrieveChatCtx();
           this.logger.debug('running EOU detection on stt END_OF_SPEECH');
@@ -199,7 +205,7 @@ export class AudioRecognition {
     }
   }
 
-  private async runEOUDetection(chatCtx: ChatContext) {
+  private runEOUDetection(chatCtx: ChatContext) {
     this.logger.debug(
       {
         stt: this.stt,
@@ -243,9 +249,7 @@ export class AudioRecognition {
       // add delay to see if there's a potential upcoming EOU task that cancels this one
       await delay(Math.max(extraSleep, 0), { signal: controller.signal });
 
-      this.logger.debug('end of user turn', {
-        transcript: this.audioTranscript,
-      });
+      this.logger.debug({ transcript: this.audioTranscript }, 'end of user turn');
 
       const committed = await this.hooks.onEndOfTurn({
         newTranscript: this.audioTranscript,
@@ -294,8 +298,13 @@ export class AudioRecognition {
       this.logger.debug({ step: 3 }, 'createSttTask');
       if (sttStream instanceof ReadableStream) {
         const reader = sttStream.getReader();
+        this.logger.debug({ step: 4 }, 'createSttTask');
+
         while (!controller.signal.aborted) {
+          this.logger.debug({ step: "before" }, 'createSttTask');
           const { done, value: ev } = await reader.read();
+          this.logger.debug({ step: "after" }, 'createSttTask');
+
           if (done) {
             break;
           }
@@ -307,11 +316,11 @@ export class AudioRecognition {
         }
 
         this.logger.debug('STT task cancelled');
-        this.logger.debug({ step: 4 }, 'createSttTask');
-        reader.releaseLock();
         this.logger.debug({ step: 5 }, 'createSttTask');
-        sttStream.cancel();
+        reader.releaseLock();
         this.logger.debug({ step: 6 }, 'createSttTask');
+        sttStream.cancel();
+        this.logger.debug({ step: 7 }, 'createSttTask');
       }
     };
   }
@@ -388,8 +397,10 @@ export class AudioRecognition {
         this.audioInterimTranscript = '';
 
         const chatCtx = this.hooks.retrieveChatCtx();
+        this.logger.debug('running EOU detection on commitUserTurn');
         this.runEOUDetection(chatCtx);
         this.userTurnCommitted = true;
+        this.printDebugObject();
       };
 
     // cancel any existing commit user turn task
