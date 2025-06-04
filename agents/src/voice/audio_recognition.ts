@@ -189,6 +189,14 @@ export class AudioRecognition {
         this.hooks.onInterimTranscript(ev);
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
         break;
+      case SpeechEventType.END_OF_SPEECH:
+        if (this.turnDetectionMode !== "stt") break;
+        this.userTurnCommitted = true;
+        if (!this.speaking) {
+          const chatCtx = this.hooks.retrieveChatCtx();
+          this.logger.debug('running EOU detection on stt END_OF_SPEECH');
+          this.runEOUDetection(chatCtx);
+        }
     }
   }
 
