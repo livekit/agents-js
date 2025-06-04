@@ -31,7 +31,6 @@ export class AgentActivity implements RecognitionHooks {
   private started = false;
   private audioRecognition?: AudioRecognition;
   private logger = log();
-  private turnDetectionMode?: TurnDetectionMode;
   private _draining = false;
   private currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
@@ -42,6 +41,7 @@ export class AgentActivity implements RecognitionHooks {
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
     this.agentSession = agentSession;
+
     // relies on JavaScript's built-in lexicographic array comparison behavior, which checks elements of the array one by one
     this.speechQueue = new Heap<[number, number, SpeechHandle]>(Heap.maxComparator);
     this.q_updated = new Future();
@@ -56,7 +56,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession.options.maxEndpointingDelay,
       // Arrow function preserves the Agent context
       (...args) => this.agent.sttNode(...args),
-      this.turnDetectionMode,
+      this.agentSession.turnDetection,
     );
     this.audioRecognition.start();
     this.started = true;
@@ -88,6 +88,11 @@ export class AgentActivity implements RecognitionHooks {
   get allowInterruptions(): boolean {
     // TODO(AJS-51): Allow options to be defined in Agent class
     return this.agentSession.options.allowInterruptions;
+  }
+
+  get turnDetection(): TurnDetectionMode | undefined {
+    // TODO(brian): prioritize using agent.turn_detection
+    return this.agentSession.turnDetection;
   }
 
   updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
@@ -123,7 +128,7 @@ export class AgentActivity implements RecognitionHooks {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onVADInferenceDone(ev: VADEvent): void {
     // skip speech handle interruption for manual and realtime model
-    if (this.turnDetectionMode === 'manual' || this.turnDetectionMode === 'realtime_llm') {
+    if (this.turnDetection === 'manual' || this.turnDetection === 'realtime_llm') {
       return;
     }
 
@@ -148,7 +153,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (
       this.stt &&
-      this.turnDetectionMode !== 'manual' &&
+      this.turnDetection !== 'manual' &&
       this.currentSpeech &&
       this.currentSpeech.allowInterruptions &&
       !this.currentSpeech.interrupted &&

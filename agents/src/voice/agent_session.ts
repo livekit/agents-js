@@ -44,6 +44,8 @@ export class AgentSession {
   stt: STT;
   llm: LLM;
   tts: TTS;
+  turnDetection?: TurnDetectionMode;
+
   readonly options: VoiceOptions;
 
   private agent?: Agent;
@@ -66,12 +68,15 @@ export class AgentSession {
     stt: STT,
     llm: LLM,
     tts: TTS,
+    turnDetection?: TurnDetectionMode,
     options: Partial<VoiceOptions> = defaultVoiceOptions,
   ) {
     this.vad = vad;
     this.stt = stt;
     this.llm = llm;
     this.tts = tts;
+    this.turnDetection = turnDetection;
+
     // TODO(shubhra): Add tools to chat context initalzation
     this._chatCtx = new ChatContext();
     this.options = { ...defaultVoiceOptions, ...options };

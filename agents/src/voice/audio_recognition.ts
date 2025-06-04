@@ -37,6 +37,7 @@ export interface _TurnDetector {
   predictEndOfTurn(chatCtx: ChatContext): Promise<number>;
 }
 
+
 export class AudioRecognition {
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
@@ -74,13 +75,31 @@ export class AudioRecognition {
   }
 
   async start() {
+    console.log('Start audio recognition with turn detection mode: ', this.turnDetectionMode);
     this.updateVad();
     this.updateStt();
+
+    // every 1 second, print interm transcript and audio transcript and lastFinalTranscriptTime and userTurnCommitted
+    (async () => {
+      const secondAgo = (time: number) => (Date.now() - time) / 1000;
+
+      while (true) {
+        console.log('===============================================');
+        const debugObject = {
+          interimTranscript: this.audioInterimTranscript,
+          audioTranscript: this.audioTranscript,
+          lastFinalTranscriptTime: `${secondAgo(this.lastFinalTranscriptTime)}s ago`,
+          userTurnCommitted: this.userTurnCommitted,
+        };
+        console.log('debugObject: ', debugObject);
+        await delay(500);
+      }
+    })();
   }
 
-  private updateVad() {
+  private async updateVad() {
     // cancel any existing vad task
-    this.vadTask?.cancelAndWait().catch((err) => {
+    await this.vadTask?.cancelAndWait(1000).catch((err) => {
       this.logger.error(`Error cancelling VAD task: ${err}`);
     });
 
@@ -90,9 +109,9 @@ export class AudioRecognition {
     });
   }
 
-  private updateStt() {
+  private async updateStt() {
     // cancel any existing stt task
-    this.sttTask?.cancelAndWait().catch((err) => {
+    await this.sttTask?.cancelAndWait(3000).catch((err) => {
       this.logger.error(`Error cancelling STT task: ${err}`);
     });
 
@@ -231,6 +250,8 @@ export class AudioRecognition {
         // clear the transcript if the user turn was committed
         this.audioTranscript = '';
       }
+
+      this.userTurnCommitted = false;
     };
 
     // cancel any existing EOU task
@@ -256,10 +277,14 @@ export class AudioRecognition {
         return;
       }
 
+      this.logger.debug({ step: 1 }, 'createSttTask');
       const sttStream = await this.stt(this.sttInputStream, {});
+      this.logger.debug({ step: 2 }, 'createSttTask');
+
       if (controller.signal.aborted) return;
       if (sttStream === null) return;
 
+      this.logger.debug({ step: 3 }, 'createSttTask');
       if (sttStream instanceof ReadableStream) {
         const reader = sttStream.getReader();
         while (!controller.signal.aborted) {
@@ -275,8 +300,11 @@ export class AudioRecognition {
         }
 
         this.logger.debug('STT task cancelled');
+        this.logger.debug({ step: 4 }, 'createSttTask');
         reader.releaseLock();
+        this.logger.debug({ step: 5 }, 'createSttTask');
         sttStream.cancel();
+        this.logger.debug({ step: 6 }, 'createSttTask');
       }
     };
   }
@@ -324,6 +352,7 @@ export class AudioRecognition {
   }
 
   clearUserTurn() {
+    console.log('clearUserTurn');
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
     this.userTurnCommitted = false;

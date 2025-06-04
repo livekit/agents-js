@@ -34,6 +34,7 @@ export default defineAgent({
       new deepgram.STT(),
       new openai.LLM(),
       new elevenlabs.TTS(),
+      'manual',
     );
 
     if (!ctx.room.localParticipant) {
