@@ -20,8 +20,8 @@ export class DeferredReadableStream<T> {
    */
   setSource(source: ReadableStream<T>) {
     if (this.transform.writable.locked) {
-      throw new Error('Stream is already locked');
+      throw new Error('Stream source already set');
     }
-    source.pipeTo(this.transform.writable);
+    return source.pipeTo(this.transform.writable);
   }
 }
