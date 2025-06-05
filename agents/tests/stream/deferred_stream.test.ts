@@ -259,11 +259,13 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     expect(result.done).toBe(false);
     expect(result.value).toBe('before-cancel');
 
+    const result2Promise = reader.read();
+
     // detach the source
     await deferred.detachSource();
 
     // read second chunk
-    const result2 = await reader.read();
+    const result2 = await result2Promise;
     expect(result2.done).toBe(true);
     expect(result2.value).toBeUndefined();
 
@@ -303,7 +305,7 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     });
 
     deferred.setSource(source);
-    // the trick here is that we have to do both reader.cancel() and detachSource() in this order!!!
+    // the trick here is that we have to do both reader.cancel() and detachSource() in this exact order
     await reader.cancel();
     await deferred.detachSource();
     await delay(100);
