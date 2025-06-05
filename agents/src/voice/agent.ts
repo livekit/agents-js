@@ -136,18 +136,12 @@ export class Agent {
 
       return new ReadableStream({
         async start(controller) {
-          try {
-            for await (const event of stream) {
-              controller.enqueue(event);
-            }
-            controller.close();
-          } catch (error) {
-            console.log('++++ stt node error', error);
-            controller.error(error);
+          for await (const event of stream) {
+            controller.enqueue(event);
           }
+          controller.close();
         },
         cancel() {
-          // Properly close the underlying STT stream when cancelled
           stream.close();
         },
       });
@@ -192,16 +186,13 @@ export class Agent {
         async start(controller) {
           for await (const chunk of stream) {
             if (chunk === SynthesizeStream.END_OF_STREAM) {
-              console.log('++++ tts node end of stream');
               break;
             }
             controller.enqueue(chunk.frame);
           }
-          console.log('++++ tts node close');
           controller.close();
         },
         cancel() {
-          console.log('++++ tts node cancel');
           stream.close();
         },
       });
