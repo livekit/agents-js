@@ -212,7 +212,16 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     const result2 = await reader.read();
     expect(result2.done).toBe(true);
     expect(result2.value).toBeUndefined();
+    reader.releaseLock();
 
+    const reader2 = source.getReader();
+    const result3 = await reader2.read();
+    expect(result3.done).toBe(false);
+    expect(result3.value).toBe('second');
+
+    const result4 = await reader2.read();
+    expect(result4.done).toBe(true);
+    expect(result4.value).toBeUndefined();
     reader.releaseLock();
   });
 
