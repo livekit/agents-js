@@ -176,7 +176,7 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
 
     deferred.setSource(source);
 
-    // Cancel the stream before setting source
+    // Cancel the stream after setting source
     await reader.cancel();
 
     const result = await readPromise;
@@ -286,4 +286,45 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     expect(result4.value).toBeUndefined();
     reader2.releaseLock();
   });
+
+  it("an always-awaiting source reader releases lock after detaching", async () => {
+    const deferred = new DeferredReadableStream<string>();
+    const reader = deferred.stream.getReader();
+    const readPromise = reader.read();
+    let resumeSource = false;
+
+    const source = new ReadableStream<string>({
+        async start(controller) {
+            while (!resumeSource) await delay(10);
+
+            controller.enqueue('data');
+            controller.close();
+        }
+    });
+
+    deferred.setSource(source);
+    // the trick here is that we have to do both reader.cancel() and detachSource() in this order!!!
+    await reader.cancel();
+    await deferred.detachSource();
+    await delay(100);
+
+    // read before detach should return undefined since source never resumed
+    const result = await readPromise;
+    expect(result.done).toBe(true);
+    expect(result.value).toBeUndefined();
+
+    const reader2 = source.getReader();
+    resumeSource = true;
+
+    // read after detach should return correct order of data since source resumed
+    const result2 = await reader2.read();
+    expect(result2.done).toBe(false);
+    expect(result2.value).toBe('data');
+
+    const result3 = await reader2.read();
+    expect(result3.done).toBe(true);
+    expect(result3.value).toBeUndefined();
+
+    reader2.releaseLock();
+  })
 });
