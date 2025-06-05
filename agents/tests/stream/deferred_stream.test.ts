@@ -233,7 +233,7 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     reader.releaseLock();
   });
 
-  it('source set by another deferred stream after calling cancel()', async () => {
+  it('source can be set by another deferred stream after calling detach', async () => {
     const deferred = new DeferredReadableStream<string>();
     
     // Create a new source stream
