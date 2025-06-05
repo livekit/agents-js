@@ -222,14 +222,10 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     expect(result.value).toBe('before-cancel');
 
     // cancel the stream
-    console.log('cancelling');
     await deferred.cancel();
-    console.log('cancelled');
 
     // read second chunk
-    console.log('reading second chunk');
     const result2 = await reader.read();
-    console.log('read second chunk', result2);
     expect(result2.done).toBe(true);
     expect(result2.value).toBeUndefined();
 
