@@ -301,9 +301,9 @@ export class AudioRecognition {
         this.logger.debug({ step: 4 }, 'createSttTask');
 
         while (!controller.signal.aborted) {
-          this.logger.debug({ step: "before" }, 'createSttTask');
+          // this.logger.debug({ step: "before" }, 'createSttTask');
           const { done, value: ev } = await reader.read();
-          this.logger.debug({ step: "after" }, 'createSttTask');
+          // this.logger.debug({ step: "after" }, 'createSttTask');
 
           if (done) {
             break;
