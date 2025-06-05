@@ -233,20 +233,23 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     expect(result2.done).toBe(true);
     expect(result2.value).toBeUndefined();
 
-    // // create a new deferred stream and set the source
-    // const deferred2 = new DeferredReadableStream<string>();
-    // deferred2.setSource(source);
-    // const reader2 = deferred2.stream.getReader();
+    // we manually release the lock
+    reader.releaseLock();
 
-    // // read the second chunk
-    // const result3 = await reader2.read();
-    // expect(result3.done).toBe(false);
-    // expect(result3.value).toBe('after-cancel');
+    // create a new deferred stream and set the source
+    const deferred2 = new DeferredReadableStream<string>();
+    deferred2.setSource(source);
+    const reader2 = deferred2.stream.getReader();
 
-    // // read the third chunk
-    // const result4 = await reader.read();
-    // expect(result4.done).toBe(true);
-    // expect(result4.value).toBeUndefined();
-    // reader.releaseLock();
+    // read the second chunk
+    const result3 = await reader2.read();
+    expect(result3.done).toBe(false);
+    expect(result3.value).toBe('after-cancel');
+
+    // read the third chunk
+    const result4 = await reader2.read();
+    expect(result4.done).toBe(true);
+    expect(result4.value).toBeUndefined();
+    reader2.releaseLock();
   });
 });

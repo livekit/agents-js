@@ -37,16 +37,14 @@ export class DeferredReadableStream<T> {
           await this.writer.write(value);
         }
 
-        console.log('after loop', controller.signal.aborted);
-
         this.writer.releaseLock();
         reader.releaseLock();
 
-        if (!controller.signal.aborted) {
-          console.log('aborted');
-          await this.transform.writable.close();
-          await this.transform.readable.cancel();
-        }
+        // we only close the writable stream after done
+        await this.transform.writable.close();
+        // NOTE: we do not cancel readable stream as there might be access to 
+        // this transform.readable.getReader() outside that blocks thed cancellation
+        // and user using this deferred readable stream should cancel reader on their own
       } catch (e) {
         this.writer.abort(e);
       }
