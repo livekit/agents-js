@@ -6,6 +6,7 @@ import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { DeferredReadableStream } from '../../src/stream/deferred_stream.js';
 
+
 describe('DeferredReadableStream', { timeout: 2000 }, () => {
   it('should create a readable stream', () => {
     const deferred = new DeferredReadableStream<string>();
@@ -338,4 +339,59 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
 
     reader2.releaseLock();
   })
+
+  it("should transfer source between deferred streams while reading is ongoing", async () => {
+    console.log('starting test');
+    const deferred1 = new DeferredReadableStream<string>();
+    const deferred2 = new DeferredReadableStream<string>();
+    
+    // Create a source that slowly emits data
+    let emitCount = 0;
+    const source = new ReadableStream<string>({
+      async start(controller) {
+        // Emit 5 chunks with delays
+        for (let i = 0; i < 4; i++) {
+          controller.enqueue(`chunk-${i}`);
+          emitCount++;
+          await delay(20); // Small delay between chunks
+        }
+        controller.close();
+      }
+    });
+
+    deferred1.setSource(source);
+    const reader1 = deferred1.stream.getReader();
+    const result1 = await reader1.read();
+    expect(result1.done).toBe(false);
+    expect(result1.value).toBe('chunk-0');
+
+    const result2 = await reader1.read();
+    expect(result2.done).toBe(false);
+    expect(result2.value).toBe('chunk-1');
+    await delay(10);
+    console.log('detaching mother fucker');
+    await deferred1.detachSource();
+
+    // reader1 now done
+    const result3 = await reader1.read();
+    expect(result3.done).toBe(true);
+    expect(result3.value).toBeUndefined();
+
+    deferred2.setSource(source);
+    const reader2 = deferred2.stream.getReader();
+    const result4 = await reader2.read();
+    expect(result4.done).toBe(false);
+    expect(result4.value).toBe('chunk-2');
+
+    const result5 = await reader2.read();
+    expect(result5.done).toBe(false);
+    expect(result5.value).toBe('chunk-3');
+
+    const result6 = await reader2.read();
+    expect(result6.done).toBe(true);
+    expect(result6.value).toBeUndefined();
+
+    reader1.releaseLock();
+    reader2.releaseLock();
+  });
 });
