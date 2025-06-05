@@ -55,7 +55,11 @@ export class DeferredReadableStream<T> {
    * Detach the source and clean up resources.
    */
   async detachSource() {
-    this.pipeTask?.cancel();
-    await this.pipeTask?.result;
+    if (!this.pipeTask) {
+      throw new Error('Source not set');
+    }
+
+    this.pipeTask.cancel();
+    await this.pipeTask.result;
   }
 }
