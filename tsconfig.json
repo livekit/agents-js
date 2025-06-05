@@ -3,6 +3,7 @@
     "rootDir": ".",
     "baseUrl": ".",
     "target": "es2022",
+    "types": ["node"],
     "module": "node16",
     "declaration": true,
     "declarationMap": true,
