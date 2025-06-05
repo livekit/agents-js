@@ -155,25 +155,56 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     expect(() => deferred.setSource(source2)).toThrow('Stream source already set');
   });
 
-  it('read after cancellation should return undefined', async () => {
+  it('read returns undefined as soon as reader is cancelled', async () => {
     const deferred = new DeferredReadableStream<string>();
     const reader = deferred.stream.getReader();
     const readPromise = reader.read();
 
-    // Cancel the stream before setting source
-    await reader.cancel();
-
     const source = new ReadableStream<string>({
       start(controller) {
         controller.enqueue('data');
+        controller.close();
       }
     });
 
     deferred.setSource(source);
 
+    // Cancel the stream before setting source
+    await reader.cancel();
+
     const result = await readPromise;
     expect(result.done).toBe(true);
     expect(result.value).toBeUndefined();
+
+    reader.releaseLock();
+  });
+
+
+  it('reads after detaching source should return undefined', async () => {
+    const deferred = new DeferredReadableStream<string>();
+    const reader = deferred.stream.getReader();
+    const readPromise = reader.read();
+
+    const source = new ReadableStream<string>({
+      start(controller) {
+        controller.enqueue('first');
+        controller.enqueue('second');
+        controller.close();
+      }
+    });
+
+    deferred.setSource(source);
+
+    // Detach the source
+    await deferred.detachSource();
+
+    const result = await readPromise;
+    expect(result.done).toBe(false);
+    expect(result.value).toBe('first');
+
+    const result2 = await reader.read();
+    expect(result2.done).toBe(true);
+    expect(result2.value).toBeUndefined();
 
     reader.releaseLock();
   });
@@ -221,8 +252,8 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     expect(result.done).toBe(false);
     expect(result.value).toBe('before-cancel');
 
-    // cancel the stream
-    await deferred.cancel();
+    // detach the source
+    await deferred.detachSource();
 
     // read second chunk
     const result2 = await reader.read();

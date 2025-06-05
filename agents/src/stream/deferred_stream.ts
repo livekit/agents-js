@@ -52,9 +52,9 @@ export class DeferredReadableStream<T> {
   }
 
   /**
-   * Cancel the stream and clean up resources.
+   * Detach the source and clean up resources.
    */
-  async cancel() {
+  async detachSource() {
     this.pipeTask?.cancel();
     await this.pipeTask?.result;
   }
