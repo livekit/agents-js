@@ -91,7 +91,6 @@ export function performTTSInference(
     let ttsStream: ReadableStream<AudioFrame> | null = null;
 
     try {
-      console.log('++++ tts inference task starting');
       ttsStream = await node(text, modelSettings);
       if (ttsStream === null) {
         await writer.close();
@@ -101,30 +100,19 @@ export function performTTSInference(
       reader = ttsStream.getReader();
       while (true) {
         if (signal.aborted) {
-          console.log('++++ tts inference task aborted');
           break;
         }
-
         const { done, value: chunk } = await reader.read();
         if (done) {
-          console.log('++++ tts inference task breaking loop due to DONE');
-          break;
-        }
-        if (signal.aborted) {
-          console.log('++++ tts inference task aborted in loop before write ABORTED');
           break;
         }
         await writer.write(chunk);
       }
     } finally {
       reader?.releaseLock();
-      console.log('++++ tts inference task cancelling tts stream');
       await ttsStream?.cancel();
-      console.log(`++++ tts inference task ${signal.aborted ? 'aborting' : 'closing'} writer`);
       await writer.close();
-      console.log('++++ tts inference task writer cleanup done');
     }
-    console.log('++++ tts inference task done');
   };
 
   return [inferenceTask(), audioOutputStream];
@@ -157,7 +145,6 @@ async function forwardText(
   } finally {
     reader?.releaseLock();
   }
-  console.log('++++ text forwarder done');
 }
 
 export function performTextForwarding(

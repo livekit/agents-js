@@ -343,14 +343,13 @@ export class AgentActivity implements RecognitionHooks {
     // TODO(shubhra): add waiting for audio playout in audio output
 
     if (speechHandle.interrupted) {
-      this.logger.info(
+      this.logger.debug(
         { speech_id: speechHandle.id },
-        '++++ aborting tasks after interrupt after forwarding',
+        'Aborting all pipeline reply tasks due to interruption',
       );
       abortController.abort();
       await Promise.allSettled(tasks);
       // TODO(shubhra): add waiting for audio playout in audio output and syncronizher transcripts
-      this.logger.info({ speech_id: speechHandle.id }, '++++ creating message');
       const message = ChatMessage.create({
         role: ChatRole.ASSISTANT,
         text: textOutput.text,
@@ -362,7 +361,10 @@ export class AgentActivity implements RecognitionHooks {
       }
       this.agentSession._conversationItemAdded(message);
 
-      this.logger.info({ speech_id: speechHandle.id }, 'playout completed with interrupt');
+      this.logger.info(
+        { speech_id: speechHandle.id, message: textOutput.text },
+        'playout completed with interrupt',
+      );
       // TODO(shubhra) add chat message to speech handle
       speechHandle.markPlayoutDone();
       return;
@@ -375,7 +377,10 @@ export class AgentActivity implements RecognitionHooks {
       chatCtx.insertItem(message);
       this.agent._chatCtx.insertItem(message);
       this.agentSession._conversationItemAdded(message);
-      this.logger.info({ speech_id: speechHandle.id }, 'playout completed without interruption');
+      this.logger.info(
+        { speech_id: speechHandle.id, message: textOutput.text },
+        'playout completed without interruption',
+      );
       speechHandle.markPlayoutDone();
       return;
     }
