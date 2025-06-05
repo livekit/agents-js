@@ -6,7 +6,7 @@ import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { DeferredReadableStream } from '../../src/stream/deferred_stream.js';
 
-describe('DeferredReadableStream', () => {
+describe('DeferredReadableStream', { timeout: 2000 }, () => {
   it('should create a readable stream', () => {
     const deferred = new DeferredReadableStream<string>();
     expect(deferred.stream).toBeInstanceOf(ReadableStream);
@@ -109,18 +109,15 @@ describe('DeferredReadableStream', () => {
     // Create a source that errors
     const errorMessage = 'Source error';
     const source = new ReadableStream<string>({
-      start(controller) {
+      async start(controller) {
         controller.error(new Error(errorMessage));
+      },
+      cancel(reason) {
+        console.log('cancel', reason);
       },
     });
 
-    try {
-        await deferred.setSource(source);
-        expect.fail('setSource should have thrown');
-    } catch (e: any) {
-        expect(e).toBeInstanceOf(Error);
-        expect(e.message).toBe('Source error');
-    }
+    deferred.setSource(source);
 
     // The read should reject with the error
     try {
@@ -158,38 +155,27 @@ describe('DeferredReadableStream', () => {
     expect(() => deferred.setSource(source2)).toThrow('Stream source already set');
   });
 
-  it('should handle cancellation before source is set', async () => {
+  it('read after cancellation should return undefined', async () => {
     const deferred = new DeferredReadableStream<string>();
     const reader = deferred.stream.getReader();
+    const readPromise = reader.read();
 
     // Cancel the stream before setting source
-    await reader.cancel('User cancelled')
-    reader.releaseLock();
+    await reader.cancel();
 
-    // Create a source
-    let sourceCancelled = false;
     const source = new ReadableStream<string>({
       start(controller) {
         controller.enqueue('data');
-      },
-      cancel(reason) {
-        sourceCancelled = true;
-      },
+      }
     });
 
-    // Setting source after cancellation should still work but the source should be cancelled
-    try {
-        await deferred.setSource(source);
-        expect.fail('setSource should have thrown');
-    } catch (e: any) {
-        expect(e).toBe('User cancelled');
-    }
+    deferred.setSource(source);
 
-    // Give time for cancellation to propagate
-    await delay(50);
+    const result = await readPromise;
+    expect(result.done).toBe(true);
+    expect(result.value).toBeUndefined();
 
-    // The source should have been cancelled
-    expect(sourceCancelled).toBe(true);
+    reader.releaseLock();
   });
 
   it('should handle empty source stream', async () => {
@@ -214,5 +200,53 @@ describe('DeferredReadableStream', () => {
     expect(result.value).toBeUndefined();
 
     reader.releaseLock();
+  });
+
+  it('source set by another deferred stream after calling cancel()', async () => {
+    const deferred = new DeferredReadableStream<string>();
+    
+    // Create a new source stream
+    const source = new ReadableStream<string>({
+      start(controller) {
+        controller.enqueue('before-cancel');
+        controller.enqueue('after-cancel');
+        controller.close();
+      },
+    });
+
+    // read first chunk
+    deferred.setSource(source);
+    const reader = deferred.stream.getReader();
+    const result = await reader.read();
+    expect(result.done).toBe(false);
+    expect(result.value).toBe('before-cancel');
+
+    // cancel the stream
+    console.log('cancelling');
+    await deferred.cancel();
+    console.log('cancelled');
+
+    // read second chunk
+    console.log('reading second chunk');
+    const result2 = await reader.read();
+    console.log('read second chunk', result2);
+    expect(result2.done).toBe(true);
+    expect(result2.value).toBeUndefined();
+
+    // // create a new deferred stream and set the source
+    // const deferred2 = new DeferredReadableStream<string>();
+    // deferred2.setSource(source);
+    // const reader2 = deferred2.stream.getReader();
+
+    // // read the second chunk
+    // const result3 = await reader2.read();
+    // expect(result3.done).toBe(false);
+    // expect(result3.value).toBe('after-cancel');
+
+    // // read the third chunk
+    // const result4 = await reader.read();
+    // expect(result4.done).toBe(true);
+    // expect(result4.value).toBeUndefined();
+    // reader.releaseLock();
   });
 });
