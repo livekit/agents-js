@@ -43,8 +43,8 @@ export class DeferredReadableStream<T> {
         // we only close the writable stream after done
         await this.transform.writable.close();
         // NOTE: we do not cancel readable stream as there might be access to
-        // this.transform.readable.getReader() outside that blocks thed cancellation
-        // and user using this deferred readable stream should cancel reader on their own
+        // this.transform.readable.getReader() outside that blocks this cancellation
+        // hence, user using this deferred readable stream should cancel reader on their own
       } catch (e) {
         this.writer.abort(e);
       }
