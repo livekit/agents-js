@@ -104,7 +104,10 @@ export class AgentActivity implements RecognitionHooks {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onVADInferenceDone(ev: VADEvent): void {
-    // TODO(AJS-40): Implement this
+    if (this.currentSpeech && !this.currentSpeech.interrupted && this.currentSpeech.done) {
+      this.logger.info({ 'speech id': this.currentSpeech.id }, 'speech interrupted by VAD');
+      // this.currentSpeech.interrupt();
+    }
   }
 
   onInterimTranscript(ev: SpeechEvent): void {
@@ -131,6 +134,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession.options.minInterruptionWords > 0 &&
       info.newTranscript.split(' ').length < this.agentSession.options.minInterruptionWords
     ) {
+      // avoid interruption if the new transcript is too short
       return false;
     }
     this.userTurnCompleted(info);
@@ -177,6 +181,7 @@ export class AgentActivity implements RecognitionHooks {
       0,
       this.currentSpeech,
     );
+    this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
 
     if (instructions) {
       instructions = `${this.agent.instructions}\n${instructions}`;
@@ -221,7 +226,12 @@ export class AgentActivity implements RecognitionHooks {
         return;
       }
 
-      // this.currentSpeech.interrupt();
+      this.logger.info(
+        { 'speech id': this.currentSpeech.id },
+        'speech interrupted, new user turn detected',
+      );
+
+      this.currentSpeech.interrupt();
       // TODO(AJS-32): Add realtime model support for interrupting the current generation
     }
 
@@ -254,6 +264,8 @@ export class AgentActivity implements RecognitionHooks {
     instructions?: string,
     newMessage?: ChatMessage,
   ): Promise<void> {
+    const replyAbortController = new AbortController();
+
     // TODO(AJS-54): add transcription/text output
 
     const audioOutput = this.agentSession.audioOutput;
@@ -269,11 +281,12 @@ export class AgentActivity implements RecognitionHooks {
     // TODO(AJS-57): handle instructions
 
     this.agentSession._updateAgentState('thinking');
-    const tasks: Array<Promise<any>> = [];
+    const tasks: Array<Promise<void>> = [];
     const [llmTask, llmGenData] = performLLMInference(
       (...args) => this.agent.llmNode(...args),
       chatCtx,
       {},
+      replyAbortController.signal,
     );
     tasks.push(llmTask);
 
@@ -286,14 +299,27 @@ export class AgentActivity implements RecognitionHooks {
         (...args) => this.agent.ttsNode(...args),
         ttsTextInput,
         {},
+        replyAbortController.signal,
       );
       tasks.push(ttsTask);
     }
 
-    // TODO(AJS-40): handle interrupted authorization
-    await speechHandle.waitForAuthorization();
+    await speechHandle.waitIfNotInterrupted([speechHandle.waitForAuthorization()]);
+    if (speechHandle.interrupted) {
+      this.logger.info(
+        { speech_id: speechHandle.id },
+        'Speech interrupted after tts and llm tasks',
+      );
+      replyAbortController.abort();
+      await Promise.allSettled(tasks);
+      return;
+    }
 
-    const [textForwardTask, textOutput] = performTextForwarding(null, llmOutput);
+    const [textForwardTask, textOutput] = performTextForwarding(
+      null,
+      llmOutput,
+      replyAbortController.signal,
+    );
     tasks.push(textForwardTask);
 
     const onFirstFrame = () => {
@@ -302,7 +328,11 @@ export class AgentActivity implements RecognitionHooks {
 
     if (audioOutput) {
       if (ttsStream) {
-        const [forwardTask, audioOut] = performAudioForwarding(ttsStream, audioOutput);
+        const [forwardTask, audioOut] = performAudioForwarding(
+          ttsStream,
+          audioOutput,
+          replyAbortController.signal,
+        );
         tasks.push(forwardTask);
         audioOut.firstFrameFut.await.then(onFirstFrame);
       } else {
@@ -313,18 +343,52 @@ export class AgentActivity implements RecognitionHooks {
     }
     // TODO(shubhra): handle tool calls
 
-    const message = ChatMessage.create({
-      role: ChatRole.ASSISTANT,
-      text: textOutput.text,
-    });
-    chatCtx.insertItem(message);
-    this.agent._chatCtx.insertItem(message);
-    this.agentSession._conversationItemAdded(message);
+    await speechHandle.waitIfNotInterrupted(tasks);
 
-    await Promise.all(tasks);
+    // TODO(shubhra): add waiting for audio playout in audio output
 
-    this.logger.info({ speech_id: speechHandle.id }, 'playout completed');
-    speechHandle.markPlayoutDone();
+    if (speechHandle.interrupted) {
+      this.logger.debug(
+        { speech_id: speechHandle.id },
+        'Aborting all pipeline reply tasks due to interruption',
+      );
+      replyAbortController.abort();
+      await Promise.allSettled(tasks);
+      // TODO(shubhra): add waiting for audio playout in audio output and syncronizher transcripts
+      const message = ChatMessage.create({
+        role: ChatRole.ASSISTANT,
+        text: textOutput.text,
+      });
+      chatCtx.insertItem(message);
+      this.agent._chatCtx.insertItem(message);
+      if (this.agentSession.agentState === 'speaking') {
+        this.agentSession._updateAgentState('listening');
+      }
+      this.agentSession._conversationItemAdded(message);
+
+      this.logger.info(
+        { speech_id: speechHandle.id, message: textOutput.text },
+        'playout completed with interrupt',
+      );
+      // TODO(shubhra) add chat message to speech handle
+      speechHandle.markPlayoutDone();
+      return;
+    }
+    if (textOutput && textOutput.text) {
+      const message = ChatMessage.create({
+        role: ChatRole.ASSISTANT,
+        text: textOutput.text,
+      });
+      chatCtx.insertItem(message);
+      this.agent._chatCtx.insertItem(message);
+      this.agentSession._conversationItemAdded(message);
+      this.logger.info(
+        { speech_id: speechHandle.id, message: textOutput.text },
+        'playout completed without interruption',
+      );
+      speechHandle.markPlayoutDone();
+      return;
+    }
   }
 
   private scheduleSpeech(speechHandle: SpeechHandle, priority: number): void {

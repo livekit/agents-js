@@ -141,6 +141,9 @@ export class Agent {
           }
           controller.close();
         },
+        cancel() {
+          stream.close();
+        },
       });
     },
 
@@ -157,6 +160,9 @@ export class Agent {
             controller.enqueue(chunk);
           }
           controller.close();
+        },
+        cancel() {
+          stream.close();
         },
       });
     },
@@ -180,11 +186,14 @@ export class Agent {
         async start(controller) {
           for await (const chunk of stream) {
             if (chunk === SynthesizeStream.END_OF_STREAM) {
-              controller.close();
               break;
             }
             controller.enqueue(chunk.frame);
           }
+          controller.close();
+        },
+        cancel() {
+          stream.close();
         },
       });
     },

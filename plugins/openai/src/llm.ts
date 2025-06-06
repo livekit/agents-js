@@ -498,6 +498,9 @@ export class LLMStream extends llm.LLMStream {
 
       for await (const chunk of stream) {
         for (const choice of chunk.choices) {
+          if (this.abortController.signal.aborted) {
+            break;
+          }
           const chatChunk = this.#parseChoice(chunk.id, choice);
           if (chatChunk) {
             this.queue.put(chatChunk);

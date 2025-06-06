@@ -682,7 +682,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
           llmStream = (await defaultBeforeLLMCallback(this, copiedCtx)) as LLMStream;
         }
 
-        if (handle!.interrupted) {
+        if (handle!.legacyInterrupted) {
           return;
         }
 
@@ -745,13 +745,13 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         resolve();
       });
       commitUserQuestionIfNeeded();
-      if (handle.interrupted) break;
+      if (handle.legacyInterrupted) break;
     }
     commitUserQuestionIfNeeded();
 
     let collectedText = this.#agentTranscribedText;
     const isUsingTools = handle.source instanceof LLMStream && !!handle.source.functionCalls.length;
-    const interrupted = handle.interrupted;
+    const interrupted = handle.legacyInterrupted;
 
     if (handle.addToChatCtx && (!userQuestion || handle.userCommitted)) {
       if (handle.extraToolsMessages) {
@@ -979,7 +979,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       for await (const speech of this.#speechQueue) {
         if (speech === VoicePipelineAgent.FLUSH_SENTINEL) break;
         if (!speech.isReply) continue;
-        if (speech.allowInterruptions) speech.interrupt();
+        if (speech.allowInterruptions) speech.legacyInterrupt();
       }
     }
 
@@ -1009,7 +1009,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     if (
       !this.#playingSpeech ||
       !this.#playingSpeech.allowInterruptions ||
-      this.#playingSpeech.interrupted
+      this.#playingSpeech.legacyInterrupted
     ) {
       return;
     }
@@ -1024,7 +1024,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         return;
       }
     }
-    this.#playingSpeech.interrupt();
+    this.#playingSpeech.legacyInterrupt();
   }
 
   #addSpeechForPlayout(handle: SpeechHandle) {
