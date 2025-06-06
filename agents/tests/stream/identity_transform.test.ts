@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { IdentityTransform } from '../../src/stream/identity_transform.js';
 
-describe('IdentityTransform', () => {
+describe('IdentityTransform', { timeout: 2000 }, () => {
   it('should handle stream with one value', async () => {
     const transform = new IdentityTransform<string>();
     const writer = transform.writable.getWriter();
