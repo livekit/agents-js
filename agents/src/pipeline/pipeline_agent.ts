@@ -750,7 +750,8 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       if (handle.interrupted) break;
     }
     commitUserQuestionIfNeeded();
-
+    // wait for the new sentence delay
+    await new Promise((resolve) => setTimeout(resolve, defaultTextSyncOptions.newSentenceDelay));
     let collectedText = this.#agentFinalTranscriptionBuffer
       .map((segment) => segment.text)
       .join(' ');
