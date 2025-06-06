@@ -9,6 +9,7 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import type { ChatChunk, ChatMessage, LLM } from '../llm/index.js';
 import { ChatContext } from '../llm/index.js';
+import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
@@ -16,6 +17,7 @@ import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
+import type { NodeOptions } from './io.js';
 
 export class StopResponse extends Error {
   constructor() {
@@ -76,8 +78,9 @@ export class Agent {
   async transcriptionNode(
     text: ReadableStream<string>,
     modelSettings: any, // TODO(shubhra): add type
+    nodeOptions: NodeOptions = {},
   ): Promise<ReadableStream<string> | null> {
-    return Agent.default.transcriptionNode(this, text, modelSettings);
+    return Agent.default.transcriptionNode(this, text, modelSettings, nodeOptions);
   }
 
   async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage): Promise<void> {}
@@ -85,22 +88,25 @@ export class Agent {
   async sttNode(
     audio: ReadableStream<AudioFrame>,
     modelSettings: any, // TODO(AJS-59): add type
+    nodeOptions: NodeOptions = {},
   ): Promise<ReadableStream<SpeechEvent | string> | null> {
-    return Agent.default.sttNode(this, audio, modelSettings);
+    return Agent.default.sttNode(this, audio, modelSettings, nodeOptions);
   }
 
   async llmNode(
     chatCtx: ChatContext,
     modelSettings: any, // TODO(AJS-59): add type
+    nodeOptions: NodeOptions = {},
   ): Promise<ReadableStream<ChatChunk | string> | null> {
-    return Agent.default.llmNode(this, chatCtx, modelSettings);
+    return Agent.default.llmNode(this, chatCtx, modelSettings, nodeOptions);
   }
 
   async ttsNode(
     text: ReadableStream<string>,
     modelSettings: any, // TODO(AJS-59): add type
+    nodeOptions: NodeOptions = {},
   ): Promise<ReadableStream<AudioFrame> | null> {
-    return Agent.default.ttsNode(this, text, modelSettings);
+    return Agent.default.ttsNode(this, text, modelSettings, nodeOptions);
   }
 
   // realtime_audio_output_node
@@ -117,7 +123,9 @@ export class Agent {
       agent: Agent,
       audio: ReadableStream<AudioFrame>,
       modelSettings: any, // TODO(AJS-59): add type
+      nodeOptions: NodeOptions = {},
     ): Promise<ReadableStream<SpeechEvent | string> | null> {
+      const logger = log();
       const activity = agent.getActivityOrThrow();
 
       let wrapped_stt = activity.stt;
@@ -131,19 +139,38 @@ export class Agent {
         wrapped_stt = new STTStreamAdapter(wrapped_stt, agent.vad);
       }
 
+      logger.debug('Agent.default.sttNode: creating STT (deepgram) stream');
       const stream = wrapped_stt.stream();
+
+      logger.debug('Agent.default.sttNode: setting deferred input stream');
       stream.updateInputStream(audio);
 
+
+      if (nodeOptions.signal) {
+        logger.debug('Agent.default.sttNode: attaching abort signal listener');
+        nodeOptions.signal.addEventListener('abort', () => {
+          logger.debug('Agent.default.sttNode: abort signal received, detaching input stream');
+          stream.detachInputStream();
+          logger.debug('Agent.default.sttNode: cancel stt readable stream');
+          stream.close();
+        });
+      }
+
+      logger.debug('Agent.default.sttNode: creating ReadableStream');
       return new ReadableStream({
         async start(controller) {
           for await (const event of stream) {
             controller.enqueue(event);
+            logger.debug('Agent.default.sttNode: enqueued event');
           }
+          logger.debug('Agent.default.sttNode: closing controller');
           controller.close();
+          logger.debug('Agent.default.sttNode: controller closed');
         },
-        async cancel() {
-          stream.close();
-        },
+        // async cancel() {
+        //   logger.debug('Agent.default.sttNode: cancel stt readable stream');
+        //   stream.close();
+        // },
       });
     },
 
@@ -151,6 +178,7 @@ export class Agent {
       agent: Agent,
       chatCtx: ChatContext,
       modelSettings: any, // TODO(AJS-59): add type
+      nodeOptions: NodeOptions = {},
     ): Promise<ReadableStream<ChatChunk | string> | null> {
       const activity = agent.getActivityOrThrow();
       const stream = activity.llm.chat({ chatCtx });
@@ -168,6 +196,7 @@ export class Agent {
       agent: Agent,
       text: ReadableStream<string>,
       modelSettings: any, // TODO(AJS-59): add type
+      nodeOptions: NodeOptions = {},
     ): Promise<ReadableStream<AudioFrame> | null> {
       const activity = agent.getActivityOrThrow();
       let wrapped_tts = activity.tts;
@@ -196,6 +225,7 @@ export class Agent {
       agent: Agent,
       text: ReadableStream<string>,
       modelSettings: any, // TODO(shubhra): add type
+      nodeOptions: NodeOptions = {},
     ): Promise<ReadableStream<string> | null> {
       return text;
     },

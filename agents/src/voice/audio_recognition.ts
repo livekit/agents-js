@@ -67,14 +67,14 @@ export class AudioRecognition {
     private lastLanguage?: string,
   ) {
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
-
+delay
     const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
     this.vadInputStream = vadInputStream;
     this.sttInputStream = sttInputStream;
   }
 
   async start() {
-    console.log('Start audio recognition with turn detection mode: ', this.turnDetectionMode);
+    this.logger.debug('Start audio recognition with turn detection mode: ', this.turnDetectionMode);
 
     this.vadTask = Task.from(this.createVadTask());
     this.vadTask.result.catch((err) => {
@@ -98,14 +98,14 @@ export class AudioRecognition {
   private printDebugObject() {
     const secondAgo = (time: number) => (Date.now() - time) / 1000;
 
-    console.log('===============================================');
+    this.logger.debug('===============================================');
     const debugObject = {
       interimTranscript: this.audioInterimTranscript,
       audioTranscript: this.audioTranscript,
       lastFinalTranscriptTime: `${secondAgo(this.lastFinalTranscriptTime)}s ago`,
       userTurnCommitted: this.userTurnCommitted,
     };
-    console.log('debugObject: ', debugObject);
+    this.logger.debug(debugObject, 'debugObject');
   }
 
   private async onSTTEvent(ev: SpeechEvent) {
@@ -272,39 +272,41 @@ export class AudioRecognition {
         return;
       }
 
-      this.logger.debug({ step: 1 }, 'createSttTask');
-      const sttStream = await this.stt(this.sttInputStream, {});
-      this.logger.debug({ step: 2 }, 'createSttTask');
+      this.logger.debug('createSttTask: create stt stream from stt node');
+      const sttStream = await this.stt(this.sttInputStream, {}, { signal: controller.signal });
 
       if (controller.signal.aborted) return;
       if (sttStream === null) return;
 
-      this.logger.debug({ step: 3 }, 'createSttTask');
       if (sttStream instanceof ReadableStream) {
+        this.logger.debug('createSttTask: acquiring sttStream reader');
         const reader = sttStream.getReader();
-        this.logger.debug({ step: 4 }, 'createSttTask');
 
-        while (!controller.signal.aborted) {
-          // this.logger.debug({ step: "before" }, 'createSttTask');
-          const { done, value: ev } = await reader.read();
-          // this.logger.debug({ step: "after" }, 'createSttTask');
+        try {
+          while (true) {
+            this.logger.debug('createSttTask: before reading sttStream');
+            const { done, value: ev } = await reader.read();
+            this.logger.debug('createSttTask: after reading sttStream');
 
-          if (done) {
-            break;
+            if (done) {
+              this.logger.debug('createSttTask: sttStream reader done, exiting loop...');
+              break;
+            }
+            if (typeof ev === 'string') {
+              throw new Error('STT node must yield SpeechEvent');
+            } else {
+              await this.onSTTEvent(ev);
+            }
           }
-          if (typeof ev === 'string') {
-            throw new Error('STT node must yield SpeechEvent');
-          } else {
-            await this.onSTTEvent(ev);
-          }
+        } catch (e) {
+          this.logger.error({ error: e }, 'createSttTask: error reading sttStream');
+        } finally {
+          this.logger.debug('createSttTask: releasing sttStream reader');
+          reader.releaseLock();
+          this.logger.debug('createSttTask: cancelling sttStream');
+          sttStream.cancel();
+          this.logger.debug('createSttTask: sttStream cancelled, exiting task...');
         }
-
-        this.logger.debug('STT task cancelled');
-        this.logger.debug({ step: 5 }, 'createSttTask');
-        reader.releaseLock();
-        this.logger.debug({ step: 6 }, 'createSttTask');
-        sttStream.cancel();
-        this.logger.debug({ step: 7 }, 'createSttTask');
       }
     };
   }
@@ -352,14 +354,27 @@ export class AudioRecognition {
   }
 
   clearUserTurn() {
-    console.log('clearUserTurn');
+    this.logger.debug('clearUserTurn');
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
     this.userTurnCommitted = false;
+
+    this.logger.debug('clearUserTurn: cancelling stt task');
+    const startTime = Date.now();
+    this.sttTask?.cancelAndWait().then(() => {
+      const endTime = Date.now();
+      this.logger.debug(`clearUserTurn: stt task cancelled in ${endTime - startTime}ms`);
+      this.logger.debug('clearUserTurn: stt task cancelled, recreating...');
+      this.sttTask = Task.from(this.createSttTask());
+      this.logger.debug('clearUserTurn: stt task recreated');
+      this.sttTask.result.catch((err) => {
+        this.logger.error(`Error running STT task: ${err}`);
+      });
+    });
   }
 
   commitUserTurn(audioDetached: boolean) {
-    console.log('commitUserTurn', audioDetached);
+    this.logger.debug('commitUserTurn', audioDetached);
 
     const commitUserTurnTask =
       (delayDuration: number = 500) =>

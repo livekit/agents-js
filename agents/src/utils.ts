@@ -402,12 +402,12 @@ export class Task<T> {
    * @param timeout - The timeout in milliseconds
    * @returns The result status of the task (timeout, completed, aborted)
    */
-  async cancelAndWait(timeout: number = 2000) {
+  async cancelAndWait(timeout?: number) {
     this.cancel();
 
     try {
       // Race between task completion and timeout
-      const result = await Promise.race([
+      const promises = [
         this.result
           .then(() => TaskResult.Completed)
           .catch((error) => {
@@ -416,8 +416,13 @@ export class Task<T> {
             }
             throw error;
           }),
-        delay(timeout).then(() => TaskResult.Timeout),
-      ]);
+      ];
+
+      if (timeout) {
+        promises.push(delay(timeout).then(() => TaskResult.Timeout));
+      }
+
+      const result = await Promise.race(promises);
 
       // Check what happened
       if (result === TaskResult.Timeout) {
