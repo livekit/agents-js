@@ -28,48 +28,51 @@ export function performLLMInference(
   signal: AbortSignal,
 ): [Promise<void>, _LLMGenerationData] {
   const textStream = new IdentityTransform<string>();
-  const writer = textStream.writable.getWriter();
+  const outputWriter = textStream.writable.getWriter();
   const data = new _LLMGenerationData(textStream.readable);
 
   const inferenceTask = async () => {
-    let reader: ReadableStreamDefaultReader<any> | null = null;
+    let llmStreamReader: ReadableStreamDefaultReader<any> | null = null;
     let llmStream: ReadableStream<string | ChatChunk> | null = null;
 
     try {
       llmStream = await node(chatCtx, modelSettings);
       if (llmStream === null) {
-        await writer.close();
+        await outputWriter.close();
         return;
       }
 
-      reader = llmStream.getReader();
+      llmStreamReader = llmStream.getReader();
+      // signal.addEventListener('abort', () => {
+      //   llmStreamReader?.releaseLock();
+      // });
       while (true) {
         if (signal?.aborted) {
           break;
         }
         // promise race on abort signal
-        const { done, value: chunk } = await reader.read();
+        const { done, value: chunk } = await llmStreamReader.read();
         if (done) {
           break;
         }
 
         if (typeof chunk === 'string') {
           data.generatedText += chunk;
-          await writer.write(chunk);
+          await outputWriter.write(chunk);
           // TODO(shubhra): better way to check??
         } else if ('choices' in chunk) {
           const content = chunk.choices[0]?.delta.content;
           if (!content) continue;
           data.generatedText += content;
-          await writer.write(content);
+          await outputWriter.write(content);
         } else {
           throw new Error(`Unexpected chunk type: ${JSON.stringify(chunk)}`);
         }
       }
     } finally {
-      reader?.releaseLock();
+      llmStreamReader?.releaseLock();
       await llmStream?.cancel();
-      await writer.close();
+      await outputWriter.close();
     }
   };
 
@@ -83,35 +86,35 @@ export function performTTSInference(
   signal: AbortSignal,
 ): [Promise<void>, ReadableStream<AudioFrame>] {
   const audioStream = new IdentityTransform<AudioFrame>();
-  const writer = audioStream.writable.getWriter();
+  const outputWriter = audioStream.writable.getWriter();
   const audioOutputStream = audioStream.readable;
 
   const inferenceTask = async () => {
-    let reader: ReadableStreamDefaultReader<AudioFrame> | null = null;
+    let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
 
     try {
       ttsStream = await node(text, modelSettings);
       if (ttsStream === null) {
-        await writer.close();
+        await outputWriter.close();
         return;
       }
 
-      reader = ttsStream.getReader();
+      ttsStreamReader = ttsStream.getReader();
       while (true) {
         if (signal.aborted) {
           break;
         }
-        const { done, value: chunk } = await reader.read();
+        const { done, value: chunk } = await ttsStreamReader.read();
         if (done) {
           break;
         }
-        await writer.write(chunk);
+        await outputWriter.write(chunk);
       }
     } finally {
-      reader?.releaseLock();
+      ttsStreamReader?.releaseLock();
       await ttsStream?.cancel();
-      await writer.close();
+      await outputWriter.close();
     }
   };
 
