@@ -38,11 +38,15 @@ export class DeferredReadableStream<T> {
     return this.transform.readable;
   }
 
+  get isSourceSet() {
+    return !!this.sourceReader;
+  }
+
   /**
    * Call once the actual source is ready.
    */
   setSource(source: ReadableStream<T>) {
-    if (this.sourceReader) {
+    if (this.isSourceSet) {
       throw new Error('Stream source already set');
     }
 
@@ -89,7 +93,7 @@ export class DeferredReadableStream<T> {
    * Detach the source stream and clean up resources.
    */
   async detachSource() {
-    if (!this.sourceReader) {
+    if (!this.isSourceSet) {
       throw new Error('Source not set');
     }
 
