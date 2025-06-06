@@ -141,6 +141,9 @@ export class Agent {
           }
           controller.close();
         },
+        async cancel() {
+          stream.close();
+        },
       });
     },
 

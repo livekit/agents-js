@@ -75,8 +75,16 @@ export class AudioRecognition {
 
   async start() {
     console.log('Start audio recognition with turn detection mode: ', this.turnDetectionMode);
-    this.updateVad();
-    this.updateStt();
+
+    this.vadTask = Task.from(this.createVadTask());
+    this.vadTask.result.catch((err) => {
+      this.logger.error(`Error running VAD task: ${err}`);
+    });
+
+    this.sttTask = Task.from(this.createSttTask());
+    this.sttTask.result.catch((err) => {
+      this.logger.error(`Error running STT task: ${err}`);
+    });
 
     // every 1 second, print interm transcript and audio transcript and lastFinalTranscriptTime and userTurnCommitted
     (async () => {
@@ -98,30 +106,6 @@ export class AudioRecognition {
       userTurnCommitted: this.userTurnCommitted,
     };
     console.log('debugObject: ', debugObject);
-  }
-
-  private async updateVad() {
-    // cancel any existing vad task
-    await this.vadTask?.cancelAndWait(1000).catch((err) => {
-      this.logger.error(`Error cancelling VAD task: ${err}`);
-    });
-
-    this.vadTask = Task.from(this.createVadTask());
-    this.vadTask.result.catch((err) => {
-      this.logger.error(`Error running VAD task: ${err}`);
-    });
-  }
-
-  private async updateStt() {
-    // cancel any existing stt task
-    await this.sttTask?.cancelAndWait(3000).catch((err) => {
-      this.logger.error(`Error cancelling STT task: ${err}`);
-    });
-
-    this.sttTask = Task.from(this.createSttTask());
-    this.sttTask.result.catch((err) => {
-      this.logger.error(`Error running STT task: ${err}`);
-    });
   }
 
   private async onSTTEvent(ev: SpeechEvent) {
@@ -372,9 +356,6 @@ export class AudioRecognition {
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
     this.userTurnCommitted = false;
-
-    // reset stt to clear the buffer from previous user turn
-    this.updateStt();
   }
 
   commitUserTurn(audioDetached: boolean) {
