@@ -117,14 +117,14 @@ export class Queue<T> {
 }
 
 /** @internal */
-export class Future {
-  #await: Promise<void>;
-  #resolvePromise!: () => void;
+export class Future<T = void> {
+  #await: Promise<T>;
+  #resolvePromise!: (value: T) => void;
   #rejectPromise!: (error: Error) => void;
   #done: boolean = false;
 
   constructor() {
-    this.#await = new Promise<void>((resolve, reject) => {
+    this.#await = new Promise<T>((resolve, reject) => {
       this.#resolvePromise = resolve;
       this.#rejectPromise = reject;
     });
@@ -138,9 +138,9 @@ export class Future {
     return this.#done;
   }
 
-  resolve() {
+  resolve(value: T) {
     this.#done = true;
-    this.#resolvePromise();
+    this.#resolvePromise(value);
   }
 
   reject(error: Error) {
@@ -338,4 +338,48 @@ export class AudioEnergyFilter {
 
     return false;
   }
+}
+
+export class AbortableTask<T> {
+  private resultFuture: Future<T>;
+
+  constructor(
+    private readonly fn: (controller: AbortController) => Promise<T>,
+    private readonly controller: AbortController,
+  ) {
+    this.resultFuture = new Future();
+    this.runTask();
+  }
+
+  private async runTask() {
+    return this.fn(this.controller)
+      .then((value) => {
+        this.resultFuture.resolve(value);
+        return value;
+      })
+      .catch((error) => {
+        this.resultFuture.reject(error);
+      });
+  }
+
+  cancel() {
+    this.controller.abort();
+  }
+
+  get result(): Promise<T> {
+    return this.resultFuture.await;
+  }
+
+  get done(): boolean {
+    return this.resultFuture.done;
+  }
+}
+
+export function createTask<T>(
+  fn: (controller: AbortController) => Promise<T>,
+  controller?: AbortController,
+) {
+  const abortController = controller ?? new AbortController();
+  const task = new AbortableTask(fn, abortController);
+  return task;
 }
