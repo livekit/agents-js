@@ -300,6 +300,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
       if (this.abortController.signal.aborted) {
         console.log('++++ closing ws for tts stream');
+        //can't we just do this with an event listner
+        // either we're braking form a loop or we're having a side effect ducntipn pn abort
+        // can we make it easy for plugins based on this paradigm
         ws.close();
       }
     };

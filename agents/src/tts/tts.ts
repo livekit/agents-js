@@ -140,22 +140,15 @@ export abstract class SynthesizeStream
     try {
       while (true) {
         if (this.abortController.signal.aborted) {
-          console.log('++++ tts stream main task aborted');
           break;
         }
         const { done, value } = await reader.read();
-        if (
-          done ||
-          value === SynthesizeStream.FLUSH_SENTINEL ||
-          this.abortController.signal.aborted
-        ) {
+        if (done || value === SynthesizeStream.FLUSH_SENTINEL) {
           break;
         }
         this.pushText(value);
       }
-      if (!this.abortController.signal.aborted) {
-        this.endInput();
-      }
+      this.endInput();
     } catch (error) {
       this.logger.error(error, 'Error reading deferred input stream');
     }
@@ -262,7 +255,6 @@ export abstract class SynthesizeStream
 
   /** Close both the input and output of the TTS stream */
   close() {
-    console.log('++++ tts stream close');
     this.abortController.abort();
     this.input.close();
     this.output.close();
@@ -310,6 +302,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     let requestId = '';
 
     for await (const audio of this.queue) {
+      this.output.put(audio);
       requestId = audio.requestId;
       if (!ttfb) {
         ttfb = process.hrtime.bigint() - startTime;

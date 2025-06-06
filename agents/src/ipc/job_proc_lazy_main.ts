@@ -14,7 +14,7 @@ import { defaultInitializeProcessFunc } from '../worker.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
 
-const ORPHANED_TIMEOUT = 15 * 10000000;
+const ORPHANED_TIMEOUT = 15 * 1000;
 
 type JobTask = {
   ctx: JobContext;
@@ -169,19 +169,7 @@ const startJob = (
     let logger = log().child({ pid: proc.pid });
 
     process.on('unhandledRejection', (reason) => {
-      // Don't log AbortErrors as errors since they're expected during interruptions
-      if (reason instanceof Error && reason.name === 'AbortError') {
-        logger.debug('Task aborted (expected during interruption)', { reason: reason.message });
-        return;
-      }
-
-      logger.error(
-        {
-          reason: reason instanceof Error ? reason.message : reason,
-          stack: reason instanceof Error ? reason.stack : undefined,
-        },
-        'Unhandled promise rejection ++',
-      );
+      logger.error(reason);
     });
 
     logger.debug('initializing job runner');

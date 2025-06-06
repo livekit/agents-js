@@ -7,7 +7,7 @@ import { initializeLogger, log } from '../log.js';
 import { Future } from '../utils.js';
 import type { IPCMessage } from './message.js';
 
-const ORPHANED_TIMEOUT = 15 * 10000000000000000;
+const ORPHANED_TIMEOUT = 15 * 1000;
 
 (async () => {
   if (process.send) {

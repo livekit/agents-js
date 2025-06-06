@@ -181,7 +181,7 @@ export class AgentActivity implements RecognitionHooks {
       0,
       this.currentSpeech,
     );
-    this.logger.info({ speech_id: handle.id }, '++++ creating speech handle');
+    this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
 
     if (instructions) {
       instructions = `${this.agent.instructions}\n${instructions}`;
@@ -288,7 +288,7 @@ export class AgentActivity implements RecognitionHooks {
       (...args) => this.agent.llmNode(...args),
       chatCtx,
       {},
-      signal, // Pass abort signal
+      signal,
     );
     tasks.push(llmTask);
 
@@ -301,7 +301,7 @@ export class AgentActivity implements RecognitionHooks {
         (...args) => this.agent.ttsNode(...args),
         ttsTextInput,
         {},
-        signal, // Pass abort signal
+        signal,
       );
       tasks.push(ttsTask);
     }
@@ -310,7 +310,7 @@ export class AgentActivity implements RecognitionHooks {
     if (speechHandle.interrupted) {
       this.logger.info(
         { speech_id: speechHandle.id },
-        '++++ speech interrupted after tts and llm tasks',
+        'Speech interrupted after tts and llm tasks',
       );
       abortController.abort(); // Abort all tasks
       await Promise.allSettled(tasks); // Wait for tasks to complete
@@ -326,7 +326,6 @@ export class AgentActivity implements RecognitionHooks {
 
     if (audioOutput) {
       if (ttsStream) {
-        this.logger.info({ speech_id: speechHandle.id }, '++++ forwarding audio');
         const [forwardTask, audioOut] = performAudioForwarding(ttsStream, audioOutput, signal);
         tasks.push(forwardTask);
         audioOut.firstFrameFut.await.then(onFirstFrame);
