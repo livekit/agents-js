@@ -4,10 +4,9 @@
 import { type ReadableStream } from 'node:stream/web';
 import { IdentityTransform } from './identity_transform.js';
 
-
 /**
  * Check if error is related to reader.read after release lock
- * 
+ *
  * Invalid state: Releasing reader
  * Invalid state: The reader is not attached to a stream
  */
