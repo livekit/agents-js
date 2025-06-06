@@ -64,9 +64,6 @@ export function performLLMInference(
       }
 
       llmStreamReader = llmStream.getReader();
-      // signal.addEventListener('abort', () => {
-      //   llmStreamReader?.releaseLock();
-      // });
       while (true) {
         if (signal?.aborted) {
           break;
