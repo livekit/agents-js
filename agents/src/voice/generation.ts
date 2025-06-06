@@ -68,7 +68,6 @@ export function performLLMInference(
         if (signal?.aborted) {
           break;
         }
-        // promise race on abort signal
         const { done, value: chunk } = await raceWithAbort(signal, llmStreamReader.read());
         if (done) {
           break;
