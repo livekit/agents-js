@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import type { ReadableStream } from 'node:stream/web';
 import type { LLMMetrics } from '../metrics/base.js';
-import { AsyncIterableQueue } from '../utils.js';
+import { IdentityTransform } from '../stream/identity_transform.js';
 import type { ChatContext, ChatRole } from './chat_context.js';
 import type { FunctionCallInfo, FunctionContext } from './function_context.js';
 
@@ -59,8 +60,7 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
 }
 
 export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
-  protected output = new AsyncIterableQueue<ChatChunk>();
-  protected queue = new AsyncIterableQueue<ChatChunk>();
+  protected outputWriter: WritableStreamDefaultWriter<ChatChunk>;
   protected closed = false;
   protected _functionCalls: FunctionCallInfo[] = [];
   abstract label: string;
@@ -68,11 +68,21 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   #llm: LLM;
   #chatCtx: ChatContext;
   #fncCtx?: FunctionContext;
+  private output: IdentityTransform<ChatChunk>;
+  private outputReader: ReadableStreamDefaultReader<ChatChunk>;
+  private metricsStream: ReadableStream<ChatChunk>;
 
   constructor(llm: LLM, chatCtx: ChatContext, fncCtx?: FunctionContext) {
     this.#llm = llm;
     this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
+
+    this.output = new IdentityTransform();
+    this.outputWriter = this.output.writable.getWriter();
+    const [outputStream, metricsStream] = this.output.readable.tee();
+    this.outputReader = outputStream.getReader();
+    this.metricsStream = metricsStream;
+
     this.monitorMetrics();
   }
 
@@ -82,8 +92,11 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     let requestId = '';
     let usage: CompletionUsage | undefined;
 
-    for await (const ev of this.queue) {
-      this.output.put(ev);
+    const metricsReader = this.metricsStream.getReader();
+    while (true) {
+      const { done, value: ev } = await metricsReader.read();
+      if (done) break;
+
       requestId = ev.requestId;
       if (!ttft) {
         ttft = process.hrtime.bigint() - startTime;
@@ -92,7 +105,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         usage = ev.usage;
       }
     }
-    this.output.close();
+    metricsReader.releaseLock();
 
     const duration = process.hrtime.bigint() - startTime;
     const metrics: LLMMetrics = {
@@ -139,12 +152,18 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   }
 
   next(): Promise<IteratorResult<ChatChunk>> {
-    return this.output.next();
+    return this.outputReader.read().then(({ done, value }) => {
+      if (done) {
+        return { done: true, value: undefined };
+      }
+      return { done: false, value };
+    });
   }
 
   close() {
-    this.output.close();
-    this.queue.close();
+    if (!this.closed) {
+      this.outputWriter.close();
+    }
     this.closed = true;
   }
 
