@@ -2,14 +2,31 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { type ReadableStream } from 'node:stream/web';
-import { type AbortableTask, createTask } from '../utils.js';
 import { IdentityTransform } from './identity_transform.js';
+
+
+/**
+ * Check if error is related to reader.read after release lock
+ * 
+ * Invalid state: Releasing reader
+ * Invalid state: The reader is not attached to a stream
+ */
+function isStreamReaderReleaseError(e: unknown) {
+  const allowedMessages = [
+    'Invalid state: Releasing reader',
+    'Invalid state: The reader is not attached to a stream',
+  ];
+
+  if (e instanceof TypeError) {
+    return allowedMessages.some((message) => e.message.includes(message));
+  }
+
+  return false;
+}
 
 export class DeferredReadableStream<T> {
   private transform: IdentityTransform<T>;
   private writer: WritableStreamDefaultWriter<T>;
-
-  private pipeTask?: AbortableTask<void>;
   private sourceReader?: ReadableStreamDefaultReader<T>;
 
   constructor() {
@@ -25,44 +42,57 @@ export class DeferredReadableStream<T> {
    * Call once the actual source is ready.
    */
   setSource(source: ReadableStream<T>) {
-    if (this.pipeTask || this.sourceReader) {
+    if (this.sourceReader) {
       throw new Error('Stream source already set');
     }
 
     this.sourceReader = source.getReader();
-    this.pipeTask = createTask(async (controller) => {
-      try {
-        while (!controller.signal.aborted) {
-          const { done, value } = await this.sourceReader!.read();
-          if (done) break;
-          await this.writer.write(value);
-        }
+    this.pump();
+  }
 
-        this.writer.releaseLock();
+  private async pump() {
+    let sourceError: unknown;
 
-        // we only close the writable stream after done
-        await this.transform.writable.close();
-        // NOTE: we do not cancel this.transform.readable as there might be access to
-        // this.transform.readable.getReader() outside that blocks this cancellation
-        // hence, user is responsible for canceling reader on their own
-      } catch (e) {
-        this.writer.abort(e);
+    try {
+      while (true) {
+        const { done, value } = await this.sourceReader!.read();
+        if (done) break;
+        await this.writer.write(value);
       }
-    });
+    } catch (e) {
+      if (isStreamReaderReleaseError(e)) return;
+      sourceError = e;
+    } finally {
+      if (sourceError) {
+        this.writer.abort(sourceError);
+        return;
+      }
+
+      this.writer.releaseLock();
+
+      // we only close the writable stream after done
+      try {
+        await this.transform.writable.close();
+      } catch (e) {
+        // ignore TypeError: Invalid state: WritableStream is closed
+      }
+
+      // we only close the writable stream after done
+      // await this.transform.writable.close();
+      // NOTE: we do not cancel this.transform.readable as there might be access to
+      // this.transform.readable.getReader() outside that blocks this cancellation
+      // hence, user is responsible for canceling reader on their own
+    }
   }
 
   /**
    * Detach the source stream and clean up resources.
    */
   async detachSource() {
-    if (!this.pipeTask || !this.sourceReader) {
+    if (!this.sourceReader) {
       throw new Error('Source not set');
     }
 
-    this.sourceReader.releaseLock();
-
-    // TODO(brian): replace with cancelAndWait() after merged with https://github.com/livekit/agents-js/pull/412/files
-    this.pipeTask.cancel();
-    await this.pipeTask.result;
+    this.sourceReader!.releaseLock();
   }
 }

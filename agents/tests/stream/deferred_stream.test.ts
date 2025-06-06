@@ -177,7 +177,6 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
 
     deferred.setSource(source);
 
-    // Cancel the stream after setting source
     await reader.cancel();
 
     const result = await readPromise;
@@ -299,7 +298,7 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     reader2.releaseLock();
   });
 
-  it("an always-awaiting source reader releases lock after detaching", async () => {
+  it("a non-terminating source reader releases lock after detaching", async () => {
     const deferred = new DeferredReadableStream<string>();
     const reader = deferred.stream.getReader();
     const readPromise = reader.read();
@@ -315,8 +314,6 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     });
 
     deferred.setSource(source);
-    // the trick here is that we have to do both reader.cancel() and detachSource() in this exact order
-    await reader.cancel();
     await deferred.detachSource();
     await delay(100);
 
@@ -341,7 +338,6 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
   })
 
   it("should transfer source between deferred streams while reading is ongoing", async () => {
-    console.log('starting test');
     const deferred1 = new DeferredReadableStream<string>();
     const deferred2 = new DeferredReadableStream<string>();
     
@@ -369,7 +365,6 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     expect(result2.done).toBe(false);
     expect(result2.value).toBe('chunk-1');
     await delay(10);
-    console.log('detaching mother fucker');
     await deferred1.detachSource();
 
     // reader1 now done
