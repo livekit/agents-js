@@ -288,7 +288,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               sendLastFrame(segmentId, true);
               this.queue.put(SynthesizeStream.END_OF_STREAM);
 
-              if (segmentId === requestId) {
+              if (segmentId === requestId || this.abortController.signal.aborted) {
                 ws.close();
                 return;
               }
@@ -297,13 +297,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         } catch {
           break;
         }
-      }
-      if (this.abortController.signal.aborted) {
-        console.log('++++ closing ws for tts stream');
-        //can't we just do this with an event listner
-        // either we're braking form a loop or we're having a side effect ducntipn pn abort
-        // can we make it easy for plugins based on this paradigm
-        ws.close();
       }
     };
 
