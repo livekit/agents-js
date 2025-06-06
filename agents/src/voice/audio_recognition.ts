@@ -8,9 +8,9 @@ import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import type { AbortableTask } from '../utils.js';
-import { createTask } from '../utils.js';
+import { Task } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
+import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
 
 export interface EndOfTurnInfo {
@@ -30,7 +30,7 @@ export interface RecognitionHooks {
   retrieveChatCtx: () => ChatContext;
 }
 
-interface _TurnDetector {
+export interface _TurnDetector {
   unlikelyThreshold: (language?: string) => number | null;
   supportsLanguage: (language?: string) => boolean;
 
@@ -39,8 +39,6 @@ interface _TurnDetector {
 
 export class AudioRecognition {
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
-  private vadStreamProcessor?: Promise<void>;
-  private sttStreamProcessor?: Promise<void>;
   private logger = log();
   private lastFinalTranscriptTime = 0;
   private audioTranscript = '';
@@ -49,8 +47,14 @@ export class AudioRecognition {
   private userTurnCommitted = false;
   private speaking = false;
 
-  // all abortable tasks
-  private bounceEOUTask?: AbortableTask<void>;
+  private vadInputStream: ReadableStream<AudioFrame>;
+  private sttInputStream: ReadableStream<AudioFrame>;
+
+  // all cancellable tasks
+  private bounceEOUTask?: Task<void>;
+  private commitUserTurnTask?: Task<void>;
+  private vadTask?: Task<void>;
+  private sttTask?: Task<void>;
 
   constructor(
     private readonly hooks: RecognitionHooks,
@@ -58,26 +62,55 @@ export class AudioRecognition {
     private readonly minEndpointingDelay: number,
     private readonly maxEndpointingDelay: number,
     private stt?: STTNode,
-    private manualTurnDetection = false,
+    private turnDetectionMode?: TurnDetectionMode,
     private turnDetector?: _TurnDetector,
     private lastLanguage?: string,
   ) {
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
+delay
+    const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
+    this.vadInputStream = vadInputStream;
+    this.sttInputStream = sttInputStream;
   }
 
   async start() {
-    const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
-    this.vadStreamProcessor = this.vadTask(vadInputStream).catch((err) => {
-      this.logger.error(`Error in VAD task: ${err}`);
+    this.logger.debug('Start audio recognition with turn detection mode: ', this.turnDetectionMode);
+
+    this.vadTask = Task.from(this.createVadTask());
+    this.vadTask.result.catch((err) => {
+      this.logger.error(`Error running VAD task: ${err}`);
     });
-    this.sttStreamProcessor = this.sttTask(sttInputStream).catch((err) => {
-      this.logger.error(`Error in STT task: ${err}`);
+
+    this.sttTask = Task.from(this.createSttTask());
+    this.sttTask.result.catch((err) => {
+      this.logger.error(`Error running STT task: ${err}`);
     });
+
+    // every 1 second, print interm transcript and audio transcript and lastFinalTranscriptTime and userTurnCommitted
+    (async () => {
+      while (true) {
+        this.printDebugObject();
+        await delay(500);
+      }
+    })();
+  }
+
+  private printDebugObject() {
+    const secondAgo = (time: number) => (Date.now() - time) / 1000;
+
+    this.logger.debug('===============================================');
+    const debugObject = {
+      interimTranscript: this.audioInterimTranscript,
+      audioTranscript: this.audioTranscript,
+      lastFinalTranscriptTime: `${secondAgo(this.lastFinalTranscriptTime)}s ago`,
+      userTurnCommitted: this.userTurnCommitted,
+    };
+    this.logger.debug(debugObject, 'debugObject');
   }
 
   private async onSTTEvent(ev: SpeechEvent) {
     if (
-      this.manualTurnDetection &&
+      this.turnDetectionMode === 'manual' &&
       this.userTurnCommitted &&
       (this.bounceEOUTask === undefined ||
         this.bounceEOUTask.done ||
@@ -85,6 +118,15 @@ export class AudioRecognition {
     ) {
       // ignore stt event if user turn already committed and EOU task is done
       // or it's an interim transcript
+      this.logger.debug(
+        {
+          userTurnCommitted: this.userTurnCommitted,
+          eouTaskDone: this.bounceEOUTask?.done,
+          evType: ev.type,
+          turnDetectionMode: this.turnDetectionMode,
+        },
+        'ignoring stt event',
+      );
       return;
     }
 
@@ -94,7 +136,10 @@ export class AudioRecognition {
         const transcript = ev.alternatives?.[0]?.text;
         this.lastLanguage = ev.alternatives?.[0]?.language;
 
-        if (!transcript) return;
+        if (!transcript) {
+          this.logger.debug('stt final transcript received but no transcript');
+          return;
+        }
 
         this.logger.debug(
           {
@@ -120,8 +165,9 @@ export class AudioRecognition {
             this.lastSpeakingTime = Date.now();
           }
 
-          if (!this.manualTurnDetection || this.userTurnCommitted) {
+          if (this.vadBaseTurnDetection || this.userTurnCommitted) {
             const chatCtx = this.hooks.retrieveChatCtx();
+            this.logger.debug('running EOU detection on stt FINAL_TRANSCRIPT');
             this.runEOUDetection(chatCtx);
           }
         }
@@ -130,12 +176,32 @@ export class AudioRecognition {
         this.hooks.onInterimTranscript(ev);
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
         break;
+      case SpeechEventType.END_OF_SPEECH:
+        if (this.turnDetectionMode !== 'stt') break;
+        this.userTurnCommitted = true;
+        this.printDebugObject();
+
+        if (!this.speaking) {
+          const chatCtx = this.hooks.retrieveChatCtx();
+          this.logger.debug('running EOU detection on stt END_OF_SPEECH');
+          this.runEOUDetection(chatCtx);
+        }
     }
   }
 
-  private async runEOUDetection(chatCtx: ChatContext) {
-    if (this.stt && !this.audioTranscript && !this.manualTurnDetection) {
+  private runEOUDetection(chatCtx: ChatContext) {
+    this.logger.debug(
+      {
+        stt: this.stt,
+        audioTranscript: this.audioTranscript,
+        turnDetectionMode: this.turnDetectionMode,
+      },
+      'running EOU detection',
+    );
+
+    if (this.stt && !this.audioTranscript && this.turnDetectionMode !== 'manual') {
       // stt enabled but no transcript yet
+      this.logger.debug('skipping EOU detection');
       return;
     }
 
@@ -144,12 +210,14 @@ export class AudioRecognition {
 
     const turnDetector =
       // disable EOU model if manual turn detection enabled
-      this.audioTranscript && !this.manualTurnDetection ? this.turnDetector : null;
+      this.audioTranscript && this.turnDetectionMode !== 'manual' ? this.turnDetector : undefined;
 
     const bounceEOUTask = (lastSpeakingTime: number) => async (controller: AbortController) => {
       let endpointingDelay = this.minEndpointingDelay;
 
+      // TODO(AJS-74): need to support actual turn detection model plugins for following code to run
       if (turnDetector) {
+        this.logger.debug('Running turn detector model');
         if (!turnDetector.supportsLanguage(this.lastLanguage)) {
           this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
         } else {
@@ -162,11 +230,10 @@ export class AudioRecognition {
       }
 
       const extraSleep = lastSpeakingTime + endpointingDelay - Date.now();
+      // add delay to see if there's a potential upcoming EOU task that cancels this one
       await delay(Math.max(extraSleep, 0), { signal: controller.signal });
 
-      this.logger.debug('end of user turn', {
-        transcript: this.audioTranscript,
-      });
+      this.logger.debug({ transcript: this.audioTranscript }, 'end of user turn');
 
       const committed = await this.hooks.onEndOfTurn({
         newTranscript: this.audioTranscript,
@@ -178,81 +245,178 @@ export class AudioRecognition {
         // clear the transcript if the user turn was committed
         this.audioTranscript = '';
       }
+
+      this.userTurnCommitted = false;
     };
 
     // cancel any existing EOU task
     this.bounceEOUTask?.cancel();
-    this.bounceEOUTask = createTask(bounceEOUTask(this.lastSpeakingTime));
+    this.bounceEOUTask = Task.from(bounceEOUTask(this.lastSpeakingTime));
 
-    try {
-      await this.bounceEOUTask.result;
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        this.logger.debug('EOU detection task was aborted');
-      } else {
-        this.logger.error('Error in EOU detection task:', err);
-      }
-    }
-  }
-
-  private async sttTask(inputStream: ReadableStream<AudioFrame>) {
-    if (!this.stt) {
-      return;
-    }
-
-    const sttStream = await this.stt(inputStream, {});
-    if (sttStream === null) {
-      return;
-    }
-    if (sttStream instanceof ReadableStream) {
-      const reader = sttStream.getReader();
-      while (true) {
-        const { done, value: ev } = await reader.read();
-        if (done) {
-          break;
-        }
-        if (typeof ev === 'string') {
-          throw new Error('STT node must yield SpeechEvent');
+    this.bounceEOUTask.result
+      .then(() => {
+        this.logger.debug('EOU detection task completed');
+      })
+      .catch((err: any) => {
+        if (err.name === 'AbortError') {
+          this.logger.debug('EOU detection task was aborted');
         } else {
-          await this.onSTTEvent(ev);
+          this.logger.error('Error in EOU detection task:', err);
         }
-      }
-      reader.releaseLock();
-      sttStream.cancel();
-    }
+      });
   }
 
-  private async vadTask(inputStream: ReadableStream<AudioFrame>) {
-    const vadStream = this.vad.stream();
-    vadStream.updateInputStream(inputStream);
-
-    for await (const ev of vadStream) {
-      switch (ev.type) {
-        case VADEventType.START_OF_SPEECH:
-          this.hooks.onStartOfSpeech(ev);
-          this.speaking = true;
-
-          this.bounceEOUTask?.cancel();
-          break;
-        case VADEventType.INFERENCE_DONE:
-          this.hooks.onVADInferenceDone(ev);
-          break;
-        case VADEventType.END_OF_SPEECH:
-          this.hooks.onEndOfSpeech(ev);
-          this.speaking = false;
-          // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
-          this.lastSpeakingTime = Date.now() - ev.silenceDuration;
-
-          if (!this.manualTurnDetection) {
-            const chatCtx = this.hooks.retrieveChatCtx();
-            this.runEOUDetection(chatCtx);
-          }
-          break;
+  private createSttTask() {
+    return async (controller: AbortController) => {
+      if (!this.stt) {
+        return;
       }
-    }
+
+      this.logger.debug('createSttTask: create stt stream from stt node');
+      const sttStream = await this.stt(this.sttInputStream, {}, { signal: controller.signal });
+
+      if (controller.signal.aborted) return;
+      if (sttStream === null) return;
+
+      if (sttStream instanceof ReadableStream) {
+        this.logger.debug('createSttTask: acquiring sttStream reader');
+        const reader = sttStream.getReader();
+
+        try {
+          while (true) {
+            this.logger.debug('createSttTask: before reading sttStream');
+            const { done, value: ev } = await reader.read();
+            this.logger.debug('createSttTask: after reading sttStream');
+
+            if (done) {
+              this.logger.debug('createSttTask: sttStream reader done, exiting loop...');
+              break;
+            }
+            if (typeof ev === 'string') {
+              throw new Error('STT node must yield SpeechEvent');
+            } else {
+              await this.onSTTEvent(ev);
+            }
+          }
+        } catch (e) {
+          this.logger.error({ error: e }, 'createSttTask: error reading sttStream');
+        } finally {
+          this.logger.debug('createSttTask: releasing sttStream reader');
+          reader.releaseLock();
+          this.logger.debug('createSttTask: cancelling sttStream');
+          sttStream.cancel();
+          this.logger.debug('createSttTask: sttStream cancelled, exiting task...');
+        }
+      }
+    };
+  }
+
+  private createVadTask() {
+    return async (controller: AbortController) => {
+      const vadStream = this.vad.stream();
+      vadStream.updateInputStream(this.vadInputStream);
+
+      for await (const ev of vadStream) {
+        if (controller.signal.aborted) {
+          this.logger.debug('VAD task cancelled');
+          break;
+        }
+
+        switch (ev.type) {
+          case VADEventType.START_OF_SPEECH:
+            this.hooks.onStartOfSpeech(ev);
+            this.speaking = true;
+
+            this.bounceEOUTask?.cancel();
+            break;
+          case VADEventType.INFERENCE_DONE:
+            this.hooks.onVADInferenceDone(ev);
+            break;
+          case VADEventType.END_OF_SPEECH:
+            this.hooks.onEndOfSpeech(ev);
+            this.speaking = false;
+            // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
+            this.lastSpeakingTime = Date.now() - ev.silenceDuration;
+
+            if (this.turnDetectionMode !== 'manual') {
+              const chatCtx = this.hooks.retrieveChatCtx();
+              this.logger.debug('running EOU detection on vad END_OF_SPEECH');
+              this.runEOUDetection(chatCtx);
+            }
+            break;
+        }
+      }
+    };
   }
 
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {
     this.deferredInputStream.setSource(audioStream);
+  }
+
+  clearUserTurn() {
+    this.logger.debug('clearUserTurn');
+    this.audioTranscript = '';
+    this.audioInterimTranscript = '';
+    this.userTurnCommitted = false;
+
+    this.logger.debug('clearUserTurn: cancelling stt task');
+    const startTime = Date.now();
+    this.sttTask?.cancelAndWait().then(() => {
+      const endTime = Date.now();
+      this.logger.debug(`clearUserTurn: stt task cancelled in ${endTime - startTime}ms`);
+      this.logger.debug('clearUserTurn: stt task cancelled, recreating...');
+      this.sttTask = Task.from(this.createSttTask());
+      this.logger.debug('clearUserTurn: stt task recreated');
+      this.sttTask.result.catch((err) => {
+        this.logger.error(`Error running STT task: ${err}`);
+      });
+    });
+  }
+
+  commitUserTurn(audioDetached: boolean) {
+    this.logger.debug('commitUserTurn', audioDetached);
+
+    const commitUserTurnTask =
+      (delayDuration: number = 500) =>
+      async (controller: AbortController) => {
+        if (Date.now() - this.lastFinalTranscriptTime > delayDuration) {
+          // TODO(brian): push silence to stt to flush the buffer
+          // ...
+
+          await delay(delayDuration, { signal: controller.signal });
+        }
+
+        if (this.audioInterimTranscript) {
+          // append interim transcript in case the final transcript is not ready
+          this.audioTranscript = `${this.audioTranscript} ${this.audioInterimTranscript}`.trim();
+        }
+        this.audioInterimTranscript = '';
+
+        const chatCtx = this.hooks.retrieveChatCtx();
+        this.logger.debug('running EOU detection on commitUserTurn');
+        this.runEOUDetection(chatCtx);
+        this.userTurnCommitted = true;
+        this.printDebugObject();
+      };
+
+    // cancel any existing commit user turn task
+    this.commitUserTurnTask?.cancel();
+    this.commitUserTurnTask = Task.from(commitUserTurnTask());
+
+    this.commitUserTurnTask.result
+      .then(() => {
+        this.logger.debug('User turn committed');
+      })
+      .catch((err: any) => {
+        if (err.name === 'AbortError') {
+          this.logger.debug('User turn commit task was aborted');
+        } else {
+          this.logger.error('Error in user turn commit task:', err);
+        }
+      });
+  }
+
+  private get vadBaseTurnDetection() {
+    return this.turnDetectionMode === undefined || this.turnDetectionMode === 'vad';
   }
 }

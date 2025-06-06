@@ -157,9 +157,10 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   protected async mainTask() {
     // TODO(AJS-35): Implement STT with webstreams API
+    const inputStream = this.deferredInputStream.stream;
+    const reader = inputStream.getReader();
+
     try {
-      const inputStream = this.deferredInputStream.stream;
-      const reader = inputStream.getReader();
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -167,6 +168,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
       }
     } catch (error) {
       this.logger.error('Error in STTStream mainTask:', error);
+    } finally {
+      reader.releaseLock();
     }
   }
 
@@ -192,6 +195,10 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   updateInputStream(audioStream: ReadableStream<AudioFrame>) {
     this.deferredInputStream.setSource(audioStream);
+  }
+
+  detachInputStream() {
+    this.deferredInputStream.detachSource();
   }
 
   /** Push an audio frame to the STT */
