@@ -66,25 +66,26 @@ export class DeferredReadableStream<T> {
       if (isStreamReaderReleaseError(e)) return;
       sourceError = e;
     } finally {
+      // any other error from source will be propagated to the consumer
       if (sourceError) {
         this.writer.abort(sourceError);
         return;
       }
 
+      // release lock so this.stream.getReader().read() will terminate with done: true
       this.writer.releaseLock();
 
       // we only close the writable stream after done
       try {
         await this.transform.writable.close();
+        // NOTE: we do not cancel this.transform.readable as there might be access to
+        // this.transform.readable.getReader() outside that blocks this cancellation
+        // hence, user is responsible for canceling reader on their own
       } catch (e) {
         // ignore TypeError: Invalid state: WritableStream is closed
+        // in case stream reader is already closed, this will throw
+        // but we ignore it as we are closing the stream anyway
       }
-
-      // we only close the writable stream after done
-      // await this.transform.writable.close();
-      // NOTE: we do not cancel this.transform.readable as there might be access to
-      // this.transform.readable.getReader() outside that blocks this cancellation
-      // hence, user is responsible for canceling reader on their own
     }
   }
 
@@ -96,6 +97,10 @@ export class DeferredReadableStream<T> {
       throw new Error('Source not set');
     }
 
+    // release lock will make any pending read() throw TypeError
+    // which are expected, and we intentionally catch those error
+    // using isStreamReaderReleaseError
+    // this will unblock any pending read() inside the async for loop
     this.sourceReader!.releaseLock();
   }
 }
