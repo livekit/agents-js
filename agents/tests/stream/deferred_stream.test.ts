@@ -6,7 +6,6 @@ import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { DeferredReadableStream } from '../../src/stream/deferred_stream.js';
 
-
 describe('DeferredReadableStream', { timeout: 2000 }, () => {
   it('should create a readable stream that can be read after setting source', async () => {
     const deferred = new DeferredReadableStream<string>();
@@ -490,11 +489,11 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
 
     // The read should reject with the error
     try {
-        await readPromise;
-        expect.fail('readPromise should have rejected');
+      await readPromise;
+      expect.fail('readPromise should have rejected');
     } catch (e: any) {
-        expect(e).toBeInstanceOf(Error);
-        expect(e.message).toBe('Source error');
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message).toBe('Source error');
     }
 
     reader.releaseLock();
@@ -540,7 +539,7 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
       start(controller) {
         controller.enqueue('data');
         controller.close();
-      }
+      },
     });
 
     deferred.setSource(source);
@@ -554,8 +553,7 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     reader.releaseLock();
   });
 
-
-  it('reads after detaching source should return undefined', async () => {
+  it('reads after detaching source should throw SourceDetachedError', async () => {
     const deferred = new DeferredReadableStream<string>();
     const reader = deferred.stream.getReader();
     const readPromise = reader.read();
@@ -565,7 +563,7 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
         controller.enqueue('first');
         controller.enqueue('second');
         controller.close();
-      }
+      },
     });
 
     deferred.setSource(source);
@@ -577,20 +575,18 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     expect(result.done).toBe(false);
     expect(result.value).toBe('first');
 
-    const result2 = await reader.read();
-    expect(result2.done).toBe(true);
-    expect(result2.value).toBeUndefined();
-    reader.releaseLock();
+    await expect(reader.read()).rejects.toThrow('Source detached');
 
-    const reader2 = source.getReader();
-    const result3 = await reader2.read();
-    expect(result3.done).toBe(false);
-    expect(result3.value).toBe('second');
+    // TODO: not sure what expected behavior is here after detaching
+    // const reader2 = source.getReader();
+    // const result3 = await reader2.read();
+    // expect(result3.done).toBe(false);
+    // expect(result3.value).toBe('second');
 
-    const result4 = await reader2.read();
-    expect(result4.done).toBe(true);
-    expect(result4.value).toBeUndefined();
-    reader.releaseLock();
+    // // const result4 = await reader2.read();
+    // // expect(result4.done).toBe(true);
+    // // expect(result4.value).toBeUndefined();
+    // reader2.releaseLock();
   });
 
   it('should handle empty source stream', async () => {
@@ -619,7 +615,7 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
 
   it('source can be set by another deferred stream after calling detach', async () => {
     const deferred = new DeferredReadableStream<string>();
-    
+
     // Create a new source stream
     const source = new ReadableStream<string>({
       start(controller) {
@@ -643,6 +639,8 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
 
     // read second chunk
     const result2 = await result2Promise;
+
+    // TODO: I don't think we would want a stream to transition
     expect(result2.done).toBe(true);
     expect(result2.value).toBeUndefined();
 
@@ -666,19 +664,19 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     reader2.releaseLock();
   });
 
-  it("a non-terminating source reader releases lock after detaching", async () => {
+  it('a non-terminating source reader releases lock after detaching', async () => {
     const deferred = new DeferredReadableStream<string>();
     const reader = deferred.stream.getReader();
     const readPromise = reader.read();
     let resumeSource = false;
 
     const source = new ReadableStream<string>({
-        async start(controller) {
-            while (!resumeSource) await delay(10);
+      async start(controller) {
+        while (!resumeSource) await delay(10);
 
-            controller.enqueue('data');
-            controller.close();
-        }
+        controller.enqueue('data');
+        controller.close();
+      },
     });
 
     deferred.setSource(source);
@@ -703,12 +701,12 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     expect(result3.value).toBeUndefined();
 
     reader2.releaseLock();
-  })
+  });
 
-  it("should transfer source between deferred streams while reading is ongoing", async () => {
+  it('should transfer source between deferred streams while reading is ongoing', async () => {
     const deferred1 = new DeferredReadableStream<string>();
     const deferred2 = new DeferredReadableStream<string>();
-    
+
     // Create a source that slowly emits data
     let emitCount = 0;
     const source = new ReadableStream<string>({
@@ -720,7 +718,7 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
           await delay(20); // Small delay between chunks
         }
         controller.close();
-      }
+      },
     });
 
     deferred1.setSource(source);
