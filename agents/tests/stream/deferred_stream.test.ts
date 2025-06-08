@@ -757,4 +757,36 @@ describe('DeferredReadableStream', { timeout: 2000 }, () => {
     reader1.releaseLock();
     reader2.releaseLock();
   });
+
+  it("setSource should throw error if source is already set", () => {
+    const deferred = new DeferredReadableStream<string>();
+    const source = new ReadableStream<string>({
+      start(controller) {
+        controller.enqueue('data');
+        controller.close();
+      }
+    });
+
+    deferred.setSource(source);
+    expect(() => deferred.setSource(source)).toThrow('Stream source already set');
+  });
+
+  it("setSource should throw error if source is already set and detachSource is called", async () => {
+    const deferred = new DeferredReadableStream<string>();
+    const source = new ReadableStream<string>({
+      start(controller) {
+        controller.enqueue('data');
+        controller.close();
+      }
+    });
+
+    deferred.setSource(source);
+    await deferred.detachSource();
+    expect(() => deferred.setSource(source)).toThrow('Stream source already set');
+  });
+
+  it("detachSource should throw error if source is not set", async () => {
+    const deferred = new DeferredReadableStream<string>();
+    await expect(deferred.detachSource()).rejects.toThrow('Source not set');
+  });
 });
