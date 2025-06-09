@@ -5,7 +5,7 @@ const defaultOptions: Options = {
   format: ['cjs', 'esm'],
   splitting: false,
   sourcemap: true,
-  // for the type maps to work, we use tsc's declaration-only command on the success callback, but still set this to true to ensure .d.cts files for cjs are generated
+  // for the type maps to work, we use tsc's declaration-only command on the success callback
   dts: false,
   clean: true,
   target: 'node16',
