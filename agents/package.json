@@ -6,10 +6,13 @@
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": {
+    "import": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "default": "./dist/index.js"
+    },
+    "require": {
+      "types": "./index.d.cts",
+      "default": "./index.cjs"
     }
   },
   "author": "LiveKit",
