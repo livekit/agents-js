@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
-import { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
+import type { WritableStreamDefaultWriter } from 'node:stream/web';
+import { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
@@ -393,12 +394,7 @@ export class AudioRecognition {
           if (audioDetached && this.sampleRate !== undefined) {
             const numSamples = Math.floor(this.sampleRate * 0.5);
             const silence = new Int16Array(numSamples * 2);
-            const silenceFrame = new AudioFrame(
-              silence,
-              this.sampleRate,
-              1,
-              numSamples,
-            );
+            const silenceFrame = new AudioFrame(silence, this.sampleRate, 1, numSamples);
             this.silenceAudioWriter.write(silenceFrame);
           }
 
@@ -441,7 +437,6 @@ export class AudioRecognition {
   }
 }
 
-
 function withResolvers<T = unknown>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: any) => void;
@@ -454,9 +449,7 @@ function withResolvers<T = unknown>() {
   return { promise, resolve, reject };
 }
 
-export function mergeReadableStreams<T>(
-  ...streams: ReadableStream<T>[]
-): ReadableStream<T> {
+export function mergeReadableStreams<T>(...streams: ReadableStream<T>[]): ReadableStream<T> {
   const resolvePromises = streams.map(() => withResolvers<void>());
   return new ReadableStream<T>({
     start(controller) {

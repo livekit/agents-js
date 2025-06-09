@@ -9,7 +9,7 @@ import type { SpeechEvent } from '../stt/stt.js';
 
 export type NodeOptions = {
   signal?: AbortSignal;
-}
+};
 
 export type STTNode = (
   audio: ReadableStream<AudioFrame>,
