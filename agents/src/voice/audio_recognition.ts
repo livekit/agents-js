@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
-import { ReadableStream } from 'node:stream/web';
+import { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
 import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
@@ -47,10 +47,12 @@ export class AudioRecognition {
   private lastSpeakingTime = 0;
   private userTurnCommitted = false;
   private speaking = false;
+  private sampleRate?: number;
 
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
   private silenceAudioTransform = new IdentityTransform<AudioFrame>();
+  private silenceAudioWriter: WritableStreamDefaultWriter<AudioFrame>;
 
   // all cancellable tasks
   private bounceEOUTask?: Task<void>;
@@ -73,6 +75,7 @@ export class AudioRecognition {
     const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
     this.vadInputStream = vadInputStream;
     this.sttInputStream = sttInputStream;
+    this.silenceAudioWriter = this.silenceAudioTransform.writable.getWriter();
   }
 
   async start() {
@@ -89,12 +92,12 @@ export class AudioRecognition {
     });
 
     // every 1 second, print interm transcript and audio transcript and lastFinalTranscriptTime and userTurnCommitted
-    (async () => {
-      while (true) {
-        this.printDebugObject();
-        await delay(500);
-      }
-    })();
+    // (async () => {
+    //   while (true) {
+    //     this.printDebugObject();
+    //     await delay(500);
+    //   }
+    // })();
   }
 
   private printDebugObject() {
@@ -386,9 +389,20 @@ export class AudioRecognition {
       (delayDuration: number = 500) =>
       async (controller: AbortController) => {
         if (Date.now() - this.lastFinalTranscriptTime > delayDuration) {
-          // TODO(brian): push silence to stt to flush the buffer
-          // ...
+          // flush the stt by pushing silence
+          if (audioDetached && this.sampleRate !== undefined) {
+            const numSamples = Math.floor(this.sampleRate * 0.5);
+            const silence = new Int16Array(numSamples * 2);
+            const silenceFrame = new AudioFrame(
+              silence,
+              this.sampleRate,
+              1,
+              numSamples,
+            );
+            this.silenceAudioWriter.write(silenceFrame);
+          }
 
+          // wait for the final transcript to be available
           await delay(delayDuration, { signal: controller.signal });
         }
 
