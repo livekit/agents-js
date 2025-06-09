@@ -22,6 +22,6 @@
     "@typescript-eslint/ban-ts-comment": "warn",
     "@typescript-eslint/no-empty-interface": "warn",
     "@typescript-eslint/consistent-type-imports": "warn",
-    "@typescript-eslint/no-explicit-any": "warn",
+    "@typescript-eslint/no-explicit-any": "off",
   },
 }

@@ -295,7 +295,7 @@ describe('AbortableTask', () => {
         results.push('parent-start');
 
         // Create first child task
-        const child1Task = Task.from(async (childController) => {
+        const child1Task = Task.from(async () => {
           results.push('child1-start');
           await delay(25);
           results.push('child1-end');
@@ -307,7 +307,7 @@ describe('AbortableTask', () => {
           results.push('child2-start');
 
           // Create a grandchild task
-          const grandchildTask = Task.from(async (grandController) => {
+          const grandchildTask = Task.from(async () => {
             results.push('grandchild-start');
             await delay(10);
             results.push('grandchild-end');
@@ -367,12 +367,12 @@ describe('AbortableTask', () => {
       let child2Started = false;
 
       const parentTask = Task.from(async (controller) => {
-        const child1Task = Task.from(async (childController) => {
+        const child1Task = Task.from(async () => {
           await delay(20);
           throw new Error('child1 error');
         }, controller);
 
-        const child2Task = Task.from(async (childController) => {
+        const child2Task = Task.from(async () => {
           child2Started = true;
           await delay(30);
           child1Completed = true;
@@ -420,7 +420,7 @@ describe('AbortableTask', () => {
     });
 
     it('should timeout if task does not respond to cancellation', async () => {
-      const task = Task.from(async (controller) => {
+      const task = Task.from(async () => {
         await delay(1000);
       });
 
