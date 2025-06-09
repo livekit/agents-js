@@ -210,7 +210,7 @@ describe('AbortableTask', () => {
 
       // Both promises should resolve to the same value
       const [result1, result2] = await Promise.all([resultPromise1, resultPromise2]);
-      
+
       expect(result1).toBe('delayed result');
       expect(result2).toBe('delayed result');
       expect(task.done).toBe(true);
@@ -266,7 +266,7 @@ describe('AbortableTask', () => {
       const [parentResult, child1Result, child2Result] = await Promise.allSettled([
         parentTask.result,
         child1Task.result,
-        child2Task.result
+        child2Task.result,
       ]);
 
       // Verify all tasks were rejected with AbortError
@@ -305,7 +305,7 @@ describe('AbortableTask', () => {
         // Create second child task that depends on first
         const child2Task = Task.from(async (childController) => {
           results.push('child2-start');
-          
+
           // Create a grandchild task
           const grandchildTask = Task.from(async (grandController) => {
             results.push('grandchild-start');
@@ -323,14 +323,14 @@ describe('AbortableTask', () => {
         // Wait for all tasks
         const [child1Result, child2Result] = await Promise.all([
           child1Task.result,
-          child2Task.result
+          child2Task.result,
         ]);
 
         results.push('parent-end');
         return {
           parent: 'parent-result',
           child1: child1Result,
-          child2: child2Result
+          child2: child2Result,
         };
       });
 
@@ -341,7 +341,7 @@ describe('AbortableTask', () => {
       expect(finalResult).toEqual({
         parent: 'parent-result',
         child1: 'child1-result',
-        child2: 'child2-result-with-grandchild-result'
+        child2: 'child2-result-with-grandchild-result',
       });
 
       // Verify execution order
@@ -356,7 +356,7 @@ describe('AbortableTask', () => {
         'child1-end',
         'parent-end',
       ]);
-      
+
       // All tasks should be done
       expect(parentTask.done).toBe(true);
     });
