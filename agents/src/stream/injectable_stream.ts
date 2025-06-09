@@ -1,5 +1,6 @@
 import { Mutex } from '@livekit/mutex';
 import { mergeReadableStreams } from '@std/streams';
+import type { ReadableStream } from 'node:stream/web';
 import { IdentityTransform } from './identity_transform.js';
 
 export class InjectableStream<T> {
@@ -60,3 +61,38 @@ export class InjectableStream<T> {
     return this.mergedStream;
   }
 }
+
+// // Copied from @std/streams/merge-readable-streams.ts to avoid incompetible ReadableStream types
+// export function mergeReadableStreams<T>(
+//   ...streams: ReadableStream<T>[]
+// ): ReadableStream<T> {
+//   const resolvePromises = streams.map(() => Promise.withResolvers<void>());
+//   return new ReadableStream<T>({
+//     start(controller) {
+//       let mustClose = false;
+//       Promise.all(resolvePromises.map(({ promise }) => promise))
+//         .then(() => {
+//           controller.close();
+//         })
+//         .catch((error) => {
+//           mustClose = true;
+//           controller.error(error);
+//         });
+//       for (const [index, stream] of streams.entries()) {
+//         (async () => {
+//           try {
+//             for await (const data of stream) {
+//               if (mustClose) {
+//                 break;
+//               }
+//               controller.enqueue(data);
+//             }
+//             resolvePromises[index]!.resolve();
+//           } catch (error) {
+//             resolvePromises[index]!.reject(error);
+//           }
+//         })();
+//       }
+//     },
+//   });
+// }

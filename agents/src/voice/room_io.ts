@@ -13,6 +13,7 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
+import type { ReadableStream } from 'node:stream/web';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import type { AgentSession } from './agent_session.js';
@@ -56,7 +57,7 @@ export class RoomIO {
           // TODO(AJS-41) remove hardcoded sample rate
           sampleRate: 16000,
           numChannels: 1,
-        }) as ReadableStream<AudioFrame>,
+        }),
       );
     }
   };

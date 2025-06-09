@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
+import { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';

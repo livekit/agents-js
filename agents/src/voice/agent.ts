@@ -6,6 +6,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { AudioFrame } from '@livekit/rtc-node';
+import { ReadableStream } from 'node:stream/web';
 import type { ChatChunk, ChatMessage, LLM } from '../llm/index.js';
 import { ChatContext } from '../llm/index.js';
 import type { STT, SpeechEvent } from '../stt/index.js';

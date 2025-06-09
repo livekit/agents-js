@@ -1,3 +1,4 @@
+import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { InjectableStream } from '../../src/stream/injectable_stream.js';
 

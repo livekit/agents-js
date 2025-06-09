@@ -3,6 +3,7 @@
 
   "compilerOptions": {
     "types": ["node"],
+    "lib": ["es2024"],
     "rootDir": "./src",
     "declarationDir": "dist",
     "outDir": "dist"
