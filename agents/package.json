@@ -25,7 +25,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\"",
+    "build": "tsup --onSuccess \"pnpm build:types\"",
+    "build:types": "tsc --declaration --emitDeclarationOnly && node ../scripts/copyDeclarationOutput.js",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",

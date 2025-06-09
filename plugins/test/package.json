@@ -26,7 +26,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\" && cp src/long.wav dist/",
+    "build": "tsup --onSuccess \"pnpm build:types\" && cp src/long.wav dist/",
+    "build:types": "tsc --declaration --emitDeclarationOnly && node ../../scripts/copyDeclarationOutput.js",
     "lint": "eslint -f unix \"src/**/*.{ts,js}\""
   },
   "devDependencies": {
