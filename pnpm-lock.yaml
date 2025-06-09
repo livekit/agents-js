@@ -16,10 +16,13 @@ importers:
         version: 0.0.4
       '@rushstack/heft':
         specifier: ^0.66.0
-        version: 0.66.9(@types/node@22.5.5)
+        version: 0.66.9(@types/node@22.15.29)
       '@trivago/prettier-plugin-sort-imports':
         specifier: ^4.3.0
         version: 4.3.0(prettier@3.2.5)
+      '@types/node':
+        specifier: ^22.13.10
+        version: 22.15.29
       '@typescript-eslint/eslint-plugin':
         specifier: ^6.21.0
         version: 6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint@8.57.0)(typescript@5.4.5)
@@ -37,7 +40,7 @@ importers:
         version: 8.10.0(eslint@8.57.0)
       eslint-config-standard:
         specifier: ^17.1.0
-        version: 17.1.0(eslint-plugin-import@2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint@8.57.0))(eslint-plugin-n@16.6.2(eslint@8.57.0))(eslint-plugin-promise@6.1.1(eslint@8.57.0))(eslint@8.57.0)
+        version: 17.1.0(eslint-plugin-import@2.29.1)(eslint-plugin-n@16.6.2(eslint@8.57.0))(eslint-plugin-promise@6.1.1(eslint@8.57.0))(eslint@8.57.0)
       eslint-config-turbo:
         specifier: ^1.12.2
         version: 1.13.3(eslint@8.57.0)
@@ -89,6 +92,9 @@ importers:
       '@std/async':
         specifier: npm:@jsr/std__async@^1.0.13
         version: '@jsr/std__async@1.0.13'
+      '@std/streams':
+        specifier: jsr:^1.0.9
+        version: '@jsr/std__streams@1.0.9'
       commander:
         specifier: ^12.0.0
         version: 12.0.0
@@ -190,13 +196,13 @@ importers:
         version: 0.13.13
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.5.5)
+        version: 7.43.7(@types/node@22.15.29)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.5.5))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.15.29))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -221,13 +227,13 @@ importers:
         version: 0.13.13
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.5.5)
+        version: 7.43.7(@types/node@22.15.29)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.5.5))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.15.29))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -252,13 +258,13 @@ importers:
         version: 0.13.13
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.5.5)
+        version: 7.43.7(@types/node@22.15.29)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.5.5))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.15.29))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -277,13 +283,13 @@ importers:
         version: link:../../agents
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.5.5)
+        version: 7.43.7(@types/node@22.15.29)
       onnxruntime-common:
         specifier: ^1.19.2
         version: 1.19.2
       tsup:
         specifier: ^8.3.5
-        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.5.5))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.15.29))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -308,13 +314,13 @@ importers:
         version: 0.13.13
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.5.5)
+        version: 7.43.7(@types/node@22.15.29)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.5.5))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.15.29))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -345,13 +351,13 @@ importers:
         version: 0.13.13
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.5.5)
+        version: 7.43.7(@types/node@22.15.29)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.5.5))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.15.29))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -376,13 +382,13 @@ importers:
         version: 0.13.13
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.5.5)
+        version: 7.43.7(@types/node@22.15.29)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.5.5))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.15.29))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -404,7 +410,7 @@ importers:
         version: 0.13.13
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.5.5)
+        version: 7.43.7(@types/node@22.15.29)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
@@ -413,7 +419,7 @@ importers:
         version: 1.19.2
       tsup:
         specifier: ^8.3.5
-        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.5.5))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.15.29))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -1332,6 +1338,12 @@ packages:
   '@jsr/std__async@1.0.13':
     resolution: {integrity: sha512-GEApyNtzauJ0kEZ/GxebSkdEN0t29qJtkw+WEvzYTwkL6fHX8cq3YWzRjCqHu+4jMl+rpHiwyr/lfitNInntzA==, tarball: https://npm.jsr.io/~/11/@jsr/std__async/1.0.13.tgz}
 
+  '@jsr/std__bytes@1.0.6':
+    resolution: {integrity: sha512-St6yKggjFGhxS52IFLJWvkchRFbAKg2Xh8UxA4S1EGz7GJ2Ui+ssDDldj/w2c8vCxvl6qgR0HaYbKeFJNqujmA==, tarball: https://npm.jsr.io/~/11/@jsr/std__bytes/1.0.6.tgz}
+
+  '@jsr/std__streams@1.0.9':
+    resolution: {integrity: sha512-nPkEijnOPwLQt6ZtvOajE6F2hCmRILaq0kR6I0JFVvxSsvhdeyFMGc8F4DqypCpfq/U+8umLcE0RNMcYdx4NlQ==, tarball: https://npm.jsr.io/~/11/@jsr/std__streams/1.0.9.tgz}
+
   '@livekit/changesets-changelog-github@0.0.4':
     resolution: {integrity: sha512-MXaiLYwgkYciZb8G2wkVtZ1pJJzZmVx5cM30Q+ClslrIYyAqQhRbPmZDM79/5CGxb1MTemR/tfOM25tgJgAK0g==}
 
@@ -1809,6 +1821,9 @@ packages:
 
   '@types/node@18.19.64':
     resolution: {integrity: sha512-955mDqvO2vFf/oL7V3WiUtiz+BugyX8uVbaT2H8oj3+8dRyH2FLiNdowe7eNqRM7IOIZvzDH76EoAT+gwm6aIQ==}
+
+  '@types/node@22.15.29':
+    resolution: {integrity: sha512-LNdjOkUDlU1RZb8e1kOIUpN1qQUlzGkEtbVNo53vbrwDg5om6oduhm4SiUaPW5ASTXhAiP0jInWG8Qx9fVlOeQ==}
 
   '@types/node@22.5.5':
     resolution: {integrity: sha512-Xjs4y5UPO/CLdzpgR6GirZJx36yScjh73+2NlLlkFRSoQN8B0DpfXPdZGnvVmLRLOsqDpOfTNv7D9trgGhmOIA==}
@@ -4384,6 +4399,9 @@ packages:
   undici-types@6.19.8:
     resolution: {integrity: sha512-ve2KP6f/JnbPBFyobGHuerC9g1FYGn/F8n1LWTwNxCEzd6IfqTwUQcNXgEtmmQ6DlRrC1hrSrBnCZPokRrDHjw==}
 
+  undici-types@6.21.0:
+    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
+
   universalify@0.1.2:
     resolution: {integrity: sha512-rBJeI5CXAlmy1pV+617WB9J63U6XcazHHF2f2dbJix4XzpUF0RS3Zbj0FGIOCAva5P/d/GBOYaACQ1w+0azUkg==}
     engines: {node: '>= 4.0.0'}
@@ -5334,6 +5352,12 @@ snapshots:
 
   '@jsr/std__async@1.0.13': {}
 
+  '@jsr/std__bytes@1.0.6': {}
+
+  '@jsr/std__streams@1.0.9':
+    dependencies:
+      '@jsr/std__bytes': 1.0.6
+
   '@livekit/changesets-changelog-github@0.0.4':
     dependencies:
       '@changesets/get-github-info': 0.5.2
@@ -5395,11 +5419,37 @@ snapshots:
       globby: 11.1.0
       read-yaml-file: 1.1.0
 
+  '@microsoft/api-extractor-model@7.28.17(@types/node@22.15.29)':
+    dependencies:
+      '@microsoft/tsdoc': 0.14.2
+      '@microsoft/tsdoc-config': 0.16.2
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.15.29)
+    transitivePeerDependencies:
+      - '@types/node'
+
   '@microsoft/api-extractor-model@7.28.17(@types/node@22.5.5)':
     dependencies:
       '@microsoft/tsdoc': 0.14.2
       '@microsoft/tsdoc-config': 0.16.2
       '@rushstack/node-core-library': 4.3.0(@types/node@22.5.5)
+    transitivePeerDependencies:
+      - '@types/node'
+
+  '@microsoft/api-extractor@7.43.7(@types/node@22.15.29)':
+    dependencies:
+      '@microsoft/api-extractor-model': 7.28.17(@types/node@22.15.29)
+      '@microsoft/tsdoc': 0.14.2
+      '@microsoft/tsdoc-config': 0.16.2
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.15.29)
+      '@rushstack/rig-package': 0.5.2
+      '@rushstack/terminal': 0.11.0(@types/node@22.15.29)
+      '@rushstack/ts-command-line': 4.21.0(@types/node@22.15.29)
+      lodash: 4.17.21
+      minimatch: 3.0.8
+      resolve: 1.22.8
+      semver: 7.5.4
+      source-map: 0.6.1
+      typescript: 5.4.2
     transitivePeerDependencies:
       - '@types/node'
 
@@ -5638,23 +5688,23 @@ snapshots:
 
   '@rushstack/eslint-patch@1.10.3': {}
 
-  '@rushstack/heft-config-file@0.14.19(@types/node@22.5.5)':
+  '@rushstack/heft-config-file@0.14.19(@types/node@22.15.29)':
     dependencies:
-      '@rushstack/node-core-library': 4.3.0(@types/node@22.5.5)
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.15.29)
       '@rushstack/rig-package': 0.5.2
-      '@rushstack/terminal': 0.11.0(@types/node@22.5.5)
+      '@rushstack/terminal': 0.11.0(@types/node@22.15.29)
       jsonpath-plus: 4.0.0
     transitivePeerDependencies:
       - '@types/node'
 
-  '@rushstack/heft@0.66.9(@types/node@22.5.5)':
+  '@rushstack/heft@0.66.9(@types/node@22.15.29)':
     dependencies:
-      '@rushstack/heft-config-file': 0.14.19(@types/node@22.5.5)
-      '@rushstack/node-core-library': 4.3.0(@types/node@22.5.5)
-      '@rushstack/operation-graph': 0.2.19(@types/node@22.5.5)
+      '@rushstack/heft-config-file': 0.14.19(@types/node@22.15.29)
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.15.29)
+      '@rushstack/operation-graph': 0.2.19(@types/node@22.15.29)
       '@rushstack/rig-package': 0.5.2
-      '@rushstack/terminal': 0.11.0(@types/node@22.5.5)
-      '@rushstack/ts-command-line': 4.21.0(@types/node@22.5.5)
+      '@rushstack/terminal': 0.11.0(@types/node@22.15.29)
+      '@rushstack/ts-command-line': 4.21.0(@types/node@22.15.29)
       '@types/tapable': 1.0.6
       fast-glob: 3.3.2
       git-repo-info: 2.1.1
@@ -5664,6 +5714,17 @@ snapshots:
       watchpack: 2.4.0
     transitivePeerDependencies:
       - '@types/node'
+
+  '@rushstack/node-core-library@4.3.0(@types/node@22.15.29)':
+    dependencies:
+      fs-extra: 7.0.1
+      import-lazy: 4.0.0
+      jju: 1.4.0
+      resolve: 1.22.8
+      semver: 7.5.4
+      z-schema: 5.0.5
+    optionalDependencies:
+      '@types/node': 22.15.29
 
   '@rushstack/node-core-library@4.3.0(@types/node@22.5.5)':
     dependencies:
@@ -5676,17 +5737,24 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.5.5
 
-  '@rushstack/operation-graph@0.2.19(@types/node@22.5.5)':
+  '@rushstack/operation-graph@0.2.19(@types/node@22.15.29)':
     dependencies:
-      '@rushstack/node-core-library': 4.3.0(@types/node@22.5.5)
-      '@rushstack/terminal': 0.11.0(@types/node@22.5.5)
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.15.29)
+      '@rushstack/terminal': 0.11.0(@types/node@22.15.29)
     optionalDependencies:
-      '@types/node': 22.5.5
+      '@types/node': 22.15.29
 
   '@rushstack/rig-package@0.5.2':
     dependencies:
       resolve: 1.22.8
       strip-json-comments: 3.1.1
+
+  '@rushstack/terminal@0.11.0(@types/node@22.15.29)':
+    dependencies:
+      '@rushstack/node-core-library': 4.3.0(@types/node@22.15.29)
+      supports-color: 8.1.1
+    optionalDependencies:
+      '@types/node': 22.15.29
 
   '@rushstack/terminal@0.11.0(@types/node@22.5.5)':
     dependencies:
@@ -5694,6 +5762,15 @@ snapshots:
       supports-color: 8.1.1
     optionalDependencies:
       '@types/node': 22.5.5
+
+  '@rushstack/ts-command-line@4.21.0(@types/node@22.15.29)':
+    dependencies:
+      '@rushstack/terminal': 0.11.0(@types/node@22.15.29)
+      '@types/argparse': 1.0.38
+      argparse: 1.0.10
+      string-argv: 0.3.2
+    transitivePeerDependencies:
+      - '@types/node'
 
   '@rushstack/ts-command-line@4.21.0(@types/node@22.5.5)':
     dependencies:
@@ -5740,7 +5817,7 @@ snapshots:
 
   '@types/node-fetch@2.6.11':
     dependencies:
-      '@types/node': 22.5.5
+      '@types/node': 22.15.29
       form-data: 4.0.1
 
   '@types/node@12.20.55': {}
@@ -5748,6 +5825,10 @@ snapshots:
   '@types/node@18.19.64':
     dependencies:
       undici-types: 5.26.5
+
+  '@types/node@22.15.29':
+    dependencies:
+      undici-types: 6.21.0
 
   '@types/node@22.5.5':
     dependencies:
@@ -5761,7 +5842,7 @@ snapshots:
 
   '@types/ws@8.5.10':
     dependencies:
-      '@types/node': 22.5.5
+      '@types/node': 22.15.29
 
   '@typescript-eslint/eslint-plugin@6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint@8.57.0)(typescript@5.4.5)':
     dependencies:
@@ -6638,7 +6719,7 @@ snapshots:
     dependencies:
       eslint: 8.57.0
 
-  eslint-config-standard@17.1.0(eslint-plugin-import@2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint@8.57.0))(eslint-plugin-n@16.6.2(eslint@8.57.0))(eslint-plugin-promise@6.1.1(eslint@8.57.0))(eslint@8.57.0):
+  eslint-config-standard@17.1.0(eslint-plugin-import@2.29.1)(eslint-plugin-n@16.6.2(eslint@8.57.0))(eslint-plugin-promise@6.1.1(eslint@8.57.0))(eslint@8.57.0):
     dependencies:
       eslint: 8.57.0
       eslint-plugin-import: 2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0)
@@ -6663,7 +6744,7 @@ snapshots:
       debug: 4.3.4
       enhanced-resolve: 5.16.1
       eslint: 8.57.0
-      eslint-module-utils: 2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1)(eslint@8.57.0))(eslint@8.57.0)
+      eslint-module-utils: 2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0)
       eslint-plugin-import: 2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0)
       fast-glob: 3.3.2
       get-tsconfig: 4.7.5
@@ -6675,7 +6756,7 @@ snapshots:
       - eslint-import-resolver-webpack
       - supports-color
 
-  eslint-module-utils@2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1)(eslint@8.57.0))(eslint@8.57.0):
+  eslint-module-utils@2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0):
     dependencies:
       debug: 3.2.7
     optionalDependencies:
@@ -6703,7 +6784,7 @@ snapshots:
       doctrine: 2.1.0
       eslint: 8.57.0
       eslint-import-resolver-node: 0.3.9
-      eslint-module-utils: 2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1)(eslint@8.57.0))(eslint@8.57.0)
+      eslint-module-utils: 2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.4.5))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0)
       hasown: 2.0.2
       is-core-module: 2.13.1
       is-glob: 4.0.3
@@ -7911,7 +7992,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.0
-      '@types/node': 22.5.5
+      '@types/node': 22.15.29
       long: 5.2.3
 
   pseudomap@1.0.2: {}
@@ -8487,6 +8568,34 @@ snapshots:
 
   tslib@2.6.2: {}
 
+  tsup@8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.15.29))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5):
+    dependencies:
+      bundle-require: 5.0.0(esbuild@0.24.0)
+      cac: 6.7.14
+      chokidar: 4.0.1
+      consola: 3.2.3
+      debug: 4.3.7
+      esbuild: 0.24.0
+      joycon: 3.1.1
+      picocolors: 1.1.1
+      postcss-load-config: 6.0.1(postcss@8.4.38)(tsx@4.19.2)
+      resolve-from: 5.0.0
+      rollup: 4.27.3
+      source-map: 0.8.0-beta.0
+      sucrase: 3.35.0
+      tinyexec: 0.3.1
+      tinyglobby: 0.2.10
+      tree-kill: 1.2.2
+    optionalDependencies:
+      '@microsoft/api-extractor': 7.43.7(@types/node@22.15.29)
+      postcss: 8.4.38
+      typescript: 5.4.5
+    transitivePeerDependencies:
+      - jiti
+      - supports-color
+      - tsx
+      - yaml
+
   tsup@8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.5.5))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5):
     dependencies:
       bundle-require: 5.0.0(esbuild@0.24.0)
@@ -8660,6 +8769,8 @@ snapshots:
 
   undici-types@6.19.8: {}
 
+  undici-types@6.21.0: {}
+
   universalify@0.1.2: {}
 
   uri-js@4.4.1:
@@ -8672,6 +8783,23 @@ snapshots:
       spdx-expression-parse: 3.0.1
 
   validator@13.12.0: {}
+
+  vite-node@1.6.0(@types/node@22.15.29):
+    dependencies:
+      cac: 6.7.14
+      debug: 4.3.4
+      pathe: 1.1.2
+      picocolors: 1.0.1
+      vite: 5.2.11(@types/node@22.15.29)
+    transitivePeerDependencies:
+      - '@types/node'
+      - less
+      - lightningcss
+      - sass
+      - stylus
+      - sugarss
+      - supports-color
+      - terser
 
   vite-node@1.6.0(@types/node@22.5.5):
     dependencies:
@@ -8715,6 +8843,39 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.5.5
       fsevents: 2.3.3
+
+  vitest@1.6.0(@types/node@22.15.29):
+    dependencies:
+      '@vitest/expect': 1.6.0
+      '@vitest/runner': 1.6.0
+      '@vitest/snapshot': 1.6.0
+      '@vitest/spy': 1.6.0
+      '@vitest/utils': 1.6.0
+      acorn-walk: 8.3.2
+      chai: 4.4.1
+      debug: 4.3.4
+      execa: 8.0.1
+      local-pkg: 0.5.0
+      magic-string: 0.30.10
+      pathe: 1.1.2
+      picocolors: 1.0.1
+      std-env: 3.7.0
+      strip-literal: 2.1.0
+      tinybench: 2.8.0
+      tinypool: 0.8.4
+      vite: 5.2.11(@types/node@22.15.29)
+      vite-node: 1.6.0(@types/node@22.15.29)
+      why-is-node-running: 2.2.2
+    optionalDependencies:
+      '@types/node': 22.15.29
+    transitivePeerDependencies:
+      - less
+      - lightningcss
+      - sass
+      - stylus
+      - sugarss
+      - supports-color
+      - terser
 
   vitest@1.6.0(@types/node@22.5.5):
     dependencies:

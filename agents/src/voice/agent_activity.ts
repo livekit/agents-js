@@ -12,8 +12,8 @@ import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
 import { Future } from '../utils.js';
 import type { VADEvent } from '../vad.js';
-import { StopResponse } from './agent.js';
 import type { Agent } from './agent.js';
+import { StopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import {
   AudioRecognition,
