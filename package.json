@@ -43,7 +43,7 @@
     "turbo": "^1.13.3",
     "typedoc": "^0.25.13",
     "typescript": "^5.4.5",
-    "vitest": "^1.6.0"
+    "vitest": "^3.2.2"
   },
   "packageManager": "pnpm@10.11.0"
 }
