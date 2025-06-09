@@ -4,7 +4,7 @@
 import { delay } from '@std/async/delay';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
-import { DeferredReadableStream } from '../../src/stream/deferred_stream.js';
+import { DeferredReadableStream } from './deferred_stream.js';
 
 
 describe('DeferredReadableStream', { timeout: 2000 }, () => {

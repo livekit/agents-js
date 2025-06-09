@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
-import { IdentityTransform } from '../../src/stream/identity_transform.js';
+import { IdentityTransform } from './identity_transform.js';
 
 describe('IdentityTransform', () => {
   it('should handle stream with one value', async () => {
