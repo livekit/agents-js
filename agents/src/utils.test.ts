@@ -114,7 +114,7 @@ describe('AbortableTask', () => {
       });
 
       await delay(10);
-      
+
       // Multiple cancellations should not cause issues
       task.cancel();
       task.cancel();
@@ -210,7 +210,7 @@ describe('AbortableTask', () => {
 
       // Both promises should resolve to the same value
       const [result1, result2] = await Promise.all([resultPromise1, resultPromise2]);
-      
+
       expect(result1).toBe('delayed result');
       expect(result2).toBe('delayed result');
       expect(task.done).toBe(true);
@@ -266,7 +266,7 @@ describe('AbortableTask', () => {
       const [parentResult, child1Result, child2Result] = await Promise.allSettled([
         parentTask.result,
         child1Task.result,
-        child2Task.result
+        child2Task.result,
       ]);
 
       // Verify all tasks were rejected with AbortError
@@ -295,7 +295,7 @@ describe('AbortableTask', () => {
         results.push('parent-start');
 
         // Create first child task
-        const child1Task = createTask(async (childController) => {
+        const child1Task = createTask(async () => {
           results.push('child1-start');
           await delay(25);
           results.push('child1-end');
@@ -305,9 +305,9 @@ describe('AbortableTask', () => {
         // Create second child task that depends on first
         const child2Task = createTask(async (childController) => {
           results.push('child2-start');
-          
+
           // Create a grandchild task
-          const grandchildTask = createTask(async (grandController) => {
+          const grandchildTask = createTask(async () => {
             results.push('grandchild-start');
             await delay(10);
             results.push('grandchild-end');
@@ -323,14 +323,14 @@ describe('AbortableTask', () => {
         // Wait for all tasks
         const [child1Result, child2Result] = await Promise.all([
           child1Task.result,
-          child2Task.result
+          child2Task.result,
         ]);
 
         results.push('parent-end');
         return {
           parent: 'parent-result',
           child1: child1Result,
-          child2: child2Result
+          child2: child2Result,
         };
       });
 
@@ -341,7 +341,7 @@ describe('AbortableTask', () => {
       expect(finalResult).toEqual({
         parent: 'parent-result',
         child1: 'child1-result',
-        child2: 'child2-result-with-grandchild-result'
+        child2: 'child2-result-with-grandchild-result',
       });
 
       // Verify execution order
@@ -356,7 +356,7 @@ describe('AbortableTask', () => {
         'child1-end',
         'parent-end',
       ]);
-      
+
       // All tasks should be done
       expect(parentTask.done).toBe(true);
     });
@@ -367,12 +367,12 @@ describe('AbortableTask', () => {
       let child2Started = false;
 
       const parentTask = createTask(async (controller) => {
-        const child1Task = createTask(async (childController) => {
+        const child1Task = createTask(async () => {
           await delay(20);
           throw new Error('child1 error');
         }, controller);
 
-        const child2Task = createTask(async (childController) => {
+        const child2Task = createTask(async () => {
           child2Started = true;
           await delay(30);
           child1Completed = true;
