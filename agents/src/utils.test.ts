@@ -420,7 +420,7 @@ describe('AbortableTask', () => {
     });
 
     it('should timeout if task does not respond to cancellation', async () => {
-      const task = Task.from(async (controller) => {
+      const task = Task.from(async () => {
         await delay(1000);
       });
 
