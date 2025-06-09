@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { delay } from '@std/async';
 import { describe, expect, it } from 'vitest';
-import { Task, TASK_TIMEOUT_ERROR, TaskResult } from '../src/utils.js';
+import { TASK_TIMEOUT_ERROR, Task, TaskResult } from '../src/utils.js';
 
 describe('AbortableTask', () => {
   describe('AbortableTask.from', () => {
@@ -401,7 +401,7 @@ describe('AbortableTask', () => {
 
     it('should cancel and wait for task completion', async () => {
       let taskCompleted = false;
-      
+
       const task = Task.from(async (controller) => {
         await delay(5000, { signal: controller.signal });
         taskCompleted = true;
@@ -443,7 +443,7 @@ describe('AbortableTask', () => {
 
       // Cancel and wait - but task will complete normally before being canceled
       const result = await task.cancelAndWait(1000);
-      
+
       // Task should have completed normally
       expect(result).toBe(TaskResult.Completed);
       expect(task.done).toBe(true);
