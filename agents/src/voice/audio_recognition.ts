@@ -10,7 +10,7 @@ import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import { Task } from '../utils.js';
+import { isStreamReaderReleaseError, Task } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
@@ -279,7 +279,7 @@ export class AudioRecognition {
       }
 
       this.logger.debug('createSttTask: create stt stream from stt node');
-      const sttStream = await this.stt(this.sttInputStream, {}, { signal: controller.signal });
+      const sttStream = await this.stt(this.sttInputStream, {});
 
       if (controller.signal.aborted) return;
       if (sttStream === null) return;
@@ -288,11 +288,26 @@ export class AudioRecognition {
         this.logger.debug('createSttTask: acquiring sttStream reader');
         const reader = sttStream.getReader();
 
+        controller.signal.addEventListener('abort', async () => {
+          this.logger.debug('createSttTask: abort signal received');
+          try {
+            this.logger.debug('createSttTask: releasing sttStream reader');
+            reader.releaseLock();
+            this.logger.debug('createSttTask: cancelling sttStream');
+            await sttStream?.cancel();
+          } catch (e) {
+            this.logger.debug('createSttTask: error during abort handler:', e);
+          }
+        });
+
         try {
           while (true) {
-            this.logger.debug('createSttTask: before reading sttStream');
+            if (controller.signal.aborted) {
+              this.logger.debug('createSttTask: abort signal detected in read loop, breaking...');
+              break;
+            }
+            
             const { done, value: ev } = await reader.read();
-            this.logger.debug('createSttTask: after reading sttStream');
 
             if (done) {
               this.logger.debug('createSttTask: sttStream reader done, exiting loop...');
@@ -305,13 +320,21 @@ export class AudioRecognition {
             }
           }
         } catch (e) {
+          if (isStreamReaderReleaseError(e)) {
+            this.logger.debug('createSttTask: error reading sttStream, reader released');
+            return;
+          }
           this.logger.error({ error: e }, 'createSttTask: error reading sttStream');
         } finally {
           this.logger.debug('createSttTask: releasing sttStream reader');
           reader.releaseLock();
           this.logger.debug('createSttTask: cancelling sttStream');
-          sttStream.cancel();
-          this.logger.debug('createSttTask: sttStream cancelled, exiting task...');
+          try {
+            await sttStream.cancel();
+            this.logger.debug('createSttTask: sttStream cancelled, exiting task...');
+          } catch (e) {
+            this.logger.debug('createSttTask: error cancelling sttStream (may already be cancelled):', e);
+          }
         }
       }
     };

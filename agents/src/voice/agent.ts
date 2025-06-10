@@ -142,18 +142,7 @@ export class Agent {
       logger.debug('Agent.default.sttNode: creating STT (deepgram) stream');
       const stream = wrapped_stt.stream();
 
-      logger.debug('Agent.default.sttNode: setting deferred input stream');
       stream.updateInputStream(audio);
-
-      if (nodeOptions.signal) {
-        logger.debug('Agent.default.sttNode: attaching abort signal listener');
-        nodeOptions.signal.addEventListener('abort', () => {
-          logger.debug('Agent.default.sttNode: abort signal received, detaching input stream');
-          stream.detachInputStream();
-          logger.debug('Agent.default.sttNode: cancel stt readable stream');
-          stream.close();
-        });
-      }
 
       logger.debug('Agent.default.sttNode: creating ReadableStream');
       return new ReadableStream({
@@ -166,10 +155,12 @@ export class Agent {
           controller.close();
           logger.debug('Agent.default.sttNode: controller closed');
         },
-        // async cancel() {
-        //   logger.debug('Agent.default.sttNode: cancel stt readable stream');
-        //   stream.close();
-        // },
+        cancel() {
+          logger.debug('Agent.default.sttNode: detaching deferred input stream');
+          stream.detachInputStream();
+          logger.debug('Agent.default.sttNode: closing stt readable stream');
+          stream.close();
+        },
       });
     },
 
