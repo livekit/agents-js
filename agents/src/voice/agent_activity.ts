@@ -10,7 +10,7 @@ import { log } from '../log.js';
 import { SpeechHandle } from '../pipeline/speech_handle.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
-import { Future } from '../utils.js';
+import { Future, Task } from '../utils.js';
 import type { VADEvent } from '../vad.js';
 import { StopResponse } from './agent.js';
 import type { Agent } from './agent.js';
@@ -285,26 +285,26 @@ export class AgentActivity implements RecognitionHooks {
     // TODO(AJS-57): handle instructions
 
     this.agentSession._updateAgentState('thinking');
-    const tasks: Array<Promise<void>> = [];
+    const tasks: Array<Task<void>> = [];
     const [llmTask, llmGenData] = performLLMInference(
       // preserve  `this` context in llmNode
       (...args) => this.agent.llmNode(...args),
       chatCtx,
       {},
-      replyAbortController.signal,
+      replyAbortController,
     );
     tasks.push(llmTask);
 
     const [ttsTextInput, llmOutput] = llmGenData.textStream.tee();
 
-    let ttsTask: Promise<void> | null = null;
+    let ttsTask: Task<void> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
     if (audioOutput) {
       [ttsTask, ttsStream] = performTTSInference(
         (...args) => this.agent.ttsNode(...args),
         ttsTextInput,
         {},
-        replyAbortController.signal,
+        replyAbortController,
       );
       tasks.push(ttsTask);
     }
@@ -316,14 +316,14 @@ export class AgentActivity implements RecognitionHooks {
         'Speech interrupted after tts and llm tasks',
       );
       replyAbortController.abort();
-      await Promise.allSettled(tasks);
+      await Promise.allSettled(tasks.map((task) => task.cancelAndWait));
       return;
     }
 
     const [textForwardTask, textOutput] = performTextForwarding(
       null,
       llmOutput,
-      replyAbortController.signal,
+      replyAbortController,
     );
     tasks.push(textForwardTask);
 
@@ -336,7 +336,7 @@ export class AgentActivity implements RecognitionHooks {
         const [forwardTask, audioOut] = performAudioForwarding(
           ttsStream,
           audioOutput,
-          replyAbortController.signal,
+          replyAbortController,
         );
         tasks.push(forwardTask);
         audioOut.firstFrameFut.await.then(onFirstFrame);
@@ -348,7 +348,7 @@ export class AgentActivity implements RecognitionHooks {
     }
     // TODO(shubhra): handle tool calls
 
-    await speechHandle.waitIfNotInterrupted(tasks);
+    await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
     // TODO(shubhra): add waiting for audio playout in audio output
 
@@ -358,7 +358,7 @@ export class AgentActivity implements RecognitionHooks {
         'Aborting all pipeline reply tasks due to interruption',
       );
       replyAbortController.abort();
-      await Promise.allSettled(tasks);
+      await Promise.allSettled(tasks.map((task) => task.cancelAndWait));
       // TODO(shubhra): add waiting for audio playout in audio output and syncronizher transcripts
       const message = ChatMessage.create({
         role: ChatRole.ASSISTANT,

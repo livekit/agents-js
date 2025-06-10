@@ -7,7 +7,7 @@ import type { ReadableStream } from 'stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
-import { Future } from '../utils.js';
+import { Future, Task } from '../utils.js';
 import type { LLMNode, TTSNode } from './io.js';
 
 /* @internal */
@@ -25,13 +25,13 @@ export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
   modelSettings: any, // TODO(AJS-59): add type
-  signal: AbortSignal,
-): [Promise<void>, _LLMGenerationData] {
+  controller: AbortController,
+): [Task<void>, _LLMGenerationData] {
   const textStream = new IdentityTransform<string>();
   const outputWriter = textStream.writable.getWriter();
   const data = new _LLMGenerationData(textStream.readable);
 
-  const inferenceTask = async () => {
+  const inferenceTask = async (signal: AbortSignal) => {
     let llmStreamReader: ReadableStreamDefaultReader<any> | null = null;
     let llmStream: ReadableStream<string | ChatChunk> | null = null;
 
@@ -44,7 +44,7 @@ export function performLLMInference(
 
       llmStreamReader = llmStream.getReader();
       while (true) {
-        if (signal?.aborted) {
+        if (signal.aborted) {
           break;
         }
         const { done, value: chunk } = await llmStreamReader.read();
@@ -78,20 +78,20 @@ export function performLLMInference(
     }
   };
 
-  return [inferenceTask(), data];
+  return [Task.from((controller) => inferenceTask(controller.signal), controller), data];
 }
 
 export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string>,
   modelSettings: any, // TODO(AJS-59): add type
-  signal: AbortSignal,
-): [Promise<void>, ReadableStream<AudioFrame>] {
+  controller: AbortController,
+): [Task<void>, ReadableStream<AudioFrame>] {
   const audioStream = new IdentityTransform<AudioFrame>();
   const outputWriter = audioStream.writable.getWriter();
   const audioOutputStream = audioStream.readable;
 
-  const inferenceTask = async () => {
+  const inferenceTask = async (signal: AbortSignal) => {
     let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
 
@@ -126,7 +126,10 @@ export function performTTSInference(
     }
   };
 
-  return [inferenceTask(), audioOutputStream];
+  return [
+    Task.from((controller) => inferenceTask(controller.signal), controller),
+    audioOutputStream,
+  ];
 }
 
 export interface _TextOutput {
@@ -167,13 +170,16 @@ async function forwardText(
 export function performTextForwarding(
   textOutput: _TextOutput | null,
   source: ReadableStream<string>,
-  signal?: AbortSignal,
-): [Promise<void>, _TextOutput] {
+  controller: AbortController,
+): [Task<void>, _TextOutput] {
   const out = {
     text: '',
     firstTextFut: new Future(),
   };
-  return [forwardText(textOutput, source, out, signal), out];
+  return [
+    Task.from((controller) => forwardText(textOutput, source, out, controller.signal), controller),
+    out,
+  ];
 }
 
 export interface _AudioOutput {
@@ -220,11 +226,17 @@ async function forwardAudio(
 export function performAudioForwarding(
   ttsStream: ReadableStream<AudioFrame>,
   audioOutput: AudioSource,
-  signal?: AbortSignal,
-): [Promise<void>, _AudioOutput] {
+  controller: AbortController,
+): [Task<void>, _AudioOutput] {
   const out = {
     audio: [],
     firstFrameFut: new Future(),
   };
-  return [forwardAudio(ttsStream, audioOutput, out, signal), out];
+  return [
+    Task.from(
+      (controller) => forwardAudio(ttsStream, audioOutput, out, controller.signal),
+      controller,
+    ),
+    out,
+  ];
 }
