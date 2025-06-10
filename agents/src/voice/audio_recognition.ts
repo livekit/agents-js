@@ -9,6 +9,7 @@ import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
+import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { Task, isStreamReaderReleaseError } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
@@ -463,46 +464,3 @@ export class AudioRecognition {
   }
 }
 
-function withResolvers<T = unknown>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: any) => void;
-
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-
-  return { promise, resolve, reject };
-}
-
-export function mergeReadableStreams<T>(...streams: ReadableStream<T>[]): ReadableStream<T> {
-  const resolvePromises = streams.map(() => withResolvers<void>());
-  return new ReadableStream<T>({
-    start(controller) {
-      let mustClose = false;
-      Promise.all(resolvePromises.map(({ promise }) => promise))
-        .then(() => {
-          controller.close();
-        })
-        .catch((error) => {
-          mustClose = true;
-          controller.error(error);
-        });
-      for (const [index, stream] of streams.entries()) {
-        (async () => {
-          try {
-            for await (const data of stream) {
-              if (mustClose) {
-                break;
-              }
-              controller.enqueue(data);
-            }
-            resolvePromises[index]!.resolve();
-          } catch (error) {
-            resolvePromises[index]!.reject(error);
-          }
-        })();
-      }
-    },
-  });
-}
