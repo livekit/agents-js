@@ -104,7 +104,11 @@ export class AgentActivity implements RecognitionHooks {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onVADInferenceDone(ev: VADEvent): void {
-    if (this.currentSpeech && !this.currentSpeech.interrupted && this.currentSpeech.done) {
+    if (
+      this.currentSpeech &&
+      !this.currentSpeech.interrupted &&
+      this.currentSpeech.allowInterruptions
+    ) {
       this.logger.info({ 'speech id': this.currentSpeech.id }, 'speech interrupted by VAD');
       // this.currentSpeech.interrupt();
     }
@@ -282,7 +286,8 @@ export class AgentActivity implements RecognitionHooks {
 
     this.agentSession._updateAgentState('thinking');
     const tasks: Array<Promise<void>> = [];
-    const [llmTask, llmGenData] = performLLMInference(
+    const [llmTask, llmGenData] = Tasks.from( performLLMInference(
+      // preserve  `this` context in llmNode
       (...args) => this.agent.llmNode(...args),
       chatCtx,
       {},
