@@ -262,9 +262,6 @@ export abstract class SynthesizeStream
   /** Close both the input and output of the TTS stream */
   close() {
     this.abortController.abort();
-    // this.input.close();
-    // this.output.close();
-    // this.closed = true;
   }
 
   [Symbol.asyncIterator](): SynthesizeStream {
