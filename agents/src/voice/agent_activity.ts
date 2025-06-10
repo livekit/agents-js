@@ -286,7 +286,7 @@ export class AgentActivity implements RecognitionHooks {
 
     this.agentSession._updateAgentState('thinking');
     const tasks: Array<Promise<void>> = [];
-    const [llmTask, llmGenData] = Tasks.from( performLLMInference(
+    const [llmTask, llmGenData] = performLLMInference(
       // preserve  `this` context in llmNode
       (...args) => this.agent.llmNode(...args),
       chatCtx,
