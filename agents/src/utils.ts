@@ -8,6 +8,7 @@ import type {
   TrackPublication,
 } from '@livekit/rtc-node';
 import { AudioFrame, TrackSource } from '@livekit/rtc-node';
+import { delay } from '@std/async';
 import { EventEmitter, once } from 'node:events';
 
 /** Union of a single and a list of {@link AudioFrame}s */
@@ -340,7 +341,34 @@ export class AudioEnergyFilter {
   }
 }
 
-export class AbortableTask<T> {
+export const TASK_TIMEOUT_ERROR = new Error('Task cancellation timed out');
+
+export enum TaskResult {
+  Timeout = 'timeout',
+  Completed = 'completed',
+  Aborted = 'aborted',
+}
+
+/** @internal */
+/**
+ * A task that can be cancelled.
+ *
+ * We recommend using the `Task.from` method to create a task. When creating subtasks, pass the same controller to all subtasks.
+ *
+ * @example
+ * ```ts
+ * const parent = Task.from((controller) => {
+ *   const child1 = Task.from(() => { ... }, controller);
+ *   const child2 = Task.from(() => { ... }, controller);
+ * });
+ * parent.cancel();
+ * ```
+ *
+ * This will cancel all subtasks when the parent is cancelled.
+ *
+ * @param T - The type of the task result
+ */
+export class Task<T> {
   private resultFuture: Future<T>;
 
   constructor(
@@ -349,6 +377,18 @@ export class AbortableTask<T> {
   ) {
     this.resultFuture = new Future();
     this.runTask();
+  }
+
+  /**
+   * Creates a new task from a function.
+   *
+   * @param fn - The function to run
+   * @param controller - The abort controller to use
+   * @returns A new task
+   */
+  static from<T>(fn: (controller: AbortController) => Promise<T>, controller?: AbortController) {
+    const abortController = controller ?? new AbortController();
+    return new Task(fn, abortController);
   }
 
   private async runTask() {
@@ -362,24 +402,63 @@ export class AbortableTask<T> {
       });
   }
 
+  /**
+   * Cancels the task.
+   */
   cancel() {
     this.controller.abort();
   }
 
+  /**
+   * Cancels the task and waits for it to complete.
+   *
+   * @param timeout - The timeout in milliseconds
+   * @returns The result status of the task (timeout, completed, aborted)
+   */
+  async cancelAndWait(timeout?: number) {
+    this.cancel();
+
+    try {
+      // Race between task completion and timeout
+      const promises = [
+        this.result
+          .then(() => TaskResult.Completed)
+          .catch((error) => {
+            if (error.name === 'AbortError') {
+              return TaskResult.Aborted;
+            }
+            throw error;
+          }),
+      ];
+
+      if (timeout) {
+        promises.push(delay(timeout).then(() => TaskResult.Timeout));
+      }
+
+      const result = await Promise.race(promises);
+
+      // Check what happened
+      if (result === TaskResult.Timeout) {
+        throw TASK_TIMEOUT_ERROR;
+      }
+
+      return result;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * The result of the task.
+   */
   get result(): Promise<T> {
     return this.resultFuture.await;
   }
 
+  /**
+   * Whether the task has completed.
+   */
   get done(): boolean {
     return this.resultFuture.done;
   }
-}
-
-export function createTask<T>(
-  fn: (controller: AbortController) => Promise<T>,
-  controller?: AbortController,
-) {
-  const abortController = controller ?? new AbortController();
-  const task = new AbortableTask(fn, abortController);
-  return task;
 }
