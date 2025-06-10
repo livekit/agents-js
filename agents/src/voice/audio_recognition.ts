@@ -8,8 +8,7 @@ import { type ChatContext, ChatRole } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import type { AbortableTask } from '../utils.js';
-import { createTask } from '../utils.js';
+import { Task } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { STTNode } from './io.js';
 
@@ -50,7 +49,7 @@ export class AudioRecognition {
   private speaking = false;
 
   // all abortable tasks
-  private bounceEOUTask?: AbortableTask<void>;
+  private bounceEOUTask?: Task<void>;
 
   constructor(
     private readonly hooks: RecognitionHooks,
@@ -182,7 +181,7 @@ export class AudioRecognition {
 
     // cancel any existing EOU task
     this.bounceEOUTask?.cancel();
-    this.bounceEOUTask = createTask(bounceEOUTask(this.lastSpeakingTime));
+    this.bounceEOUTask = Task.from(bounceEOUTask(this.lastSpeakingTime));
 
     try {
       await this.bounceEOUTask.result;
