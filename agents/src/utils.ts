@@ -353,6 +353,19 @@ export enum TaskResult {
 /**
  * A task that can be cancelled.
  *
+ * We recommend using the `Task.from` method to create a task. When creating subtasks, pass the same controller to all subtasks.
+ *
+ * @example
+ * ```ts
+ * const parent = Task.from((controller) => {
+ *   const child1 = Task.from(() => { ... }, controller);
+ *   const child2 = Task.from(() => { ... }, controller);
+ * });
+ * parent.cancel();
+ * ```
+ *
+ * This will cancel all subtasks when the parent is cancelled.
+ *
  * @param T - The type of the task result
  */
 export class Task<T> {
