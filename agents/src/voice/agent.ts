@@ -145,7 +145,6 @@ export class Agent {
       logger.debug('Agent.default.sttNode: setting deferred input stream');
       stream.updateInputStream(audio);
 
-
       if (nodeOptions.signal) {
         logger.debug('Agent.default.sttNode: attaching abort signal listener');
         nodeOptions.signal.addEventListener('abort', () => {
