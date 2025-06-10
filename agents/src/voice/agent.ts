@@ -16,7 +16,6 @@ import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
-import type { NodeOptions } from './io.js';
 
 export class StopResponse extends Error {
   constructor() {
@@ -77,9 +76,8 @@ export class Agent {
   async transcriptionNode(
     text: ReadableStream<string>,
     modelSettings: any, // TODO(shubhra): add type
-    nodeOptions: NodeOptions = {},
   ): Promise<ReadableStream<string> | null> {
-    return Agent.default.transcriptionNode(this, text, modelSettings, nodeOptions);
+    return Agent.default.transcriptionNode(this, text, modelSettings);
   }
 
   async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage): Promise<void> {}
@@ -87,25 +85,22 @@ export class Agent {
   async sttNode(
     audio: ReadableStream<AudioFrame>,
     modelSettings: any, // TODO(AJS-59): add type
-    nodeOptions: NodeOptions = {},
   ): Promise<ReadableStream<SpeechEvent | string> | null> {
-    return Agent.default.sttNode(this, audio, modelSettings, nodeOptions);
+    return Agent.default.sttNode(this, audio, modelSettings);
   }
 
   async llmNode(
     chatCtx: ChatContext,
     modelSettings: any, // TODO(AJS-59): add type
-    nodeOptions: NodeOptions = {},
   ): Promise<ReadableStream<ChatChunk | string> | null> {
-    return Agent.default.llmNode(this, chatCtx, modelSettings, nodeOptions);
+    return Agent.default.llmNode(this, chatCtx, modelSettings);
   }
 
   async ttsNode(
     text: ReadableStream<string>,
     modelSettings: any, // TODO(AJS-59): add type
-    nodeOptions: NodeOptions = {},
   ): Promise<ReadableStream<AudioFrame> | null> {
-    return Agent.default.ttsNode(this, text, modelSettings, nodeOptions);
+    return Agent.default.ttsNode(this, text, modelSettings);
   }
 
   // realtime_audio_output_node
@@ -122,7 +117,6 @@ export class Agent {
       agent: Agent,
       audio: ReadableStream<AudioFrame>,
       modelSettings: any, // TODO(AJS-59): add type
-      nodeOptions: NodeOptions = {},
     ): Promise<ReadableStream<SpeechEvent | string> | null> {
       const activity = agent.getActivityOrThrow();
 
@@ -138,7 +132,6 @@ export class Agent {
       }
 
       const stream = wrapped_stt.stream();
-
       stream.updateInputStream(audio);
 
       return new ReadableStream({
@@ -155,7 +148,6 @@ export class Agent {
       agent: Agent,
       chatCtx: ChatContext,
       modelSettings: any, // TODO(AJS-59): add type
-      nodeOptions: NodeOptions = {},
     ): Promise<ReadableStream<ChatChunk | string> | null> {
       const activity = agent.getActivityOrThrow();
       const stream = activity.llm.chat({ chatCtx });
@@ -173,7 +165,6 @@ export class Agent {
       agent: Agent,
       text: ReadableStream<string>,
       modelSettings: any, // TODO(AJS-59): add type
-      nodeOptions: NodeOptions = {},
     ): Promise<ReadableStream<AudioFrame> | null> {
       const activity = agent.getActivityOrThrow();
       let wrapped_tts = activity.tts;
@@ -202,7 +193,6 @@ export class Agent {
       agent: Agent,
       text: ReadableStream<string>,
       modelSettings: any, // TODO(shubhra): add type
-      nodeOptions: NodeOptions = {},
     ): Promise<ReadableStream<string> | null> {
       return text;
     },
