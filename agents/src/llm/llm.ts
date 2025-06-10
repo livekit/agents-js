@@ -77,6 +77,11 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
     this.monitorMetrics();
+    this.abortController.signal.addEventListener('abort', () => {
+      this.output.close();
+      // TODO (AJS-37) clean this up when we refactor with streams
+      this.closed = true;
+    });
   }
 
   protected async monitorMetrics() {
@@ -147,7 +152,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
 
   close() {
     this.abortController.abort();
-    this.closed = true;
   }
 
   [Symbol.asyncIterator](): LLMStream {

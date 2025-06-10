@@ -132,6 +132,13 @@ export abstract class SynthesizeStream
     this.#tts = tts;
     this.deferredInputStream = new DeferredReadableStream();
     this.mainTask();
+    this.abortController.signal.addEventListener('abort', () => {
+      this.deferredInputStream.detachSource();
+      // TODO (AJS-36) clean this up when we refactor with streams
+      this.input.close();
+      this.output.close();
+      this.closed = true;
+    });
   }
 
   // TODO(AJS-37) Remove when refactoring TTS to use streams
@@ -139,9 +146,6 @@ export abstract class SynthesizeStream
     const reader = this.deferredInputStream.stream.getReader();
     try {
       while (true) {
-        if (this.abortController.signal.aborted) {
-          break;
-        }
         const { done, value } = await reader.read();
         if (done || value === SynthesizeStream.FLUSH_SENTINEL) {
           break;
@@ -258,9 +262,9 @@ export abstract class SynthesizeStream
   /** Close both the input and output of the TTS stream */
   close() {
     this.abortController.abort();
-    this.input.close();
-    this.output.close();
-    this.closed = true;
+    // this.input.close();
+    // this.output.close();
+    // this.closed = true;
   }
 
   [Symbol.asyncIterator](): SynthesizeStream {

@@ -10,27 +10,6 @@ import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future } from '../utils.js';
 import type { LLMNode, TTSNode } from './io.js';
 
-/**
- * Race a promise with an abort signal
- * @param signal - AbortSignal to race against
- * @param promise - Promise to race
- * @returns Promise that resolves with the original promise result or rejects with AbortError
- */
-function raceWithAbort<T>(signal: AbortSignal, promise: Promise<T>): Promise<T> {
-  if (signal.aborted) {
-    return Promise.reject(new DOMException('Operation was aborted', 'AbortError'));
-  }
-
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => {
-      signal.addEventListener('abort', () => {
-        reject(new DOMException('Operation was aborted', 'AbortError'));
-      });
-    }),
-  ]);
-}
-
 /* @internal */
 export class _LLMGenerationData {
   generatedText: string = '';
@@ -68,7 +47,7 @@ export function performLLMInference(
         if (signal?.aborted) {
           break;
         }
-        const { done, value: chunk } = await raceWithAbort(signal, llmStreamReader.read());
+        const { done, value: chunk } = await llmStreamReader.read();
         if (done) {
           break;
         }
@@ -128,7 +107,7 @@ export function performTTSInference(
         if (signal.aborted) {
           break;
         }
-        const { done, value: chunk } = await raceWithAbort(signal, ttsStreamReader.read());
+        const { done, value: chunk } = await ttsStreamReader.read();
         if (done) {
           break;
         }
@@ -167,9 +146,7 @@ async function forwardText(
       if (signal?.aborted) {
         break;
       }
-      const { done, value: delta } = signal
-        ? await raceWithAbort(signal, reader.read())
-        : await reader.read();
+      const { done, value: delta } = await reader.read();
       if (done) break;
       out.text += delta;
       if (!out.firstTextFut.done) {
@@ -217,9 +194,7 @@ async function forwardAudio(
         break;
       }
 
-      const { done, value: frame } = signal
-        ? await raceWithAbort(signal, reader.read())
-        : await reader.read();
+      const { done, value: frame } = await reader.read();
       if (done) break;
       // TODO(AJS-56) handle resampling
       if (signal?.aborted) {

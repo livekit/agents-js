@@ -109,7 +109,7 @@ export class AgentActivity implements RecognitionHooks {
       !this.currentSpeech.interrupted &&
       this.currentSpeech.allowInterruptions
     ) {
-      this.logger.info({ 'speech id': this.currentSpeech.id }, 'speech interrupted by VAD');
+      // this.logger.info({ 'speech id': this.currentSpeech.id }, 'speech interrupted by VAD');
       // this.currentSpeech.interrupt();
     }
   }
