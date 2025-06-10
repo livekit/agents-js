@@ -87,7 +87,7 @@ export class Agent {
     audio: ReadableStream<AudioFrame>,
     modelSettings: any, // TODO(AJS-59): add type
   ): Promise<ReadableStream<SpeechEvent | string> | null> {
-    return Agent.default.sttNode(this, audio, modelSettings );
+    return Agent.default.sttNode(this, audio, modelSettings);
   }
 
   async llmNode(

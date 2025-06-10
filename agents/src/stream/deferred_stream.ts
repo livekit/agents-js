@@ -9,7 +9,6 @@ import type {
 import { isStreamReaderReleaseError } from '../utils.js';
 import { IdentityTransform } from './identity_transform.js';
 
-
 export class DeferredReadableStream<T> {
   private transform: IdentityTransform<T>;
   private writer: WritableStreamDefaultWriter<T>;

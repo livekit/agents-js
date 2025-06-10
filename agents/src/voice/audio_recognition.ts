@@ -10,7 +10,7 @@ import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import { isStreamReaderReleaseError, Task } from '../utils.js';
+import { Task, isStreamReaderReleaseError } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
@@ -306,7 +306,7 @@ export class AudioRecognition {
               this.logger.debug('createSttTask: abort signal detected in read loop, breaking...');
               break;
             }
-            
+
             const { done, value: ev } = await reader.read();
 
             if (done) {
@@ -333,7 +333,10 @@ export class AudioRecognition {
             await sttStream.cancel();
             this.logger.debug('createSttTask: sttStream cancelled, exiting task...');
           } catch (e) {
-            this.logger.debug('createSttTask: error cancelling sttStream (may already be cancelled):', e);
+            this.logger.debug(
+              'createSttTask: error cancelling sttStream (may already be cancelled):',
+              e,
+            );
           }
         }
       }
