@@ -151,6 +151,8 @@ export abstract class SynthesizeStream
       this.endInput();
     } catch (error) {
       this.logger.error(error, 'Error reading deferred input stream');
+    } finally {
+      reader.releaseLock();
     }
   }
 
