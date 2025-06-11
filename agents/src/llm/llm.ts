@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import { AsyncIterableQueue } from '../utils.js';
 import type { ChatContext, ChatRole } from './chat_context.js';
@@ -63,6 +64,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected queue = new AsyncIterableQueue<ChatChunk>();
   protected closed = false;
   protected _functionCalls: FunctionCallInfo[] = [];
+  protected abortController = new AbortController();
+  protected logger = log();
   abstract label: string;
 
   #llm: LLM;
@@ -74,6 +77,11 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     this.#chatCtx = chatCtx;
     this.#fncCtx = fncCtx;
     this.monitorMetrics();
+    this.abortController.signal.addEventListener('abort', () => {
+      this.output.close();
+      // TODO (AJS-37) clean this up when we refactor with streams
+      this.closed = true;
+    });
   }
 
   protected async monitorMetrics() {
@@ -143,9 +151,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   }
 
   close() {
-    this.output.close();
-    this.queue.close();
-    this.closed = true;
+    this.abortController.abort();
   }
 
   [Symbol.asyncIterator](): LLMStream {
