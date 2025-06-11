@@ -121,6 +121,7 @@ export abstract class SynthesizeStream
   #metricsPendingTexts: string[] = [];
   #metricsText = '';
   #monitorMetricsTask?: Promise<void>;
+  protected abortController = new AbortController();
 
   private deferredInputStream: DeferredReadableStream<
     string | typeof SynthesizeStream.FLUSH_SENTINEL
@@ -131,6 +132,13 @@ export abstract class SynthesizeStream
     this.#tts = tts;
     this.deferredInputStream = new DeferredReadableStream();
     this.mainTask();
+    this.abortController.signal.addEventListener('abort', () => {
+      this.deferredInputStream.detachSource();
+      // TODO (AJS-36) clean this up when we refactor with streams
+      this.input.close();
+      this.output.close();
+      this.closed = true;
+    });
   }
 
   // TODO(AJS-37) Remove when refactoring TTS to use streams
@@ -144,10 +152,11 @@ export abstract class SynthesizeStream
         }
         this.pushText(value);
       }
-      this.flush();
       this.endInput();
     } catch (error) {
       this.logger.error(error, 'Error reading deferred input stream');
+    } finally {
+      reader.releaseLock();
     }
   }
 
@@ -177,6 +186,9 @@ export abstract class SynthesizeStream
     };
 
     for await (const audio of this.queue) {
+      if (this.abortController.signal.aborted) {
+        break;
+      }
       this.output.put(audio);
       if (audio === SynthesizeStream.END_OF_STREAM) continue;
       requestId = audio.requestId;
@@ -233,6 +245,7 @@ export abstract class SynthesizeStream
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
+    this.flush();
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
@@ -248,9 +261,7 @@ export abstract class SynthesizeStream
 
   /** Close both the input and output of the TTS stream */
   close() {
-    this.input.close();
-    this.output.close();
-    this.closed = true;
+    this.abortController.abort();
   }
 
   [Symbol.asyncIterator](): SynthesizeStream {

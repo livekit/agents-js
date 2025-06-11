@@ -53,7 +53,7 @@ export class AgentSession {
   private nextActivity?: AgentActivity;
   private started = false;
   private userState: UserState = 'listening';
-  private agentState: AgentState = 'initializing';
+  private _agentState: AgentState = 'initializing';
 
   private roomIO?: RoomIO;
   private logger = log();
@@ -139,6 +139,10 @@ export class AgentSession {
     return this._chatCtx;
   }
 
+  get agentState(): AgentState {
+    return this._agentState;
+  }
+
   /** @internal */
   _conversationItemAdded(item: ChatMessage): void {
     this._chatCtx.insertItem(item);
@@ -146,7 +150,7 @@ export class AgentSession {
 
   /** @internal */
   _updateAgentState(state: AgentState) {
-    this.agentState = state;
+    this._agentState = state;
   }
 
   /** @internal */

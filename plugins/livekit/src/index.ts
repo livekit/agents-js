@@ -6,6 +6,6 @@ import * as turnDetector from './turn_detector.js';
 
 InferenceRunner.registerRunner(
   turnDetector.EOURunner.INFERENCE_METHOD,
-  import.meta.resolve('./turn_detector.js'),
+  new URL('./turn_detector.js', import.meta.url).toString(),
 );
 export { turnDetector };
