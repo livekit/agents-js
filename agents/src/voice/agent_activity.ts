@@ -10,7 +10,8 @@ import { log } from '../log.js';
 import { SpeechHandle } from '../pipeline/speech_handle.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
-import { Future, Task } from '../utils.js';
+import type { Task } from '../utils.js';
+import { Future } from '../utils.js';
 import type { VADEvent } from '../vad.js';
 import { StopResponse } from './agent.js';
 import type { Agent } from './agent.js';
@@ -28,6 +29,7 @@ import {
 } from './generation.js';
 
 export class AgentActivity implements RecognitionHooks {
+  private static readonly REPLY_TASK_CANCEL_TIMEOUT = 5000;
   private started = false;
   private audioRecognition?: AudioRecognition;
   private logger = log();
@@ -316,7 +318,9 @@ export class AgentActivity implements RecognitionHooks {
         'Speech interrupted after tts and llm tasks',
       );
       replyAbortController.abort();
-      await Promise.allSettled(tasks.map((task) => task.cancelAndWait));
+      await Promise.allSettled(
+        tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
+      );
       return;
     }
 
@@ -358,7 +362,9 @@ export class AgentActivity implements RecognitionHooks {
         'Aborting all pipeline reply tasks due to interruption',
       );
       replyAbortController.abort();
-      await Promise.allSettled(tasks.map((task) => task.cancelAndWait));
+      await Promise.allSettled(
+        tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
+      );
       // TODO(shubhra): add waiting for audio playout in audio output and syncronizher transcripts
       const message = ChatMessage.create({
         role: ChatRole.ASSISTANT,
