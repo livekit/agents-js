@@ -155,9 +155,6 @@ export class Agent {
           logger.debug('Agent.default.sttNode: closing stt readable stream');
           stream.close();
         },
-        cancel() {
-          stream.close();
-        },
       });
     },
 
