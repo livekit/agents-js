@@ -70,7 +70,8 @@ export class ParticipantAudioOutput {
       this.capturing = true;
       this.playbackSegmentsCount++;
     }
-
+    // TODO(shubhra)
+    this.pushedDuration += frame.duration;
     await this.audioSource.captureFrame(frame);
   }
 
