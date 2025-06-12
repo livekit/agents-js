@@ -125,7 +125,6 @@ export abstract class SupervisedProc {
         case 'done': {
           this.#closing = true;
           this.proc!.off('message', listener);
-          this.#join.resolve();
           break;
         }
       }
@@ -139,6 +138,10 @@ export abstract class SupervisedProc {
       clearTimeout(this.#pongTimeout);
       clearInterval(this.#pingInterval);
       clearInterval(this.#memoryWatch);
+      this.#join.resolve();
+    });
+
+    this.proc!.on('exit', () => {
       this.#join.resolve();
     });
 
@@ -185,15 +188,11 @@ export abstract class SupervisedProc {
     }
     this.#closing = true;
 
-    if (!this.#runningJob) {
-      this.proc!.kill();
-      this.#join.resolve();
-    }
-
     this.proc!.send({ case: 'shutdownRequest' });
 
     const timer = setTimeout(() => {
       this.#logger.error('job shutdown is taking too much time');
+      this.proc!.kill();
     }, this.#opts.closeTimeout);
     await this.#join.await.then(() => {
       clearTimeout(timer);

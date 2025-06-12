@@ -64,7 +64,7 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
   }
 
   createProcess(): ChildProcess {
-    return fork(new URL(import.meta.resolve('./job_proc_lazy_main.js')), [this.#agent]);
+    return fork(new URL('./job_proc_lazy_main.js', import.meta.url), [this.#agent]);
   }
 
   async mainTask(proc: ChildProcess) {

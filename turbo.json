@@ -17,13 +17,16 @@
     "LIVEKIT_API_KEY",
     "LIVEKIT_API_SECRET",
     "LIVEKIT_URL",
+    "LLAMA_API_KEY",
     "LOG_LEVEL",
     "OCTOAI_TOKEN",
     "OPENAI_API_KEY",
     "PERPLEXITY_API_KEY",
     "TELNYX_API_KEY",
     "TOGETHER_API_KEY",
-    "XAI_API_KEY"
+    "XAI_API_KEY",
+    "NEUPHONIC_API_KEY",
+    "RESEMBLE_API_KEY"
   ],
   "pipeline": {
     "build": {

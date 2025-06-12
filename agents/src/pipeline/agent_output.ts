@@ -202,7 +202,9 @@ const streamSynthesisTask = (
       handle.synchronizer.pushText(text);
       ttsStream.pushText(text);
     }
-    handle.synchronizer.markTextSegmentEnd();
+    if (!cancelled) {
+      handle.synchronizer.markTextSegmentEnd();
+    }
 
     // end the audio queue early if there is no actual text to turn into speech
     if (!fullText || fullText.trim().length === 0) {

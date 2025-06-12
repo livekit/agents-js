@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { LocalTrackPublication, RemoteParticipant, Room } from '@livekit/rtc-node';
+import type {
+  LocalTrackPublication,
+  NoiseCancellationOptions,
+  RemoteParticipant,
+  Room,
+} from '@livekit/rtc-node';
 import {
   AudioSource,
   LocalAudioTrack,
@@ -12,6 +17,11 @@ import {
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { randomUUID } from 'node:crypto';
 import EventEmitter from 'node:events';
+import {
+  ATTRIBUTE_TRANSCRIPTION_FINAL,
+  ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
+  TOPIC_TRANSCRIPTION,
+} from '../constants.js';
 import type {
   CallableFunctionResult,
   FunctionCallInfo,
@@ -216,6 +226,8 @@ export interface VPAOptions {
   transcription: AgentTranscriptionOptions;
   /** Turn detection model to use. */
   turnDetector?: TurnDetector;
+  /** Noise cancellation options. */
+  noiseCancellation?: NoiseCancellationOptions;
 }
 
 const defaultVPAOptions: VPAOptions = {
@@ -474,7 +486,13 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       return;
     }
 
-    this.#humanInput = new HumanInput(this.#room, this.#vad, this.#stt, this.#participant);
+    this.#humanInput = new HumanInput(
+      this.#room,
+      this.#vad,
+      this.#stt,
+      this.#participant,
+      this.#opts.noiseCancellation,
+    );
     this.#humanInput.on(HumanInputEvent.START_OF_SPEECH, (event) => {
       this.emit(VPAEvent.USER_STARTED_SPEAKING);
       this.#deferredValidation.onHumanStartOfSpeech(event);
@@ -505,28 +523,21 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.emit(VPAEvent.USER_STOPPED_SPEAKING);
       this.#deferredValidation.onHumanEndOfSpeech(event);
     });
-    this.#humanInput.on(HumanInputEvent.INTERIM_TRANSCRIPT, (event) => {
+    this.#humanInput.on(HumanInputEvent.INTERIM_TRANSCRIPT, async (event) => {
       if (!this.#transcriptionId) {
         this.#transcriptionId = randomUUID();
       }
       this.#transcribedInterimText = event.alternatives![0].text;
 
-      this.#room!.localParticipant!.publishTranscription({
-        participantIdentity: this.#humanInput!.participant.identity,
-        trackSid: this.#humanInput!.subscribedTrack!.sid!,
-        segments: [
-          {
-            text: this.#transcribedInterimText,
-            id: this.#transcriptionId,
-            final: true,
-            startTime: BigInt(0),
-            endTime: BigInt(0),
-            language: '',
-          },
-        ],
-      });
+      await this.#publishTranscription(
+        this.#humanInput!.participant.identity,
+        this.#humanInput!.subscribedTrack!.sid!,
+        this.#transcribedInterimText,
+        false,
+        this.#transcriptionId,
+      );
     });
-    this.#humanInput.on(HumanInputEvent.FINAL_TRANSCRIPT, (event) => {
+    this.#humanInput.on(HumanInputEvent.FINAL_TRANSCRIPT, async (event) => {
       const newTranscript = event.alternatives![0].text;
       if (!newTranscript) return;
 
@@ -537,20 +548,14 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       this.#lastFinalTranscriptTime = Date.now();
       this.transcribedText += (this.transcribedText ? ' ' : '') + newTranscript;
 
-      this.#room!.localParticipant!.publishTranscription({
-        participantIdentity: this.#humanInput!.participant.identity,
-        trackSid: this.#humanInput!.subscribedTrack!.sid!,
-        segments: [
-          {
-            text: this.transcribedText,
-            id: this.#transcriptionId,
-            final: true,
-            startTime: BigInt(0),
-            endTime: BigInt(0),
-            language: '',
-          },
-        ],
-      });
+      await this.#publishTranscription(
+        this.#humanInput!.participant.identity,
+        this.#humanInput!.subscribedTrack!.sid!,
+        this.transcribedText,
+        true,
+        this.#transcriptionId,
+      );
+
       this.#transcriptionId = undefined;
 
       if (
@@ -881,18 +886,54 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     handle.setDone();
   }
 
+  async #publishTranscription(
+    participantIdentity: string,
+    trackSid: string,
+    text: string,
+    isFinal: boolean,
+    id: string,
+  ) {
+    this.#room!.localParticipant!.publishTranscription({
+      participantIdentity: participantIdentity,
+      trackSid: trackSid,
+      segments: [
+        {
+          text: text,
+          final: isFinal,
+          id: id,
+          startTime: BigInt(0),
+          endTime: BigInt(0),
+          language: '',
+        },
+      ],
+    });
+    const stream = await this.#room!.localParticipant!.streamText({
+      senderIdentity: participantIdentity,
+      topic: TOPIC_TRANSCRIPTION,
+      attributes: {
+        [ATTRIBUTE_TRANSCRIPTION_TRACK_ID]: trackSid,
+        [ATTRIBUTE_TRANSCRIPTION_FINAL]: isFinal.toString(),
+      },
+    });
+    await stream.write(text);
+    await stream.close();
+  }
+
   #synthesizeAgentSpeech(
     speechId: string,
     source: string | LLMStream | AsyncIterable<string>,
   ): SynthesisHandle {
     const synchronizer = new TextAudioSynchronizer(defaultTextSyncOptions);
-    synchronizer.on('textUpdated', (text) => {
+    // TODO: where possible we would want to use deltas instead of full text segments, esp for LLM streams over the streamText API
+    synchronizer.on('textUpdated', async (text) => {
       this.#agentTranscribedText = text.text;
-      this.#room!.localParticipant!.publishTranscription({
-        participantIdentity: this.#room!.localParticipant!.identity,
-        trackSid: this.#agentPublication!.sid!,
-        segments: [text],
-      });
+      await this.#publishTranscription(
+        this.#room!.localParticipant!.identity!,
+        this.#agentPublication?.sid ?? '',
+        text.text,
+        text.final,
+        text.id,
+      );
     });
 
     if (!this.#agentOutput) {

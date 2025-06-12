@@ -1,5 +1,23 @@
 # @livekit/agents-plugin-cartesia
 
+## 0.1.3
+
+### Patch Changes
+
+- add updateOptions - [#375](https://github.com/livekit/agents-js/pull/375) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`5f805961b91f121c4a7d83a04b648b1122b15dba`](https://github.com/livekit/agents-js/commit/5f805961b91f121c4a7d83a04b648b1122b15dba), [`a0c49c9b7b771bb67748fb7c75c5dd2fe9f90e8a`](https://github.com/livekit/agents-js/commit/a0c49c9b7b771bb67748fb7c75c5dd2fe9f90e8a), [`c06c84fa79ecdfae9170a5255a10315cf64216aa`](https://github.com/livekit/agents-js/commit/c06c84fa79ecdfae9170a5255a10315cf64216aa)]:
+  - @livekit/agents@0.7.4
+
+## 0.1.2
+
+### Patch Changes
+
+- bump to use 0.7.0 - [#316](https://github.com/livekit/agents-js/pull/316) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`724c02bb7a91c27d6c8daf961842fb9f0934770c`](https://github.com/livekit/agents-js/commit/724c02bb7a91c27d6c8daf961842fb9f0934770c), [`7398cffad62b17c79b5fe2f0ca4e99e548560367`](https://github.com/livekit/agents-js/commit/7398cffad62b17c79b5fe2f0ca4e99e548560367), [`6ed0c90d1bab013854c416768b10ef96f3227d68`](https://github.com/livekit/agents-js/commit/6ed0c90d1bab013854c416768b10ef96f3227d68), [`33c241960f0e8f325f534d2406f42148a4486b5a`](https://github.com/livekit/agents-js/commit/33c241960f0e8f325f534d2406f42148a4486b5a)]:
+  - @livekit/agents@0.7.1
+
 ## 0.1.1
 
 ### Patch Changes

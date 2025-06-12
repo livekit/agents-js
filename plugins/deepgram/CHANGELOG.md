@@ -1,5 +1,23 @@
 # @livekit/agents-plugin-deepgram
 
+## 0.5.6
+
+### Patch Changes
+
+- add updateOptions - [#374](https://github.com/livekit/agents-js/pull/374) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`5f805961b91f121c4a7d83a04b648b1122b15dba`](https://github.com/livekit/agents-js/commit/5f805961b91f121c4a7d83a04b648b1122b15dba), [`a0c49c9b7b771bb67748fb7c75c5dd2fe9f90e8a`](https://github.com/livekit/agents-js/commit/a0c49c9b7b771bb67748fb7c75c5dd2fe9f90e8a), [`c06c84fa79ecdfae9170a5255a10315cf64216aa`](https://github.com/livekit/agents-js/commit/c06c84fa79ecdfae9170a5255a10315cf64216aa)]:
+  - @livekit/agents@0.7.4
+
+## 0.5.5
+
+### Patch Changes
+
+- fix(deepgram): add keyterm for nova-3-general #337 - [#337](https://github.com/livekit/agents-js/pull/337) ([@nbsp](https://github.com/nbsp))
+
+- Updated dependencies [[`d44445934cc291df987013068f5c43491634dfa1`](https://github.com/livekit/agents-js/commit/d44445934cc291df987013068f5c43491634dfa1), [`a7350c92f8968e0fd833e7679a607eaf9a1d7e7f`](https://github.com/livekit/agents-js/commit/a7350c92f8968e0fd833e7679a607eaf9a1d7e7f), [`2dcfeab76ace2e1851993771d769ebcb7c188144`](https://github.com/livekit/agents-js/commit/2dcfeab76ace2e1851993771d769ebcb7c188144), [`2bb936c55233ac0747582a5045caa595c6338651`](https://github.com/livekit/agents-js/commit/2bb936c55233ac0747582a5045caa595c6338651)]:
+  - @livekit/agents@0.7.2
+
 ## 0.5.4
 
 ### Patch Changes

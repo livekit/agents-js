@@ -1,15 +1,18 @@
 {
   "name": "@livekit/agents-plugin-elevenlabs",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "ElevenLabs plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": {
+    "import": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "default": "./dist/index.js"
+    },
+    "require": {
+      "types": "./dist/index.d.cts",
+      "default": "./dist/index.cjs"
     }
   },
   "author": "LiveKit",
@@ -22,7 +25,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\"",
+    "build": "tsup --onSuccess \"pnpm build:types\"",
+    "build:types": "tsc --declaration --emitDeclarationOnly && node ../../scripts/copyDeclarationOutput.js",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.{ts,js}\"",
@@ -33,7 +37,7 @@
     "@livekit/agents": "workspace:^x",
     "@livekit/agents-plugin-openai": "workspace:^x",
     "@livekit/agents-plugins-test": "workspace:^x",
-    "@livekit/rtc-node": "^0.13.4",
+    "@livekit/rtc-node": "^0.13.11",
     "@microsoft/api-extractor": "^7.35.0",
     "@types/ws": "^8.5.10",
     "tsup": "^8.3.5",
@@ -44,6 +48,6 @@
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:^x",
-    "@livekit/rtc-node": "^0.13.4"
+    "@livekit/rtc-node": "^0.13.11"
   }
 }

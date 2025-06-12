@@ -157,6 +157,7 @@ export class WorkerOptions {
   wsURL: string;
   apiKey?: string;
   apiSecret?: string;
+  workerToken?: string;
   host: string;
   port: number;
   logLevel: string;
@@ -180,7 +181,8 @@ export class WorkerOptions {
     wsURL = 'ws://localhost:7880',
     apiKey = undefined,
     apiSecret = undefined,
-    host = 'localhost',
+    workerToken = undefined,
+    host = '0.0.0.0',
     port = undefined,
     logLevel = 'info',
     production = false,
@@ -207,6 +209,7 @@ export class WorkerOptions {
     wsURL?: string;
     apiKey?: string;
     apiSecret?: string;
+    workerToken?: string;
     host?: string;
     port?: number;
     logLevel?: string;
@@ -231,6 +234,7 @@ export class WorkerOptions {
     this.wsURL = wsURL;
     this.apiKey = apiKey;
     this.apiSecret = apiSecret;
+    this.workerToken = workerToken;
     this.host = host;
     this.port = port || Default.port(production);
     this.logLevel = logLevel;
@@ -319,7 +323,11 @@ export class Worker {
     );
 
     this.#opts = opts;
-    this.#httpServer = new HTTPServer(opts.host, opts.port);
+    this.#httpServer = new HTTPServer(opts.host, opts.port, () => ({
+      agent_name: opts.agentName,
+      worker_type: JobType[opts.workerType],
+      active_jobs: this.activeJobs.length,
+    }));
   }
 
   /* @throws {@link WorkerError} if worker failed to connect or already running */
@@ -347,7 +355,11 @@ export class Worker {
         const token = new AccessToken(this.#opts.apiKey, this.#opts.apiSecret);
         token.addGrant({ agent: true });
         const jwt = await token.toJwt();
-        this.#session = new WebSocket(url + 'agent', {
+        const wsUrl = new URL(url + 'agent');
+        if (this.#opts.workerToken) {
+          wsUrl.searchParams.append('worker_token', this.#opts.workerToken);
+        }
+        this.#session = new WebSocket(wsUrl, {
           headers: { authorization: 'Bearer ' + jwt },
         });
 
@@ -360,8 +372,7 @@ export class Worker {
 
           retries = 0;
           this.#logger.debug('connected to LiveKit server');
-          this.#runWS(this.#session);
-          return;
+          await this.#runWS(this.#session);
         } catch (e: unknown) {
           if (e instanceof Error || e instanceof ErrorEvent) {
             e = e.message;
@@ -475,7 +486,7 @@ export class Worker {
     );
   }
 
-  #runWS(ws: WebSocket) {
+  async #runWS(ws: WebSocket) {
     let closingWS = false;
 
     const send = (msg: WorkerMessage) => {
@@ -487,10 +498,18 @@ export class Worker {
     };
     this.event.on('worker_msg', send);
 
-    ws.addEventListener('close', () => {
-      closingWS = true;
-      this.#logger.error('worker connection closed unexpectedly');
-      this.close();
+    const close = new Promise<void>((resolve) => {
+      ws.addEventListener('close', () => {
+        closingWS = true;
+        if (!this.#closed) {
+          this.#logger.error('worker connection closed unexpectedly');
+        }
+        resolve();
+      });
+    });
+
+    ws.addEventListener('error', (event) => {
+      this.#logger.error('worker error:', event.message);
     });
 
     ws.addEventListener('message', (event) => {
@@ -605,6 +624,9 @@ export class Worker {
         );
       });
     }, UPDATE_LOAD_INTERVAL);
+
+    await close;
+    ws.removeAllListeners();
   }
 
   async #availability(msg: AvailabilityRequest) {

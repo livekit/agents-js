@@ -168,15 +168,9 @@ export class AgentPlayout extends (EventEmitter as new () => TypedEmitter<AgentP
           handle.pushedDuration += (frame.samplesPerChannel / frame.sampleRate) * 1000;
           handle.synchronizer.pushAudio(frame);
           await this.#audioSource.captureFrame(frame);
-          await this.#audioSource.waitForPlayout();
         }
 
-        // XXX(nbsp): line 161 waits instead of this. this is not the case on python agents,
-        //            but for some reason too many TTS frames can gunk up the buffer and lead to
-        //            FFI errors. this works 🤷‍♀️
-        // if (this.#audioSource.queuedDuration > 0) {
-        //   await this.#audioSource.waitForPlayout();
-        // }
+        await this.#audioSource.waitForPlayout();
 
         handle.synchronizer.close(false);
         resolve();

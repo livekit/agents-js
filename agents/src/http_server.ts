@@ -9,19 +9,28 @@ const healthCheck = async (res: ServerResponse) => {
   res.end('OK');
 };
 
+interface WorkerResponse {
+  agent_name: string;
+  worker_type: string;
+  active_jobs: number;
+}
+
 export class HTTPServer {
   host: string;
   port: number;
   app: Server;
   #logger = log();
 
-  constructor(host: string, port: number) {
+  constructor(host: string, port: number, workerListener: () => WorkerResponse) {
     this.host = host;
     this.port = port;
 
     this.app = createServer((req: IncomingMessage, res: ServerResponse) => {
       if (req.url === '/') {
         healthCheck(res);
+      } else if (req.url === '/worker') {
+        res.writeHead(200, { 'Contet-Type': 'application/json' });
+        res.end(JSON.stringify(workerListener()));
       } else {
         res.writeHead(404);
         res.end('not found');

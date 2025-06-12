@@ -1,5 +1,27 @@
 # @livekit/agents-plugin-openai
 
+## 0.9.1
+
+### Patch Changes
+
+- ignore apiKey if isAzure & entraToken - [#339](https://github.com/livekit/agents-js/pull/339) ([@nbsp](https://github.com/nbsp))
+
+- feat(openai): add new TTS model and voices, include optional instruct… - [#351](https://github.com/livekit/agents-js/pull/351) ([@tomc98](https://github.com/tomc98))
+
+- Updated dependencies [[`d44445934cc291df987013068f5c43491634dfa1`](https://github.com/livekit/agents-js/commit/d44445934cc291df987013068f5c43491634dfa1), [`a7350c92f8968e0fd833e7679a607eaf9a1d7e7f`](https://github.com/livekit/agents-js/commit/a7350c92f8968e0fd833e7679a607eaf9a1d7e7f), [`2dcfeab76ace2e1851993771d769ebcb7c188144`](https://github.com/livekit/agents-js/commit/2dcfeab76ace2e1851993771d769ebcb7c188144), [`2bb936c55233ac0747582a5045caa595c6338651`](https://github.com/livekit/agents-js/commit/2bb936c55233ac0747582a5045caa595c6338651)]:
+  - @livekit/agents@0.7.2
+
+## 0.9.0
+
+### Minor Changes
+
+- Narrow tools inventory per session update - [#93](https://github.com/livekit/agents-js/pull/93) ([@tillkolter](https://github.com/tillkolter))
+
+### Patch Changes
+
+- Updated dependencies [[`724c02bb7a91c27d6c8daf961842fb9f0934770c`](https://github.com/livekit/agents-js/commit/724c02bb7a91c27d6c8daf961842fb9f0934770c), [`7398cffad62b17c79b5fe2f0ca4e99e548560367`](https://github.com/livekit/agents-js/commit/7398cffad62b17c79b5fe2f0ca4e99e548560367), [`6ed0c90d1bab013854c416768b10ef96f3227d68`](https://github.com/livekit/agents-js/commit/6ed0c90d1bab013854c416768b10ef96f3227d68), [`33c241960f0e8f325f534d2406f42148a4486b5a`](https://github.com/livekit/agents-js/commit/33c241960f0e8f325f534d2406f42148a4486b5a)]:
+  - @livekit/agents@0.7.1
+
 ## 0.8.2
 
 ### Patch Changes

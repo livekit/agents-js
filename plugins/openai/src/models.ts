@@ -29,9 +29,20 @@ export type ChatModels =
 
 export type WhisperModels = 'whisper-1';
 
-export type TTSModels = 'tts-1' | 'tts-1-hd';
+export type TTSModels = 'tts-1' | 'tts-1-hd' | 'gpt-4o-mini-tts';
 
-export type TTSVoices = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
+export type TTSVoices =
+  | 'alloy'
+  | 'ash'
+  | 'ballad'
+  | 'coral'
+  | 'echo'
+  | 'fable'
+  | 'nova'
+  | 'onyx'
+  | 'sage'
+  | 'shimmer'
+  | 'verse';
 
 // adapters for OpenAI-compatible LLMs, TTSs, STTs
 
@@ -117,3 +128,9 @@ export type OctoChatModels =
   | 'wizardlm-2-8x22bllamaguard-2-7b';
 
 export type XAIChatModels = 'grok-2' | 'grok-2-mini' | 'grok-2-mini-public' | 'grok-2-public';
+
+export type MetaChatModels =
+  | 'Llama-4-Scout-17B-16E-Instruct-FP8'
+  | 'Llama-4-Maverick-17B-128E-Instruct-FP8'
+  | 'Llama-3.3-70B-Instruct'
+  | 'Llama-3.3-8B-Instruct';

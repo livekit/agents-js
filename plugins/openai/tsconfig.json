@@ -11,6 +11,5 @@
     "name": "plugins/agents-plugin-openai",
     "entryPointStrategy": "resolve",
     "entryPoints": ["src/index.ts"]
-  },
-  "references": [{ "path": "../../agents/tsconfig.json" }]
+  }
 }
