@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, AudioSource, Room } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
-import { ChatContext } from '../llm/chat_context.js';
 import type { ChatMessage } from '../llm/chat_context.js';
+import { ChatContext } from '../llm/chat_context.js';
 import type { LLM } from '../llm/index.js';
 import { log } from '../log.js';
 import type { AgentState } from '../pipeline/index.js';
@@ -15,6 +15,7 @@ import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { UserState } from './events.js';
 import { RoomIO } from './room_io.js';
+import type { UnknownUserData } from './run_context.js';
 
 export interface VoiceOptions {
   allowInterruptions: boolean;
@@ -36,7 +37,7 @@ const defaultVoiceOptions: VoiceOptions = {
   maxToolSteps: 3,
 } as const;
 
-export class AgentSession {
+export class AgentSession<UserData = UnknownUserData> {
   vad: VAD;
   stt: STT;
   llm: LLM;

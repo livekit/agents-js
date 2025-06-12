@@ -63,6 +63,7 @@ const looksLikeInstanceof = <T>(value: unknown, target: new (...args: any[]) => 
 };
 
 /** @internal */
+/**
 export const oaiParams = (p: z.AnyZodObject) => {
   const properties: Record<string, any> = {};
   const requiredProperties: string[] = [];
