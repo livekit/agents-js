@@ -84,6 +84,7 @@ export class ParticipantAudioOutput {
       this.playbackSegmentsCount++;
     }
 
+    // TODO(shubhra): use frame.durationMs once available in rtc-node
     this.pushedDurationMs += frame.samplesPerChannel / frame.sampleRate;
     await this.audioSource.captureFrame(frame);
   }
