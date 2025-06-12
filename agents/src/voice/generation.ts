@@ -33,7 +33,7 @@ export function performLLMInference(
 
   const inferenceTask = async (signal: AbortSignal) => {
     let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk> | null = null;
-    let llmStream: ReadableStream<string | ChatChunk> | null = null ;
+    let llmStream: ReadableStream<string | ChatChunk> | null = null;
 
     try {
       llmStream = await node(chatCtx, modelSettings);

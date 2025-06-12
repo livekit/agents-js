@@ -1,10 +1,8 @@
 import { ReadableStream } from 'node:stream/web';
 import { withResolvers } from '../utils.js';
 
-
-
 // Adapted from https://github.com/denoland/std/blob/main/streams/merge_readable_streams.ts
-// we manually adapted to make ReadableStream<T> typing compatible with our current node 
+// we manually adapted to make ReadableStream<T> typing compatible with our current node
 // version as well as typescript configuration
 export function mergeReadableStreams<T>(...streams: ReadableStream<T>[]): ReadableStream<T> {
   const resolvePromises = streams.map(() => withResolvers<void>());

@@ -463,4 +463,3 @@ export class AudioRecognition {
     return this.turnDetectionMode === undefined || this.turnDetectionMode === 'vad';
   }
 }
-
