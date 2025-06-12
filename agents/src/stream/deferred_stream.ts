@@ -6,9 +6,26 @@ import type {
   ReadableStreamDefaultReader,
   WritableStreamDefaultWriter,
 } from 'node:stream/web';
-import { isStreamReaderReleaseError } from '../utils.js';
 import { IdentityTransform } from './identity_transform.js';
 
+/**
+ * Check if error is related to reader.read after release lock
+ *
+ * Invalid state: Releasing reader
+ * Invalid state: The reader is not attached to a stream
+ */
+export function isStreamReaderReleaseError(e: unknown) {
+  const allowedMessages = [
+    'Invalid state: Releasing reader',
+    'Invalid state: The reader is not attached to a stream',
+  ];
+
+  if (e instanceof TypeError) {
+    return allowedMessages.some((message) => e.message.includes(message));
+  }
+
+  return false;
+}
 export class DeferredReadableStream<T> {
   private transform: IdentityTransform<T>;
   private writer: WritableStreamDefaultWriter<T>;

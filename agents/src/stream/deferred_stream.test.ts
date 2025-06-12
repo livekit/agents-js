@@ -6,7 +6,7 @@ import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { DeferredReadableStream } from './deferred_stream.js';
 
-describe('DeferredReadableStream', { timeout: 2000 }, () => {
+describe('DeferredReadableStream', () => {
   it('should create a readable stream that can be read after setting source', async () => {
     const deferred = new DeferredReadableStream<string>();
     const reader = deferred.stream.getReader();

@@ -463,21 +463,14 @@ export class Task<T> {
   }
 }
 
-/**
- * Check if error is related to reader.read after release lock
- *
- * Invalid state: Releasing reader
- * Invalid state: The reader is not attached to a stream
- */
-export function isStreamReaderReleaseError(e: unknown) {
-  const allowedMessages = [
-    'Invalid state: Releasing reader',
-    'Invalid state: The reader is not attached to a stream',
-  ];
+export function withResolvers<T = unknown>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: any) => void;
+  
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
 
-  if (e instanceof TypeError) {
-    return allowedMessages.some((message) => e.message.includes(message));
-  }
-
-  return false;
+  return { promise, resolve, reject };
 }

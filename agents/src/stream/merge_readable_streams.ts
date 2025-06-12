@@ -1,16 +1,7 @@
 import { ReadableStream } from 'node:stream/web';
+import { withResolvers } from '../utils.js';
 
-function withResolvers<T = unknown>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: any) => void;
-  
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
 
-  return { promise, resolve, reject };
-}
 
 // Adapted from https://github.com/denoland/std/blob/main/streams/merge_readable_streams.ts
 // we manually adapted to make ReadableStream<T> typing compatible with our current node 
