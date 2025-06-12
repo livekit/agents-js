@@ -49,6 +49,7 @@ export class AgentSession<UserData = UnknownUserData> {
   private nextActivity?: AgentActivity;
   private started = false;
   private userState: UserState = 'listening';
+  private _userData: UserData | undefined;
   private _agentState: AgentState = 'initializing';
 
   private roomIO?: RoomIO;
@@ -73,6 +74,10 @@ export class AgentSession<UserData = UnknownUserData> {
     // TODO(shubhra): Add tools to chat context initalzation
     this._chatCtx = new ChatContext();
     this.options = { ...defaultVoiceOptions, ...options };
+  }
+
+  get userData(): UserData {
+    return this._userData!;
   }
 
   async start(agent: Agent, room: Room): Promise<void> {

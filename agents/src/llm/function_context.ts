@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { z } from 'zod';
+import { z } from 'zod';
 
 // heavily inspired by Vercel AI's `tool()`:
 // https://github.com/vercel/ai/blob/3b0983b/packages/ai/core/tool/tool.ts
@@ -63,7 +63,6 @@ const looksLikeInstanceof = <T>(value: unknown, target: new (...args: any[]) => 
 };
 
 /** @internal */
-/**
 export const oaiParams = (p: z.AnyZodObject) => {
   const properties: Record<string, any> = {};
   const requiredProperties: string[] = [];

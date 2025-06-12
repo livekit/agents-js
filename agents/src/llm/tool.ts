@@ -25,7 +25,7 @@ export type ToolExecuteFunction<
 
 export interface ToolExecutionOptions<UserData = UnknownUserData> {
   /**
-   * RunContext
+   * RunContext for the current agent session.
    */
   ctx: RunContext<UserData>;
 
