@@ -14,7 +14,7 @@ import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { UserState } from './events.js';
-import { RoomIO } from './room_io.js';
+import { ParticipantAudioOutput, RoomIO } from './room_io.js';
 
 export interface VoiceOptions {
   allowInterruptions: boolean;
@@ -56,7 +56,7 @@ export class AgentSession {
   /** @internal */
   audioInput?: ReadableStream<AudioFrame>;
   /** @internal */
-  audioOutput?: AudioSource;
+  audioOutput?: ParticipantAudioOutput;
 
   constructor(
     vad: VAD,

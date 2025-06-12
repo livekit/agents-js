@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame, AudioSource } from '@livekit/rtc-node';
+import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
 import type { ReadableStream } from 'stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
@@ -9,6 +9,7 @@ import type { ChatChunk } from '../llm/llm.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task } from '../utils.js';
 import type { LLMNode, TTSNode } from './io.js';
+import type { ParticipantAudioOutput } from './room_io.js';
 
 /* @internal */
 export class _LLMGenerationData {
@@ -182,15 +183,15 @@ export function performTextForwarding(
   ];
 }
 
-export interface _AudioOutput {
+export interface _AudioOut {
   audio: Array<AudioFrame>;
   firstFrameFut: Future;
 }
 
 async function forwardAudio(
   ttsStream: ReadableStream<AudioFrame>,
-  audioOuput: AudioSource,
-  out: _AudioOutput,
+  audioOuput: ParticipantAudioOutput,
+  out: _AudioOut,
   signal?: AbortSignal,
 ): Promise<void> {
   const reader = ttsStream.getReader();
@@ -203,9 +204,6 @@ async function forwardAudio(
       const { done, value: frame } = await reader.read();
       if (done) break;
       // TODO(AJS-56) handle resampling
-      if (signal?.aborted) {
-        break;
-      }
       await audioOuput.captureFrame(frame);
       out.audio.push(frame);
       if (!out.firstFrameFut.done) {
@@ -220,14 +218,15 @@ async function forwardAudio(
     throw error;
   } finally {
     reader?.releaseLock();
+    audioOuput.flush();
   }
 }
 
 export function performAudioForwarding(
   ttsStream: ReadableStream<AudioFrame>,
-  audioOutput: AudioSource,
+  audioOutput: ParticipantAudioOutput,
   controller: AbortController,
-): [Task<void>, _AudioOutput] {
+): [Task<void>, _AudioOut] {
   const out = {
     audio: [],
     firstFrameFut: new Future(),

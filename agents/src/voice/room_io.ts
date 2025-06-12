@@ -34,7 +34,6 @@ export interface AudioOutputOptions {
   numChannels: number;
   trackPublishOptions: TrackPublishOptions;
   queueSizeMs?: number;
-  agentSession: AgentSession;
 }
 export class ParticipantAudioOutput {
   private room: Room;
@@ -185,7 +184,7 @@ export class RoomIO {
   private room: Room;
 
   private _deferredAudioInputStream = new DeferredReadableStream<AudioFrame>();
-  private audioSource?: AudioSource;
+  private participantAudioOutput?: ParticipantAudioOutput;
   private publication?: LocalTrackPublication;
 
   constructor(
@@ -205,10 +204,6 @@ export class RoomIO {
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
   }
 
-  private cleanup() {
-    this.room.off(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
-  }
-
   private onTrackSubscribed = (track: RemoteTrack) => {
     if (track.kind === TrackKind.KIND_AUDIO) {
       this._deferredAudioInputStream.setSource(
@@ -221,18 +216,14 @@ export class RoomIO {
     }
   };
 
-  private async publishTrack(audioSource: AudioSource) {
-    const track = LocalAudioTrack.createAudioTrack('roomio_audio', audioSource);
-    this.publication = await this.room.localParticipant?.publishTrack(
-      track,
-      new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
-    );
-  }
-
   start() {
-    this.audioSource = new AudioSource(this.sampleRate, this.numChannels);
-    this.publishTrack(this.audioSource);
+    this.participantAudioOutput = new ParticipantAudioOutput(this.room, {
+      sampleRate: this.sampleRate,
+      numChannels: this.numChannels,
+      trackPublishOptions: new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
+    });
+    this.participantAudioOutput.start();
     this.agentSession.audioInput = this.participantAudioInputStream;
-    this.agentSession.audioOutput = this.audioSource;
+    this.agentSession.audioOutput = this.participantAudioOutput;
   }
 }

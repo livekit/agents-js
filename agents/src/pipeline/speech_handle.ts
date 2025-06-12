@@ -224,8 +224,8 @@ export class SpeechHandle {
     return this.playoutDoneFut.await;
   }
 
-  async waitIfNotInterrupted(aw: Promise<void>[]): Promise<void> {
-    const fs: Promise<void>[] = [...aw, this.interruptFut.await];
+  async waitIfNotInterrupted(aw: Promise<unknown>[]): Promise<void> {
+    const fs: Promise<unknown>[] = [...aw, this.interruptFut.await];
     await Promise.race(fs);
   }
 
