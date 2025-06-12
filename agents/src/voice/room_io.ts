@@ -16,7 +16,7 @@ import {
 import type { ReadableStream } from 'node:stream/web';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
-import { Future } from '../utils.js';
+import { Future, Task } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 
 export interface PlaybackFinishedEvent {
@@ -40,17 +40,28 @@ export class ParticipantAudioOutput {
   private room: Room;
   private options: AudioOutputOptions;
   private audioSource: AudioSource;
-  private startedFuture: Future<void>;
-
   private publication?: LocalTrackPublication;
+  private flushTask?: Task<void>;
+  private pushedDurationMs: number = 0;
+  private startedFuture: Future<void> = new Future();
+  private interruptedFuture: Future<void> = new Future();
+
+  private playbackFinishedFuture: Future<void> = new Future();
   private capturing: boolean = false;
+  private playbackFinishedCount: number = 0;
   private playbackSegmentsCount: number = 0;
+  private lastPlaybackEvent: PlaybackFinishedEvent = {
+    playbackPosition: 0,
+    interrupted: false,
+    synchronizedTranscript: null,
+  };
+
+  private logger = log();
 
   constructor(room: Room, options: AudioOutputOptions) {
     this.room = room;
     this.options = options;
     this.audioSource = new AudioSource(options.sampleRate, options.numChannels);
-    this.startedFuture = new Future();
   }
 
   get queueSizeMs(): number {
@@ -63,6 +74,9 @@ export class ParticipantAudioOutput {
     this.startedFuture.resolve();
   }
 
+  /**
+   * Capture an audio frame for playback, frames can be pushed faster than real-time
+   */
   async captureFrame(frame: AudioFrame): Promise<void> {
     await this.startedFuture.await;
 
@@ -70,18 +84,88 @@ export class ParticipantAudioOutput {
       this.capturing = true;
       this.playbackSegmentsCount++;
     }
-    // TODO(shubhra)
-    this.pushedDuration += frame.duration;
+
+    this.pushedDurationMs += frame.samplesPerChannel / frame.sampleRate;
     await this.audioSource.captureFrame(frame);
   }
 
-  flush(): void {
-    this.capturing = false;
-    this.playbackSegmentsCount++;
-    return;
+  /**
+   * Wait for the past audio segments to finish playing out.
+   *
+   * @returns The event that was emitted when the audio finished playing out (only the last segment information)
+   */
+  async waitForPlayout(): Promise<PlaybackFinishedEvent> {
+    const target = this.playbackSegmentsCount;
+
+    while (this.playbackFinishedCount < target) {
+      await this.playbackFinishedFuture.await;
+      this.playbackFinishedFuture = new Future();
+    }
+
+    return this.lastPlaybackEvent;
   }
 
-  clearBuffer(): void {}
+  private async waitForPlayoutTask(abortController: AbortController): Promise<void> {
+    const waitForPlayout = this.audioSource.waitForPlayout();
+    const waitForInterruption = new Promise<void>((resolve) => {
+      abortController.signal.addEventListener('abort', () => resolve());
+    });
+
+    await Promise.race([waitForPlayout, waitForInterruption]);
+
+    const interrupted = abortController.signal.aborted;
+    let pushedDuration = this.pushedDurationMs;
+
+    if (interrupted) {
+      // Calculate actual played duration accounting for queued audio
+      pushedDuration = Math.max(this.pushedDurationMs - this.audioSource.queuedDuration, 0);
+      this.audioSource.clearQueue();
+    } else {
+      abortController.signal.removeEventListener('abort', () => {});
+    }
+
+    this.pushedDurationMs = 0;
+    this.onPlaybackFinished({
+      playbackPosition: pushedDuration,
+      interrupted,
+      synchronizedTranscript: null, // TODO: implement transcript synchronization
+    });
+  }
+
+  /**
+   * Flush any buffered audio, marking the current playback/segment as complete
+   */
+  flush(): void {
+    this.capturing = false;
+
+    if (!this.pushedDurationMs) {
+      return;
+    }
+
+    if (this.flushTask && !this.flushTask.done) {
+      this.logger.error('flush called while playback is in progress');
+      this.flushTask.cancel();
+    }
+
+    this.flushTask = Task.from((controller) => this.waitForPlayoutTask(controller));
+  }
+
+  /**
+   * Clear the buffer, stopping playback immediately
+   */
+  clearBuffer(): void {
+    if (!this.pushedDurationMs) {
+      return;
+    }
+
+    this.interruptedFuture.resolve();
+  }
+
+  private onPlaybackFinished(event: PlaybackFinishedEvent) {
+    this.lastPlaybackEvent = event;
+    this.playbackFinishedCount++;
+    this.playbackFinishedFuture.resolve();
+  }
 
   private async publishTrack() {
     const track = LocalAudioTrack.createAudioTrack('roomio_audio', this.audioSource);
