@@ -98,7 +98,7 @@ export class ParticipantTranscriptionOutput {
     this.capturing = false;
     const currWriter = this.writer;
     this.writer = null;
-    this.flushTask = Task.from((controller) => this.flushTaskImpl(currWriter, controller));
+    this.flushTask = Task.from((controller) => this.flushTaskImpl(currWriter, controller.signal));
   }
 
   async captureText(text: string) {
@@ -161,26 +161,34 @@ export class ParticipantTranscriptionOutput {
     });
   }
 
-  private async flushTaskImpl(
-    writer: TextStreamWriter | null,
-    controller: AbortController,
-  ): Promise<void> {
+  private async flushTaskImpl(writer: TextStreamWriter | null, signal: AbortSignal): Promise<void> {
     const attributes: Record<string, string> = {
       ATTRIBUTE_TRANSCRIPTION_FINAL: 'true',
     };
     if (this.trackId) {
       attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
     }
+
+    const abortPromise = new Promise<void>((resolve) => {
+      signal.addEventListener('abort', () => resolve());
+    });
+
     try {
       if (this.room.isConnected) {
         if (this.isDeltaStream) {
           if (writer) {
-            await writer.close();
+            await Promise.race([writer.close(), abortPromise]);
           }
         } else {
-          const tmpWriter = await this.createTextWriter(attributes);
-          await tmpWriter.write(this.latestText);
-          await tmpWriter.close();
+          const tmpWriter = await Promise.race([this.createTextWriter(attributes), abortPromise]);
+          if (signal.aborted || !tmpWriter) {
+            return;
+          }
+          await Promise.race([tmpWriter.write(this.latestText), abortPromise]);
+          if (signal.aborted) {
+            return;
+          }
+          await Promise.race([tmpWriter.close(), abortPromise]);
         }
       }
     } catch (error) {
