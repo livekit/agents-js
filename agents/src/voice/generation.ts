@@ -32,7 +32,7 @@ export function performLLMInference(
   const data = new _LLMGenerationData(textStream.readable);
 
   const inferenceTask = async (signal: AbortSignal) => {
-    let llmStreamReader: ReadableStreamDefaultReader<any> | null = null;
+    let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk> | null = null;
     let llmStream: ReadableStream<string | ChatChunk> | null = null;
 
     try {
