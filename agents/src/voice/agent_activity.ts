@@ -401,7 +401,7 @@ export class AgentActivity implements RecognitionHooks {
       await Promise.allSettled(
         tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
       );
-      // TODO(shubhra): add syncronizher and transcripts
+      // TODO(AJS-87): add syncronizher and transcripts
 
       if (audioOutput) {
         audioOutput.clearBuffer();
