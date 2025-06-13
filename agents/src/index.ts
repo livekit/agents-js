@@ -14,7 +14,6 @@ import * as ipc from './ipc/index.js';
 import * as llm from './llm/index.js';
 import * as metrics from './metrics/index.js';
 import * as multimodal from './multimodal/index.js';
-import * as pipeline from './pipeline/index.js';
 import * as stt from './stt/index.js';
 import * as tokenize from './tokenize/index.js';
 import * as tts from './tts/index.js';
@@ -32,4 +31,4 @@ export * from './audio.js';
 export * from './transcription.js';
 export * from './inference_runner.js';
 
-export { cli, stt, tts, llm, pipeline, multimodal, tokenize, metrics, ipc, voice };
+export { cli, stt, tts, llm, multimodal, tokenize, metrics, ipc, voice };
