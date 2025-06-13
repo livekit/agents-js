@@ -12,6 +12,7 @@ import type { TTS } from '../tts/tts.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
+import type { _TurnDetector } from './audio_recognition.js';
 import type { UserState } from './events.js';
 import { RoomIO } from './room_io.js';
 
@@ -36,11 +37,15 @@ const defaultVoiceOptions: VoiceOptions = {
   maxToolSteps: 3,
 } as const;
 
+export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
+
 export class AgentSession {
   vad: VAD;
   stt: STT;
   llm: LLM;
   tts: TTS;
+  turnDetection?: TurnDetectionMode;
+
   readonly options: VoiceOptions;
 
   private agent?: Agent;
@@ -63,12 +68,15 @@ export class AgentSession {
     stt: STT,
     llm: LLM,
     tts: TTS,
+    turnDetection?: TurnDetectionMode,
     options: Partial<VoiceOptions> = defaultVoiceOptions,
   ) {
     this.vad = vad;
     this.stt = stt;
     this.llm = llm;
     this.tts = tts;
+    this.turnDetection = turnDetection;
+
     // TODO(shubhra): Add tools to chat context initalzation
     this._chatCtx = new ChatContext();
     this.options = { ...defaultVoiceOptions, ...options };
@@ -96,6 +104,21 @@ export class AgentSession {
     this.logger.debug('AgentSession started');
     this.started = true;
     this._updateAgentState('listening');
+  }
+
+  commitUserTurn() {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
+    }
+
+    this.activity.commitUserTurn();
+  }
+
+  clearUserTurn() {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
+    }
+    this.activity.clearUserTurn();
   }
 
   private async updateActivity(agent: Agent): Promise<void> {

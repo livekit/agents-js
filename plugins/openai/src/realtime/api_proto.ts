@@ -84,7 +84,6 @@ export interface Tool {
     type: 'object';
     properties: {
       [prop: string]: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         [prop: string]: any;
       };
     };

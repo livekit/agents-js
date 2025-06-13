@@ -28,7 +28,7 @@ export interface ImageContent {
 
   mimeType?: string;
 
-  _cache?: Record<string, unknown>;
+  cache: { [id: string | number | symbol]: any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
 export interface AudioContent {
