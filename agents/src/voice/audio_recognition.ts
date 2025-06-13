@@ -92,27 +92,6 @@ export class AudioRecognition {
     this.sttTask.result.catch((err) => {
       this.logger.error(`Error running STT task: ${err}`);
     });
-
-    // every 1 second, print interm transcript and audio transcript and lastFinalTranscriptTime and userTurnCommitted
-    // (async () => {
-    //   while (true) {
-    //     this.printDebugObject();
-    //     await delay(500);
-    //   }
-    // })();
-  }
-
-  private printDebugObject() {
-    const secondAgo = (time: number) => (Date.now() - time) / 1000;
-
-    this.logger.debug('===============================================');
-    const debugObject = {
-      interimTranscript: this.audioInterimTranscript,
-      audioTranscript: this.audioTranscript,
-      lastFinalTranscriptTime: `${secondAgo(this.lastFinalTranscriptTime)}s ago`,
-      userTurnCommitted: this.userTurnCommitted,
-    };
-    this.logger.debug(debugObject, 'debugObject');
   }
 
   private async onSTTEvent(ev: SpeechEvent) {
@@ -186,7 +165,6 @@ export class AudioRecognition {
       case SpeechEventType.END_OF_SPEECH:
         if (this.turnDetectionMode !== 'stt') break;
         this.userTurnCommitted = true;
-        this.printDebugObject();
 
         if (!this.speaking) {
           const chatCtx = this.hooks.retrieveChatCtx();
@@ -282,19 +260,14 @@ export class AudioRecognition {
       this.logger.debug('createSttTask: create stt stream from stt node');
       const sttStream = await this.stt(this.sttInputStream, {});
 
-      if (controller.signal.aborted) return;
-      if (sttStream === null) return;
+      if (controller.signal.aborted || sttStream === null) return;
 
       if (sttStream instanceof ReadableStream) {
-        this.logger.debug('createSttTask: acquiring sttStream reader');
         const reader = sttStream.getReader();
 
         controller.signal.addEventListener('abort', async () => {
-          this.logger.debug('createSttTask: abort signal received');
           try {
-            this.logger.debug('createSttTask: releasing sttStream reader');
             reader.releaseLock();
-            this.logger.debug('createSttTask: cancelling sttStream');
             await sttStream?.cancel();
           } catch (e) {
             this.logger.debug('createSttTask: error during abort handler:', e);
@@ -304,14 +277,12 @@ export class AudioRecognition {
         try {
           while (true) {
             if (controller.signal.aborted) {
-              this.logger.debug('createSttTask: abort signal detected in read loop, breaking...');
               break;
             }
 
             const { done, value: ev } = await reader.read();
 
             if (done) {
-              this.logger.debug('createSttTask: sttStream reader done, exiting loop...');
               break;
             }
             if (typeof ev === 'string') {
@@ -322,17 +293,13 @@ export class AudioRecognition {
           }
         } catch (e) {
           if (isStreamReaderReleaseError(e)) {
-            this.logger.debug('createSttTask: error reading sttStream, reader released');
             return;
           }
           this.logger.error({ error: e }, 'createSttTask: error reading sttStream');
         } finally {
-          this.logger.debug('createSttTask: releasing sttStream reader');
           reader.releaseLock();
-          this.logger.debug('createSttTask: cancelling sttStream');
           try {
             await sttStream.cancel();
-            this.logger.debug('createSttTask: sttStream cancelled, exiting task...');
           } catch (e) {
             this.logger.debug(
               'createSttTask: error cancelling sttStream (may already be cancelled):',
@@ -391,19 +358,14 @@ export class AudioRecognition {
   }
 
   clearUserTurn() {
-    this.logger.debug('clearUserTurn');
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
     this.userTurnCommitted = false;
 
-    this.logger.debug('clearUserTurn: cancelling stt task');
     const startTime = Date.now();
     this.sttTask?.cancelAndWait().then(() => {
       const endTime = Date.now();
-      this.logger.debug(`clearUserTurn: stt task cancelled in ${endTime - startTime}ms`);
-      this.logger.debug('clearUserTurn: stt task cancelled, recreating...');
       this.sttTask = Task.from(this.createSttTask());
-      this.logger.debug('clearUserTurn: stt task recreated');
       this.sttTask.result.catch((err) => {
         this.logger.error(`Error running STT task: ${err}`);
       });
@@ -411,8 +373,6 @@ export class AudioRecognition {
   }
 
   commitUserTurn(audioDetached: boolean) {
-    this.logger.debug('commitUserTurn', audioDetached);
-
     const commitUserTurnTask =
       (delayDuration: number = 500) =>
       async (controller: AbortController) => {
@@ -439,7 +399,6 @@ export class AudioRecognition {
         this.logger.debug('running EOU detection on commitUserTurn');
         this.runEOUDetection(chatCtx);
         this.userTurnCommitted = true;
-        this.printDebugObject();
       };
 
     // cancel any existing commit user turn task
