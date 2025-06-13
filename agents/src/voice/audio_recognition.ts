@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
@@ -360,9 +362,7 @@ export class AudioRecognition {
     this.audioInterimTranscript = '';
     this.userTurnCommitted = false;
 
-    const startTime = Date.now();
     this.sttTask?.cancelAndWait().then(() => {
-      const endTime = Date.now();
       this.sttTask = Task.from(this.createSttTask());
       this.sttTask.result.catch((err) => {
         this.logger.error(`Error running STT task: ${err}`);

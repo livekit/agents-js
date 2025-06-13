@@ -489,9 +489,10 @@ describe('DeferredReadableStream', () => {
     try {
       await readPromise;
       expect.fail('readPromise should have rejected');
-    } catch (e: any) {
-      expect(e).toBeInstanceOf(Error);
-      expect(e.message).toBe('Source error');
+    } catch (e: unknown) {
+      const error = e as Error;
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toBe('Source error');
     }
 
     reader.releaseLock();

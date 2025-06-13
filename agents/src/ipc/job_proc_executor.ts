@@ -51,10 +51,12 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     throw new Error('job status not available');
   }
 
-  get userArguments(): any { // eslint-disable-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  get userArguments(): any {
     return this.#userArgs;
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   set userArguments(args: any) {
     this.#userArgs = args;
   }

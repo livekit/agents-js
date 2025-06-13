@@ -24,6 +24,7 @@ export class _LLMGenerationData {
 export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   modelSettings: any, // TODO(AJS-59): add type
   controller: AbortController,
 ): [Task<void>, _LLMGenerationData] {
@@ -84,6 +85,7 @@ export function performLLMInference(
 export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   modelSettings: any, // TODO(AJS-59): add type
   controller: AbortController,
 ): [Task<void>, ReadableStream<AudioFrame>] {

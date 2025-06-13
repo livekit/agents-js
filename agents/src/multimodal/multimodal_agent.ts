@@ -343,6 +343,7 @@ export class MultimodalAgent extends EventEmitter {
         this.#logger.child({ transcription }).debug('committed user speech');
       });
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('input_speech_started', async (ev: any) => {
         this.emit('user_started_speaking');
         if (this.#playingHandle && !this.#playingHandle.done) {
@@ -364,8 +365,7 @@ export class MultimodalAgent extends EventEmitter {
         }
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      this.#session.on('input_speech_stopped', (ev: any) => {
+      this.#session.on('input_speech_stopped', () => {
         this.emit('user_stopped_speaking');
       });
 
