@@ -132,7 +132,6 @@ export class Agent {
       }
 
       const stream = wrapped_stt.stream();
-
       stream.updateInputStream(audio);
 
       return new ReadableStream({
