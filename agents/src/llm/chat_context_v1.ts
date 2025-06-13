@@ -2,40 +2,40 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
-import { v4 as uuidv4 } from "uuid";
+import { v4 as uuidv4 } from 'uuid';
 
 function shortuuid(prefix: string): string {
   return `${prefix}_${uuidv4().slice(0, 12)}`;
 }
 
-export type ChatRole = "developer" | "system" | "user" | "assistant";
+export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
 
 export interface ImageContent {
   id: string;
 
-  type: "image_content";
+  type: 'image_content';
 
   /**
    * Either a string URL or a VideoFrame object.
    */
   image: string | VideoFrame;
-  
+
   inferenceWidth?: number;
-  
+
   inferenceHeight?: number;
-  
-  inferenceDetail?: "auto" | "high" | "low";
-  
+
+  inferenceDetail?: 'auto' | 'high' | 'low';
+
   mimeType?: string;
 
   _cache?: Record<string, unknown>;
 }
 
 export interface AudioContent {
-  type: "audio_content";
+  type: 'audio_content';
 
   frame: AudioFrame[];
-  
+
   transcript?: string;
 }
 
@@ -44,22 +44,22 @@ export type ChatContent = ImageContent | AudioContent | string;
 export class ChatMessage {
   readonly id: string;
 
-  readonly type = "message" as const;
-  
+  readonly type = 'message' as const;
+
   readonly role: ChatRole;
-  
+
   content: ChatContent[];
-  
+
   interrupted: boolean;
-  
+
   hash?: Uint8Array;
-  
+
   createdAt: number;
 
   constructor({
     role,
     content,
-    id = shortuuid("item"),
+    id = shortuuid('item'),
     interrupted = false,
     createdAt = Date.now(),
   }: {
@@ -81,31 +81,37 @@ export class ChatMessage {
    * lines. If no string content is present, returns `null`.
    */
   get textContent(): string | undefined {
-    const parts = this.content.filter((c): c is string => typeof c === "string");
-    return parts.length > 0 ? parts.join("\n") : undefined;
+    const parts = this.content.filter((c): c is string => typeof c === 'string');
+    return parts.length > 0 ? parts.join('\n') : undefined;
   }
 }
 
 export class FunctionCall {
   readonly id: string;
-  
-  readonly type = "function_call" as const;
-  
+
+  readonly type = 'function_call' as const;
+
   callId: string;
-  
+
   args: string;
-  
+
   name: string;
-  
+
   createdAt: number;
 
   constructor({
     callId,
     name,
     args,
-    id = shortuuid("item"),
+    id = shortuuid('item'),
     createdAt = Date.now(),
-  }: { callId: string; name: string; args: string; id?: string; createdAt?: number }) {
+  }: {
+    callId: string;
+    name: string;
+    args: string;
+    id?: string;
+    createdAt?: number;
+  }) {
     this.id = id;
     this.callId = callId;
     this.args = args;
@@ -117,26 +123,33 @@ export class FunctionCall {
 export class FunctionCallOutput {
   readonly id: string;
 
-  readonly type = "function_call_output" as const;
-  
-  name = "";
-  
+  readonly type = 'function_call_output' as const;
+
+  name = '';
+
   callId: string;
-  
+
   output: string;
-  
+
   isError: boolean;
-  
+
   createdAt: number;
 
   constructor({
     callId,
     output,
     isError,
-    id = shortuuid("item"),
+    id = shortuuid('item'),
     createdAt = Date.now(),
-    name = "",
-  }: { callId: string; output: string; isError: boolean; id?: string; createdAt?: number; name?: string }) {
+    name = '',
+  }: {
+    callId: string;
+    output: string;
+    isError: boolean;
+    id?: string;
+    createdAt?: number;
+    name?: string;
+  }) {
     this.id = id;
     this.callId = callId;
     this.output = output;
@@ -147,7 +160,6 @@ export class FunctionCallOutput {
 }
 
 export type ChatItem = ChatMessage | FunctionCall | FunctionCallOutput;
-
 
 export class ChatContext {
   private _items: ChatItem[];
@@ -215,18 +227,39 @@ export class ChatContext {
    * Only a subset of copy-options from the Python implementation has been
    * ported. Feel free to extend as needed.
    */
-  copy(options: {
-    excludeFunctionCall?: boolean;
-    excludeInstructions?: boolean;
-    excludeEmptyMessage?: boolean;
-    // TODO: tools filter implementation
-    tools?: unknown;
-  } = {}): ChatContext {
-    const { excludeFunctionCall = false, excludeInstructions = false, excludeEmptyMessage = false } = options;
+  copy(
+    options: {
+      excludeFunctionCall?: boolean;
+      excludeInstructions?: boolean;
+      excludeEmptyMessage?: boolean;
+      // TODO: tools filter implementation
+      tools?: unknown;
+    } = {},
+  ): ChatContext {
+    const {
+      excludeFunctionCall = false,
+      excludeInstructions = false,
+      excludeEmptyMessage = false,
+    } = options;
     const items = this._items.filter((item) => {
-      if (excludeFunctionCall && (item.type === "function_call" || item.type === "function_call_output")) return false;
-      if (excludeInstructions && item.type === "message" && (item as ChatMessage).role !== "user" && (item as ChatMessage).role !== "assistant") return false;
-      if (excludeEmptyMessage && item.type === "message" && (item as ChatMessage).content.length === 0) return false;
+      if (
+        excludeFunctionCall &&
+        (item.type === 'function_call' || item.type === 'function_call_output')
+      )
+        return false;
+      if (
+        excludeInstructions &&
+        item.type === 'message' &&
+        (item as ChatMessage).role !== 'user' &&
+        (item as ChatMessage).role !== 'assistant'
+      )
+        return false;
+      if (
+        excludeEmptyMessage &&
+        item.type === 'message' &&
+        (item as ChatMessage).content.length === 0
+      )
+        return false;
       return true;
     });
     return new ChatContext([...items]);
@@ -240,7 +273,7 @@ export class ChatContext {
     if (maxItems <= 0) return this;
 
     const instructions = this._items.find(
-      (i) => i.type === "message" && (i as ChatMessage).role === "system"
+      (i) => i.type === 'message' && (i as ChatMessage).role === 'system',
     ) as ChatMessage | undefined;
 
     let newItems = this._items.slice(-maxItems);
@@ -248,17 +281,17 @@ export class ChatContext {
     // Ensure the first item is not a function-call artefact.
     while (newItems.length > 0) {
       const first = newItems[0]!;
-      if (first.type === "function_call" || first.type === "function_call_output") {
+      if (first.type === 'function_call' || first.type === 'function_call_output') {
         newItems.shift();
       } else {
         break;
       }
     }
-    
+
     let nonFunctionItemIdx = 0;
     for (let i = 0; i < newItems.length; i++) {
-        const item = newItems[i]!;
-      if (item.type !== "function_call" && item.type !== "function_call_output") {
+      const item = newItems[i]!;
+      if (item.type !== 'function_call' && item.type !== 'function_call_output') {
         nonFunctionItemIdx = i;
         break;
       }
@@ -273,7 +306,7 @@ export class ChatContext {
         newItems = [instructions, ...newItems];
       }
     }
-    
+
     this._items = newItems;
     return this;
   }
