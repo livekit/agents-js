@@ -9,7 +9,7 @@ import type { ChatChunk } from '../llm/llm.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task } from '../utils.js';
 import type { LLMNode, TTSNode } from './io.js';
-import type { ParticipantAudioOutput } from './room_io.js';
+import type { ParticipantAudioOutput, ParticipantTranscriptionOutput } from './room_io.js';
 
 /* @internal */
 export class _LLMGenerationData {
@@ -139,20 +139,23 @@ export interface _TextOut {
 }
 
 async function forwardText(
-  textOutput: _TextOut | null,
   source: ReadableStream<string>,
   out: _TextOut,
-  signal?: AbortSignal,
+  signal: AbortSignal,
+  textOutput?: ParticipantTranscriptionOutput,
 ): Promise<void> {
   const reader = source.getReader();
   try {
     while (true) {
-      if (signal?.aborted) {
+      if (signal.aborted) {
         break;
       }
       const { done, value: delta } = await reader.read();
       if (done) break;
       out.text += delta;
+      if (textOutput) {
+        await textOutput.captureText(delta);
+      }
       if (!out.firstTextFut.done) {
         out.firstTextFut.resolve();
       }
@@ -164,21 +167,22 @@ async function forwardText(
     }
     throw error;
   } finally {
+    textOutput?.flush();
     reader?.releaseLock();
   }
 }
 
 export function performTextForwarding(
-  textOutput: _TextOut | null,
   source: ReadableStream<string>,
   controller: AbortController,
+  textOutput?: ParticipantTranscriptionOutput,
 ): [Task<void>, _TextOut] {
   const out = {
     text: '',
     firstTextFut: new Future(),
   };
   return [
-    Task.from((controller) => forwardText(textOutput, source, out, controller.signal), controller),
+    Task.from((controller) => forwardText(source, out, controller.signal, textOutput), controller),
     out,
   ];
 }
@@ -191,7 +195,7 @@ export interface _AudioOut {
 async function forwardAudio(
   ttsStream: ReadableStream<AudioFrame>,
   audioOuput: ParticipantAudioOutput,
-  out: _AudioOutput,
+  out: _AudioOut,
   signal?: AbortSignal,
 ): Promise<void> {
   const reader = ttsStream.getReader();
@@ -226,7 +230,7 @@ export function performAudioForwarding(
   ttsStream: ReadableStream<AudioFrame>,
   audioOutput: ParticipantAudioOutput,
   controller: AbortController,
-): [Task<void>, _AudioOutput] {
+): [Task<void>, _AudioOut] {
   const out = {
     audio: [],
     firstFrameFut: new Future(),

@@ -277,6 +277,7 @@ export class AgentActivity implements RecognitionHooks {
     // TODO(AJS-54): add transcription/text output
 
     const audioOutput = this.agentSession.audioOutput;
+    const transcriptionOutput = this.agentSession._transcriptionOutput;
 
     chatCtx = chatCtx.copy();
 
@@ -322,20 +323,13 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    const [textForwardTask, textOutput] = performTextForwarding(
-      null,
-      llmOutput,
-      replyAbortController,
-    );
-    tasks.push(textForwardTask);
-
     const trNodeResult = await this.agent.transcriptionNode(llmOutput, {}); // TODO(AJS-59): add model settings
     let textOut: _TextOut | null = null;
     if (trNodeResult) {
       const [textForwardTask, _textOut] = performTextForwarding(
-        null,
         trNodeResult,
         replyAbortController,
+        transcriptionOutput,
       );
       tasks.push(textForwardTask);
       textOut = _textOut;
@@ -360,7 +354,7 @@ export class AgentActivity implements RecognitionHooks {
         throw Error('ttsStream is null when audioOutput is enabled');
       }
     } else {
-      textOutput.firstTextFut.await.then(onFirstFrame);
+      textOut?.firstTextFut.await.then(onFirstFrame);
     }
     // TODO(shubhra): handle tool calls
 
@@ -395,7 +389,7 @@ export class AgentActivity implements RecognitionHooks {
 
       const message = ChatMessage.create({
         role: ChatRole.ASSISTANT,
-        text: textOutput.text,
+        text: textOut?.text,
       });
       chatCtx.insertItem(message);
       this.agent._chatCtx.insertItem(message);
@@ -405,23 +399,23 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._conversationItemAdded(message);
 
       this.logger.info(
-        { speech_id: speechHandle.id, message: textOutput.text },
+        { speech_id: speechHandle.id, message: textOut?.text },
         'playout completed with interrupt',
       );
       // TODO(shubhra) add chat message to speech handle
       speechHandle.markPlayoutDone();
       return;
     }
-    if (textOutput && textOutput.text) {
+    if (textOut && textOut.text) {
       const message = ChatMessage.create({
         role: ChatRole.ASSISTANT,
-        text: textOutput.text,
+        text: textOut.text,
       });
       chatCtx.insertItem(message);
       this.agent._chatCtx.insertItem(message);
       this.agentSession._conversationItemAdded(message);
       this.logger.info(
-        { speech_id: speechHandle.id, message: textOutput.text },
+        { speech_id: speechHandle.id, message: textOut.text },
         'playout completed without interruption',
       );
       speechHandle.markPlayoutDone();

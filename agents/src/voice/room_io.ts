@@ -17,6 +17,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import type { ReadableStream } from 'node:stream/web';
 import {
+  ATTRIBUTE_PUBLISH_ON_BEHALF,
   ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID,
   ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
   TOPIC_TRANSCRIPTION,
@@ -372,6 +373,10 @@ export class RoomIO {
   private userTranscriptOutput?: ParticipantTranscriptionOutput;
   private agentTranscriptOutput?: ParticipantTranscriptionOutput;
 
+  private participantIdentity: string | null = null;
+  private participantAvailableFuture: Future<Participant> = new Future();
+  private roomConnectedFuture: Future<void> = new Future();
+
   constructor(
     agentSession: AgentSession,
     room: Room,
@@ -381,12 +386,6 @@ export class RoomIO {
     this.agentSession = agentSession;
     this.room = room;
     this.participantAudioInputStream = this._deferredAudioInputStream.stream;
-
-    this.setupEventListeners();
-  }
-
-  private setupEventListeners() {
-    this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
   }
 
   private onTrackSubscribed = (track: RemoteTrack) => {
@@ -401,24 +400,77 @@ export class RoomIO {
     }
   };
 
-  private createTranscriptionOutput(isDeltaStream: boolean, participant: Participant | null) {
-    return new ParticipantTranscriptionOutput(this.room, isDeltaStream, participant);
+  private createTranscriptionOutput(options: {
+    isDeltaStream: boolean;
+    participant: string | null;
+  }) {
+    return new ParticipantTranscriptionOutput(
+      this.room,
+      options.isDeltaStream,
+      options.participant,
+    );
+  }
+
+  private async initTask() {
+    await this.roomConnectedFuture.await;
+
+    for (const participant of this.room.remoteParticipants.values()) {
+      this.onParticipantConnected(participant);
+    }
+
+    const participant = await this.participantAvailableFuture.await;
+    this.userTranscriptOutput?.setParticipant(participant.identity);
+
+    await this.participantAudioOutput?.start();
+  }
+
+  private onParticipantConnected(participant: Participant) {
+    if (this.participantAvailableFuture.done) {
+      return;
+    }
+
+    if (this.participantIdentity) {
+      if (participant.identity !== this.participantIdentity) {
+        return;
+      }
+    } else if (
+      // otherwise, skip participants that are marked as publishing for this agent
+      participant.attributes?.[ATTRIBUTE_PUBLISH_ON_BEHALF] === this.room.localParticipant?.identity
+    ) {
+      return;
+    }
+
+    // TODO(shubhra): allow user to specify accepted participany kinds
+
+    this.participantAvailableFuture.resolve(participant);
   }
 
   start() {
-    // -- create inputs --
-    this.agentSession.audioInput = this.participantAudioInputStream;
-
     // -- create outputs --
     this.participantAudioOutput = new ParticipantAudioOutput(this.room, {
       sampleRate: this.sampleRate,
       numChannels: this.numChannels,
       trackPublishOptions: new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
     });
-    this.participantAudioOutput.start();
 
+    this.userTranscriptOutput = this.createTranscriptionOutput({
+      isDeltaStream: false,
+      participant: this.participantIdentity,
+    });
+    this.agentTranscriptOutput = this.createTranscriptionOutput({
+      isDeltaStream: true,
+      participant: null,
+    });
+
+    // -- set the room event handlers --
+    this.room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
+    this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
+
+    this.initTask();
+
+    // -- attatch the agent to the session --
+    this.agentSession.audioInput = this.participantAudioInputStream;
     this.agentSession.audioOutput = this.participantAudioOutput;
-    this.userTranscriptOutput = this.createTranscriptionOutput(false, null);
-    this.agentTranscriptOutput = this.createTranscriptionOutput(true, null);
+    this.agentSession._transcriptionOutput = this.agentTranscriptOutput;
   }
 }
