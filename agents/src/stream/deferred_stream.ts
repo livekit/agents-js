@@ -14,7 +14,7 @@ import { IdentityTransform } from './identity_transform.js';
  * Invalid state: Releasing reader
  * Invalid state: The reader is not attached to a stream
  */
-function isStreamReaderReleaseError(e: unknown) {
+export function isStreamReaderReleaseError(e: unknown) {
   const allowedMessages = [
     'Invalid state: Releasing reader',
     'Invalid state: The reader is not attached to a stream',
@@ -26,7 +26,6 @@ function isStreamReaderReleaseError(e: unknown) {
 
   return false;
 }
-
 export class DeferredReadableStream<T> {
   private transform: IdentityTransform<T>;
   private writer: WritableStreamDefaultWriter<T>;
@@ -67,6 +66,7 @@ export class DeferredReadableStream<T> {
         await this.writer.write(value);
       }
     } catch (e) {
+      // skip source detach related errors
       if (isStreamReaderReleaseError(e)) return;
       sourceError = e;
     } finally {
