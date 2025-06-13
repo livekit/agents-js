@@ -15,6 +15,7 @@ import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import type { UserState } from './events.js';
 import { RoomIO } from './room_io.js';
+import type { UnknownUserData } from './run_context.js';
 
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
 export interface VoiceOptions {
@@ -39,7 +40,7 @@ const defaultVoiceOptions: VoiceOptions = {
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
 
-export class AgentSession {
+export class AgentSession<UserData = UnknownUserData> {
   vad: VAD;
   stt: STT;
   llm: LLM;
@@ -53,6 +54,7 @@ export class AgentSession {
   private nextActivity?: AgentActivity;
   private started = false;
   private userState: UserState = 'listening';
+  private _userData: UserData | undefined;
   private _agentState: AgentState = 'initializing';
 
   private roomIO?: RoomIO;
@@ -80,6 +82,10 @@ export class AgentSession {
     // TODO(shubhra): Add tools to chat context initalzation
     this._chatCtx = new ChatContext();
     this.options = { ...defaultVoiceOptions, ...options };
+  }
+
+  get userData(): UserData {
+    return this._userData!;
   }
 
   async start(agent: Agent, room: Room): Promise<void> {
