@@ -9,18 +9,15 @@ import type { SpeechEvent } from '../stt/stt.js';
 
 export type STTNode = (
   audio: ReadableStream<AudioFrame>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   modelSettings: any, // TODO(AJS-59): add type
 ) => Promise<ReadableStream<SpeechEvent | string> | null>;
 
 export type LLMNode = (
   chatCtx: ChatContext,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   modelSettings: any, // TODO(AJS-59): add type
 ) => Promise<ReadableStream<ChatChunk | string> | null>;
 
 export type TTSNode = (
   text: ReadableStream<string>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   modelSettings: any, // TODO(AJS-59): add type
 ) => Promise<ReadableStream<AudioFrame> | null>;

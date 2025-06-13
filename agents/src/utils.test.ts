@@ -224,10 +224,8 @@ describe('AbortableTask', () => {
       let child1Completed = false;
       let child2Completed = false;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let child1Task: any;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let child2Task: any;
+      let child1Task: Task<string> | undefined = undefined;
+      let child2Task: Task<string> | undefined = undefined;
 
       const parentTask = Task.from(async (controller) => {
         parentStarted = true;
@@ -267,30 +265,27 @@ describe('AbortableTask', () => {
       // Use Promise.allSettled to handle all promise settlements
       const [parentResult, child1Result, child2Result] = await Promise.allSettled([
         parentTask.result,
-        child1Task.result,
-        child2Task.result,
+        child1Task!.result,
+        child2Task!.result,
       ]);
 
       // Verify all tasks were rejected with AbortError
       expect(parentResult.status).toBe('rejected');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect((parentResult as any).reason.name).toBe('AbortError');
+      expect((parentResult as PromiseRejectedResult).reason.name).toBe('AbortError');
 
       expect(child1Result.status).toBe('rejected');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect((child1Result as any).reason.name).toBe('AbortError');
+      expect((child1Result as PromiseRejectedResult).reason.name).toBe('AbortError');
 
       expect(child2Result.status).toBe('rejected');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect((child2Result as any).reason.name).toBe('AbortError');
+      expect((child2Result as PromiseRejectedResult).reason.name).toBe('AbortError');
 
       // Verify none of the tasks completed
       expect(parentCompleted).toBe(false);
       expect(child1Completed).toBe(false);
       expect(child2Completed).toBe(false);
       expect(parentTask.done).toBe(true);
-      expect(child1Task.done).toBe(true);
-      expect(child2Task.done).toBe(true);
+      expect(child1Task!.done).toBe(true);
+      expect(child2Task!.done).toBe(true);
     });
 
     it('should handle nested tasks that complete successfully', async () => {

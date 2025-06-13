@@ -37,9 +37,7 @@ import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
  * @beta
  */
 export abstract class RealtimeSession extends EventEmitter {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   abstract conversation: any; // openai.realtime.Conversation
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   abstract inputAudioBuffer: any; // openai.realtime.InputAudioBuffer
   abstract fncCtx: llm.FunctionContext | undefined;
   abstract recoverFromTextResponse(itemId: string): void;
@@ -50,7 +48,6 @@ export abstract class RealtimeSession extends EventEmitter {
  * @beta
  */
 export abstract class RealtimeModel {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   abstract session(options: any): RealtimeSession; // openai.realtime.ModelOptions
   abstract close(): Promise<void>;
   abstract sampleRate: number;
@@ -250,7 +247,6 @@ export class MultimodalAgent extends EventEmitter {
       this.#session = this.model.session({ fncCtx: this.#fncCtx, chatCtx: this.#chatCtx });
       this.#started = true;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('response_content_added', (message: any) => {
         // openai.realtime.RealtimeContent
         if (message.contentType === 'text') return;
@@ -276,7 +272,6 @@ export class MultimodalAgent extends EventEmitter {
         this.#playingHandle = handle;
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('response_content_done', (message: any) => {
         // openai.realtime.RealtimeContent
         if (message.contentType === 'text') {
@@ -306,7 +301,6 @@ export class MultimodalAgent extends EventEmitter {
         }
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('input_speech_committed', async (ev: any) => {
         // openai.realtime.InputSpeechCommittedEvent
         const participantIdentity = this.linkedParticipant?.identity;
@@ -318,7 +312,6 @@ export class MultimodalAgent extends EventEmitter {
         }
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('input_speech_transcription_completed', async (ev: any) => {
         // openai.realtime.InputSpeechTranscriptionCompletedEvent
         const transcription = ev.transcript;
@@ -343,7 +336,6 @@ export class MultimodalAgent extends EventEmitter {
         this.#logger.child({ transcription }).debug('committed user speech');
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('input_speech_started', async (ev: any) => {
         this.emit('user_started_speaking');
         if (this.#playingHandle && !this.#playingHandle.done) {
@@ -369,19 +361,16 @@ export class MultimodalAgent extends EventEmitter {
         this.emit('user_stopped_speaking');
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('function_call_started', (ev: any) => {
         this.#pendingFunctionCalls.add(ev.callId);
         this.#updateState();
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('function_call_completed', (ev: any) => {
         this.#pendingFunctionCalls.delete(ev.callId);
         this.#updateState();
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('function_call_failed', (ev: any) => {
         this.#pendingFunctionCalls.delete(ev.callId);
         this.#updateState();

@@ -75,7 +75,6 @@ export class AudioRecognition {
     private lastLanguage?: string,
   ) {
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
-    delay;
     const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
     this.vadInputStream = vadInputStream;
     this.sttInputStream = sttInputStream;
