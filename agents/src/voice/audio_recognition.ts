@@ -7,7 +7,7 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
-import { type ChatContext, ChatRole } from '../llm/chat_context.js';
+import { type ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream, isStreamReaderReleaseError } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
@@ -190,7 +190,7 @@ export class AudioRecognition {
     }
 
     chatCtx = chatCtx.copy();
-    chatCtx.append({ role: ChatRole.USER, text: this.audioTranscript });
+    chatCtx.addMessage({ role: 'user', content: this.audioTranscript });
 
     const turnDetector =
       // disable EOU model if manual turn detection enabled
