@@ -165,7 +165,7 @@ export class WorkerOptions {
   jobMemoryWarnMB: number;
   jobMemoryLimitMB: number;
 
-  /** @param options */
+  /** @param options - Worker options */
   constructor({
     agent,
     requestFunc = defaultRequestFunc,

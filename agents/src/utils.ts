@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type {
   LocalParticipant,
   RemoteParticipant,
@@ -17,7 +19,7 @@ export type AudioBuffer = AudioFrame[] | AudioFrame;
 /**
  * Merge one or more {@link AudioFrame}s into a single one.
  *
- * @param buffer Either an {@link AudioFrame} or a list thereof
+ * @param buffer - Either an {@link AudioFrame} or a list thereof
  * @throws
  * {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypeError
  * | TypeError} if sample rate or channel count are mismatched
@@ -461,4 +463,16 @@ export class Task<T> {
   get done(): boolean {
     return this.resultFuture.done;
   }
+}
+
+export function withResolvers<T = unknown>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: any) => void;
+
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  return { promise, resolve, reject };
 }

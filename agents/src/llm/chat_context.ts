@@ -19,7 +19,7 @@ export interface ChatImage {
    * @internal
    * Used by LLM implementations to store a processed version of the image for later use.
    */
-  cache: { [id: string | number | symbol]: any };
+  cache: { [id: string | number | symbol]: any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
 export interface ChatAudio {
@@ -131,7 +131,7 @@ export class ChatMessage {
 
 export class ChatContext {
   messages: ChatMessage[] = [];
-  metadata: { [id: string]: any } = {};
+  metadata: { [id: string]: any } = {}; // eslint-disable-line @typescript-eslint/no-explicit-any
 
   /** @deprecated Use insertItem for 1.0 changes. */
   append(msg: { text?: string; images?: ChatImage[]; role: ChatRole }): ChatContext {
