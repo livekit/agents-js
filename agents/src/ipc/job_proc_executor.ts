@@ -12,7 +12,7 @@ import type { IPCMessage } from './message.js';
 import { SupervisedProc } from './supervised_proc.js';
 
 export class JobProcExecutor extends SupervisedProc implements JobExecutor {
-  #userArgs?: any;
+  #userArgs?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
   #jobStatus?: JobStatus;
   #runningJob?: RunningJobInfo;
   #agent: string;
@@ -51,7 +51,7 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     throw new Error('job status not available');
   }
 
-  get userArguments(): any {
+  get userArguments(): any { // eslint-disable-line @typescript-eslint/no-explicit-any
     return this.#userArgs;
   }
 
