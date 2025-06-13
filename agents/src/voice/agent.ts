@@ -142,6 +142,7 @@ export class Agent {
           controller.close();
         },
         cancel() {
+          stream.detachInputStream();
           stream.close();
         },
       });

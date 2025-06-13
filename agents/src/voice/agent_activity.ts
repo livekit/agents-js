@@ -7,15 +7,14 @@ import type { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage, ChatRole } from '../llm/chat_context.js';
 import type { LLM } from '../llm/index.js';
 import { log } from '../log.js';
-import { SpeechHandle } from '../pipeline/speech_handle.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
 import type { Task } from '../utils.js';
 import { Future } from '../utils.js';
 import type { VADEvent } from '../vad.js';
-import { StopResponse } from './agent.js';
 import type { Agent } from './agent.js';
-import type { AgentSession } from './agent_session.js';
+import { StopResponse } from './agent.js';
+import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 import {
   AudioRecognition,
   type EndOfTurnInfo,
@@ -29,13 +28,13 @@ import {
   performTTSInference,
   performTextForwarding,
 } from './generation.js';
+import { SpeechHandle } from './speech_handle.js';
 
 export class AgentActivity implements RecognitionHooks {
   private static readonly REPLY_TASK_CANCEL_TIMEOUT = 5000;
   private started = false;
   private audioRecognition?: AudioRecognition;
   private logger = log();
-  private turnDetectionMode?: string;
   private _draining = false;
   private currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
@@ -46,6 +45,7 @@ export class AgentActivity implements RecognitionHooks {
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
     this.agentSession = agentSession;
+
     // relies on JavaScript's built-in lexicographic array comparison behavior, which checks elements of the array one by one
     this.speechQueue = new Heap<[number, number, SpeechHandle]>(Heap.maxComparator);
     this.q_updated = new Future();
@@ -60,7 +60,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession.options.maxEndpointingDelay,
       // Arrow function preserves the Agent context
       (...args) => this.agent.sttNode(...args),
-      this.turnDetectionMode === 'manual',
+      this.agentSession.turnDetection,
     );
     this.audioRecognition.start();
     this.started = true;
@@ -94,8 +94,31 @@ export class AgentActivity implements RecognitionHooks {
     return this.agentSession.options.allowInterruptions;
   }
 
+  get turnDetection(): TurnDetectionMode | undefined {
+    // TODO(brian): prioritize using agent.turn_detection
+    return this.agentSession.turnDetection;
+  }
+
   updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
     this.audioRecognition?.setInputAudioStream(audioStream);
+  }
+
+  commitUserTurn() {
+    if (!this.audioRecognition) {
+      throw new Error('AudioRecognition is not initialized');
+    }
+
+    // TODO(brian): add audio_detached flag
+    const audioDetached = false;
+    this.audioRecognition.commitUserTurn(audioDetached);
+  }
+
+  clearUserTurn() {
+    if (!this.audioRecognition) {
+      throw new Error('AudioRecognition is not initialized');
+    }
+
+    this.audioRecognition.clearUserTurn();
   }
 
   onStartOfSpeech(ev: VADEvent): void {
@@ -108,6 +131,11 @@ export class AgentActivity implements RecognitionHooks {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onVADInferenceDone(ev: VADEvent): void {
+    // skip speech handle interruption for manual and realtime model
+    if (this.turnDetection === 'manual' || this.turnDetection === 'realtime_llm') {
+      return;
+    }
+
     if (
       this.currentSpeech &&
       !this.currentSpeech.interrupted &&
@@ -133,16 +161,18 @@ export class AgentActivity implements RecognitionHooks {
       // TODO(shubhra): should we "forward" this new turn to the next agent/activity?
       return true;
     }
+
     if (
       this.stt &&
-      this.turnDetectionMode !== 'manual' &&
+      this.turnDetection !== 'manual' &&
       this.currentSpeech &&
       this.currentSpeech.allowInterruptions &&
       !this.currentSpeech.interrupted &&
       this.agentSession.options.minInterruptionWords > 0 &&
       info.newTranscript.split(' ').length < this.agentSession.options.minInterruptionWords
     ) {
-      // avoid interruption if the new transcript is too short
+      // avoid interruption if the new_transcript is too short
+      this.logger.info('skipping user input, new_transcript is too short');
       return false;
     }
     this.userTurnCompleted(info);
@@ -214,6 +244,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async userTurnCompleted(info: EndOfTurnInfo): Promise<void> {
+    this.logger.info('userTurnCompleted', info);
     // TODO(AJS-40) handle old task cancellation
 
     // When the audio recognition detects the end of a user turn:
@@ -373,7 +404,7 @@ export class AgentActivity implements RecognitionHooks {
       await Promise.allSettled(
         tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
       );
-      // TODO(shubhra): add syncronizher and transcripts
+      // TODO(AJS-87): add syncronizher and transcripts
 
       if (audioOutput) {
         audioOutput.clearBuffer();
