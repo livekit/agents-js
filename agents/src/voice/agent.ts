@@ -9,7 +9,6 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import type { ChatChunk, ChatMessage, LLM } from '../llm/index.js';
 import { ChatContext } from '../llm/index.js';
-import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
@@ -119,7 +118,6 @@ export class Agent {
       audio: ReadableStream<AudioFrame>,
       modelSettings: any, // TODO(AJS-59): add type
     ): Promise<ReadableStream<SpeechEvent | string> | null> {
-      const logger = log();
       const activity = agent.getActivityOrThrow();
 
       let wrapped_stt = activity.stt;
@@ -133,26 +131,19 @@ export class Agent {
         wrapped_stt = new STTStreamAdapter(wrapped_stt, agent.vad);
       }
 
-      logger.debug('Agent.default.sttNode: creating STT (deepgram) stream');
       const stream = wrapped_stt.stream();
 
       stream.updateInputStream(audio);
 
-      logger.debug('Agent.default.sttNode: creating ReadableStream');
       return new ReadableStream({
         async start(controller) {
           for await (const event of stream) {
             controller.enqueue(event);
-            logger.debug('Agent.default.sttNode: enqueued event');
           }
-          logger.debug('Agent.default.sttNode: closing controller');
           controller.close();
-          logger.debug('Agent.default.sttNode: controller closed');
         },
         cancel() {
-          logger.debug('Agent.default.sttNode: detaching deferred input stream');
           stream.detachInputStream();
-          logger.debug('Agent.default.sttNode: closing stt readable stream');
           stream.close();
         },
       });
