@@ -23,6 +23,7 @@ import {
 } from './audio_recognition.js';
 import {
   type _AudioOut,
+  type _TextOut,
   performAudioForwarding,
   performLLMInference,
   performTTSInference,
@@ -314,10 +315,6 @@ export class AgentActivity implements RecognitionHooks {
 
     await speechHandle.waitIfNotInterrupted([speechHandle.waitForAuthorization()]);
     if (speechHandle.interrupted) {
-      this.logger.info(
-        { speech_id: speechHandle.id },
-        'Speech interrupted after tts and llm tasks',
-      );
       replyAbortController.abort();
       await Promise.allSettled(
         tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
@@ -331,6 +328,18 @@ export class AgentActivity implements RecognitionHooks {
       replyAbortController,
     );
     tasks.push(textForwardTask);
+
+    const trNodeResult = await this.agent.transcriptionNode(llmOutput, {}); // TODO(AJS-59): add model settings
+    let textOut: _TextOut | null = null;
+    if (trNodeResult) {
+      const [textForwardTask, _textOut] = performTextForwarding(
+        null,
+        trNodeResult,
+        replyAbortController,
+      );
+      tasks.push(textForwardTask);
+      textOut = _textOut;
+    }
 
     const onFirstFrame = () => {
       this.agentSession._updateAgentState('speaking');

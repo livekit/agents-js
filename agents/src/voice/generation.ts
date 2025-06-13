@@ -133,15 +133,15 @@ export function performTTSInference(
   ];
 }
 
-export interface _TextOutput {
+export interface _TextOut {
   text: string;
   firstTextFut: Future;
 }
 
 async function forwardText(
-  textOutput: _TextOutput | null,
+  textOutput: _TextOut | null,
   source: ReadableStream<string>,
-  out: _TextOutput,
+  out: _TextOut,
   signal?: AbortSignal,
 ): Promise<void> {
   const reader = source.getReader();
@@ -169,10 +169,10 @@ async function forwardText(
 }
 
 export function performTextForwarding(
-  textOutput: _TextOutput | null,
+  textOutput: _TextOut | null,
   source: ReadableStream<string>,
   controller: AbortController,
-): [Task<void>, _TextOutput] {
+): [Task<void>, _TextOut] {
   const out = {
     text: '',
     firstTextFut: new Future(),
@@ -191,7 +191,7 @@ export interface _AudioOut {
 async function forwardAudio(
   ttsStream: ReadableStream<AudioFrame>,
   audioOuput: ParticipantAudioOutput,
-  out: _AudioOut,
+  out: _AudioOutput,
   signal?: AbortSignal,
 ): Promise<void> {
   const reader = ttsStream.getReader();
@@ -226,7 +226,7 @@ export function performAudioForwarding(
   ttsStream: ReadableStream<AudioFrame>,
   audioOutput: ParticipantAudioOutput,
   controller: AbortController,
-): [Task<void>, _AudioOut] {
+): [Task<void>, _AudioOutput] {
   const out = {
     audio: [],
     firstFrameFut: new Future(),
