@@ -134,7 +134,6 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    
     if (
       this.currentSpeech &&
       !this.currentSpeech.interrupted &&
