@@ -4,7 +4,6 @@
 import { randomUUID } from 'crypto';
 import type { ChatMessage, LLMStream } from '../llm/index.js';
 import { AsyncIterableQueue, Future } from '../utils.js';
-import type { SynthesisHandle } from './agent_output.js';
 
 // TODO(AJS-50): Update speech handle to 1.0
 export class SpeechHandle {
@@ -27,7 +26,6 @@ export class SpeechHandle {
   private playoutDoneFut = new Future();
   #speechCommitted = false;
   #source?: string | LLMStream | AsyncIterable<string>;
-  #synthesisHandle?: SynthesisHandle;
   #initialized = false;
   #fncNestedDepth: number;
   #fncExtraToolsMesages?: ChatMessage[];
@@ -105,13 +103,8 @@ export class SpeechHandle {
     await this.#initFut.await;
   }
 
-  initialize(source: string | LLMStream | AsyncIterable<string>, synthesisHandle: SynthesisHandle) {
-    if (this.legacyInterrupted) {
-      throw new Error('speech was interrupted');
-    }
-
+  initialize(source: string | LLMStream | AsyncIterable<string>) {
     this.#source = source;
-    this.#synthesisHandle = synthesisHandle;
     this.#initialized = true;
     this.#initFut.resolve();
   }
@@ -151,17 +144,6 @@ export class SpeechHandle {
     return this.#source;
   }
 
-  get synthesisHandle(): SynthesisHandle {
-    if (!this.#synthesisHandle) {
-      throw new Error('speech not initialized');
-    }
-    return this.#synthesisHandle;
-  }
-
-  set synthesisHandle(handle: SynthesisHandle) {
-    this.#synthesisHandle = handle;
-  }
-
   get initialized(): boolean {
     return this.#initialized;
   }
@@ -172,11 +154,6 @@ export class SpeechHandle {
 
   get userQuestion(): string {
     return this.#userQuestion;
-  }
-
-  /** @deprecated Use interrupted instead */
-  get legacyInterrupted(): boolean {
-    return !!this.#synthesisHandle?.interrupted;
   }
 
   get interrupted(): boolean {
@@ -256,6 +233,5 @@ export class SpeechHandle {
   cancel() {
     this.#initFut.reject(new Error());
     this.#nestedSpeechChanged.close();
-    this.#synthesisHandle?.interrupt();
   }
 }
