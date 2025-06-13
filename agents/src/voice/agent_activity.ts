@@ -7,7 +7,6 @@ import type { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage, ChatRole } from '../llm/chat_context.js';
 import type { LLM } from '../llm/index.js';
 import { log } from '../log.js';
-import { SpeechHandle } from '../pipeline/speech_handle.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
 import type { Task } from '../utils.js';
@@ -27,6 +26,7 @@ import {
   performTTSInference,
   performTextForwarding,
 } from './generation.js';
+import { SpeechHandle } from './speech_handle.js';
 
 export class AgentActivity implements RecognitionHooks {
   private static readonly REPLY_TASK_CANCEL_TIMEOUT = 5000;
