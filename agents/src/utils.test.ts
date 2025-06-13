@@ -142,7 +142,7 @@ describe('AbortableTask', () => {
         return 'completed';
       });
 
-      await delay(35);
+      await delay(39);
       task.cancel();
 
       expect(arr).toEqual([0, 1, 2]);

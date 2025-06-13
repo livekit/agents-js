@@ -66,6 +66,7 @@ export class DeferredReadableStream<T> {
         await this.writer.write(value);
       }
     } catch (e) {
+      // skip source detach related errors
       if (isStreamReaderReleaseError(e)) return;
       sourceError = e;
     } finally {
