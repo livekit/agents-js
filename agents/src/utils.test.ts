@@ -54,8 +54,8 @@ describe('AbortableTask', () => {
       // The task should reject with AbortError
       try {
         await task.result;
-      } catch (error: any) {
-        expect(error.name).toBe('AbortError');
+      } catch (error: unknown) {
+        expect((error as Error).name).toBe('AbortError');
       }
 
       expect(taskCompleted).toBe(false);
@@ -75,8 +75,8 @@ describe('AbortableTask', () => {
 
       try {
         await task.result;
-      } catch (error: any) {
-        expect(error.name).toBe('AbortError');
+      } catch (error: unknown) {
+        expect((error as Error).name).toBe('AbortError');
       }
 
       expect(task.done).toBe(true);
@@ -100,7 +100,7 @@ describe('AbortableTask', () => {
 
       try {
         await task.result;
-      } catch (error: any) {
+      } catch (error: unknown) {
         expect(error).toBe(expectedError);
       }
 
@@ -122,8 +122,8 @@ describe('AbortableTask', () => {
 
       try {
         await task.result;
-      } catch (error: any) {
-        expect(error.name).toBe('AbortError');
+      } catch (error: unknown) {
+        expect((error as Error).name).toBe('AbortError');
       }
 
       expect(task.done).toBe(true);
@@ -142,14 +142,14 @@ describe('AbortableTask', () => {
         return 'completed';
       });
 
-      await delay(35);
+      await delay(39);
       task.cancel();
 
       expect(arr).toEqual([0, 1, 2]);
       try {
         await task.result;
-      } catch (error: any) {
-        expect(error.message).toBe('Task was aborted');
+      } catch (error: unknown) {
+        expect((error as Error).message).toBe('Task was aborted');
       }
 
       expect(task.done).toBe(true);
@@ -224,8 +224,8 @@ describe('AbortableTask', () => {
       let child1Completed = false;
       let child2Completed = false;
 
-      let child1Task: any;
-      let child2Task: any;
+      let child1Task: Task<string> | undefined = undefined;
+      let child2Task: Task<string> | undefined = undefined;
 
       const parentTask = Task.from(async (controller) => {
         parentStarted = true;
@@ -265,27 +265,27 @@ describe('AbortableTask', () => {
       // Use Promise.allSettled to handle all promise settlements
       const [parentResult, child1Result, child2Result] = await Promise.allSettled([
         parentTask.result,
-        child1Task.result,
-        child2Task.result,
+        child1Task!.result,
+        child2Task!.result,
       ]);
 
       // Verify all tasks were rejected with AbortError
       expect(parentResult.status).toBe('rejected');
-      expect((parentResult as any).reason.name).toBe('AbortError');
+      expect((parentResult as PromiseRejectedResult).reason.name).toBe('AbortError');
 
       expect(child1Result.status).toBe('rejected');
-      expect((child1Result as any).reason.name).toBe('AbortError');
+      expect((child1Result as PromiseRejectedResult).reason.name).toBe('AbortError');
 
       expect(child2Result.status).toBe('rejected');
-      expect((child2Result as any).reason.name).toBe('AbortError');
+      expect((child2Result as PromiseRejectedResult).reason.name).toBe('AbortError');
 
       // Verify none of the tasks completed
       expect(parentCompleted).toBe(false);
       expect(child1Completed).toBe(false);
       expect(child2Completed).toBe(false);
       expect(parentTask.done).toBe(true);
-      expect(child1Task.done).toBe(true);
-      expect(child2Task.done).toBe(true);
+      expect(child1Task!.done).toBe(true);
+      expect(child2Task!.done).toBe(true);
     });
 
     it('should handle nested tasks that complete successfully', async () => {
@@ -388,8 +388,8 @@ describe('AbortableTask', () => {
       try {
         await parentTask.result;
         expect.fail('Parent task should have thrown');
-      } catch (error: any) {
-        parentError = error;
+      } catch (error: unknown) {
+        parentError = error as Error;
       }
 
       // Verify the error propagated correctly
@@ -428,7 +428,7 @@ describe('AbortableTask', () => {
       try {
         await task.cancelAndWait(200);
         expect.fail('Task should have timed out');
-      } catch (error: any) {
+      } catch (error: unknown) {
         expect(error).toBe(TASK_TIMEOUT_ERROR);
       }
     });
@@ -458,9 +458,9 @@ describe('AbortableTask', () => {
       try {
         await task.cancelAndWait(1000);
         expect.fail('Task should have thrown');
-      } catch (error: any) {
-        expect(error.message).toBe('Custom error');
-        expect(error.name).toBe('TypeError');
+      } catch (error: unknown) {
+        expect((error as Error).message).toBe('Custom error');
+        expect((error as Error).name).toBe('TypeError');
       }
     });
   });

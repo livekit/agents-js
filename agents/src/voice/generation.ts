@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
-import type { ReadableStream } from 'stream/web';
+import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
@@ -33,7 +33,7 @@ export function performLLMInference(
   const data = new _LLMGenerationData(textStream.readable);
 
   const inferenceTask = async (signal: AbortSignal) => {
-    let llmStreamReader: ReadableStreamDefaultReader<any> | null = null;
+    let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk> | null = null;
     let llmStream: ReadableStream<string | ChatChunk> | null = null;
 
     try {
