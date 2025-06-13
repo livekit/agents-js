@@ -81,8 +81,6 @@ export class AudioRecognition {
   }
 
   async start() {
-    this.logger.debug('Start audio recognition with turn detection mode: ', this.turnDetectionMode);
-
     this.vadTask = Task.from(this.createVadTask());
     this.vadTask.result.catch((err) => {
       this.logger.error(`Error running VAD task: ${err}`);
@@ -123,7 +121,7 @@ export class AudioRecognition {
         this.lastLanguage = ev.alternatives?.[0]?.language;
 
         if (!transcript) {
-          this.logger.debug('stt final transcript received but no transcript');
+          // stt final transcript received but no transcript
           return;
         }
 
