@@ -134,7 +134,7 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    // TODO(AJS-40): Implement this
+    
     if (
       this.currentSpeech &&
       !this.currentSpeech.interrupted &&
