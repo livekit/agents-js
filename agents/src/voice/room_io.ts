@@ -25,7 +25,11 @@ import {
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { Future, Task } from '../utils.js';
-import type { AgentSession } from './agent_session.js';
+import {
+  type AgentSession,
+  AgentSessionEvent,
+  type UserInputTranscribedEvent,
+} from './agent_session.js';
 
 function findMicrophoneTrackId(room: Room, identity: string): string {
   let p: Participant | LocalParticipant | null = room.remoteParticipants.get(identity) ?? null;
@@ -383,6 +387,8 @@ export class RoomIO {
   private participantAvailableFuture: Future<Participant> = new Future();
   private roomConnectedFuture: Future<void> = new Future();
 
+  private logger = log();
+
   constructor(
     agentSession: AgentSession,
     room: Room,
@@ -451,6 +457,14 @@ export class RoomIO {
     this.participantAvailableFuture.resolve(participant);
   }
 
+  private onUserInputTranscribed = (ev: UserInputTranscribedEvent) => {
+    this.logger.debug({ ev }, 'user input transcribed');
+    this.userTranscriptOutput?.captureText(ev.transcript);
+    if (ev.isFinal) {
+      this.userTranscriptOutput?.flush();
+    }
+  };
+
   start() {
     // -- create outputs --
     this.participantAudioOutput = new ParticipantAudioOutput(this.room, {
@@ -471,6 +485,9 @@ export class RoomIO {
     // -- set the room event handlers --
     this.room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
+    if (this.room.isConnected) {
+      this.roomConnectedFuture.resolve();
+    }
 
     this.initTask();
 
@@ -478,5 +495,7 @@ export class RoomIO {
     this.agentSession.audioInput = this.participantAudioInputStream;
     this.agentSession.audioOutput = this.participantAudioOutput;
     this.agentSession._transcriptionOutput = this.agentTranscriptOutput;
+
+    this.agentSession.on(AgentSessionEvent.UserInputTranscribed, this.onUserInputTranscribed);
   }
 }

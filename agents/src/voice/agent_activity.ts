@@ -14,7 +14,7 @@ import { Future } from '../utils.js';
 import type { VADEvent } from '../vad.js';
 import type { Agent } from './agent.js';
 import { StopResponse } from './agent.js';
-import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+import { type AgentSession, AgentSessionEvent, type TurnDetectionMode } from './agent_session.js';
 import {
   AudioRecognition,
   type EndOfTurnInfo,
@@ -147,11 +147,21 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onInterimTranscript(ev: SpeechEvent): void {
-    this.logger.info('Interim transcript', ev);
+    this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
+      transcript: ev.alternatives![0].text,
+      isFinal: false,
+      // TODO(shubhra): add multi participant support
+      speakerId: null,
+    });
   }
 
   onFinalTranscript(ev: SpeechEvent): void {
-    this.logger.info(`Final transcript ${ev.alternatives![0].text}`);
+    this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
+      transcript: ev.alternatives![0].text,
+      isFinal: true,
+      // TODO(shubhra): add multi participant support
+      speakerId: null,
+    });
   }
 
   async onEndOfTurn(info: EndOfTurnInfo): Promise<boolean> {
