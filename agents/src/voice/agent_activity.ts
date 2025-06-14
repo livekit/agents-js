@@ -421,6 +421,7 @@ export class AgentActivity implements RecognitionHooks {
         interrupted: true,
         createdAt: replyStartedAt,
       });
+      chatCtx.addMessage(message);
       this.agent._chatCtx.insert(message);
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
