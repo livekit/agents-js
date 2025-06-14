@@ -308,8 +308,8 @@ export class AgentActivity implements RecognitionHooks {
     chatCtx = chatCtx.copy();
 
     if (newMessage) {
-      chatCtx.addMessage(newMessage);
-      this.agent._chatCtx.addMessage(newMessage);
+      chatCtx.insert(newMessage);
+      this.agent._chatCtx.insert(newMessage);
       this.agentSession._conversationItemAdded(newMessage);
     }
 
@@ -421,7 +421,7 @@ export class AgentActivity implements RecognitionHooks {
         interrupted: true,
         createdAt: replyStartedAt,
       });
-      chatCtx.addMessage(message);
+      chatCtx.insert(message);
       this.agent._chatCtx.insert(message);
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
@@ -437,13 +437,14 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
     if (textOutput && textOutput.text) {
-      const message = chatCtx.addMessage({
+      const message = new ChatMessage({
         role: 'assistant',
         content: textOutput.text,
         id: llmGenData.id,
         interrupted: false,
         createdAt: replyStartedAt,
       });
+      chatCtx.insert(message);
       this.agent._chatCtx.insert(message);
       this.agentSession._conversationItemAdded(message);
       this.logger.info(
