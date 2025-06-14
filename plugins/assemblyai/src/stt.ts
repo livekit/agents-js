@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type AudioBuffer, AudioByteStream, AudioEnergyFilter, log, stt } from '@livekit/agents';
+import { type AudioBuffer, AudioByteStream, log, stt } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AssemblyAI } from 'assemblyai';
-import type { RealtimeTranscriber } from 'assemblyai';
+import type { RealtimeTranscriber, RealtimeTranscript } from 'assemblyai';
 
 export interface STTOptions {
   apiKey?: string;
@@ -62,7 +62,6 @@ export class STT extends stt.STT {
 
 export class SpeechStream extends stt.SpeechStream {
   #opts: STTOptions;
-  #audioEnergyFilter: AudioEnergyFilter;
   #logger = log();
   #speaking = false;
   #client: AssemblyAI;
@@ -73,7 +72,6 @@ export class SpeechStream extends stt.SpeechStream {
     super(stt);
     this.#opts = opts;
     this.closed = false;
-    this.#audioEnergyFilter = new AudioEnergyFilter();
     this.#client = new AssemblyAI({
       apiKey: this.#opts.apiKey || '',
     });
@@ -150,9 +148,7 @@ export class SpeechStream extends stt.SpeechStream {
           }
 
           for await (const frame of frames) {
-            if (this.#audioEnergyFilter.pushFrame(frame)) {
-              this.#transcriber?.sendAudio(new Uint8Array(frame.data.buffer));
-            }
+            this.#transcriber?.sendAudio(new Uint8Array(frame.data.buffer));
           }
         }
 
@@ -162,8 +158,8 @@ export class SpeechStream extends stt.SpeechStream {
       };
 
       await sendTask();
-    } catch (error: any) {
-      this.#logger.child({ error: error.message }).error(`Error in AssemblyAI STT`);
+    } catch (error: unknown) {
+      this.#logger.child({ error }).error(`Error in AssemblyAI STT`);
 
       if (!this.closed) {
         setTimeout(() => this.#run(), 5000);
@@ -172,7 +168,7 @@ export class SpeechStream extends stt.SpeechStream {
   }
 }
 
-const assemblyTranscriptToSpeechData = (transcript: any): stt.SpeechData => {
+const assemblyTranscriptToSpeechData = (transcript: RealtimeTranscript): stt.SpeechData => {
   return {
     language: 'en-US',
     startTime: transcript.audio_start || 0,
