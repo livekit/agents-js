@@ -266,7 +266,7 @@ export class ParticipantLegacyTranscriptionOutput extends ParticipantTextOutput 
   private isDeltaStream: boolean;
 
   private capturing: boolean = false;
-  private currentId: string = randomUUID();
+  private currentId: string = 'SG_' + randomUUID();
   private latestText: string = '';
 
   private participantIdentity: string | null = null;
@@ -309,7 +309,7 @@ export class ParticipantLegacyTranscriptionOutput extends ParticipantTextOutput 
   }
 
   private resetState() {
-    this.currentId = randomUUID();
+    this.currentId = 'SG_' + randomUUID();
     this.capturing = false;
     this.latestText = '';
   }
@@ -350,6 +350,15 @@ export class ParticipantLegacyTranscriptionOutput extends ParticipantTextOutput 
     if (!this.participantIdentity || !this.trackId) {
       return;
     }
+
+    this.logger.debug(
+      {
+        participantIdentity: this.participantIdentity,
+        trackSid: this.trackId,
+        segments: [{ id, text, final, startTime: BigInt(0), endTime: BigInt(0), language: '' }],
+      },
+      'sending text',
+    );
 
     try {
       if (this.room.isConnected) {
@@ -625,7 +634,15 @@ export class RoomIO {
     }
 
     const participant = await this.participantAvailableFuture.await;
+
+    // init user outputs
     this.updateTranscriptionOutput(this.userTranscriptOutput, participant.identity);
+
+    // init agent outputs
+    this.updateTranscriptionOutput(
+      this.agentTranscriptOutput,
+      this.room.localParticipant?.identity,
+    );
 
     await this.participantAudioOutput?.start();
   }
@@ -673,7 +690,7 @@ export class RoomIO {
     ]);
   }
 
-  private updateTranscriptionOutput(output: ParalellTextOutput | null, participant: string | null) {
+  private updateTranscriptionOutput(output: ParalellTextOutput | null, participant?: string) {
     if (output === null) {
       return;
     }
@@ -683,7 +700,7 @@ export class RoomIO {
         sink instanceof ParticipantLegacyTranscriptionOutput ||
         sink instanceof ParticipantTranscriptionOutput
       ) {
-        sink.setParticipant(participant);
+        sink.setParticipant(participant ?? null);
       }
     }
   }
