@@ -22,7 +22,7 @@ const defaultSTTOptions: STTOptions = {
   keywords: [],
   // NOTE:
   // The default is 700ms from AssemblyAI.
-  // I use a low default of 300ms here because I also use
+  // We use a low default of 300ms here because we also use
   // the new end-of-utterance model from LiveKit to handle
   // turn detection in my agent. Which means that even though
   // this will quickly return a final transcript EVEN THOUGH
@@ -76,7 +76,6 @@ export class SpeechStream extends stt.SpeechStream {
     this.closed = false;
     this.#audioEnergyFilter = new AudioEnergyFilter();
     this.#client = new AssemblyAI({
-      // Defaults to the apiKey in defaultSTTOptions, which pulls in process.env.ASSEMBLY_AI_KEY,
       apiKey: this.#opts.apiKey || '',
     });
 
@@ -85,14 +84,12 @@ export class SpeechStream extends stt.SpeechStream {
 
   async #run() {
     try {
-      // Create the realtime transcriber with parameters that AssemblyAI supports
       this.#transcriber = this.#client.realtime.transcriber({
         sampleRate: this.#opts.sampleRate,
         wordBoost: this.#opts.keywords.map((k) => k[0]),
         endUtteranceSilenceThreshold: this.#opts.endUtteranceSilenceThreshold,
       });
 
-      // Set up event handlers
       this.#transcriber.on('open', (data) => {
         this.#logger
           .child({ sessionId: data.sessionId, expiresAt: data.expiresAt })
@@ -102,7 +99,6 @@ export class SpeechStream extends stt.SpeechStream {
       this.#transcriber.on('close', (code, reason) => {
         this.#logger.child({ code, reason }).debug(`AssemblyAI session closed`);
         if (!this.closed) {
-          // Try to reconnect if not intentionally closed
           this.#run();
         }
       });
@@ -118,13 +114,11 @@ export class SpeechStream extends stt.SpeechStream {
           return;
         }
 
-        // If we haven't started speaking yet, emit a start of speech event
         if (!this.#speaking) {
           this.#speaking = true;
           this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
         }
 
-        // Handle partial and final transcripts
         if (transcript.message_type === 'PartialTranscript') {
           this.queue.put({
             type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
@@ -138,10 +132,8 @@ export class SpeechStream extends stt.SpeechStream {
         }
       });
 
-      // Connect to the AssemblyAI service
       await this.#transcriber.connect();
 
-      // Process audio data from the input stream
       const sendTask = async () => {
         const samples100Ms = Math.floor(this.#opts.sampleRate / 10);
         const stream = new AudioByteStream(this.#opts.sampleRate, 1, samples100Ms);
@@ -160,24 +152,20 @@ export class SpeechStream extends stt.SpeechStream {
 
           for await (const frame of frames) {
             if (this.#audioEnergyFilter.pushFrame(frame)) {
-              // Send audio data to AssemblyAI
               this.#transcriber?.sendAudio(new Uint8Array(frame.data.buffer));
             }
           }
         }
 
-        // Close the connection when done
         if (this.#transcriber) {
           await this.#transcriber.close();
         }
       };
 
-      // Start processing audio
       await sendTask();
     } catch (error: any) {
       this.#logger.child({ error: error.message }).error(`Error in AssemblyAI STT`);
 
-      // Try to reconnect after a delay if not intentionally closed
       if (!this.closed) {
         setTimeout(() => this.#run(), 5000);
       }
@@ -185,7 +173,6 @@ export class SpeechStream extends stt.SpeechStream {
   }
 }
 
-// Helper function to convert AssemblyAI transcript to SpeechData
 const assemblyTranscriptToSpeechData = (transcript: any): stt.SpeechData => {
   return {
     language: 'en-US',
