@@ -21,6 +21,7 @@ import {
   type RecognitionHooks,
 } from './audio_recognition.js';
 import {
+  type _AudioOut,
   performAudioForwarding,
   performLLMInference,
   performTTSInference,
@@ -365,13 +366,15 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('speaking');
     };
 
+    let audioOut: _AudioOut | null = null;
     if (audioOutput) {
       if (ttsStream) {
-        const [forwardTask, audioOut] = performAudioForwarding(
+        const [forwardTask, _audioOut] = performAudioForwarding(
           ttsStream,
           audioOutput,
           replyAbortController,
         );
+        audioOut = _audioOut;
         tasks.push(forwardTask);
         audioOut.firstFrameFut.await.then(onFirstFrame);
       } else {
@@ -384,7 +387,9 @@ export class AgentActivity implements RecognitionHooks {
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
-    // TODO(shubhra): add waiting for audio playout in audio output
+    if (audioOutput) {
+      await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
+    }
 
     if (speechHandle.interrupted) {
       this.logger.debug(
@@ -395,8 +400,21 @@ export class AgentActivity implements RecognitionHooks {
       await Promise.allSettled(
         tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
       );
-      // TODO(shubhra): add waiting for audio playout in audio output and syncronizher transcripts
-      const message = chatCtx.addMessage({
+      // TODO(AJS-87): add syncronizher and transcripts
+
+      if (audioOutput) {
+        audioOutput.clearBuffer();
+        const playbackEv = await audioOutput.waitForPlayout();
+        if (audioOut?.firstFrameFut.done) {
+          // playback EV is valid only if the first frame was already played
+          this.logger.info(
+            { speech_id: speechHandle.id, playbackPosition: playbackEv.playbackPosition },
+            'playout interrupted',
+          );
+        }
+      }
+
+      const message = new ChatMessage({
         role: 'assistant',
         content: textOutput.text,
         id: llmGenData.id,
