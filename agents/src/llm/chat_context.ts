@@ -314,7 +314,6 @@ export class ChatContext {
   }
 }
 
-
 export function message(params: {
   role: ChatRole;
   content: ChatContent[] | string;
