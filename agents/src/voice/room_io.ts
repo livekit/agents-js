@@ -429,7 +429,7 @@ export interface PlaybackFinishedEvent {
   interrupted: boolean;
   // Transcript synced with playback; may be partial if the audio was interrupted
   // When null, the transcript is not synchronized with the playback
-  synchronizedTranscript: string | null;
+  synchronizedTranscript?: string;
 }
 
 export interface AudioOutputOptions {
@@ -455,7 +455,6 @@ export class ParticipantAudioOutput {
   private lastPlaybackEvent: PlaybackFinishedEvent = {
     playbackPosition: 0,
     interrupted: false,
-    synchronizedTranscript: null,
   };
 
   private logger = log();
@@ -509,21 +508,20 @@ export class ParticipantAudioOutput {
   }
 
   private async waitForPlayoutTask(abortController: AbortController): Promise<void> {
-    const interrupted = await new Promise<boolean>((resolve) => {
-      const abortHandler = () => resolve(true);
-      abortController.signal.addEventListener('abort', abortHandler);
+    const abortFuture = new Future<boolean>();
 
-      this.audioSource
-        .waitForPlayout()
-        .then(() => {
-          abortController.signal.removeEventListener('abort', abortHandler);
-          resolve(false);
-        })
-        .catch(() => {
-          abortController.signal.removeEventListener('abort', abortHandler);
-          resolve(false);
-        });
+    const resolveAbort = () => {
+      if (!abortFuture.done) abortFuture.resolve(true);
+    };
+
+    abortController.signal.addEventListener('abort', resolveAbort);
+
+    this.audioSource.waitForPlayout().finally(() => {
+      abortController.signal.removeEventListener('abort', resolveAbort);
+      if (!abortFuture.done) abortFuture.resolve(false);
     });
+
+    const interrupted = await abortFuture.await;
 
     let pushedDuration = this.pushedDurationMs;
 
@@ -537,7 +535,7 @@ export class ParticipantAudioOutput {
     this.onPlaybackFinished({
       playbackPosition: pushedDuration,
       interrupted,
-      synchronizedTranscript: null, // TODO: implement transcript synchronization
+      // TODO: implement transcript synchronization
     });
   }
 
@@ -612,6 +610,12 @@ export class RoomIO {
     this.agentSession = agentSession;
     this.room = room;
     this.participantAudioInputStream = this._deferredAudioInputStream.stream;
+
+    this.setupEventListeners();
+  }
+
+  private setupEventListeners() {
+    this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
   }
 
   private onTrackSubscribed = (track: RemoteTrack) => {

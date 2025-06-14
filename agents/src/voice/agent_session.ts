@@ -2,8 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, Room } from '@livekit/rtc-node';
+<<<<<<< HEAD
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+=======
+>>>>>>> dev-1.0
 import type { ReadableStream } from 'node:stream/web';
 import type { ChatMessage } from '../llm/chat_context.js';
 import { ChatContext } from '../llm/chat_context.js';
@@ -16,7 +19,11 @@ import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import type { UserState } from './events.js';
+<<<<<<< HEAD
 import type { ParticipantAudioOutput, TextOutput } from './room_io.js';
+=======
+import type { ParticipantAudioOutput } from './room_io.js';
+>>>>>>> dev-1.0
 import { RoomIO } from './room_io.js';
 
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
@@ -80,8 +87,11 @@ export class AgentSession extends (EventEmitter as new () => TypedEmitter<AgentS
   audioInput?: ReadableStream<AudioFrame>;
   /** @internal */
   audioOutput?: ParticipantAudioOutput;
+<<<<<<< HEAD
   /** @internal */
   _transcriptionOutput?: TextOutput;
+=======
+>>>>>>> dev-1.0
 
   constructor(
     vad: VAD,
