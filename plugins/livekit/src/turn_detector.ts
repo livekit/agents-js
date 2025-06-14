@@ -92,11 +92,8 @@ export class EOUModel {
     let messages: RawChatContext = [];
 
     for (const message of chatCtx.items) {
-      if (message.type !== 'message') {
-        continue;
-      }
-
-      if (message.role !== 'assistant' && message.role !== 'user') {
+      // skip system and developer messages or tool call messages
+      if (message.type !== 'message' || message.role in ['system', 'developer']) {
         continue;
       }
 
