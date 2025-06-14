@@ -26,7 +26,7 @@ export interface PlaybackFinishedEvent {
   interrupted: boolean;
   // Transcript synced with playback; may be partial if the audio was interrupted
   // When null, the transcript is not synchronized with the playback
-  synchronizedTranscript: string | null;
+  synchronizedTranscript?: string;
 }
 
 export interface AudioOutputOptions {
@@ -52,7 +52,6 @@ export class ParticipantAudioOutput {
   private lastPlaybackEvent: PlaybackFinishedEvent = {
     playbackPosition: 0,
     interrupted: false,
-    synchronizedTranscript: null,
   };
 
   private logger = log();
@@ -134,7 +133,7 @@ export class ParticipantAudioOutput {
     this.onPlaybackFinished({
       playbackPosition: pushedDuration,
       interrupted,
-      synchronizedTranscript: null, // TODO: implement transcript synchronization
+      // TODO: implement transcript synchronization
     });
   }
 
