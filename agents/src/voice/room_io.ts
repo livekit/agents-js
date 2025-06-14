@@ -610,12 +610,6 @@ export class RoomIO {
     this.agentSession = agentSession;
     this.room = room;
     this.participantAudioInputStream = this._deferredAudioInputStream.stream;
-
-    this.setupEventListeners();
-  }
-
-  private setupEventListeners() {
-    this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
   }
 
   private onTrackSubscribed = (track: RemoteTrack) => {
