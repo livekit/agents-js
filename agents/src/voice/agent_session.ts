@@ -42,7 +42,7 @@ const defaultVoiceOptions: VoiceOptions = {
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
 
-// TODO(shubhra): add and organize all agent session callbacks
+// TODO(AJS-102): add and organize all agent session callbacks
 export enum AgentSessionEvent {
   UserInputTranscribed = 'user_input_transcribed',
 }

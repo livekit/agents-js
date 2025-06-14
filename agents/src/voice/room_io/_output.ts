@@ -475,7 +475,7 @@ export class ParticipantAudioOutput {
       this.playbackSegmentsCount++;
     }
 
-    // TODO(shubhra): use frame.durationMs once available in rtc-node
+    // TODO(AJS-102): use frame.durationMs once available in rtc-node
     this.pushedDurationMs += frame.samplesPerChannel / frame.sampleRate;
     await this.audioSource.captureFrame(frame);
   }
@@ -524,7 +524,7 @@ export class ParticipantAudioOutput {
     this.onPlaybackFinished({
       playbackPosition: pushedDuration,
       interrupted,
-      // TODO: implement transcript synchronization
+      // TODO(AJS-104): implement transcript synchronization
     });
   }
 
