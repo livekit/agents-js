@@ -105,21 +105,20 @@ export class ParticipantAudioOutput {
   }
 
   private async waitForPlayoutTask(abortController: AbortController): Promise<void> {
-    const interrupted = await new Promise<boolean>((resolve) => {
-      const abortHandler = () => resolve(true);
-      abortController.signal.addEventListener('abort', abortHandler);
+    const abortFuture = new Future<boolean>();
 
-      this.audioSource
-        .waitForPlayout()
-        .then(() => {
-          abortController.signal.removeEventListener('abort', abortHandler);
-          resolve(false);
-        })
-        .catch(() => {
-          abortController.signal.removeEventListener('abort', abortHandler);
-          resolve(false);
-        });
+    const resolveAbort = () => {
+      if (!abortFuture.done) abortFuture.resolve(true);
+    };
+
+    abortController.signal.addEventListener('abort', resolveAbort);
+
+    this.audioSource.waitForPlayout().finally(() => {
+      abortController.signal.removeEventListener('abort', resolveAbort);
+      if (!abortFuture.done) abortFuture.resolve(false);
     });
+
+    const interrupted = await abortFuture.await;
 
     let pushedDuration = this.pushedDurationMs;
 
