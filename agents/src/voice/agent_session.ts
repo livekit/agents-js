@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame, AudioSource, Room } from '@livekit/rtc-node';
+import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
 import type { ChatMessage } from '../llm/chat_context.js';
 import { ChatContext } from '../llm/chat_context.js';
@@ -14,6 +14,7 @@ import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import type { UserState } from './events.js';
+import type { ParticipantAudioOutput } from './room_io.js';
 import { RoomIO } from './room_io.js';
 
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
@@ -61,7 +62,7 @@ export class AgentSession {
   /** @internal */
   audioInput?: ReadableStream<AudioFrame>;
   /** @internal */
-  audioOutput?: AudioSource;
+  audioOutput?: ParticipantAudioOutput;
 
   constructor(
     vad: VAD,
