@@ -303,3 +303,34 @@ export class ChatContext {
     return false;
   }
 }
+
+
+export function message(params: {
+  role: ChatRole;
+  content: ChatContent[] | string;
+  id?: string;
+  interrupted?: boolean;
+  createdAt?: number;
+}) {
+  return new ChatMessage(params);
+}
+
+export function toolCall(params: {
+  callId: string;
+  name: string;
+  args: string;
+  id?: string;
+  createdAt?: number;
+}) {
+  return new FunctionCall(params);
+}
+
+export function toolCallOutput(params: {
+  callId: string;
+  output: string;
+  isError: boolean;
+  id?: string;
+  createdAt?: number;
+}) {
+  return new FunctionCallOutput(params);
+}
