@@ -16,7 +16,7 @@ import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import type { UserState } from './events.js';
-import type { ParticipantAudioOutput, ParticipantTranscriptionOutput } from './room_io.js';
+import type { ParticipantAudioOutput, TextOutput } from './room_io.js';
 import { RoomIO } from './room_io.js';
 
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
@@ -81,7 +81,7 @@ export class AgentSession extends (EventEmitter as new () => TypedEmitter<AgentS
   /** @internal */
   audioOutput?: ParticipantAudioOutput;
   /** @internal */
-  _transcriptionOutput?: ParticipantTranscriptionOutput;
+  _transcriptionOutput?: TextOutput;
 
   constructor(
     vad: VAD,

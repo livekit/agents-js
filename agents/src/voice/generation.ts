@@ -9,7 +9,7 @@ import type { ChatChunk } from '../llm/llm.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task } from '../utils.js';
 import type { LLMNode, TTSNode } from './io.js';
-import type { ParticipantAudioOutput, ParticipantTranscriptionOutput } from './room_io.js';
+import type { ParticipantAudioOutput, TextOutput } from './room_io.js';
 
 /* @internal */
 export class _LLMGenerationData {
@@ -142,7 +142,7 @@ async function forwardText(
   source: ReadableStream<string>,
   out: _TextOut,
   signal: AbortSignal,
-  textOutput?: ParticipantTranscriptionOutput,
+  textOutput?: TextOutput,
 ): Promise<void> {
   const reader = source.getReader();
   try {
@@ -175,7 +175,7 @@ async function forwardText(
 export function performTextForwarding(
   source: ReadableStream<string>,
   controller: AbortController,
-  textOutput?: ParticipantTranscriptionOutput,
+  textOutput?: TextOutput,
 ): [Task<void>, _TextOut] {
   const out = {
     text: '',

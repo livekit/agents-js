@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame, LocalParticipant, Participant, Room } from '@livekit/rtc-node';
+import type {
+  AudioFrame,
+  LocalParticipant,
+  Participant,
+  RemoteParticipant,
+  RemoteTrackPublication,
+  Room,
+} from '@livekit/rtc-node';
 import {
   AudioSource,
   AudioStream,
@@ -51,12 +58,33 @@ function findMicrophoneTrackId(room: Room, identity: string): string {
   throw new Error(`Participant ${identity} does not have a microphone track`);
 }
 
-export class ParticipantTranscriptionOutput {
-  private room: Room;
+export abstract class TextOutput {
+  abstract captureText(text: string): Promise<void>;
+  abstract flush(): void;
+}
+
+abstract class ParticipantTextOutput extends TextOutput {
+  protected room: Room;
+
+  constructor(room: Room) {
+    super();
+    this.room = room;
+  }
+
+  abstract setParticipant(participant: Participant | string | null): void;
+
+  protected abstract onTrackPublished(
+    track: RemoteTrackPublication,
+    participant: RemoteParticipant,
+  ): void;
+  protected abstract onLocalTrackPublished(track: LocalTrackPublication): void;
+}
+
+export class ParticipantTranscriptionOutput extends ParticipantTextOutput {
   private isDeltaStream: boolean;
 
   private capturing: boolean = false;
-  private currentId: string = '';
+  private currentId: string = randomUUID();
   private latestText: string = '';
   private logger = log();
 
@@ -66,10 +94,12 @@ export class ParticipantTranscriptionOutput {
   private flushTask: Task<void> | null = null;
 
   constructor(room: Room, isDeltaStream: boolean, participant: Participant | string | null) {
-    this.room = room;
+    super(room);
     this.isDeltaStream = isDeltaStream;
 
-    this.resetState();
+    this.room.on(RoomEvent.TrackPublished, this.onTrackPublished);
+    this.room.on(RoomEvent.LocalTrackPublished, this.onLocalTrackPublished);
+
     this.setParticipant(participant);
   }
 
@@ -112,7 +142,7 @@ export class ParticipantTranscriptionOutput {
     }
 
     if (this.flushTask && !this.flushTask.done) {
-      await this.flushTask;
+      await this.flushTask.result;
     }
 
     if (!this.capturing) {
@@ -139,6 +169,30 @@ export class ParticipantTranscriptionOutput {
       this.logger.error(error, 'failed to publish transcription');
     }
   }
+
+  protected onTrackPublished = (track: RemoteTrackPublication, participant: RemoteParticipant) => {
+    if (
+      this.participantIdentity === null ||
+      participant.identity !== this.participantIdentity ||
+      track.source !== TrackSource.SOURCE_MICROPHONE
+    ) {
+      return;
+    }
+
+    this.trackId = track.sid ?? null;
+  };
+
+  protected onLocalTrackPublished = (track: LocalTrackPublication) => {
+    if (
+      this.participantIdentity === null ||
+      this.participantIdentity !== this.room.localParticipant?.identity ||
+      track.source !== TrackSource.SOURCE_MICROPHONE
+    ) {
+      return;
+    }
+
+    this.trackId = track.sid ?? null;
+  };
 
   private async createTextWriter(attributes?: Record<string, string>): Promise<TextStreamWriter> {
     if (!this.participantIdentity) {
@@ -205,6 +259,157 @@ export class ParticipantTranscriptionOutput {
     this.currentId = randomUUID();
     this.capturing = false;
     this.latestText = '';
+  }
+}
+
+export class ParticipantLegacyTranscriptionOutput extends ParticipantTextOutput {
+  private isDeltaStream: boolean;
+
+  private capturing: boolean = false;
+  private currentId: string = randomUUID();
+  private latestText: string = '';
+
+  private participantIdentity: string | null = null;
+  private trackId: string | null = null;
+  private pushedText: string = '';
+  private flushTask: Promise<void> | null = null;
+
+  private logger = log();
+
+  constructor(room: Room, isDeltaStream: boolean, participant: Participant | string | null) {
+    super(room);
+    this.isDeltaStream = isDeltaStream;
+
+    this.room.on(RoomEvent.TrackPublished, this.onTrackPublished);
+    this.room.on(RoomEvent.LocalTrackPublished, this.onLocalTrackPublished);
+
+    this.setParticipant(participant);
+  }
+
+  setParticipant(participant: Participant | string | null) {
+    if (participant === null) {
+      return;
+    }
+
+    if (typeof participant === 'string') {
+      this.participantIdentity = participant;
+    } else {
+      this.participantIdentity = participant.identity;
+    }
+
+    try {
+      this.trackId = findMicrophoneTrackId(this.room, this.participantIdentity);
+    } catch (error) {
+      // track id is optional for TextStream when audio is not published
+      this.trackId = null;
+    }
+
+    this.flush();
+    this.resetState();
+  }
+
+  private resetState() {
+    this.currentId = randomUUID();
+    this.capturing = false;
+    this.latestText = '';
+  }
+
+  async captureText(text: string) {
+    if (!this.participantIdentity || !this.trackId) {
+      return;
+    }
+
+    if (this.flushTask) {
+      await this.flushTask;
+    }
+
+    if (!this.capturing) {
+      this.resetState();
+      this.capturing = true;
+    }
+
+    if (this.isDeltaStream) {
+      this.pushedText += text;
+    } else {
+      this.pushedText = text;
+    }
+
+    await this.publishTranscription(this.currentId, this.pushedText, false);
+  }
+
+  flush() {
+    if (this.participantIdentity === null || !this.capturing || !this.trackId) {
+      return;
+    }
+
+    this.flushTask = this.publishTranscription(this.currentId, this.pushedText, true);
+    this.resetState();
+  }
+
+  async publishTranscription(id: string, text: string, final: boolean, signal?: AbortSignal) {
+    if (!this.participantIdentity || !this.trackId) {
+      return;
+    }
+
+    try {
+      if (this.room.isConnected) {
+        if (signal?.aborted) {
+          return;
+        }
+
+        await this.room.localParticipant?.publishTranscription({
+          participantIdentity: this.participantIdentity,
+          trackSid: this.trackId,
+          segments: [{ id, text, final, startTime: BigInt(0), endTime: BigInt(0), language: '' }],
+        });
+      }
+    } catch (error) {
+      this.logger.error(error, 'failed to publish transcription');
+    }
+  }
+
+  protected onTrackPublished = (track: RemoteTrackPublication, participant: RemoteParticipant) => {
+    if (
+      this.participantIdentity === null ||
+      participant.identity !== this.participantIdentity ||
+      track.source !== TrackSource.SOURCE_MICROPHONE
+    ) {
+      return;
+    }
+
+    this.trackId = track.sid ?? null;
+  };
+
+  protected onLocalTrackPublished = (track: LocalTrackPublication) => {
+    if (
+      this.participantIdentity === null ||
+      this.participantIdentity !== this.room.localParticipant?.identity ||
+      track.source !== TrackSource.SOURCE_MICROPHONE
+    ) {
+      return;
+    }
+
+    this.trackId = track.sid ?? null;
+  };
+}
+
+export class ParalellTextOutput extends TextOutput {
+  /* @internal */
+  _sinks: TextOutput[];
+
+  constructor(sinks: TextOutput[]) {
+    super();
+    this._sinks = sinks;
+  }
+
+  async captureText(text: string) {
+    await Promise.all(this._sinks.map((sink) => sink.captureText(text)));
+  }
+
+  flush() {
+    for (const sink of this._sinks) {
+      sink.flush();
+    }
   }
 }
 
@@ -380,8 +585,8 @@ export class RoomIO {
 
   private _deferredAudioInputStream = new DeferredReadableStream<AudioFrame>();
   private participantAudioOutput?: ParticipantAudioOutput;
-  private userTranscriptOutput?: ParticipantTranscriptionOutput;
-  private agentTranscriptOutput?: ParticipantTranscriptionOutput;
+  private userTranscriptOutput: ParalellTextOutput | null = null;
+  private agentTranscriptOutput: ParalellTextOutput | null = null;
 
   private participantIdentity: string | null = null;
   private participantAvailableFuture: Future<Participant> = new Future();
@@ -412,17 +617,6 @@ export class RoomIO {
     }
   };
 
-  private createTranscriptionOutput(options: {
-    isDeltaStream: boolean;
-    participant: string | null;
-  }) {
-    return new ParticipantTranscriptionOutput(
-      this.room,
-      options.isDeltaStream,
-      options.participant,
-    );
-  }
-
   private async initTask() {
     await this.roomConnectedFuture.await;
 
@@ -431,7 +625,7 @@ export class RoomIO {
     }
 
     const participant = await this.participantAvailableFuture.await;
-    this.userTranscriptOutput?.setParticipant(participant.identity);
+    this.updateTranscriptionOutput(this.userTranscriptOutput, participant.identity);
 
     await this.participantAudioOutput?.start();
   }
@@ -464,6 +658,35 @@ export class RoomIO {
       this.userTranscriptOutput?.flush();
     }
   };
+
+  private createTranscriptionOutput(options: {
+    isDeltaStream: boolean;
+    participant: string | null;
+  }) {
+    return new ParalellTextOutput([
+      new ParticipantLegacyTranscriptionOutput(
+        this.room,
+        options.isDeltaStream,
+        options.participant,
+      ),
+      new ParticipantTranscriptionOutput(this.room, options.isDeltaStream, options.participant),
+    ]);
+  }
+
+  private updateTranscriptionOutput(output: ParalellTextOutput | null, participant: string | null) {
+    if (output === null) {
+      return;
+    }
+
+    for (const sink of output._sinks) {
+      if (
+        sink instanceof ParticipantLegacyTranscriptionOutput ||
+        sink instanceof ParticipantTranscriptionOutput
+      ) {
+        sink.setParticipant(participant);
+      }
+    }
+  }
 
   start() {
     // -- create outputs --
