@@ -270,7 +270,7 @@ export class AgentActivity implements RecognitionHooks {
       // TODO(AJS-32): Add realtime model support for interrupting the current generation
     }
 
-    const userMessage = new ChatMessage({
+    const userMessage = ChatMessage.create({
       role: 'user',
       content: info.newTranscript,
     });
@@ -414,7 +414,7 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
 
-      const message = new ChatMessage({
+      const message = ChatMessage.create({
         role: 'assistant',
         content: textOutput.text,
         id: llmGenData.id,
@@ -437,7 +437,7 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
     if (textOutput && textOutput.text) {
-      const message = new ChatMessage({
+      const message = ChatMessage.create({
         role: 'assistant',
         content: textOutput.text,
         id: llmGenData.id,

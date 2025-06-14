@@ -76,6 +76,16 @@ export class ChatMessage {
     this.createdAt = createdAt;
   }
 
+  static create(params: {
+    role: ChatRole;
+    content: ChatContent[] | string;
+    id?: string;
+    interrupted?: boolean;
+    createdAt?: number;
+  }) {
+    return new ChatMessage(params);
+  }
+
   /**
    * Returns a single string with all text parts of the message joined by new
    * lines. If no string content is present, returns `null`.
