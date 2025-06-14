@@ -52,38 +52,19 @@ export abstract class TextOutput {
   abstract flush(): void;
 }
 
-abstract class ParticipantTextOutput extends TextOutput {
+abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected room: Room;
-
-  constructor(room: Room) {
-    super();
-    this.room = room;
-  }
-
-  abstract setParticipant(participant: Participant | string | null): void;
-
-  protected abstract onTrackPublished(
-    track: RemoteTrackPublication,
-    participant: RemoteParticipant,
-  ): void;
-  protected abstract onLocalTrackPublished(track: LocalTrackPublication): void;
-}
-
-export class ParticipantTranscriptionOutput extends ParticipantTextOutput {
-  private isDeltaStream: boolean;
-
-  private capturing: boolean = false;
-  private currentId: string = randomUUID();
-  private latestText: string = '';
-  private logger = log();
-
-  private participantIdentity: string | null = null;
-  private trackId: string | null = null;
-  private writer: TextStreamWriter | null = null;
-  private flushTask: Task<void> | null = null;
+  protected isDeltaStream: boolean;
+  protected capturing: boolean = false;
+  protected latestText: string = '';
+  protected participantIdentity: string | null = null;
+  protected trackId: string | null = null;
+  protected currentId: string = this.generateCurrentId();
+  protected logger = log();
 
   constructor(room: Room, isDeltaStream: boolean, participant: Participant | string | null) {
-    super(room);
+    super();
+    this.room = room;
     this.isDeltaStream = isDeltaStream;
 
     this.room.on(RoomEvent.TrackPublished, this.onTrackPublished);
@@ -114,51 +95,6 @@ export class ParticipantTranscriptionOutput extends ParticipantTextOutput {
     this.resetState();
   }
 
-  flush() {
-    if (this.participantIdentity === null || !this.capturing) {
-      return;
-    }
-
-    this.capturing = false;
-    const currWriter = this.writer;
-    this.writer = null;
-    this.flushTask = Task.from((controller) => this.flushTaskImpl(currWriter, controller.signal));
-  }
-
-  async captureText(text: string) {
-    if (!this.participantIdentity) {
-      return;
-    }
-
-    if (this.flushTask && !this.flushTask.done) {
-      await this.flushTask.result;
-    }
-
-    if (!this.capturing) {
-      this.resetState();
-      this.capturing = true;
-    }
-
-    this.latestText = text;
-    try {
-      if (this.room.isConnected) {
-        if (this.isDeltaStream) {
-          // reuse the existing writer
-          if (this.writer === null) {
-            this.writer = await this.createTextWriter();
-          }
-          await this.writer.write(text);
-        } else {
-          const tmpWriter = await this.createTextWriter();
-          await tmpWriter.write(text);
-          await tmpWriter.close();
-        }
-      }
-    } catch (error) {
-      this.logger.error(error, 'failed to publish transcription');
-    }
-  }
-
   protected onTrackPublished = (track: RemoteTrackPublication, participant: RemoteParticipant) => {
     if (
       this.participantIdentity === null ||
@@ -182,6 +118,77 @@ export class ParticipantTranscriptionOutput extends ParticipantTextOutput {
 
     this.trackId = track.sid ?? null;
   };
+
+  protected generateCurrentId(): string {
+    return 'SG_' + randomUUID();
+  }
+
+  protected resetState() {
+    this.currentId = this.generateCurrentId();
+    this.capturing = false;
+    this.latestText = '';
+  }
+
+  async captureText(text: string) {
+    if (!this.participantIdentity) {
+      return;
+    }
+
+    this.latestText = text;
+    await this.handleCaptureText(text);
+  }
+
+  flush() {
+    if (this.participantIdentity === null || !this.capturing) {
+      return;
+    }
+
+    this.capturing = false;
+    this.handleFlush();
+  }
+
+  protected abstract handleCaptureText(text: string): Promise<void>;
+  protected abstract handleFlush(): void;
+}
+
+export class ParticipantTranscriptionOutput extends BaseParticipantTranscriptionOutput {
+  private writer: TextStreamWriter | null = null;
+  private flushTask: Task<void> | null = null;
+
+  protected async handleCaptureText(text: string): Promise<void> {
+    if (this.flushTask && !this.flushTask.done) {
+      await this.flushTask.result;
+    }
+
+    if (!this.capturing) {
+      this.resetState();
+      this.capturing = true;
+    }
+
+    try {
+      if (this.room.isConnected) {
+        if (this.isDeltaStream) {
+          // reuse the existing writer
+          if (this.writer === null) {
+            this.writer = await this.createTextWriter();
+          }
+          await this.writer.write(text);
+        } else {
+          const tmpWriter = await this.createTextWriter();
+          await tmpWriter.write(text);
+          await tmpWriter.close();
+        }
+      }
+    } catch (error) {
+      this.logger.error(error, 'failed to publish transcription');
+    }
+  }
+
+  protected handleFlush() {
+    const currWriter = this.writer;
+    this.writer = null;
+    this.flushTask = Task.from((controller) => this.flushTaskImpl(currWriter, controller.signal));
+  }
 
   private async createTextWriter(attributes?: Record<string, string>): Promise<TextStreamWriter> {
     if (!this.participantIdentity) {
@@ -243,68 +250,14 @@ export class ParticipantTranscriptionOutput extends ParticipantTextOutput {
       this.logger.error(error, 'failed to publish transcription');
     }
   }
-
-  private resetState() {
-    this.currentId = randomUUID();
-    this.capturing = false;
-    this.latestText = '';
-  }
 }
 
-export class ParticipantLegacyTranscriptionOutput extends ParticipantTextOutput {
-  private isDeltaStream: boolean;
-
-  private capturing: boolean = false;
-  private currentId: string = 'SG_' + randomUUID();
-  private latestText: string = '';
-
-  private participantIdentity: string | null = null;
-  private trackId: string | null = null;
+export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscriptionOutput {
   private pushedText: string = '';
   private flushTask: Promise<void> | null = null;
 
-  private logger = log();
-
-  constructor(room: Room, isDeltaStream: boolean, participant: Participant | string | null) {
-    super(room);
-    this.isDeltaStream = isDeltaStream;
-
-    this.room.on(RoomEvent.TrackPublished, this.onTrackPublished);
-    this.room.on(RoomEvent.LocalTrackPublished, this.onLocalTrackPublished);
-
-    this.setParticipant(participant);
-  }
-
-  setParticipant(participant: Participant | string | null) {
-    if (participant === null) {
-      return;
-    }
-
-    if (typeof participant === 'string') {
-      this.participantIdentity = participant;
-    } else {
-      this.participantIdentity = participant.identity;
-    }
-
-    try {
-      this.trackId = findMicrophoneTrackId(this.room, this.participantIdentity);
-    } catch (error) {
-      // track id is optional for TextStream when audio is not published
-      this.trackId = null;
-    }
-
-    this.flush();
-    this.resetState();
-  }
-
-  private resetState() {
-    this.currentId = 'SG_' + randomUUID();
-    this.capturing = false;
-    this.latestText = '';
-  }
-
-  async captureText(text: string) {
-    if (!this.participantIdentity || !this.trackId) {
+  protected async handleCaptureText(text: string): Promise<void> {
+    if (!this.trackId) {
       return;
     }
 
@@ -326,8 +279,8 @@ export class ParticipantLegacyTranscriptionOutput extends ParticipantTextOutput 
     await this.publishTranscription(this.currentId, this.pushedText, false);
   }
 
-  flush() {
-    if (this.participantIdentity === null || !this.capturing || !this.trackId) {
+  protected handleFlush() {
+    if (!this.trackId) {
       return;
     }
 
@@ -339,15 +292,6 @@ export class ParticipantLegacyTranscriptionOutput extends ParticipantTextOutput 
     if (!this.participantIdentity || !this.trackId) {
       return;
     }
-
-    this.logger.debug(
-      {
-        participantIdentity: this.participantIdentity,
-        trackSid: this.trackId,
-        segments: [{ id, text, final, startTime: BigInt(0), endTime: BigInt(0), language: '' }],
-      },
-      'sending text',
-    );
 
     try {
       if (this.room.isConnected) {
@@ -365,30 +309,6 @@ export class ParticipantLegacyTranscriptionOutput extends ParticipantTextOutput 
       this.logger.error(error, 'failed to publish transcription');
     }
   }
-
-  protected onTrackPublished = (track: RemoteTrackPublication, participant: RemoteParticipant) => {
-    if (
-      this.participantIdentity === null ||
-      participant.identity !== this.participantIdentity ||
-      track.source !== TrackSource.SOURCE_MICROPHONE
-    ) {
-      return;
-    }
-
-    this.trackId = track.sid ?? null;
-  };
-
-  protected onLocalTrackPublished = (track: LocalTrackPublication) => {
-    if (
-      this.participantIdentity === null ||
-      this.participantIdentity !== this.room.localParticipant?.identity ||
-      track.source !== TrackSource.SOURCE_MICROPHONE
-    ) {
-      return;
-    }
-
-    this.trackId = track.sid ?? null;
-  };
 }
 
 export class ParalellTextOutput extends TextOutput {
