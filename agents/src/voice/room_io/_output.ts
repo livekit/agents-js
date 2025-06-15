@@ -55,14 +55,14 @@ export abstract class TextOutput {
 abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected room: Room;
   protected isDeltaStream: boolean;
+  protected participantIdentity?: string;
+  protected trackId?: string;
   protected capturing: boolean = false;
   protected latestText: string = '';
-  protected participantIdentity: string | null = null;
-  protected trackId: string | null = null;
   protected currentId: string = this.generateCurrentId();
   protected logger = log();
 
-  constructor(room: Room, isDeltaStream: boolean, participant: Participant | string | null) {
+  constructor(room: Room, isDeltaStream: boolean, participant?: Participant | string) {
     super();
     this.room = room;
     this.isDeltaStream = isDeltaStream;
@@ -73,8 +73,8 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
     this.setParticipant(participant);
   }
 
-  setParticipant(participant: Participant | string | null) {
-    if (participant === null) {
+  setParticipant(participant?: Participant | string) {
+    if (!participant) {
       return;
     }
 
@@ -88,7 +88,7 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
       this.trackId = findMicrophoneTrackId(this.room, this.participantIdentity);
     } catch (error) {
       // track id is optional for TextStream when audio is not published
-      this.trackId = null;
+      this.logger.debug(error, 'failed to find microphone track id');
     }
 
     this.flush();
@@ -97,26 +97,26 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
 
   protected onTrackPublished = (track: RemoteTrackPublication, participant: RemoteParticipant) => {
     if (
-      this.participantIdentity === null ||
+      !this.participantIdentity ||
       participant.identity !== this.participantIdentity ||
       track.source !== TrackSource.SOURCE_MICROPHONE
     ) {
       return;
     }
 
-    this.trackId = track.sid ?? null;
+    this.trackId = track.sid;
   };
 
   protected onLocalTrackPublished = (track: LocalTrackPublication) => {
     if (
-      this.participantIdentity === null ||
+      !this.participantIdentity ||
       this.participantIdentity !== this.room.localParticipant?.identity ||
       track.source !== TrackSource.SOURCE_MICROPHONE
     ) {
       return;
     }
 
-    this.trackId = track.sid ?? null;
+    this.trackId = track.sid;
   };
 
   protected generateCurrentId(): string {

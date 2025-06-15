@@ -35,10 +35,10 @@ export class RoomIO {
 
   private _deferredAudioInputStream = new DeferredReadableStream<AudioFrame>();
   private participantAudioOutput?: ParticipantAudioOutput;
-  private userTranscriptOutput: ParalellTextOutput | null = null;
-  private agentTranscriptOutput: ParalellTextOutput | null = null;
+  private userTranscriptOutput?: ParalellTextOutput;
+  private agentTranscriptOutput?: ParalellTextOutput;
 
-  private participantIdentity: string | null = null;
+  private participantIdentity?: string;
   private participantAvailableFuture: Future<Participant> = new Future();
   private roomConnectedFuture: Future<void> = new Future();
 
@@ -117,10 +117,7 @@ export class RoomIO {
     }
   };
 
-  private createTranscriptionOutput(options: {
-    isDeltaStream: boolean;
-    participant: string | null;
-  }) {
+  private createTranscriptionOutput(options: { isDeltaStream: boolean; participant?: string }) {
     return new ParalellTextOutput([
       new ParticipantLegacyTranscriptionOutput(
         this.room,
@@ -131,8 +128,8 @@ export class RoomIO {
     ]);
   }
 
-  private updateTranscriptionOutput(output: ParalellTextOutput | null, participant?: string) {
-    if (output === null) {
+  private updateTranscriptionOutput(output?: ParalellTextOutput, participant?: string) {
+    if (!output) {
       return;
     }
 
@@ -141,7 +138,7 @@ export class RoomIO {
         sink instanceof ParticipantLegacyTranscriptionOutput ||
         sink instanceof ParticipantTranscriptionOutput
       ) {
-        sink.setParticipant(participant ?? null);
+        sink.setParticipant(participant);
       }
     }
   }
@@ -160,7 +157,6 @@ export class RoomIO {
     });
     this.agentTranscriptOutput = this.createTranscriptionOutput({
       isDeltaStream: true,
-      participant: null,
     });
 
     // -- set the room event handlers --
