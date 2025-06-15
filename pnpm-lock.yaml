@@ -167,6 +167,34 @@ importers:
         specifier: ^5.0.0
         version: 5.4.5
 
+  plugins/assemblyai:
+    dependencies:
+      assemblyai:
+        specifier: ^4.9.0
+        version: 4.9.0
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:^x
+        version: link:../../agents
+      '@livekit/agents-plugin-silero':
+        specifier: workspace:^x
+        version: link:../silero
+      '@livekit/agents-plugins-test':
+        specifier: workspace:^x
+        version: link:../test
+      '@livekit/rtc-node':
+        specifier: ^0.13.4
+        version: 0.13.12
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@22.5.5)
+      tsup:
+        specifier: ^8.3.5
+        version: 8.3.5(@microsoft/api-extractor@7.43.7(@types/node@22.5.5))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.4.5
+
   plugins/cartesia:
     dependencies:
       ws:
@@ -2029,6 +2057,10 @@ packages:
   arrify@1.0.1:
     resolution: {integrity: sha512-3CYzex9M9FGQjCGMGyi6/31c8GJbgb0qGyrx5HWxPd0aCwh4cB2YjMb2Xf9UuoogrMrlO9cTqnB5rI5GHZTcUA==}
     engines: {node: '>=0.10.0'}
+
+  assemblyai@4.9.0:
+    resolution: {integrity: sha512-YUvkVIdMKvMLNQ07zWNma9YWvdSoGZy9RuJ/fB5uceAgDnTL2uo8sAlytkt52hD8DJ61xmZkfO9jkjXl3sZTiw==}
+    engines: {node: '>=18'}
 
   assertion-error@1.1.0:
     resolution: {integrity: sha512-jgsaNduz+ndvGyFt3uSuWqvy4lCnIJiovtouQN5JZHOKCS2QuhEdbcQHFhVksz2N2U9hXJo8odG7ETyWlEeuDw==}
@@ -4463,6 +4495,18 @@ packages:
       utf-8-validate:
         optional: true
 
+  ws@8.18.1:
+    resolution: {integrity: sha512-RKW2aJZMXeMxVpnZ6bck+RswznaxmzdULiBr6KY7XkTnW8uvt0iT9H5DkHUChXrc+uurzwa0rVI16n/Xzjdz1w==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   y18n@4.0.3:
     resolution: {integrity: sha512-JKhqTOwSrqNA1NY5lSztJ1GrBiUodLMmIZuLiDaMRJ+itFd+ABVE8XBjOvIWL+rSqNDC74LCSFmlb/U4UZ4hJQ==}
 
@@ -5902,6 +5946,13 @@ snapshots:
       is-shared-array-buffer: 1.0.3
 
   arrify@1.0.1: {}
+
+  assemblyai@4.9.0:
+    dependencies:
+      ws: 8.18.1
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   assertion-error@1.1.0: {}
 
@@ -8641,6 +8692,8 @@ snapshots:
   wrappy@1.0.2: {}
 
   ws@8.17.0: {}
+
+  ws@8.18.1: {}
 
   y18n@4.0.3: {}
 
