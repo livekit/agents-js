@@ -1,4 +1,4 @@
-import { VideoFrame } from '@livekit/rtc-node';
+import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import sharp from 'sharp';
 import type { ImageContent } from './chat_context.js';
 
@@ -7,6 +7,21 @@ export interface SerializedImage {
   mimeType?: string;
   base64Data?: string;
   externalUrl?: string;
+}
+
+function getChannelsFromVideoBufferType(type: VideoBufferType): 3 | 4 {
+  switch (type) {
+    case VideoBufferType.RGBA:
+    case VideoBufferType.ABGR:
+    case VideoBufferType.ARGB:
+    case VideoBufferType.BGRA:
+      return 4;
+    case VideoBufferType.RGB24:
+      return 3;
+    default:
+      // YUV formats (I420, I420A, I422, I444, I010, NV12) need conversion
+      throw new Error(`Unsupported VideoBufferType: ${type}. Only RGB/RGBA formats are supported.`);
+  }
 }
 
 export async function serializeImage(image: ImageContent): Promise<SerializedImage> {
@@ -55,7 +70,7 @@ export async function serializeImage(image: ImageContent): Promise<SerializedIma
       raw: {
         width: image.image.width,
         height: image.image.height,
-        channels: 4, // RGBA
+        channels: getChannelsFromVideoBufferType(image.image.type),
       },
     });
 
