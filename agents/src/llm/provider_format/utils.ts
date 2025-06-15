@@ -32,6 +32,10 @@ class ChatItemGroup {
     return new ChatItemGroup({ message, toolCalls, toolOutputs });
   }
 
+  get isEmpty() {
+    return this.message === undefined && this.toolCalls.length === 0 && this.toolOutputs.length === 0;
+  }
+
   add(item: ChatItem) {
     if (item.type === 'message') {
       if (this.message) {

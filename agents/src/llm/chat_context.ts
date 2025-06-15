@@ -20,15 +20,15 @@ export interface ImageContent {
    */
   image: string | VideoFrame;
 
+  inferenceDetail: 'auto' | 'high' | 'low';
+
   inferenceWidth?: number;
 
   inferenceHeight?: number;
 
-  inferenceDetail?: 'auto' | 'high' | 'low';
-
   mimeType?: string;
 
-  cache: { [id: string | number | symbol]: any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  _cache: Record<any, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
 export interface AudioContent {
