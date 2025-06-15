@@ -146,7 +146,7 @@ export class AgentSession {
 
   /** @internal */
   _conversationItemAdded(item: ChatMessage): void {
-    this._chatCtx.insertItem(item);
+    this._chatCtx.insert(item);
   }
 
   /** @internal */
