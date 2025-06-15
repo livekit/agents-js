@@ -9,7 +9,7 @@ import type { ChatChunk } from '../llm/llm.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task } from '../utils.js';
 import type { LLMNode, TTSNode } from './io.js';
-import type { ParticipantAudioOutput, TextOutput } from './room_io/_output.js';
+import type { ParticipantAudioOutput, TextOutput } from './room_io/index.js';
 
 /* @internal */
 export class _LLMGenerationData {

@@ -16,7 +16,7 @@ import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import type { UserState } from './events.js';
-import type { ParticipantAudioOutput, TextOutput } from './room_io/_output.js';
+import type { ParticipantAudioOutput, TextOutput } from './room_io/index.js';
 import { RoomIO } from './room_io/room_io.js';
 
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
