@@ -56,19 +56,14 @@ export class ChatMessage {
 
   createdAt: number;
 
-  constructor({
-    role,
-    content,
-    id = shortuuid('item'),
-    interrupted = false,
-    createdAt = Date.now(),
-  }: {
+  constructor(params: {
     role: ChatRole;
     content: ChatContent[] | string;
     id?: string;
     interrupted?: boolean;
     createdAt?: number;
   }) {
+    const { role, content, id = shortuuid('item'), interrupted = false, createdAt = Date.now() } = params;
     this.id = id;
     this.role = role;
     this.content = Array.isArray(content) ? content : [content];
@@ -109,24 +104,29 @@ export class FunctionCall {
 
   createdAt: number;
 
-  constructor({
-    callId,
-    name,
-    args,
-    id = shortuuid('item'),
-    createdAt = Date.now(),
-  }: {
+  constructor(params: {
     callId: string;
     name: string;
     args: string;
     id?: string;
     createdAt?: number;
   }) {
+    const { callId, name, args, id = shortuuid('item'), createdAt = Date.now() } = params;
     this.id = id;
     this.callId = callId;
     this.args = args;
     this.name = name;
     this.createdAt = createdAt;
+  }
+
+  static create(params: {
+    callId: string;
+    name: string;
+    args: string;
+    id?: string;
+    createdAt?: number;
+  }) {
+    return new FunctionCall(params);
   }
 }
 
@@ -145,14 +145,7 @@ export class FunctionCallOutput {
 
   createdAt: number;
 
-  constructor({
-    callId,
-    output,
-    isError,
-    id = shortuuid('item'),
-    createdAt = Date.now(),
-    name = '',
-  }: {
+  constructor(params: {
     callId: string;
     output: string;
     isError: boolean;
@@ -160,12 +153,24 @@ export class FunctionCallOutput {
     createdAt?: number;
     name?: string;
   }) {
+    const { callId, output, isError, id = shortuuid('item'), createdAt = Date.now(), name = '' } = params;
     this.id = id;
     this.callId = callId;
     this.output = output;
     this.isError = isError;
     this.name = name;
     this.createdAt = createdAt;
+  }
+
+  static create(params: {
+    callId: string;
+    output: string;
+    isError: boolean;
+    id?: string;
+    createdAt?: number;
+    name?: string;
+  }) {
+    return new FunctionCallOutput(params);
   }
 }
 
@@ -312,34 +317,4 @@ export class ChatContext {
   get readonly(): boolean {
     return false;
   }
-}
-
-export function message(params: {
-  role: ChatRole;
-  content: ChatContent[] | string;
-  id?: string;
-  interrupted?: boolean;
-  createdAt?: number;
-}) {
-  return new ChatMessage(params);
-}
-
-export function toolCall(params: {
-  callId: string;
-  name: string;
-  args: string;
-  id?: string;
-  createdAt?: number;
-}) {
-  return new FunctionCall(params);
-}
-
-export function toolCallOutput(params: {
-  callId: string;
-  output: string;
-  isError: boolean;
-  id?: string;
-  createdAt?: number;
-}) {
-  return new FunctionCallOutput(params);
 }
