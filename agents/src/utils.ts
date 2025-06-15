@@ -3,13 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type {
-  LocalParticipant,
-  RemoteParticipant,
-  Room,
-  TrackPublication,
-} from '@livekit/rtc-node';
-import { AudioFrame, TrackSource } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
 import { EventEmitter, once } from 'node:events';
 
