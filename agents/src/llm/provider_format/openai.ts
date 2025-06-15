@@ -9,7 +9,9 @@ export async function to_chat_ctx(chatCtx: ChatContext, injectDummyUserMessage: 
   for (const group of itemGroups) {
     if (group.isEmpty) continue;
 
-    const message: Record<string, any> = group.message ? await toChatItem(group.message) : { role: 'assistant' }; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const message: Record<string, any> = group.message
+      ? await toChatItem(group.message)
+      : { role: 'assistant' }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
     const toolCalls = group.toolCalls.map((toolCall) => ({
       type: 'function',

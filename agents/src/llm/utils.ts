@@ -56,7 +56,10 @@ export async function serializeImage(image: ImageContent): Promise<SerializedIma
       encoded = encoded.resize(image.inferenceWidth, image.inferenceHeight);
     }
 
-    const base64Data = await encoded.jpeg().toBuffer().then((buffer) => buffer.toString('base64'));
+    const base64Data = await encoded
+      .jpeg()
+      .toBuffer()
+      .then((buffer) => buffer.toString('base64'));
 
     return {
       base64Data,

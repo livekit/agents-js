@@ -33,7 +33,9 @@ class ChatItemGroup {
   }
 
   get isEmpty() {
-    return this.message === undefined && this.toolCalls.length === 0 && this.toolOutputs.length === 0;
+    return (
+      this.message === undefined && this.toolCalls.length === 0 && this.toolOutputs.length === 0
+    );
   }
 
   add(item: ChatItem) {
