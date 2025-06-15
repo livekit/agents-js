@@ -168,6 +168,6 @@ export function groupToolCalls(chatCtx: ChatContext) {
   // sort groups by their item id
   const orderedGroups = Object.entries(itemGroups)
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([_, group]) => group);
+    .map(([, group]) => group);
   return orderedGroups;
 }

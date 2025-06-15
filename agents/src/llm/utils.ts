@@ -50,20 +50,27 @@ export async function serializeImage(image: ImageContent): Promise<SerializedIma
       externalUrl: image.image,
     };
   } else if (image.image instanceof VideoFrame) {
-    let encoded = sharp(image.image.data);
+    // Sharp needs to know the format of raw pixel data
+    let encoded = sharp(Buffer.from(image.image.data), {
+      raw: {
+        width: image.image.width,
+        height: image.image.height,
+        channels: 4, // RGBA
+      },
+    });
 
     if (image.inferenceWidth && image.inferenceHeight) {
       encoded = encoded.resize(image.inferenceWidth, image.inferenceHeight);
     }
 
     const base64Data = await encoded
-      .jpeg()
+      .png()
       .toBuffer()
       .then((buffer) => buffer.toString('base64'));
 
     return {
       base64Data,
-      mimeType: 'image/jpeg',
+      mimeType: 'image/png',
       inferenceDetail: image.inferenceDetail,
     };
   } else {

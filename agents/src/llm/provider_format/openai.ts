@@ -2,6 +2,7 @@ import type { ChatContext, ChatItem, ImageContent } from '../chat_context.js';
 import { type SerializedImage, serializeImage } from '../utils.js';
 import { groupToolCalls } from './utils.js';
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function to_chat_ctx(chatCtx: ChatContext, injectDummyUserMessage: boolean = true) {
   const itemGroups = groupToolCalls(chatCtx);
   const messages: Record<string, any>[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -9,9 +10,9 @@ export async function to_chat_ctx(chatCtx: ChatContext, injectDummyUserMessage: 
   for (const group of itemGroups) {
     if (group.isEmpty) continue;
 
-    const message: Record<string, any> = group.message
+    const message: Record<string, any> = group.message // eslint-disable-line @typescript-eslint/no-explicit-any
       ? await toChatItem(group.message)
-      : { role: 'assistant' }; // eslint-disable-line @typescript-eslint/no-explicit-any
+      : { role: 'assistant' };
 
     const toolCalls = group.toolCalls.map((toolCall) => ({
       type: 'function',
