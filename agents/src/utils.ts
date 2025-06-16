@@ -3,13 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type {
-  LocalParticipant,
-  RemoteParticipant,
-  Room,
-  TrackPublication,
-} from '@livekit/rtc-node';
-import { AudioFrame, TrackSource } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
 import { EventEmitter, once } from 'node:events';
 
@@ -53,33 +47,6 @@ export const mergeFrames = (buffer: AudioBuffer): AudioFrame => {
   }
 
   return buffer;
-};
-
-export const findMicroTrackId = (room: Room, identity: string): string => {
-  let p: RemoteParticipant | LocalParticipant | undefined = room.remoteParticipants.get(identity);
-
-  if (identity === room.localParticipant?.identity) {
-    p = room.localParticipant;
-  }
-
-  if (!p) {
-    throw new Error(`participant ${identity} not found`);
-  }
-
-  // find first micro track
-  let trackId: string | undefined;
-  p.trackPublications.forEach((track: TrackPublication) => {
-    if (track.source === TrackSource.SOURCE_MICROPHONE) {
-      trackId = track.sid;
-      return;
-    }
-  });
-
-  if (!trackId) {
-    throw new Error(`participant ${identity} does not have a microphone track`);
-  }
-
-  return trackId;
 };
 
 /** @internal */
