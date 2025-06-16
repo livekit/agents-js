@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import type { LocalParticipant, Participant, Room } from '@livekit/rtc-node';
 import { TrackSource } from '@livekit/rtc-node';
 
