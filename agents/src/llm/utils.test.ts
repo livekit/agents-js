@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import sharp from 'sharp';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

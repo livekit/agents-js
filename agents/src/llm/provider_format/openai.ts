@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import type { ChatContext, ChatItem, ImageContent } from '../chat_context.js';
 import { type SerializedImage, serializeImage } from '../utils.js';
 import { groupToolCalls } from './utils.js';
