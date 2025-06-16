@@ -82,7 +82,7 @@ export class Agent {
 
   async transcriptionNode(
     text: ReadableStream<string>,
-    modelSettings: any, // TODO(shubhra): add type
+    modelSettings: any, // TODO(AJS-59): add type
   ): Promise<ReadableStream<string> | null> {
     return Agent.default.transcriptionNode(this, text, modelSettings);
   }
@@ -209,7 +209,7 @@ export class Agent {
     async transcriptionNode(
       agent: Agent,
       text: ReadableStream<string>,
-      modelSettings: any, // TODO(shubhra): add type
+      modelSettings: any, // TODO(AJS-59): add type
     ): Promise<ReadableStream<string> | null> {
       return text;
     },

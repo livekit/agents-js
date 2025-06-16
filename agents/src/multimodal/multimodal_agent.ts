@@ -29,7 +29,7 @@ import * as llm from '../llm/index.js';
 import { log } from '../log.js';
 import type { MultimodalLLMMetrics } from '../metrics/base.js';
 import { TextAudioSynchronizer, defaultTextSyncOptions } from '../transcription.js';
-import { findMicroTrackId } from '../utils.js';
+import { findMicrophoneTrackId } from '../voice/transcription/index.js';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 
 /**
@@ -470,7 +470,7 @@ export class MultimodalAgent extends EventEmitter {
 
   #getLocalTrackSid(): string | null {
     if (!this.#localTrackSid && this.room && this.room.localParticipant) {
-      this.#localTrackSid = findMicroTrackId(this.room, this.room.localParticipant!.identity!);
+      this.#localTrackSid = findMicrophoneTrackId(this.room, this.room.localParticipant!.identity!);
     }
     return this.#localTrackSid;
   }
