@@ -8,8 +8,7 @@ import type { ChatChunk } from '../llm/llm.js';
 import { shortuuid } from '../llm/misc.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task } from '../utils.js';
-import type { LLMNode, TTSNode } from './io.js';
-import type { ParticipantAudioOutput, TextOutput } from './room_io/index.js';
+import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
 
 /* @internal */
 export class _LLMGenerationData {
@@ -194,7 +193,7 @@ export interface _AudioOut {
 
 async function forwardAudio(
   ttsStream: ReadableStream<AudioFrame>,
-  audioOuput: ParticipantAudioOutput,
+  audioOuput: AudioOutput,
   out: _AudioOut,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -228,7 +227,7 @@ async function forwardAudio(
 
 export function performAudioForwarding(
   ttsStream: ReadableStream<AudioFrame>,
-  audioOutput: ParticipantAudioOutput,
+  audioOutput: AudioOutput,
   controller: AbortController,
 ): [Task<void>, _AudioOut] {
   const out = {

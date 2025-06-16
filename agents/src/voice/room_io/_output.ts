@@ -25,12 +25,8 @@ import {
 } from '../../constants.js';
 import { log } from '../../log.js';
 import { Future, Task } from '../../utils.js';
+import { AudioOutput, TextOutput } from '../io.js';
 import { findMicrophoneTrackId } from '../transcription/index.js';
-
-export abstract class TextOutput {
-  abstract captureText(text: string): Promise<void>;
-  abstract flush(): void;
-}
 
 abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected room: Room;
@@ -310,23 +306,13 @@ export class ParalellTextOutput extends TextOutput {
   }
 }
 
-export interface PlaybackFinishedEvent {
-  // How much of the audio was played back
-  playbackPosition: number;
-  // Interrupted is True if playback was interrupted (clearBuffer() was called)
-  interrupted: boolean;
-  // Transcript synced with playback; may be partial if the audio was interrupted
-  // When null, the transcript is not synchronized with the playback
-  synchronizedTranscript?: string;
-}
-
 export interface AudioOutputOptions {
   sampleRate: number;
   numChannels: number;
   trackPublishOptions: TrackPublishOptions;
   queueSizeMs?: number;
 }
-export class ParticipantAudioOutput {
+export class ParticipantAudioOutput extends AudioOutput {
   private room: Room;
   private options: AudioOutputOptions;
   private audioSource: AudioSource;
@@ -336,18 +322,10 @@ export class ParticipantAudioOutput {
   private startedFuture: Future<void> = new Future();
   private interruptedFuture: Future<void> = new Future();
 
-  private playbackFinishedFuture: Future<void> = new Future();
-  private capturing: boolean = false;
-  private playbackFinishedCount: number = 0;
-  private playbackSegmentsCount: number = 0;
-  private lastPlaybackEvent: PlaybackFinishedEvent = {
-    playbackPosition: 0,
-    interrupted: false,
-  };
-
   private logger = log();
 
   constructor(room: Room, options: AudioOutputOptions) {
+    super(options.sampleRate);
     this.room = room;
     this.options = options;
     this.audioSource = new AudioSource(options.sampleRate, options.numChannels);
@@ -363,36 +341,14 @@ export class ParticipantAudioOutput {
     this.startedFuture.resolve();
   }
 
-  /**
-   * Capture an audio frame for playback, frames can be pushed faster than real-time
-   */
   async captureFrame(frame: AudioFrame): Promise<void> {
     await this.startedFuture.await;
 
-    if (!this.capturing) {
-      this.capturing = true;
-      this.playbackSegmentsCount++;
-    }
+    super.captureFrame(frame);
 
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     this.pushedDurationMs += frame.samplesPerChannel / frame.sampleRate;
     await this.audioSource.captureFrame(frame);
-  }
-
-  /**
-   * Wait for the past audio segments to finish playing out.
-   *
-   * @returns The event that was emitted when the audio finished playing out (only the last segment information)
-   */
-  async waitForPlayout(): Promise<PlaybackFinishedEvent> {
-    const target = this.playbackSegmentsCount;
-
-    while (this.playbackFinishedCount < target) {
-      await this.playbackFinishedFuture.await;
-      this.playbackFinishedFuture = new Future();
-    }
-
-    return this.lastPlaybackEvent;
   }
 
   private async waitForPlayoutTask(abortController: AbortController): Promise<void> {
@@ -431,7 +387,7 @@ export class ParticipantAudioOutput {
    * Flush any buffered audio, marking the current playback/segment as complete
    */
   flush(): void {
-    this.capturing = false;
+    super.flush();
 
     if (!this.pushedDurationMs) {
       return;
@@ -445,21 +401,12 @@ export class ParticipantAudioOutput {
     this.flushTask = Task.from((controller) => this.waitForPlayoutTask(controller));
   }
 
-  /**
-   * Clear the buffer, stopping playback immediately
-   */
   clearBuffer(): void {
     if (!this.pushedDurationMs) {
       return;
     }
 
     this.interruptedFuture.resolve();
-  }
-
-  private onPlaybackFinished(event: PlaybackFinishedEvent) {
-    this.lastPlaybackEvent = event;
-    this.playbackFinishedCount++;
-    this.playbackFinishedFuture.resolve();
   }
 
   private async publishTrack() {
