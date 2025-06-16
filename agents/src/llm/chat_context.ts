@@ -2,12 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
-import { v4 as uuidv4 } from 'uuid';
+import { shortuuid } from './misc.js';
 import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
-
-function shortuuid(prefix: string): string {
-  return `${prefix}_${uuidv4().slice(0, 12)}`;
-}
 
 export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
 export interface ImageContent {
@@ -258,8 +254,35 @@ export class ChatContext {
       tools?: unknown;
     } = {},
   ): ChatContext {
-    // TODO(brian): implement copy
-    return this;
+    const {
+      excludeFunctionCall = false,
+      excludeInstructions = false,
+      excludeEmptyMessage = false,
+    } = options;
+    const items: ChatItem[] = [];
+
+    for (const item of this._items) {
+      if (
+        (excludeFunctionCall && item.type === 'function_call') ||
+        item.type === 'function_call_output'
+      ) {
+        continue;
+      }
+
+      if (excludeInstructions && item.type === 'message' && item.role in ['system', 'developer']) {
+        continue;
+      }
+
+      if (excludeEmptyMessage && item.type === 'message' && item.content.length === 0) {
+        continue;
+      }
+
+      // TODO(brian): exclude invalid tools filter
+
+      items.push(item);
+    }
+
+    return new ChatContext(items);
   }
 
   truncate(maxItems: number): ChatContext {
