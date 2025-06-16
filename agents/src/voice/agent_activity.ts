@@ -428,7 +428,7 @@ export class AgentActivity implements RecognitionHooks {
 
       const message = ChatMessage.create({
         role: 'assistant',
-        content: textOut?.text || "",
+        content: textOut?.text || '',
         id: llmGenData.id,
         interrupted: true,
         createdAt: replyStartedAt,

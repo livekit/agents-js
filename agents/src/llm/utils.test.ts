@@ -62,9 +62,9 @@ function createGradientFrame(width: number, height: number): VideoFrame {
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const idx = (y * width + x) * channels;
-      frameData[idx] = Math.floor((x / (width - 1)) * 255); 
-      frameData[idx + 1] = Math.floor((y / (height - 1)) * 255); 
-      frameData[idx + 2] = 128; 
+      frameData[idx] = Math.floor((x / (width - 1)) * 255);
+      frameData[idx + 1] = Math.floor((y / (height - 1)) * 255);
+      frameData[idx + 2] = 128;
       frameData[idx + 3] = 255;
     }
   }
@@ -89,7 +89,7 @@ function createPatternFrame(width: number, height: number, patterns: number[][])
 }
 
 function verifyPngHeader(imageBuffer: Buffer) {
-  expect(imageBuffer[0]).toBe(0x89); 
+  expect(imageBuffer[0]).toBe(0x89);
   expect(imageBuffer[1]).toBe(0x50);
   expect(imageBuffer[2]).toBe(0x4e);
   expect(imageBuffer[3]).toBe(0x47);
@@ -176,11 +176,9 @@ describe('serializeImage', () => {
     });
 
     it('should warn and use provided mimeType when it differs from data URL mime type', async () => {
-      const imageContent = createImageContent(
-        'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
-        'auto',
-        { mimeType: 'image/png' }, 
-      );
+      const imageContent = createImageContent('data:image/jpeg;base64,/9j/4AAQSkZJRg==', 'auto', {
+        mimeType: 'image/png',
+      });
 
       const result = await serializeImage(imageContent);
 
@@ -195,10 +193,7 @@ describe('serializeImage', () => {
     });
 
     it('should throw error for invalid data URL format', async () => {
-      const imageContent = createImageContent(
-        'data:;base64,/9j/4AAQSkZJRg==', 
-        'auto',
-      );
+      const imageContent = createImageContent('data:;base64,/9j/4AAQSkZJRg==', 'auto');
 
       await expect(serializeImage(imageContent)).rejects.toThrow('Invalid data URL format');
     });
@@ -257,7 +252,7 @@ describe('serializeImage', () => {
         inferenceDetail: 'auto',
       });
       expect(result.base64Data).toBeDefined();
-      expect(result.base64Data).toMatch(/^[A-Za-z0-9+/]+=*$/); 
+      expect(result.base64Data).toMatch(/^[A-Za-z0-9+/]+=*$/);
       expect(result.externalUrl).toBeUndefined();
 
       const { imageBuffer, decodedImage } = await decodeImageToRaw(result.base64Data!);
@@ -266,7 +261,7 @@ describe('serializeImage', () => {
 
       expect(decodedImage.info.width).toBe(width);
       expect(decodedImage.info.height).toBe(height);
-      expect(decodedImage.info.channels).toBe(4); 
+      expect(decodedImage.info.channels).toBe(4);
 
       const decodedData = decodedImage.data;
       for (let i = 0; i < decodedData.length; i += 4) {
@@ -310,10 +305,10 @@ describe('serializeImage', () => {
       const height = 2;
 
       const patterns = [
-        [255, 0, 0, 255], 
-        [0, 255, 0, 255], 
-        [0, 0, 255, 255], 
-        [255, 255, 255, 255], 
+        [255, 0, 0, 255],
+        [0, 255, 0, 255],
+        [0, 0, 255, 255],
+        [255, 255, 255, 255],
       ];
 
       const videoFrame = createPatternFrame(width, height, patterns);
@@ -325,9 +320,9 @@ describe('serializeImage', () => {
       const decoded = decodedImage.data;
 
       expectPixel(decoded, 0, { r: 255, g: 0, b: 0, a: 255 });
-      expectPixel(decoded, 4, { r: 0, g: 255, b: 0, a: 255 }); 
-      expectPixel(decoded, width * 4, { r: 0, g: 0, b: 255, a: 255 }); 
-      expectPixel(decoded, (width + 1) * 4, { r: 255, g: 255, b: 255, a: 255 }); 
+      expectPixel(decoded, 4, { r: 0, g: 255, b: 0, a: 255 });
+      expectPixel(decoded, width * 4, { r: 0, g: 0, b: 255, a: 255 });
+      expectPixel(decoded, (width + 1) * 4, { r: 255, g: 255, b: 255, a: 255 });
     });
 
     it('should handle resize parameters correctly', async () => {
@@ -349,23 +344,23 @@ describe('serializeImage', () => {
 
       const decodedData = decodedImage.data;
       for (let i = 0; i < decodedData.length; i += 4) {
-        expect(decodedData[i]).toBeCloseTo(100, -1); 
-        expect(decodedData[i + 1]).toBeCloseTo(100, -1); 
-        expect(decodedData[i + 2]).toBeCloseTo(100, -1); 
-        expect(decodedData[i + 3]).toBe(255); 
+        expect(decodedData[i]).toBeCloseTo(100, -1);
+        expect(decodedData[i + 1]).toBeCloseTo(100, -1);
+        expect(decodedData[i + 2]).toBeCloseTo(100, -1);
+        expect(decodedData[i + 3]).toBe(255);
       }
     });
 
     it('should handle RGB24 VideoBufferType correctly', async () => {
       const width = 2;
       const height = 2;
-      const channels = 3; 
+      const channels = 3;
       const frameData = new Uint8Array(width * height * channels);
 
       for (let i = 0; i < frameData.length; i += channels) {
-        frameData[i] = 255; 
-        frameData[i + 1] = 128; 
-        frameData[i + 2] = 64; 
+        frameData[i] = 255;
+        frameData[i + 1] = 128;
+        frameData[i + 2] = 64;
       }
 
       const videoFrame = new VideoFrame(frameData, width, height, VideoBufferType.RGB24);
@@ -383,11 +378,11 @@ describe('serializeImage', () => {
       const decodedChannels = decodedImage.info.channels;
 
       for (let i = 0; i < decodedData.length; i += decodedChannels) {
-        expect(decodedData[i]).toBe(255); 
-        expect(decodedData[i + 1]).toBe(128); 
-        expect(decodedData[i + 2]).toBe(64); 
+        expect(decodedData[i]).toBe(255);
+        expect(decodedData[i + 1]).toBe(128);
+        expect(decodedData[i + 2]).toBe(64);
         if (decodedChannels === 4) {
-          expect(decodedData[i + 3]).toBe(255); 
+          expect(decodedData[i + 3]).toBe(255);
         }
       }
     });
@@ -440,7 +435,7 @@ describe('serializeImage', () => {
 
   describe('Error handling', () => {
     it('should throw error for unsupported image type', async () => {
-      const imageContent = createImageContent(123 as any, 'auto'); 
+      const imageContent = createImageContent(123 as any, 'auto');
 
       await expect(serializeImage(imageContent)).rejects.toThrow('Unsupported image type');
     });
