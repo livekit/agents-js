@@ -481,15 +481,17 @@ export class LLMStream extends llm.LLMStream {
       : undefined;
 
     try {
+      const messages = (await this.chatCtx.toProviderFormat(
+        'openai',
+      )) as OpenAI.ChatCompletionMessageParam[];
       const stream = await this.#client.chat.completions.create({
         model: opts.model,
         user: opts.user,
         n,
-        // TODO(brian): implement this in the chat context
-        messages: this.chatCtx.toProviderFormat('openai') as OpenAI.ChatCompletionMessageParam[],
         temperature: temperature || opts.temperature,
         stream_options: { include_usage: true },
         stream: true,
+        messages,
         tools,
         parallel_tool_calls: this.fncCtx && parallelToolCalls,
       });

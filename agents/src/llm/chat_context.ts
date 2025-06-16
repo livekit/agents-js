@@ -3,13 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
 import { v4 as uuidv4 } from 'uuid';
+import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
 
 function shortuuid(prefix: string): string {
   return `${prefix}_${uuidv4().slice(0, 12)}`;
 }
 
 export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
-
 export interface ImageContent {
   id: string;
 
@@ -63,7 +63,13 @@ export class ChatMessage {
     interrupted?: boolean;
     createdAt?: number;
   }) {
-    const { role, content, id = shortuuid('item'), interrupted = false, createdAt = Date.now() } = params;
+    const {
+      role,
+      content,
+      id = shortuuid('item'),
+      interrupted = false,
+      createdAt = Date.now(),
+    } = params;
     this.id = id;
     this.role = role;
     this.content = Array.isArray(content) ? content : [content];
@@ -153,7 +159,14 @@ export class FunctionCallOutput {
     createdAt?: number;
     name?: string;
   }) {
-    const { callId, output, isError, id = shortuuid('item'), createdAt = Date.now(), name = '' } = params;
+    const {
+      callId,
+      output,
+      isError,
+      id = shortuuid('item'),
+      createdAt = Date.now(),
+      name = '',
+    } = params;
     this.id = id;
     this.callId = callId;
     this.output = output;
@@ -292,9 +305,8 @@ export class ChatContext {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  toProviderFormat(format: string, _options: any = {}): [unknown[], unknown] {
-    // TODO(brian): Implement provider-specific conversions (openai, google, aws, anthropic)
-    throw new Error(`Unsupported provider format: ${format}`);
+  async toProviderFormat(format: ProviderFormat, injectDummyUserMessage: boolean = true) {
+    return await toChatCtx(format, this, injectDummyUserMessage);
   }
 
   /**

@@ -40,7 +40,7 @@ function createSolidColorFrame(
 ): VideoFrame {
   const channels = bufferType === VideoBufferType.RGB24 ? 3 : 4;
   const frameData = new Uint8Array(width * height * channels);
-  
+
   for (let i = 0; i < frameData.length; i += channels) {
     frameData[i] = color.r;
     frameData[i + 1] = color.g;
@@ -49,14 +49,14 @@ function createSolidColorFrame(
       frameData[i + 3] = color.a;
     }
   }
-  
+
   return new VideoFrame(frameData, width, height, bufferType);
 }
 
 function createGradientFrame(width: number, height: number): VideoFrame {
   const channels = 4;
   const frameData = new Uint8Array(width * height * channels);
-  
+
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const idx = (y * width + x) * channels;
@@ -66,14 +66,14 @@ function createGradientFrame(width: number, height: number): VideoFrame {
       frameData[idx + 3] = 255; // A full
     }
   }
-  
+
   return new VideoFrame(frameData, width, height, VideoBufferType.RGBA);
 }
 
 function createPatternFrame(width: number, height: number, patterns: number[][]): VideoFrame {
   const channels = 4;
   const frameData = new Uint8Array(width * height * channels);
-  
+
   for (let i = 0; i < patterns.length; i++) {
     const offset = i * 4;
     const pattern = patterns[i]!;
@@ -82,7 +82,7 @@ function createPatternFrame(width: number, height: number, patterns: number[][])
     frameData[offset + 2] = pattern[2]!;
     frameData[offset + 3] = pattern[3]!;
   }
-  
+
   return new VideoFrame(frameData, width, height, VideoBufferType.RGBA);
 }
 
@@ -115,10 +115,7 @@ describe('serializeImage', () => {
   describe('Data URL handling', () => {
     it('should serialize a valid JPEG data URL', async () => {
       const originalBase64 = '/9j/4AAQSkZJRg==';
-      const imageContent = createImageContent(
-        `data:image/jpeg;base64,${originalBase64}`,
-        'high',
-      );
+      const imageContent = createImageContent(`data:image/jpeg;base64,${originalBase64}`, 'high');
 
       const result = await serializeImage(imageContent);
 
@@ -264,7 +261,7 @@ describe('serializeImage', () => {
 
       // Decode and verify
       const { imageBuffer, decodedImage } = await decodeImageToRaw(result.base64Data!);
-      
+
       verifyPngHeader(imageBuffer);
 
       // PNG is lossless, so we should get exact values
@@ -315,7 +312,7 @@ describe('serializeImage', () => {
     it('should preserve exact pixel data through serialization', async () => {
       const width = 2;
       const height = 2;
-      
+
       // Create a specific pattern:
       // Top-left: Red, Top-right: Green
       // Bottom-left: Blue, Bottom-right: White
@@ -346,7 +343,7 @@ describe('serializeImage', () => {
       const width = 2;
       const height = 2;
       const videoFrame = createSolidColorFrame(width, height, { r: 100, g: 100, b: 100, a: 255 });
-      
+
       const imageContent = createImageContent(videoFrame, 'auto', {
         inferenceWidth: 4,
         inferenceHeight: 4,
@@ -369,46 +366,46 @@ describe('serializeImage', () => {
         expect(decodedData[i + 3]).toBe(255); // A
       }
     });
-    
+
     it('should handle RGB24 VideoBufferType correctly', async () => {
       const width = 2;
       const height = 2;
       const channels = 3; // RGB24 has no alpha
       const frameData = new Uint8Array(width * height * channels);
-      
+
       // Fill with test pattern
       for (let i = 0; i < frameData.length; i += channels) {
-        frameData[i] = 255;     // R
+        frameData[i] = 255; // R
         frameData[i + 1] = 128; // G
-        frameData[i + 2] = 64;  // B
+        frameData[i + 2] = 64; // B
       }
-      
+
       const videoFrame = new VideoFrame(frameData, width, height, VideoBufferType.RGB24);
       const imageContent = createImageContent(videoFrame, 'auto');
-      
+
       const result = await serializeImage(imageContent);
-      
+
       expect(result.mimeType).toBe('image/png');
-      
+
       // Decode and verify
       const { decodedImage } = await decodeImageToRaw(result.base64Data!);
-      
+
       // Decoded image may have 3 or 4 channels depending on PNG encoding
       expect(decodedImage.info.channels).toBeGreaterThanOrEqual(3);
-      
+
       const decodedData = decodedImage.data;
       const decodedChannels = decodedImage.info.channels;
-      
+
       for (let i = 0; i < decodedData.length; i += decodedChannels) {
-        expect(decodedData[i]).toBe(255);     // R
+        expect(decodedData[i]).toBe(255); // R
         expect(decodedData[i + 1]).toBe(128); // G
-        expect(decodedData[i + 2]).toBe(64);  // B
+        expect(decodedData[i + 2]).toBe(64); // B
         if (decodedChannels === 4) {
           expect(decodedData[i + 3]).toBe(255); // A (if present)
         }
       }
     });
-    
+
     it('should handle different RGBA-like formats correctly', async () => {
       const width = 1;
       const height = 1;
@@ -418,19 +415,19 @@ describe('serializeImage', () => {
         VideoBufferType.ARGB,
         VideoBufferType.ABGR,
       ];
-      
+
       for (const format of testFormats) {
         const frameData = new Uint8Array([100, 150, 200, 250]);
         const videoFrame = new VideoFrame(frameData, width, height, format);
         const imageContent = createImageContent(videoFrame, 'auto');
-        
+
         const result = await serializeImage(imageContent);
-        
+
         expect(result.mimeType).toBe('image/png');
         expect(result.base64Data).toBeDefined();
       }
     });
-    
+
     it('should throw error for unsupported YUV formats', async () => {
       const width = 2;
       const height = 2;
@@ -442,15 +439,15 @@ describe('serializeImage', () => {
         VideoBufferType.I010,
         VideoBufferType.NV12,
       ];
-      
+
       for (const format of unsupportedFormats) {
         // Create minimal data for the format (size doesn't matter since it will throw)
         const frameData = new Uint8Array(width * height);
         const videoFrame = new VideoFrame(frameData, width, height, format);
         const imageContent = createImageContent(videoFrame, 'auto');
-        
+
         await expect(serializeImage(imageContent)).rejects.toThrow(
-          `Unsupported VideoBufferType: ${format}. Only RGB/RGBA formats are supported.`
+          `Unsupported VideoBufferType: ${format}. Only RGB/RGBA formats are supported.`,
         );
       }
     });

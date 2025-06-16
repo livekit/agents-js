@@ -2,17 +2,15 @@ import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../../log.js';
 import { ChatContext, FunctionCall, FunctionCallOutput } from '../chat_context.js';
-import { to_chat_ctx } from './openai.js';
+import { serializeImage } from '../utils.js';
+import { toChatCtx } from './openai.js';
 
 // Mock the serializeImage function
 vi.mock('../utils.js', () => ({
   serializeImage: vi.fn(),
 }));
 
-
-import { serializeImage } from '../utils.js';
-
-describe('to_chat_ctx', () => {
+describe('toChatCtx', () => {
   const serializeImageMock = vi.mocked(serializeImage);
 
   // initialize logger at start of test
@@ -27,7 +25,7 @@ describe('to_chat_ctx', () => {
     ctx.addMessage({ role: 'user', content: 'Hello' });
     ctx.addMessage({ role: 'assistant', content: 'Hi there!' });
 
-    const result = await to_chat_ctx(ctx);
+    const result = await toChatCtx(ctx);
 
     // Messages should be in the result, order may vary due to ID-based sorting
     expect(result).toHaveLength(2);
@@ -40,7 +38,7 @@ describe('to_chat_ctx', () => {
     ctx.addMessage({ role: 'system', content: 'You are a helpful assistant' });
     ctx.addMessage({ role: 'user', content: 'Hello' });
 
-    const result = await to_chat_ctx(ctx);
+    const result = await toChatCtx(ctx);
 
     // Messages should be in the result, order may vary due to ID-based sorting
     expect(result).toHaveLength(2);
@@ -52,11 +50,9 @@ describe('to_chat_ctx', () => {
     const ctx = ChatContext.empty();
     ctx.addMessage({ role: 'user', content: ['Line 1', 'Line 2', 'Line 3'] });
 
-    const result = await to_chat_ctx(ctx);
+    const result = await toChatCtx(ctx);
 
-    expect(result).toEqual([
-      { role: 'user', content: 'Line 1\nLine 2\nLine 3' },
-    ]);
+    expect(result).toEqual([{ role: 'user', content: 'Line 1\nLine 2\nLine 3' }]);
   });
 
   it('should handle messages with external URL images', async () => {
@@ -80,7 +76,7 @@ describe('to_chat_ctx', () => {
       ],
     });
 
-    const result = await to_chat_ctx(ctx);
+    const result = await toChatCtx(ctx);
 
     expect(result).toEqual([
       {
@@ -121,7 +117,7 @@ describe('to_chat_ctx', () => {
       ],
     });
 
-    const result = await to_chat_ctx(ctx);
+    const result = await toChatCtx(ctx);
 
     expect(result).toEqual([
       {
@@ -164,7 +160,7 @@ describe('to_chat_ctx', () => {
       ],
     });
 
-    const result = await to_chat_ctx(ctx);
+    const result = await toChatCtx(ctx);
 
     expect(result).toEqual([
       {
@@ -201,8 +197,8 @@ describe('to_chat_ctx', () => {
     ctx.addMessage({ role: 'user', content: [imageContent] });
 
     // Call twice to test caching
-    await to_chat_ctx(ctx);
-    await to_chat_ctx(ctx);
+    await toChatCtx(ctx);
+    await toChatCtx(ctx);
 
     // serializeImage should only be called once due to caching
     expect(serializeImageMock).toHaveBeenCalledTimes(1);
@@ -211,7 +207,7 @@ describe('to_chat_ctx', () => {
 
   it('should handle tool calls and outputs', async () => {
     const ctx = ChatContext.empty();
-    
+
     // Add an assistant message with tool calls
     const msg = ctx.addMessage({ role: 'assistant', content: 'Let me help you with that.' });
     const toolCall = FunctionCall.create({
@@ -225,10 +221,10 @@ describe('to_chat_ctx', () => {
       output: '{"temperature": 72, "condition": "sunny"}',
       isError: false,
     });
-    
+
     ctx.insert([toolCall, toolOutput]);
 
-    const result = await to_chat_ctx(ctx);
+    const result = await toChatCtx(ctx);
 
     expect(result).toEqual([
       {
@@ -255,8 +251,8 @@ describe('to_chat_ctx', () => {
 
   it('should handle multiple tool calls in one message', async () => {
     const ctx = ChatContext.empty();
-    
-    const msg = ctx.addMessage({ role: 'assistant', content: 'I\'ll check both locations.' });
+
+    const msg = ctx.addMessage({ role: 'assistant', content: "I'll check both locations." });
     const toolCall1 = new FunctionCall({
       id: msg.id + '/tool_1',
       callId: 'call_1',
@@ -279,15 +275,15 @@ describe('to_chat_ctx', () => {
       output: '{"temperature": 78}',
       isError: false,
     });
-    
+
     ctx.insert([toolCall1, toolCall2, toolOutput1, toolOutput2]);
 
-    const result = await to_chat_ctx(ctx);
+    const result = await toChatCtx(ctx);
 
     expect(result).toEqual([
       {
         role: 'assistant',
-        content: 'I\'ll check both locations.',
+        content: "I'll check both locations.",
         tool_calls: [
           {
             type: 'function',
@@ -316,7 +312,7 @@ describe('to_chat_ctx', () => {
 
   it('should handle tool calls without accompanying message', async () => {
     const ctx = ChatContext.empty();
-    
+
     const toolCall = new FunctionCall({
       id: 'func_123',
       callId: 'call_456',
@@ -328,10 +324,10 @@ describe('to_chat_ctx', () => {
       output: '{"result": 8}',
       isError: false,
     });
-    
+
     ctx.insert([toolCall, toolOutput]);
 
-    const result = await to_chat_ctx(ctx);
+    const result = await toChatCtx(ctx);
 
     expect(result).toEqual([
       {
@@ -355,7 +351,7 @@ describe('to_chat_ctx', () => {
   it('should skip empty groups', async () => {
     const ctx = ChatContext.empty();
     ctx.addMessage({ role: 'user', content: 'Hello', createdAt: 1000 });
-    
+
     // Create an isolated tool output without corresponding call (will be filtered)
     const orphanOutput = new FunctionCallOutput({
       callId: 'orphan_call',
@@ -364,10 +360,10 @@ describe('to_chat_ctx', () => {
       createdAt: 2000,
     });
     ctx.insert(orphanOutput);
-    
+
     ctx.addMessage({ role: 'assistant', content: 'Hi!', createdAt: 3000 });
 
-    const result = await to_chat_ctx(ctx);
+    const result = await toChatCtx(ctx);
 
     // Messages should be in the result, orphan output should be filtered out
     expect(result).toHaveLength(2);
@@ -411,7 +407,7 @@ describe('to_chat_ctx', () => {
       ],
     });
 
-    const result = await to_chat_ctx(ctx);
+    const result = await toChatCtx(ctx);
 
     expect(result).toEqual([
       {
@@ -460,7 +456,7 @@ describe('to_chat_ctx', () => {
       ],
     });
 
-    const result = await to_chat_ctx(ctx);
+    const result = await toChatCtx(ctx);
 
     expect(result).toEqual([
       {
@@ -490,7 +486,7 @@ describe('to_chat_ctx', () => {
       ],
     });
 
-    await expect(to_chat_ctx(ctx)).rejects.toThrow('Unsupported content type: audio_content');
+    await expect(toChatCtx(ctx)).rejects.toThrow('Unsupported content type: audio_content');
   });
 
   it('should throw error when serialized image has no data', async () => {
@@ -513,12 +509,12 @@ describe('to_chat_ctx', () => {
       ],
     });
 
-    await expect(to_chat_ctx(ctx)).rejects.toThrow('Serialized image has no data bytes');
+    await expect(toChatCtx(ctx)).rejects.toThrow('Serialized image has no data bytes');
   });
 
   it('should filter out standalone function calls without outputs', async () => {
     const ctx = ChatContext.empty();
-    
+
     // Add standalone function call without output
     const funcCall = new FunctionCall({
       id: 'func_standalone',
@@ -526,10 +522,10 @@ describe('to_chat_ctx', () => {
       name: 'standalone_function',
       args: '{}',
     });
-    
+
     ctx.insert(funcCall);
 
-    const result = await to_chat_ctx(ctx);
+    const result = await toChatCtx(ctx);
 
     // Standalone function calls without outputs are filtered out by groupToolCalls
     expect(result).toEqual([]);
@@ -537,7 +533,7 @@ describe('to_chat_ctx', () => {
 
   it('should handle function call output correctly', async () => {
     const ctx = ChatContext.empty();
-    
+
     // First add a function call
     const funcCall = new FunctionCall({
       id: 'func_1',
@@ -545,17 +541,17 @@ describe('to_chat_ctx', () => {
       name: 'test_function',
       args: '{}',
     });
-    
+
     // Then add its output
     const funcOutput = new FunctionCallOutput({
       callId: 'call_output_test',
       output: 'Function executed successfully',
       isError: false,
     });
-    
+
     ctx.insert([funcCall, funcOutput]);
 
-    const result = await to_chat_ctx(ctx);
+    const result = await toChatCtx(ctx);
 
     expect(result).toEqual([
       {
