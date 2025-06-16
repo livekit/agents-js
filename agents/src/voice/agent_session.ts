@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame, AudioSource, Room } from '@livekit/rtc-node';
+import type { AudioFrame, Room } from '@livekit/rtc-node';
+import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { ChatMessage } from '../llm/chat_context.js';
 import { ChatContext } from '../llm/chat_context.js';
@@ -14,7 +16,8 @@ import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import type { UserState } from './events.js';
-import { RoomIO } from './room_io.js';
+import type { AudioOutput, TextOutput } from './io.js';
+import { RoomIO } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
@@ -40,7 +43,22 @@ const defaultVoiceOptions: VoiceOptions = {
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
 
-export class AgentSession<UserData = UnknownUserData> {
+// TODO(AJS-102): add and organize all agent session callbacks
+export enum AgentSessionEvent {
+  UserInputTranscribed = 'user_input_transcribed',
+}
+
+export type UserInputTranscribedEvent = {
+  transcript: string;
+  isFinal: boolean;
+  speakerId: string | null;
+};
+
+export type AgentSessionCallbacks = {
+  [AgentSessionEvent.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
+};
+
+export class AgentSession<UserData = UnknownUserData> extends (EventEmitter as new () => TypedEmitter<AgentSessionCallbacks>) {
   vad: VAD;
   stt: STT;
   llm: LLM;
@@ -63,7 +81,9 @@ export class AgentSession<UserData = UnknownUserData> {
   /** @internal */
   audioInput?: ReadableStream<AudioFrame>;
   /** @internal */
-  audioOutput?: AudioSource;
+  audioOutput?: AudioOutput;
+  /** @internal */
+  _transcriptionOutput?: TextOutput;
 
   constructor(
     vad: VAD,
@@ -73,6 +93,8 @@ export class AgentSession<UserData = UnknownUserData> {
     turnDetection?: TurnDetectionMode,
     options: Partial<VoiceOptions> = defaultVoiceOptions,
   ) {
+    super();
+
     this.vad = vad;
     this.stt = stt;
     this.llm = llm;
@@ -151,7 +173,7 @@ export class AgentSession<UserData = UnknownUserData> {
 
   /** @internal */
   _conversationItemAdded(item: ChatMessage): void {
-    this._chatCtx.insertItem(item);
+    this._chatCtx.insert(item);
   }
 
   /** @internal */

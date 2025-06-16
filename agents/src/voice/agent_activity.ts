@@ -4,7 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { Heap } from 'heap-js';
 import type { ReadableStream } from 'node:stream/web';
-import { type ChatContext, ChatMessage, ChatRole } from '../llm/chat_context.js';
+import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
@@ -14,13 +14,15 @@ import { Future } from '../utils.js';
 import type { VADEvent } from '../vad.js';
 import type { Agent } from './agent.js';
 import { StopResponse } from './agent.js';
-import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+import { type AgentSession, AgentSessionEvent, type TurnDetectionMode } from './agent_session.js';
 import {
   AudioRecognition,
   type EndOfTurnInfo,
   type RecognitionHooks,
 } from './audio_recognition.js';
 import {
+  type _AudioOut,
+  type _TextOut,
   performAudioForwarding,
   performLLMInference,
   performTTSInference,
@@ -145,11 +147,21 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onInterimTranscript(ev: SpeechEvent): void {
-    this.logger.info('Interim transcript', ev);
+    this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
+      transcript: ev.alternatives![0].text,
+      isFinal: false,
+      // TODO(AJS-106): add multi participant support
+      speakerId: null,
+    });
   }
 
   onFinalTranscript(ev: SpeechEvent): void {
-    this.logger.info(`Final transcript ${ev.alternatives![0].text}`);
+    this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
+      transcript: ev.alternatives![0].text,
+      isFinal: true,
+      // TODO(AJS-106): add multi participant support
+      speakerId: null,
+    });
   }
 
   async onEndOfTurn(info: EndOfTurnInfo): Promise<boolean> {
@@ -223,14 +235,11 @@ export class AgentActivity implements RecognitionHooks {
       instructions = `${this.agent.instructions}\n${instructions}`;
     }
 
-    this.pipelineReplyTask(
-      handle,
-      chatCtx || this.agent.chatCtx,
-      instructions,
-      userMessage?.copy(),
-    ).then(() => {
-      this.onPipelineReplyDone();
-    });
+    this.pipelineReplyTask(handle, chatCtx || this.agent.chatCtx, instructions, userMessage).then(
+      () => {
+        this.onPipelineReplyDone();
+      },
+    );
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
     return handle;
   }
@@ -272,8 +281,8 @@ export class AgentActivity implements RecognitionHooks {
       // TODO(AJS-32): Add realtime model support for interrupting the current generation
     }
 
-    const userMessage = new ChatMessage({
-      role: ChatRole.USER,
+    const userMessage = ChatMessage.create({
+      role: 'user',
       content: info.newTranscript,
     });
 
@@ -306,12 +315,13 @@ export class AgentActivity implements RecognitionHooks {
     // TODO(AJS-54): add transcription/text output
 
     const audioOutput = this.agentSession.audioOutput;
+    const transcriptionOutput = this.agentSession._transcriptionOutput;
 
     chatCtx = chatCtx.copy();
 
     if (newMessage) {
-      chatCtx.insertItem(newMessage);
-      this.agent._chatCtx.insertItem(newMessage);
+      chatCtx.insert(newMessage);
+      this.agent._chatCtx.insert(newMessage);
       this.agentSession._conversationItemAdded(newMessage);
     }
 
@@ -344,10 +354,6 @@ export class AgentActivity implements RecognitionHooks {
 
     await speechHandle.waitIfNotInterrupted([speechHandle.waitForAuthorization()]);
     if (speechHandle.interrupted) {
-      this.logger.info(
-        { speech_id: speechHandle.id },
-        'Speech interrupted after tts and llm tasks',
-      );
       replyAbortController.abort();
       await Promise.allSettled(
         tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
@@ -355,37 +361,47 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    const [textForwardTask, textOutput] = performTextForwarding(
-      null,
-      llmOutput,
-      replyAbortController,
-    );
-    tasks.push(textForwardTask);
+    const replyStartedAt = Date.now();
+    const trNodeResult = await this.agent.transcriptionNode(llmOutput, {}); // TODO(AJS-59): add model settings
+    let textOut: _TextOut | null = null;
+    if (trNodeResult) {
+      const [textForwardTask, _textOut] = performTextForwarding(
+        trNodeResult,
+        replyAbortController,
+        transcriptionOutput,
+      );
+      tasks.push(textForwardTask);
+      textOut = _textOut;
+    }
 
     const onFirstFrame = () => {
       this.agentSession._updateAgentState('speaking');
     };
 
+    let audioOut: _AudioOut | null = null;
     if (audioOutput) {
       if (ttsStream) {
-        const [forwardTask, audioOut] = performAudioForwarding(
+        const [forwardTask, _audioOut] = performAudioForwarding(
           ttsStream,
           audioOutput,
           replyAbortController,
         );
+        audioOut = _audioOut;
         tasks.push(forwardTask);
         audioOut.firstFrameFut.await.then(onFirstFrame);
       } else {
         throw Error('ttsStream is null when audioOutput is enabled');
       }
     } else {
-      textOutput.firstTextFut.await.then(onFirstFrame);
+      textOut?.firstTextFut.await.then(onFirstFrame);
     }
     // TODO(shubhra): handle tool calls
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
-    // TODO(shubhra): add waiting for audio playout in audio output
+    if (audioOutput) {
+      await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
+    }
 
     if (speechHandle.interrupted) {
       this.logger.debug(
@@ -396,36 +412,55 @@ export class AgentActivity implements RecognitionHooks {
       await Promise.allSettled(
         tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
       );
-      // TODO(shubhra): add waiting for audio playout in audio output and syncronizher transcripts
+      // TODO(AJS-87): add syncronizher and transcripts
+
+      if (audioOutput) {
+        audioOutput.clearBuffer();
+        const playbackEv = await audioOutput.waitForPlayout();
+        if (audioOut?.firstFrameFut.done) {
+          // playback EV is valid only if the first frame was already played
+          this.logger.info(
+            { speech_id: speechHandle.id, playbackPosition: playbackEv.playbackPosition },
+            'playout interrupted',
+          );
+        }
+      }
+
       const message = ChatMessage.create({
-        role: ChatRole.ASSISTANT,
-        text: textOutput.text,
+        role: 'assistant',
+        content: textOut?.text || '',
+        id: llmGenData.id,
+        interrupted: true,
+        createdAt: replyStartedAt,
       });
-      chatCtx.insertItem(message);
-      this.agent._chatCtx.insertItem(message);
+      chatCtx.insert(message);
+      this.agent._chatCtx.insert(message);
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
       }
       this.agentSession._conversationItemAdded(message);
 
       this.logger.info(
-        { speech_id: speechHandle.id, message: textOutput.text },
+        { speech_id: speechHandle.id, message: textOut?.text },
         'playout completed with interrupt',
       );
       // TODO(shubhra) add chat message to speech handle
       speechHandle.markPlayoutDone();
       return;
     }
-    if (textOutput && textOutput.text) {
+    if (textOut && textOut.text) {
       const message = ChatMessage.create({
-        role: ChatRole.ASSISTANT,
-        text: textOutput.text,
+        role: 'assistant',
+        id: llmGenData.id,
+        interrupted: false,
+        createdAt: replyStartedAt,
+        content: textOut.text,
       });
-      chatCtx.insertItem(message);
-      this.agent._chatCtx.insertItem(message);
+      chatCtx.insert(message);
+      this.agent._chatCtx.insert(message);
       this.agentSession._conversationItemAdded(message);
       this.logger.info(
-        { speech_id: speechHandle.id, message: textOutput.text },
+        { speech_id: speechHandle.id, message: textOut.text },
         'playout completed without interruption',
       );
       speechHandle.markPlayoutDone();

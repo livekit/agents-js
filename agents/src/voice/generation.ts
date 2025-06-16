@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame, AudioSource } from '@livekit/rtc-node';
-import { randomUUID } from 'node:crypto';
+import type { AudioFrame } from '@livekit/rtc-node';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
+import { shortuuid } from '../llm/misc.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task } from '../utils.js';
-import type { LLMNode, TTSNode } from './io.js';
+import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
 
 /* @internal */
 export class _LLMGenerationData {
@@ -17,7 +17,7 @@ export class _LLMGenerationData {
 
   constructor(public readonly textStream: ReadableStream<string>) {
     // TODO(AJS-60): standardize id generation - same as python
-    this.id = randomUUID();
+    this.id = shortuuid('item');
   }
 }
 
@@ -132,26 +132,29 @@ export function performTTSInference(
   ];
 }
 
-export interface _TextOutput {
+export interface _TextOut {
   text: string;
   firstTextFut: Future;
 }
 
 async function forwardText(
-  textOutput: _TextOutput | null,
   source: ReadableStream<string>,
-  out: _TextOutput,
-  signal?: AbortSignal,
+  out: _TextOut,
+  signal: AbortSignal,
+  textOutput?: TextOutput,
 ): Promise<void> {
   const reader = source.getReader();
   try {
     while (true) {
-      if (signal?.aborted) {
+      if (signal.aborted) {
         break;
       }
       const { done, value: delta } = await reader.read();
       if (done) break;
       out.text += delta;
+      if (textOutput) {
+        await textOutput.captureText(delta);
+      }
       if (!out.firstTextFut.done) {
         out.firstTextFut.resolve();
       }
@@ -163,34 +166,35 @@ async function forwardText(
     }
     throw error;
   } finally {
+    textOutput?.flush();
     reader?.releaseLock();
   }
 }
 
 export function performTextForwarding(
-  textOutput: _TextOutput | null,
   source: ReadableStream<string>,
   controller: AbortController,
-): [Task<void>, _TextOutput] {
+  textOutput?: TextOutput,
+): [Task<void>, _TextOut] {
   const out = {
     text: '',
     firstTextFut: new Future(),
   };
   return [
-    Task.from((controller) => forwardText(textOutput, source, out, controller.signal), controller),
+    Task.from((controller) => forwardText(source, out, controller.signal, textOutput), controller),
     out,
   ];
 }
 
-export interface _AudioOutput {
+export interface _AudioOut {
   audio: Array<AudioFrame>;
   firstFrameFut: Future;
 }
 
 async function forwardAudio(
   ttsStream: ReadableStream<AudioFrame>,
-  audioOuput: AudioSource,
-  out: _AudioOutput,
+  audioOuput: AudioOutput,
+  out: _AudioOut,
   signal?: AbortSignal,
 ): Promise<void> {
   const reader = ttsStream.getReader();
@@ -203,9 +207,6 @@ async function forwardAudio(
       const { done, value: frame } = await reader.read();
       if (done) break;
       // TODO(AJS-56) handle resampling
-      if (signal?.aborted) {
-        break;
-      }
       await audioOuput.captureFrame(frame);
       out.audio.push(frame);
       if (!out.firstFrameFut.done) {
@@ -220,14 +221,15 @@ async function forwardAudio(
     throw error;
   } finally {
     reader?.releaseLock();
+    audioOuput.flush();
   }
 }
 
 export function performAudioForwarding(
   ttsStream: ReadableStream<AudioFrame>,
-  audioOutput: AudioSource,
+  audioOutput: AudioOutput,
   controller: AbortController,
-): [Task<void>, _AudioOutput] {
+): [Task<void>, _AudioOut] {
   const out = {
     audio: [],
     firstFrameFut: new Future(),

@@ -62,9 +62,11 @@ export const llm = async (llm: llmlib.LLM) => {
   initializeLogger({ pretty: false });
   describe('LLM', async () => {
     it('should properly respond to chat', async () => {
-      const chatCtx = new llmlib.ChatContext().append({
-        text: 'You are an assistant at a drive-thru restaurant "Live-Burger". Ask the customer what they would like to order.',
-        role: llmlib.ChatRole.SYSTEM,
+      const chatCtx = new llmlib.ChatContext();
+      chatCtx.addMessage({
+        role: 'system',
+        content:
+          'You are an assistant at a drive-thru restaurant "Live-Burger". Ask the customer what they would like to order.',
       });
 
       const stream = llm.chat({ chatCtx });
@@ -153,12 +155,17 @@ const requestFncCall = async (
   parallelToolCalls: boolean | undefined = undefined,
 ) => {
   const stream = llm.chat({
-    chatCtx: new llmlib.ChatContext()
-      .append({
-        text: 'You are an helpful assistant. Follow the instructions provided by the user. You can use multiple tool calls at once.',
-        role: llmlib.ChatRole.SYSTEM,
-      })
-      .append({ text, role: llmlib.ChatRole.USER }),
+    chatCtx: new llmlib.ChatContext([
+      new llmlib.ChatMessage({
+        role: 'system',
+        content:
+          'You are an helpful assistant. Follow the instructions provided by the user. You can use multiple tool calls at once.',
+      }),
+      new llmlib.ChatMessage({
+        role: 'user',
+        content: text,
+      }),
+    ]),
     fncCtx,
     temperature,
     parallelToolCalls,
