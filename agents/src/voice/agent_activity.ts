@@ -150,7 +150,7 @@ export class AgentActivity implements RecognitionHooks {
     this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
       transcript: ev.alternatives![0].text,
       isFinal: false,
-      // TODO(shubhra): add multi participant support
+      // TODO(AJS-106): add multi participant support
       speakerId: null,
     });
   }
@@ -159,7 +159,7 @@ export class AgentActivity implements RecognitionHooks {
     this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
       transcript: ev.alternatives![0].text,
       isFinal: true,
-      // TODO(shubhra): add multi participant support
+      // TODO(AJS-106): add multi participant support
       speakerId: null,
     });
   }

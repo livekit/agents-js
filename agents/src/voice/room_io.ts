@@ -272,7 +272,7 @@ export class RoomIO {
       return;
     }
 
-    // TODO(shubhra): allow user to specify accepted participany kinds
+    // TODO(AJS-105): allow user to specify accepted participany kinds
 
     this.participantAvailableFuture.resolve(participant);
   }
