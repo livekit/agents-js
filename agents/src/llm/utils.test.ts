@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ImageContent } from './chat_context.js';
 import { serializeImage } from './utils.js';
 
-// Helper functions
 function createImageContent(
   image: string | VideoFrame,
   inferenceDetail: 'auto' | 'high' | 'low' = 'auto',
@@ -60,10 +59,10 @@ function createGradientFrame(width: number, height: number): VideoFrame {
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const idx = (y * width + x) * channels;
-      frameData[idx] = Math.floor((x / (width - 1)) * 255); // R gradient
-      frameData[idx + 1] = Math.floor((y / (height - 1)) * 255); // G gradient
-      frameData[idx + 2] = 128; // B constant
-      frameData[idx + 3] = 255; // A full
+      frameData[idx] = Math.floor((x / (width - 1)) * 255); 
+      frameData[idx + 1] = Math.floor((y / (height - 1)) * 255); 
+      frameData[idx + 2] = 128; 
+      frameData[idx + 3] = 255;
     }
   }
 
@@ -87,10 +86,10 @@ function createPatternFrame(width: number, height: number, patterns: number[][])
 }
 
 function verifyPngHeader(imageBuffer: Buffer) {
-  expect(imageBuffer[0]).toBe(0x89); // PNG signature
-  expect(imageBuffer[1]).toBe(0x50); // P
-  expect(imageBuffer[2]).toBe(0x4e); // N
-  expect(imageBuffer[3]).toBe(0x47); // G
+  expect(imageBuffer[0]).toBe(0x89); 
+  expect(imageBuffer[1]).toBe(0x50);
+  expect(imageBuffer[2]).toBe(0x4e);
+  expect(imageBuffer[3]).toBe(0x47);
 }
 
 function expectPixel(
@@ -125,7 +124,6 @@ describe('serializeImage', () => {
         inferenceDetail: 'high',
       });
 
-      // Verify the base64 data is unchanged
       expect(result.base64Data).toBe(originalBase64);
     });
 
@@ -178,7 +176,7 @@ describe('serializeImage', () => {
       const imageContent = createImageContent(
         'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
         'auto',
-        { mimeType: 'image/png' }, // Different from data URL
+        { mimeType: 'image/png' }, 
       );
 
       const result = await serializeImage(imageContent);
@@ -195,7 +193,7 @@ describe('serializeImage', () => {
 
     it('should throw error for invalid data URL format', async () => {
       const imageContent = createImageContent(
-        'data:;base64,/9j/4AAQSkZJRg==', // Missing mime type
+        'data:;base64,/9j/4AAQSkZJRg==', 
         'auto',
       );
 
@@ -256,20 +254,17 @@ describe('serializeImage', () => {
         inferenceDetail: 'auto',
       });
       expect(result.base64Data).toBeDefined();
-      expect(result.base64Data).toMatch(/^[A-Za-z0-9+/]+=*$/); // Valid base64
+      expect(result.base64Data).toMatch(/^[A-Za-z0-9+/]+=*$/); 
       expect(result.externalUrl).toBeUndefined();
 
-      // Decode and verify
       const { imageBuffer, decodedImage } = await decodeImageToRaw(result.base64Data!);
 
       verifyPngHeader(imageBuffer);
 
-      // PNG is lossless, so we should get exact values
       expect(decodedImage.info.width).toBe(width);
       expect(decodedImage.info.height).toBe(height);
-      expect(decodedImage.info.channels).toBe(4); // PNG supports alpha
+      expect(decodedImage.info.channels).toBe(4); 
 
-      // Check that all pixels are exactly red
       const decodedData = decodedImage.data;
       for (let i = 0; i < decodedData.length; i += 4) {
         expectPixel(decodedData, i, { r: 255, g: 0, b: 0, a: 255 });
@@ -289,7 +284,6 @@ describe('serializeImage', () => {
         inferenceDetail: 'high',
       });
 
-      // Decode and verify exact pixel values
       const { decodedImage } = await decodeImageToRaw(result.base64Data!);
 
       expect(decodedImage.info.width).toBe(width);
@@ -297,7 +291,6 @@ describe('serializeImage', () => {
 
       const decodedData = decodedImage.data;
 
-      // Verify the exact gradient values are preserved
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
           const idx = (y * width + x) * 4;
@@ -313,14 +306,11 @@ describe('serializeImage', () => {
       const width = 2;
       const height = 2;
 
-      // Create a specific pattern:
-      // Top-left: Red, Top-right: Green
-      // Bottom-left: Blue, Bottom-right: White
       const patterns = [
-        [255, 0, 0, 255], // Red
-        [0, 255, 0, 255], // Green
-        [0, 0, 255, 255], // Blue
-        [255, 255, 255, 255], // White
+        [255, 0, 0, 255], 
+        [0, 255, 0, 255], 
+        [0, 0, 255, 255], 
+        [255, 255, 255, 255], 
       ];
 
       const videoFrame = createPatternFrame(width, height, patterns);
@@ -328,15 +318,13 @@ describe('serializeImage', () => {
 
       const result = await serializeImage(imageContent);
 
-      // Decode and verify the pattern
       const { decodedImage } = await decodeImageToRaw(result.base64Data!);
       const decoded = decodedImage.data;
 
-      // Check each pixel - PNG is lossless so values should be exact
-      expectPixel(decoded, 0, { r: 255, g: 0, b: 0, a: 255 }); // Top-left (red)
-      expectPixel(decoded, 4, { r: 0, g: 255, b: 0, a: 255 }); // Top-right (green)
-      expectPixel(decoded, width * 4, { r: 0, g: 0, b: 255, a: 255 }); // Bottom-left (blue)
-      expectPixel(decoded, (width + 1) * 4, { r: 255, g: 255, b: 255, a: 255 }); // Bottom-right (white)
+      expectPixel(decoded, 0, { r: 255, g: 0, b: 0, a: 255 });
+      expectPixel(decoded, 4, { r: 0, g: 255, b: 0, a: 255 }); 
+      expectPixel(decoded, width * 4, { r: 0, g: 0, b: 255, a: 255 }); 
+      expectPixel(decoded, (width + 1) * 4, { r: 255, g: 255, b: 255, a: 255 }); 
     });
 
     it('should handle resize parameters correctly', async () => {
@@ -351,33 +339,30 @@ describe('serializeImage', () => {
 
       const result = await serializeImage(imageContent);
 
-      // Decode and verify it was resized
       const { decodedImage } = await decodeImageToRaw(result.base64Data!);
 
       expect(decodedImage.info.width).toBe(4);
       expect(decodedImage.info.height).toBe(4);
 
-      // All pixels should still be gray (allowing small variation due to interpolation)
       const decodedData = decodedImage.data;
       for (let i = 0; i < decodedData.length; i += 4) {
-        expect(decodedData[i]).toBeCloseTo(100, -1); // R
-        expect(decodedData[i + 1]).toBeCloseTo(100, -1); // G
-        expect(decodedData[i + 2]).toBeCloseTo(100, -1); // B
-        expect(decodedData[i + 3]).toBe(255); // A
+        expect(decodedData[i]).toBeCloseTo(100, -1); 
+        expect(decodedData[i + 1]).toBeCloseTo(100, -1); 
+        expect(decodedData[i + 2]).toBeCloseTo(100, -1); 
+        expect(decodedData[i + 3]).toBe(255); 
       }
     });
 
     it('should handle RGB24 VideoBufferType correctly', async () => {
       const width = 2;
       const height = 2;
-      const channels = 3; // RGB24 has no alpha
+      const channels = 3; 
       const frameData = new Uint8Array(width * height * channels);
 
-      // Fill with test pattern
       for (let i = 0; i < frameData.length; i += channels) {
-        frameData[i] = 255; // R
-        frameData[i + 1] = 128; // G
-        frameData[i + 2] = 64; // B
+        frameData[i] = 255; 
+        frameData[i + 1] = 128; 
+        frameData[i + 2] = 64; 
       }
 
       const videoFrame = new VideoFrame(frameData, width, height, VideoBufferType.RGB24);
@@ -387,21 +372,19 @@ describe('serializeImage', () => {
 
       expect(result.mimeType).toBe('image/png');
 
-      // Decode and verify
       const { decodedImage } = await decodeImageToRaw(result.base64Data!);
 
-      // Decoded image may have 3 or 4 channels depending on PNG encoding
       expect(decodedImage.info.channels).toBeGreaterThanOrEqual(3);
 
       const decodedData = decodedImage.data;
       const decodedChannels = decodedImage.info.channels;
 
       for (let i = 0; i < decodedData.length; i += decodedChannels) {
-        expect(decodedData[i]).toBe(255); // R
-        expect(decodedData[i + 1]).toBe(128); // G
-        expect(decodedData[i + 2]).toBe(64); // B
+        expect(decodedData[i]).toBe(255); 
+        expect(decodedData[i + 1]).toBe(128); 
+        expect(decodedData[i + 2]).toBe(64); 
         if (decodedChannels === 4) {
-          expect(decodedData[i + 3]).toBe(255); // A (if present)
+          expect(decodedData[i + 3]).toBe(255); 
         }
       }
     });
@@ -441,7 +424,6 @@ describe('serializeImage', () => {
       ];
 
       for (const format of unsupportedFormats) {
-        // Create minimal data for the format (size doesn't matter since it will throw)
         const frameData = new Uint8Array(width * height);
         const videoFrame = new VideoFrame(frameData, width, height, format);
         const imageContent = createImageContent(videoFrame, 'auto');
@@ -455,7 +437,7 @@ describe('serializeImage', () => {
 
   describe('Error handling', () => {
     it('should throw error for unsupported image type', async () => {
-      const imageContent = createImageContent(123 as any, 'auto'); // Invalid type
+      const imageContent = createImageContent(123 as any, 'auto'); 
 
       await expect(serializeImage(imageContent)).rejects.toThrow('Unsupported image type');
     });
