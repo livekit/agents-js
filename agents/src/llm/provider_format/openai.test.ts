@@ -32,8 +32,8 @@ describe('toChatCtx', () => {
 
     // Messages should be in the result, order may vary due to ID-based sorting
     expect(result).toHaveLength(2);
-    expect(result).toContainEqual({ role: 'user', content: 'Hello' });
-    expect(result).toContainEqual({ role: 'assistant', content: 'Hi there!' });
+    expect(result[0]).toEqual({ role: 'user', content: 'Hello' });
+    expect(result[1]).toEqual({ role: 'assistant', content: 'Hi there!' });
   });
 
   it('should handle system messages', async () => {
@@ -45,8 +45,8 @@ describe('toChatCtx', () => {
 
     // Messages should be in the result, order may vary due to ID-based sorting
     expect(result).toHaveLength(2);
-    expect(result).toContainEqual({ role: 'system', content: 'You are a helpful assistant' });
-    expect(result).toContainEqual({ role: 'user', content: 'Hello' });
+    expect(result[0]).toEqual({ role: 'system', content: 'You are a helpful assistant' });
+    expect(result[1]).toEqual({ role: 'user', content: 'Hello' });
   });
 
   it('should handle multi-line text content', async () => {
@@ -55,7 +55,8 @@ describe('toChatCtx', () => {
 
     const result = await toChatCtx(ctx);
 
-    expect(result).toEqual([{ role: 'user', content: 'Line 1\nLine 2\nLine 3' }]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ role: 'user', content: 'Line 1\nLine 2\nLine 3' });
   });
 
   it('should handle messages with external URL images', async () => {

@@ -121,9 +121,11 @@ function intersection<T>(set1: Set<T>, set2: Set<T>): Set<T> {
  */
 export function groupToolCalls(chatCtx: ChatContext) {
   const itemGroups: Record<string, ChatItemGroup> = {};
+  const insertionOrder: Record<string, number> = {};
   const toolOutputs: FunctionCallOutput[] = [];
   const logger = log();
 
+  let insertionIndex = 0;
   for (const item of chatCtx.items) {
     const isAssistantMessage = item.type === 'message' && item.role === 'assistant';
     const isFunctionCall = item.type === 'function_call';
@@ -134,6 +136,11 @@ export function groupToolCalls(chatCtx: ChatContext) {
       const groupId = item.id.split('/')[0]!;
       if (itemGroups[groupId] === undefined) {
         itemGroups[groupId] = ChatItemGroup.create();
+
+        // we use insertion order to sort the groups as they are added to the context
+        // simulating the OrderedDict in python
+        insertionOrder[groupId] = insertionIndex;
+        insertionIndex++;
       }
       itemGroups[groupId]!.add(item);
     } else if (isFunctionCallOutput) {
@@ -170,7 +177,7 @@ export function groupToolCalls(chatCtx: ChatContext) {
 
   // sort groups by their item id
   const orderedGroups = Object.entries(itemGroups)
-    .sort((a, b) => a[0].localeCompare(b[0]))
+    .sort((a, b) => insertionOrder[a[0]]! - insertionOrder[b[0]]!)
     .map(([, group]) => group);
   return orderedGroups;
 }
