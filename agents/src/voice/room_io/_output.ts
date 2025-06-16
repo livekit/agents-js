@@ -17,7 +17,7 @@ import {
   TOPIC_TRANSCRIPTION,
 } from '../../constants.js';
 import { log } from '../../log.js';
-import { Future, Task } from '../../utils.js';
+import { Task } from '../../utils.js';
 
 function findMicrophoneTrackId(room: Room, identity: string): string {
   let p: Participant | LocalParticipant | null = room.remoteParticipants.get(identity) ?? null;
