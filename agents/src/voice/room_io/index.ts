@@ -2,3 +2,4 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 export * from './_output.js';
+export * from './room_io.js';
