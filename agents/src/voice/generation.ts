@@ -10,6 +10,7 @@ import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task } from '../utils.js';
 import type { LLMNode, TTSNode } from './io.js';
 import type { ParticipantAudioOutput } from './room_io.js';
+import type { TextOutput } from './room_io/_output.js';
 
 /* @internal */
 export class _LLMGenerationData {
@@ -133,26 +134,29 @@ export function performTTSInference(
   ];
 }
 
-export interface _TextOutput {
+export interface _TextOut {
   text: string;
   firstTextFut: Future;
 }
 
 async function forwardText(
-  textOutput: _TextOutput | null,
   source: ReadableStream<string>,
-  out: _TextOutput,
-  signal?: AbortSignal,
+  out: _TextOut,
+  signal: AbortSignal,
+  textOutput?: TextOutput,
 ): Promise<void> {
   const reader = source.getReader();
   try {
     while (true) {
-      if (signal?.aborted) {
+      if (signal.aborted) {
         break;
       }
       const { done, value: delta } = await reader.read();
       if (done) break;
       out.text += delta;
+      if (textOutput) {
+        await textOutput.captureText(delta);
+      }
       if (!out.firstTextFut.done) {
         out.firstTextFut.resolve();
       }
@@ -164,21 +168,22 @@ async function forwardText(
     }
     throw error;
   } finally {
+    textOutput?.flush();
     reader?.releaseLock();
   }
 }
 
 export function performTextForwarding(
-  textOutput: _TextOutput | null,
   source: ReadableStream<string>,
   controller: AbortController,
-): [Task<void>, _TextOutput] {
+  textOutput?: TextOutput,
+): [Task<void>, _TextOut] {
   const out = {
     text: '',
     firstTextFut: new Future(),
   };
   return [
-    Task.from((controller) => forwardText(textOutput, source, out, controller.signal), controller),
+    Task.from((controller) => forwardText(source, out, controller.signal, textOutput), controller),
     out,
   ];
 }
