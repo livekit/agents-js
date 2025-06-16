@@ -485,7 +485,7 @@ describe('toChatCtx', () => {
         {
           type: 'audio_content',
           frame: [],
-        } as any,
+        } as any, // eslint-disable-line @typescript-eslint/no-explicit-any
       ],
     });
 

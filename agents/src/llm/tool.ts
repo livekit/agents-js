@@ -15,7 +15,7 @@ type ToolParameters = ZodObject<any>;
 /** Type reinforcement for the callable function's execute parameters. */
 type inferParameters<P extends ToolParameters> = zodInfer<P>;
 
-export type ToolType = 'core' | 'provider-defined';
+export type ToolType = 'function' | 'provider-defined';
 
 export type ToolExecuteFunction<
   Parameters extends ToolParameters,
@@ -57,20 +57,21 @@ export interface Tool {
 }
 
 // TODO(brian): support provider-defined tools
-export interface ProviderDefinedTool<
-  Parameters extends ToolParameters,
-  UserData = UnknownUserData,
-  Result = unknown,
-> extends Tool {
+export interface ProviderDefinedTool extends Tool {
   type: 'provider-defined';
+
+  /**
+   * The configuration of the tool.
+   */
+  config: Record<string, unknown>;
 }
 
-export interface CoreTool<
+export interface FunctionTool<
   Parameters extends ToolParameters,
   UserData = UnknownUserData,
   Result = unknown,
 > extends Tool {
-  type: 'core';
+  type: 'function';
 
   /**
    * The description of the tool. Will be used by the language model to decide whether to use the tool.
@@ -105,9 +106,9 @@ export function tool<
   description: string;
   parameters: Parameters;
   execute: ToolExecuteFunction<Parameters, UserData, Result>;
-}): CoreTool<Parameters, UserData, Result> {
+}): FunctionTool<Parameters, UserData, Result> {
   return {
-    type: 'core',
+    type: 'function',
     name,
     description,
     parameters,

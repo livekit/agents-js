@@ -435,7 +435,7 @@ describe('serializeImage', () => {
 
   describe('Error handling', () => {
     it('should throw error for unsupported image type', async () => {
-      const imageContent = createImageContent(123 as any, 'auto');
+      const imageContent = createImageContent(123 as any, 'auto'); // eslint-disable-line @typescript-eslint/no-explicit-any
 
       await expect(serializeImage(imageContent)).rejects.toThrow('Unsupported image type');
     });
