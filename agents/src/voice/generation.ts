@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import { randomUUID } from 'node:crypto';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
-import { shortuuid } from '../llm/misc.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task } from '../utils.js';
 import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
@@ -17,7 +17,7 @@ export class _LLMGenerationData {
 
   constructor(public readonly textStream: ReadableStream<string>) {
     // TODO(AJS-60): standardize id generation - same as python
-    this.id = shortuuid('item');
+    this.id = randomUUID();
   }
 }
 

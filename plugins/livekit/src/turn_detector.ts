@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { PreTrainedTokenizer } from '@huggingface/transformers';
 import { AutoTokenizer } from '@huggingface/transformers';
-import type { ipc, llm } from '@livekit/agents';
-import { CurrentJobContext, InferenceRunner, log } from '@livekit/agents';
+import type { ipc } from '@livekit/agents';
+import { CurrentJobContext, InferenceRunner, llm, log } from '@livekit/agents';
 import { fileURLToPath } from 'node:url';
 import { InferenceSession, Tensor } from 'onnxruntime-node';
 
@@ -91,22 +91,21 @@ export class EOUModel {
   async predictEndOfTurn(chatCtx: llm.ChatContext): Promise<number> {
     let messages: RawChatContext = [];
 
-    for (const message of chatCtx.items) {
-      // skip system and developer messages or tool call messages
-      if (message.type !== 'message' || message.role in ['system', 'developer']) {
+    for (const msg of chatCtx.messages) {
+      if (msg.role !== llm.ChatRole.ASSISTANT && msg.role !== llm.ChatRole.USER) {
         continue;
       }
 
-      if (typeof message.content === 'string') {
+      if (typeof msg.content === 'string') {
         messages.push({
-          role: message.role === 'assistant' ? 'assistant' : 'user',
-          content: message.content,
+          role: msg.role === llm.ChatRole.ASSISTANT ? 'assistant' : 'user',
+          content: msg.content,
         });
-      } else if (Array.isArray(message.content)) {
-        for (const content of message.content) {
+      } else if (Array.isArray(msg.content)) {
+        for (const content of msg.content) {
           if (typeof content === 'string') {
             messages.push({
-              role: message.role === 'assistant' ? 'assistant' : 'user',
+              role: msg.role === llm.ChatRole.ASSISTANT ? 'assistant' : 'user',
               content: content,
             });
           }

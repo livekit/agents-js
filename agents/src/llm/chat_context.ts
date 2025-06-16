@@ -2,354 +2,154 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
-import { shortuuid } from './misc.js';
-import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
+import type { CallableFunctionResult, FunctionCallInfo } from './function_context.js';
 
-export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
-export interface ImageContent {
-  id: string;
+export enum ChatRole {
+  SYSTEM,
+  USER,
+  ASSISTANT,
+  TOOL,
+}
 
-  type: 'image_content';
-
-  /**
-   * Either a string URL or a VideoFrame object.
-   */
+export interface ChatImage {
   image: string | VideoFrame;
-
-  inferenceDetail: 'auto' | 'high' | 'low';
-
   inferenceWidth?: number;
-
   inferenceHeight?: number;
-
-  mimeType?: string;
-
-  _cache: Record<any, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
-}
-
-export interface AudioContent {
-  type: 'audio_content';
-
-  frame: AudioFrame[];
-
-  transcript?: string;
-}
-
-export type ChatContent = ImageContent | AudioContent | string;
-
-export class ChatMessage {
-  readonly id: string;
-
-  readonly type = 'message' as const;
-
-  readonly role: ChatRole;
-
-  content: ChatContent[];
-
-  interrupted: boolean;
-
-  hash?: Uint8Array;
-
-  createdAt: number;
-
-  constructor(params: {
-    role: ChatRole;
-    content: ChatContent[] | string;
-    id?: string;
-    interrupted?: boolean;
-    createdAt?: number;
-  }) {
-    const {
-      role,
-      content,
-      id = shortuuid('item'),
-      interrupted = false,
-      createdAt = Date.now(),
-    } = params;
-    this.id = id;
-    this.role = role;
-    this.content = Array.isArray(content) ? content : [content];
-    this.interrupted = interrupted;
-    this.createdAt = createdAt;
-  }
-
-  static create(params: {
-    role: ChatRole;
-    content: ChatContent[] | string;
-    id?: string;
-    interrupted?: boolean;
-    createdAt?: number;
-  }) {
-    return new ChatMessage(params);
-  }
-
   /**
-   * Returns a single string with all text parts of the message joined by new
-   * lines. If no string content is present, returns `null`.
+   * @internal
+   * Used by LLM implementations to store a processed version of the image for later use.
    */
-  get textContent(): string | undefined {
-    const parts = this.content.filter((c): c is string => typeof c === 'string');
-    return parts.length > 0 ? parts.join('\n') : undefined;
-  }
+  cache: { [id: string | number | symbol]: any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
-export class FunctionCall {
-  readonly id: string;
-
-  readonly type = 'function_call' as const;
-
-  callId: string;
-
-  args: string;
-
-  name: string;
-
-  createdAt: number;
-
-  constructor(params: {
-    callId: string;
-    name: string;
-    args: string;
-    id?: string;
-    createdAt?: number;
-  }) {
-    const { callId, name, args, id = shortuuid('item'), createdAt = Date.now() } = params;
-    this.id = id;
-    this.callId = callId;
-    this.args = args;
-    this.name = name;
-    this.createdAt = createdAt;
-  }
-
-  static create(params: {
-    callId: string;
-    name: string;
-    args: string;
-    id?: string;
-    createdAt?: number;
-  }) {
-    return new FunctionCall(params);
-  }
+export interface ChatAudio {
+  frame: AudioFrame | AudioFrame[];
 }
 
-export class FunctionCallOutput {
-  readonly id: string;
+export type ChatContent = string | ChatImage | ChatAudio;
 
-  readonly type = 'function_call_output' as const;
+const defaultCreateChatMessage = {
+  text: '',
+  images: [],
+  role: ChatRole.SYSTEM,
+};
 
-  name = '';
+// TODO(AJS-41): update with 1.0 changes
+export class ChatMessage {
+  readonly role: ChatRole;
+  readonly id?: string;
+  readonly name?: string;
+  readonly content?: ChatContent | ChatContent[];
+  readonly toolCalls?: FunctionCallInfo[];
+  readonly toolCallId?: string;
+  readonly toolException?: Error;
 
-  callId: string;
-
-  output: string;
-
-  isError: boolean;
-
-  createdAt: number;
-
-  constructor(params: {
-    callId: string;
-    output: string;
-    isError: boolean;
+  /** @internal */
+  constructor({
+    role,
+    id,
+    name,
+    content,
+    toolCalls,
+    toolCallId,
+    toolException,
+  }: {
+    role: ChatRole;
     id?: string;
-    createdAt?: number;
     name?: string;
+    content?: ChatContent | ChatContent[];
+    toolCalls?: FunctionCallInfo[];
+    toolCallId?: string;
+    toolException?: Error;
   }) {
-    const {
-      callId,
-      output,
-      isError,
-      id = shortuuid('item'),
-      createdAt = Date.now(),
-      name = '',
-    } = params;
+    this.role = role;
     this.id = id;
-    this.callId = callId;
-    this.output = output;
-    this.isError = isError;
     this.name = name;
-    this.createdAt = createdAt;
+    this.content = content;
+    this.toolCalls = toolCalls;
+    this.toolCallId = toolCallId;
+    this.toolException = toolException;
   }
 
-  static create(params: {
-    callId: string;
-    output: string;
-    isError: boolean;
-    id?: string;
-    createdAt?: number;
-    name?: string;
-  }) {
-    return new FunctionCallOutput(params);
+  static createToolFromFunctionResult(func: CallableFunctionResult): ChatMessage {
+    if (!func.result && !func.error) {
+      throw new TypeError('CallableFunctionResult must include result or error');
+    }
+
+    return new ChatMessage({
+      role: ChatRole.TOOL,
+      name: func.name,
+      content: func.result || `Error: ${func.error}`,
+      toolCallId: func.toolCallId,
+      toolException: func.error,
+    });
+  }
+
+  static createToolCalls(toolCalls: FunctionCallInfo[], text = '') {
+    return new ChatMessage({
+      role: ChatRole.ASSISTANT,
+      toolCalls,
+      content: text,
+    });
+  }
+
+  static create(
+    options: Partial<{
+      text?: string;
+      images: ChatImage[];
+      role: ChatRole;
+    }>,
+  ): ChatMessage {
+    const { text, images, role } = { ...defaultCreateChatMessage, ...options };
+
+    if (!images.length) {
+      return new ChatMessage({
+        role,
+        content: text,
+      });
+    } else {
+      return new ChatMessage({
+        role,
+        content: [...(text ? [text] : []), ...images],
+      });
+    }
+  }
+
+  /** Returns a structured clone of this message. */
+  copy(): ChatMessage {
+    return new ChatMessage({
+      role: this.role,
+      id: this.id,
+      name: this.name,
+      content: this.content,
+      toolCalls: this.toolCalls,
+      toolCallId: this.toolCallId,
+      toolException: this.toolException,
+    });
   }
 }
-
-export type ChatItem = ChatMessage | FunctionCall | FunctionCallOutput;
 
 export class ChatContext {
-  private _items: ChatItem[];
+  messages: ChatMessage[] = [];
+  metadata: { [id: string]: any } = {}; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-  constructor(items?: ChatItem[]) {
-    this._items = items ? [...items] : [];
-  }
-
-  static empty(): ChatContext {
-    return new ChatContext([]);
-  }
-
-  get items(): ReadonlyArray<ChatItem> {
-    return this._items;
-  }
-
-  set items(items: ChatItem[]) {
-    this._items = [...items];
-  }
-
-  /**
-   * Add a new message to the context and return it.
-   */
-  addMessage(params: {
-    role: ChatRole;
-    content: ChatContent[] | string;
-    id?: string;
-    interrupted?: boolean;
-    createdAt?: number;
-  }): ChatMessage {
-    const msg = new ChatMessage(params);
-    if (params.createdAt !== undefined) {
-      const idx = this.findInsertionIndex(params.createdAt);
-      this._items.splice(idx, 0, msg);
-    } else {
-      this._items.push(msg);
-    }
-    return msg;
-  }
-
-  /**
-   * Insert a single item or multiple items based on their `createdAt` field so
-   * that the array keeps its chronological order.
-   */
-  insert(item: ChatItem | ChatItem[]): void {
-    const arr = Array.isArray(item) ? item : [item];
-    for (const it of arr) {
-      const idx = this.findInsertionIndex(it.createdAt);
-      this._items.splice(idx, 0, it);
-    }
-  }
-
-  getById(itemId: string): ChatItem | undefined {
-    return this._items.find((i) => i.id === itemId);
-  }
-
-  indexById(itemId: string): number | undefined {
-    const idx = this._items.findIndex((i) => i.id === itemId);
-    return idx !== -1 ? idx : undefined;
-  }
-
-  copy(
-    options: {
-      excludeFunctionCall?: boolean;
-      excludeInstructions?: boolean;
-      excludeEmptyMessage?: boolean;
-      // TODO: tools filter implementation
-      tools?: unknown;
-    } = {},
-  ): ChatContext {
-    const {
-      excludeFunctionCall = false,
-      excludeInstructions = false,
-      excludeEmptyMessage = false,
-    } = options;
-    const items: ChatItem[] = [];
-
-    for (const item of this._items) {
-      if (
-        (excludeFunctionCall && item.type === 'function_call') ||
-        item.type === 'function_call_output'
-      ) {
-        continue;
-      }
-
-      if (excludeInstructions && item.type === 'message' && item.role in ['system', 'developer']) {
-        continue;
-      }
-
-      if (excludeEmptyMessage && item.type === 'message' && item.content.length === 0) {
-        continue;
-      }
-
-      // TODO(brian): exclude invalid tools filter
-
-      items.push(item);
-    }
-
-    return new ChatContext(items);
-  }
-
-  truncate(maxItems: number): ChatContext {
-    if (maxItems <= 0) return this;
-
-    const instructions = this._items.find(
-      (i) => i.type === 'message' && (i as ChatMessage).role === 'system',
-    ) as ChatMessage | undefined;
-
-    let newItems = this._items.slice(-maxItems);
-
-    // Ensure the first item is not a function-call artefact.
-    while (newItems.length > 0) {
-      const first = newItems[0]!;
-      if (first.type === 'function_call' || first.type === 'function_call_output') {
-        newItems.shift();
-      } else {
-        break;
-      }
-    }
-
-    let nonFunctionItemIdx = 0;
-    for (let i = 0; i < newItems.length; i++) {
-      const item = newItems[i]!;
-      if (item.type !== 'function_call' && item.type !== 'function_call_output') {
-        nonFunctionItemIdx = i;
-        break;
-      }
-    }
-
-    // Trim chat ctx start on any function_call or function_call_output
-    newItems = newItems.slice(nonFunctionItemIdx);
-
-    if (instructions) {
-      // At this point `instructions` is defined, so it is safe to pass to `includes`.
-      if (!newItems.includes(instructions)) {
-        newItems = [instructions, ...newItems];
-      }
-    }
-
-    this._items = newItems;
+  /** @deprecated Use insertItem for 1.0 changes. */
+  append(msg: { text?: string; images?: ChatImage[]; role: ChatRole }): ChatContext {
+    this.messages.push(ChatMessage.create(msg));
     return this;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async toProviderFormat(format: ProviderFormat, injectDummyUserMessage: boolean = true) {
-    return await toChatCtx(format, this, injectDummyUserMessage);
+  insertItem(msg: ChatMessage): ChatContext {
+    // TODO(AJS-41): insert at the correct position
+    this.messages.push(msg);
+    return this;
   }
 
-  /**
-   * Internal helper used by `truncate` & `addMessage` to find the correct
-   * insertion index for a timestamp so the list remains sorted.
-   */
-  private findInsertionIndex(createdAt: number): number {
-    for (let i = this._items.length - 1; i >= 0; i -= 1) {
-      const item = this._items[i];
-      if (item!.createdAt <= createdAt) {
-        return i + 1;
-      }
-    }
-    return 0;
-  }
-
-  /**
-   * Indicates whether the context is read-only
-   */
-  get readonly(): boolean {
-    return false;
+  /** Returns a structured clone of this context. */
+  copy(): ChatContext {
+    const ctx = new ChatContext();
+    ctx.messages.push(...this.messages.map((msg) => msg.copy()));
+    ctx.metadata = structuredClone(this.metadata);
+    return ctx;
   }
 }

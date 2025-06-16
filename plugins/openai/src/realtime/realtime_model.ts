@@ -143,17 +143,16 @@ class ConversationItem {
     });
   }
 
-  create(message: llm.ChatItem, previousItemId?: string): void {
-    if (message.type === 'message' && !message.content) {
+  create(message: llm.ChatMessage, previousItemId?: string): void {
+    if (!message.content) {
       return;
     }
 
-    let event: api_proto.ConversationItemCreateEvent | undefined = undefined;
+    let event: api_proto.ConversationItemCreateEvent;
 
-    if (message.type === 'function_call_output') {
-      const { callId: call_id, output } = message;
-      if (typeof output !== 'string') {
-        throw new TypeError('message.output must be a string');
+    if (message.toolCallId) {
+      if (typeof message.content !== 'string') {
+        throw new TypeError('message.content must be a string');
       }
 
       event = {
@@ -161,17 +160,17 @@ class ConversationItem {
         previous_item_id: previousItemId,
         item: {
           type: 'function_call_output',
-          call_id,
-          output,
+          call_id: message.toolCallId,
+          output: message.content,
         },
       };
-    } else if (message.type === 'message') {
+    } else {
       let content = message.content;
       if (!Array.isArray(content)) {
         content = [content];
       }
 
-      if (message.role === 'user') {
+      if (message.role === llm.ChatRole.USER) {
         const contents: (api_proto.InputTextContent | api_proto.InputAudioContent)[] = [];
         for (const c of content) {
           if (typeof c === 'string') {
@@ -181,8 +180,8 @@ class ConversationItem {
             });
           } else if (
             // typescript type guard for determining ChatAudio vs ChatImage
-            ((c: llm.AudioContent | llm.ImageContent): c is llm.AudioContent => {
-              return (c as llm.AudioContent).frame !== undefined;
+            ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatAudio => {
+              return (c as llm.ChatAudio).frame !== undefined;
             })(c)
           ) {
             contents.push({
@@ -201,7 +200,7 @@ class ConversationItem {
             content: contents,
           },
         };
-      } else if (message.role === 'assistant') {
+      } else if (message.role === llm.ChatRole.ASSISTANT) {
         const contents: api_proto.TextContent[] = [];
         for (const c of content) {
           if (typeof c === 'string') {
@@ -211,8 +210,8 @@ class ConversationItem {
             });
           } else if (
             // typescript type guard for determining ChatAudio vs ChatImage
-            ((c: llm.AudioContent | llm.ImageContent): c is llm.AudioContent => {
-              return (c as llm.AudioContent).frame !== undefined;
+            ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatAudio => {
+              return (c as llm.ChatAudio).frame !== undefined;
             })(c)
           ) {
             this.#logger.warn('audio content in assistant message is not supported');
@@ -228,7 +227,7 @@ class ConversationItem {
             content: contents,
           },
         };
-      } else if (message.role === 'system') {
+      } else if (message.role === llm.ChatRole.SYSTEM) {
         const contents: api_proto.InputTextContent[] = [];
         for (const c of content) {
           if (typeof c === 'string') {
@@ -238,8 +237,8 @@ class ConversationItem {
             });
           } else if (
             // typescript type guard for determining ChatAudio vs ChatImage
-            ((c: llm.AudioContent | llm.ImageContent): c is llm.AudioContent => {
-              return (c as llm.AudioContent).frame !== undefined;
+            ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatAudio => {
+              return (c as llm.ChatAudio).frame !== undefined;
             })(c)
           ) {
             this.#logger.warn('audio content in system message is not supported');
@@ -263,9 +262,7 @@ class ConversationItem {
       }
     }
 
-    if (event) {
-      this.#session.queueMsg(event);
-    }
+    this.#session.queueMsg(event);
   }
 }
 
@@ -680,21 +677,16 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   /** Create an empty audio message with the given duration. */
   #createEmptyUserAudioMessage(duration: number): llm.ChatMessage {
     const samples = duration * api_proto.SAMPLE_RATE;
-    return llm.ChatMessage.create({
-      role: 'user',
-      content: [
-        {
-          type: 'audio_content',
-          frame: [
-            new AudioFrame(
-              new Int16Array(samples * api_proto.NUM_CHANNELS),
-              api_proto.SAMPLE_RATE,
-              api_proto.NUM_CHANNELS,
-              samples,
-            ),
-          ],
-        },
-      ],
+    return new llm.ChatMessage({
+      role: llm.ChatRole.USER,
+      content: {
+        frame: new AudioFrame(
+          new Int16Array(samples * api_proto.NUM_CHANNELS),
+          api_proto.SAMPLE_RATE,
+          api_proto.NUM_CHANNELS,
+          samples,
+        ),
+      },
     });
   }
 
@@ -1130,10 +1122,10 @@ export class RealtimeSession extends multimodal.RealtimeSession {
             callId: item.call_id,
           });
           this.conversation.item.create(
-            llm.FunctionCallOutput.create({
-              callId: item.call_id,
-              output: content,
-              isError: false,
+            llm.ChatMessage.createToolFromFunctionResult({
+              name: item.name,
+              toolCallId: item.call_id,
+              result: content,
             }),
             output.itemId,
           );

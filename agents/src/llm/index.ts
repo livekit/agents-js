@@ -2,34 +2,31 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 export {
-  oaiBuildFunctionInfo,
-  oaiParams,
   type CallableFunction,
-  type CallableFunctionResult,
   type FunctionCallInfo,
+  type CallableFunctionResult,
   type FunctionContext,
   type inferParameters,
+  oaiParams,
+  oaiBuildFunctionInfo,
 } from './function_context.js';
 
 export {
-  ChatContext,
-  ChatMessage,
-  FunctionCall,
-  FunctionCallOutput,
-  type AudioContent,
+  type ChatImage,
+  type ChatAudio,
   type ChatContent,
-  type ChatItem,
-  type ChatRole,
-  type ImageContent,
+  ChatRole,
+  ChatMessage,
+  ChatContext,
 } from './chat_context.js';
 
 export {
-  LLM,
-  LLMEvent,
-  LLMStream,
-  type ChatChunk,
-  type Choice,
   type ChoiceDelta,
   type CompletionUsage,
+  type Choice,
+  type ChatChunk,
   type LLMCallbacks,
+  LLMEvent,
+  LLM,
+  LLMStream,
 } from './llm.js';

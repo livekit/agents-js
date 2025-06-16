@@ -4,6 +4,7 @@
 import { llm, log } from '@livekit/agents';
 import { randomUUID } from 'node:crypto';
 import { AzureOpenAI, OpenAI } from 'openai';
+import sharp from 'sharp';
 import type {
   CerebrasChatModels,
   ChatModels,
@@ -481,17 +482,16 @@ export class LLMStream extends llm.LLMStream {
       : undefined;
 
     try {
-      const messages = (await this.chatCtx.toProviderFormat(
-        'openai',
-      )) as OpenAI.ChatCompletionMessageParam[];
       const stream = await this.#client.chat.completions.create({
         model: opts.model,
         user: opts.user,
         n,
+        messages: await Promise.all(
+          this.chatCtx.messages.map(async (m) => await buildMessage(m, this.#id)),
+        ),
         temperature: temperature || opts.temperature,
         stream_options: { include_usage: true },
         stream: true,
-        messages,
         tools,
         parallel_tool_calls: this.fncCtx && parallelToolCalls,
       });
@@ -567,7 +567,7 @@ export class LLMStream extends llm.LLMStream {
       requestId: id,
       choices: [
         {
-          delta: { content: delta.content || undefined, role: 'assistant' },
+          delta: { content: delta.content || undefined, role: llm.ChatRole.ASSISTANT },
           index: choice.index,
         },
       ],
@@ -608,7 +608,7 @@ export class LLMStream extends llm.LLMStream {
         {
           delta: {
             content: choice.delta.content || undefined,
-            role: 'assistant',
+            role: llm.ChatRole.ASSISTANT,
             toolCalls: this._functionCalls,
           },
           index: choice.index,
@@ -617,3 +617,98 @@ export class LLMStream extends llm.LLMStream {
     };
   }
 }
+
+const buildMessage = async (msg: llm.ChatMessage, cacheKey: any) => {
+  const oaiMsg: Partial<OpenAI.ChatCompletionMessageParam> = {};
+
+  switch (msg.role) {
+    case llm.ChatRole.SYSTEM:
+      oaiMsg.role = 'system';
+      break;
+    case llm.ChatRole.USER:
+      oaiMsg.role = 'user';
+      break;
+    case llm.ChatRole.ASSISTANT:
+      oaiMsg.role = 'assistant';
+      break;
+    case llm.ChatRole.TOOL:
+      oaiMsg.role = 'tool';
+      if (oaiMsg.role === 'tool') {
+        oaiMsg.tool_call_id = msg.toolCallId;
+      }
+      break;
+  }
+
+  if (typeof msg.content === 'string') {
+    oaiMsg.content = msg.content;
+  } else if (Array.isArray(msg.content)) {
+    oaiMsg.content = (await Promise.all(
+      msg.content.map(async (c) => {
+        if (typeof c === 'string') {
+          return { type: 'text', text: c };
+        } else if (
+          // typescript type guard for determining ChatAudio vs ChatImage
+          ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatImage => {
+            return (c as llm.ChatImage).image !== undefined;
+          })(c)
+        ) {
+          return await buildImageContent(c, cacheKey);
+        } else {
+          throw new Error('ChatAudio is not supported');
+        }
+      }),
+    )) as OpenAI.ChatCompletionContentPart[];
+  } else if (msg.content === undefined) {
+    oaiMsg.content = '';
+  }
+
+  // make sure to provide when function has been called inside the context
+  // (+ raw_arguments)
+  if (msg.toolCalls && oaiMsg.role === 'assistant') {
+    oaiMsg.tool_calls = Object.entries(msg.toolCalls).map(([name, func]) => ({
+      id: func.toolCallId,
+      type: 'function' as const,
+      function: {
+        name: name,
+        arguments: func.rawParams,
+      },
+    }));
+  }
+
+  return oaiMsg as OpenAI.ChatCompletionMessageParam;
+};
+
+const buildImageContent = async (image: llm.ChatImage, cacheKey: any) => {
+  if (typeof image.image === 'string') {
+    // image url
+    return {
+      type: 'image_url',
+      image_url: {
+        url: image.image,
+        detail: 'auto',
+      },
+    };
+  } else {
+    if (!image.cache[cacheKey]) {
+      // inside our internal implementation, we allow to put extra metadata to
+      // each ChatImage (avoid to reencode each time we do a chatcompletion request)
+      let encoded = sharp(image.image.data);
+
+      if (image.inferenceHeight && image.inferenceHeight) {
+        encoded = encoded.resize(image.inferenceWidth, image.inferenceHeight);
+      }
+
+      image.cache[cacheKey] = await encoded
+        .jpeg()
+        .toBuffer()
+        .then((buffer) => buffer.toString('utf-8'));
+    }
+
+    return {
+      type: 'image_url',
+      image_url: {
+        url: `data:image/jpeg;base64,${image.cache[cacheKey]}`,
+      },
+    };
+  }
+};

@@ -201,9 +201,9 @@ export class MultimodalAgent extends EventEmitter {
           if (interrupted) {
             text += '…';
           }
-          const msg = new llm.ChatMessage({
-            role: 'assistant',
-            content: text,
+          const msg = llm.ChatMessage.create({
+            role: llm.ChatRole.ASSISTANT,
+            text,
           });
 
           if (interrupted) {
@@ -328,9 +328,9 @@ export class MultimodalAgent extends EventEmitter {
         } else {
           this.#logger.error('Participant or track not set');
         }
-        const userMsg = new llm.ChatMessage({
-          role: 'user',
-          content: transcription,
+        const userMsg = llm.ChatMessage.create({
+          role: llm.ChatRole.USER,
+          text: transcription,
         });
         this.emit('user_speech_committed', userMsg);
         this.#logger.child({ transcription }).debug('committed user speech');
