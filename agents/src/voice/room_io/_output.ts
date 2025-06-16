@@ -17,7 +17,7 @@ import {
   TOPIC_TRANSCRIPTION,
 } from '../../constants.js';
 import { log } from '../../log.js';
-import { Task } from '../../utils.js';
+import { Future, Task } from '../../utils.js';
 
 function findMicrophoneTrackId(room: Room, identity: string): string {
   let p: Participant | LocalParticipant | null = room.remoteParticipants.get(identity) ?? null;
@@ -215,27 +215,22 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     if (this.trackId) {
       attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
     }
-
-    const abortPromise = new Promise<void>((resolve) => {
-      signal.addEventListener('abort', () => resolve());
-    });
-
     try {
       if (this.room.isConnected) {
         if (this.isDeltaStream) {
           if (writer) {
-            await Promise.race([writer.close(), abortPromise]);
+            await writer.close();
           }
         } else {
-          const tmpWriter = await Promise.race([this.createTextWriter(attributes), abortPromise]);
+          const tmpWriter = await this.createTextWriter(attributes);
           if (signal.aborted || !tmpWriter) {
             return;
           }
-          await Promise.race([tmpWriter.write(this.latestText), abortPromise]);
+          await tmpWriter.write(this.latestText);
           if (signal.aborted) {
             return;
           }
-          await Promise.race([tmpWriter.close(), abortPromise]);
+          await tmpWriter.close();
         }
       }
     } catch (error) {
