@@ -1,7 +1,10 @@
+// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import type { RunContext } from '../voice/run_context.js';
-import { tool, type ToolExecutionOptions } from './tool.js';
+import { type ToolExecutionOptions, tool } from './tool.js';
 
 describe('tool', () => {
   describe('core tool', () => {
@@ -18,7 +21,10 @@ describe('tool', () => {
       });
 
       const runContext = { userData: { name: 'John' } } as unknown as RunContext<{ name: string }>;
-      const result = await getWeather.execute({ location: 'San Francisco' }, { ctx: runContext, toolCallId: '123' });
+      const result = await getWeather.execute(
+        { location: 'San Francisco' },
+        { ctx: runContext, toolCallId: '123' },
+      );
       expect(result).toBe('The weather in San Francisco is sunny, John');
     });
   });

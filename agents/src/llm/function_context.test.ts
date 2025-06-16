@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { oaiParams, type CallableFunction } from './function_context.js';
+import { type CallableFunction, oaiParams } from './function_context.js';
 
 describe('function_context', () => {
   describe('oaiParams', () => {

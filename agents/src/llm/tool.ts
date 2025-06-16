@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import type { ZodObject, infer as zodInfer } from 'zod';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
 

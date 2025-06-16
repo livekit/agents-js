@@ -58,7 +58,9 @@ export type AgentSessionCallbacks = {
   [AgentSessionEvent.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
 };
 
-export class AgentSession<UserData = UnknownUserData> extends (EventEmitter as new () => TypedEmitter<AgentSessionCallbacks>) {
+export class AgentSession<
+  UserData = UnknownUserData,
+> extends (EventEmitter as new () => TypedEmitter<AgentSessionCallbacks>) {
   vad: VAD;
   stt: STT;
   llm: LLM;
