@@ -4,7 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { Heap } from 'heap-js';
 import type { ReadableStream } from 'node:stream/web';
-import { type ChatContext, ChatMessage, ChatRole } from '../llm/chat_context.js';
+import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
@@ -235,14 +235,11 @@ export class AgentActivity implements RecognitionHooks {
       instructions = `${this.agent.instructions}\n${instructions}`;
     }
 
-    this.pipelineReplyTask(
-      handle,
-      chatCtx || this.agent.chatCtx,
-      instructions,
-      userMessage?.copy(),
-    ).then(() => {
-      this.onPipelineReplyDone();
-    });
+    this.pipelineReplyTask(handle, chatCtx || this.agent.chatCtx, instructions, userMessage).then(
+      () => {
+        this.onPipelineReplyDone();
+      },
+    );
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
     return handle;
   }
@@ -284,8 +281,8 @@ export class AgentActivity implements RecognitionHooks {
       // TODO(AJS-32): Add realtime model support for interrupting the current generation
     }
 
-    const userMessage = new ChatMessage({
-      role: ChatRole.USER,
+    const userMessage = ChatMessage.create({
+      role: 'user',
       content: info.newTranscript,
     });
 
@@ -323,8 +320,8 @@ export class AgentActivity implements RecognitionHooks {
     chatCtx = chatCtx.copy();
 
     if (newMessage) {
-      chatCtx.insertItem(newMessage);
-      this.agent._chatCtx.insertItem(newMessage);
+      chatCtx.insert(newMessage);
+      this.agent._chatCtx.insert(newMessage);
       this.agentSession._conversationItemAdded(newMessage);
     }
 
@@ -364,6 +361,7 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
+    const replyStartedAt = Date.now();
     const trNodeResult = await this.agent.transcriptionNode(llmOutput, {}); // TODO(AJS-59): add model settings
     let textOut: _TextOut | null = null;
     if (trNodeResult) {
@@ -429,11 +427,14 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       const message = ChatMessage.create({
-        role: ChatRole.ASSISTANT,
-        text: textOut?.text,
+        role: 'assistant',
+        content: textOut?.text || '',
+        id: llmGenData.id,
+        interrupted: true,
+        createdAt: replyStartedAt,
       });
-      chatCtx.insertItem(message);
-      this.agent._chatCtx.insertItem(message);
+      chatCtx.insert(message);
+      this.agent._chatCtx.insert(message);
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
       }
@@ -449,11 +450,14 @@ export class AgentActivity implements RecognitionHooks {
     }
     if (textOut && textOut.text) {
       const message = ChatMessage.create({
-        role: ChatRole.ASSISTANT,
-        text: textOut.text,
+        role: 'assistant',
+        id: llmGenData.id,
+        interrupted: false,
+        createdAt: replyStartedAt,
+        content: textOut.text,
       });
-      chatCtx.insertItem(message);
-      this.agent._chatCtx.insertItem(message);
+      chatCtx.insert(message);
+      this.agent._chatCtx.insert(message);
       this.agentSession._conversationItemAdded(message);
       this.logger.info(
         { speech_id: speechHandle.id, message: textOut.text },

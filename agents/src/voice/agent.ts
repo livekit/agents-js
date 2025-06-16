@@ -7,8 +7,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
-import type { ChatChunk, ChatMessage, LLM } from '../llm/index.js';
-import { ChatContext } from '../llm/index.js';
+import { type ChatChunk, ChatContext, ChatMessage, type LLM } from '../llm/index.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
@@ -51,7 +50,15 @@ export class Agent {
   ) {
     this._instructions = instructions;
     // TODO(AJS-42): copy tools when provided
-    this._chatCtx = chatCtx || new ChatContext();
+    this._chatCtx =
+      chatCtx ||
+      new ChatContext([
+        ChatMessage.create({
+          role: 'system',
+          content: instructions,
+        }),
+      ]);
+
     this.tools = tools;
     this.turnDetection = turnDetection;
     this.stt = stt;

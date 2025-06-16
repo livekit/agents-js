@@ -167,7 +167,7 @@ export class AgentSession extends (EventEmitter as new () => TypedEmitter<AgentS
 
   /** @internal */
   _conversationItemAdded(item: ChatMessage): void {
-    this._chatCtx.insertItem(item);
+    this._chatCtx.insert(item);
   }
 
   /** @internal */
