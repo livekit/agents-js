@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { ZodObject, z, type infer as zodInfer } from 'zod';
+import { ZodObject, type infer as zodInfer } from 'zod';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
-import { FunctionCall } from './chat_context.js';
 
 // heavily inspired by Vercel AI's `tool()`:
 // https://github.com/vercel/ai/blob/3b0983b/packages/ai/core/tool/tool.ts
@@ -11,10 +10,10 @@ import { FunctionCall } from './chat_context.js';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 // TODO(brian): support raw JSON schema, both strict and non-strict versions
-type ToolParameters = ZodObject<any>;
+export type ToolParameters = ZodObject<any, any, any>;
 
 /** Type reinforcement for the callable function's execute parameters. */
-type inferParameters<P extends ToolParameters> = zodInfer<P>;
+export type inferParameters<P extends ToolParameters> = zodInfer<P>;
 
 export type ToolType = 'function' | 'provider-defined';
 
@@ -94,7 +93,9 @@ export interface FunctionTool<
 }
 
 // TODO(brian: support provider-defined tools in the future)
-export type ToolContext = Record<string, FunctionTool<any, any, any>>;
+export type ToolContext = {
+  [name: string]: FunctionTool<any, any, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+}
 
 /**
  * Create a function tool.
@@ -127,94 +128,3 @@ export function tool<
     execute,
   };
 }
-
-// XXX: Zod is victim to the dual-package hazard. this is a hacky sorta-fix
-// until Zod v4.0.0 is released.
-// https://github.com/colinhacks/zod/issues/2241#issuecomment-2142688925
-const looksLikeInstanceof = <T>(value: unknown, target: new (...args: any[]) => T): value is T => {
-  let current = value?.constructor;
-  do {
-    if (current?.name === target.name) return true;
-    // eslint-disable-next-line @typescript-eslint/ban-types
-    current = Object.getPrototypeOf(current) as Function;
-  } while (current?.name);
-  return false;
-};
-
-/** @internal */
-export const oaiParams = (p: ToolParameters) => {
-  const properties: Record<string, any> = {};
-  const requiredProperties: string[] = [];
-
-  const processZodType = (field: z.ZodTypeAny): any => {
-    const isOptional = field instanceof z.ZodOptional;
-    const nestedField = isOptional ? field._def.innerType : field;
-    const description = field._def.description;
-
-    if (looksLikeInstanceof(nestedField, z.ZodEnum)) {
-      return {
-        type: typeof nestedField._def.values[0],
-        ...(description && { description }),
-        enum: nestedField._def.values,
-      };
-    } else if (looksLikeInstanceof(nestedField, z.ZodArray)) {
-      const elementType = nestedField._def.type;
-      return {
-        type: 'array',
-        ...(description && { description }),
-        items: processZodType(elementType),
-      };
-    } else if (looksLikeInstanceof(nestedField, z.ZodObject)) {
-      const { properties, required } = oaiParams(nestedField);
-      return {
-        type: 'object',
-        ...(description && { description }),
-        properties,
-        required,
-      };
-    } else {
-      let type = nestedField._def.typeName.toLowerCase();
-      type = type.includes('zod') ? type.substring(3) : type;
-      return {
-        type,
-        ...(description && { description }),
-      };
-    }
-  };
-
-  for (const key in p.shape) {
-    const field = p.shape[key];
-    properties[key] = processZodType(field);
-
-    if (!(field instanceof z.ZodOptional)) {
-      requiredProperties.push(key);
-    }
-  }
-
-  const type = 'object' as const;
-  return {
-    type,
-    properties,
-    required: requiredProperties,
-  };
-};
-
-/** @internal */
-export const oaiBuildFunctionInfo = (
-  toolCtx: ToolContext,
-  toolCallId: string,
-  toolName: string,
-  rawArgs: string,
-): FunctionCall => {
-  const tool = toolCtx[toolName];
-  if (!tool) {
-    throw new Error(`AI tool ${toolName} not found`);
-  }
-
-  return FunctionCall.create({
-    callId: toolCallId,
-    name: toolName,
-    args: rawArgs,
-  });
-};
-

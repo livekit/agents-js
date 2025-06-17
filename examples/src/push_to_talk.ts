@@ -21,7 +21,9 @@ export default defineAgent({
   },
   entry: async (ctx: JobContext) => {
     const agent = new voice.Agent(
-      "You are a helpful assistant, you can hear the user's message and respond to it.",
+      {
+        instructions: "You are a helpful assistant, you can hear the user's message and respond to it.",
+      }
     );
     await ctx.connect();
     const participant = await ctx.waitForParticipant();

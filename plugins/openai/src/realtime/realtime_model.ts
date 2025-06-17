@@ -432,7 +432,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
   }
 
   session({
-    fncCtx,
+    toolCtx,
     chatCtx,
     modalities = this.#defaultOpts.modalities,
     instructions = this.#defaultOpts.instructions,
@@ -444,7 +444,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     temperature = this.#defaultOpts.temperature,
     maxResponseOutputTokens = this.#defaultOpts.maxResponseOutputTokens,
   }: {
-    fncCtx?: llm.FunctionContext;
+    toolCtx?: llm.ToolContext;
     chatCtx?: llm.ChatContext;
     modalities?: ['text', 'audio'] | ['text'];
     instructions?: string;
@@ -474,12 +474,9 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       entraToken: this.#defaultOpts.entraToken,
     };
 
-    const newSession = new RealtimeSession(opts, {
-      chatCtx: chatCtx || new llm.ChatContext(),
-      fncCtx,
-    });
-    this.#sessions.push(newSession);
-    return newSession;
+    const session = new RealtimeSession(opts, { toolCtx, chatCtx });
+    this.#sessions.push(session);
+    return session;
   }
 
   async close() {
@@ -489,7 +486,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
 
 export class RealtimeSession extends multimodal.RealtimeSession {
   #chatCtx: llm.ChatContext | undefined = undefined;
-  #fncCtx: llm.FunctionContext | undefined = undefined;
+  #toolCtx: llm.ToolContext | undefined = undefined;
   #opts: ModelOptions;
   #pendingResponses: { [id: string]: RealtimeResponse } = {};
   #sessionId = 'not-connected';
@@ -502,13 +499,13 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   constructor(
     opts: ModelOptions,
-    { fncCtx, chatCtx }: { fncCtx?: llm.FunctionContext; chatCtx?: llm.ChatContext },
+    { toolCtx, chatCtx }: { toolCtx?: llm.ToolContext; chatCtx?: llm.ChatContext },
   ) {
     super();
 
     this.#opts = opts;
     this.#chatCtx = chatCtx;
-    this.#fncCtx = fncCtx;
+    this.#toolCtx = toolCtx;
 
     this.#task = this.#start();
 
@@ -530,12 +527,12 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     return this.#chatCtx;
   }
 
-  get fncCtx(): llm.FunctionContext | undefined {
-    return this.#fncCtx;
+  get toolCtx(): llm.ToolContext | undefined {
+    return this.#toolCtx;
   }
 
-  set fncCtx(ctx: llm.FunctionContext | undefined) {
-    this.#fncCtx = ctx;
+  set toolCtx(ctx: llm.ToolContext | undefined) {
+    this.#toolCtx = ctx;
   }
 
   get conversation(): Conversation {
@@ -602,7 +599,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     temperature = this.#opts.temperature,
     maxResponseOutputTokens = this.#opts.maxResponseOutputTokens,
     toolChoice = 'auto',
-    selectedTools = Object.keys(this.#fncCtx || {}),
+    selectedTools = Object.keys(this.#toolCtx || {}),
   }: {
     modalities: ['text', 'audio'] | ['text'];
     instructions?: string;
@@ -634,8 +631,8 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       entraToken: this.#opts.entraToken,
     };
 
-    const tools = this.#fncCtx
-      ? Object.entries(this.#fncCtx)
+    const tools = this.#toolCtx
+      ? Object.entries(this.#toolCtx)
           .filter(([name]) => selectedTools.includes(name))
           .map(([name, func]) => ({
             type: 'function' as const,
@@ -1097,8 +1094,8 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const output = response!.output[outputIndex];
 
     if (output?.type === 'function_call') {
-      if (!this.#fncCtx) {
-        this.#logger.error('function call received but no fncCtx is available');
+      if (!this.#toolCtx) {
+        this.#logger.error('function call received but no toolCtx is available');
         return;
       }
 
@@ -1107,9 +1104,9 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       if (item.type !== 'function_call') {
         throw new Error('Expected function_call item');
       }
-      const func = this.#fncCtx[item.name];
+      const func = this.#toolCtx[item.name];
       if (!func) {
-        this.#logger.error(`no function with name ${item.name} in fncCtx`);
+        this.#logger.error(`no function with name ${item.name} in toolCtx`);
         return;
       }
 
@@ -1123,7 +1120,10 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         `[Function Call ${item.call_id}] Executing ${item.name} with arguments ${parsedArgs}`,
       );
 
-      func.execute(parsedArgs).then(
+      func.execute(parsedArgs, { 
+        ctx: {} as any, // TODO: provide proper RunContext
+        toolCallId: item.call_id 
+      }).then(
         (content) => {
           this.#logger.debug(`[Function Call ${item.call_id}] ${item.name} returned ${content}`);
           this.emit('function_call_completed', {

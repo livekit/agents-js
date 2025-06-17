@@ -3,20 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import type { UnknownUserData } from '../voice/run_context.js';
-import { oaiParams, tool, type ToolExecutionOptions } from './tool_context.js';
-
-
+import { tool, type ToolExecutionOptions } from './tool_context.js';
+import { createToolOptions, oaiParams } from './utils.js';
 
 describe('Tool Context', () => {
-
-  const createToolOptions = <UserData extends UnknownUserData>(
-    toolCallId: string,
-    userData: UserData = {} as UserData,
-  ): ToolExecutionOptions<UserData> => {
-    return { ctx: { userData }, toolCallId } as unknown as ToolExecutionOptions<UserData>;
-  };
-
   describe('oaiParams', () => {
     it('should handle basic object schema', () => {
       const schema = z.object({

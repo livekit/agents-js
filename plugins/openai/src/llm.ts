@@ -414,13 +414,13 @@ export class LLM extends llm.LLM {
 
   chat({
     chatCtx,
-    fncCtx,
+    toolCtx,
     temperature,
     n,
     parallelToolCalls,
   }: {
     chatCtx: llm.ChatContext;
-    fncCtx?: llm.FunctionContext | undefined;
+    toolCtx?: llm.ToolContext | undefined;
     temperature?: number | undefined;
     n?: number | undefined;
     parallelToolCalls?: boolean | undefined;
@@ -431,7 +431,7 @@ export class LLM extends llm.LLM {
       this,
       this.#client,
       chatCtx,
-      fncCtx,
+      toolCtx,
       this.#opts,
       parallelToolCalls,
       temperature,
@@ -453,29 +453,26 @@ export class LLMStream extends llm.LLMStream {
     llm: LLM,
     client: OpenAI,
     chatCtx: llm.ChatContext,
-    fncCtx: llm.FunctionContext | undefined,
+    toolCtx: llm.ToolContext | undefined,
     opts: LLMOptions,
     parallelToolCalls?: boolean,
     temperature?: number,
     n?: number,
   ) {
-    super(llm, chatCtx, fncCtx);
+    super(llm, chatCtx, toolCtx);
     this.#client = client;
     this.#run(opts, n, parallelToolCalls, temperature);
   }
 
   async #run(opts: LLMOptions, n?: number, parallelToolCalls?: boolean, temperature?: number) {
-    const tools = this.fncCtx
-      ? Object.entries(this.fncCtx).map(([name, func]) => ({
+    const tools = this.toolCtx
+      ? Object.entries(this.toolCtx).map(([name, func]) => ({
           type: 'function' as const,
           function: {
             name,
             description: func.description,
             // don't format parameters if they are raw openai params
-            parameters:
-              func.parameters.type == ('object' as const)
-                ? func.parameters
-                : llm.oaiParams(func.parameters),
+            parameters: llm.oaiParams(func.parameters),
           },
         }))
       : undefined;
@@ -493,7 +490,7 @@ export class LLMStream extends llm.LLMStream {
         stream: true,
         messages,
         tools,
-        parallel_tool_calls: this.fncCtx && parallelToolCalls,
+        parallel_tool_calls: this.toolCtx && parallelToolCalls,
       });
 
       for await (const chunk of stream) {
@@ -578,7 +575,7 @@ export class LLMStream extends llm.LLMStream {
     id: string,
     choice: OpenAI.ChatCompletionChunk.Choice,
   ): llm.ChatChunk | undefined {
-    if (!this.fncCtx) {
+    if (!this.toolCtx) {
       this.#logger.warn('oai stream tried to run function without function context');
       return undefined;
     }
@@ -594,7 +591,7 @@ export class LLMStream extends llm.LLMStream {
     }
 
     const functionInfo = llm.oaiBuildFunctionInfo(
-      this.fncCtx,
+      this.toolCtx,
       this.#toolCallId,
       this.#fncName,
       this.#fncRawArguments,

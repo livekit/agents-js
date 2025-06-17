@@ -44,3 +44,11 @@ export {
   type LLMCallbacks
 } from './llm.js';
 
+export {
+  createToolOptions,
+  executeToolCall,
+  oaiBuildFunctionInfo,
+  oaiParams,
+  type OpenAIFunctionParameters
+} from './utils.js';
+

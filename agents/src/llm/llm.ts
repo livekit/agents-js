@@ -6,8 +6,9 @@ import { EventEmitter } from 'node:events';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import { AsyncIterableQueue } from '../utils.js';
-import type { ChatContext, ChatRole, FunctionCall } from './chat_context.js';
+import { FunctionCallOutput, type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
 import type { ToolContext } from './tool_context.js';
+import { executeToolCall } from './utils.js';
 
 export interface ChoiceDelta {
   role: ChatRole;
@@ -135,15 +136,10 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   }
 
   /** Execute all deferred functions of this stream concurrently. */
-  executeFunctions(): FunctionCall[] {
-    this._functionCalls.forEach(
-      (f) =>
-        (f.task = f.func.execute(f.params).then(
-          (result) => ({ name: f.name, toolCallId: f.toolCallId, result }),
-          (error) => ({ name: f.name, toolCallId: f.toolCallId, error }),
-        )),
-    );
-    return this._functionCalls;
+  async executeFunctions(): Promise<FunctionCallOutput[]> {
+    return await Promise.all(this._functionCalls.map(async (f) => {
+      return await executeToolCall(f, this.#toolCtx!);
+    }));
   }
 
   next(): Promise<IteratorResult<ChatChunk>> {
