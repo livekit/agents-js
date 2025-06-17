@@ -7,7 +7,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
-import { type ChatChunk, ChatContext, ChatMessage, type LLM } from '../llm/index.js';
+import { type ChatChunk, ChatContext, ChatMessage, type LLM, type ToolContext } from '../llm/index.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
@@ -15,6 +15,7 @@ import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
+import type { TurnDetectionMode } from './agent_session.js';
 
 export class StopResponse extends Error {
   constructor() {
@@ -23,33 +24,53 @@ export class StopResponse extends Error {
   }
 }
 
+export interface AgentOptions {
+  instructions: string;
+  chatCtx?: ChatContext;
+  tools?: ToolContext;
+  turnDetection?: TurnDetectionMode;
+  stt?: STT;
+  vad?: VAD;
+  llm?: LLM; // TODO: support realtime model
+  tts?: TTS;
+  mcpServers?: any[]; // TODO: support MCP servers
+  allowInterruptions?: boolean;
+  minConsecutiveSpeechDelay?: number;
+}
+
 export class Agent {
-  private _instructions: string;
-  private tools: any; // TODO(shubhra): add type
-  private turnDetection: any; // TODO(shubhra): add type
-  private stt: STT | undefined;
-  private vad: VAD | undefined;
-  private llm: LLM | any;
-  private tts: TTS | undefined;
+  private turnDetection?: TurnDetectionMode;
+  private stt?: STT;
+  private vad?: VAD;
+  private llm?: LLM;
+  private tts?: TTS;
 
   /** @internal */
   agentActivity?: AgentActivity;
+  
   /** @internal */
   _chatCtx: ChatContext;
+  
+  /** @internal */
+  _instructions: string;
+  
+  /** @internal */
+  _tools?: ToolContext;
 
   constructor(
-    instructions: string,
-    chatCtx?: ChatContext,
-    tools?: any, // TODO(shubhra): add type
-    turnDetection?: any, // TODO(shubhra): add type
-    stt?: STT,
-    vad?: VAD,
-    llm?: LLM | any,
-    tts?: TTS,
-    allowInterruptions?: boolean,
+    {
+      instructions,
+      chatCtx,
+      tools,
+      turnDetection,
+      stt,
+      vad,
+      llm,
+      tts,
+    }: AgentOptions,
   ) {
     this._instructions = instructions;
-    // TODO(AJS-42): copy tools when provided
+    this._tools = { ...tools };
     this._chatCtx =
       chatCtx ||
       new ChatContext([
@@ -59,7 +80,6 @@ export class Agent {
         }),
       ]);
 
-    this.tools = tools;
     this.turnDetection = turnDetection;
     this.stt = stt;
     this.vad = vad;
@@ -69,11 +89,16 @@ export class Agent {
   }
 
   get chatCtx(): ChatContext {
+    // TODO(brian): make it readonly
     return this._chatCtx;
   }
 
   get instructions(): string {
     return this._instructions;
+  }
+
+  get tools(): ToolContext {
+    return { ...this._tools };
   }
 
   async onEnter(): Promise<void> {}
@@ -214,4 +239,8 @@ export class Agent {
       return text;
     },
   };
+}
+
+export function createAgent(options: AgentOptions): Agent {
+  return new Agent(options);
 }
