@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { ZodObject, type infer as zodInfer } from 'zod';
+import type { ZodObject } from 'zod';
+import { type infer as zodInfer } from 'zod';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
 
 // heavily inspired by Vercel AI's `tool()`:
@@ -95,7 +96,7 @@ export interface FunctionTool<
 // TODO(brian: support provider-defined tools in the future)
 export type ToolContext = {
   [name: string]: FunctionTool<any, any, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
-}
+};
 
 /**
  * Create a function tool.

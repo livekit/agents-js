@@ -7,7 +7,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
-import { type ChatChunk, ChatContext, ChatMessage, type LLM, type ToolContext } from '../llm/index.js';
+import {
+  type ChatChunk,
+  ChatContext,
+  ChatMessage,
+  type LLM,
+  type ToolContext,
+} from '../llm/index.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
@@ -47,28 +53,17 @@ export class Agent {
 
   /** @internal */
   agentActivity?: AgentActivity;
-  
+
   /** @internal */
   _chatCtx: ChatContext;
-  
+
   /** @internal */
   _instructions: string;
-  
+
   /** @internal */
   _tools?: ToolContext;
 
-  constructor(
-    {
-      instructions,
-      chatCtx,
-      tools,
-      turnDetection,
-      stt,
-      vad,
-      llm,
-      tts,
-    }: AgentOptions,
-  ) {
+  constructor({ instructions, chatCtx, tools, turnDetection, stt, vad, llm, tts }: AgentOptions) {
     this._instructions = instructions;
     this._tools = { ...tools };
     this._chatCtx =

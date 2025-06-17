@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { tool, type ToolExecutionOptions } from './tool_context.js';
+import { type ToolExecutionOptions, tool } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
 
 describe('Tool Context', () => {
@@ -158,7 +158,7 @@ describe('Tool Context', () => {
           return `The weather in ${location} is sunny, ${ctx.userData.name}`;
         },
       });
-  
+
       const result = await getWeather.execute(
         { location: 'San Francisco' },
         createToolOptions('123', { name: 'John' }),
@@ -180,7 +180,10 @@ describe('Tool Context', () => {
         },
       });
 
-      const result = await testFunction.execute({ name: 'John', age: 30 }, createToolOptions('123'));
+      const result = await testFunction.execute(
+        { name: 'John', age: 30 },
+        createToolOptions('123'),
+      );
       expect(result).toBe('John is 30 years old');
     });
 

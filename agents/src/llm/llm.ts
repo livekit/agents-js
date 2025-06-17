@@ -6,7 +6,8 @@ import { EventEmitter } from 'node:events';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import { AsyncIterableQueue } from '../utils.js';
-import { FunctionCallOutput, type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
+import type { FunctionCallOutput } from './chat_context.js';
+import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
 import type { ToolContext } from './tool_context.js';
 import { executeToolCall } from './utils.js';
 
@@ -137,9 +138,11 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
 
   /** Execute all deferred functions of this stream concurrently. */
   async executeFunctions(): Promise<FunctionCallOutput[]> {
-    return await Promise.all(this._functionCalls.map(async (f) => {
-      return await executeToolCall(f, this.#toolCtx!);
-    }));
+    return await Promise.all(
+      this._functionCalls.map(async (f) => {
+        return await executeToolCall(f, this.#toolCtx!);
+      }),
+    );
   }
 
   next(): Promise<IteratorResult<ChatChunk>> {

@@ -1120,33 +1120,35 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         `[Function Call ${item.call_id}] Executing ${item.name} with arguments ${parsedArgs}`,
       );
 
-      func.execute(parsedArgs, { 
-        ctx: {} as any, // TODO: provide proper RunContext
-        toolCallId: item.call_id 
-      }).then(
-        (content) => {
-          this.#logger.debug(`[Function Call ${item.call_id}] ${item.name} returned ${content}`);
-          this.emit('function_call_completed', {
-            callId: item.call_id,
-          });
-          this.conversation.item.create(
-            llm.FunctionCallOutput.create({
+      func
+        .execute(parsedArgs, {
+          ctx: {} as any, // TODO: provide proper RunContext
+          toolCallId: item.call_id,
+        })
+        .then(
+          (content) => {
+            this.#logger.debug(`[Function Call ${item.call_id}] ${item.name} returned ${content}`);
+            this.emit('function_call_completed', {
               callId: item.call_id,
-              output: content,
-              isError: false,
-            }),
-            output.itemId,
-          );
-          this.response.create();
-        },
-        (error) => {
-          this.#logger.error(`[Function Call ${item.call_id}] ${item.name} failed with ${error}`);
-          // TODO: send it back up as failed?
-          this.emit('function_call_failed', {
-            callId: item.call_id,
-          });
-        },
-      );
+            });
+            this.conversation.item.create(
+              llm.FunctionCallOutput.create({
+                callId: item.call_id,
+                output: content,
+                isError: false,
+              }),
+              output.itemId,
+            );
+            this.response.create();
+          },
+          (error) => {
+            this.#logger.error(`[Function Call ${item.call_id}] ${item.name} failed with ${error}`);
+            // TODO: send it back up as failed?
+            this.emit('function_call_failed', {
+              callId: item.call_id,
+            });
+          },
+        );
     }
 
     output?.doneFut.resolve();

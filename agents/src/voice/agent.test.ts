@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { tool } from '../llm/index.js';
@@ -18,7 +17,7 @@ describe('Agent', () => {
 
   it('should create agent with instructions and tools', () => {
     const instructions = 'You are a helpful assistant with tools';
-    
+
     // Create mock tools using the tool function
     const mockTool1 = tool({
       name: 'getTool1',
@@ -28,7 +27,7 @@ describe('Agent', () => {
     });
 
     const mockTool2 = tool({
-      name: 'getTool2', 
+      name: 'getTool2',
       description: 'Second test tool',
       parameters: z.object({
         input: z.string().describe('Input parameter'),
@@ -46,13 +45,13 @@ describe('Agent', () => {
 
     expect(agent).toBeDefined();
     expect(agent.instructions).toBe(instructions);
-    
+
     // Assert tools are set correctly
     const agentTools = agent.tools;
     expect(Object.keys(agentTools)).toHaveLength(2);
     expect(agentTools).toHaveProperty('getTool1');
     expect(agentTools).toHaveProperty('getTool2');
-    
+
     // Verify tool properties with proper checks
     expect(agentTools.getTool1?.name).toBe('getTool1');
     expect(agentTools.getTool1?.description).toBe('First test tool');
@@ -68,17 +67,17 @@ describe('Agent', () => {
       parameters: z.object({}),
       execute: async () => 'result',
     });
-    
+
     const tools = { testTool: mockTool };
     const agent = createAgent({ instructions, tools });
-    
+
     const tools1 = agent.tools;
     const tools2 = agent.tools;
-    
+
     // Should return different object references
     expect(tools1).not.toBe(tools2);
     expect(tools1).not.toBe(tools);
-    
+
     // But should have the same content
     expect(tools1).toEqual(tools2);
     expect(tools1).toEqual(tools);

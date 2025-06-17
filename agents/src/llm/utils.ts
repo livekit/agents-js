@@ -102,7 +102,7 @@ export async function serializeImage(image: ImageContent): Promise<SerializedIma
 /** Raw OpenAI-adherent function parameters. */
 export type OpenAIFunctionParameters = {
   type: 'object';
-  properties: { [id: string]: any };
+  properties: { [id: string]: any }; // eslint-disable-line @typescript-eslint/no-explicit-any
   required: string[];
   additionalProperties?: boolean;
 };
@@ -118,6 +118,7 @@ export const createToolOptions = <UserData extends UnknownUserData>(
 // XXX: Zod is victim to the dual-package hazard. this is a hacky sorta-fix
 // until Zod v4.0.0 is released.
 // https://github.com/colinhacks/zod/issues/2241#issuecomment-2142688925
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const looksLikeInstanceof = <T>(value: unknown, target: new (...args: any[]) => T): value is T => {
   let current = value?.constructor;
   do {
@@ -130,9 +131,10 @@ const looksLikeInstanceof = <T>(value: unknown, target: new (...args: any[]) => 
 
 /** @internal */
 export const oaiParams = (p: ToolParameters): OpenAIFunctionParameters => {
-  const properties: Record<string, any> = {};
+  const properties: Record<string, any> = {}; // eslint-disable-line @typescript-eslint/no-explicit-any
   const requiredProperties: string[] = [];
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const processZodType = (field: z.ZodTypeAny): any => {
     const isOptional = field instanceof z.ZodOptional;
     const nestedField = isOptional ? field._def.innerType : field;
@@ -205,7 +207,10 @@ export const oaiBuildFunctionInfo = (
   });
 };
 
-export async function executeToolCall(toolCall: FunctionCall, toolCtx: ToolContext): Promise<FunctionCallOutput> {
+export async function executeToolCall(
+  toolCall: FunctionCall,
+  toolCtx: ToolContext,
+): Promise<FunctionCallOutput> {
   const tool = toolCtx[toolCall.name]!;
   let args: object | undefined;
   let params: object | undefined;
