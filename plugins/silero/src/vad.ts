@@ -209,7 +209,7 @@ export class VADStream extends baseStream {
 
           // convert data to f32
           inferenceData = Float32Array.from(
-            inferenceFrame.data.subarray(0, this.#model.windowSizeSamples),
+            inferenceFrame.data.slice(0, this.#model.windowSizeSamples),
             (x) => x / 32767,
           );
 
@@ -229,7 +229,7 @@ export class VADStream extends baseStream {
           const availableSpace = this.#speechBuffer.length - speechBufferIndex;
           const toCopyBuffer = Math.min(this.#model.windowSizeSamples, availableSpace);
           if (toCopyBuffer > 0) {
-            this.#speechBuffer.set(inputFrame.data.subarray(0, toCopyBuffer), speechBufferIndex);
+            this.#speechBuffer.set(inputFrame.data.slice(0, toCopyBuffer), speechBufferIndex);
             speechBufferIndex += toCopyBuffer;
           } else if (!this.#speechBufferMaxReached) {
             this.#speechBufferMaxReached = true;
@@ -265,7 +265,7 @@ export class VADStream extends baseStream {
             inferenceDuration,
             frames: [
               new AudioFrame(
-                inputFrame.data.subarray(0, toCopyInt),
+                inputFrame.data.slice(0, toCopyInt),
                 this.#inputSampleRate,
                 1,
                 toCopyInt,
@@ -282,7 +282,7 @@ export class VADStream extends baseStream {
               return;
             }
 
-            const paddingData = this.#speechBuffer.subarray(
+            const paddingData = this.#speechBuffer.slice(
               speechBufferIndex - this.#prefixPaddingSamples,
               speechBufferIndex,
             );
@@ -294,7 +294,7 @@ export class VADStream extends baseStream {
           const copySpeechBuffer = (): AudioFrame => {
             if (!this.#speechBuffer) throw new Error('speechBuffer is empty');
             return new AudioFrame(
-              this.#speechBuffer.subarray(this.#prefixPaddingSamples, speechBufferIndex),
+              this.#speechBuffer.slice(0, speechBufferIndex),
               this.#inputSampleRate,
               1,
               speechBufferIndex,
@@ -358,13 +358,13 @@ export class VADStream extends baseStream {
           inferenceFrames = [];
 
           if (inputFrame.data.length > toCopyInt) {
-            const data = inputFrame.data.subarray(toCopyInt);
+            const data = inputFrame.data.slice(toCopyInt);
             inputFrames.push(
               new AudioFrame(data, this.#inputSampleRate, 1, Math.trunc(data.length / 2)),
             );
           }
           if (inferenceFrame.data.length > this.#model.windowSizeSamples) {
-            const data = inferenceFrame.data.subarray(this.#model.windowSizeSamples);
+            const data = inferenceFrame.data.slice(this.#model.windowSizeSamples);
             inferenceFrames.push(
               new AudioFrame(data, this.#opts.sampleRate, 1, Math.trunc(data.length / 2)),
             );
@@ -398,7 +398,7 @@ export class VADStream extends baseStream {
         this.#prefixPaddingSamples;
       const resizedBuffer = new Int16Array(bufferSize);
       resizedBuffer.set(
-        this.#speechBuffer.subarray(0, Math.min(this.#speechBuffer.length, bufferSize)),
+        this.#speechBuffer.slice(0, Math.min(this.#speechBuffer.length, bufferSize)),
       );
       this.#speechBuffer = resizedBuffer;
 
