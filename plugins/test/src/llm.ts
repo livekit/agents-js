@@ -91,47 +91,21 @@ export const llm = async (llm: llmlib.LLM) => {
           "What's the weather in San Francisco and what's the weather in Paris?",
           toolCtx,
         );
-        stream.executeFunctions();
+        await stream.executeFunctions();
         const calls = stream.functionCalls;
-        const results = await Promise.all(calls.map(async (call) => {
-          try {
-            const tool = toolCtx[call.name];
-            if (!tool) throw new Error(`Tool ${call.name} not found`);
-            await tool.execute(JSON.parse(call.args), {
-              ctx: {} as any,
-              toolCallId: call.id,
-            });
-            return { task: Promise.resolve() };
-          } catch (error) {
-            return { task: Promise.resolve({ error }) };
-          }
-        }));
         stream.close();
 
         expect(calls.length).toStrictEqual(2);
       });
       it('should handle exceptions', async () => {
         const stream = await requestFncCall(llm, 'Call the failing function', toolCtx);
-        stream.executeFunctions();
         const calls = stream.functionCalls;
+        const results = await stream.executeFunctions();
         stream.close();
 
         expect(calls.length).toStrictEqual(1);
-        const task = await (async () => {
-          try {
-            const tool = toolCtx[calls[0]!.name];
-            if (!tool) throw new Error(`Tool ${calls[0]!.name} not found`);
-            await tool.execute(JSON.parse(calls[0]!.args), {
-              ctx: {} as any,
-              toolCallId: calls[0]!.id,
-            });
-            return {};
-          } catch (error) {
-            return { error };
-          }
-        })();
-        expect(task.error).toBeInstanceOf(Error);
-        expect((task.error as Error).message).toStrictEqual('Simulated failure');
+        expect(results[0]!.isError).toBe(true);
+        expect(results[0]!.output).toContain('Simulated failure');
       });
       it('should handle arrays', async () => {
         const stream = await requestFncCall(
