@@ -33,9 +33,11 @@ interface AudioData {
 class SegmentSynchronizerImpl {
   private textData: TextData;
   private audioData: AudioData;
+  private speed: number;
   private outputStream: IdentityTransform<string>;
   private outputStreamWriter: WritableStreamDefaultWriter<string>;
   private mainTask: Task<void>;
+  private captureTask: Task<void>;
 
   private startFuture: Future = new Future();
   private closedFuture: Future = new Future();
@@ -44,9 +46,12 @@ class SegmentSynchronizerImpl {
 
   private logger = log();
 
-  constructor(public options: TextSyncOptions) {
+  constructor(
+    private readonly options: TextSyncOptions,
+    private readonly nextInChain: TextOutput,
+  ) {
     this.logger.debug('SegmentSynchronizerImpl constructor:', { options });
-    this.options = options;
+    this.speed = options.speed * STANDARD_SPEECH_RATE; // hyphens per second
     this.textData = {
       sentenceStream: options.sentenceTokenizer.stream(),
       pushedText: '',
@@ -71,6 +76,7 @@ class SegmentSynchronizerImpl {
       .catch((error) => {
         this.logger.error('mainTask error:', error);
       });
+    this.captureTask = Task.from((controller) => this.captureTaskImpl(controller.signal));
   }
 
   get closed() {
@@ -143,7 +149,7 @@ class SegmentSynchronizerImpl {
     this.textData.pushedText += text;
 
     this.textData.sentenceStream.flush();
-    this.logger.debug('pushText: after flush');
+    this.logger.debug('pushText: after pushText');
   }
 
   endTextInput() {
@@ -175,6 +181,18 @@ class SegmentSynchronizerImpl {
       return this.textData.pushedText;
     }
     return this.textData.forwardedText;
+  }
+
+  private async captureTaskImpl(signal: AbortSignal) {
+    for await (const text of this.outputStream.readable) {
+      if (signal.aborted) {
+        this.logger.debug('captureTask: exiting early - aborted');
+        break;
+      }
+      this.textData.forwardedText += text;
+      await this.nextInChain.captureText(text);
+    }
+    this.nextInChain.flush();
   }
 
   private async mainTaskImpl(signal: AbortSignal): Promise<void> {
@@ -298,9 +316,9 @@ class SegmentSynchronizerImpl {
       return;
     }
     this.closedFuture.resolve();
-    this.startFuture.resolve();
-    await this.outputStreamWriter.close();
+    this.startFuture.resolve(); // avoid deadlock of mainTaskImpl in case it never started
     this.textData.sentenceStream.close();
+    await this.captureTask.cancelAndWait();
   }
 }
 
@@ -312,7 +330,7 @@ export interface TranscriptionSynchronizerOptions {
 }
 
 export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
-  speed: STANDARD_SPEECH_RATE,
+  speed: 1,
   hyphenateWord: basic.hyphenateWord,
   splitWords: basic.splitWords,
   sentenceTokenizer: new basic.SentenceTokenizer(),
@@ -323,18 +341,22 @@ export class TranscriptionSynchronizer {
   readonly textOutput: SyncedTextOutput;
 
   private options: TextSyncOptions;
-
-  /* @internal */
-  _impl: SegmentSynchronizerImpl;
   private rotateSegmentTask: Task<void>;
   private _enabled: boolean = true;
   private closed: boolean = false;
 
+  /* @internal */
+  _impl: SegmentSynchronizerImpl;
+
   private logger = log();
 
-  constructor(options: TranscriptionSynchronizerOptions = defaultTextSyncOptions) {
-    this.audioOutput = new SyncedAudioOutput(this);
-    this.textOutput = new SyncedTextOutput(this);
+  constructor(
+    nextInChainAudio: AudioOutput,
+    nextInChainText: TextOutput,
+    options: TranscriptionSynchronizerOptions = defaultTextSyncOptions,
+  ) {
+    this.audioOutput = new SyncedAudioOutput(this, nextInChainAudio);
+    this.textOutput = new SyncedTextOutput(this, nextInChainText);
     this.options = {
       speed: options.speed,
       hyphenateWord: options.hyphenateWord,
@@ -343,7 +365,7 @@ export class TranscriptionSynchronizer {
     };
 
     // initial segment/first segment, recreated for each new segment
-    this._impl = new SegmentSynchronizerImpl(this.options);
+    this._impl = new SegmentSynchronizerImpl(this.options, nextInChainText);
     this.rotateSegmentTask = Task.from((controller) => this.rotate_segment_task(controller.signal));
   }
 
@@ -399,24 +421,30 @@ export class TranscriptionSynchronizer {
       return;
     }
     await this._impl.close();
-    this._impl = new SegmentSynchronizerImpl(this.options);
+    this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain);
   }
 }
 
 class SyncedAudioOutput extends AudioOutput {
-  private _capturing: boolean = false;
+  private capturing: boolean = false;
   private pushedDuration: number = 0.0;
   private logger = log();
 
-  constructor(public synchronizer: TranscriptionSynchronizer) {
+  constructor(
+    public synchronizer: TranscriptionSynchronizer,
+    public nextInChainAudio: AudioOutput,
+  ) {
     super();
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
+    // using barrier() on capture should be sufficient, flush() must not be called if
+    // capture_frame isn't completed
     await this.synchronizer.barrier();
 
-    this._capturing = true;
+    this.capturing = true;
     await super.captureFrame(frame);
+    await this.nextInChainAudio.captureFrame(frame); // passthrough audio
 
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
@@ -429,12 +457,16 @@ class SyncedAudioOutput extends AudioOutput {
       this.logger.warn(
         'SegmentSynchronizerImpl audio marked as ended in capture audio, rotating segment',
       );
-      this.synchronizer._impl.markPlaybackFinished(this.pushedDuration, false);
+      this.synchronizer.rotateSegment();
+      await this.synchronizer.barrier();
     }
+    this.synchronizer._impl.pushAudio(frame);
   }
 
   flush() {
     super.flush();
+    this.nextInChainAudio.flush();
+
     if (!this.synchronizer.enabled) {
       return;
     }
@@ -445,27 +477,37 @@ class SyncedAudioOutput extends AudioOutput {
       return;
     }
 
-    this._capturing = false;
+    this.capturing = false;
     this.synchronizer._impl.endAudioInput();
   }
 
   clearBuffer() {
-    this._capturing = false;
+    this.nextInChainAudio.clearBuffer();
+    this.capturing = false;
   }
 }
 
 class SyncedTextOutput extends TextOutput {
-  private _capturing: boolean = false;
+  private capturing: boolean = false;
   private logger = log();
 
-  constructor(public synchronizer: TranscriptionSynchronizer) {
+  constructor(
+    private readonly synchronizer: TranscriptionSynchronizer,
+    public readonly nextInChain: TextOutput,
+  ) {
     super();
   }
 
   async captureText(text: string): Promise<void> {
     await this.synchronizer.barrier();
 
-    this._capturing = true;
+    if (!this.synchronizer.enabled) {
+      // pass through to the next in chain
+      await this.nextInChain.captureText(text);
+      return;
+    }
+
+    this.capturing = true;
     if (this.synchronizer._impl.textInputEnded) {
       this.logger.warn(
         'SegmentSynchronizerImpl text marked as ended in capture text, rotating segment',
@@ -478,9 +520,15 @@ class SyncedTextOutput extends TextOutput {
 
   flush() {
     if (!this.synchronizer.enabled) {
+      this.nextInChain.flush(); // passthrough text if the synchronizer is disabled
       return;
     }
-    this._capturing = false;
+
+    if (!this.capturing) {
+      return;
+    }
+
+    this.capturing = false;
     this.synchronizer._impl.endTextInput();
   }
 }

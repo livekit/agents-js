@@ -24,7 +24,7 @@ export type TTSNode = (
 ) => Promise<ReadableStream<AudioFrame> | null>;
 export abstract class AudioOutput {
   private playbackFinishedFuture: Future<void> = new Future();
-  private capturing: boolean = false;
+  private _capturing: boolean = false;
   private playbackFinishedCount: number = 0;
   private playbackSegmentsCount: number = 0;
   private lastPlaybackEvent: PlaybackFinishedEvent = {
@@ -38,8 +38,8 @@ export abstract class AudioOutput {
    * Capture an audio frame for playback, frames can be pushed faster than real-time
    */
   async captureFrame(_frame: AudioFrame): Promise<void> {
-    if (!this.capturing) {
-      this.capturing = true;
+    if (!this._capturing) {
+      this._capturing = true;
       this.playbackSegmentsCount++;
     }
   }
@@ -71,7 +71,7 @@ export abstract class AudioOutput {
   }
 
   flush(): void {
-    this.capturing = false;
+    this._capturing = false;
   }
 
   /**

@@ -178,7 +178,10 @@ export class RoomIO {
       isDeltaStream: true,
     });
 
-    this.transcriptionSynchronizer = new TranscriptionSynchronizer();
+    this.transcriptionSynchronizer = new TranscriptionSynchronizer(
+      this.participantAudioOutput,
+      this.agentTranscriptOutput,
+    );
 
     // -- set the room event handlers --
     this.room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
