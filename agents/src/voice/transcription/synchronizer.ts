@@ -8,6 +8,8 @@ import { basic } from '../../tokenize/index.js';
 import { Future, Task } from '../../utils.js';
 import { AudioOutput, TextOutput } from '../io.js';
 
+const STANDARD_SPEECH_RATE = 3.83; // hyphens (syllables) per second
+
 interface TextSyncOptions {
   speed: number;
   hyphenateWord: (word: string) => string[];
@@ -43,6 +45,7 @@ class SegmentSynchronizerImpl {
   private logger = log();
 
   constructor(public options: TextSyncOptions) {
+    this.logger.debug('SegmentSynchronizerImpl constructor:', { options });
     this.options = options;
     this.textData = {
       sentenceStream: options.sentenceTokenizer.stream(),
@@ -58,8 +61,16 @@ class SegmentSynchronizerImpl {
     this.outputStream = new IdentityTransform();
     this.outputStreamWriter = this.outputStream.writable.getWriter();
 
+    this.logger.debug('SegmentSynchronizerImpl: starting mainTask');
     this.mainTask = Task.from((controller) => this.mainTaskImpl(controller.signal));
-    this.mainTask.result.then(() => this.outputStreamWriter.close());
+    this.mainTask.result
+      .then(() => {
+        this.logger.info('mainTask result');
+        this.outputStreamWriter.close();
+      })
+      .catch((error) => {
+        this.logger.error('mainTask error:', error);
+      });
   }
 
   get closed() {
@@ -85,8 +96,19 @@ class SegmentSynchronizerImpl {
     }
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     const frameDuration = frame.samplesPerChannel / frame.sampleRate;
+    this.logger.debug('pushAudio:', {
+      frameDuration,
+      samplesPerChannel: frame.samplesPerChannel,
+      sampleRate: frame.sampleRate,
+      currentPushedDuration: this.audioData.pushedDuration,
+      startWallTime: this.startWallTime,
+    });
+
     if (!this.startWallTime && frameDuration > 0) {
       this.startWallTime = Date.now();
+      this.logger.debug('pushAudio: setting startWallTime and resolving startFuture', {
+        startWallTime: this.startWallTime,
+      });
       this.startFuture.resolve();
     }
 
@@ -108,10 +130,20 @@ class SegmentSynchronizerImpl {
       return;
     }
 
+    this.logger.debug('pushText:', {
+      text: text.substring(0, 100) + (text.length > 100 ? '...' : ''),
+      textLength: text.length,
+      currentPushedText:
+        this.textData.pushedText.substring(0, 50) +
+        (this.textData.pushedText.length > 50 ? '...' : ''),
+      textDone: this.textData.done,
+    });
+
     this.textData.sentenceStream.pushText(text);
     this.textData.pushedText += text;
 
     this.textData.sentenceStream.flush();
+    this.logger.debug('pushText: after flush');
   }
 
   endTextInput() {
@@ -119,6 +151,13 @@ class SegmentSynchronizerImpl {
       this.logger.warn('SegmentSynchronizerImpl.endTextInput called after close');
       return;
     }
+    this.logger.debug('endTextInput:', {
+      pushedText:
+        this.textData.pushedText.substring(0, 100) +
+        (this.textData.pushedText.length > 100 ? '...' : ''),
+      pushedTextLength: this.textData.pushedText.length,
+      wasAlreadyDone: this.textData.done,
+    });
     this.textData.done = true;
     this.textData.sentenceStream.endInput();
   }
@@ -139,56 +178,112 @@ class SegmentSynchronizerImpl {
   }
 
   private async mainTaskImpl(signal: AbortSignal): Promise<void> {
+    this.logger.debug('mainTaskImpl: starting', {
+      closed: this.closed,
+      playbackCompleted: this.playbackCompleted,
+      startWallTime: this.startWallTime,
+      textDone: this.textData.done,
+      audioDone: this.audioData.done,
+      signalAborted: signal.aborted,
+    });
+
+    this.logger.debug('mainTaskImpl: waiting for startFuture');
     await this.startFuture.await;
+    this.logger.debug('mainTaskImpl: startFuture resolved');
 
     if (this.closed && !this.playbackCompleted) {
+      this.logger.debug(
+        { closed: this.closed, playbackCompleted: this.playbackCompleted },
+        'mainTaskImpl: exiting early - closed without playback completed',
+      );
       return;
     }
 
     if (!this.startWallTime) {
+      this.logger.error('mainTaskImpl: startWallTime is not set');
       throw new Error('startWallTime is not set when starting SegmentSynchronizerImpl.mainTask');
     }
 
-    for await (const text_seg of this.textData.sentenceStream) {
-      const sentence = text_seg.token;
-      let text_cursor = 0;
-      if ((this.closed && !this.playbackCompleted) || signal.aborted) {
-        return;
-      }
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for (const [word, _, end_pos] of this.options.splitWords(sentence)) {
-        if (this.closed && !this.playbackCompleted) {
+    this.logger.debug('mainTaskImpl: starting sentence stream iteration', {
+      startWallTime: this.startWallTime,
+      pushedText: this.textData.pushedText,
+      textDone: this.textData.done,
+    });
+
+    let sentenceCount = 0;
+    try {
+      for await (const text_seg of this.textData.sentenceStream) {
+        sentenceCount++;
+        const sentence = text_seg.token;
+        this.logger.debug(`mainTaskImpl: processing sentence ${sentenceCount}:`, {
+          sentence: sentence.substring(0, 50) + (sentence.length > 50 ? '...' : ''),
+          length: sentence.length,
+        });
+
+        let text_cursor = 0;
+        if ((this.closed && !this.playbackCompleted) || signal.aborted) {
+          this.logger.debug('mainTaskImpl: exiting mid-sentence - closed or aborted');
           return;
         }
 
-        if (this.playbackCompleted) {
+        const words = this.options.splitWords(sentence);
+        this.logger.debug(`mainTaskImpl: sentence split into ${words.length} words`);
+
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        for (const [word, _, end_pos] of words) {
+          if (this.closed && !this.playbackCompleted) {
+            this.logger.debug('mainTaskImpl: exiting mid-word - closed without playback');
+            return;
+          }
+
+          if (this.playbackCompleted) {
+            this.logger.debug('mainTaskImpl: playback completed, flushing word:', word);
+            this.outputStreamWriter.write(sentence.slice(text_cursor, end_pos));
+            text_cursor = end_pos;
+            continue;
+          }
+
+          const word_hyphens = this.options.hyphenateWord(word).length;
+          const elapsed_in_seconds = (Date.now() - this.startWallTime) / 1000;
+          const targetHyphens = elapsed_in_seconds * this.options.speed;
+          const hyphensBehind = Math.max(0, targetHyphens - this.textData.forwardedHyphens);
+          let delay = Math.max(0, word_hyphens - hyphensBehind) / this.options.speed;
+
+          this.logger.debug('mainTaskImpl: word timing calculation', {
+            word,
+            wordHyphens: word_hyphens,
+            elapsedSeconds: elapsed_in_seconds,
+            targetHyphens,
+            forwardedHyphens: this.textData.forwardedHyphens,
+            hyphensBehind,
+            calculatedDelay: delay,
+            speed: this.options.speed,
+          });
+
+          if (this.playbackCompleted) {
+            delay = 0;
+          }
+
+          await this.sleepIfNotClosed(delay / 2, signal);
           this.outputStreamWriter.write(sentence.slice(text_cursor, end_pos));
+          await this.sleepIfNotClosed(delay / 2, signal);
+
+          this.textData.forwardedHyphens += word_hyphens;
           text_cursor = end_pos;
-          continue;
         }
 
-        const word_hyphens = this.options.hyphenateWord(word).length;
-        const elapsed_in_seconds = (Date.now() - this.startWallTime) / 1000;
-        const targetHyphens = elapsed_in_seconds * this.options.speed;
-        const hyphensBehind = Math.max(0, targetHyphens - this.textData.forwardedHyphens);
-        let delay = Math.max(0, word_hyphens - hyphensBehind) / this.options.speed;
-
-        if (this.playbackCompleted) {
-          delay = 0;
+        if (text_cursor < sentence.length) {
+          const remaining = sentence.slice(text_cursor);
+          this.logger.debug('mainTaskImpl: writing remaining text:', remaining);
+          this.outputStreamWriter.write(remaining);
         }
-
-        await this.sleepIfNotClosed(delay / 2, signal);
-        this.outputStreamWriter.write(sentence.slice(text_cursor, end_pos));
-        await this.sleepIfNotClosed(delay / 2, signal);
-
-        this.textData.forwardedHyphens += word_hyphens;
-        text_cursor = end_pos;
       }
-
-      if (text_cursor < sentence.length) {
-        this.outputStreamWriter.write(sentence.slice(text_cursor));
-      }
+    } catch (error) {
+      this.logger.error('mainTaskImpl: error in sentence stream processing', error);
+      throw error;
     }
+
+    this.logger.debug(`mainTaskImpl: completed processing ${sentenceCount} sentences`);
   }
 
   private async sleepIfNotClosed(sleepTime: number, signal: AbortSignal) {
@@ -217,7 +312,7 @@ export interface TranscriptionSynchronizerOptions {
 }
 
 export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
-  speed: 3.83,
+  speed: STANDARD_SPEECH_RATE,
   hyphenateWord: basic.hyphenateWord,
   splitWords: basic.splitWords,
   sentenceTokenizer: new basic.SentenceTokenizer(),
@@ -247,6 +342,7 @@ export class TranscriptionSynchronizer {
       sentenceTokenizer: options.sentenceTokenizer,
     };
 
+    // initial segment/first segment, recreated for each new segment
     this._impl = new SegmentSynchronizerImpl(this.options);
     this.rotateSegmentTask = Task.from((controller) => this.rotate_segment_task(controller.signal));
   }
