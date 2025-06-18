@@ -20,6 +20,8 @@ import {
   AgentSessionEvent,
   type UserInputTranscribedEvent,
 } from '../agent_session.js';
+import type { AudioOutput, TextOutput } from '../io.js';
+import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
 import {
   ParalellTextOutput,
   ParticipantAudioOutput,
@@ -37,8 +39,9 @@ export class RoomIO {
   private participantAudioOutput?: ParticipantAudioOutput;
   private userTranscriptOutput?: ParalellTextOutput;
   private agentTranscriptOutput?: ParalellTextOutput;
-
+  private transcriptionSynchronizer?: TranscriptionSynchronizer;
   private participantIdentity?: string;
+
   private participantAvailableFuture: Future<Participant> = new Future();
   private roomConnectedFuture: Future<void> = new Future();
 
@@ -143,6 +146,22 @@ export class RoomIO {
     }
   }
 
+  get audioOutput(): AudioOutput | undefined {
+    if (!this.transcriptionSynchronizer) {
+      return this.participantAudioOutput;
+    }
+
+    return this.transcriptionSynchronizer.audioOutput;
+  }
+
+  get transcriptionOutput(): TextOutput | undefined {
+    if (!this.transcriptionSynchronizer) {
+      return this.agentTranscriptOutput;
+    }
+
+    return this.transcriptionSynchronizer.textOutput;
+  }
+
   start() {
     // -- create outputs --
     this.participantAudioOutput = new ParticipantAudioOutput(this.room, {
@@ -159,6 +178,8 @@ export class RoomIO {
       isDeltaStream: true,
     });
 
+    this.transcriptionSynchronizer = new TranscriptionSynchronizer();
+
     // -- set the room event handlers --
     this.room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
@@ -170,8 +191,8 @@ export class RoomIO {
 
     // -- attatch the agent to the session --
     this.agentSession.audioInput = this.participantAudioInputStream;
-    this.agentSession.audioOutput = this.participantAudioOutput;
-    this.agentSession._transcriptionOutput = this.agentTranscriptOutput;
+    this.agentSession.audioOutput = this.audioOutput;
+    this.agentSession._transcriptionOutput = this.transcriptionOutput;
 
     this.agentSession.on(AgentSessionEvent.UserInputTranscribed, this.onUserInputTranscribed);
   }

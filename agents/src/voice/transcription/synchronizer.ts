@@ -1,7 +1,8 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
-import { IdentityTransform } from 'agents/src/stream/identity_transform.js';
+import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
 import { log } from '../../log.js';
+import { IdentityTransform } from '../../stream/identity_transform.js';
 import type { SentenceStream, SentenceTokenizer } from '../../tokenize/index.js';
 import { basic } from '../../tokenize/index.js';
 import { Future, Task } from '../../utils.js';
@@ -73,19 +74,23 @@ class SegmentSynchronizerImpl {
     return this.textData.done;
   }
 
+  get readable(): ReadableStream<string> {
+    return this.outputStream.readable;
+  }
+
   pushAudio(frame: AudioFrame) {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.pushAudio called after close');
       return;
     }
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
-    const framDuration = frame.samplesPerChannel / frame.sampleRate;
-    if (!this.startWallTime && framDuration > 0) {
+    const frameDuration = frame.samplesPerChannel / frame.sampleRate;
+    if (!this.startWallTime && frameDuration > 0) {
       this.startWallTime = Date.now();
       this.startFuture.resolve();
     }
 
-    this.audioData.pushedDuration += framDuration;
+    this.audioData.pushedDuration += frameDuration;
   }
 
   endAudioInput() {
@@ -163,7 +168,10 @@ class SegmentSynchronizerImpl {
         }
 
         const word_hyphens = this.options.hyphenateWord(word).length;
-        let delay = word_hyphens / this.options.speed;
+        const elapsed_in_seconds = (Date.now() - this.startWallTime) / 1000;
+        const targetHyphens = elapsed_in_seconds * this.options.speed;
+        const hyphensBehind = Math.max(0, targetHyphens - this.textData.forwardedHyphens);
+        let delay = Math.max(0, word_hyphens - hyphensBehind) / this.options.speed;
 
         if (this.playbackCompleted) {
           delay = 0;
@@ -209,7 +217,7 @@ export interface TranscriptionSynchronizerOptions {
 }
 
 export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
-  speed: 1.0,
+  speed: 3.83,
   hyphenateWord: basic.hyphenateWord,
   splitWords: basic.splitWords,
   sentenceTokenizer: new basic.SentenceTokenizer(),
