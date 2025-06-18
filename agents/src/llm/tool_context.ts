@@ -25,7 +25,7 @@ export interface ToolExecutionOptions<UserData = UnknownUserData> {
   ctx: RunContext<UserData>;
 
   /**
-   * The ID of the tool call. You can use it e.g. when sending tool-call related information with stream data.
+   * The ID of the tool call.
    */
   toolCallId: string;
 
