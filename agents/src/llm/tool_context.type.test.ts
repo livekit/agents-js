@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod';
-import { tool, type FunctionTool } from './index.js';
+import { tool, type FunctionTool, type ProviderDefinedTool, type ToolExecutionOptions } from './index.js';
 
 describe('tool type inference', () => {
   it('should infer argument type from zod schema', () => {
@@ -15,6 +15,30 @@ describe('tool type inference', () => {
     });
 
     expectTypeOf(toolType).toEqualTypeOf<FunctionTool<{ number: number }, unknown, 'test'>>();
+  });
+
+  it("should infer provider defined tool type", () => {
+    const toolType = tool({
+      name: 'code-interpreter',
+      config: {
+        language: 'python',
+      },
+    });
+
+    expectTypeOf(toolType).toEqualTypeOf<ProviderDefinedTool>();
+  });
+
+  it('should infer run context type', () => {
+    const toolType = tool({
+      name: 'test',
+      description: 'test',
+      parameters: z.object({ number: z.number() }),
+      execute: async ({ number }, { ctx }: ToolExecutionOptions<{ name: string }>) => {
+        return `The number is ${number}, ${ctx.userData.name}`;
+      },
+    });
+
+    expectTypeOf(toolType).toEqualTypeOf<FunctionTool<{ number: number }, { name: string }, string>>();
   });
 
   it("should not accept primitive zod schemas", () => {
