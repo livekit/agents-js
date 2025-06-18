@@ -17,7 +17,7 @@ export type JSONObject = {
   [key: string]: JSONValue;
 };
 
-// TODO(brian): support raw JSON schema, both strict and non-strict versions
+// TODO(AJS-111): support Zod cross-version compatibility, raw JSON schema, both strict and non-strict versions
 export type ToolInputSchema<T extends JSONObject> = ZodObject<any, any, any, T, T>;
 
 export type ToolType = 'function' | 'provider-defined';
