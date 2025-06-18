@@ -133,12 +133,12 @@ export function tool(tool: any): any {
     if (!(tool.parameters instanceof ZodType)) {
       throw new Error('Tool parameters must be a Zod schema');
     }
-    
+
     // Check if it's specifically a ZodObject (not other Zod types like ZodString, ZodNumber, etc.)
     if (tool.parameters._def.typeName !== 'ZodObject') {
       throw new Error('Tool parameters must be a Zod object schema (z.object(...))');
     }
-    
+
     return {
       type: 'function',
       name: tool.name,

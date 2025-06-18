@@ -3,7 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod';
-import { tool, type FunctionTool, type ProviderDefinedTool, type ToolExecutionOptions } from './index.js';
+import {
+    type FunctionTool,
+    type ProviderDefinedTool,
+    type ToolExecutionOptions,
+    tool,
+} from './index.js';
 
 describe('tool type inference', () => {
   it('should infer argument type from zod schema', () => {
@@ -17,7 +22,7 @@ describe('tool type inference', () => {
     expectTypeOf(toolType).toEqualTypeOf<FunctionTool<{ number: number }, unknown, 'test'>>();
   });
 
-  it("should infer provider defined tool type", () => {
+  it('should infer provider defined tool type', () => {
     const toolType = tool({
       name: 'code-interpreter',
       config: {
@@ -38,10 +43,12 @@ describe('tool type inference', () => {
       },
     });
 
-    expectTypeOf(toolType).toEqualTypeOf<FunctionTool<{ number: number }, { name: string }, string>>();
+    expectTypeOf(toolType).toEqualTypeOf<
+      FunctionTool<{ number: number }, { name: string }, string>
+    >();
   });
 
-  it("should not accept primitive zod schemas", () => {
+  it('should not accept primitive zod schemas', () => {
     expect(() => {
       // @ts-expect-error - Testing that non-object schemas are rejected
       tool({
@@ -53,7 +60,7 @@ describe('tool type inference', () => {
     }).toThrowError('Tool parameters must be a Zod object schema (z.object(...))');
   });
 
-  it("should not accept array schemas", () => {
+  it('should not accept array schemas', () => {
     expect(() => {
       // @ts-expect-error - Testing that array schemas are rejected
       tool({
@@ -65,7 +72,7 @@ describe('tool type inference', () => {
     }).toThrowError('Tool parameters must be a Zod object schema (z.object(...))');
   });
 
-  it("should not accept union schemas", () => {
+  it('should not accept union schemas', () => {
     expect(() => {
       // @ts-expect-error - Testing that union schemas are rejected
       tool({
@@ -77,7 +84,7 @@ describe('tool type inference', () => {
     }).toThrowError('Tool parameters must be a Zod object schema (z.object(...))');
   });
 
-  it("should not accept non-Zod values as parameters", () => {
+  it('should not accept non-Zod values as parameters', () => {
     expect(() => {
       // @ts-expect-error - Testing that non-Zod values are rejected
       tool({
@@ -88,4 +95,4 @@ describe('tool type inference', () => {
       });
     }).toThrowError('Tool parameters must be a Zod schema');
   });
-}); 
+});
