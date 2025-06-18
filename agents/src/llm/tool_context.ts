@@ -58,7 +58,7 @@ export interface Tool {
   name: string;
 }
 
-// TODO(brian): support provider-defined tools
+// TODO(AJS-112): support provider-defined tools
 export interface ProviderDefinedTool extends Tool {
   type: 'provider-defined';
 
@@ -94,7 +94,7 @@ export interface FunctionTool<
   execute: ToolExecuteFunction<Parameters, UserData, Result>;
 }
 
-// TODO(brian: support provider-defined tools in the future)
+// TODO(AJS-112): support provider-defined tools in the future)
 export type ToolContext = {
   [name: string]: FunctionTool<any, any, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 };
