@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { ZodObject } from 'zod';
+import { type ZodObject, ZodType } from 'zod';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
 
 // heavily inspired by Vercel AI's `tool()`:
@@ -129,6 +129,16 @@ export function tool({
 
 export function tool(tool: any): any {
   if (tool.parameters !== undefined && tool.execute !== undefined) {
+    // if parameters is not zod object, throw an error
+    if (!(tool.parameters instanceof ZodType)) {
+      throw new Error('Tool parameters must be a Zod schema');
+    }
+    
+    // Check if it's specifically a ZodObject (not other Zod types like ZodString, ZodNumber, etc.)
+    if (tool.parameters._def.typeName !== 'ZodObject') {
+      throw new Error('Tool parameters must be a Zod object schema (z.object(...))');
+    }
+    
     return {
       type: 'function',
       name: tool.name,
