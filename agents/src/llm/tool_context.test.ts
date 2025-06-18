@@ -175,7 +175,6 @@ describe('Tool Context', () => {
           age: z.number().describe('The user age'),
         }),
         execute: async (args) => {
-          // TypeScript should recognize args.name and args.age
           return `${args.name} is ${args.age} years old`;
         },
       });

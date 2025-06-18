@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { ZodObject } from 'zod';
-import { type infer as zodInfer } from 'zod';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
 
 // heavily inspired by Vercel AI's `tool()`:
@@ -10,11 +9,16 @@ import type { RunContext, UnknownUserData } from '../voice/run_context.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// TODO(brian): support raw JSON schema, both strict and non-strict versions
-export type ToolParameters = ZodObject<any, any, any>;
+export type JSONValue = null | string | number | boolean | JSONObject | JSONArray;
 
-/** Type reinforcement for the callable function's execute parameters. */
-export type inferParameters<P extends ToolParameters> = zodInfer<P>;
+export type JSONArray = JSONValue[];
+
+export type JSONObject = {
+  [key: string]: JSONValue;
+};
+
+// TODO(brian): support raw JSON schema, both strict and non-strict versions
+export type ToolInputSchema<T extends JSONObject> = ZodObject<any, any, any, T, T>;
 
 export type ToolType = 'function' | 'provider-defined';
 
@@ -36,13 +40,10 @@ export interface ToolExecutionOptions<UserData = UnknownUserData> {
 }
 
 export type ToolExecuteFunction<
-  Parameters extends ToolParameters,
+  Parameters extends JSONObject,
   UserData = UnknownUserData,
   Result = unknown,
-> = (
-  args: inferParameters<Parameters>,
-  opts: ToolExecutionOptions<UserData>,
-) => PromiseLike<Result>;
+> = (args: Parameters, opts: ToolExecutionOptions<UserData>) => PromiseLike<Result>;
 
 export interface Tool {
   /**
@@ -68,7 +69,7 @@ export interface ProviderDefinedTool extends Tool {
 }
 
 export interface FunctionTool<
-  Parameters extends ToolParameters,
+  Parameters extends JSONObject,
   UserData = UnknownUserData,
   Result = unknown,
 > extends Tool {
@@ -84,7 +85,7 @@ export interface FunctionTool<
    * It is also used to validate the output of the language model.
    * Use descriptions to make the input understandable for the language model.
    */
-  parameters: Parameters;
+  parameters: ToolInputSchema<Parameters>;
 
   /**
    * An async function that is called with the arguments from the tool call and produces a result.
@@ -106,11 +107,7 @@ export type ToolContext = {
  * @param parameters - The schema of the input that the tool expects.
  * @param execute - The function that is called with the arguments from the tool call and produces a result.
  */
-export function tool<
-  Parameters extends ToolParameters,
-  UserData = UnknownUserData,
-  Result = unknown,
->({
+export function tool<Parameters extends JSONObject, UserData = UnknownUserData, Result = unknown>({
   name,
   description,
   parameters,
@@ -118,14 +115,36 @@ export function tool<
 }: {
   name: string;
   description: string;
-  parameters: Parameters;
+  parameters: ToolInputSchema<Parameters>;
   execute: ToolExecuteFunction<Parameters, UserData, Result>;
-}): FunctionTool<Parameters, UserData, Result> {
-  return {
-    type: 'function',
-    name,
-    description,
-    parameters,
-    execute,
-  };
+}): FunctionTool<Parameters, UserData, Result>;
+
+export function tool({
+  name,
+  config,
+}: {
+  name: string;
+  config: Record<string, unknown>;
+}): ProviderDefinedTool;
+
+export function tool(tool: any): any {
+  if (tool.parameters !== undefined && tool.execute !== undefined) {
+    return {
+      type: 'function',
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+      execute: tool.execute,
+    };
+  }
+
+  if (tool.config !== undefined) {
+    return {
+      type: 'provider-defined',
+      name: tool.name,
+      config: tool.config,
+    };
+  }
+
+  throw new Error('Invalid tool');
 }

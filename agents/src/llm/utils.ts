@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import sharp from 'sharp';
+import type { ZodObject } from 'zod';
 import { z } from 'zod';
 import type { UnknownUserData } from '../voice/run_context.js';
 import { FunctionCall, FunctionCallOutput, type ImageContent } from './chat_context.js';
-import type { ToolContext, ToolExecutionOptions, ToolParameters } from './tool_context.js';
+import type { ToolContext, ToolExecutionOptions } from './tool_context.js';
 
 export interface SerializedImage {
   inferenceDetail: 'auto' | 'high' | 'low';
@@ -130,7 +131,7 @@ const looksLikeInstanceof = <T>(value: unknown, target: new (...args: any[]) => 
 };
 
 /** @internal */
-export const oaiParams = (p: ToolParameters): OpenAIFunctionParameters => {
+export const oaiParams = (p: ZodObject<any>): OpenAIFunctionParameters => {
   const properties: Record<string, any> = {}; // eslint-disable-line @typescript-eslint/no-explicit-any
   const requiredProperties: string[] = [];
 

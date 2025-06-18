@@ -638,11 +638,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
             type: 'function' as const,
             name,
             description: func.description,
-            parameters:
-              // don't format parameters if they are raw openai params
-              func.parameters.type == ('object' as const)
-                ? func.parameters
-                : llm.oaiParams(func.parameters),
+            parameters: llm.oaiParams(func.parameters),
           }))
       : [];
 
