@@ -123,15 +123,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     return this.#chatCtx;
   }
 
-  /** Execute all deferred functions of this stream concurrently. */
-  // async executeFunctions(): Promise<FunctionCallOutput[]> {
-  //   return await Promise.all(
-  //     this._functionCalls.map(async (f) => {
-  //       return await executeToolCall(f, this.#toolCtx!);
-  //     }),
-  //   );
-  // }
-
   next(): Promise<IteratorResult<ChatChunk>> {
     return this.output.next();
   }
