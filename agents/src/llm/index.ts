@@ -1,16 +1,6 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-// export {
-//   oaiBuildFunctionInfo,
-//   oaiParams,
-//   type CallableFunction,
-//   type CallableFunctionResult,
-//   type FunctionCallInfo,
-//   type FunctionContext,
-//   type inferParameters,
-// } from './function_context.js';
-
 export {
   tool,
   type FunctionTool,

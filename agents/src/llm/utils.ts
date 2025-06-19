@@ -131,8 +131,10 @@ const looksLikeInstanceof = <T>(value: unknown, target: new (...args: any[]) => 
 };
 
 /** @internal */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const oaiParams = (p: ZodObject<any>): OpenAIFunctionParameters => {
-  const properties: Record<string, any> = {}; // eslint-disable-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const properties: Record<string, any> = {};
   const requiredProperties: string[] = [];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

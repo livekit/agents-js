@@ -4,10 +4,10 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod';
 import {
-    type FunctionTool,
-    type ProviderDefinedTool,
-    type ToolExecutionOptions,
-    tool,
+  type FunctionTool,
+  type ProviderDefinedTool,
+  type ToolExecutionOptions,
+  tool,
 } from './index.js';
 
 describe('tool type inference', () => {

@@ -78,7 +78,7 @@ describe('Agent', () => {
     expect(tools1).not.toBe(tools2);
     expect(tools1).not.toBe(tools);
 
-    // But should have the same content
+    // Should contain the same set of tools
     expect(tools1).toEqual(tools2);
     expect(tools1).toEqual(tools);
   });
