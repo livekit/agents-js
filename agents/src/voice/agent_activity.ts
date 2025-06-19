@@ -395,7 +395,8 @@ export class AgentActivity implements RecognitionHooks {
     } else {
       textOut?.firstTextFut.await.then(onFirstFrame);
     }
-    // TODO(shubhra): handle tool calls
+
+    // TODO(brian): handle tool calls
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 

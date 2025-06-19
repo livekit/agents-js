@@ -51,16 +51,16 @@ export interface Tool {
    * @internal Either user-defined core tool or provider-defined tool.
    */
   type: ToolType;
-
-  /**
-   * The name of the tool.
-   */
-  name: string;
 }
 
 // TODO(AJS-112): support provider-defined tools
 export interface ProviderDefinedTool extends Tool {
   type: 'provider-defined';
+
+  /**
+   * The ID of the tool.
+   */
+  id: string;
 
   /**
    * The configuration of the tool.
@@ -102,28 +102,31 @@ export type ToolContext = {
 /**
  * Create a function tool.
  *
- * @param name - The name of the tool.
  * @param description - The description of the tool.
  * @param parameters - The schema of the input that the tool expects.
  * @param execute - The function that is called with the arguments from the tool call and produces a result.
  */
 export function tool<Parameters extends JSONObject, UserData = UnknownUserData, Result = unknown>({
-  name,
   description,
   parameters,
   execute,
 }: {
-  name: string;
   description: string;
   parameters: ToolInputSchema<Parameters>;
   execute: ToolExecuteFunction<Parameters, UserData, Result>;
 }): FunctionTool<Parameters, UserData, Result>;
 
+/**
+ * Create a provider-defined tool.
+ *
+ * @param id - The ID of the tool.
+ * @param config - The configuration of the tool.
+ */
 export function tool({
-  name,
+  id,
   config,
 }: {
-  name: string;
+  id: string;
   config: Record<string, unknown>;
 }): ProviderDefinedTool;
 
@@ -141,17 +144,16 @@ export function tool(tool: any): any {
 
     return {
       type: 'function',
-      name: tool.name,
       description: tool.description,
       parameters: tool.parameters,
       execute: tool.execute,
     };
   }
 
-  if (tool.config !== undefined) {
+  if (tool.config !== undefined && tool.id !== undefined) {
     return {
       type: 'provider-defined',
-      name: tool.name,
+      id: tool.id,
       config: tool.config,
     };
   }

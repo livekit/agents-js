@@ -20,14 +20,12 @@ describe('Agent', () => {
 
     // Create mock tools using the tool function
     const mockTool1 = tool({
-      name: 'getTool1',
       description: 'First test tool',
       parameters: z.object({}),
       execute: async () => 'tool1 result',
     });
 
     const mockTool2 = tool({
-      name: 'getTool2',
       description: 'Second test tool',
       parameters: z.object({
         input: z.string().describe('Input parameter'),
@@ -53,16 +51,13 @@ describe('Agent', () => {
     expect(agentTools).toHaveProperty('getTool2');
 
     // Verify tool properties with proper checks
-    expect(agentTools.getTool1?.name).toBe('getTool1');
     expect(agentTools.getTool1?.description).toBe('First test tool');
-    expect(agentTools.getTool2?.name).toBe('getTool2');
     expect(agentTools.getTool2?.description).toBe('Second test tool');
   });
 
   it('should return a copy of tools, not the original reference', () => {
     const instructions = 'You are a helpful assistant';
     const mockTool = tool({
-      name: 'testTool',
       description: 'Test tool',
       parameters: z.object({}),
       execute: async () => 'result',

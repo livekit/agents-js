@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
-import type { ChatContext } from '../llm/chat_context.js';
+import { FunctionCall, type ChatContext } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import { shortuuid } from '../llm/misc.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
@@ -13,9 +13,13 @@ import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
 /* @internal */
 export class _LLMGenerationData {
   generatedText: string = '';
+  generatedToolCalls: FunctionCall[] = [];
   id: string;
 
-  constructor(public readonly textStream: ReadableStream<string>) {
+  constructor(
+    public readonly textStream: ReadableStream<string>,
+    public readonly toolCallStream: ReadableStream<FunctionCall>,
+  ) {
     // TODO(AJS-60): standardize id generation - same as python
     this.id = shortuuid('item');
   }
@@ -28,8 +32,11 @@ export function performLLMInference(
   controller: AbortController,
 ): [Task<void>, _LLMGenerationData] {
   const textStream = new IdentityTransform<string>();
-  const outputWriter = textStream.writable.getWriter();
-  const data = new _LLMGenerationData(textStream.readable);
+  const toolCallStream = new IdentityTransform<FunctionCall>();
+  
+  const textWriter = textStream.writable.getWriter();
+  const toolCallWriter = toolCallStream.writable.getWriter();
+  const data = new _LLMGenerationData(textStream.readable, toolCallStream.readable);
 
   const inferenceTask = async (signal: AbortSignal) => {
     let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk> | null = null;
@@ -38,7 +45,7 @@ export function performLLMInference(
     try {
       llmStream = await node(chatCtx, modelSettings);
       if (llmStream === null) {
-        await outputWriter.close();
+        await textWriter.close();
         return;
       }
 
@@ -54,7 +61,7 @@ export function performLLMInference(
 
         if (typeof chunk === 'string') {
           data.generatedText += chunk;
-          await outputWriter.write(chunk);
+          await textWriter.write(chunk);
           // TODO(shubhra): better way to check??
         } else {
           if (chunk.delta === undefined) {
@@ -62,12 +69,22 @@ export function performLLMInference(
           }
 
           if (chunk.delta.toolCalls) {
-            // TODO(brian): handle tool calls
+            for (const tool of chunk.delta.toolCalls) {
+              if (tool.type !== 'function_call') continue;
+
+              const toolCall = FunctionCall.create({
+                callId: `${data.id}/fnc_${data.generatedToolCalls.length}`,
+                name: tool.name,
+                args: tool.args,
+              });
+              data.generatedToolCalls.push(toolCall);
+              await toolCallWriter.write(toolCall);
+            }
           }
 
           if (chunk.delta.content) {
             data.generatedText += chunk.delta.content;
-            await outputWriter.write(chunk.delta.content);
+            await textWriter.write(chunk.delta.content);
           }
         }
 
@@ -83,7 +100,8 @@ export function performLLMInference(
     } finally {
       llmStreamReader?.releaseLock();
       await llmStream?.cancel();
-      await outputWriter.close();
+      await textWriter.close();
+      await toolCallWriter.close();
     }
   };
 
