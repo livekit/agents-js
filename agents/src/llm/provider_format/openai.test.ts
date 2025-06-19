@@ -486,7 +486,7 @@ describe('toChatCtx', () => {
         {
           type: 'audio_content',
           frame: [],
-        } as any,
+        },
       ],
     });
 

@@ -18,6 +18,7 @@ import type { _TurnDetector } from './audio_recognition.js';
 import type { UserState } from './events.js';
 import type { AudioOutput, TextOutput } from './io.js';
 import { RoomIO } from './room_io/index.js';
+import type { UnknownUserData } from './run_context.js';
 
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
 export interface VoiceOptions {
@@ -57,7 +58,9 @@ export type AgentSessionCallbacks = {
   [AgentSessionEvent.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
 };
 
-export class AgentSession extends (EventEmitter as new () => TypedEmitter<AgentSessionCallbacks>) {
+export class AgentSession<
+  UserData = UnknownUserData,
+> extends (EventEmitter as new () => TypedEmitter<AgentSessionCallbacks>) {
   vad: VAD;
   stt: STT;
   llm: LLM;
@@ -71,6 +74,7 @@ export class AgentSession extends (EventEmitter as new () => TypedEmitter<AgentS
   private nextActivity?: AgentActivity;
   private started = false;
   private userState: UserState = 'listening';
+  private _userData: UserData | undefined;
   private _agentState: AgentState = 'initializing';
 
   private roomIO?: RoomIO;
@@ -102,6 +106,10 @@ export class AgentSession extends (EventEmitter as new () => TypedEmitter<AgentS
     // TODO(shubhra): Add tools to chat context initalzation
     this._chatCtx = new ChatContext();
     this.options = { ...defaultVoiceOptions, ...options };
+  }
+
+  get userData(): UserData {
+    return this._userData!;
   }
 
   async start(agent: Agent, room: Room): Promise<void> {
