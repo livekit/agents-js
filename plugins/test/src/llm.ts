@@ -86,37 +86,29 @@ export const llm = async (llm: llmlib.LLM) => {
     });
     describe('function calling', async () => {
       it('should handle function calling', async () => {
-        const stream = await requestFncCall(
+        const calls = await requestFncCall(
           llm,
           "What's the weather in San Francisco and what's the weather in Paris?",
           toolCtx,
         );
-        await stream.executeFunctions();
-        const calls = stream.functionCalls;
-        stream.close();
 
         expect(calls.length).toStrictEqual(2);
       });
       it('should handle exceptions', async () => {
-        const stream = await requestFncCall(llm, 'Call the failing function', toolCtx);
-        const calls = stream.functionCalls;
-        const results = await stream.executeFunctions();
-        stream.close();
+        const calls = await requestFncCall(llm, 'Call the failing function', toolCtx);
+        const results = await executeCalls(calls);
 
         expect(calls.length).toStrictEqual(1);
         expect(results[0]!.isError).toBe(true);
         expect(results[0]!.output).toContain('Simulated failure');
       });
       it('should handle arrays', async () => {
-        const stream = await requestFncCall(
+        const calls = await requestFncCall(
           llm,
           'Can you select all currencies in Europe at once from given choices?',
           toolCtx,
           0.2,
         );
-        stream.executeFunctions();
-        const calls = stream.functionCalls;
-        stream.close();
 
         expect(calls.length).toStrictEqual(1);
         expect(JSON.parse(calls[0]!.args).currencies.length).toStrictEqual(3);
@@ -125,27 +117,21 @@ export const llm = async (llm: llmlib.LLM) => {
         expect(JSON.parse(calls[0]!.args).currencies).toContain('SEK');
       });
       it('should handle enums', async () => {
-        const stream = await requestFncCall(
+        const calls = await requestFncCall(
           llm,
           "What's the weather in San Francisco, in Celsius?",
           toolCtx,
         );
-        stream.executeFunctions();
-        const calls = stream.functionCalls;
-        stream.close();
 
         expect(calls.length).toStrictEqual(1);
         expect(JSON.parse(calls[0]!.args).unit).toStrictEqual('celsius');
       });
       it('should handle optional arguments', async () => {
-        const stream = await requestFncCall(
+        const calls = await requestFncCall(
           llm,
           'Use a tool call to update the user info to name Theo',
           toolCtx,
         );
-        stream.executeFunctions();
-        const calls = stream.functionCalls;
-        stream.close();
 
         expect(calls.length).toStrictEqual(1);
         expect(JSON.parse(calls[0]!.args).name).toStrictEqual('Theo');
@@ -180,8 +166,31 @@ const requestFncCall = async (
     parallelToolCalls,
   });
 
-  for await (const _ of stream) {
-    _;
+  const calls: llmlib.FunctionCall[] = [];
+
+  for await (const chunk of stream) {
+    if (chunk.delta?.toolCalls) {
+      calls.push(...chunk.delta.toolCalls);
+    }
   }
-  return stream;
+
+  stream.close();
+  return calls;
+};
+
+const executeCalls = async (calls: llmlib.FunctionCall[]) => {
+  const results: llmlib.FunctionCallOutput[] = [];
+
+  for (const call of calls) {
+    const tool = toolCtx[call.name];
+    if (!tool) {
+      throw new Error(`Tool ${call.name} not found`);
+    }
+
+    // execute function
+    const result = await llmlib.executeToolCall(call, toolCtx);
+    results.push(result);
+  }
+
+  return results;
 };

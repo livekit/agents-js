@@ -539,12 +539,12 @@ export class LLMStream extends llm.LLMStream {
 
         /**
          * The way OpenAI streams tool calls is a bit tricky.
-         * 
+         *
          * For any new tool call, it first emits a delta tool call with id, and function name,
-         * the rest of the delta chunks will only stream the remaining arguments string, 
-         * until a new tool call is started or the tool call is finished. 
+         * the rest of the delta chunks will only stream the remaining arguments string,
+         * until a new tool call is started or the tool call is finished.
          * See below for an example.
-         * 
+         *
          * Choice(delta=ChoiceDelta(content=None, function_call=None, refusal=None, role='assistant', tool_calls=None), finish_reason=None, index=0, logprobs=None)
          * [ChoiceDeltaToolCall(index=0, id='call_LaVeHWUHpef9K1sd5UO8TtLg', function=ChoiceDeltaToolCallFunction(arguments='', name='get_weather'), type='function')]
          * [ChoiceDeltaToolCall(index=0, id=None, function=ChoiceDeltaToolCallFunction(arguments='{"location": "P', name=None), type=None)]
@@ -553,7 +553,7 @@ export class LLMStream extends llm.LLMStream {
          * [ChoiceDeltaToolCall(index=1, id=None, function=ChoiceDeltaToolCallFunction(arguments='{"location": "T', name=None), type=None)]
          * [ChoiceDeltaToolCall(index=1, id=None, function=ChoiceDeltaToolCallFunction(arguments='okyo', name=None), type=None)]
          * Choice(delta=ChoiceDelta(content=None, function_call=None, refusal=None, role=None, tool_calls=None), finish_reason='tool_calls', index=0, logprobs=None)
-        */
+         */
         let callChunk: llm.ChatChunk | undefined;
         // If we have a previous tool call and this is a new one, emit the previous
         if (this.#toolCallId && tool.id && tool.index !== this.#toolIndex) {
@@ -602,7 +602,10 @@ export class LLMStream extends llm.LLMStream {
     };
   }
 
-  #createRunningToolCallChunk(id: string, delta: OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta): llm.ChatChunk {
+  #createRunningToolCallChunk(
+    id: string,
+    delta: OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta,
+  ): llm.ChatChunk {
     return {
       id,
       delta: {
