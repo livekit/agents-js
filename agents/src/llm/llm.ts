@@ -6,10 +6,8 @@ import { EventEmitter } from 'node:events';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import { AsyncIterableQueue } from '../utils.js';
-import type { FunctionCallOutput } from './chat_context.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
 import type { ToolContext } from './tool_context.js';
-import { executeToolCall } from './utils.js';
 
 export interface ChoiceDelta {
   role: ChatRole;
@@ -23,14 +21,9 @@ export interface CompletionUsage {
   totalTokens: number;
 }
 
-export interface Choice {
-  delta: ChoiceDelta;
-  index: number;
-}
-
 export interface ChatChunk {
-  requestId: string;
-  choices: Choice[];
+  id: string;
+  delta?: ChoiceDelta;
   usage?: CompletionUsage;
 }
 
@@ -65,7 +58,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected output = new AsyncIterableQueue<ChatChunk>();
   protected queue = new AsyncIterableQueue<ChatChunk>();
   protected closed = false;
-  protected _functionCalls: FunctionCall[] = [];
   protected abortController = new AbortController();
   protected logger = log();
   abstract label: string;
@@ -94,7 +86,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
 
     for await (const ev of this.queue) {
       this.output.put(ev);
-      requestId = ev.requestId;
+      requestId = ev.id;
       if (!ttft) {
         ttft = process.hrtime.bigint() - startTime;
       }
@@ -121,11 +113,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     this.#llm.emit(LLMEvent.METRICS_COLLECTED, metrics);
   }
 
-  /** List of called functions from this stream. */
-  get functionCalls(): FunctionCall[] {
-    return this._functionCalls;
-  }
-
   /** The function context of this stream. */
   get toolCtx(): ToolContext | undefined {
     return this.#toolCtx;
@@ -134,15 +121,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   /** The initial chat context of this stream. */
   get chatCtx(): ChatContext {
     return this.#chatCtx;
-  }
-
-  /** Execute all deferred functions of this stream concurrently. */
-  async executeFunctions(): Promise<FunctionCallOutput[]> {
-    return await Promise.all(
-      this._functionCalls.map(async (f) => {
-        return await executeToolCall(f, this.#toolCtx!);
-      }),
-    );
   }
 
   next(): Promise<IteratorResult<ChatChunk>> {

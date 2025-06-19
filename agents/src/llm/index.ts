@@ -28,7 +28,6 @@ export {
   LLMEvent,
   LLMStream,
   type ChatChunk,
-  type Choice,
   type ChoiceDelta,
   type CompletionUsage,
   type LLMCallbacks,

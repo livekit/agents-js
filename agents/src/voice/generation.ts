@@ -56,14 +56,23 @@ export function performLLMInference(
           data.generatedText += chunk;
           await outputWriter.write(chunk);
           // TODO(shubhra): better way to check??
-        } else if ('choices' in chunk) {
-          const content = chunk.choices[0]?.delta.content;
-          if (!content) continue;
-          data.generatedText += content;
-          await outputWriter.write(content);
         } else {
-          throw new Error(`Unexpected chunk type: ${JSON.stringify(chunk)}`);
+          if (chunk.delta === undefined) {
+            continue;
+          }
+
+          if (chunk.delta.toolCalls) {
+            // TODO(brian): handle tool calls
+          }
+
+          if (chunk.delta.content) {
+            data.generatedText += chunk.delta.content;
+            await outputWriter.write(chunk.delta.content);
+          }
         }
+
+        // No need to check if chunk is of type other than ChatChunk or string like in
+        // Python since chunk is defined in the type ChatChunk | string in TypeScript
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
