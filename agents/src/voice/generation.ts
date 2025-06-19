@@ -56,8 +56,8 @@ export function performLLMInference(
           data.generatedText += chunk;
           await outputWriter.write(chunk);
           // TODO(shubhra): better way to check??
-        } else if ('choices' in chunk) {
-          const content = chunk.choices[0]?.delta.content;
+        } else if (chunk.delta !== undefined) {
+          const content = chunk.delta.content;
           if (!content) continue;
           data.generatedText += content;
           await outputWriter.write(content);

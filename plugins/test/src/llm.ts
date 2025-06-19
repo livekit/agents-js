@@ -78,8 +78,8 @@ export const llm = async (llm: llmlib.LLM) => {
       const stream = llm.chat({ chatCtx });
       let text = '';
       for await (const chunk of stream) {
-        if (!chunk.choices.length) continue;
-        text += chunk.choices[0]?.delta.content;
+        if (!chunk.delta) continue;
+        text += chunk.delta.content;
       }
 
       expect(text.length).toBeGreaterThan(0);
