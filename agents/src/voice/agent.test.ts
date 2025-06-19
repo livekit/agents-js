@@ -45,7 +45,7 @@ describe('Agent', () => {
     expect(agent.instructions).toBe(instructions);
 
     // Assert tools are set correctly
-    const agentTools = agent.tools;
+    const agentTools = agent.toolCtx;
     expect(Object.keys(agentTools)).toHaveLength(2);
     expect(agentTools).toHaveProperty('getTool1');
     expect(agentTools).toHaveProperty('getTool2');
@@ -66,8 +66,8 @@ describe('Agent', () => {
     const tools = { testTool: mockTool };
     const agent = createAgent({ instructions, tools });
 
-    const tools1 = agent.tools;
-    const tools2 = agent.tools;
+    const tools1 = agent.toolCtx;
+    const tools2 = agent.toolCtx;
 
     // Should return different object references
     expect(tools1).not.toBe(tools2);

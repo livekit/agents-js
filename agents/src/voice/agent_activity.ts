@@ -5,7 +5,7 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { Heap } from 'heap-js';
 import type { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
-import type { LLM } from '../llm/index.js';
+import type { LLM, ToolChoice, ToolContext } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
@@ -27,6 +27,7 @@ import {
   performLLMInference,
   performTTSInference,
   performTextForwarding,
+  performToolExecutions,
 } from './generation.js';
 import { SpeechHandle } from './speech_handle.js';
 
@@ -220,6 +221,7 @@ export class AgentActivity implements RecognitionHooks {
     chatCtx?: ChatContext,
     instructions?: string,
     allowInterruptions?: boolean,
+    toolChoice?: ToolChoice,
   ): SpeechHandle {
     // TODO(AJS-32): Add realtime model support for generating a reply
 
@@ -235,11 +237,17 @@ export class AgentActivity implements RecognitionHooks {
       instructions = `${this.agent.instructions}\n${instructions}`;
     }
 
-    this.pipelineReplyTask(handle, chatCtx || this.agent.chatCtx, instructions, userMessage).then(
-      () => {
-        this.onPipelineReplyDone();
-      },
-    );
+    this.pipelineReplyTask(
+      handle,
+      chatCtx || this.agent.chatCtx,
+      this.agent.toolCtx,
+      // TODO(brian): make tool choice as model settings
+      toolChoice || 'auto',
+      instructions,
+      userMessage,
+    ).then(() => {
+      this.onPipelineReplyDone();
+    });
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
     return handle;
   }
@@ -307,6 +315,8 @@ export class AgentActivity implements RecognitionHooks {
   private async pipelineReplyTask(
     speechHandle: SpeechHandle,
     chatCtx: ChatContext,
+    toolCtx: ToolContext,
+    toolChoice: ToolChoice,
     instructions?: string,
     newMessage?: ChatMessage,
   ): Promise<void> {
@@ -396,7 +406,14 @@ export class AgentActivity implements RecognitionHooks {
       textOut?.firstTextFut.await.then(onFirstFrame);
     }
 
-    // TODO(brian): handle tool calls
+    const [executeToolsTask, toolOutput] = performToolExecutions({
+      session: this.agentSession,
+      speechHandle,
+      toolCtx,
+      toolChoice,
+      toolCallStream: llmGenData.toolCallStream,
+    });
+    tasks.push(executeToolsTask);
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
@@ -447,8 +464,10 @@ export class AgentActivity implements RecognitionHooks {
       );
       // TODO(shubhra) add chat message to speech handle
       speechHandle.markPlayoutDone();
+      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       return;
     }
+
     if (textOut && textOut.text) {
       const message = ChatMessage.create({
         role: 'assistant',
@@ -464,8 +483,19 @@ export class AgentActivity implements RecognitionHooks {
         { speech_id: speechHandle.id, message: textOut.text },
         'playout completed without interruption',
       );
-      speechHandle.markPlayoutDone();
-      return;
+    }
+
+    if (toolOutput.output.length > 0) {
+      this.agentSession._updateAgentState('thinking');
+    } else if (this.agentSession.agentState === 'speaking') {
+      this.agentSession._updateAgentState('listening');
+    }
+
+    speechHandle.markPlayoutDone();
+    await executeToolsTask.result;
+
+    if (toolOutput.output.length > 0) {
+      // TODO(brian): handle actual tool execution output
     }
   }
 
