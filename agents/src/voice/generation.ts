@@ -44,7 +44,7 @@ export class _ToolOutput {
 
 export class _JsOutput {
   toolCall: FunctionCall;
-  output: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  output: any;
   exception?: Error;
 
   constructor(toolCall: FunctionCall, output: any, exception: Error | undefined) {
