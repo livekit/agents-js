@@ -114,7 +114,7 @@ export function performLLMInference(
                 name: tool.name,
                 args: tool.args,
               });
-              
+
               log().debug(
                 {
                   function: tool.name,
@@ -124,7 +124,7 @@ export function performLLMInference(
                 },
                 'performLLMInference: LLM generated tool call',
               );
-              
+
               data.generatedToolCalls.push(toolCall);
               await toolCallWriter.write(toolCall);
             }
@@ -416,7 +416,7 @@ export function performToolExecutions({
         },
         'performToolExecutions.executeToolsTask: parsing tool arguments',
       );
-      
+
       try {
         parsedArgs = tool.parameters.parse(JSON.parse(toolCall.args));
         logger.debug(
@@ -472,11 +472,11 @@ export function performToolExecutions({
             },
             'performToolExecutions.executeToolsTask: starting tool execution',
           );
-          
+
           const { result, isAborted } = await waitUntilAborted(toolExecTask, signal);
           jsOut.exception = isAborted ? new Error('tool call was aborted') : undefined;
           jsOut.output = isAborted ? undefined : result;
-          
+
           logger.debug(
             {
               function: toolCall.name,

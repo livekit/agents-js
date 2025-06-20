@@ -479,13 +479,16 @@ export class LLMStream extends llm.LLMStream {
         }))
       : undefined;
 
-    this.#logger.debug({
-      tools,
-      opts,
-      n,
-      parallelToolCalls,
-      temperature,
-    }, 'tools');
+    this.#logger.debug(
+      {
+        tools,
+        opts,
+        n,
+        parallelToolCalls,
+        temperature,
+      },
+      'tools',
+    );
 
     try {
       const messages = (await this.chatCtx.toProviderFormat(
