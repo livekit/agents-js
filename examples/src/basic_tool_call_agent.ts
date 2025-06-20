@@ -7,14 +7,13 @@ import {
     WorkerOptions,
     cli,
     defineAgent,
+    llm,
     voice,
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
-import { tool } from 'agents/dist/llm/tool_context.js';
-import { createAgent } from 'agents/dist/voice/agent.js';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -25,7 +24,7 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    const getWeather = tool({
+    const getWeather = llm.tool({
       description: ' Called when the user asks about the weather.',
       parameters: z.object({
         location: z.string().describe('The location to get the weather for'),
@@ -35,7 +34,7 @@ export default defineAgent({
       },
     });
 
-    const toggleLight = tool({
+    const toggleLight = llm.tool({
       description: 'Called when the user asks to turn on or off the light.',
       parameters: z.object({
         room: roomNameSchema.describe('The room to turn the light in'),
@@ -46,7 +45,7 @@ export default defineAgent({
       },
     });
 
-    const getNumber = tool({
+    const getNumber = llm.tool({
       description:
         'Called when the user wants to get a number value, None if user want a random value',
       parameters: z.object({
@@ -60,11 +59,11 @@ export default defineAgent({
       },
     });
 
-    const agent = createAgent({
+    const agent = voice.createAgent({
       instructions: 'You are a helpful assistant.',
       tools: { getWeather, toggleLight, getNumber },
     });
-    
+
     await ctx.connect();
     const participant = await ctx.waitForParticipant();
     console.log('participant joined: ', participant.identity);
