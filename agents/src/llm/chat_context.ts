@@ -4,6 +4,7 @@
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
 import { shortuuid } from './misc.js';
 import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
+import type { ToolContext } from './tool_context.js';
 
 export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
 export interface ImageContent {
@@ -250,34 +251,41 @@ export class ChatContext {
       excludeFunctionCall?: boolean;
       excludeInstructions?: boolean;
       excludeEmptyMessage?: boolean;
-      // TODO: tools filter implementation
-      tools?: unknown;
+      toolCtx?: ToolContext;
     } = {},
   ): ChatContext {
     const {
       excludeFunctionCall = false,
       excludeInstructions = false,
       excludeEmptyMessage = false,
+      toolCtx,
     } = options;
     const items: ChatItem[] = [];
 
+    const isToolCallOrOutput = (item: ChatItem): item is FunctionCall | FunctionCallOutput =>
+      ['function_call', 'function_call_output'].includes(item.type);
+    const isChatMessage = (item: ChatItem): item is ChatMessage => item.type === 'message';
+
     for (const item of this._items) {
+      if (excludeFunctionCall && isToolCallOrOutput(item)) {
+        continue;
+      }
+
       if (
-        (excludeFunctionCall && item.type === 'function_call') ||
-        item.type === 'function_call_output'
+        excludeInstructions &&
+        isChatMessage(item) &&
+        ['system', 'developer'].includes(item.role)
       ) {
         continue;
       }
 
-      if (excludeInstructions && item.type === 'message' && item.role in ['system', 'developer']) {
+      if (excludeEmptyMessage && isChatMessage(item) && item.content.length === 0) {
         continue;
       }
 
-      if (excludeEmptyMessage && item.type === 'message' && item.content.length === 0) {
+      if (toolCtx !== undefined && isToolCallOrOutput(item) && toolCtx[item.name] === undefined) {
         continue;
       }
-
-      // TODO(brian): exclude invalid tools filter
 
       items.push(item);
     }

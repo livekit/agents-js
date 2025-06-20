@@ -25,12 +25,7 @@ export class SpeechHandle {
 
   #chatMessage?: ChatMessage;
 
-  constructor(
-    id: string,
-    allowInterruptions: boolean,
-    stepIndex: number,
-    parent?: SpeechHandle,
-  ) {
+  constructor(id: string, allowInterruptions: boolean, stepIndex: number, parent?: SpeechHandle) {
     this.#id = id;
     this.#allowInterruptions = allowInterruptions;
     this.#stepIndex = stepIndex;
@@ -38,12 +33,7 @@ export class SpeechHandle {
   }
 
   static create(allowInterruptions: boolean = false, stepIndex: number = 0, parent?: SpeechHandle) {
-    return new SpeechHandle(
-      shortuuid("speech"),
-      allowInterruptions,
-      stepIndex,
-      parent,
-    );
+    return new SpeechHandle(shortuuid('speech'), allowInterruptions, stepIndex, parent);
   }
 
   get id(): string {

@@ -435,7 +435,7 @@ export class AgentActivity implements RecognitionHooks {
       for (const msg of toolsMessages) {
         msg.createdAt = replyStartedAt;
       }
-      chatCtx.insert(toolsMessages);
+      this.agent._chatCtx.insert(toolsMessages);
     }
 
     if (speechHandle.interrupted) {
@@ -574,7 +574,6 @@ export class AgentActivity implements RecognitionHooks {
       for (const msg of toolMessages) {
         msg.createdAt = replyStartedAt;
       }
-      chatCtx.insert(toolMessages);
       this.agent._chatCtx.insert(toolMessages);
     }
   }
