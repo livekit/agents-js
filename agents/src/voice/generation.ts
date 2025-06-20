@@ -44,10 +44,10 @@ export class _ToolOutput {
 
 export class _JsOutput {
   toolCall: FunctionCall;
-  output: any;
+  output: unknown;
   exception?: Error;
 
-  constructor(toolCall: FunctionCall, output: any, exception: Error | undefined) {
+  constructor(toolCall: FunctionCall, output: unknown, exception: Error | undefined) {
     this.toolCall = toolCall;
     this.output = output;
     this.exception = exception;
@@ -55,7 +55,7 @@ export class _JsOutput {
 
   static create(params: {
     toolCall: FunctionCall;
-    output?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    output?: unknown;
     exception?: Error;
   }) {
     const { toolCall, output = undefined, exception = undefined } = params;
