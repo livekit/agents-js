@@ -277,22 +277,22 @@ class SegmentSynchronizerImpl {
             continue;
           }
 
-          const word_hyphens = this.options.hyphenateWord(word).length;
-          const elapsed_in_seconds = (Date.now() - this.startWallTime) / 1000;
-          const targetHyphens = elapsed_in_seconds * this.options.speed;
+          const wordHphens = this.options.hyphenateWord(word).length;
+          const elapsedSeconds = (Date.now() - this.startWallTime) / 1000;
+          const targetHyphens = elapsedSeconds * this.options.speed;
           const hyphensBehind = Math.max(0, targetHyphens - this.textData.forwardedHyphens);
-          let delay = Math.max(0, word_hyphens - hyphensBehind) / this.options.speed;
+          let delay = Math.max(0, wordHphens - hyphensBehind) / this.speed;
 
           this.logger.debug(
             {
               word,
-              wordHyphens: word_hyphens,
-              elapsedSeconds: elapsed_in_seconds,
+              wordHyphens: wordHphens,
+              elapsedSeconds,
               targetHyphens,
               forwardedHyphens: this.textData.forwardedHyphens,
               hyphensBehind,
               calculatedDelay: delay,
-              speed: this.options.speed,
+              speed: this.speed,
             },
             'mainTaskImpl: word timing calculation',
           );
@@ -305,7 +305,7 @@ class SegmentSynchronizerImpl {
           this.outputStreamWriter.write(sentence.slice(text_cursor, end_pos));
           await this.sleepIfNotClosed(delay / 2);
 
-          this.textData.forwardedHyphens += word_hyphens;
+          this.textData.forwardedHyphens += wordHphens;
           text_cursor = end_pos;
         }
 
@@ -323,11 +323,11 @@ class SegmentSynchronizerImpl {
     this.logger.debug(`mainTaskImpl: completed processing ${sentenceCount} sentences`);
   }
 
-  private async sleepIfNotClosed(sleepTime: number) {
+  private async sleepIfNotClosed(sleepTimeSeconds: number) {
     if (this.closed) {
       return;
     }
-    await delay(sleepTime);
+    await delay(sleepTimeSeconds * 1000);
   }
 
   async close(): Promise<void> {
