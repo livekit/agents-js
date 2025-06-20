@@ -412,7 +412,8 @@ export class AgentActivity implements RecognitionHooks {
       await Promise.allSettled(
         tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
       );
-      // TODO(AJS-87): add syncronizher and transcripts
+
+      let forwardedText = textOut?.text || '';
 
       if (audioOutput) {
         audioOutput.clearBuffer();
@@ -423,31 +424,40 @@ export class AgentActivity implements RecognitionHooks {
             { speech_id: speechHandle.id, playbackPosition: playbackEv.playbackPosition },
             'playout interrupted',
           );
+          if (playbackEv.synchronizedTranscript) {
+            forwardedText = playbackEv.synchronizedTranscript;
+          }
+        } else {
+          forwardedText = '';
         }
       }
 
-      const message = ChatMessage.create({
-        role: 'assistant',
-        content: textOut?.text || '',
-        id: llmGenData.id,
-        interrupted: true,
-        createdAt: replyStartedAt,
-      });
-      chatCtx.insert(message);
-      this.agent._chatCtx.insert(message);
+      if (forwardedText) {
+        const message = ChatMessage.create({
+          role: 'assistant',
+          content: forwardedText,
+          id: llmGenData.id,
+          interrupted: true,
+          createdAt: replyStartedAt,
+        });
+        chatCtx.insert(message);
+        this.agent._chatCtx.insert(message);
+        this.agentSession._conversationItemAdded(message);
+      }
+
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
       }
-      this.agentSession._conversationItemAdded(message);
 
       this.logger.info(
-        { speech_id: speechHandle.id, message: textOut?.text },
+        { speech_id: speechHandle.id, message: forwardedText },
         'playout completed with interrupt',
       );
       // TODO(shubhra) add chat message to speech handle
       speechHandle.markPlayoutDone();
       return;
     }
+
     if (textOut && textOut.text) {
       const message = ChatMessage.create({
         role: 'assistant',

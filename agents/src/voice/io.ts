@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
@@ -22,7 +23,9 @@ export type TTSNode = (
   text: ReadableStream<string>,
   modelSettings: any, // TODO(AJS-59): add type
 ) => Promise<ReadableStream<AudioFrame> | null>;
-export abstract class AudioOutput {
+export abstract class AudioOutput extends EventEmitter {
+  static readonly EVENT_PLAYBACK_FINISHED = 'playbackFinished';
+
   private playbackFinishedFuture: Future<void> = new Future();
   private _capturing: boolean = false;
   private playbackFinishedCount: number = 0;
@@ -32,7 +35,17 @@ export abstract class AudioOutput {
     interrupted: false,
   };
 
-  constructor(protected readonly sampleRate?: number) {}
+  constructor(
+    protected readonly sampleRate?: number,
+    protected readonly nextInChain?: AudioOutput,
+  ) {
+    super();
+    if (this.nextInChain) {
+      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_FINISHED, (ev: PlaybackFinishedEvent) =>
+        this.onPlaybackFinished(ev),
+      );
+    }
+  }
 
   /**
    * Capture an audio frame for playback, frames can be pushed faster than real-time
@@ -68,6 +81,7 @@ export abstract class AudioOutput {
     this.lastPlaybackEvent = event;
     this.playbackFinishedCount++;
     this.playbackFinishedFuture.resolve();
+    this.emit(AudioOutput.EVENT_PLAYBACK_FINISHED, event);
   }
 
   flush(): void {

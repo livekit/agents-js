@@ -147,6 +147,7 @@ async function forwardText(
   try {
     while (true) {
       if (signal.aborted) {
+        console.log('forwardText: Abort signal was triggered, handle gracefully');
         break;
       }
       const { done, value: delta } = await reader.read();
@@ -159,12 +160,6 @@ async function forwardText(
         out.firstTextFut.resolve();
       }
     }
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      // Abort signal was triggered, handle gracefully
-      return;
-    }
-    throw error;
   } finally {
     textOutput?.flush();
     reader?.releaseLock();
