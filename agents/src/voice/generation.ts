@@ -53,11 +53,7 @@ export class _JsOutput {
     this.exception = exception;
   }
 
-  static create(params: {
-    toolCall: FunctionCall;
-    output?: unknown;
-    exception?: Error;
-  }) {
+  static create(params: { toolCall: FunctionCall; output?: unknown; exception?: Error }) {
     const { toolCall, output = undefined, exception = undefined } = params;
     return new _JsOutput(toolCall, output, exception);
   }
