@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
-  type JobContext,
-  type JobProcess,
-  WorkerOptions,
-  cli,
-  defineAgent,
-  llm,
-  voice,
+    type JobContext,
+    type JobProcess,
+    WorkerOptions,
+    cli,
+    defineAgent,
+    llm,
+    voice,
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
