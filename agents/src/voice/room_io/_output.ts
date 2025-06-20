@@ -329,6 +329,9 @@ export class ParticipantAudioOutput extends AudioOutput {
     this.room = room;
     this.options = options;
     this.audioSource = new AudioSource(options.sampleRate, options.numChannels);
+    this.on(AudioOutput.EVENT_PLAYBACK_FINISHED, () => {
+      this.logger.debug('ParticipantAudioOutput.onPlaybackFinished called');
+    });
   }
 
   get queueSizeMs(): number {
@@ -365,7 +368,10 @@ export class ParticipantAudioOutput extends AudioOutput {
       if (!abortFuture.done) abortFuture.resolve(false);
     });
 
-    const interrupted = await abortFuture.await;
+    const interrupted = await Promise.race([
+      abortFuture.await,
+      this.interruptedFuture.await.then(() => true),
+    ]);
 
     let pushedDuration = this.pushedDurationMs;
 
@@ -376,10 +382,10 @@ export class ParticipantAudioOutput extends AudioOutput {
     }
 
     this.pushedDurationMs = 0;
+    this.interruptedFuture = new Future();
     this.onPlaybackFinished({
       playbackPosition: pushedDuration,
       interrupted,
-      // TODO(AJS-104): implement transcript synchronization
     });
   }
 

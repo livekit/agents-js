@@ -12,17 +12,24 @@ interface TokenizerOptions {
   language: string;
   minSentenceLength: number;
   streamContextLength: number;
+  retainFormat: boolean;
 }
 
 export class SentenceTokenizer extends tokenizer.SentenceTokenizer {
   #config: TokenizerOptions;
 
-  constructor(language = 'en-US', minSentenceLength = 20, streamContextLength = 10) {
+  constructor(
+    language = 'en-US',
+    minSentenceLength = 20,
+    streamContextLength = 10,
+    retainFormat = false,
+  ) {
     super();
     this.#config = {
       language,
       minSentenceLength,
       streamContextLength,
+      retainFormat,
     };
   }
 
@@ -34,7 +41,8 @@ export class SentenceTokenizer extends tokenizer.SentenceTokenizer {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   stream(language?: string): tokenizer.SentenceStream {
     return new BufferedSentenceStream(
-      (text: string) => splitSentences(text, this.#config.minSentenceLength),
+      (text: string) =>
+        splitSentences(text, this.#config.minSentenceLength, this.#config.retainFormat),
       this.#config.minSentenceLength,
       this.#config.streamContextLength,
     );

@@ -5,7 +5,11 @@
 /**
  * Split the text into sentences.
  */
-export const splitSentences = (text: string, minLength = 20): [string, number, number][] => {
+export const splitSentences = (
+  text: string,
+  minLength = 20,
+  retainFormat: boolean = false,
+): [string, number, number][] => {
   const alphabets = /([A-Za-z])/g;
   const prefixes = /(Mr|St|Mrs|Ms|Dr)[.]/g;
   const suffixes = /(Inc|Ltd|Jr|Sr|Co)/g;
@@ -16,7 +20,12 @@ export const splitSentences = (text: string, minLength = 20): [string, number, n
   const digits = /([0-9])/g;
   const dots = /\.{2,}/g;
 
-  text = text.replaceAll('\n', ' ');
+  if (retainFormat) {
+    text = text.replaceAll('\n', '<nel><stop>');
+  } else {
+    text = text.replaceAll('\n', ' ');
+  }
+
   text = text.replaceAll(prefixes, '$1<prd>');
   text = text.replaceAll(websites, '<prd>$2');
   text = text.replaceAll(new RegExp(`${digits.source}[.]${digits.source}`, 'g'), '$1<prd>$2');
@@ -47,6 +56,10 @@ export const splitSentences = (text: string, minLength = 20): [string, number, n
   text = text.replaceAll('!', '!<stop>');
   text = text.replaceAll('<prd>', '.');
 
+  if (retainFormat) {
+    text = text.replaceAll('<nel>', '\n');
+  }
+
   const split = text.split('<stop>');
   text = text.replaceAll('<stop>', '');
 
@@ -54,21 +67,22 @@ export const splitSentences = (text: string, minLength = 20): [string, number, n
   let buf = '';
   let start = 0;
   let end = 0;
+  const prePad = retainFormat ? '' : ' ';
   for (const match of split) {
-    const sentence = match.trim();
+    const sentence = retainFormat ? match : match.trim();
     if (!sentence) continue;
 
-    buf += ' ' + sentence;
+    buf += prePad + sentence;
     end += match.length;
     if (buf.length > minLength) {
-      sentences.push([buf.slice(1), start, end]);
+      sentences.push([buf.slice(prePad.length), start, end]);
       start = end;
       buf = '';
     }
   }
 
   if (buf) {
-    sentences.push([buf.slice(1), start, text.length - 1]);
+    sentences.push([buf.slice(prePad.length), start, text.length - 1]);
   }
 
   return sentences;
