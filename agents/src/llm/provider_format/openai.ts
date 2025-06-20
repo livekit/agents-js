@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { log } from '../../log.js';
 import type { ChatContext, ChatItem, ImageContent } from '../chat_context.js';
 import { type SerializedImage, serializeImage } from '../utils.js';
 import { groupToolCalls } from './utils.js';
@@ -33,6 +34,8 @@ export async function toChatCtx(chatCtx: ChatContext, injectDummyUserMessage: bo
       messages.push(await toChatItem(toolOutput));
     }
   }
+
+  log().debug({ messages }, 'toChatCtx');
 
   return messages;
 }

@@ -168,6 +168,8 @@ export function tool(tool: any): any {
       description: tool.description,
       parameters: tool.parameters,
       execute: tool.execute,
+      [TOOL_SYMBOL]: true,
+      [FUNCTION_TOOL_SYMBOL]: true,
     };
   }
 
@@ -176,6 +178,8 @@ export function tool(tool: any): any {
       type: 'provider-defined',
       id: tool.id,
       config: tool.config,
+      [TOOL_SYMBOL]: true,
+      [PROVIDER_DEFINED_TOOL_SYMBOL]: true,
     };
   }
 

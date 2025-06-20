@@ -343,6 +343,7 @@ export class AgentActivity implements RecognitionHooks {
       // preserve  `this` context in llmNode
       (...args) => this.agent.llmNode(...args),
       chatCtx,
+      toolCtx,
       {},
       replyAbortController,
     );
@@ -496,6 +497,10 @@ export class AgentActivity implements RecognitionHooks {
 
     if (toolOutput.output.length > 0) {
       // TODO(brian): handle actual tool execution output
+      this.logger.info(
+        { speech_id: speechHandle.id, tool_output: toolOutput.output },
+        'pipelineReplyTask: tool output',
+      );
     }
   }
 

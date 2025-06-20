@@ -118,9 +118,10 @@ export class Agent {
 
   async llmNode(
     chatCtx: ChatContext,
+    toolCtx: ToolContext,
     modelSettings: any, // TODO(AJS-59): add type
   ): Promise<ReadableStream<ChatChunk | string> | null> {
-    return Agent.default.llmNode(this, chatCtx, modelSettings);
+    return Agent.default.llmNode(this, chatCtx, toolCtx, modelSettings);
   }
 
   async ttsNode(
@@ -178,10 +179,12 @@ export class Agent {
     async llmNode(
       agent: Agent,
       chatCtx: ChatContext,
+      toolCtx: ToolContext,
       modelSettings: any, // TODO(AJS-59): add type
     ): Promise<ReadableStream<ChatChunk | string> | null> {
       const activity = agent.getActivityOrThrow();
-      const stream = activity.llm.chat({ chatCtx });
+      // TODO(brian): make parallelToolCalls configurable
+      const stream = activity.llm.chat({ chatCtx, toolCtx, parallelToolCalls: true });
       return new ReadableStream({
         async start(controller) {
           for await (const chunk of stream) {

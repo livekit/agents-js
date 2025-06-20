@@ -5,6 +5,7 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import type { ReadableStream } from 'node:stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
+import type { ToolContext } from '../llm/tool_context.js';
 import type { SpeechEvent } from '../stt/stt.js';
 import { Future } from '../utils.js';
 
@@ -15,6 +16,7 @@ export type STTNode = (
 
 export type LLMNode = (
   chatCtx: ChatContext,
+  toolCtx: ToolContext,
   modelSettings: any, // TODO(AJS-59): add type
 ) => Promise<ReadableStream<ChatChunk | string> | null>;
 
