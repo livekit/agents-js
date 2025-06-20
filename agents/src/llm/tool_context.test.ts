@@ -149,7 +149,6 @@ describe('Tool Context', () => {
   describe('tool', () => {
     it('should create and execute a basic core tool', async () => {
       const getWeather = tool({
-        name: 'get-weather',
         description: 'Get the weather for a given location',
         parameters: z.object({
           location: z.string(),
@@ -168,7 +167,6 @@ describe('Tool Context', () => {
 
     it('should properly type a callable function', async () => {
       const testFunction = tool({
-        name: 'testFunction',
         description: 'Test function',
         parameters: z.object({
           name: z.string().describe('The user name'),
@@ -188,7 +186,6 @@ describe('Tool Context', () => {
 
     it('should handle async execution', async () => {
       const testFunction = tool({
-        name: 'testFunction',
         description: 'Async test function',
         parameters: z.object({
           delay: z.number().describe('Delay in milliseconds'),

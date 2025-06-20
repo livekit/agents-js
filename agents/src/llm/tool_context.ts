@@ -9,6 +9,10 @@ import type { RunContext, UnknownUserData } from '../voice/run_context.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+const TOOL_SYMBOL = Symbol('tool');
+const FUNCTION_TOOL_SYMBOL = Symbol('function_tool');
+const PROVIDER_DEFINED_TOOL_SYMBOL = Symbol('provider_defined_tool');
+
 export type JSONValue = null | string | number | boolean | JSONObject | JSONArray;
 
 export type JSONArray = JSONValue[];
@@ -21,6 +25,17 @@ export type JSONObject = {
 export type ToolInputSchema<T extends JSONObject> = ZodObject<any, any, any, T, T>;
 
 export type ToolType = 'function' | 'provider-defined';
+
+export type ToolChoice =
+  | 'auto'
+  | 'none'
+  | 'required'
+  | {
+      type: 'function';
+      function: {
+        name: string;
+      };
+    };
 
 export interface ToolExecutionOptions<UserData = UnknownUserData> {
   /**
@@ -43,7 +58,7 @@ export type ToolExecuteFunction<
   Parameters extends JSONObject,
   UserData = UnknownUserData,
   Result = unknown,
-> = (args: Parameters, opts: ToolExecutionOptions<UserData>) => PromiseLike<Result>;
+> = (args: Parameters, opts: ToolExecutionOptions<UserData>) => Promise<Result>;
 
 export interface Tool {
   /**
@@ -52,10 +67,7 @@ export interface Tool {
    */
   type: ToolType;
 
-  /**
-   * The name of the tool.
-   */
-  name: string;
+  [TOOL_SYMBOL]: true;
 }
 
 // TODO(AJS-112): support provider-defined tools
@@ -63,9 +75,16 @@ export interface ProviderDefinedTool extends Tool {
   type: 'provider-defined';
 
   /**
+   * The ID of the tool.
+   */
+  id: string;
+
+  /**
    * The configuration of the tool.
    */
   config: Record<string, unknown>;
+
+  [PROVIDER_DEFINED_TOOL_SYMBOL]: true;
 }
 
 export interface FunctionTool<
@@ -92,6 +111,8 @@ export interface FunctionTool<
    * It also carries context about current session, user-defined data, and the tool call id, etc.
    */
   execute: ToolExecuteFunction<Parameters, UserData, Result>;
+
+  [FUNCTION_TOOL_SYMBOL]: true;
 }
 
 // TODO(AJS-112): support provider-defined tools in the future)
@@ -102,28 +123,31 @@ export type ToolContext = {
 /**
  * Create a function tool.
  *
- * @param name - The name of the tool.
  * @param description - The description of the tool.
  * @param parameters - The schema of the input that the tool expects.
  * @param execute - The function that is called with the arguments from the tool call and produces a result.
  */
 export function tool<Parameters extends JSONObject, UserData = UnknownUserData, Result = unknown>({
-  name,
   description,
   parameters,
   execute,
 }: {
-  name: string;
   description: string;
   parameters: ToolInputSchema<Parameters>;
   execute: ToolExecuteFunction<Parameters, UserData, Result>;
 }): FunctionTool<Parameters, UserData, Result>;
 
+/**
+ * Create a provider-defined tool.
+ *
+ * @param id - The ID of the tool.
+ * @param config - The configuration of the tool.
+ */
 export function tool({
-  name,
+  id,
   config,
 }: {
-  name: string;
+  id: string;
   config: Record<string, unknown>;
 }): ProviderDefinedTool;
 
@@ -141,20 +165,35 @@ export function tool(tool: any): any {
 
     return {
       type: 'function',
-      name: tool.name,
       description: tool.description,
       parameters: tool.parameters,
       execute: tool.execute,
     };
   }
 
-  if (tool.config !== undefined) {
+  if (tool.config !== undefined && tool.id !== undefined) {
     return {
       type: 'provider-defined',
-      name: tool.name,
+      id: tool.id,
       config: tool.config,
     };
   }
 
   throw new Error('Invalid tool');
+}
+
+export function isTool(tool: any): tool is Tool {
+  return tool && tool[TOOL_SYMBOL] === true;
+}
+
+export function isFunctionTool(tool: any): tool is FunctionTool<any, any, any> {
+  const isTool = tool && tool[TOOL_SYMBOL] === true;
+  const isFunctionTool = tool[FUNCTION_TOOL_SYMBOL] === true;
+  return isTool && isFunctionTool;
+}
+
+export function isProviderDefinedTool(tool: any): tool is ProviderDefinedTool {
+  const isTool = tool && tool[TOOL_SYMBOL] === true;
+  const isProviderDefinedTool = tool[PROVIDER_DEFINED_TOOL_SYMBOL] === true;
+  return isTool && isProviderDefinedTool;
 }

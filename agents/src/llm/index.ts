@@ -6,6 +6,7 @@ export {
   type FunctionTool,
   type ProviderDefinedTool,
   type Tool,
+  type ToolChoice,
   type ToolContext,
   type ToolExecutionOptions,
   type ToolType,

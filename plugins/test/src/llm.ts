@@ -7,7 +7,6 @@ import { z } from 'zod';
 
 const toolCtx: llmlib.ToolContext = {
   getWeather: llmlib.tool({
-    name: 'getWeather',
     description: 'Get the current weather in a given location',
     parameters: z.object({
       location: z.string().describe('The city and state, e.g. San Francisco, CA'),
@@ -16,7 +15,6 @@ const toolCtx: llmlib.ToolContext = {
     execute: async () => {},
   }),
   playMusic: llmlib.tool({
-    name: 'playMusic',
     description: 'Play music',
     parameters: z.object({
       name: z.string().describe('The artist and name of the song'),
@@ -24,7 +22,6 @@ const toolCtx: llmlib.ToolContext = {
     execute: async () => {},
   }),
   toggleLight: llmlib.tool({
-    name: 'toggleLight',
     description: 'Turn on/off the lights in a room',
     parameters: z.object({
       name: z.string().describe('The room to control'),
@@ -35,7 +32,6 @@ const toolCtx: llmlib.ToolContext = {
     },
   }),
   selectCurrencies: llmlib.tool({
-    name: 'selectCurrencies',
     description: 'Currencies of a specific area',
     parameters: z.object({
       currencies: z
@@ -45,7 +41,6 @@ const toolCtx: llmlib.ToolContext = {
     execute: async () => {},
   }),
   updateUserInfo: llmlib.tool({
-    name: 'updateUserInfo',
     description: 'Update user info',
     parameters: z.object({
       email: z.string().optional().describe("User's email address"),
@@ -55,7 +50,6 @@ const toolCtx: llmlib.ToolContext = {
     execute: async () => {},
   }),
   simulateFailure: llmlib.tool({
-    name: 'simulateFailure',
     description: 'Simulate a failure',
     parameters: z.object({}),
     execute: async () => {

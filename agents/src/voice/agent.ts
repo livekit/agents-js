@@ -92,7 +92,7 @@ export class Agent {
     return this._instructions;
   }
 
-  get tools(): ToolContext {
+  get toolCtx(): ToolContext {
     return { ...this._tools };
   }
 

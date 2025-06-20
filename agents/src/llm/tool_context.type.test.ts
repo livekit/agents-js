@@ -13,7 +13,6 @@ import {
 describe('tool type inference', () => {
   it('should infer argument type from zod schema', () => {
     const toolType = tool({
-      name: 'test',
       description: 'test',
       parameters: z.object({ number: z.number() }),
       execute: async () => 'test' as const,
@@ -24,7 +23,7 @@ describe('tool type inference', () => {
 
   it('should infer provider defined tool type', () => {
     const toolType = tool({
-      name: 'code-interpreter',
+      id: 'code-interpreter',
       config: {
         language: 'python',
       },
@@ -35,7 +34,6 @@ describe('tool type inference', () => {
 
   it('should infer run context type', () => {
     const toolType = tool({
-      name: 'test',
       description: 'test',
       parameters: z.object({ number: z.number() }),
       execute: async ({ number }, { ctx }: ToolExecutionOptions<{ name: string }>) => {
