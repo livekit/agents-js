@@ -14,10 +14,15 @@ import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
+import type { ToolOptions } from 'agents/dist/llm/tool_context.js';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 const roomNameSchema = z.enum(['bedroom', 'living room', 'kitchen', 'bathroom', 'office']);
+
+type UserData = {
+  number: number;
+};
 
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
@@ -59,9 +64,28 @@ export default defineAgent({
       },
     });
 
-    const agent = voice.createAgent({
+    const checkStoredNumber = llm.tool({
+      description: 'Called when the user wants to check the stored number.',
+      parameters: z.object({}),
+      execute: async (_, { ctx }: ToolOptions<UserData>) => {
+        return `The stored number is ${ctx.userData.number}.`;
+      },
+    });
+
+    const updateStoredNumber = llm.tool({
+      description: 'Called when the user wants to update the stored number.',
+      parameters: z.object({
+        number: z.number().describe('The number to update the stored number to'),
+      }),
+      execute: async ({ number }, { ctx }: ToolOptions<UserData>) => {
+        ctx.userData.number = number;
+        return `The stored number is now ${number}.`;
+      },
+    });
+
+    const agent = voice.createAgent<UserData>({
       instructions: 'You are a helpful assistant.',
-      tools: { getWeather, toggleLight, getNumber },
+      tools: { getWeather, toggleLight, getNumber, checkStoredNumber, updateStoredNumber },
     });
 
     await ctx.connect();
@@ -70,12 +94,13 @@ export default defineAgent({
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
 
-    const session = new voice.AgentSession(
+    const session = new voice.AgentSession({
       vad,
-      new deepgram.STT(),
-      new openai.LLM(),
-      new elevenlabs.TTS(),
-    );
+      stt: new deepgram.STT(),
+      llm: new openai.LLM(),
+      tts: new elevenlabs.TTS(),
+      userData: { number: 0 },
+    });
     session.start(agent, ctx.room);
   },
 });

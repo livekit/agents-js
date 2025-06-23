@@ -58,6 +58,17 @@ export type AgentSessionCallbacks = {
   [AgentSessionEvent.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
 };
 
+export type AgentSessionOptions<UserData = UnknownUserData> = {
+  turnDetection?: TurnDetectionMode;
+  // TODO: Make voice pipeline components optional
+  stt: STT;
+  vad: VAD;
+  llm: LLM;
+  tts: TTS;
+  userData?: UserData;
+  voiceOptions?: Partial<VoiceOptions>;
+};
+
 export class AgentSession<
   UserData = UnknownUserData,
 > extends (EventEmitter as new () => TypedEmitter<AgentSessionCallbacks>) {
@@ -74,12 +85,17 @@ export class AgentSession<
   private nextActivity?: AgentActivity;
   private started = false;
   private userState: UserState = 'listening';
-  private _userData: UserData | undefined;
-  private _agentState: AgentState = 'initializing';
 
   private roomIO?: RoomIO;
   private logger = log();
+
+  /** @internal */
   private _chatCtx: ChatContext;
+  /** @internal */
+  private _userData: UserData | undefined;
+  /** @internal */
+  private _agentState: AgentState = 'initializing';
+
   /** @internal */
   audioInput?: ReadableStream<AudioFrame>;
   /** @internal */
@@ -87,29 +103,41 @@ export class AgentSession<
   /** @internal */
   _transcriptionOutput?: TextOutput;
 
-  constructor(
-    vad: VAD,
-    stt: STT,
-    llm: LLM,
-    tts: TTS,
-    turnDetection?: TurnDetectionMode,
-    options: Partial<VoiceOptions> = defaultVoiceOptions,
-  ) {
+  constructor(opts: AgentSessionOptions<UserData>) {
     super();
+
+    const {
+      vad,
+      stt,
+      llm,
+      tts,
+      turnDetection,
+      userData,
+      voiceOptions = defaultVoiceOptions,
+    } = opts;
 
     this.vad = vad;
     this.stt = stt;
     this.llm = llm;
     this.tts = tts;
     this.turnDetection = turnDetection;
+    this._userData = userData;
 
-    // TODO(shubhra): Add tools to chat context initalzation
-    this._chatCtx = new ChatContext();
-    this.options = { ...defaultVoiceOptions, ...options };
+    // This is the "global" chat context, it holds the entire conversation history
+    this._chatCtx = ChatContext.empty();
+    this.options = { ...defaultVoiceOptions, ...voiceOptions };
   }
 
   get userData(): UserData {
-    return this._userData!;
+    if (this._userData === undefined) {
+      throw new Error('Voice agent userData is not set');
+    }
+
+    return this._userData;
+  }
+
+  set userData(value: UserData) {
+    this._userData = value;
   }
 
   async start(agent: Agent, room: Room): Promise<void> {
@@ -165,8 +193,7 @@ export class AgentSession<
   }
 
   get chatCtx(): ChatContext {
-    // TODO(shubhra): Return a readonly object
-    return this._chatCtx;
+    return this._chatCtx.copy();
   }
 
   get agentState(): AgentState {

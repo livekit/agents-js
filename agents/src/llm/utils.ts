@@ -7,7 +7,7 @@ import type { ZodObject } from 'zod';
 import { z } from 'zod';
 import type { UnknownUserData } from '../voice/run_context.js';
 import { FunctionCall, FunctionCallOutput, type ImageContent } from './chat_context.js';
-import type { ToolContext, ToolExecutionOptions } from './tool_context.js';
+import type { ToolContext, ToolOptions } from './tool_context.js';
 
 export interface SerializedImage {
   inferenceDetail: 'auto' | 'high' | 'low';
@@ -112,8 +112,8 @@ export type OpenAIFunctionParameters = {
 export const createToolOptions = <UserData extends UnknownUserData>(
   toolCallId: string,
   userData: UserData = {} as UserData,
-): ToolExecutionOptions<UserData> => {
-  return { ctx: { userData }, toolCallId } as unknown as ToolExecutionOptions<UserData>;
+): ToolOptions<UserData> => {
+  return { ctx: { userData }, toolCallId } as unknown as ToolOptions<UserData>;
 };
 
 // XXX: Zod is victim to the dual-package hazard. this is a hacky sorta-fix

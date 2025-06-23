@@ -30,12 +30,12 @@ export default defineAgent({
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
 
-    const session = new voice.AgentSession(
+    const session = new voice.AgentSession({
       vad,
-      new deepgram.STT(),
-      new openai.LLM(),
-      new elevenlabs.TTS(),
-    );
+      stt: new deepgram.STT(),
+      llm: new openai.LLM(),
+      tts: new elevenlabs.TTS(),
+    });
     session.start(agent, ctx.room);
   },
 });

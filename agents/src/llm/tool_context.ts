@@ -37,7 +37,7 @@ export type ToolChoice =
       };
     };
 
-export interface ToolExecutionOptions<UserData = UnknownUserData> {
+export interface ToolOptions<UserData = UnknownUserData> {
   /**
    * RunContext for the current agent session.
    */
@@ -58,7 +58,7 @@ export type ToolExecuteFunction<
   Parameters extends JSONObject,
   UserData = UnknownUserData,
   Result = unknown,
-> = (args: Parameters, opts: ToolExecutionOptions<UserData>) => Promise<Result>;
+> = (args: Parameters, opts: ToolOptions<UserData>) => Promise<Result>;
 
 export interface Tool {
   /**
@@ -116,8 +116,8 @@ export interface FunctionTool<
 }
 
 // TODO(AJS-112): support provider-defined tools in the future)
-export type ToolContext = {
-  [name: string]: FunctionTool<any, any, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+export type ToolContext<UserData = UnknownUserData> = {
+  [name: string]: FunctionTool<any, UserData, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 };
 
 /**
