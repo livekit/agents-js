@@ -456,7 +456,7 @@ export function performToolExecutions({
     const signal = controller.signal;
     const reader = toolCallStream.getReader();
 
-    const tasks: Promise<any>[] = [];
+    const tasks: Promise<any>[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
     while (!signal.aborted) {
       const { done, value: toolCall } = await reader.read();
       if (signal.aborted) break;

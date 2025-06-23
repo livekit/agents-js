@@ -193,6 +193,7 @@ export class AgentActivity implements RecognitionHooks {
     this.speechTasks.add(promise);
 
     promise.finally(() => {
+      this.logger.info({ name }, 'speech task done');
       this.speechTasks.delete(promise);
 
       if (ownedSpeechHandle) {
