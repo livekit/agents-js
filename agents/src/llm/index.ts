@@ -3,12 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 export {
   tool,
+  ToolError,
   type FunctionTool,
   type ProviderDefinedTool,
   type Tool,
   type ToolChoice,
   type ToolContext,
-  type ToolOptions as ToolExecutionOptions,
+  type ToolOptions,
   type ToolType,
 } from './tool_context.js';
 
