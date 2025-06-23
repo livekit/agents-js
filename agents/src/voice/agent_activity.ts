@@ -678,5 +678,20 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  async aclose(): Promise<void> {}
+  async aclose(): Promise<void> {
+    const unlock = await this.lock.lock();
+
+    if (!this._draining) {
+      this.logger.warn('task closing without draining');
+    }
+
+    try {
+      await this.audioRecognition?.aclose();
+      await this._mainTask?.cancelAndWait();
+
+      this.agent.agentActivity = undefined;
+    } finally {
+      unlock();
+    }
+  }
 }
