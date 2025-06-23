@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
-import { type ChatContext, FunctionCall } from '../llm/chat_context.js';
+import { type ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import { shortuuid } from '../llm/misc.js';
 import { type ToolChoice, type ToolContext, isFunctionTool } from '../llm/tool_context.js';
@@ -42,6 +42,33 @@ export class _ToolOutput {
   }
 }
 
+export class _SanitizedOutput {
+  toolCall: FunctionCall;
+  toolCallOutput?: FunctionCallOutput;
+  // TODO(AJS-94): add support for agent handoff function
+  // agentTask: Agent | undefined;
+  replyRequired: boolean;
+
+  constructor(
+    toolCall: FunctionCall,
+    toolCallOutput: FunctionCallOutput | undefined,
+    replyRequired: boolean,
+  ) {
+    this.toolCall = toolCall;
+    this.toolCallOutput = toolCallOutput;
+    this.replyRequired = replyRequired;
+  }
+
+  static create(params: {
+    toolCall: FunctionCall;
+    toolCallOutput?: FunctionCallOutput;
+    replyRequired?: boolean;
+  }) {
+    const { toolCall, toolCallOutput, replyRequired = true } = params;
+    return new _SanitizedOutput(toolCall, toolCallOutput, replyRequired);
+  }
+}
+
 export class _JsOutput {
   toolCall: FunctionCall;
   output: unknown;
@@ -56,6 +83,37 @@ export class _JsOutput {
   static create(params: { toolCall: FunctionCall; output?: unknown; exception?: Error }) {
     const { toolCall, output = undefined, exception = undefined } = params;
     return new _JsOutput(toolCall, output, exception);
+  }
+
+  sanitize(): _SanitizedOutput {
+    // TODO(AJS-90): ToolError handling
+
+    // TODO(AJS-116): support OpenAI stop response
+
+    if (this.exception !== undefined) {
+      return _SanitizedOutput.create({
+        toolCall: { ...this.toolCall },
+        toolCallOutput: FunctionCallOutput.create({
+          name: this.toolCall.name,
+          callId: this.toolCall.callId,
+          output: 'An internal error occurred while executing the tool.', // Don't send the actual error message, as it may contain sensitive information
+          isError: true,
+        }),
+      });
+    }
+
+    // TODO(AJS-94): handle agent handoff tool response
+    // ...
+
+    return _SanitizedOutput.create({
+      toolCall: { ...this.toolCall },
+      toolCallOutput: FunctionCallOutput.create({
+        name: this.toolCall.name,
+        callId: this.toolCall.callId,
+        output: JSON.stringify(this.output), // take the string representation of the output
+        isError: false,
+      }),
+    });
   }
 }
 
@@ -114,16 +172,6 @@ export function performLLMInference(
                 name: tool.name,
                 args: tool.args,
               });
-
-              log().debug(
-                {
-                  function: tool.name,
-                  call_id: toolCall.callId,
-                  args: tool.args,
-                  tool_count: data.generatedToolCalls.length + 1,
-                },
-                'performLLMInference: LLM generated tool call',
-              );
 
               data.generatedToolCalls.push(toolCall);
               await toolCallWriter.write(toolCall);
@@ -338,30 +386,11 @@ export function performToolExecutions({
     const signal = controller.signal;
     const reader = toolCallStream.getReader();
 
-    logger.debug(
-      {
-        speech_id: speechHandle.id,
-        tool_choice: toolChoice,
-        available_tools: Object.keys(toolCtx),
-      },
-      'performToolExecutions.executeToolsTask: starting tool execution task',
-    );
-
     const tasks: Promise<any>[] = [];
     while (!signal.aborted) {
       const { done, value: toolCall } = await reader.read();
       if (signal.aborted) break;
       if (done) break;
-
-      logger.debug(
-        {
-          function: toolCall.name,
-          tool_call_id: toolCall.callId,
-          speech_id: speechHandle.id,
-          args: toolCall.args,
-        },
-        'performToolExecutions.executeToolsTask: received tool call from stream',
-      );
 
       if (toolChoice === 'none') {
         logger.error(
@@ -383,13 +412,6 @@ export function performToolExecutions({
           },
           `unknown AI function ${toolCall.name}`,
         );
-        logger.debug(
-          {
-            available_tools: Object.keys(toolCtx),
-            requested_tool: toolCall.name,
-          },
-          'performToolExecutions.executeToolsTask: tool not found in context',
-        );
         continue;
       }
 
@@ -408,25 +430,8 @@ export function performToolExecutions({
       const jsOut = _JsOutput.create({ toolCall });
 
       // Ensure valid arguments
-      logger.debug(
-        {
-          function: toolCall.name,
-          raw_args: toolCall.args,
-          speech_id: speechHandle.id,
-        },
-        'performToolExecutions.executeToolsTask: parsing tool arguments',
-      );
-
       try {
         parsedArgs = tool.parameters.parse(JSON.parse(toolCall.args));
-        logger.debug(
-          {
-            function: toolCall.name,
-            parsed_args: parsedArgs,
-            speech_id: speechHandle.id,
-          },
-          'performToolExecutions.executeToolsTask: successfully parsed tool arguments',
-        );
       } catch (error) {
         logger.error(
           {
@@ -464,29 +469,9 @@ export function performToolExecutions({
       const task = async (toolExecTask: Promise<any>) => {
         // await for task to complete, if task is aborted, set exception
         try {
-          logger.debug(
-            {
-              function: toolCall.name,
-              tool_call_id: toolCall.callId,
-              speech_id: speechHandle.id,
-            },
-            'performToolExecutions.executeToolsTask: starting tool execution',
-          );
-
           const { result, isAborted } = await waitUntilAborted(toolExecTask, signal);
           jsOut.exception = isAborted ? new Error('tool call was aborted') : undefined;
           jsOut.output = isAborted ? undefined : result;
-
-          logger.debug(
-            {
-              function: toolCall.name,
-              tool_call_id: toolCall.callId,
-              speech_id: speechHandle.id,
-              is_aborted: isAborted,
-              result: isAborted ? 'aborted' : result,
-            },
-            'performToolExecutions.executeToolsTask: tool execution completed',
-          );
         } catch (rawError) {
           logger.error(
             {

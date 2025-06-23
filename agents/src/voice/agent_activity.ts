@@ -5,7 +5,14 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { Heap } from 'heap-js';
 import type { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
-import type { LLM, ToolChoice, ToolContext } from '../llm/index.js';
+import type {
+  ChatItem,
+  FunctionCall,
+  FunctionCallOutput,
+  LLM,
+  ToolChoice,
+  ToolContext,
+} from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
@@ -319,6 +326,7 @@ export class AgentActivity implements RecognitionHooks {
     toolChoice: ToolChoice,
     instructions?: string,
     newMessage?: ChatMessage,
+    toolsMessages?: ChatItem[],
   ): Promise<void> {
     const replyAbortController = new AbortController();
 
@@ -422,6 +430,14 @@ export class AgentActivity implements RecognitionHooks {
       await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
     }
 
+    // add the tools messages that triggers this reply to the chat context
+    if (toolsMessages) {
+      for (const msg of toolsMessages) {
+        msg.createdAt = replyStartedAt;
+      }
+      this.agent._chatCtx.insert(toolsMessages);
+    }
+
     if (speechHandle.interrupted) {
       this.logger.debug(
         { speech_id: speechHandle.id },
@@ -495,12 +511,70 @@ export class AgentActivity implements RecognitionHooks {
     speechHandle.markPlayoutDone();
     await executeToolsTask.result;
 
-    if (toolOutput.output.length > 0) {
-      // TODO(brian): handle actual tool execution output
-      this.logger.info(
-        { speech_id: speechHandle.id, tool_output: toolOutput.output },
-        'pipelineReplyTask: tool output',
+    if (toolOutput.output.length === 0) return;
+
+    // important: no agent output should be used after this point
+    const { maxToolSteps } = this.agentSession.options;
+    if (speechHandle.stepIndex >= maxToolSteps) {
+      this.logger.warn(
+        { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
+        'maximum number of function calls steps reached',
       );
+      return;
+    }
+
+    const newToolCalls: FunctionCall[] = [];
+    const newToolCallOutputs: FunctionCallOutput[] = [];
+    let shouldGenerateToolReply: boolean = false;
+    // TODO(AJS-94): add support for agent handoff function
+    // newAgentTask: Agent | undefined = undefined;
+    // ignoreTaskSwitch: boolean = false;
+
+    for (const jsOut of toolOutput.output) {
+      const sanitizedOut = jsOut.sanitize();
+
+      if (sanitizedOut.toolCallOutput !== undefined) {
+        newToolCalls.push(sanitizedOut.toolCall);
+        newToolCallOutputs.push(sanitizedOut.toolCallOutput);
+        if (sanitizedOut.replyRequired) {
+          shouldGenerateToolReply = true;
+        }
+      }
+
+      // TODO(AJS-94): add support for agent handoff function
+    }
+
+    // TODO(AJS-91): handle draining + agent activity switching
+
+    const toolMessages = [...newToolCalls, ...newToolCallOutputs] as ChatItem[];
+    if (shouldGenerateToolReply) {
+      chatCtx.insert(toolMessages);
+
+      const handle = SpeechHandle.create(
+        speechHandle.allowInterruptions,
+        speechHandle.stepIndex + 1,
+        speechHandle,
+      );
+
+      this.pipelineReplyTask(
+        handle,
+        chatCtx,
+        toolCtx,
+        toolChoice,
+        instructions,
+        undefined,
+        toolMessages,
+      ).then(() => {
+        this.onPipelineReplyDone();
+      });
+
+      // TODO(AJS-91): handle scheduling speech bypassing draining
+      this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+    } else if (newToolCallOutputs.length > 0) {
+      for (const msg of toolMessages) {
+        msg.createdAt = replyStartedAt;
+      }
+      this.agent._chatCtx.insert(toolMessages);
     }
   }
 

@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { randomUUID } from 'crypto';
-import type { ChatMessage, LLMStream } from '../llm/index.js';
-import { AsyncIterableQueue, Future } from '../utils.js';
+import type { ChatMessage } from '../llm/index.js';
+import { shortuuid } from '../llm/misc.js';
+import { Future } from '../utils.js';
 
 // TODO(AJS-50): Update speech handle to 1.0
 export class SpeechHandle {
@@ -15,114 +15,25 @@ export class SpeechHandle {
   static SPEECH_PRIORITY_HIGH = 10;
 
   #id: string;
+  #stepIndex: number;
   #allowInterruptions: boolean;
-  #addToChatCtx: boolean;
-  #isReply: boolean;
-  #userQuestion: string;
-  #userCommitted = false;
-  #initFut = new Future();
+  #parent?: SpeechHandle;
+
   private interruptFut = new Future();
   private authorizeFut = new Future();
   private playoutDoneFut = new Future();
-  #speechCommitted = false;
-  #source?: string | LLMStream | AsyncIterable<string>;
-  #initialized = false;
-  #fncNestedDepth: number;
-  #fncExtraToolsMesages?: ChatMessage[];
-  #nestedSpeechHandles: SpeechHandle[] = [];
-  #nestedSpeechChanged = new AsyncIterableQueue<void>();
-  #nestedSpeechFinished = false;
-  private parent?: SpeechHandle;
 
-  constructor(
-    id: string,
-    allowInterruptions: boolean,
-    addToChatCtx: boolean,
-    isReply: boolean,
-    userQuestion: string,
-    fncNestedDepth = 0,
-    extraToolsMessages: ChatMessage[] | undefined = undefined,
-    parent?: SpeechHandle,
-  ) {
+  #chatMessage?: ChatMessage;
+
+  constructor(id: string, allowInterruptions: boolean, stepIndex: number, parent?: SpeechHandle) {
     this.#id = id;
     this.#allowInterruptions = allowInterruptions;
-    this.#addToChatCtx = addToChatCtx;
-    this.#isReply = isReply;
-    this.#userQuestion = userQuestion;
-    this.#fncNestedDepth = fncNestedDepth;
-    this.#fncExtraToolsMesages = extraToolsMessages;
-    this.parent = parent;
+    this.#stepIndex = stepIndex;
+    this.#parent = parent;
   }
 
   static create(allowInterruptions: boolean = false, stepIndex: number = 0, parent?: SpeechHandle) {
-    return new SpeechHandle(
-      randomUUID(),
-      allowInterruptions,
-      false,
-      false,
-      '',
-      stepIndex,
-      undefined,
-      parent,
-    );
-  }
-
-  /** @deprecated Use SpeechHandle.create instead */
-  static createAssistantReply(
-    allowInterruptions: boolean,
-    addToChatCtx: boolean,
-    userQuestion: string,
-  ): SpeechHandle {
-    return new SpeechHandle(randomUUID(), allowInterruptions, addToChatCtx, true, userQuestion);
-  }
-
-  /** @deprecated Use SpeechHandle.create instead */
-  static createAssistantSpeech(allowInterruptions: boolean, addToChatCtx: boolean): SpeechHandle {
-    return new SpeechHandle(randomUUID(), allowInterruptions, addToChatCtx, false, '');
-  }
-
-  /** @deprecated Use SpeechHandle.create instead */
-  static createToolSpeech(
-    allowInterruptions: boolean,
-    addToChatCtx: boolean,
-    fncNestedDepth: number,
-    extraToolsMessages: ChatMessage[],
-  ): SpeechHandle {
-    return new SpeechHandle(
-      randomUUID(),
-      allowInterruptions,
-      addToChatCtx,
-      false,
-      '',
-      fncNestedDepth,
-      extraToolsMessages,
-    );
-  }
-
-  async waitForInitialization() {
-    await this.#initFut.await;
-  }
-
-  initialize(source: string | LLMStream | AsyncIterable<string>) {
-    this.#source = source;
-    this.#initialized = true;
-    this.#initFut.resolve();
-  }
-
-  markUserCommitted() {
-    this.#userCommitted = true;
-  }
-
-  markSpeechCommitted() {
-    this.#speechCommitted = true;
-  }
-
-  get userCommitted(): boolean {
-    return this.#userCommitted;
-  }
-
-  get speechCommitted(): boolean {
-    return this.#speechCommitted;
+    return new SpeechHandle(shortuuid('speech'), allowInterruptions, stepIndex, parent);
   }
 
   get id(): string {
@@ -133,60 +44,20 @@ export class SpeechHandle {
     return this.#allowInterruptions;
   }
 
-  get addToChatCtx(): boolean {
-    return this.#addToChatCtx;
+  get stepIndex(): number {
+    return this.#stepIndex;
   }
 
-  get source(): string | LLMStream | AsyncIterable<string> {
-    if (!this.#source) {
-      throw new Error('speech not initialized');
-    }
-    return this.#source;
-  }
-
-  get initialized(): boolean {
-    return this.#initialized;
-  }
-
-  get isReply(): boolean {
-    return this.#isReply;
-  }
-
-  get userQuestion(): string {
-    return this.#userQuestion;
+  get chatMessage(): ChatMessage | undefined {
+    return this.#chatMessage;
   }
 
   get interrupted(): boolean {
     return this.interruptFut.done;
   }
 
-  get fncNestedDepth(): number {
-    return this.#fncNestedDepth;
-  }
-
-  get extraToolsMessages(): ChatMessage[] | undefined {
-    return this.#fncExtraToolsMesages;
-  }
-
-  addNestedSpeech(handle: SpeechHandle) {
-    this.#nestedSpeechHandles.push(handle);
-    this.#nestedSpeechChanged.put();
-  }
-
-  get nestedSpeechHandles(): SpeechHandle[] {
-    return this.#nestedSpeechHandles;
-  }
-
-  async nestedSpeechChanged() {
-    await this.#nestedSpeechChanged.next();
-  }
-
-  get nestedSpeechFinished(): boolean {
-    return this.#nestedSpeechFinished;
-  }
-
-  markNestedSpeechFinished() {
-    this.#nestedSpeechFinished = true;
+  get parent(): SpeechHandle | undefined {
+    return this.#parent;
   }
 
   authorizePlayout() {
@@ -219,7 +90,6 @@ export class SpeechHandle {
     if (!this.#allowInterruptions) {
       throw new Error('interruptions are not allowed');
     }
-    this.cancel();
   }
 
   interrupt(): SpeechHandle {
@@ -230,8 +100,10 @@ export class SpeechHandle {
     return this;
   }
 
-  cancel() {
-    this.#initFut.reject(new Error());
-    this.#nestedSpeechChanged.close();
+  setChatMessage(chatMessage: ChatMessage) {
+    if (this.done) {
+      throw new Error('cannot set chat message after speech has been played');
+    }
+    this.#chatMessage = chatMessage;
   }
 }
