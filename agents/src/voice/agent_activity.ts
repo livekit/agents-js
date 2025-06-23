@@ -55,6 +55,7 @@ export class AgentActivity implements RecognitionHooks {
 
   /** @internal */
   _mainTask?: Task<void>;
+  _userTurnCompletedTask?: Task<void>;
 
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
@@ -225,7 +226,13 @@ export class AgentActivity implements RecognitionHooks {
       this.logger.info('skipping user input, new_transcript is too short');
       return false;
     }
-    this.userTurnCompleted(info);
+
+    // We never cancel user code as this is very confusing.
+    // So we wait for the old execution of on_user_turn_completed to finish.
+    // In practice this is OK because most speeches will be interrupted if a new turn
+    // is detected. So the previous execution should complete quickly.
+    await this._userTurnCompletedTask?.result;
+    this._userTurnCompletedTask = Task.from(({ signal }) => this.userTurnCompleted(info, signal));
     return true;
   }
 
@@ -306,7 +313,7 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private async userTurnCompleted(info: EndOfTurnInfo): Promise<void> {
+  private async userTurnCompleted(info: EndOfTurnInfo, signal: AbortSignal): Promise<void> {
     this.logger.info('userTurnCompleted', info);
     // TODO(AJS-40) handle old task cancellation
 
@@ -347,6 +354,8 @@ export class AgentActivity implements RecognitionHooks {
     // Agent.chatCtx
     const chatCtx = this.agent.chatCtx.copy();
 
+    if (signal.aborted) return;
+
     try {
       await this.agent.onUserTurnCompleted(chatCtx, userMessage);
     } catch (e) {
@@ -356,6 +365,7 @@ export class AgentActivity implements RecognitionHooks {
       this.logger.error({ error: e }, 'error occurred during onUserTurnCompleted');
     }
 
+    if (signal.aborted) return;
     this.generateReply(userMessage, chatCtx);
     //TODO(AJS-40) handle interruptions
   }
@@ -610,17 +620,21 @@ export class AgentActivity implements RecognitionHooks {
       // passing tool response back to the LLM
       const respondToolChoice = draining || toolChoice === 'none' ? 'none' : 'auto';
 
-      this.pipelineReplyTask(
-        handle,
-        chatCtx,
-        toolCtx,
-        respondToolChoice,
-        instructions,
-        undefined,
-        toolMessages,
-      ).then(() => {
-        this.onPipelineReplyDone();
+      const toolResponseTask = this.createSpeechTask({
+        promise: this.pipelineReplyTask(
+          handle,
+          chatCtx,
+          toolCtx,
+          respondToolChoice,
+          instructions,
+          undefined,
+          toolMessages,
+        ),
+        ownedSpeechHandle: handle,
+        name: 'AgentActivity.pipeline_reply',
       });
+
+      toolResponseTask.finally(this.onPipelineReplyDone);
 
       this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
     } else if (newToolCallOutputs.length > 0) {
