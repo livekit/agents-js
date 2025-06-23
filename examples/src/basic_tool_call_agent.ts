@@ -14,7 +14,6 @@ import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
-import type { ToolOptions } from 'agents/dist/llm/tool_context.js';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -35,6 +34,9 @@ export default defineAgent({
         location: z.string().describe('The location to get the weather for'),
       }),
       execute: async ({ location }) => {
+        if (Math.random() < 0.5) {
+          throw new llm.ToolError('Internal server error, please try again later.');
+        }
         return `The weather in ${location} is sunny today.`;
       },
     });
@@ -67,7 +69,7 @@ export default defineAgent({
     const checkStoredNumber = llm.tool({
       description: 'Called when the user wants to check the stored number.',
       parameters: z.object({}),
-      execute: async (_, { ctx }: ToolOptions<UserData>) => {
+      execute: async (_, { ctx }: llm.ToolOptions<UserData>) => {
         return `The stored number is ${ctx.userData.number}.`;
       },
     });
@@ -77,7 +79,7 @@ export default defineAgent({
       parameters: z.object({
         number: z.number().describe('The number to update the stored number to'),
       }),
-      execute: async ({ number }, { ctx }: ToolOptions<UserData>) => {
+      execute: async ({ number }, { ctx }: llm.ToolOptions<UserData>) => {
         ctx.userData.number = number;
         return `The stored number is now ${number}.`;
       },

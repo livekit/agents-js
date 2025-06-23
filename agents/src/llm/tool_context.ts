@@ -12,6 +12,7 @@ import type { RunContext, UnknownUserData } from '../voice/run_context.js';
 const TOOL_SYMBOL = Symbol('tool');
 const FUNCTION_TOOL_SYMBOL = Symbol('function_tool');
 const PROVIDER_DEFINED_TOOL_SYMBOL = Symbol('provider_defined_tool');
+const TOOL_ERROR_SYMBOL = Symbol('tool_error');
 
 export type JSONValue = null | string | number | boolean | JSONObject | JSONArray;
 
@@ -36,6 +37,16 @@ export type ToolChoice =
         name: string;
       };
     };
+
+export class ToolError extends Error {
+  constructor(message: string) {
+    super(message);
+
+    Object.defineProperty(this, TOOL_ERROR_SYMBOL, {
+      value: true,
+    });
+  }
+}
 
 export interface ToolOptions<UserData = UnknownUserData> {
   /**
@@ -200,4 +211,8 @@ export function isProviderDefinedTool(tool: any): tool is ProviderDefinedTool {
   const isTool = tool && tool[TOOL_SYMBOL] === true;
   const isProviderDefinedTool = tool[PROVIDER_DEFINED_TOOL_SYMBOL] === true;
   return isTool && isProviderDefinedTool;
+}
+
+export function isToolError(error: any): error is ToolError {
+  return error && error[TOOL_ERROR_SYMBOL] === true;
 }

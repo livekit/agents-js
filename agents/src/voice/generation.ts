@@ -6,7 +6,13 @@ import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
 import { type ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import { shortuuid } from '../llm/misc.js';
-import { type ToolChoice, type ToolContext, isFunctionTool } from '../llm/tool_context.js';
+import {
+  type ToolChoice,
+  type ToolContext,
+  ToolError,
+  isFunctionTool,
+  isToolError,
+} from '../llm/tool_context.js';
 import { toError } from '../llm/utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
@@ -86,7 +92,17 @@ export class _JsOutput {
   }
 
   sanitize(): _SanitizedOutput {
-    // TODO(AJS-90): ToolError handling
+    if (isToolError(this.exception)) {
+      return _SanitizedOutput.create({
+        toolCall: { ...this.toolCall },
+        toolCallOutput: FunctionCallOutput.create({
+          name: this.toolCall.name,
+          callId: this.toolCall.callId,
+          output: this.exception.message,
+          isError: true,
+        }),
+      });
+    }
 
     // TODO(AJS-116): support OpenAI stop response
 
@@ -432,17 +448,20 @@ export function performToolExecutions({
       // Ensure valid arguments
       try {
         parsedArgs = tool.parameters.parse(JSON.parse(toolCall.args));
-      } catch (error) {
+      } catch (rawError) {
+        const error = toError(rawError);
         logger.error(
           {
             function: toolCall.name,
             arguments: toolCall.args,
             speech_id: speechHandle.id,
-            error: toError(error).message,
+            error: error.message,
           },
           `tried to call AI function ${toolCall.name} with invalid arguments`,
         );
-        jsOut.exception = toError(error);
+        jsOut.exception = new ToolError(
+          `Error when parsing arguments for tool ${toolCall.name}: ${error.message}. Make sure to pass the valid arguments.`,
+        );
         toolOutput.output.push(jsOut);
         continue;
       }

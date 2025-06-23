@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { type ToolExecutionOptions, tool } from './tool_context.js';
+import { type ToolOptions, tool } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
 
 describe('Tool Context', () => {
@@ -153,7 +153,7 @@ describe('Tool Context', () => {
         parameters: z.object({
           location: z.string(),
         }),
-        execute: async ({ location }, { ctx }: ToolExecutionOptions<{ name: string }>) => {
+        execute: async ({ location }, { ctx }: ToolOptions<{ name: string }>) => {
           return `The weather in ${location} is sunny, ${ctx.userData.name}`;
         },
       });
