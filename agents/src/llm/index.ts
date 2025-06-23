@@ -8,7 +8,7 @@ export {
   type Tool,
   type ToolChoice,
   type ToolContext,
-  type ToolExecutionOptions,
+  type ToolOptions as ToolExecutionOptions,
   type ToolType,
 } from './tool_context.js';
 

@@ -461,7 +461,7 @@ export function performToolExecutions({
       );
 
       const toolExecution = tool.execute(parsedArgs, {
-        ctx: new RunContext(session),
+        ctx: new RunContext(session, speechHandle, toolCall),
         toolCallId: toolCall.callId,
         abortSignal: signal,
       });

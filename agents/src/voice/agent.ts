@@ -30,10 +30,10 @@ export class StopResponse extends Error {
   }
 }
 
-export interface AgentOptions {
+export interface AgentOptions<UserData> {
   instructions: string;
   chatCtx?: ChatContext;
-  tools?: ToolContext;
+  tools?: ToolContext<UserData>;
   turnDetection?: TurnDetectionMode;
   stt?: STT;
   vad?: VAD;
@@ -44,7 +44,7 @@ export interface AgentOptions {
   minConsecutiveSpeechDelay?: number;
 }
 
-export class Agent {
+export class Agent<UserData = any> {
   private turnDetection?: TurnDetectionMode;
   private stt?: STT;
   private vad?: VAD;
@@ -61,9 +61,18 @@ export class Agent {
   _instructions: string;
 
   /** @internal */
-  _tools?: ToolContext;
+  _tools?: ToolContext<UserData>;
 
-  constructor({ instructions, chatCtx, tools, turnDetection, stt, vad, llm, tts }: AgentOptions) {
+  constructor({
+    instructions,
+    chatCtx,
+    tools,
+    turnDetection,
+    stt,
+    vad,
+    llm,
+    tts,
+  }: AgentOptions<UserData>) {
     this._instructions = instructions;
     this._tools = { ...tools };
     this._chatCtx =
@@ -92,7 +101,7 @@ export class Agent {
     return this._instructions;
   }
 
-  get toolCtx(): ToolContext {
+  get toolCtx(): ToolContext<UserData> {
     return { ...this._tools };
   }
 
@@ -239,6 +248,6 @@ export class Agent {
   };
 }
 
-export function createAgent(options: AgentOptions): Agent {
+export function createAgent<UserData = any>(options: AgentOptions<UserData>): Agent<UserData> {
   return new Agent(options);
 }
