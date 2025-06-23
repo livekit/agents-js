@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { Heap } from 'heap-js';
 import type { ReadableStream } from 'node:stream/web';
@@ -47,6 +48,7 @@ export class AgentActivity implements RecognitionHooks {
   private currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private q_updated: Future;
+  private lock = new Mutex();
   agent: Agent;
   agentSession: AgentSession;
 
@@ -526,9 +528,8 @@ export class AgentActivity implements RecognitionHooks {
     const newToolCalls: FunctionCall[] = [];
     const newToolCallOutputs: FunctionCallOutput[] = [];
     let shouldGenerateToolReply: boolean = false;
-    // TODO(AJS-94): add support for agent handoff function
-    // newAgentTask: Agent | undefined = undefined;
-    // ignoreTaskSwitch: boolean = false;
+    let newAgentTask: Agent | undefined = undefined;
+    let ignoreTaskSwitch: boolean = false;
 
     for (const jsOut of toolOutput.output) {
       const sanitizedOut = jsOut.sanitize();
@@ -541,10 +542,20 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
 
-      // TODO(AJS-94): add support for agent handoff function
+      if (newAgentTask !== undefined && sanitizedOut.agentTask !== undefined) {
+        this.logger.error('expected to receive only one agent task from the tool executions');
+        ignoreTaskSwitch = true;
+        // TODO: should we mark the function call as failed to notify the LLM?
+      }
+
+      newAgentTask = sanitizedOut.agentTask;
     }
 
-    // TODO(AJS-91): handle draining + agent activity switching
+    let draining = this.draining;
+    if (!ignoreTaskSwitch && newAgentTask !== undefined) {
+      this.agentSession.updateAgent(newAgentTask);
+      draining = true;
+    }
 
     const toolMessages = [...newToolCalls, ...newToolCallOutputs] as ChatItem[];
     if (shouldGenerateToolReply) {
@@ -556,11 +567,15 @@ export class AgentActivity implements RecognitionHooks {
         speechHandle,
       );
 
+      // Avoid setting tool_choice to "required" or a specific function when
+      // passing tool response back to the LLM
+      const respondToolChoice = draining || toolChoice === 'none' ? 'none' : 'auto';
+
       this.pipelineReplyTask(
         handle,
         chatCtx,
         toolCtx,
-        toolChoice,
+        respondToolChoice,
         instructions,
         undefined,
         toolMessages,
@@ -568,8 +583,7 @@ export class AgentActivity implements RecognitionHooks {
         this.onPipelineReplyDone();
       });
 
-      // TODO(AJS-91): handle scheduling speech bypassing draining
-      this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+      this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
     } else if (newToolCallOutputs.length > 0) {
       for (const msg of toolMessages) {
         msg.createdAt = replyStartedAt;
@@ -578,9 +592,32 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private scheduleSpeech(speechHandle: SpeechHandle, priority: number): void {
+  private scheduleSpeech(
+    speechHandle: SpeechHandle,
+    priority: number,
+    bypassDraining: boolean = false,
+  ): void {
+    if (this.draining && !bypassDraining) {
+      throw new Error('cannot schedule new speech, the agent is draining');
+    }
+
     // Monotonic time to avoid near 0 collisions
     this.speechQueue.push([priority, Number(process.hrtime.bigint()), speechHandle]);
     this.wakeupMainTask();
   }
+
+  async drain(): Promise<void> {
+    const unlock = await this.lock.lock();
+
+    try {
+      if (this._draining) return;
+
+      this._draining = true;
+      // TODO: agent onExit hook
+    } finally {
+      unlock();
+    }
+  }
+
+  async aclose(): Promise<void> {}
 }

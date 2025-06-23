@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { Mutex } from '@livekit/mutex';
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
@@ -95,6 +96,8 @@ export class AgentSession<
   private _userData: UserData | undefined;
   /** @internal */
   private _agentState: AgentState = 'initializing';
+  /** @internal */
+  private _activityLock = new Mutex();
 
   /** @internal */
   audioInput?: ReadableStream<AudioFrame>;
@@ -164,6 +167,13 @@ export class AgentSession<
     this._updateAgentState('listening');
   }
 
+  updateAgent(agent: Agent): void {
+    this.agent = agent;
+
+    if (!this.started) return;
+    this.updateActivity(agent);
+  }
+
   commitUserTurn() {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
@@ -180,15 +190,24 @@ export class AgentSession<
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
-    this.nextActivity = new AgentActivity(agent, this);
+    const unlock = await this._activityLock.lock();
 
-    // TODO(shubhra): Drain and close the old activity
+    try {
+      this.nextActivity = new AgentActivity(agent, this);
 
-    this.activity = this.nextActivity;
-    this.nextActivity = undefined;
+      if (this.activity) {
+        await this.activity.drain();
+        await this.activity.aclose();
+      }
 
-    if (this.activity) {
-      await this.activity.start();
+      this.activity = this.nextActivity;
+      this.nextActivity = undefined;
+
+      if (this.activity) {
+        await this.activity.start();
+      }
+    } finally {
+      unlock();
     }
   }
 
