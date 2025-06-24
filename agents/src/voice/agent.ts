@@ -30,6 +30,12 @@ export class StopResponse extends Error {
   }
 }
 
+export interface AgentHooks {
+  enter(): Promise<void>;
+  exit(): Promise<void>;
+  userTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage): Promise<void>;
+}
+
 export interface AgentOptions<UserData> {
   instructions: string;
   chatCtx?: ChatContext;
@@ -39,6 +45,7 @@ export interface AgentOptions<UserData> {
   vad?: VAD;
   llm?: LLM; // TODO: support realtime model
   tts?: TTS;
+  on?: AgentHooks;
   mcpServers?: any[]; // TODO: support MCP servers
   allowInterruptions?: boolean;
   minConsecutiveSpeechDelay?: number;
@@ -63,6 +70,9 @@ export class Agent<UserData = any> {
   /** @internal */
   _tools?: ToolContext<UserData>;
 
+  /** @internal */
+  _on?: AgentHooks;
+
   constructor({
     instructions,
     chatCtx,
@@ -72,6 +82,7 @@ export class Agent<UserData = any> {
     vad,
     llm,
     tts,
+    on,
   }: AgentOptions<UserData>) {
     this._instructions = instructions;
     this._tools = { ...tools };
@@ -89,6 +100,7 @@ export class Agent<UserData = any> {
     this.vad = vad;
     this.llm = llm;
     this.tts = tts;
+    this._on = on;
     this.agentActivity = undefined; // TODO(shubhra): add type
   }
 
@@ -105,9 +117,13 @@ export class Agent<UserData = any> {
     return { ...this._tools };
   }
 
-  async onEnter(): Promise<void> {}
+  async onEnter(): Promise<void> {
+    await this._on?.enter();
+  }
 
-  async onExit(): Promise<void> {}
+  async onExit(): Promise<void> {
+    await this._on?.exit();
+  }
 
   async transcriptionNode(
     text: ReadableStream<string>,
@@ -116,7 +132,9 @@ export class Agent<UserData = any> {
     return Agent.default.transcriptionNode(this, text, modelSettings);
   }
 
-  async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage): Promise<void> {}
+  async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage): Promise<void> {
+    await this._on?.userTurnCompleted(chatCtx, newMessage);
+  }
 
   async sttNode(
     audio: ReadableStream<AudioFrame>,

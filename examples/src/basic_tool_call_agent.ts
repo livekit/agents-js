@@ -88,6 +88,19 @@ export default defineAgent({
     const agent = voice.createAgent<UserData>({
       instructions: 'You are a helpful assistant.',
       tools: { getWeather, toggleLight, getNumber, checkStoredNumber, updateStoredNumber },
+      on: {
+        enter: async () => {
+          console.log('[hook] agent entered');
+        },
+        exit: async () => {
+          console.log('[hook] agent exited');
+        },
+        userTurnCompleted: async (chatCtx, newMessage) => {
+          console.log('[hook] user turn completed');
+          console.log(chatCtx.items[chatCtx.items.length - 1]);
+          console.log(newMessage.content);
+        },
+      },
     });
 
     await ctx.connect();
