@@ -137,7 +137,9 @@ export class ChunkedStream extends tts.ChunkedStream {
 export class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
   #logger = log();
-  #tokenizer = new tokenize.basic.SentenceTokenizer(undefined, BUFFERED_WORDS_COUNT).stream();
+  #tokenizer = new tokenize.basic.SentenceTokenizer({
+    minSentenceLength: BUFFERED_WORDS_COUNT,
+  }).stream();
   label = 'cartesia.SynthesizeStream';
 
   constructor(tts: TTS, opts: TTSOptions) {

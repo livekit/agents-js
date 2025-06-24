@@ -298,12 +298,6 @@ async function forwardText(
         out.firstTextFut.resolve();
       }
     }
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      // Abort signal was triggered, handle gracefully
-      return;
-    }
-    throw error;
   } finally {
     textOutput?.flush();
     reader?.releaseLock();

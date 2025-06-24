@@ -142,6 +142,10 @@ export class BufferedSentenceStream extends SentenceStream {
     this.#stream.close();
   }
 
+  endInput() {
+    this.#stream.endInput();
+  }
+
   next(): Promise<IteratorResult<TokenData>> {
     return this.#stream.next();
   }
