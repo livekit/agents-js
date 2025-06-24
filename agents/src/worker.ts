@@ -328,7 +328,6 @@ export class Worker {
       worker_type: JobType[opts.workerType],
       active_jobs: this.activeJobs.length,
       sdk_version: version,
-      worker_token: this.#opts.workerToken,
     }));
   }
 
