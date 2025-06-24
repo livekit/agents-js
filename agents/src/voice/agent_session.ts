@@ -5,6 +5,7 @@ import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
+import type { AgentState } from '../attributes.js';
 import type { ChatMessage } from '../llm/chat_context.js';
 import { ChatContext } from '../llm/chat_context.js';
 import type { LLM } from '../llm/index.js';
@@ -20,7 +21,6 @@ import type { AudioOutput, TextOutput } from './io.js';
 import { RoomIO } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 
-export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
 export interface VoiceOptions {
   allowInterruptions: boolean;
   discardAudioIfUninterruptible: boolean;

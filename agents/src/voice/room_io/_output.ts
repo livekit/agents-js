@@ -17,8 +17,13 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
+import {
+  Convert as ConvertAttributes,
+  type TranscriptionAttributes,
+} from 'agents/src/attributes.js';
 import { randomUUID } from 'node:crypto';
 import {
+  ATTRIBUTE_TRANSCRIPTION_FINAL,
   ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID,
   ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
   TOPIC_TRANSCRIPTION,
@@ -165,7 +170,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     this.flushTask = Task.from((controller) => this.flushTaskImpl(currWriter, controller.signal));
   }
 
-  private async createTextWriter(attributes?: Record<string, string>): Promise<TextStreamWriter> {
+  private async createTextWriter(attributes?: TranscriptionAttributes): Promise<TextStreamWriter> {
     if (!this.participantIdentity) {
       throw new Error('participantIdentity not found');
     }
@@ -176,24 +181,24 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
 
     if (!attributes) {
       attributes = {
-        ATTRIBUTE_TRANSCRIPTION_FINAL: 'false',
+        [ATTRIBUTE_TRANSCRIPTION_FINAL]: false,
+        [ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID]: this.currentId,
       };
       if (this.trackId) {
         attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
       }
-      attributes[ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID] = this.currentId;
     }
 
     return await this.room.localParticipant.streamText({
       topic: TOPIC_TRANSCRIPTION,
       senderIdentity: this.participantIdentity,
-      attributes,
+      attributes: ConvertAttributes.transcriptionAttributesToRaw(attributes),
     });
   }
 
   private async flushTaskImpl(writer: TextStreamWriter | null, signal: AbortSignal): Promise<void> {
-    const attributes: Record<string, string> = {
-      ATTRIBUTE_TRANSCRIPTION_FINAL: 'true',
+    const attributes: TranscriptionAttributes = {
+      [ATTRIBUTE_TRANSCRIPTION_FINAL]: true,
     };
     if (this.trackId) {
       attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;

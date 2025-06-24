@@ -19,8 +19,14 @@ import {
   TrackSource,
 } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
+import {
+  type AgentState,
+  Convert as ConvertAttributes,
+  type TranscriptionAttributes,
+} from '../attributes.js';
 import { AudioByteStream } from '../audio.js';
 import {
+  AGENT_STATE_ATTRIBUTE,
   ATTRIBUTE_TRANSCRIPTION_FINAL,
   ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
   TOPIC_TRANSCRIPTION,
@@ -55,9 +61,6 @@ export abstract class RealtimeModel {
   abstract inFrameSize: number;
   abstract outFrameSize: number;
 }
-
-export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
-export const AGENT_STATE_ATTRIBUTE = 'lk.agent.state';
 
 /** @beta */
 export class MultimodalAgent extends EventEmitter {
@@ -508,10 +511,10 @@ export class MultimodalAgent extends EventEmitter {
     const stream = await this.room.localParticipant.streamText({
       topic: TOPIC_TRANSCRIPTION,
       senderIdentity: participantIdentity,
-      attributes: {
+      attributes: ConvertAttributes.transcriptionAttributesToRaw({
         [ATTRIBUTE_TRANSCRIPTION_TRACK_ID]: trackSid,
-        [ATTRIBUTE_TRANSCRIPTION_FINAL]: isFinal.toString(),
-      },
+        [ATTRIBUTE_TRANSCRIPTION_FINAL]: isFinal,
+      } satisfies TranscriptionAttributes),
     });
     await stream.write(text);
     await stream.close();
@@ -532,7 +535,8 @@ export class MultimodalAgent extends EventEmitter {
 
   #setState(state: AgentState) {
     if (this.room?.isConnected && this.room.localParticipant) {
-      const currentState = this.room.localParticipant.attributes![AGENT_STATE_ATTRIBUTE];
+      const attributes = ConvertAttributes.toAgentAttributes(this.room.localParticipant.attributes);
+      const currentState = attributes[AGENT_STATE_ATTRIBUTE];
       if (currentState !== state) {
         this.room.localParticipant.setAttributes({
           [AGENT_STATE_ATTRIBUTE]: state,
