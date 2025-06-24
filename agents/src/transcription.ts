@@ -70,8 +70,6 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
   #audioData?: AudioData;
   #textData?: TextData;
 
-  #logger: Logger;
-
   constructor(opts: TextSyncOptions) {
     super();
 
