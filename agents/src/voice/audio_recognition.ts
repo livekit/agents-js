@@ -311,39 +311,50 @@ export class AudioRecognition {
   }
 
   private createVadTask() {
-    return async (controller: AbortController) => {
+    return async ({ signal }: AbortController) => {
       const vadStream = this.vad.stream();
       vadStream.updateInputStream(this.vadInputStream);
 
-      for await (const ev of vadStream) {
-        if (controller.signal.aborted) {
-          this.logger.debug('VAD task cancelled');
-          break;
+      const abortHandler = () => {
+        vadStream.detachInputStream();
+        vadStream.close();
+        signal.removeEventListener('abort', abortHandler);
+      };
+      signal.addEventListener('abort', abortHandler);
+
+      try {
+        for await (const ev of vadStream) {
+          if (signal.aborted) {
+            this.logger.debug('VAD task cancelled');
+            break;
+          }
+
+          switch (ev.type) {
+            case VADEventType.START_OF_SPEECH:
+              this.hooks.onStartOfSpeech(ev);
+              this.speaking = true;
+
+              this.bounceEOUTask?.cancel();
+              break;
+            case VADEventType.INFERENCE_DONE:
+              this.hooks.onVADInferenceDone(ev);
+              break;
+            case VADEventType.END_OF_SPEECH:
+              this.hooks.onEndOfSpeech(ev);
+              this.speaking = false;
+              // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
+              this.lastSpeakingTime = Date.now() - ev.silenceDuration;
+
+              if (this.turnDetectionMode !== 'manual') {
+                const chatCtx = this.hooks.retrieveChatCtx();
+                this.logger.debug('running EOU detection on vad END_OF_SPEECH');
+                this.runEOUDetection(chatCtx);
+              }
+              break;
+          }
         }
-
-        switch (ev.type) {
-          case VADEventType.START_OF_SPEECH:
-            this.hooks.onStartOfSpeech(ev);
-            this.speaking = true;
-
-            this.bounceEOUTask?.cancel();
-            break;
-          case VADEventType.INFERENCE_DONE:
-            this.hooks.onVADInferenceDone(ev);
-            break;
-          case VADEventType.END_OF_SPEECH:
-            this.hooks.onEndOfSpeech(ev);
-            this.speaking = false;
-            // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
-            this.lastSpeakingTime = Date.now() - ev.silenceDuration;
-
-            if (this.turnDetectionMode !== 'manual') {
-              const chatCtx = this.hooks.retrieveChatCtx();
-              this.logger.debug('running EOU detection on vad END_OF_SPEECH');
-              this.runEOUDetection(chatCtx);
-            }
-            break;
-        }
+      } catch (e) {
+        this.logger.error('Error in VAD task:', e);
       }
     };
   }
@@ -354,6 +365,10 @@ export class AudioRecognition {
       this.silenceAudioTransform.readable as any,
     );
     this.deferredInputStream.setSource(mergedStream as any);
+  }
+
+  detachInputAudioStream() {
+    this.deferredInputStream.detachSource();
   }
 
   clearUserTurn() {
@@ -416,10 +431,18 @@ export class AudioRecognition {
   }
 
   async close() {
+    this.logger.debug('AudioRecognition: closing');
+    this.logger.debug('AudioRecognition: detaching input audio stream');
+    this.detachInputAudioStream();
+    this.logger.debug('AudioRecognition: cancelling commitUserTurnTask');
     await this.commitUserTurnTask?.cancelAndWait();
+    this.logger.debug('AudioRecognition: cancelling sttTask');
     await this.sttTask?.cancelAndWait();
+    this.logger.debug('AudioRecognition: cancelling vadTask');
     await this.vadTask?.cancelAndWait();
+    this.logger.debug('AudioRecognition: cancelling bounceEOUTask');
     await this.bounceEOUTask?.cancelAndWait();
+    this.logger.debug('AudioRecognition: closed');
   }
 
   private get vadBaseTurnDetection() {

@@ -189,10 +189,10 @@ export class AgentSession<
     // TODO: add lock
     this.nextActivity = new AgentActivity(agent, this);
 
-    // if (this.activity) {
-    //   await this.activity.drain();
-    //   await this.activity.aclose();
-    // }
+    if (this.activity) {
+      await this.activity.drain();
+      await this.activity.close();
+    }
 
     this.activity = this.nextActivity;
     this.nextActivity = undefined;

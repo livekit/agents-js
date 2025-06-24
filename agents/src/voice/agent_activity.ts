@@ -305,7 +305,6 @@ export class AgentActivity implements RecognitionHooks {
         break;
       }
 
-      // Reset the Future for the next iteration (equivalent to Python's Event.clear())
       this.q_updated = new Future();
     }
 

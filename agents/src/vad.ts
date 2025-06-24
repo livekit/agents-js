@@ -177,6 +177,10 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     this.deferredInputStream.setSource(audioStream);
   }
 
+  detachInputStream() {
+    this.deferredInputStream.detachSource();
+  }
+
   /** @deprecated Use `updateInputStream` instead */
   pushFrame(frame: AudioFrame) {
     // TODO(AJS-395): remove this method
