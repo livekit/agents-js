@@ -36,14 +36,17 @@ jobs:
           filters: |
             agents-or-tests:
               - 'agents/**'
-              - 'plugins/test/**'
+              - 'plugins/test/**' 
+              - '.github/workflows/**'
             plugins: 
               - 'plugins/**'
+            workflows:
+              - '.github/workflows/**'
       - name: Test agents
-        if: steps.filter.outputs.agents-or-tests == 'true' || github.event_name != 'pull_request'
+        if: steps.filter.outputs.agents-or-tests == 'true' || steps.filter.outputs.workflows == 'true' || github.event_name != 'pull_request'
         run: pnpm test agents
       - name: Test all plugins
-        if: steps.filter.outputs.agents-or-tests == 'true' || github.event_name != 'pull_request'
+        if: steps.filter.outputs.agents-or-tests == 'true' || steps.filter.outputs.workflows == 'true' || github.event_name != 'pull_request'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ELEVEN_API_KEY: ${{ secrets.ELEVEN_API_KEY }}
@@ -51,9 +54,10 @@ jobs:
           CARTESIA_API_KEY: ${{ secrets.CARTESIA_API_KEY }}
           NEUPHONIC_API_KEY: ${{ secrets.NEUPHONIC_API_KEY }}
           RESEMBLE_API_KEY: ${{ secrets.RESEMBLE_API_KEY }}
+          ASSEMBLY_AI_KEY: ${{ secrets.ASSEMBLY_AI_KEY }}
         run: pnpm test plugins
       - name: Test specific plugins
-        if: steps.filter.outputs.agents-or-tests == 'false' && steps.filter.outputs.plugins == 'true' && github.event_name == 'pull_request'
+        if: steps.filter.outputs.agents-or-tests == 'false' && steps.filter.outputs.workflows == 'false' && steps.filter.outputs.plugins == 'true' && github.event_name == 'pull_request'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ELEVEN_API_KEY: ${{ secrets.ELEVEN_API_KEY }}
