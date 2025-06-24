@@ -256,17 +256,22 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async mainTask(signal: AbortSignal): Promise<void> {
-    // const abortFuture = new Future();
-    // const abortHandler = () => {
-    //   abortFuture.resolve();
-    //   signal.removeEventListener('abort', abortHandler);
-    // };
-    // signal.addEventListener('abort', abortHandler);
+    const abortFuture = new Future();
+    const abortHandler = () => {
+      abortFuture.resolve();
+      signal.removeEventListener('abort', abortHandler);
+    };
+    signal.addEventListener('abort', abortHandler);
 
     this.logger.info('mainTask: started');
     while (true) {
       this.logger.info('mainTask: waiting for q_updated');
-      await this.q_updated.await;
+      await Promise.race([this.q_updated.await, abortFuture.await]);
+      if (signal.aborted) {
+        this.logger.info('mainTask: aborted');
+        break;
+      }
+
       this.logger.info(
         { queueSize: this.speechQueue.size(), speechTasksSize: this.speechTasks.size },
         'mainTask: woken up',
