@@ -18,7 +18,7 @@ import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
 import type { Task } from '../utils.js';
 import { Future } from '../utils.js';
-import type { VADEvent } from '../vad.js';
+import type { VAD, VADEvent } from '../vad.js';
 import type { Agent } from './agent.js';
 import { StopResponse } from './agent.js';
 import { type AgentSession, AgentSessionEvent, type TurnDetectionMode } from './agent_session.js';
@@ -63,7 +63,7 @@ export class AgentActivity implements RecognitionHooks {
     this.agent.agentActivity = this;
     this.audioRecognition = new AudioRecognition(
       this,
-      this.agentSession.vad,
+      this.vad,
       this.agentSession.options.minEndpointingDelay,
       this.agentSession.options.maxEndpointingDelay,
       // Arrow function preserves the Agent context
@@ -78,19 +78,20 @@ export class AgentActivity implements RecognitionHooks {
     // TODO(shubhra): Add turn detection mode
   }
 
+  get vad(): VAD {
+    return this.agent.vad || this.agentSession.vad;
+  }
+
   get stt(): STT {
-    // TODO(AJS-51): Allow components to be defined in Agent class
-    return this.agentSession.stt;
+    return this.agent.stt || this.agentSession.stt;
   }
 
   get llm(): LLM {
-    // TODO(AJS-51): Allow components to be defined in Agent class
-    return this.agentSession.llm;
+    return this.agent.llm || this.agentSession.llm;
   }
 
   get tts(): TTS {
-    // TODO(AJS-51): Allow components to be defined in Agent class
-    return this.agentSession.tts;
+    return this.agent.tts || this.agentSession.tts;
   }
 
   get draining(): boolean {
