@@ -260,6 +260,12 @@ export class AgentActivity implements RecognitionHooks {
         this.currentSpeech = undefined;
         this.q_updated = new Future();
       }
+
+      // If we're draining and there are no more speech tasks, we can exit.
+      // Only speech tasks can bypass draining to create a tool response
+      if (this.draining && this.speechTasks.size === 0) {
+        break;
+      }
     }
   }
 
