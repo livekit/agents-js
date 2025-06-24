@@ -103,6 +103,7 @@ export default defineAgent({
       tts: new elevenlabs.TTS(),
       userData: { number: 0 },
     });
+    console.log('session 123 created');
     session.start(agent, ctx.room);
   },
 });

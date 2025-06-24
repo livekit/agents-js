@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
+import { delay } from '@std/async';
 import { Heap } from 'heap-js';
 import type { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
@@ -87,6 +88,19 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     // TODO(shubhra): Add turn detection mode
+    this.debugSpeechTasks();
+  }
+
+  async debugSpeechTasks(): Promise<void> {
+    let taskSizes = this.speechTasks.size;
+    while (true) {
+      await delay(200);
+      const newTaskSizes = this.speechTasks.size;
+      if (newTaskSizes !== taskSizes) {
+        this.logger.info({ taskSizes: newTaskSizes }, 'speech tasks changed');
+        taskSizes = newTaskSizes;
+      }
+    }
   }
 
   get stt(): STT {
@@ -189,6 +203,8 @@ export class AgentActivity implements RecognitionHooks {
     name?: string;
   }) {
     const { promise, ownedSpeechHandle, name } = options;
+
+    this.logger.info({ name }, 'creating speech task');
 
     this.speechTasks.add(promise);
 

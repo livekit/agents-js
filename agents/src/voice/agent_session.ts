@@ -144,24 +144,30 @@ export class AgentSession<
   }
 
   async start(agent: Agent, room: Room): Promise<void> {
+    this.logger.info('start', this.started);
     if (this.started) {
-      return;
+      throw new Error('AgentSession already started');
     }
 
     this.agent = agent;
+    this.logger.info('start 2');
     this._updateAgentState('initializing');
 
     if (this.agent) {
+      this.logger.info('start 3');
       await this.updateActivity(this.agent);
     }
 
+    this.logger.info('start 4');
     this.roomIO = new RoomIO(this, room, this.tts.sampleRate, this.tts.numChannels);
     this.roomIO.start();
 
+    this.logger.info('start 5');
     if (this.audioInput) {
       this.activity?.updateAudioInput(this.audioInput);
     }
 
+    this.logger.info('start 6');
     this.logger.debug('AgentSession started');
     this.started = true;
     this._updateAgentState('listening');
@@ -190,9 +196,11 @@ export class AgentSession<
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
+    this.logger.info('updateActivity: lock');
     const unlock = await this._activityLock.lock();
 
     try {
+      this.logger.info('updateActivity: create new activity');
       this.nextActivity = new AgentActivity(agent, this);
 
       if (this.activity) {
@@ -204,6 +212,7 @@ export class AgentSession<
       this.nextActivity = undefined;
 
       if (this.activity) {
+        this.logger.info('updateActivity: start new activity');
         await this.activity.start();
       }
     } finally {
