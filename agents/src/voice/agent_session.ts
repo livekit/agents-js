@@ -162,6 +162,14 @@ export class AgentSession<
     this._updateAgentState('listening');
   }
 
+  updateAgent(agent: Agent): void {
+    this.agent = agent;
+
+    if (this.started) {
+      this.updateActivity(agent);
+    }
+  }
+
   commitUserTurn() {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
@@ -178,6 +186,7 @@ export class AgentSession<
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
+    // TODO: add lock
     this.nextActivity = new AgentActivity(agent, this);
 
     // if (this.activity) {
