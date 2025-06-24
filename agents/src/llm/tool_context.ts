@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { type ZodObject, ZodType } from 'zod';
+import type { Agent } from '../voice/agent.js';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
 
 // heavily inspired by Vercel AI's `tool()`:
@@ -13,6 +14,7 @@ const TOOL_SYMBOL = Symbol('tool');
 const FUNCTION_TOOL_SYMBOL = Symbol('function_tool');
 const PROVIDER_DEFINED_TOOL_SYMBOL = Symbol('provider_defined_tool');
 const TOOL_ERROR_SYMBOL = Symbol('tool_error');
+const HANDOFF_SYMBOL = Symbol('handoff');
 
 export type JSONValue = null | string | number | boolean | JSONObject | JSONArray;
 
@@ -46,6 +48,28 @@ export class ToolError extends Error {
       value: true,
     });
   }
+}
+
+export interface AgentHandoff {
+  /**
+   * The agent to handoff to.
+   */
+  agent: Agent;
+
+  /**
+   * The return value of the tool.
+   */
+  returns?: any;
+
+  [HANDOFF_SYMBOL]: true;
+}
+
+export function handoff(options: { agent: Agent; returns?: any }): AgentHandoff {
+  return {
+    agent: options.agent,
+    returns: options.returns,
+    [HANDOFF_SYMBOL]: true,
+  };
 }
 
 export interface ToolOptions<UserData = UnknownUserData> {
@@ -215,4 +239,8 @@ export function isProviderDefinedTool(tool: any): tool is ProviderDefinedTool {
 
 export function isToolError(error: any): error is ToolError {
   return error && error[TOOL_ERROR_SYMBOL] === true;
+}
+
+export function isAgentHandoff(handoff: any): handoff is AgentHandoff {
+  return handoff && handoff[HANDOFF_SYMBOL] === true;
 }
