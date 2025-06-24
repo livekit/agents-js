@@ -86,7 +86,7 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     // TODO(shubhra): Add turn detection mode
-    // this.debugSpeechTasks();
+    this.debugSpeechTasks();
   }
 
   async debugSpeechTasks(): Promise<void> {
@@ -202,20 +202,20 @@ export class AgentActivity implements RecognitionHooks {
   }) {
     const { promise, ownedSpeechHandle, name } = options;
 
-    // this.logger.info({ name }, 'creating speech task');
+    this.logger.info({ name, speechTasksSize: this.speechTasks.size }, 'creating speech task');
 
-    // this.speechTasks.add(promise);
+    this.speechTasks.add(promise);
 
-    // promise.finally(() => {
-    //   this.logger.info({ name }, 'speech task done');
-    //   this.speechTasks.delete(promise);
+    promise.finally(() => {
+      this.logger.info({ name }, 'speech task done');
+      this.speechTasks.delete(promise);
 
-    //   if (ownedSpeechHandle) {
-    //     ownedSpeechHandle.markPlayoutDone();
-    //   }
+      if (ownedSpeechHandle) {
+        ownedSpeechHandle.markPlayoutDone();
+      }
 
-    //   this.wakeupMainTask();
-    // });
+      this.wakeupMainTask();
+    });
 
     return promise;
   }
@@ -263,8 +263,14 @@ export class AgentActivity implements RecognitionHooks {
     // };
     // signal.addEventListener('abort', abortHandler);
 
+    this.logger.info('mainTask: started');
     while (true) {
+      this.logger.info('mainTask: waiting for q_updated');
       await this.q_updated.await;
+      this.logger.info(
+        { queueSize: this.speechQueue.size(), speechTasksSize: this.speechTasks.size },
+        'mainTask: woken up',
+      );
       if (signal.aborted) {
         this.logger.info('mainTask: aborted');
         break;
@@ -285,7 +291,6 @@ export class AgentActivity implements RecognitionHooks {
         speechHandle.authorizePlayout();
         await speechHandle.waitForPlayout();
         this.currentSpeech = undefined;
-        this.q_updated = new Future();
       }
 
       // If we're draining and there are no more speech tasks, we can exit.
@@ -294,12 +299,16 @@ export class AgentActivity implements RecognitionHooks {
         this.logger.info('mainTask: draining and no more speech tasks');
         break;
       }
+
+      // Reset the Future for the next iteration (equivalent to Python's Event.clear())
+      this.q_updated = new Future();
     }
 
     this.logger.info('mainTask: exiting');
   }
 
   private wakeupMainTask(): void {
+    this.logger.info('wakeupMainTask: called');
     this.q_updated.resolve();
   }
 
