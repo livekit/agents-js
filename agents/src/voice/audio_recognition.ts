@@ -415,6 +415,13 @@ export class AudioRecognition {
       });
   }
 
+  async close() {
+    await this.commitUserTurnTask?.cancelAndWait();
+    await this.sttTask?.cancelAndWait();
+    await this.vadTask?.cancelAndWait();
+    await this.bounceEOUTask?.cancelAndWait();
+  }
+
   private get vadBaseTurnDetection() {
     return this.turnDetectionMode === undefined || this.turnDetectionMode === 'vad';
   }
