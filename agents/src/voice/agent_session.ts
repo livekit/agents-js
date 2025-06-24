@@ -178,9 +178,6 @@ export class AgentSession<
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
-    this.logger.info('updateActivity: lock');
-
-    this.logger.info('updateActivity: create new activity');
     this.nextActivity = new AgentActivity(agent, this);
 
     // if (this.activity) {
