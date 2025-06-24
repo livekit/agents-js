@@ -51,6 +51,7 @@ jobs:
           CARTESIA_API_KEY: ${{ secrets.CARTESIA_API_KEY }}
           NEUPHONIC_API_KEY: ${{ secrets.NEUPHONIC_API_KEY }}
           RESEMBLE_API_KEY: ${{ secrets.RESEMBLE_API_KEY }}
+          ASSEMBLY_AI_KEY: ${{ secrets.ASSEMBLY_AI_KEY }}
         run: pnpm test plugins
       - name: Test specific plugins
         if: steps.filter.outputs.agents-or-tests == 'false' && steps.filter.outputs.plugins == 'true' && github.event_name == 'pull_request'
