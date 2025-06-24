@@ -286,7 +286,6 @@ async function forwardText(
   try {
     while (true) {
       if (signal.aborted) {
-        console.log('forwardText: Abort signal was triggered, handle gracefully');
         break;
       }
       const { done, value: delta } = await reader.read();
