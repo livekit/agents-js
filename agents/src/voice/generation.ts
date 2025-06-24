@@ -10,6 +10,7 @@ import {
   type ToolChoice,
   type ToolContext,
   ToolError,
+  isAgentHandoff,
   isFunctionTool,
   isToolError,
 } from '../llm/tool_context.js';
@@ -17,6 +18,7 @@ import { toError } from '../llm/utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task } from '../utils.js';
+import type { Agent } from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
 import { RunContext } from './run_context.js';
@@ -51,34 +53,66 @@ export class _ToolOutput {
 export class _SanitizedOutput {
   toolCall: FunctionCall;
   toolCallOutput?: FunctionCallOutput;
-  // TODO(AJS-94): add support for agent handoff function
-  // agentTask: Agent | undefined;
   replyRequired: boolean;
+  agentTask?: Agent;
 
   constructor(
     toolCall: FunctionCall,
     toolCallOutput: FunctionCallOutput | undefined,
     replyRequired: boolean,
+    agentTask: Agent | undefined,
   ) {
     this.toolCall = toolCall;
     this.toolCallOutput = toolCallOutput;
     this.replyRequired = replyRequired;
+    this.agentTask = agentTask;
   }
 
   static create(params: {
     toolCall: FunctionCall;
     toolCallOutput?: FunctionCallOutput;
     replyRequired?: boolean;
+    agentTask?: Agent;
   }) {
-    const { toolCall, toolCallOutput, replyRequired = true } = params;
-    return new _SanitizedOutput(toolCall, toolCallOutput, replyRequired);
+    const { toolCall, toolCallOutput, replyRequired = true, agentTask } = params;
+    return new _SanitizedOutput(toolCall, toolCallOutput, replyRequired, agentTask);
   }
+}
+
+function isValidToolOutput(toolOutput: unknown): boolean {
+  const validTypes = ['string', 'number', 'boolean', undefined, null];
+
+  if (validTypes.includes(typeof toolOutput)) {
+    return true;
+  }
+
+  if (Array.isArray(toolOutput)) {
+    return toolOutput.every(isValidToolOutput);
+  }
+
+  if (toolOutput instanceof Set) {
+    return Array.from(toolOutput).every(isValidToolOutput);
+  }
+
+  if (toolOutput instanceof Map) {
+    return Array.from(toolOutput.values()).every(isValidToolOutput);
+  }
+
+  if (toolOutput instanceof Object) {
+    return Object.entries(toolOutput).every(
+      ([key, value]) => validTypes.includes(typeof key) && isValidToolOutput(value),
+    );
+  }
+
+  return false;
 }
 
 export class _JsOutput {
   toolCall: FunctionCall;
   output: unknown;
   exception?: Error;
+
+  #logger = log();
 
   constructor(toolCall: FunctionCall, output: unknown, exception: Error | undefined) {
     this.toolCall = toolCall;
@@ -118,17 +152,37 @@ export class _JsOutput {
       });
     }
 
-    // TODO(AJS-94): handle agent handoff tool response
-    // ...
+    let agentTask: Agent | undefined = undefined;
+    let toolOutput: unknown = this.output;
+    if (isAgentHandoff(this.output)) {
+      agentTask = this.output.agent;
+      toolOutput = this.output.returns;
+    }
+
+    if (!isValidToolOutput(toolOutput)) {
+      this.#logger.error(
+        {
+          callId: this.toolCall.callId,
+          function: this.toolCall.name,
+        },
+        `AI function ${this.toolCall.name} returned an invalid output`,
+      );
+      return _SanitizedOutput.create({
+        toolCall: { ...this.toolCall },
+        toolCallOutput: undefined,
+      });
+    }
 
     return _SanitizedOutput.create({
       toolCall: { ...this.toolCall },
       toolCallOutput: FunctionCallOutput.create({
         name: this.toolCall.name,
         callId: this.toolCall.callId,
-        output: JSON.stringify(this.output), // take the string representation of the output
+        output: toolOutput !== undefined ? JSON.stringify(toolOutput) : '', // take the string representation of the output
         isError: false,
       }),
+      replyRequired: toolOutput !== undefined, // require a reply if the tool returned an output
+      agentTask,
     });
   }
 }
