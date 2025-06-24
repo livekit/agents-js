@@ -100,16 +100,6 @@ class SegmentSynchronizerImpl {
     }
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     const frameDuration = frame.samplesPerChannel / frame.sampleRate;
-    this.logger.debug(
-      {
-        frameDuration,
-        samplesPerChannel: frame.samplesPerChannel,
-        sampleRate: frame.sampleRate,
-        currentPushedDuration: this.audioData.pushedDuration,
-        startWallTime: this.startWallTime,
-      },
-      'pushAudio:',
-    );
 
     if (!this.startWallTime && frameDuration > 0) {
       this.startWallTime = Date.now();
@@ -138,22 +128,9 @@ class SegmentSynchronizerImpl {
       return;
     }
 
-    this.logger.debug(
-      {
-        text: text.substring(0, 100) + (text.length > 100 ? '...' : ''),
-        textLength: text.length,
-        currentPushedText:
-          this.textData.pushedText.substring(0, 50) +
-          (this.textData.pushedText.length > 50 ? '...' : ''),
-        textDone: this.textData.done,
-      },
-      'pushText:',
-    );
-
     this.textData.sentenceStream.pushText(text);
     this.textData.pushedText += text;
-
-    this.logger.debug('pushText: after pushText');
+    this.textData.sentenceStream.flush();
   }
 
   endTextInput() {
@@ -448,7 +425,6 @@ export class TranscriptionSynchronizer {
 class SyncedAudioOutput extends AudioOutput {
   private capturing: boolean = false;
   private pushedDuration: number = 0.0;
-  private logger = log();
 
   constructor(
     public synchronizer: TranscriptionSynchronizer,

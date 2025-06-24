@@ -6,6 +6,7 @@ import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
+import { log } from '../log.js';
 import type { SpeechEvent } from '../stt/stt.js';
 import { Future } from '../utils.js';
 
@@ -34,6 +35,7 @@ export abstract class AudioOutput extends EventEmitter {
     playbackPosition: 0,
     interrupted: false,
   };
+  protected logger = log();
 
   constructor(
     protected readonly sampleRate?: number,
@@ -77,11 +79,16 @@ export abstract class AudioOutput extends EventEmitter {
    * Developers building audio sinks must call this method when a playback/segment is finished.
    * Segments are segmented by calls to flush() or clearBuffer()
    */
-  onPlaybackFinished(event: PlaybackFinishedEvent) {
-    this.lastPlaybackEvent = event;
+  onPlaybackFinished(options: PlaybackFinishedEvent) {
+    if (this.playbackFinishedCount >= this.playbackSegmentsCount) {
+      this.logger.warn('playback_finished called more times than playback segments were captured');
+      return;
+    }
+
+    this.lastPlaybackEvent = options;
     this.playbackFinishedCount++;
     this.playbackFinishedFuture.resolve();
-    this.emit(AudioOutput.EVENT_PLAYBACK_FINISHED, event);
+    this.emit(AudioOutput.EVENT_PLAYBACK_FINISHED, options);
   }
 
   flush(): void {
