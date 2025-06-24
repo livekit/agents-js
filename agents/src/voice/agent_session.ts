@@ -148,12 +148,10 @@ export class AgentSession<
     this.agent = agent;
     this._updateAgentState('initializing');
 
-    if (this.agent) {
-      await this.updateActivity(this.agent);
-    }
-
     this.roomIO = new RoomIO(this, room, this.tts.sampleRate, this.tts.numChannels);
     this.roomIO.start();
+
+    this.updateActivity(this.agent);
 
     if (this.audioInput) {
       this.activity?.updateAudioInput(this.audioInput);
