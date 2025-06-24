@@ -130,7 +130,6 @@ class SegmentSynchronizerImpl {
 
     this.textData.sentenceStream.pushText(text);
     this.textData.pushedText += text;
-    this.textData.sentenceStream.flush();
   }
 
   endTextInput() {
@@ -168,7 +167,13 @@ class SegmentSynchronizerImpl {
   }
 
   private async captureTaskImpl(signal: AbortSignal) {
-    for await (const text of this.outputStream.readable) {
+    const reader = this.outputStream.readable.getReader();
+    while (true) {
+      const { done, value: text } = await reader.read();
+      if (done) {
+        this.logger.debug('captureTask: exiting -');
+        break;
+      }
       if (signal.aborted) {
         this.logger.debug('captureTask: exiting early - aborted');
         break;
@@ -176,30 +181,14 @@ class SegmentSynchronizerImpl {
       this.textData.forwardedText += text;
       await this.nextInChain.captureText(text);
     }
+    reader.releaseLock();
     this.nextInChain.flush();
   }
 
   private async mainTask(): Promise<void> {
-    this.logger.debug(
-      {
-        closed: this.closed,
-        playbackCompleted: this.playbackCompleted,
-        startWallTime: this.startWallTime,
-        textDone: this.textData.done,
-        audioDone: this.audioData.done,
-      },
-      'mainTaskImpl: starting',
-    );
-
-    this.logger.debug('mainTaskImpl: waiting for startFuture');
     await this.startFuture.await;
-    this.logger.debug('mainTaskImpl: startFuture resolved');
 
     if (this.closed && !this.playbackCompleted) {
-      this.logger.debug(
-        { closed: this.closed, playbackCompleted: this.playbackCompleted },
-        'mainTaskImpl: exiting early - closed without playback completed',
-      );
       return;
     }
 
@@ -208,27 +197,11 @@ class SegmentSynchronizerImpl {
       throw new Error('startWallTime is not set when starting SegmentSynchronizerImpl.mainTask');
     }
 
-    this.logger.debug(
-      {
-        startWallTime: this.startWallTime,
-        pushedText: this.textData.pushedText,
-        textDone: this.textData.done,
-      },
-      'mainTaskImpl: starting sentence stream iteration',
-    );
-
     let sentenceCount = 0;
     try {
       for await (const textSegment of this.textData.sentenceStream) {
         sentenceCount++;
         const sentence = textSegment.token;
-        this.logger.debug(
-          {
-            sentence: sentence.substring(0, 50) + (sentence.length > 50 ? '...' : ''),
-            length: sentence.length,
-          },
-          `mainTaskImpl: processing sentence ${sentenceCount}:`,
-        );
 
         let textCursor = 0;
         if (this.closed && !this.playbackCompleted) {
@@ -247,7 +220,6 @@ class SegmentSynchronizerImpl {
           }
 
           if (this.playbackCompleted) {
-            this.logger.debug('mainTaskImpl: playback completed, flushing word:', word);
             this.outputStreamWriter.write(sentence.slice(textCursor, endPos));
             textCursor = endPos;
             continue;
@@ -258,20 +230,6 @@ class SegmentSynchronizerImpl {
           const targetHyphens = elapsedSeconds * this.options.speed;
           const hyphensBehind = Math.max(0, targetHyphens - this.textData.forwardedHyphens);
           let delay = Math.max(0, wordHphens - hyphensBehind) / this.speed;
-
-          this.logger.debug(
-            {
-              word,
-              wordHyphens: wordHphens,
-              elapsedSeconds,
-              targetHyphens,
-              forwardedHyphens: this.textData.forwardedHyphens,
-              hyphensBehind,
-              calculatedDelay: delay,
-              speed: this.speed,
-            },
-            'mainTaskImpl: word timing calculation',
-          );
 
           if (this.playbackCompleted) {
             delay = 0;
@@ -387,7 +345,7 @@ export class TranscriptionSynchronizer {
     if (!this.rotateSegmentTask.done) {
       this.logger.warn('rotateSegment called while previous segment is still being rotated');
     }
-
+    this.logger.debug('rotateSegment: starting new segment');
     this.rotateSegmentTask = Task.from((controller) =>
       this.rotateSegmentTaskImpl(controller.signal, this.rotateSegmentTask),
     );
@@ -408,9 +366,7 @@ export class TranscriptionSynchronizer {
 
   private async rotateSegmentTaskImpl(abort: AbortSignal, oldTask?: Task<void>) {
     if (oldTask) {
-      if (abort.aborted) {
-        return;
-      }
+      this.logger.debug('rotateSegmentTask: waiting for old task to complete');
       await oldTask.result;
     }
 
