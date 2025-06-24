@@ -165,6 +165,8 @@ class SegmentSynchronizerImpl {
   }
 
   private async captureTaskImpl() {
+    // Don't use a for-await loop here, because exiting the loop will close the writer in the
+    // outputStream, which will cause an error in the mainTask.then method.
     const reader = this.outputStream.readable.getReader();
     while (true) {
       const { done, value: text } = await reader.read();
