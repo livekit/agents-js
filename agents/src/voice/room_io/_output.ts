@@ -17,12 +17,12 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
-import { randomUUID } from 'node:crypto';
 import {
   ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID,
   ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
   TOPIC_TRANSCRIPTION,
 } from '../../constants.js';
+import { shortuuid } from '../../llm/misc.js';
 import { log } from '../../log.js';
 import { Future, Task } from '../../utils.js';
 import { AudioOutput, TextOutput } from '../io.js';
@@ -95,7 +95,7 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   };
 
   protected generateCurrentId(): string {
-    return 'SG_' + randomUUID();
+    return shortuuid('SG');
   }
 
   protected resetState() {
@@ -114,7 +114,7 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   }
 
   flush() {
-    if (this.participantIdentity === null || !this.capturing) {
+    if (this.participantIdentity === null || !this.trackId || !this.capturing) {
       return;
     }
 
@@ -255,15 +255,19 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
   }
 
   protected handleFlush() {
-    if (!this.trackId) {
-      return;
-    }
-
     this.flushTask = this.publishTranscription(this.currentId, this.pushedText, true);
     this.resetState();
   }
 
   async publishTranscription(id: string, text: string, final: boolean, signal?: AbortSignal) {
+    this.logger.debug(
+      {
+        id,
+        text,
+        final,
+      },
+      'publishTranscription called',
+    );
     if (!this.participantIdentity || !this.trackId) {
       return;
     }
@@ -283,6 +287,11 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
     } catch (error) {
       this.logger.error(error, 'failed to publish transcription');
     }
+  }
+
+  protected resetState() {
+    super.resetState();
+    this.pushedText = '';
   }
 }
 
