@@ -180,14 +180,21 @@ export class AgentSession<
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
+    this.logger.info('updateActivity: lock');
+
+    this.logger.info('updateActivity: create new activity');
     this.nextActivity = new AgentActivity(agent, this);
 
-    // TODO(shubhra): Drain and close the old activity
+    // if (this.activity) {
+    //   await this.activity.drain();
+    //   await this.activity.aclose();
+    // }
 
     this.activity = this.nextActivity;
     this.nextActivity = undefined;
 
     if (this.activity) {
+      this.logger.info('updateActivity: start new activity');
       await this.activity.start();
     }
   }
