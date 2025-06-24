@@ -114,7 +114,7 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   }
 
   flush() {
-    if (this.participantIdentity === null || !this.trackId || !this.capturing) {
+    if (!this.participantIdentity || !this.capturing) {
       return;
     }
 
@@ -255,19 +255,15 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
   }
 
   protected handleFlush() {
+    if (!this.trackId) {
+      return;
+    }
+
     this.flushTask = this.publishTranscription(this.currentId, this.pushedText, true);
     this.resetState();
   }
 
   async publishTranscription(id: string, text: string, final: boolean, signal?: AbortSignal) {
-    this.logger.debug(
-      {
-        id,
-        text,
-        final,
-      },
-      'publishTranscription called',
-    );
     if (!this.participantIdentity || !this.trackId) {
       return;
     }
