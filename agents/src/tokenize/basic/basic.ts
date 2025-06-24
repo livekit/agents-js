@@ -15,21 +15,21 @@ interface TokenizerOptions {
   retainFormat: boolean;
 }
 
+const defaultTokenizerOptions: TokenizerOptions = {
+  language: 'en-US',
+  minSentenceLength: 20,
+  streamContextLength: 10,
+  retainFormat: false,
+};
+
 export class SentenceTokenizer extends tokenizer.SentenceTokenizer {
   #config: TokenizerOptions;
 
-  constructor(
-    language = 'en-US',
-    minSentenceLength = 20,
-    streamContextLength = 10,
-    retainFormat = false,
-  ) {
+  constructor(options?: Partial<TokenizerOptions>) {
     super();
     this.#config = {
-      language,
-      minSentenceLength,
-      streamContextLength,
-      retainFormat,
+      ...defaultTokenizerOptions,
+      ...options,
     };
   }
 

@@ -263,7 +263,9 @@ export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
   speed: 1,
   hyphenateWord: basic.hyphenateWord,
   splitWords: basic.splitWords,
-  sentenceTokenizer: new basic.SentenceTokenizer('en-US', 20, 10, true),
+  sentenceTokenizer: new basic.SentenceTokenizer({
+    retainFormat: true,
+  }),
 };
 
 export class TranscriptionSynchronizer {
