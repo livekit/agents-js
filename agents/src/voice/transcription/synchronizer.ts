@@ -447,7 +447,11 @@ class SyncedAudioOutput extends AudioOutput {
     }
 
     this.synchronizer._impl.markPlaybackFinished(ev.playbackPosition, ev.interrupted);
-    super.onPlaybackFinished(ev);
+    super.onPlaybackFinished({
+      playbackPosition: ev.playbackPosition,
+      interrupted: ev.interrupted,
+      synchronizedTranscript: this.synchronizer._impl.synchronizedTranscript,
+    });
 
     this.synchronizer.rotateSegment();
     this.pushedDuration = 0.0;

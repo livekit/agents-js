@@ -312,8 +312,6 @@ export class AgentActivity implements RecognitionHooks {
   ): Promise<void> {
     const replyAbortController = new AbortController();
 
-    // TODO(AJS-54): add transcription/text output
-
     const audioOutput = this.agentSession.audioOutput;
     const transcriptionOutput = this.agentSession._transcriptionOutput;
 
