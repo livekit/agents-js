@@ -40,11 +40,11 @@ class SegmentSynchronizerImpl {
   private outputStream: IdentityTransform<string>;
   private outputStreamWriter: WritableStreamDefaultWriter<string>;
   private captureTask: Promise<void>;
+  private startWallTime?: number;
 
   private startFuture: Future = new Future();
   private closedFuture: Future = new Future();
   private playbackCompleted: boolean = false;
-  private startWallTime: number | null = null;
 
   private logger = log();
 
@@ -188,7 +188,6 @@ class SegmentSynchronizerImpl {
     }
 
     if (!this.startWallTime) {
-      this.logger.error('mainTaskImpl: startWallTime is not set');
       throw new Error('startWallTime is not set when starting SegmentSynchronizerImpl.mainTask');
     }
 
