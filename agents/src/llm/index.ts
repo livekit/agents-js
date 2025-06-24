@@ -2,14 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 export {
-  oaiBuildFunctionInfo,
-  oaiParams,
-  type CallableFunction,
-  type CallableFunctionResult,
-  type FunctionCallInfo,
-  type FunctionContext,
-  type inferParameters,
-} from './function_context.js';
+  tool,
+  ToolError,
+  type FunctionTool,
+  type ProviderDefinedTool,
+  type Tool,
+  type ToolChoice,
+  type ToolContext,
+  type ToolOptions,
+  type ToolType,
+} from './tool_context.js';
 
 export {
   ChatContext,
@@ -28,8 +30,15 @@ export {
   LLMEvent,
   LLMStream,
   type ChatChunk,
-  type Choice,
   type ChoiceDelta,
   type CompletionUsage,
   type LLMCallbacks,
 } from './llm.js';
+
+export {
+  createToolOptions,
+  executeToolCall,
+  oaiBuildFunctionInfo,
+  oaiParams,
+  type OpenAIFunctionParameters,
+} from './utils.js';

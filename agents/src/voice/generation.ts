@@ -3,44 +3,162 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
-import type { ChatContext } from '../llm/chat_context.js';
+import { type ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import { shortuuid } from '../llm/misc.js';
+import {
+  type ToolChoice,
+  type ToolContext,
+  ToolError,
+  isFunctionTool,
+  isToolError,
+} from '../llm/tool_context.js';
+import { toError } from '../llm/utils.js';
+import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task } from '../utils.js';
+import type { AgentSession } from './agent_session.js';
 import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
+import { RunContext } from './run_context.js';
+import type { SpeechHandle } from './speech_handle.js';
 
 /* @internal */
 export class _LLMGenerationData {
   generatedText: string = '';
+  generatedToolCalls: FunctionCall[];
   id: string;
 
-  constructor(public readonly textStream: ReadableStream<string>) {
+  constructor(
+    public readonly textStream: ReadableStream<string>,
+    public readonly toolCallStream: ReadableStream<FunctionCall>,
+  ) {
     // TODO(AJS-60): standardize id generation - same as python
     this.id = shortuuid('item');
+    this.generatedToolCalls = [];
+  }
+}
+
+export class _ToolOutput {
+  output: _JsOutput[];
+  firstToolFut: Future;
+
+  constructor() {
+    this.output = [];
+    this.firstToolFut = new Future();
+  }
+}
+
+export class _SanitizedOutput {
+  toolCall: FunctionCall;
+  toolCallOutput?: FunctionCallOutput;
+  // TODO(AJS-94): add support for agent handoff function
+  // agentTask: Agent | undefined;
+  replyRequired: boolean;
+
+  constructor(
+    toolCall: FunctionCall,
+    toolCallOutput: FunctionCallOutput | undefined,
+    replyRequired: boolean,
+  ) {
+    this.toolCall = toolCall;
+    this.toolCallOutput = toolCallOutput;
+    this.replyRequired = replyRequired;
+  }
+
+  static create(params: {
+    toolCall: FunctionCall;
+    toolCallOutput?: FunctionCallOutput;
+    replyRequired?: boolean;
+  }) {
+    const { toolCall, toolCallOutput, replyRequired = true } = params;
+    return new _SanitizedOutput(toolCall, toolCallOutput, replyRequired);
+  }
+}
+
+export class _JsOutput {
+  toolCall: FunctionCall;
+  output: unknown;
+  exception?: Error;
+
+  constructor(toolCall: FunctionCall, output: unknown, exception: Error | undefined) {
+    this.toolCall = toolCall;
+    this.output = output;
+    this.exception = exception;
+  }
+
+  static create(params: { toolCall: FunctionCall; output?: unknown; exception?: Error }) {
+    const { toolCall, output = undefined, exception = undefined } = params;
+    return new _JsOutput(toolCall, output, exception);
+  }
+
+  sanitize(): _SanitizedOutput {
+    if (isToolError(this.exception)) {
+      return _SanitizedOutput.create({
+        toolCall: { ...this.toolCall },
+        toolCallOutput: FunctionCallOutput.create({
+          name: this.toolCall.name,
+          callId: this.toolCall.callId,
+          output: this.exception.message,
+          isError: true,
+        }),
+      });
+    }
+
+    // TODO(AJS-116): support OpenAI stop response
+
+    if (this.exception !== undefined) {
+      return _SanitizedOutput.create({
+        toolCall: { ...this.toolCall },
+        toolCallOutput: FunctionCallOutput.create({
+          name: this.toolCall.name,
+          callId: this.toolCall.callId,
+          output: 'An internal error occurred while executing the tool.', // Don't send the actual error message, as it may contain sensitive information
+          isError: true,
+        }),
+      });
+    }
+
+    // TODO(AJS-94): handle agent handoff tool response
+    // ...
+
+    return _SanitizedOutput.create({
+      toolCall: { ...this.toolCall },
+      toolCallOutput: FunctionCallOutput.create({
+        name: this.toolCall.name,
+        callId: this.toolCall.callId,
+        output: JSON.stringify(this.output), // take the string representation of the output
+        isError: false,
+      }),
+    });
   }
 }
 
 export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
+  toolCtx: ToolContext,
   modelSettings: any, // TODO(AJS-59): add type
   controller: AbortController,
 ): [Task<void>, _LLMGenerationData] {
   const textStream = new IdentityTransform<string>();
-  const outputWriter = textStream.writable.getWriter();
-  const data = new _LLMGenerationData(textStream.readable);
+  const toolCallStream = new IdentityTransform<FunctionCall>();
+
+  const textWriter = textStream.writable.getWriter();
+  const toolCallWriter = toolCallStream.writable.getWriter();
+  const data = new _LLMGenerationData(textStream.readable, toolCallStream.readable);
 
   const inferenceTask = async (signal: AbortSignal) => {
     let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk> | null = null;
     let llmStream: ReadableStream<string | ChatChunk> | null = null;
 
     try {
-      llmStream = await node(chatCtx, modelSettings);
+      llmStream = await node(chatCtx, toolCtx, modelSettings);
       if (llmStream === null) {
-        await outputWriter.close();
+        await textWriter.close();
         return;
       }
+
+      // TODO(brian): add support for dynamic tools
 
       llmStreamReader = llmStream.getReader();
       while (true) {
@@ -54,16 +172,36 @@ export function performLLMInference(
 
         if (typeof chunk === 'string') {
           data.generatedText += chunk;
-          await outputWriter.write(chunk);
+          await textWriter.write(chunk);
           // TODO(shubhra): better way to check??
-        } else if ('choices' in chunk) {
-          const content = chunk.choices[0]?.delta.content;
-          if (!content) continue;
-          data.generatedText += content;
-          await outputWriter.write(content);
         } else {
-          throw new Error(`Unexpected chunk type: ${JSON.stringify(chunk)}`);
+          if (chunk.delta === undefined) {
+            continue;
+          }
+
+          if (chunk.delta.toolCalls) {
+            for (const tool of chunk.delta.toolCalls) {
+              if (tool.type !== 'function_call') continue;
+
+              const toolCall = FunctionCall.create({
+                callId: `${data.id}/fnc_${data.generatedToolCalls.length}`,
+                name: tool.name,
+                args: tool.args,
+              });
+
+              data.generatedToolCalls.push(toolCall);
+              await toolCallWriter.write(toolCall);
+            }
+          }
+
+          if (chunk.delta.content) {
+            data.generatedText += chunk.delta.content;
+            await textWriter.write(chunk.delta.content);
+          }
         }
+
+        // No need to check if chunk is of type other than ChatChunk or string like in
+        // Python since chunk is defined in the type ChatChunk | string in TypeScript
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -74,7 +212,8 @@ export function performLLMInference(
     } finally {
       llmStreamReader?.releaseLock();
       await llmStream?.cancel();
-      await outputWriter.close();
+      await textWriter.close();
+      await toolCallWriter.close();
     }
   };
 
@@ -236,4 +375,185 @@ export function performAudioForwarding(
     ),
     out,
   ];
+}
+
+export function performToolExecutions({
+  session,
+  speechHandle,
+  toolCtx,
+  toolChoice,
+  toolCallStream,
+}: {
+  session: AgentSession;
+  speechHandle: SpeechHandle;
+  toolCtx: ToolContext;
+  toolChoice: ToolChoice;
+  toolCallStream: ReadableStream<FunctionCall>;
+}): [Task<void>, _ToolOutput] {
+  const logger = log();
+  const toolOutput = new _ToolOutput();
+
+  const executeToolsTask = async (controller: AbortController) => {
+    const signal = controller.signal;
+    const reader = toolCallStream.getReader();
+
+    const tasks: Promise<any>[] = [];
+    while (!signal.aborted) {
+      const { done, value: toolCall } = await reader.read();
+      if (signal.aborted) break;
+      if (done) break;
+
+      if (toolChoice === 'none') {
+        logger.error(
+          {
+            function: toolCall.name,
+            speech_id: speechHandle.id,
+          },
+          "received a tool call with toolChoice set to 'none', ignoring",
+        );
+        continue;
+      }
+
+      const tool = toolCtx[toolCall.name];
+      if (!tool) {
+        logger.error(
+          {
+            function: toolCall.name,
+            speech_id: speechHandle.id,
+          },
+          `unknown AI function ${toolCall.name}`,
+        );
+        continue;
+      }
+
+      if (!isFunctionTool(tool)) {
+        logger.error(
+          {
+            function: toolCall.name,
+            speech_id: speechHandle.id,
+          },
+          `unknown tool type: ${typeof tool}`,
+        );
+        continue;
+      }
+
+      let parsedArgs: object | undefined;
+      const jsOut = _JsOutput.create({ toolCall });
+
+      // Ensure valid arguments
+      try {
+        parsedArgs = tool.parameters.parse(JSON.parse(toolCall.args));
+      } catch (rawError) {
+        const error = toError(rawError);
+        logger.error(
+          {
+            function: toolCall.name,
+            arguments: toolCall.args,
+            speech_id: speechHandle.id,
+            error: error.message,
+          },
+          `tried to call AI function ${toolCall.name} with invalid arguments`,
+        );
+        jsOut.exception = new ToolError(
+          `Error when parsing arguments for tool ${toolCall.name}: ${error.message}. Make sure to pass the valid arguments.`,
+        );
+        toolOutput.output.push(jsOut);
+        continue;
+      }
+
+      if (!toolOutput.firstToolFut.done) {
+        toolOutput.firstToolFut.resolve();
+      }
+
+      logger.debug(
+        {
+          function: toolCall.name,
+          arguments: parsedArgs,
+          speech_id: speechHandle.id,
+        },
+        'executing tool',
+      );
+
+      const toolExecution = tool.execute(parsedArgs, {
+        ctx: new RunContext(session, speechHandle, toolCall),
+        toolCallId: toolCall.callId,
+        abortSignal: signal,
+      });
+
+      const task = async (toolExecTask: Promise<any>) => {
+        // await for task to complete, if task is aborted, set exception
+        try {
+          const { result, isAborted } = await waitUntilAborted(toolExecTask, signal);
+          jsOut.exception = isAborted ? new Error('tool call was aborted') : undefined;
+          jsOut.output = isAborted ? undefined : result;
+        } catch (rawError) {
+          logger.error(
+            {
+              function: toolCall.name,
+              speech_id: speechHandle.id,
+              error: toError(rawError).message,
+            },
+            'exception occurred while executing tool',
+          );
+          jsOut.exception = toError(rawError);
+        } finally {
+          toolOutput.output.push(jsOut);
+        }
+      };
+
+      // wait, not cancelling all tool calling tasks
+      tasks.push(task(toolExecution));
+    }
+
+    await Promise.allSettled(tasks);
+    if (toolOutput.output.length > 0) {
+      logger.debug(
+        {
+          speech_id: speechHandle.id,
+        },
+        'tools execution completed',
+      );
+    }
+  };
+
+  return [Task.from(executeToolsTask), toolOutput];
+}
+
+type Aborted<T> =
+  | {
+      result: T;
+      isAborted: false;
+    }
+  | {
+      result: undefined;
+      isAborted: true;
+    };
+
+async function waitUntilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<Aborted<T>> {
+  const abortFut = new Future<Aborted<T>>();
+
+  const resolveAbort = () => {
+    if (!abortFut.done) {
+      abortFut.resolve({ result: undefined, isAborted: true });
+    }
+  };
+
+  signal.addEventListener('abort', resolveAbort);
+
+  promise
+    .then((r) => {
+      if (!abortFut.done) {
+        abortFut.resolve({ result: r, isAborted: false });
+      }
+    })
+    .catch((e) => {
+      if (!abortFut.done) {
+        abortFut.reject(e);
+      }
+    })
+    .finally(() => {
+      signal.removeEventListener('abort', resolveAbort);
+    });
+
+  return await abortFut.await;
 }

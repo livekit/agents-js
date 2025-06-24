@@ -414,13 +414,13 @@ export class LLM extends llm.LLM {
 
   chat({
     chatCtx,
-    fncCtx,
+    toolCtx,
     temperature,
     n,
     parallelToolCalls,
   }: {
     chatCtx: llm.ChatContext;
-    fncCtx?: llm.FunctionContext | undefined;
+    toolCtx?: llm.ToolContext | undefined;
     temperature?: number | undefined;
     n?: number | undefined;
     parallelToolCalls?: boolean | undefined;
@@ -431,7 +431,7 @@ export class LLM extends llm.LLM {
       this,
       this.#client,
       chatCtx,
-      fncCtx,
+      toolCtx,
       this.#opts,
       parallelToolCalls,
       temperature,
@@ -441,9 +441,11 @@ export class LLM extends llm.LLM {
 }
 
 export class LLMStream extends llm.LLMStream {
+  // Current function call that we're waiting for full completion (args are streamed)
   #toolCallId?: string;
   #fncName?: string;
   #fncRawArguments?: string;
+  #toolIndex?: number;
   #client: OpenAI;
   #logger = log();
   #id = randomUUID();
@@ -453,29 +455,26 @@ export class LLMStream extends llm.LLMStream {
     llm: LLM,
     client: OpenAI,
     chatCtx: llm.ChatContext,
-    fncCtx: llm.FunctionContext | undefined,
+    toolCtx: llm.ToolContext | undefined,
     opts: LLMOptions,
     parallelToolCalls?: boolean,
     temperature?: number,
     n?: number,
   ) {
-    super(llm, chatCtx, fncCtx);
+    super(llm, chatCtx, toolCtx);
     this.#client = client;
     this.#run(opts, n, parallelToolCalls, temperature);
   }
 
   async #run(opts: LLMOptions, n?: number, parallelToolCalls?: boolean, temperature?: number) {
-    const tools = this.fncCtx
-      ? Object.entries(this.fncCtx).map(([name, func]) => ({
+    const tools = this.toolCtx
+      ? Object.entries(this.toolCtx).map(([name, func]) => ({
           type: 'function' as const,
           function: {
             name,
             description: func.description,
             // don't format parameters if they are raw openai params
-            parameters:
-              func.parameters.type == ('object' as const)
-                ? func.parameters
-                : llm.oaiParams(func.parameters),
+            parameters: llm.oaiParams(func.parameters),
           },
         }))
       : undefined;
@@ -493,7 +492,7 @@ export class LLMStream extends llm.LLMStream {
         stream: true,
         messages,
         tools,
-        parallel_tool_calls: this.fncCtx && parallelToolCalls,
+        parallel_tool_calls: this.toolCtx && parallelToolCalls,
       });
 
       for await (const chunk of stream) {
@@ -505,19 +504,18 @@ export class LLMStream extends llm.LLMStream {
           if (chatChunk) {
             this.queue.put(chatChunk);
           }
+        }
 
-          if (chunk.usage) {
-            const usage = chunk.usage;
-            this.queue.put({
-              requestId: chunk.id,
-              choices: [],
-              usage: {
-                completionTokens: usage.completion_tokens,
-                promptTokens: usage.prompt_tokens,
-                totalTokens: usage.total_tokens,
-              },
-            });
-          }
+        if (chunk.usage) {
+          const usage = chunk.usage;
+          this.queue.put({
+            id: chunk.id,
+            usage: {
+              completionTokens: usage.completion_tokens,
+              promptTokens: usage.prompt_tokens,
+              totalTokens: usage.total_tokens,
+            },
+          });
         }
       }
     } finally {
@@ -528,6 +526,10 @@ export class LLMStream extends llm.LLMStream {
   #parseChoice(id: string, choice: OpenAI.ChatCompletionChunk.Choice): llm.ChatChunk | undefined {
     const delta = choice.delta;
 
+    // https://github.com/livekit/agents/issues/688
+    // the delta can be None when using Azure OpenAI (content filtering)
+    if (delta === undefined) return undefined;
+
     if (delta.tool_calls) {
       // check if we have functions to calls
       for (const tool of delta.tool_calls) {
@@ -535,17 +537,38 @@ export class LLMStream extends llm.LLMStream {
           continue; // oai may add other tools in the future
         }
 
+        /**
+         * The way OpenAI streams tool calls is a bit tricky.
+         *
+         * For any new tool call, it first emits a delta tool call with id, and function name,
+         * the rest of the delta chunks will only stream the remaining arguments string,
+         * until a new tool call is started or the tool call is finished.
+         * See below for an example.
+         *
+         * Choice(delta=ChoiceDelta(content=None, function_call=None, refusal=None, role='assistant', tool_calls=None), finish_reason=None, index=0, logprobs=None)
+         * [ChoiceDeltaToolCall(index=0, id='call_LaVeHWUHpef9K1sd5UO8TtLg', function=ChoiceDeltaToolCallFunction(arguments='', name='get_weather'), type='function')]
+         * [ChoiceDeltaToolCall(index=0, id=None, function=ChoiceDeltaToolCallFunction(arguments='{"location": "P', name=None), type=None)]
+         * [ChoiceDeltaToolCall(index=0, id=None, function=ChoiceDeltaToolCallFunction(arguments='aris}', name=None), type=None)]
+         * [ChoiceDeltaToolCall(index=1, id='call_ThU4OmMdQXnnVmpXGOCknXIB', function=ChoiceDeltaToolCallFunction(arguments='', name='get_weather'), type='function')]
+         * [ChoiceDeltaToolCall(index=1, id=None, function=ChoiceDeltaToolCallFunction(arguments='{"location": "T', name=None), type=None)]
+         * [ChoiceDeltaToolCall(index=1, id=None, function=ChoiceDeltaToolCallFunction(arguments='okyo', name=None), type=None)]
+         * Choice(delta=ChoiceDelta(content=None, function_call=None, refusal=None, role=None, tool_calls=None), finish_reason='tool_calls', index=0, logprobs=None)
+         */
         let callChunk: llm.ChatChunk | undefined;
-        if (this.#toolCallId && tool.id && tool.id !== this.#toolCallId) {
-          callChunk = this.#tryBuildFunction(id, choice);
+        // If we have a previous tool call and this is a new one, emit the previous
+        if (this.#toolCallId && tool.id && tool.index !== this.#toolIndex) {
+          callChunk = this.#createRunningToolCallChunk(id, delta);
+          this.#toolCallId = this.#fncName = this.#fncRawArguments = undefined;
         }
 
+        // Start or continue building the current tool call
         if (tool.function.name) {
+          this.#toolIndex = tool.index;
           this.#toolCallId = tool.id;
           this.#fncName = tool.function.name;
           this.#fncRawArguments = tool.function.arguments || '';
         } else if (tool.function.arguments) {
-          this.#fncRawArguments += tool.function.arguments;
+          this.#fncRawArguments = (this.#fncRawArguments || '') + tool.function.arguments;
         }
 
         if (callChunk) {
@@ -554,66 +577,48 @@ export class LLMStream extends llm.LLMStream {
       }
     }
 
+    // If we're done with tool calls, emit the final one
     if (
       choice.finish_reason &&
       ['tool_calls', 'stop'].includes(choice.finish_reason) &&
-      this.#toolCallId
+      this.#toolCallId !== undefined
     ) {
-      // we're done with the tool calls, run the last one
-      return this.#tryBuildFunction(id, choice);
+      const callChunk = this.#createRunningToolCallChunk(id, delta);
+      this.#toolCallId = this.#fncName = this.#fncRawArguments = undefined;
+      return callChunk;
+    }
+
+    // Regular content message
+    if (!delta.content) {
+      return undefined;
     }
 
     return {
-      requestId: id,
-      choices: [
-        {
-          delta: { content: delta.content || undefined, role: 'assistant' },
-          index: choice.index,
-        },
-      ],
+      id,
+      delta: {
+        role: 'assistant',
+        content: delta.content,
+      },
     };
   }
 
-  #tryBuildFunction(
+  #createRunningToolCallChunk(
     id: string,
-    choice: OpenAI.ChatCompletionChunk.Choice,
-  ): llm.ChatChunk | undefined {
-    if (!this.fncCtx) {
-      this.#logger.warn('oai stream tried to run function without function context');
-      return undefined;
-    }
-
-    if (!this.#toolCallId) {
-      this.#logger.warn('oai stream tried to run function but toolCallId is not set');
-      return undefined;
-    }
-
-    if (!this.#fncRawArguments || !this.#fncName) {
-      this.#logger.warn('oai stream tried to run function but rawArguments or fncName are not set');
-      return undefined;
-    }
-
-    const functionInfo = llm.oaiBuildFunctionInfo(
-      this.fncCtx,
-      this.#toolCallId,
-      this.#fncName,
-      this.#fncRawArguments,
-    );
-    this.#toolCallId = this.#fncName = this.#fncRawArguments = undefined;
-    this._functionCalls.push(functionInfo);
-
+    delta: OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta,
+  ): llm.ChatChunk {
     return {
-      requestId: id,
-      choices: [
-        {
-          delta: {
-            content: choice.delta.content || undefined,
-            role: 'assistant',
-            toolCalls: this._functionCalls,
-          },
-          index: choice.index,
-        },
-      ],
+      id,
+      delta: {
+        role: 'assistant',
+        content: delta.content || undefined,
+        toolCalls: [
+          llm.FunctionCall.create({
+            callId: this.#toolCallId!,
+            name: this.#fncName || '',
+            args: this.#fncRawArguments || '',
+          }),
+        ],
+      },
     };
   }
 }

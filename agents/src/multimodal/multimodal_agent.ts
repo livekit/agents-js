@@ -39,7 +39,7 @@ import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 export abstract class RealtimeSession extends EventEmitter {
   abstract conversation: any; // openai.realtime.Conversation
   abstract inputAudioBuffer: any; // openai.realtime.InputAudioBuffer
-  abstract fncCtx: llm.FunctionContext | undefined;
+  abstract toolCtx: llm.ToolContext | undefined;
   abstract recoverFromTextResponse(itemId: string): void;
 }
 
@@ -73,20 +73,20 @@ export class MultimodalAgent extends EventEmitter {
   constructor({
     model,
     chatCtx,
-    fncCtx,
+    toolCtx,
     maxTextResponseRetries = 5,
     noiseCancellation,
   }: {
     model: RealtimeModel;
     chatCtx?: llm.ChatContext;
-    fncCtx?: llm.FunctionContext;
+    toolCtx?: llm.ToolContext;
     maxTextResponseRetries?: number;
     noiseCancellation?: NoiseCancellationOptions;
   }) {
     super();
     this.model = model;
     this.#chatCtx = chatCtx;
-    this.#fncCtx = fncCtx;
+    this.#toolCtx = toolCtx;
     this.#maxTextResponseRetries = maxTextResponseRetries;
     this.#noiseCancellation = noiseCancellation;
   }
@@ -99,7 +99,7 @@ export class MultimodalAgent extends EventEmitter {
   #playingHandle: PlayoutHandle | undefined = undefined;
   #logger = log();
   #session: RealtimeSession | null = null;
-  #fncCtx: llm.FunctionContext | undefined = undefined;
+  #toolCtx: llm.ToolContext | undefined = undefined;
   #chatCtx: llm.ChatContext | undefined = undefined;
   #noiseCancellation: NoiseCancellationOptions | undefined = undefined;
 
@@ -107,14 +107,14 @@ export class MultimodalAgent extends EventEmitter {
   #_pendingFunctionCalls: Set<string> = new Set();
   #_speaking: boolean = false;
 
-  get fncCtx(): llm.FunctionContext | undefined {
-    return this.#fncCtx;
+  get toolCtx(): llm.ToolContext | undefined {
+    return this.#toolCtx;
   }
 
-  set fncCtx(ctx: llm.FunctionContext | undefined) {
-    this.#fncCtx = ctx;
+  set toolCtx(ctx: llm.ToolContext | undefined) {
+    this.#toolCtx = ctx;
     if (this.#session) {
-      this.#session.fncCtx = ctx;
+      this.#session.toolCtx = ctx;
     }
   }
 
@@ -244,7 +244,7 @@ export class MultimodalAgent extends EventEmitter {
         }
       }
 
-      this.#session = this.model.session({ fncCtx: this.#fncCtx, chatCtx: this.#chatCtx });
+      this.#session = this.model.session({ toolCtx: this.#toolCtx, chatCtx: this.#chatCtx });
       this.#started = true;
 
       this.#session.on('response_content_added', (message: any) => {
