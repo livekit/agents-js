@@ -3,9 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { delay } from '@std/async';
 import { describe, expect, it } from 'vitest';
+import { initializeLogger } from '../src/log.js';
 import { TASK_TIMEOUT_ERROR, Task, TaskResult } from '../src/utils.js';
 
 describe('AbortableTask', () => {
+  // initialize logger
+  initializeLogger({ pretty: true, level: 'debug' });
+
   describe('AbortableTask.from', () => {
     it('should execute task successfully and return result', async () => {
       const expectedResult = 'task completed';

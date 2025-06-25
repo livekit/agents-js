@@ -271,7 +271,10 @@ export function performLLMInference(
     }
   };
 
-  return [Task.from((controller) => inferenceTask(controller.signal), controller), data];
+  return [
+    Task.from((controller) => inferenceTask(controller.signal), controller, 'performLLMInference'),
+    data,
+  ];
 }
 
 export function performTTSInference(
@@ -320,7 +323,7 @@ export function performTTSInference(
   };
 
   return [
-    Task.from((controller) => inferenceTask(controller.signal), controller),
+    Task.from((controller) => inferenceTask(controller.signal), controller, 'performTTSInference'),
     audioOutputStream,
   ];
 }
@@ -352,12 +355,6 @@ async function forwardText(
         out.firstTextFut.resolve();
       }
     }
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      // Abort signal was triggered, handle gracefully
-      return;
-    }
-    throw error;
   } finally {
     textOutput?.flush();
     reader?.releaseLock();
@@ -374,7 +371,11 @@ export function performTextForwarding(
     firstTextFut: new Future(),
   };
   return [
-    Task.from((controller) => forwardText(source, out, controller.signal, textOutput), controller),
+    Task.from(
+      (controller) => forwardText(source, out, controller.signal, textOutput),
+      controller,
+      'performTextForwarding',
+    ),
     out,
   ];
 }
@@ -431,6 +432,7 @@ export function performAudioForwarding(
     Task.from(
       (controller) => forwardAudio(ttsStream, audioOutput, out, controller.signal),
       controller,
+      'performAudioForwarding',
     ),
     out,
   ];
@@ -442,12 +444,14 @@ export function performToolExecutions({
   toolCtx,
   toolChoice,
   toolCallStream,
+  controller,
 }: {
   session: AgentSession;
   speechHandle: SpeechHandle;
   toolCtx: ToolContext;
   toolChoice: ToolChoice;
   toolCallStream: ReadableStream<FunctionCall>;
+  controller: AbortController;
 }): [Task<void>, _ToolOutput] {
   const logger = log();
   const toolOutput = new _ToolOutput();
@@ -575,7 +579,7 @@ export function performToolExecutions({
     }
   };
 
-  return [Task.from(executeToolsTask), toolOutput];
+  return [Task.from(executeToolsTask, controller, 'performToolExecutions'), toolOutput];
 }
 
 type Aborted<T> =

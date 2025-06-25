@@ -19,6 +19,7 @@ import type { UserState } from './events.js';
 import type { AudioOutput, TextOutput } from './io.js';
 import { RoomIO } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
+import type { SpeechHandle } from './speech_handle.js';
 
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
 export interface VoiceOptions {
@@ -181,6 +182,21 @@ export class AgentSession<
     this.activity.clearUserTurn();
   }
 
+  say(
+    text: string | ReadableStream<string>,
+    options?: {
+      audio?: ReadableStream<AudioFrame>;
+      allowInterruptions?: boolean;
+      addToChatCtx?: boolean;
+    },
+  ): SpeechHandle {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
+    }
+
+    return this.activity.say(text, options);
+  }
+
   private async updateActivity(agent: Agent): Promise<void> {
     // TODO: add lock
     this.nextActivity = new AgentActivity(agent, this);
@@ -193,13 +209,10 @@ export class AgentSession<
     this.activity = this.nextActivity;
     this.nextActivity = undefined;
 
-    if (this.activity) {
-      this.logger.info('updateActivity: start new activity');
-      await this.activity.start();
+    await this.activity.start();
 
-      if (this.audioInput) {
-        this.activity.updateAudioInput(this.audioInput);
-      }
+    if (this.audioInput) {
+      this.activity.updateAudioInput(this.audioInput);
     }
   }
 

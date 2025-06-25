@@ -8,6 +8,7 @@ import {
   cli,
   defineAgent,
   llm,
+  log,
   voice,
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
@@ -28,15 +29,17 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
+    const logger = log();
+
     const getWeather = llm.tool({
       description: ' Called when the user asks about the weather.',
       parameters: z.object({
         location: z.string().describe('The location to get the weather for'),
       }),
       execute: async ({ location }) => {
-        if (Math.random() < 0.5) {
-          throw new llm.ToolError('Internal server error, please try again later.');
-        }
+        // if (Math.random() < 0.5) {
+        //   throw new llm.ToolError('Internal server error, please try again later.');
+        // }
         return `The weather in ${location} is sunny today.`;
       },
     });
@@ -100,13 +103,16 @@ export default defineAgent({
       },
       on: {
         enter: async () => {
-          console.log('[hook] router agent entered');
+          routerAgent.agentActivity!.say(
+            "Hello, I'm a router agent. I can help you with your tasks.",
+          );
+          logger.info('[hook] router agent entered');
         },
         exit: async () => {
-          console.log('[hook] router agent exited');
+          logger.info('[hook] router agent exited');
         },
         userTurnCompleted: async (chatCtx, newMessage) => {
-          console.log('[hook] router agent user turn completed');
+          logger.info('[hook] router agent user turn completed');
         },
       },
     });
@@ -127,13 +133,14 @@ export default defineAgent({
       },
       on: {
         enter: async () => {
-          console.log('[hook] game agent entered');
+          gameAgent.agentActivity!.say("Hello, I'm a game agent. I can help you with your tasks.");
+          logger.info('[hook] game agent entered');
         },
         exit: async () => {
-          console.log('[hook] game agent exited');
+          logger.info('[hook] game agent exited');
         },
         userTurnCompleted: async (chatCtx, newMessage) => {
-          console.log('[hook] game agent user turn completed');
+          logger.info('[hook] game agent user turn completed');
         },
       },
     });
@@ -151,6 +158,7 @@ export default defineAgent({
       tts: new elevenlabs.TTS(),
       userData: { number: 0 },
     });
+
     session.start(routerAgent, ctx.room);
   },
 });

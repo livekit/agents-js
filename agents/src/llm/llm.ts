@@ -72,22 +72,25 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     this.#toolCtx = toolCtx;
     this.monitorMetrics();
     this.abortController.signal.addEventListener('abort', () => {
-      this.output.close();
       // TODO (AJS-37) clean this up when we refactor with streams
+      this.output.close();
       this.closed = true;
     });
   }
 
   protected async monitorMetrics() {
     const startTime = process.hrtime.bigint();
-    let ttft: bigint | undefined;
+    let ttft: bigint = BigInt(-1);
     let requestId = '';
     let usage: CompletionUsage | undefined;
 
     for await (const ev of this.queue) {
+      if (this.abortController.signal.aborted) {
+        break;
+      }
       this.output.put(ev);
       requestId = ev.id;
-      if (!ttft) {
+      if (ttft === BigInt(-1)) {
         ttft = process.hrtime.bigint() - startTime;
       }
       if (ev.usage) {
@@ -100,7 +103,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     const metrics: LLMMetrics = {
       timestamp: Date.now(),
       requestId,
-      ttft: Math.trunc(Number(ttft! / BigInt(1000000))),
+      ttft: ttft === BigInt(-1) ? -1 : Math.trunc(Number(ttft / BigInt(1000000))),
       duration: Math.trunc(Number(duration / BigInt(1000000))),
       cancelled: false, // XXX(nbsp)
       label: this.label,

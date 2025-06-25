@@ -295,8 +295,8 @@ export class ParalellTextOutput extends TextOutput {
   /* @internal */
   _sinks: TextOutput[];
 
-  constructor(sinks: TextOutput[]) {
-    super();
+  constructor(sinks: TextOutput[], nextInChain?: TextOutput) {
+    super(nextInChain);
     this._sinks = sinks;
   }
 
@@ -326,8 +326,6 @@ export class ParticipantAudioOutput extends AudioOutput {
   private pushedDurationMs: number = 0;
   private startedFuture: Future<void> = new Future();
   private interruptedFuture: Future<void> = new Future();
-
-  private logger = log();
 
   constructor(room: Room, options: AudioOutputOptions) {
     super(options.sampleRate);
@@ -370,7 +368,10 @@ export class ParticipantAudioOutput extends AudioOutput {
       if (!abortFuture.done) abortFuture.resolve(false);
     });
 
-    const interrupted = await abortFuture.await;
+    const interrupted = await Promise.race([
+      abortFuture.await,
+      this.interruptedFuture.await.then(() => true),
+    ]);
 
     let pushedDuration = this.pushedDurationMs;
 
@@ -381,10 +382,10 @@ export class ParticipantAudioOutput extends AudioOutput {
     }
 
     this.pushedDurationMs = 0;
+    this.interruptedFuture = new Future();
     this.onPlaybackFinished({
       playbackPosition: pushedDuration,
       interrupted,
-      // TODO(AJS-104): implement transcript synchronization
     });
   }
 
