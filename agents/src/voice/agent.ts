@@ -14,6 +14,7 @@ import {
   type LLM,
   type ToolContext,
 } from '../llm/index.js';
+import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
@@ -242,6 +243,7 @@ export class Agent<UserData = any> {
         async start(controller) {
           for await (const chunk of stream) {
             if (chunk === SynthesizeStream.END_OF_STREAM) {
+              log().debug('ttsNode: END_OF_STREAM');
               break;
             }
             controller.enqueue(chunk.frame);

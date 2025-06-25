@@ -578,7 +578,12 @@ export class AgentActivity implements RecognitionHooks {
       tasks.push(ttsTask);
     }
 
+    this.logger.debug(
+      { speech_id: speechHandle.id },
+      'waitIfNotInterrupted: waiting for authorization',
+    );
     await speechHandle.waitIfNotInterrupted([speechHandle.waitForAuthorization()]);
+    this.logger.debug({ speech_id: speechHandle.id }, 'waitIfNotInterrupted: authorization done');
     if (speechHandle.interrupted) {
       replyAbortController.abort();
       await Promise.allSettled(
@@ -631,10 +636,17 @@ export class AgentActivity implements RecognitionHooks {
     });
     tasks.push(executeToolsTask);
 
+    this.logger.debug({ speech_id: speechHandle.id }, 'waitIfNotInterrupted: waiting for tasks');
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
+    this.logger.debug({ speech_id: speechHandle.id }, 'waitIfNotInterrupted: tasks done');
 
     if (audioOutput) {
+      this.logger.debug(
+        { speech_id: speechHandle.id },
+        'waitIfNotInterrupted: waiting for audio output',
+      );
       await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
+      this.logger.debug({ speech_id: speechHandle.id }, 'waitIfNotInterrupted: audio output done');
     }
 
     // add the tools messages that triggers this reply to the chat context
