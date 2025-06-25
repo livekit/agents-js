@@ -37,7 +37,7 @@ export default defineAgent({
       tts: new elevenlabs.TTS(),
     });
     await session.start(agent, ctx.room);
-    session.say('Hello, how are you? My name is LiveKit Agents');
+    session.say('Hello, how are you?');
   },
 });
 
