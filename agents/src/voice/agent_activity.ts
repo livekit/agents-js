@@ -245,8 +245,8 @@ export class AgentActivity implements RecognitionHooks {
         speechHandle.authorizePlayout();
         await speechHandle.waitForPlayout();
         this.currentSpeech = undefined;
-        this.q_updated = new Future();
       }
+      this.q_updated = new Future();
     }
   }
 
@@ -355,6 +355,8 @@ export class AgentActivity implements RecognitionHooks {
     addToChatCtx: boolean,
     audio?: ReadableStream<AudioFrame> | null,
   ): Promise<void> {
+    this.logger.debug({ speechHandle, text, addToChatCtx, audio }, 'ttsTask');
+
     const transcriptionOutput = this.agentSession._transcriptionOutput;
     const audioOutput = this.agentSession.audioOutput;
 
@@ -380,8 +382,6 @@ export class AgentActivity implements RecognitionHooks {
     const [textSource, audioSource] = baseStream.tee();
 
     const tasks: Array<Task<void>> = [];
-
-    this.logger.debug('ttsTask', { textSource, audioSource });
 
     const trNode = await this.agent.transcriptionNode(textSource, {});
     let textOut: _TextOut | null = null;
@@ -442,6 +442,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (speechHandle.interrupted) {
+      this.logger.debug('ttsTask: speech handle interrupted');
       replyAbortController.abort();
       await Promise.allSettled(
         tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
@@ -450,23 +451,28 @@ export class AgentActivity implements RecognitionHooks {
         audioOutput.clearBuffer();
         await audioOutput.waitForPlayout();
       }
-
-      if (addToChatCtx) {
-        const message = ChatMessage.create({
-          role: 'assistant',
-          content: textOut?.text || '',
-          interrupted: speechHandle.interrupted,
-        });
-        this.agent._chatCtx.insert(message);
-        this.agentSession._conversationItemAdded(message);
-      }
-
-      if (this.agentSession.agentState === 'speaking') {
-        this.agentSession._updateAgentState('listening');
-      }
-
-      return;
+    } else {
+      this.logger.debug({ speechHandle }, 'ttsTask: speech handle not interrupted');
     }
+
+    if (addToChatCtx) {
+      const message = ChatMessage.create({
+        role: 'assistant',
+        content: textOut?.text || '',
+        interrupted: speechHandle.interrupted,
+      });
+      this.logger.debug({ message }, 'ttsTask: adding chat message to chat context');
+      this.agent._chatCtx.insert(message);
+      this.agentSession._conversationItemAdded(message);
+    }
+
+    if (this.agentSession.agentState === 'speaking') {
+      this.agentSession._updateAgentState('listening');
+    }
+
+    this.logger.debug({ speechHandle }, 'ttsTask: marking speech handle as done');
+    speechHandle.markPlayoutDone();
+    return;
   }
 
   private async pipelineReplyTask(
