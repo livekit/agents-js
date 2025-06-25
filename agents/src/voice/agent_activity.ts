@@ -157,6 +157,7 @@ export class AgentActivity implements RecognitionHooks {
 
     const task = this.createSpeechTask({
       promise: this.ttsTask(handle, text, addToChatCtx, audio),
+      ownedSpeechHandle: handle,
       name: 'AgentActivity.say_tts',
     });
 
