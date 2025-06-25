@@ -81,7 +81,7 @@ export class AgentActivity implements RecognitionHooks {
     this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
     this.createSpeechTask({
       promise: this.agent.onEnter(),
-      name: 'AgentTask_on_enter',
+      name: 'AgentActivity_onEnter',
     });
 
     // TODO(shubhra): Add turn detection mode
@@ -834,7 +834,7 @@ export class AgentActivity implements RecognitionHooks {
 
     this.createSpeechTask({
       promise: this.agent.onExit(),
-      name: 'AgentTask_on_exit',
+      name: 'AgentActivity_onExit',
     });
 
     this.wakeupMainTask();
