@@ -364,7 +364,9 @@ class SyncedAudioOutput extends AudioOutput {
     public synchronizer: TranscriptionSynchronizer,
     private nextInChainAudio: AudioOutput,
   ) {
-    super(undefined, nextInChainAudio);
+    // Pass nextInChainAudio to parent constructor for proper event forwarding
+    super(nextInChainAudio.sampleRate, nextInChainAudio);
+    this.logger.debug('SyncedAudioOutput constructor called');
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
@@ -373,6 +375,7 @@ class SyncedAudioOutput extends AudioOutput {
     await this.synchronizer.barrier();
 
     this.capturing = true;
+    // Call BOTH super.captureFrame AND nextInChainAudio.captureFrame (like Python)
     await super.captureFrame(frame);
     await this.nextInChainAudio.captureFrame(frame); // passthrough audio
 
@@ -394,6 +397,7 @@ class SyncedAudioOutput extends AudioOutput {
   }
 
   flush() {
+    // Call BOTH super.flush AND nextInChainAudio.flush (like Python)
     super.flush();
     this.nextInChainAudio.flush();
 
@@ -416,14 +420,19 @@ class SyncedAudioOutput extends AudioOutput {
     this.capturing = false;
   }
 
-  // this is going to be automatically called by the next_in_chain
+  // this is going to be automatically called by the next_in_chain through parent constructor
   onPlaybackFinished(ev: PlaybackFinishedEvent) {
+    this.logger.debug('onPlaybackFinished in subclass SyncedAudioOutput', { options: ev });
+
     if (!this.synchronizer.enabled) {
+      // Forward the event as-is when synchronizer is disabled
       super.onPlaybackFinished(ev);
       return;
     }
 
     this.synchronizer._impl.markPlaybackFinished(ev.playbackPosition, ev.interrupted);
+
+    // Call super.onPlaybackFinished with synchronized transcript (like Python)
     super.onPlaybackFinished({
       playbackPosition: ev.playbackPosition,
       interrupted: ev.interrupted,

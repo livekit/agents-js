@@ -386,6 +386,10 @@ export class ParticipantAudioOutput extends AudioOutput {
 
     this.pushedDurationMs = 0;
     this.interruptedFuture = new Future();
+    this.logger.debug('ParticipantAudioOutput calling onPlaybackFinished', {
+      playbackPosition: pushedDuration,
+      interrupted,
+    });
     this.onPlaybackFinished({
       playbackPosition: pushedDuration,
       interrupted,

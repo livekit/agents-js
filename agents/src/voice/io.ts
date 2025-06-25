@@ -40,7 +40,7 @@ export abstract class AudioOutput extends EventEmitter {
   protected logger = log();
 
   constructor(
-    protected readonly sampleRate?: number,
+    readonly sampleRate?: number,
     protected readonly nextInChain?: AudioOutput,
   ) {
     super();
@@ -68,16 +68,20 @@ export abstract class AudioOutput extends EventEmitter {
    */
   async waitForPlayout(): Promise<PlaybackFinishedEvent> {
     const target = this.playbackSegmentsCount;
+    this.logger.debug(`waitForPlayout started for sub-class ${this.constructor.name}`, {
+      target,
+      playbackFinishedCount: this.playbackFinishedCount,
+    });
 
     while (this.playbackFinishedCount < target) {
       await this.playbackFinishedFuture.await;
       this.playbackFinishedFuture = new Future();
     }
 
-    this.logger.debug(
-      { target, playbackFinishedCount: this.playbackFinishedCount },
-      'waitForPlayout finished for sub-class ' + this.constructor.name,
-    );
+    this.logger.debug(`waitForPlayout finished for sub-class ${this.constructor.name}`, {
+      target,
+      playbackFinishedCount: this.playbackFinishedCount,
+    });
     return this.lastPlaybackEvent;
   }
 
