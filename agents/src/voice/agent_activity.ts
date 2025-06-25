@@ -16,8 +16,7 @@ import type {
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
-import type { Task } from '../utils.js';
-import { Future } from '../utils.js';
+import { Future, Task } from '../utils.js';
 import type { VAD, VADEvent } from '../vad.js';
 import type { Agent } from './agent.js';
 import { StopResponse } from './agent.js';
@@ -47,8 +46,14 @@ export class AgentActivity implements RecognitionHooks {
   private currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private q_updated: Future;
+  private speechTasks: Set<Promise<void>> = new Set();
+
   agent: Agent;
   agentSession: AgentSession;
+
+  /** @internal */
+  _mainTask?: Task<void>;
+  _userTurnCompletedTask?: Task<void>;
 
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
@@ -73,7 +78,11 @@ export class AgentActivity implements RecognitionHooks {
     this.audioRecognition.start();
     this.started = true;
 
-    this.mainTask();
+    this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
+    this.createSpeechTask({
+      promise: this.agent.onEnter(),
+      name: 'AgentTask_on_enter',
+    });
 
     // TODO(shubhra): Add turn detection mode
   }
@@ -173,6 +182,30 @@ export class AgentActivity implements RecognitionHooks {
     });
   }
 
+  private createSpeechTask(options: {
+    promise: Promise<void>;
+    ownedSpeechHandle?: SpeechHandle;
+    name?: string;
+  }) {
+    const { promise, ownedSpeechHandle, name } = options;
+
+    this.logger.info({ name, speechTasksSize: this.speechTasks.size }, 'creating speech task');
+
+    this.speechTasks.add(promise);
+
+    promise.finally(() => {
+      this.speechTasks.delete(promise);
+
+      if (ownedSpeechHandle) {
+        ownedSpeechHandle.markPlayoutDone();
+      }
+
+      this.wakeupMainTask();
+    });
+
+    return promise;
+  }
+
   async onEndOfTurn(info: EndOfTurnInfo): Promise<boolean> {
     if (this.draining) {
       this.logger.warn({ user_input: info.newTranscript }, 'skipping user input, task is draining');
@@ -194,7 +227,13 @@ export class AgentActivity implements RecognitionHooks {
       this.logger.info('skipping user input, new_transcript is too short');
       return false;
     }
-    this.userTurnCompleted(info);
+
+    // We never cancel user code as this is very confusing.
+    // So we wait for the old execution of on_user_turn_completed to finish.
+    // In practice this is OK because most speeches will be interrupted if a new turn
+    // is detected. So the previous execution should complete quickly.
+    await this._userTurnCompletedTask?.result;
+    this._userTurnCompletedTask = Task.from(({ signal }) => this.userTurnCompleted(info, signal));
     return true;
   }
 
@@ -202,10 +241,29 @@ export class AgentActivity implements RecognitionHooks {
     return this.agentSession.chatCtx;
   }
 
-  private async mainTask(): Promise<void> {
+  private async mainTask(signal: AbortSignal): Promise<void> {
+    const abortFuture = new Future();
+    const abortHandler = () => {
+      abortFuture.resolve();
+      signal.removeEventListener('abort', abortHandler);
+    };
+    signal.addEventListener('abort', abortHandler);
+
     while (true) {
-      await this.q_updated.await;
+      await Promise.race([this.q_updated.await, abortFuture.await]);
+      if (signal.aborted) {
+        break;
+      }
+
+      if (signal.aborted) {
+        break;
+      }
+
       while (this.speechQueue.size() > 0) {
+        if (signal.aborted) {
+          break;
+        }
+
         const heapItem = this.speechQueue.pop();
         if (!heapItem) {
           throw new Error('Speech queue is empty');
@@ -216,6 +274,14 @@ export class AgentActivity implements RecognitionHooks {
         await speechHandle.waitForPlayout();
         this.currentSpeech = undefined;
       }
+
+      // If we're draining and there are no more speech tasks, we can exit.
+      // Only speech tasks can bypass draining to create a tool response
+      if (this.draining && this.speechTasks.size === 0) {
+        this.logger.info('mainTask: draining and no more speech tasks');
+        break;
+      }
+
       this.q_updated = new Future();
     }
   }
@@ -245,17 +311,22 @@ export class AgentActivity implements RecognitionHooks {
       instructions = `${this.agent.instructions}\n${instructions}`;
     }
 
-    this.pipelineReplyTask(
-      handle,
-      chatCtx || this.agent.chatCtx,
-      this.agent.toolCtx,
-      // TODO(brian): make tool choice as model settings
-      toolChoice || 'auto',
-      instructions,
-      userMessage,
-    ).then(() => {
-      this.onPipelineReplyDone();
+    const task = this.createSpeechTask({
+      promise: this.pipelineReplyTask(
+        handle,
+        chatCtx || this.agent.chatCtx,
+        this.agent.toolCtx,
+        // TODO(brian): make tool choice as model settings
+        toolChoice || 'auto',
+        instructions,
+        userMessage,
+      ),
+      ownedSpeechHandle: handle,
+      name: 'AgentTask_pipeline_reply',
     });
+
+    task.finally(() => this.onPipelineReplyDone());
+
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
     return handle;
   }
@@ -266,7 +337,7 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private async userTurnCompleted(info: EndOfTurnInfo): Promise<void> {
+  private async userTurnCompleted(info: EndOfTurnInfo, signal: AbortSignal): Promise<void> {
     this.logger.info('userTurnCompleted', info);
     // TODO(AJS-40) handle old task cancellation
 
@@ -307,6 +378,8 @@ export class AgentActivity implements RecognitionHooks {
     // Agent.chatCtx
     const chatCtx = this.agent.chatCtx.copy();
 
+    if (signal.aborted) return;
+
     try {
       await this.agent.onUserTurnCompleted(chatCtx, userMessage);
     } catch (e) {
@@ -316,6 +389,7 @@ export class AgentActivity implements RecognitionHooks {
       this.logger.error({ error: e }, 'error occurred during onUserTurnCompleted');
     }
 
+    if (signal.aborted) return;
     this.generateReply(userMessage, chatCtx);
   }
 
@@ -533,9 +607,6 @@ export class AgentActivity implements RecognitionHooks {
     const newToolCalls: FunctionCall[] = [];
     const newToolCallOutputs: FunctionCallOutput[] = [];
     let shouldGenerateToolReply: boolean = false;
-    // TODO(AJS-94): add support for agent handoff function
-    // newAgentTask: Agent | undefined = undefined;
-    // ignoreTaskSwitch: boolean = false;
 
     for (const jsOut of toolOutput.output) {
       const sanitizedOut = jsOut.sanitize();
@@ -547,11 +618,7 @@ export class AgentActivity implements RecognitionHooks {
           shouldGenerateToolReply = true;
         }
       }
-
-      // TODO(AJS-94): add support for agent handoff function
     }
-
-    // TODO(AJS-91): handle draining + agent activity switching
 
     const toolMessages = [...newToolCalls, ...newToolCallOutputs] as ChatItem[];
     if (shouldGenerateToolReply) {
@@ -563,20 +630,23 @@ export class AgentActivity implements RecognitionHooks {
         speechHandle,
       );
 
-      this.pipelineReplyTask(
-        handle,
-        chatCtx,
-        toolCtx,
-        toolChoice,
-        instructions,
-        undefined,
-        toolMessages,
-      ).then(() => {
-        this.onPipelineReplyDone();
+      const toolResponseTask = this.createSpeechTask({
+        promise: this.pipelineReplyTask(
+          handle,
+          chatCtx,
+          toolCtx,
+          toolChoice,
+          instructions,
+          undefined,
+          toolMessages,
+        ),
+        ownedSpeechHandle: handle,
+        name: 'AgentActivity.pipeline_reply',
       });
 
-      // TODO(AJS-91): handle scheduling speech bypassing draining
-      this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+      toolResponseTask.finally(() => this.onPipelineReplyDone());
+
+      this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
     } else if (newToolCallOutputs.length > 0) {
       for (const msg of toolMessages) {
         msg.createdAt = replyStartedAt;
@@ -585,7 +655,15 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private scheduleSpeech(speechHandle: SpeechHandle, priority: number): void {
+  private scheduleSpeech(
+    speechHandle: SpeechHandle,
+    priority: number,
+    bypassDraining: boolean = false,
+  ): void {
+    if (this.draining && !bypassDraining) {
+      throw new Error('cannot schedule new speech, the agent is draining');
+    }
+
     // Monotonic time to avoid near 0 collisions
     this.speechQueue.push([priority, Number(process.hrtime.bigint()), speechHandle]);
     this.wakeupMainTask();
