@@ -163,7 +163,7 @@ export abstract class SynthesizeStream
   protected async monitorMetrics() {
     const startTime = process.hrtime.bigint();
     let audioDuration = 0;
-    let ttfb: bigint | undefined;
+    let ttfb: bigint = BigInt(-1);
     let requestId = '';
 
     const emit = () => {
@@ -173,7 +173,7 @@ export abstract class SynthesizeStream
         const metrics: TTSMetrics = {
           timestamp: Date.now(),
           requestId,
-          ttfb: Math.trunc(Number(ttfb! / BigInt(1000000))),
+          ttfb: ttfb === BigInt(-1) ? -1 : Math.trunc(Number(ttfb / BigInt(1000000))),
           duration: Math.trunc(Number(duration / BigInt(1000000))),
           charactersCount: text.length,
           audioDuration,
@@ -192,7 +192,7 @@ export abstract class SynthesizeStream
       this.output.put(audio);
       if (audio === SynthesizeStream.END_OF_STREAM) continue;
       requestId = audio.requestId;
-      if (!ttfb) {
+      if (ttfb === BigInt(-1)) {
         ttfb = process.hrtime.bigint() - startTime;
       }
       audioDuration += audio.frame.samplesPerChannel / audio.frame.sampleRate;
@@ -301,7 +301,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   protected async monitorMetrics() {
     const startTime = process.hrtime.bigint();
     let audioDuration = 0;
-    let ttfb: bigint | undefined;
+    let ttfb: bigint = BigInt(-1);
     let requestId = '';
 
     for await (const audio of this.queue) {
@@ -318,7 +318,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     const metrics: TTSMetrics = {
       timestamp: Date.now(),
       requestId,
-      ttfb: Math.trunc(Number(ttfb! / BigInt(1000000))),
+      ttfb: ttfb === BigInt(-1) ? -1 : Math.trunc(Number(ttfb / BigInt(1000000))),
       duration: Math.trunc(Number(duration / BigInt(1000000))),
       charactersCount: this.#text.length,
       audioDuration,
