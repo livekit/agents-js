@@ -390,12 +390,14 @@ export function performToolExecutions({
   toolCtx,
   toolChoice,
   toolCallStream,
+  controller,
 }: {
   session: AgentSession;
   speechHandle: SpeechHandle;
   toolCtx: ToolContext;
   toolChoice: ToolChoice;
   toolCallStream: ReadableStream<FunctionCall>;
+  controller: AbortController;
 }): [Task<void>, _ToolOutput] {
   const logger = log();
   const toolOutput = new _ToolOutput();
@@ -523,7 +525,7 @@ export function performToolExecutions({
     }
   };
 
-  return [Task.from(executeToolsTask, undefined, 'performToolExecutions'), toolOutput];
+  return [Task.from(executeToolsTask, controller, 'performToolExecutions'), toolOutput];
 }
 
 type Aborted<T> =
