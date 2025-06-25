@@ -316,7 +316,6 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     this.generateReply(userMessage, chatCtx);
-    //TODO(AJS-40) handle interruptions
   }
 
   private async pipelineReplyTask(
