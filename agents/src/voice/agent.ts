@@ -53,10 +53,10 @@ export interface AgentOptions<UserData> {
 
 export class Agent<UserData = any> {
   private turnDetection?: TurnDetectionMode;
-  private stt?: STT;
-  private vad?: VAD;
-  private llm?: LLM;
-  private tts?: TTS;
+  private _stt?: STT;
+  private _vad?: VAD;
+  private _llm?: LLM;
+  private _tts?: TTS;
 
   /** @internal */
   agentActivity?: AgentActivity;
@@ -96,12 +96,27 @@ export class Agent<UserData = any> {
       ]);
 
     this.turnDetection = turnDetection;
-    this.stt = stt;
-    this.vad = vad;
-    this.llm = llm;
-    this.tts = tts;
-    this._on = on;
+    this._stt = stt;
+    this._vad = vad;
+    this._llm = llm;
+    this._tts = tts;
     this.agentActivity = undefined; // TODO(shubhra): add type
+  }
+
+  get vad(): VAD | undefined {
+    return this._vad;
+  }
+
+  get stt(): STT | undefined {
+    return this._stt;
+  }
+
+  get llm(): LLM | undefined {
+    return this._llm;
+  }
+
+  get tts(): TTS | undefined {
+    return this._tts;
   }
 
   get chatCtx(): ChatContext {

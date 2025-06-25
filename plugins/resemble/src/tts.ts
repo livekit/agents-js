@@ -155,7 +155,9 @@ export class ChunkedStream extends tts.ChunkedStream {
 export class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
   #logger = log();
-  #tokenizer = new tokenize.basic.SentenceTokenizer(undefined, BUFFERED_WORDS_COUNT).stream();
+  #tokenizer = new tokenize.basic.SentenceTokenizer({
+    minSentenceLength: BUFFERED_WORDS_COUNT,
+  }).stream();
   #websocket: WebSocket | null = null;
   #requestId = 0;
   label = 'resemble.SynthesizeStream';

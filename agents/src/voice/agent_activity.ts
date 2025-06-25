@@ -18,7 +18,7 @@ import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
 import { Future, Task } from '../utils.js';
-import type { VADEvent } from '../vad.js';
+import type { VAD, VADEvent } from '../vad.js';
 import type { Agent } from './agent.js';
 import { StopResponse } from './agent.js';
 import { type AgentSession, AgentSessionEvent, type TurnDetectionMode } from './agent_session.js';
@@ -69,7 +69,7 @@ export class AgentActivity implements RecognitionHooks {
     this.agent.agentActivity = this;
     this.audioRecognition = new AudioRecognition(
       this,
-      this.agentSession.vad,
+      this.vad,
       this.agentSession.options.minEndpointingDelay,
       this.agentSession.options.maxEndpointingDelay,
       // Arrow function preserves the Agent context
@@ -101,19 +101,20 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  get vad(): VAD {
+    return this.agent.vad || this.agentSession.vad;
+  }
+
   get stt(): STT {
-    // TODO(AJS-51): Allow components to be defined in Agent class
-    return this.agentSession.stt;
+    return this.agent.stt || this.agentSession.stt;
   }
 
   get llm(): LLM {
-    // TODO(AJS-51): Allow components to be defined in Agent class
-    return this.agentSession.llm;
+    return this.agent.llm || this.agentSession.llm;
   }
 
   get tts(): TTS {
-    // TODO(AJS-51): Allow components to be defined in Agent class
-    return this.agentSession.tts;
+    return this.agent.tts || this.agentSession.tts;
   }
 
   get draining(): boolean {
@@ -305,7 +306,6 @@ export class AgentActivity implements RecognitionHooks {
         break;
       }
 
-      // Reset the Future for the next iteration (equivalent to Python's Event.clear())
       this.q_updated = new Future();
     }
 
@@ -418,7 +418,6 @@ export class AgentActivity implements RecognitionHooks {
 
     if (signal.aborted) return;
     this.generateReply(userMessage, chatCtx);
-    //TODO(AJS-40) handle interruptions
   }
 
   private async pipelineReplyTask(
@@ -431,8 +430,6 @@ export class AgentActivity implements RecognitionHooks {
     toolsMessages?: ChatItem[],
   ): Promise<void> {
     const replyAbortController = new AbortController();
-
-    // TODO(AJS-54): add transcription/text output
 
     const audioOutput = this.agentSession.audioOutput;
     const transcriptionOutput = this.agentSession._transcriptionOutput;
@@ -549,7 +546,8 @@ export class AgentActivity implements RecognitionHooks {
       await Promise.allSettled(
         tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
       );
-      // TODO(AJS-87): add syncronizher and transcripts
+
+      let forwardedText = textOut?.text || '';
 
       if (audioOutput) {
         audioOutput.clearBuffer();
@@ -560,25 +558,33 @@ export class AgentActivity implements RecognitionHooks {
             { speech_id: speechHandle.id, playbackPosition: playbackEv.playbackPosition },
             'playout interrupted',
           );
+          if (playbackEv.synchronizedTranscript) {
+            forwardedText = playbackEv.synchronizedTranscript;
+          }
+        } else {
+          forwardedText = '';
         }
       }
 
-      const message = ChatMessage.create({
-        role: 'assistant',
-        content: textOut?.text || '',
-        id: llmGenData.id,
-        interrupted: true,
-        createdAt: replyStartedAt,
-      });
-      chatCtx.insert(message);
-      this.agent._chatCtx.insert(message);
+      if (forwardedText) {
+        const message = ChatMessage.create({
+          role: 'assistant',
+          content: forwardedText,
+          id: llmGenData.id,
+          interrupted: true,
+          createdAt: replyStartedAt,
+        });
+        chatCtx.insert(message);
+        this.agent._chatCtx.insert(message);
+        this.agentSession._conversationItemAdded(message);
+      }
+
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
       }
-      this.agentSession._conversationItemAdded(message);
 
       this.logger.info(
-        { speech_id: speechHandle.id, message: textOut?.text },
+        { speech_id: speechHandle.id, message: forwardedText },
         'playout completed with interrupt',
       );
       // TODO(shubhra) add chat message to speech handle

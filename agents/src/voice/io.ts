@@ -2,10 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import type { ToolContext } from '../llm/tool_context.js';
+import { log } from '../log.js';
 import type { SpeechEvent } from '../stt/stt.js';
 import { Future } from '../utils.js';
 
@@ -24,24 +26,37 @@ export type TTSNode = (
   text: ReadableStream<string>,
   modelSettings: any, // TODO(AJS-59): add type
 ) => Promise<ReadableStream<AudioFrame> | null>;
-export abstract class AudioOutput {
+export abstract class AudioOutput extends EventEmitter {
+  static readonly EVENT_PLAYBACK_FINISHED = 'playbackFinished';
+
   private playbackFinishedFuture: Future<void> = new Future();
-  private capturing: boolean = false;
+  private _capturing: boolean = false;
   private playbackFinishedCount: number = 0;
   private playbackSegmentsCount: number = 0;
   private lastPlaybackEvent: PlaybackFinishedEvent = {
     playbackPosition: 0,
     interrupted: false,
   };
+  protected logger = log();
 
-  constructor(protected readonly sampleRate?: number) {}
+  constructor(
+    protected readonly sampleRate?: number,
+    protected readonly nextInChain?: AudioOutput,
+  ) {
+    super();
+    if (this.nextInChain) {
+      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_FINISHED, (ev: PlaybackFinishedEvent) =>
+        this.onPlaybackFinished(ev),
+      );
+    }
+  }
 
   /**
    * Capture an audio frame for playback, frames can be pushed faster than real-time
    */
   async captureFrame(_frame: AudioFrame): Promise<void> {
-    if (!this.capturing) {
-      this.capturing = true;
+    if (!this._capturing) {
+      this._capturing = true;
       this.playbackSegmentsCount++;
     }
   }
@@ -66,14 +81,20 @@ export abstract class AudioOutput {
    * Developers building audio sinks must call this method when a playback/segment is finished.
    * Segments are segmented by calls to flush() or clearBuffer()
    */
-  onPlaybackFinished(event: PlaybackFinishedEvent) {
-    this.lastPlaybackEvent = event;
+  onPlaybackFinished(options: PlaybackFinishedEvent) {
+    if (this.playbackFinishedCount >= this.playbackSegmentsCount) {
+      this.logger.warn('playback_finished called more times than playback segments were captured');
+      return;
+    }
+
+    this.lastPlaybackEvent = options;
     this.playbackFinishedCount++;
     this.playbackFinishedFuture.resolve();
+    this.emit(AudioOutput.EVENT_PLAYBACK_FINISHED, options);
   }
 
   flush(): void {
-    this.capturing = false;
+    this._capturing = false;
   }
 
   /**
