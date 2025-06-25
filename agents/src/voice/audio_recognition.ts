@@ -81,12 +81,12 @@ export class AudioRecognition {
   }
 
   async start() {
-    this.vadTask = Task.from(this.createVadTask());
+    this.vadTask = Task.from(({ signal }) => this.createVadTask(signal));
     this.vadTask.result.catch((err) => {
       this.logger.error(`Error running VAD task: ${err}`);
     });
 
-    this.sttTask = Task.from(this.createSttTask());
+    this.sttTask = Task.from(({ signal }) => this.createSttTask(signal));
     this.sttTask.result.catch((err) => {
       this.logger.error(`Error running STT task: ${err}`);
     });
@@ -249,112 +249,102 @@ export class AudioRecognition {
       });
   }
 
-  private createSttTask() {
-    return async (controller: AbortController) => {
-      if (!this.stt) {
-        return;
-      }
+  private async createSttTask(signal: AbortSignal) {
+    if (!this.stt) return;
 
-      this.logger.debug('createSttTask: create stt stream from stt node');
-      const sttStream = await this.stt(this.sttInputStream, {});
+    this.logger.debug('createSttTask: create stt stream from stt node');
+    const sttStream = await this.stt(this.sttInputStream, {});
 
-      if (controller.signal.aborted || sttStream === null) return;
+    if (signal.aborted || sttStream === null) return;
 
-      if (sttStream instanceof ReadableStream) {
-        const reader = sttStream.getReader();
+    if (sttStream instanceof ReadableStream) {
+      const reader = sttStream.getReader();
 
-        controller.signal.addEventListener('abort', async () => {
-          try {
-            reader.releaseLock();
-            await sttStream?.cancel();
-          } catch (e) {
-            this.logger.debug('createSttTask: error during abort handler:', e);
-          }
-        });
-
+      signal.addEventListener('abort', async () => {
         try {
-          while (true) {
-            if (controller.signal.aborted) {
-              break;
-            }
-
-            const { done, value: ev } = await reader.read();
-
-            if (done) {
-              break;
-            }
-            if (typeof ev === 'string') {
-              throw new Error('STT node must yield SpeechEvent');
-            } else {
-              await this.onSTTEvent(ev);
-            }
-          }
-        } catch (e) {
-          if (isStreamReaderReleaseError(e)) {
-            return;
-          }
-          this.logger.error({ error: e }, 'createSttTask: error reading sttStream');
-        } finally {
           reader.releaseLock();
-          try {
-            await sttStream.cancel();
-          } catch (e) {
-            this.logger.debug(
-              'createSttTask: error cancelling sttStream (may already be cancelled):',
-              e,
-            );
-          }
+          await sttStream?.cancel();
+        } catch (e) {
+          this.logger.debug('createSttTask: error during abort handler:', e);
         }
-      }
-    };
-  }
-
-  private createVadTask() {
-    return async ({ signal }: AbortController) => {
-      const vadStream = this.vad.stream();
-      vadStream.updateInputStream(this.vadInputStream);
-
-      const abortHandler = () => {
-        vadStream.detachInputStream();
-        vadStream.close();
-        signal.removeEventListener('abort', abortHandler);
-      };
-      signal.addEventListener('abort', abortHandler);
+      });
 
       try {
-        for await (const ev of vadStream) {
+        while (true) {
           if (signal.aborted) break;
 
-          switch (ev.type) {
-            case VADEventType.START_OF_SPEECH:
-              this.hooks.onStartOfSpeech(ev);
-              this.speaking = true;
+          const { done, value: ev } = await reader.read();
+          if (done) break;
 
-              this.bounceEOUTask?.cancel();
-              break;
-            case VADEventType.INFERENCE_DONE:
-              this.hooks.onVADInferenceDone(ev);
-              break;
-            case VADEventType.END_OF_SPEECH:
-              this.hooks.onEndOfSpeech(ev);
-              this.speaking = false;
-              // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
-              this.lastSpeakingTime = Date.now() - ev.silenceDuration;
-
-              if (this.turnDetectionMode !== 'manual') {
-                const chatCtx = this.hooks.retrieveChatCtx();
-                this.logger.debug('running EOU detection on vad END_OF_SPEECH');
-                this.runEOUDetection(chatCtx);
-              }
-              break;
+          if (typeof ev === 'string') {
+            throw new Error('STT node must yield SpeechEvent');
+          } else {
+            await this.onSTTEvent(ev);
           }
         }
       } catch (e) {
-        this.logger.error('Error in VAD task:', e);
+        if (isStreamReaderReleaseError(e)) {
+          return;
+        }
+        this.logger.error({ error: e }, 'createSttTask: error reading sttStream');
       } finally {
-        this.logger.debug('VAD task closed');
+        reader.releaseLock();
+        try {
+          await sttStream.cancel();
+        } catch (e) {
+          this.logger.debug(
+            'createSttTask: error cancelling sttStream (may already be cancelled):',
+            e,
+          );
+        }
       }
+    }
+  }
+
+  private async createVadTask(signal: AbortSignal) {
+    const vadStream = this.vad.stream();
+    vadStream.updateInputStream(this.vadInputStream);
+
+    const abortHandler = () => {
+      vadStream.detachInputStream();
+      vadStream.close();
+      signal.removeEventListener('abort', abortHandler);
     };
+    signal.addEventListener('abort', abortHandler);
+
+    try {
+      for await (const ev of vadStream) {
+        if (signal.aborted) break;
+
+        switch (ev.type) {
+          case VADEventType.START_OF_SPEECH:
+            this.hooks.onStartOfSpeech(ev);
+            this.speaking = true;
+
+            this.bounceEOUTask?.cancel();
+            break;
+          case VADEventType.INFERENCE_DONE:
+            this.hooks.onVADInferenceDone(ev);
+            break;
+          case VADEventType.END_OF_SPEECH:
+            this.hooks.onEndOfSpeech(ev);
+            this.speaking = false;
+            // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
+            this.lastSpeakingTime = Date.now() - ev.silenceDuration;
+
+            if (this.turnDetectionMode !== 'manual') {
+              const chatCtx = this.hooks.retrieveChatCtx();
+              this.logger.debug('running EOU detection on vad END_OF_SPEECH');
+              this.runEOUDetection(chatCtx);
+            }
+            break;
+        }
+      }
+    } catch (e) {
+      this.logger.error('Error in VAD task:', e);
+    } finally {
+      this.logger.debug('VAD task closed');
+    }
   }
 
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {
@@ -375,7 +365,7 @@ export class AudioRecognition {
     this.userTurnCommitted = false;
 
     this.sttTask?.cancelAndWait().finally(() => {
-      this.sttTask = Task.from(this.createSttTask());
+      this.sttTask = Task.from(({ signal }) => this.createSttTask(signal));
       this.sttTask.result.catch((err) => {
         this.logger.error(`Error running STT task: ${err}`);
       });
