@@ -215,8 +215,8 @@ export class AgentActivity implements RecognitionHooks {
         speechHandle.authorizePlayout();
         await speechHandle.waitForPlayout();
         this.currentSpeech = undefined;
-        this.q_updated = new Future();
       }
+      this.q_updated = new Future();
     }
   }
 
