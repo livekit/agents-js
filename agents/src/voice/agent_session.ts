@@ -198,7 +198,7 @@ export class AgentSession<
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
-    // TODO: add lock
+    // TODO(AJS-129): add lock to agent activity core lifecycle
     this.nextActivity = new AgentActivity(agent, this);
 
     // if (this.activity) {

@@ -828,7 +828,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async drain(): Promise<void> {
-    // TODO: add lock
+    // TODO(AJS-129): add lock to agent activity core lifecycle
     if (this._draining) return;
 
     this.createSpeechTask({
@@ -842,7 +842,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async close(): Promise<void> {
-    // TODO: add lock
+    // TODO(AJS-129): add lock to agent activity core lifecycle
     if (!this._draining) {
       this.logger.warn('task closing without draining');
     }
