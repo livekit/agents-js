@@ -72,8 +72,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     this.#toolCtx = toolCtx;
     this.monitorMetrics();
     this.abortController.signal.addEventListener('abort', () => {
-      this.output.close();
       // TODO (AJS-37) clean this up when we refactor with streams
+      this.output.close();
       this.closed = true;
     });
   }
@@ -85,6 +85,9 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     let usage: CompletionUsage | undefined;
 
     for await (const ev of this.queue) {
+      if (this.abortController.signal.aborted) {
+        break;
+      }
       this.output.put(ev);
       requestId = ev.id;
       if (ttft === BigInt(-1)) {
