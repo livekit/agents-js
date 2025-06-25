@@ -78,14 +78,14 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
 
   protected async monitorMetrics() {
     const startTime = process.hrtime.bigint();
-    let ttft: bigint | undefined;
+    let ttft: bigint = BigInt(-1);
     let requestId = '';
     let usage: CompletionUsage | undefined;
 
     for await (const ev of this.queue) {
       this.output.put(ev);
       requestId = ev.requestId;
-      if (!ttft) {
+      if (ttft === BigInt(-1)) {
         ttft = process.hrtime.bigint() - startTime;
       }
       if (ev.usage) {
@@ -98,7 +98,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     const metrics: LLMMetrics = {
       timestamp: Date.now(),
       requestId,
-      ttft: Math.trunc(Number(ttft! / BigInt(1000000))),
+      ttft: ttft === BigInt(-1) ? -1 : Math.trunc(Number(ttft / BigInt(1000000))),
       duration: Math.trunc(Number(duration / BigInt(1000000))),
       cancelled: false, // XXX(nbsp)
       label: this.label,
