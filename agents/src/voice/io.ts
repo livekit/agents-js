@@ -74,6 +74,10 @@ export abstract class AudioOutput extends EventEmitter {
       this.playbackFinishedFuture = new Future();
     }
 
+    this.logger.debug(
+      { target, playbackFinishedCount: this.playbackFinishedCount },
+      'waitForPlayout finished for sub-class ' + this.constructor.name,
+    );
     return this.lastPlaybackEvent;
   }
 
@@ -82,6 +86,7 @@ export abstract class AudioOutput extends EventEmitter {
    * Segments are segmented by calls to flush() or clearBuffer()
    */
   onPlaybackFinished(options: PlaybackFinishedEvent) {
+    this.logger.debug({ options }, 'onPlaybackFinished in subclass ' + this.constructor.name);
     if (this.playbackFinishedCount >= this.playbackSegmentsCount) {
       this.logger.warn('playback_finished called more times than playback segments were captured');
       return;
