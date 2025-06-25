@@ -6,6 +6,7 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
 import { EventEmitter, once } from 'node:events';
+import { log } from './log.js';
 
 /** Union of a single and a list of {@link AudioFrame}s */
 export type AudioBuffer = AudioFrame[] | AudioFrame;
@@ -340,9 +341,12 @@ export enum TaskResult {
 export class Task<T> {
   private resultFuture: Future<T>;
 
+  #logger = log();
+
   constructor(
     private readonly fn: (controller: AbortController) => Promise<T>,
     private readonly controller: AbortController,
+    readonly name?: string,
   ) {
     this.resultFuture = new Future();
     this.runTask();
@@ -355,19 +359,35 @@ export class Task<T> {
    * @param controller - The abort controller to use
    * @returns A new task
    */
-  static from<T>(fn: (controller: AbortController) => Promise<T>, controller?: AbortController) {
+  static from<T>(
+    fn: (controller: AbortController) => Promise<T>,
+    controller?: AbortController,
+    name?: string,
+  ) {
     const abortController = controller ?? new AbortController();
-    return new Task(fn, abortController);
+    return new Task(fn, abortController, name);
   }
 
   private async runTask() {
-    return this.fn(this.controller)
+    const run = async () => {
+      if (this.name) {
+        this.#logger.debug(`Task.runTask: task ${this.name} started`);
+      }
+      return await this.fn(this.controller);
+    };
+
+    return run()
       .then((value) => {
         this.resultFuture.resolve(value);
         return value;
       })
       .catch((error) => {
         this.resultFuture.reject(error);
+      })
+      .finally(() => {
+        if (this.name) {
+          this.#logger.debug(`Task.runTask: task ${this.name} done`);
+        }
       });
   }
 

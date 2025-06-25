@@ -628,6 +628,7 @@ export class AgentActivity implements RecognitionHooks {
       toolCtx,
       toolChoice,
       toolCallStream: llmGenData.toolCallStream,
+      controller: replyAbortController,
     });
     tasks.push(executeToolsTask);
 

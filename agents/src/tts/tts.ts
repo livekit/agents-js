@@ -157,6 +157,11 @@ export abstract class SynthesizeStream
       this.logger.error(error, 'Error reading deferred input stream');
     } finally {
       reader.releaseLock();
+      // Ensure output is closed when the stream ends
+      if (!this.#monitorMetricsTask) {
+        // No text was received, close the output directly
+        this.output.close();
+      }
     }
   }
 
@@ -204,7 +209,6 @@ export abstract class SynthesizeStream
     if (requestId) {
       emit();
     }
-    this.output.close();
   }
 
   updateInputStream(text: ReadableStream<string>) {
@@ -216,6 +220,8 @@ export abstract class SynthesizeStream
   pushText(text: string) {
     if (!this.#monitorMetricsTask) {
       this.#monitorMetricsTask = this.monitorMetrics();
+      // Close output when metrics task completes
+      this.#monitorMetricsTask.finally(() => this.output.close());
     }
     this.#metricsText += text;
 
