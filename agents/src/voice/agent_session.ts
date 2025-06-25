@@ -183,16 +183,14 @@ export class AgentSession<
   say(
     text: string | ReadableStream<string>,
     options?: {
-      audio?: ReadableStream<AudioFrame> | null;
-      allowInterruptions?: boolean | null;
+      audio?: ReadableStream<AudioFrame>;
+      allowInterruptions?: boolean;
       addToChatCtx?: boolean;
     },
   ): SpeechHandle {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
-
-    this.logger.debug({ text, options }, 'say in agent session');
 
     return this.activity.say(text, options);
   }
