@@ -457,6 +457,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('listening');
     }
 
+    // TODO(Brian): Move to createSpeechTask once implemented
     speechHandle.markPlayoutDone();
     return;
   }
