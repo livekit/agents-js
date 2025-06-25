@@ -46,7 +46,7 @@ export class AgentActivity implements RecognitionHooks {
   private currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private q_updated: Future;
-  private speechTasks: Set<Promise<void>> = new Set();
+  private speechTasks: Set<Promise<unknown>> = new Set();
 
   agent: Agent;
   agentSession: AgentSession;
@@ -182,11 +182,11 @@ export class AgentActivity implements RecognitionHooks {
     });
   }
 
-  private createSpeechTask(options: {
-    promise: Promise<void>;
+  private createSpeechTask<T>(options: {
+    promise: Promise<T>;
     ownedSpeechHandle?: SpeechHandle;
     name?: string;
-  }) {
+  }): Promise<T> {
     const { promise, ownedSpeechHandle, name } = options;
 
     this.logger.info({ name, speechTasksSize: this.speechTasks.size }, 'creating speech task');
@@ -308,7 +308,7 @@ export class AgentActivity implements RecognitionHooks {
         handle,
         chatCtx || this.agent.chatCtx,
         this.agent.toolCtx,
-        // TODO(brian): make tool choice as model settings
+        // TODO(AJS-59): make tool choice as model settings
         toolChoice || 'auto',
         instructions,
         userMessage,
