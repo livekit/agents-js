@@ -361,7 +361,7 @@ export class AudioRecognition {
     this.audioInterimTranscript = '';
     this.userTurnCommitted = false;
 
-    this.sttTask?.cancelAndWait().then(() => {
+    this.sttTask?.cancelAndWait().finally(() => {
       this.sttTask = Task.from(this.createSttTask());
       this.sttTask.result.catch((err) => {
         this.logger.error(`Error running STT task: ${err}`);
