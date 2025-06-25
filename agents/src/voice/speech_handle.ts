@@ -73,7 +73,8 @@ export class SpeechHandle {
   }
 
   async waitIfNotInterrupted(aw: Promise<unknown>[]): Promise<void> {
-    const fs: Promise<unknown>[] = [...aw, this.interruptFut.await];
+    const allTasksPromise = Promise.all(aw);
+    const fs: Promise<unknown>[] = [allTasksPromise, this.interruptFut.await];
     await Promise.race(fs);
   }
 

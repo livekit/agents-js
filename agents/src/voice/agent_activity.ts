@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { Heap } from 'heap-js';
-import type { ReadableStream } from 'node:stream/web';
+import { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type {
   ChatItem,
@@ -137,6 +137,29 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     this.audioRecognition.clearUserTurn();
+  }
+
+  say(
+    text: string | ReadableStream<string>,
+    options?: {
+      audio?: ReadableStream<AudioFrame>;
+      allowInterruptions?: boolean;
+      addToChatCtx?: boolean;
+    },
+  ): SpeechHandle {
+    const { audio, allowInterruptions, addToChatCtx = true } = options ?? {};
+
+    if (!audio && !this.tts && this.agentSession.audioOutput) {
+      throw new Error('trying to generate speech from text without a TTS model');
+    }
+
+    const handle = SpeechHandle.create(allowInterruptions ?? this.allowInterruptions);
+
+    this.ttsTask(handle, text, addToChatCtx, audio).finally(() => {
+      this.onPipelineReplyDone();
+    });
+    this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+    return handle;
   }
 
   onStartOfSpeech(ev: VADEvent): void {
@@ -385,6 +408,126 @@ export class AgentActivity implements RecognitionHooks {
     this.generateReply(userMessage, chatCtx);
   }
 
+  private async ttsTask(
+    speechHandle: SpeechHandle,
+    text: string | ReadableStream<string>,
+    addToChatCtx: boolean,
+    audio?: ReadableStream<AudioFrame> | null,
+  ): Promise<void> {
+    const transcriptionOutput = this.agentSession._transcriptionOutput;
+    const audioOutput = this.agentSession.audioOutput;
+
+    const replyAbortController = new AbortController();
+    await speechHandle.waitIfNotInterrupted([speechHandle.waitForAuthorization()]);
+
+    if (speechHandle.interrupted) {
+      return;
+    }
+
+    let baseStream: ReadableStream<string>;
+    if (text instanceof ReadableStream) {
+      baseStream = text;
+    } else {
+      baseStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(text);
+          controller.close();
+        },
+      });
+    }
+
+    const [textSource, audioSource] = baseStream.tee();
+
+    const tasks: Array<Task<void>> = [];
+
+    const trNode = await this.agent.transcriptionNode(textSource, {});
+    let textOut: _TextOut | null = null;
+    if (trNode) {
+      const [textForwardTask, _textOut] = performTextForwarding(
+        trNode,
+        replyAbortController,
+        transcriptionOutput,
+      );
+      textOut = _textOut;
+      tasks.push(textForwardTask);
+    }
+
+    const onFirstFrame = () => {
+      this.agentSession._updateAgentState('speaking');
+    };
+
+    if (!audioOutput) {
+      if (textOut) {
+        textOut.firstTextFut.await.finally(onFirstFrame);
+      }
+    } else {
+      let audioOut: _AudioOut | null = null;
+      if (!audio) {
+        // generate audio using TTS
+        const [ttsTask, ttsStream] = performTTSInference(
+          (...args) => this.agent.ttsNode(...args),
+          audioSource,
+          {}, // TODO(AJS-59): add model settings
+          replyAbortController,
+        );
+        tasks.push(ttsTask);
+
+        const [forwardTask, _audioOut] = performAudioForwarding(
+          ttsStream,
+          audioOutput,
+          replyAbortController,
+        );
+        tasks.push(forwardTask);
+        audioOut = _audioOut;
+      } else {
+        // use the provided audio
+        const [forwardTask, _audioOut] = performAudioForwarding(
+          audio,
+          audioOutput,
+          replyAbortController,
+        );
+        tasks.push(forwardTask);
+        audioOut = _audioOut;
+      }
+      audioOut.firstFrameFut.await.finally(onFirstFrame);
+    }
+
+    await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
+
+    if (audioOutput) {
+      await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
+    }
+
+    if (speechHandle.interrupted) {
+      replyAbortController.abort();
+      await Promise.allSettled(
+        tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
+      );
+      if (audioOutput) {
+        audioOutput.clearBuffer();
+        await audioOutput.waitForPlayout();
+      }
+    }
+
+    if (addToChatCtx) {
+      const message = ChatMessage.create({
+        role: 'assistant',
+        content: textOut?.text || '',
+        interrupted: speechHandle.interrupted,
+      });
+      this.agent._chatCtx.insert(message);
+      this.agentSession._conversationItemAdded(message);
+    }
+
+    if (this.agentSession.agentState === 'speaking') {
+      this.agentSession._updateAgentState('listening');
+    }
+
+    // TODO(Brian): Move to createSpeechTask once implemented
+    speechHandle.markPlayoutDone();
+    return;
+  }
+
   private async pipelineReplyTask(
     speechHandle: SpeechHandle,
     chatCtx: ChatContext,
@@ -471,12 +614,12 @@ export class AgentActivity implements RecognitionHooks {
         );
         audioOut = _audioOut;
         tasks.push(forwardTask);
-        audioOut.firstFrameFut.await.then(onFirstFrame);
+        audioOut.firstFrameFut.await.finally(onFirstFrame);
       } else {
         throw Error('ttsStream is null when audioOutput is enabled');
       }
     } else {
-      textOut?.firstTextFut.await.then(onFirstFrame);
+      textOut?.firstTextFut.await.finally(onFirstFrame);
     }
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
