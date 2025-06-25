@@ -94,6 +94,7 @@ export class Agent<UserData = any> {
           content: instructions,
         }),
       ]);
+    this._on = on;
 
     this.turnDetection = turnDetection;
     this._stt = stt;

@@ -8,6 +8,7 @@ import {
   cli,
   defineAgent,
   llm,
+  log,
   voice,
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
@@ -28,6 +29,8 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
+    const logger = log();
+
     const getWeather = llm.tool({
       description: ' Called when the user asks about the weather.',
       parameters: z.object({
@@ -90,15 +93,19 @@ export default defineAgent({
       tools: { getWeather, toggleLight, getNumber, checkStoredNumber, updateStoredNumber },
       on: {
         enter: async () => {
-          console.log('[hook] agent entered');
+          logger.info('[hook] agent entered');
+          logger.info(agent.agentActivity);
+          await agent.agentActivity!.say(
+            "Hello, I'm a powerful LiveKit agent. I can help you with your tasks.",
+          );
         },
         exit: async () => {
-          console.log('[hook] agent exited');
+          logger.info('[hook] agent exited');
         },
         userTurnCompleted: async (chatCtx, newMessage) => {
-          console.log('[hook] user turn completed');
-          console.log(chatCtx.items[chatCtx.items.length - 1]);
-          console.log(newMessage.content);
+          logger.info('[hook] user turn completed');
+          logger.info(chatCtx.items[chatCtx.items.length - 1]);
+          logger.info(newMessage.content);
         },
       },
     });
@@ -117,7 +124,6 @@ export default defineAgent({
       userData: { number: 0 },
     });
     await session.start(agent, ctx.room);
-    session.say("Hello, I'm a powerful LiveKit agent. I can help you with your tasks.");
   },
 });
 
