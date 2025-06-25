@@ -332,9 +332,6 @@ export class ParticipantAudioOutput extends AudioOutput {
     this.room = room;
     this.options = options;
     this.audioSource = new AudioSource(options.sampleRate, options.numChannels);
-    this.on(AudioOutput.EVENT_PLAYBACK_FINISHED, () => {
-      this.logger.debug('ParticipantAudioOutput.onPlaybackFinished called');
-    });
   }
 
   get queueSizeMs(): number {

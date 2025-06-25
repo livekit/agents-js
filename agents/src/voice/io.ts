@@ -40,7 +40,7 @@ export abstract class AudioOutput extends EventEmitter {
   protected logger = log();
 
   constructor(
-    protected readonly sampleRate?: number,
+    readonly sampleRate?: number,
     protected readonly nextInChain?: AudioOutput,
   ) {
     super();
@@ -112,6 +112,8 @@ export interface PlaybackFinishedEvent {
   synchronizedTranscript?: string;
 }
 export abstract class TextOutput {
+  constructor(protected readonly nextInChain?: TextOutput) {}
+
   /**
    * Capture a text segment (Used by the output of LLM nodes)
    */
