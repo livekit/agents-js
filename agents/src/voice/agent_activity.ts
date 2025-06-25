@@ -276,7 +276,7 @@ export class AgentActivity implements RecognitionHooks {
       toolChoice || 'auto',
       instructions,
       userMessage,
-    ).then(() => {
+    ).finally(() => {
       this.onPipelineReplyDone();
     });
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
@@ -392,7 +392,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (!audioOutput) {
       if (textOut) {
-        textOut.firstTextFut.await.then(onFirstFrame);
+        textOut.firstTextFut.await.finally(onFirstFrame);
       }
     } else {
       let audioOut: _AudioOut | null = null;
@@ -423,7 +423,7 @@ export class AgentActivity implements RecognitionHooks {
         tasks.push(forwardTask);
         audioOut = _audioOut;
       }
-      audioOut.firstFrameFut.await.then(onFirstFrame);
+      audioOut.firstFrameFut.await.finally(onFirstFrame);
     }
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
@@ -548,12 +548,12 @@ export class AgentActivity implements RecognitionHooks {
         );
         audioOut = _audioOut;
         tasks.push(forwardTask);
-        audioOut.firstFrameFut.await.then(onFirstFrame);
+        audioOut.firstFrameFut.await.finally(onFirstFrame);
       } else {
         throw Error('ttsStream is null when audioOutput is enabled');
       }
     } else {
-      textOut?.firstTextFut.await.then(onFirstFrame);
+      textOut?.firstTextFut.await.finally(onFirstFrame);
     }
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
@@ -714,7 +714,7 @@ export class AgentActivity implements RecognitionHooks {
         instructions,
         undefined,
         toolMessages,
-      ).then(() => {
+      ).finally(() => {
         this.onPipelineReplyDone();
       });
 
