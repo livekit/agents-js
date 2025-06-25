@@ -251,18 +251,10 @@ export class AgentActivity implements RecognitionHooks {
 
     while (true) {
       await Promise.race([this.q_updated.await, abortFuture.await]);
-      if (signal.aborted) {
-        break;
-      }
-
-      if (signal.aborted) {
-        break;
-      }
+      if (signal.aborted) break;
 
       while (this.speechQueue.size() > 0) {
-        if (signal.aborted) {
-          break;
-        }
+        if (signal.aborted) break;
 
         const heapItem = this.speechQueue.pop();
         if (!heapItem) {
