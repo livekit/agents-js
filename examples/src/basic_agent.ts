@@ -37,6 +37,7 @@ export default defineAgent({
       tts: new elevenlabs.TTS(),
     });
     session.start(agent, ctx.room);
+    session.say('Hello, how are you?');
   },
 });
 
