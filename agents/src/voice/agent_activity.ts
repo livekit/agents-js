@@ -314,7 +314,7 @@ export class AgentActivity implements RecognitionHooks {
         userMessage,
       ),
       ownedSpeechHandle: handle,
-      name: 'AgentTask_pipeline_reply',
+      name: 'AgentActivity.pipelineReply',
     });
 
     task.finally(() => this.onPipelineReplyDone());
@@ -633,7 +633,7 @@ export class AgentActivity implements RecognitionHooks {
           toolMessages,
         ),
         ownedSpeechHandle: handle,
-        name: 'AgentActivity.pipeline_reply',
+        name: 'AgentActivity.pipelineReply',
       });
 
       toolResponseTask.finally(() => this.onPipelineReplyDone());
