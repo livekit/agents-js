@@ -295,8 +295,8 @@ export class ParalellTextOutput extends TextOutput {
   /* @internal */
   _sinks: TextOutput[];
 
-  constructor(sinks: TextOutput[]) {
-    super();
+  constructor(sinks: TextOutput[], nextInChain?: TextOutput) {
+    super(nextInChain);
     this._sinks = sinks;
   }
 
@@ -332,9 +332,6 @@ export class ParticipantAudioOutput extends AudioOutput {
     this.room = room;
     this.options = options;
     this.audioSource = new AudioSource(options.sampleRate, options.numChannels);
-    this.on(AudioOutput.EVENT_PLAYBACK_FINISHED, () => {
-      this.logger.debug('ParticipantAudioOutput.onPlaybackFinished called');
-    });
   }
 
   get queueSizeMs(): number {

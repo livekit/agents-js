@@ -357,14 +357,13 @@ export class TranscriptionSynchronizer {
 }
 
 class SyncedAudioOutput extends AudioOutput {
-  private capturing: boolean = false;
   private pushedDuration: number = 0.0;
 
   constructor(
     public synchronizer: TranscriptionSynchronizer,
     private nextInChainAudio: AudioOutput,
   ) {
-    super(undefined, nextInChainAudio);
+    super(nextInChainAudio.sampleRate, nextInChainAudio);
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
@@ -372,7 +371,6 @@ class SyncedAudioOutput extends AudioOutput {
     // capture_frame isn't completed
     await this.synchronizer.barrier();
 
-    this.capturing = true;
     await super.captureFrame(frame);
     await this.nextInChainAudio.captureFrame(frame); // passthrough audio
 
@@ -407,13 +405,11 @@ class SyncedAudioOutput extends AudioOutput {
       return;
     }
 
-    this.capturing = false;
     this.synchronizer._impl.endAudioInput();
   }
 
   clearBuffer() {
     this.nextInChainAudio.clearBuffer();
-    this.capturing = false;
   }
 
   // this is going to be automatically called by the next_in_chain
@@ -443,7 +439,7 @@ class SyncedTextOutput extends TextOutput {
     private readonly synchronizer: TranscriptionSynchronizer,
     public readonly nextInChain: TextOutput,
   ) {
-    super();
+    super(nextInChain);
   }
 
   async captureText(text: string): Promise<void> {
