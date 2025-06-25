@@ -40,7 +40,7 @@ export abstract class AudioOutput extends EventEmitter {
   protected logger = log();
 
   constructor(
-    readonly sampleRate?: number,
+    protected readonly sampleRate?: number,
     protected readonly nextInChain?: AudioOutput,
   ) {
     super();
@@ -68,20 +68,12 @@ export abstract class AudioOutput extends EventEmitter {
    */
   async waitForPlayout(): Promise<PlaybackFinishedEvent> {
     const target = this.playbackSegmentsCount;
-    this.logger.debug(`waitForPlayout started for sub-class ${this.constructor.name}`, {
-      target,
-      playbackFinishedCount: this.playbackFinishedCount,
-    });
 
     while (this.playbackFinishedCount < target) {
       await this.playbackFinishedFuture.await;
       this.playbackFinishedFuture = new Future();
     }
 
-    this.logger.debug(`waitForPlayout finished for sub-class ${this.constructor.name}`, {
-      target,
-      playbackFinishedCount: this.playbackFinishedCount,
-    });
     return this.lastPlaybackEvent;
   }
 
@@ -90,7 +82,6 @@ export abstract class AudioOutput extends EventEmitter {
    * Segments are segmented by calls to flush() or clearBuffer()
    */
   onPlaybackFinished(options: PlaybackFinishedEvent) {
-    this.logger.debug({ options }, 'onPlaybackFinished in subclass ' + this.constructor.name);
     if (this.playbackFinishedCount >= this.playbackSegmentsCount) {
       this.logger.warn('playback_finished called more times than playback segments were captured');
       return;
