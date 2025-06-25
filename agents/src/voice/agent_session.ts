@@ -209,7 +209,6 @@ export class AgentSession<
     this.activity = this.nextActivity;
     this.nextActivity = undefined;
 
-    this.logger.info('updateActivity: start new activity');
     await this.activity.start();
 
     if (this.audioInput) {
