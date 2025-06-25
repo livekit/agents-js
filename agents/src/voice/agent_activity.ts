@@ -155,9 +155,12 @@ export class AgentActivity implements RecognitionHooks {
 
     const handle = SpeechHandle.create(allowInterruptions ?? this.allowInterruptions);
 
-    this.ttsTask(handle, text, addToChatCtx, audio).finally(() => {
-      this.onPipelineReplyDone();
+    const task = this.createSpeechTask({
+      promise: this.ttsTask(handle, text, addToChatCtx, audio),
+      name: 'AgentActivity.say_tts',
     });
+
+    task.finally(() => this.onPipelineReplyDone());
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
     return handle;
   }
@@ -522,10 +525,6 @@ export class AgentActivity implements RecognitionHooks {
     if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
     }
-
-    // TODO(Brian): Move to createSpeechTask once implemented
-    speechHandle.markPlayoutDone();
-    return;
   }
 
   private async pipelineReplyTask(
