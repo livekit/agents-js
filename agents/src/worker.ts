@@ -327,6 +327,7 @@ export class Worker {
       agent_name: opts.agentName,
       worker_type: JobType[opts.workerType],
       active_jobs: this.activeJobs.length,
+      sdk_version: version,
     }));
   }
 
