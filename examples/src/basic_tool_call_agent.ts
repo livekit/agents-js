@@ -34,9 +34,9 @@ export default defineAgent({
         location: z.string().describe('The location to get the weather for'),
       }),
       execute: async ({ location }) => {
-        if (Math.random() < 0.5) {
-          throw new llm.ToolError('Internal server error, please try again later.');
-        }
+        // if (Math.random() < 0.5) {
+        //   throw new llm.ToolError('Internal server error, please try again later.');
+        // }
         return `The weather in ${location} is sunny today.`;
       },
     });
@@ -116,7 +116,8 @@ export default defineAgent({
       tts: new elevenlabs.TTS(),
       userData: { number: 0 },
     });
-    session.start(agent, ctx.room);
+    await session.start(agent, ctx.room);
+    session.say("Hello, I'm a powerful LiveKit agent. I can help you with your tasks.");
   },
 });
 
