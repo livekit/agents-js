@@ -599,6 +599,9 @@ export class AgentActivity implements RecognitionHooks {
     const newToolCalls: FunctionCall[] = [];
     const newToolCallOutputs: FunctionCallOutput[] = [];
     let shouldGenerateToolReply: boolean = false;
+    // TODO(AJS-94): add support for agent handoff function
+    // newAgentTask: Agent | undefined = undefined;
+    // ignoreTaskSwitch: boolean = false;
 
     for (const jsOut of toolOutput.output) {
       const sanitizedOut = jsOut.sanitize();
@@ -610,7 +613,11 @@ export class AgentActivity implements RecognitionHooks {
           shouldGenerateToolReply = true;
         }
       }
+
+      // TODO(AJS-94): add support for agent handoff function
     }
+
+    // TODO(AJS-91): handle draining + agent activity switching
 
     const toolMessages = [...newToolCalls, ...newToolCallOutputs] as ChatItem[];
     if (shouldGenerateToolReply) {
@@ -638,6 +645,7 @@ export class AgentActivity implements RecognitionHooks {
 
       toolResponseTask.finally(() => this.onPipelineReplyDone());
 
+      // TODO(AJS-91): handle scheduling speech bypassing draining
       this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
     } else if (newToolCallOutputs.length > 0) {
       for (const msg of toolMessages) {
