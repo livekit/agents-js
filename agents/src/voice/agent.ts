@@ -30,6 +30,25 @@ export class StopResponse extends Error {
   }
 }
 
+export interface AgentHooks {
+  /**
+   * Invoked when the agent is initialized.
+   */
+  onEnter?: () => Promise<void>;
+
+  /**
+   * Invoked when the agent exits, e.g.
+   * - when the user ends the conversation
+   * - when the current agent is transferred to a new agent
+   */
+  onExit?: () => Promise<void>;
+
+  /**
+   * Invoked when the user finishes the speech turn.
+   */
+  onUserTurnCompleted?: (chatCtx: ChatContext, newMessage: ChatMessage) => Promise<void>;
+}
+
 export interface AgentOptions<UserData> {
   instructions: string;
   chatCtx?: ChatContext;
@@ -52,6 +71,9 @@ export class Agent<UserData = any> {
   private _tts?: TTS;
 
   /** @internal */
+  hooks: AgentHooks;
+
+  /** @internal */
   agentActivity?: AgentActivity;
 
   /** @internal */
@@ -72,7 +94,10 @@ export class Agent<UserData = any> {
     vad,
     llm,
     tts,
-  }: AgentOptions<UserData>) {
+    onEnter,
+    onExit,
+    onUserTurnCompleted,
+  }: AgentOptions<UserData> & AgentHooks) {
     this._instructions = instructions;
     this._tools = { ...tools };
     this._chatCtx =
@@ -90,6 +115,12 @@ export class Agent<UserData = any> {
     this._llm = llm;
     this._tts = tts;
     this.agentActivity = undefined; // TODO(shubhra): add type
+
+    this.hooks = {
+      onEnter,
+      onExit,
+      onUserTurnCompleted,
+    };
   }
 
   get vad(): VAD | undefined {
@@ -121,9 +152,17 @@ export class Agent<UserData = any> {
     return { ...this._tools };
   }
 
-  async onEnter(): Promise<void> {}
+  async onEnter(): Promise<void> {
+    await this.hooks.onEnter?.();
+  }
 
-  async onExit(): Promise<void> {}
+  async onExit(): Promise<void> {
+    await this.hooks.onExit?.();
+  }
+
+  async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage): Promise<void> {
+    await this.hooks.onUserTurnCompleted?.(chatCtx, newMessage);
+  }
 
   async transcriptionNode(
     text: ReadableStream<string>,
@@ -131,8 +170,6 @@ export class Agent<UserData = any> {
   ): Promise<ReadableStream<string> | null> {
     return Agent.default.transcriptionNode(this, text, modelSettings);
   }
-
-  async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage): Promise<void> {}
 
   async sttNode(
     audio: ReadableStream<AudioFrame>,
