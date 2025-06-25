@@ -1,5 +1,17 @@
 # @livekit/agents
 
+## 0.7.7
+
+### Patch Changes
+
+- set ttft/ttfb to -1 when output is empty - [#475](https://github.com/livekit/agents-js/pull/475) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- add sdk version to worker endpoint - [#462](https://github.com/livekit/agents-js/pull/462) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- bugfix with uuid in job Proc - [#442](https://github.com/livekit/agents-js/pull/442) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- fix: avoid masquerading types as mjs - [#425](https://github.com/livekit/agents-js/pull/425) ([@lukasIO](https://github.com/lukasIO))
+
 ## 0.7.6
 
 ### Patch Changes
