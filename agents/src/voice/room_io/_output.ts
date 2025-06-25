@@ -295,8 +295,8 @@ export class ParalellTextOutput extends TextOutput {
   /* @internal */
   _sinks: TextOutput[];
 
-  constructor(sinks: TextOutput[]) {
-    super();
+  constructor(sinks: TextOutput[], nextInChain?: TextOutput) {
+    super(nextInChain);
     this._sinks = sinks;
   }
 
