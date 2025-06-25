@@ -315,21 +315,15 @@ export class AudioRecognition {
       vadStream.updateInputStream(this.vadInputStream);
 
       const abortHandler = () => {
-        this.logger.debug('VAD task aborted, detaching input stream');
         vadStream.detachInputStream();
-        this.logger.debug('VAD task aborted, closing vad stream');
         vadStream.close();
-        this.logger.debug('VAD task aborted, removing abort handler');
         signal.removeEventListener('abort', abortHandler);
       };
       signal.addEventListener('abort', abortHandler);
 
       try {
         for await (const ev of vadStream) {
-          if (signal.aborted) {
-            this.logger.debug('VAD task cancelled');
-            break;
-          }
+          if (signal.aborted) break;
 
           switch (ev.type) {
             case VADEventType.START_OF_SPEECH:
@@ -435,18 +429,11 @@ export class AudioRecognition {
   }
 
   async close() {
-    this.logger.debug('AudioRecognition: closing');
-    this.logger.debug('AudioRecognition: detaching input audio stream');
     this.detachInputAudioStream();
-    this.logger.debug('AudioRecognition: cancelling commitUserTurnTask');
     await this.commitUserTurnTask?.cancelAndWait();
-    this.logger.debug('AudioRecognition: cancelling sttTask');
     await this.sttTask?.cancelAndWait();
-    this.logger.debug('AudioRecognition: cancelling vadTask');
     await this.vadTask?.cancelAndWait();
-    this.logger.debug('AudioRecognition: cancelling bounceEOUTask');
     await this.bounceEOUTask?.cancelAndWait();
-    this.logger.debug('AudioRecognition: closed');
   }
 
   private get vadBaseTurnDetection() {
