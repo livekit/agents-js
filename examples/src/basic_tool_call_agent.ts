@@ -103,7 +103,7 @@ export default defineAgent({
       tts: new elevenlabs.TTS(),
       userData: { number: 0 },
     });
-    session.start(agent, ctx.room);
+    await session.start(agent, ctx.room);
     session.say("Hello, I'm a powerful LiveKit agent. I can help you with your tasks.");
   },
 });
