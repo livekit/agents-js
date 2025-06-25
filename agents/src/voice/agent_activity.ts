@@ -146,7 +146,7 @@ export class AgentActivity implements RecognitionHooks {
 
     const handle = SpeechHandle.create(allowInterruptions ?? this.allowInterruptions);
 
-    this.ttsTask(handle, text, addToChatCtx, audio).then(() => {
+    this.ttsTask(handle, text, addToChatCtx, audio).finally(() => {
       this.onPipelineReplyDone();
     });
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
