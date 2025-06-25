@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
-import { delay } from '@std/async';
 import { Heap } from 'heap-js';
 import { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
@@ -86,19 +85,6 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     // TODO(shubhra): Add turn detection mode
-    this.debugSpeechTasks();
-  }
-
-  async debugSpeechTasks(): Promise<void> {
-    let taskSizes = this.speechTasks.size;
-    while (true) {
-      await delay(200);
-      const newTaskSizes = this.speechTasks.size;
-      if (newTaskSizes !== taskSizes) {
-        this.logger.info({ taskSizes: newTaskSizes }, 'speech tasks changed');
-        taskSizes = newTaskSizes;
-      }
-    }
   }
 
   get vad(): VAD {
