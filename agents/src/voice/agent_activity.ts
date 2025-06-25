@@ -308,7 +308,6 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private wakeupMainTask(): void {
-    this.logger.info('wakeupMainTask: called');
     this.q_updated.resolve();
   }
 
