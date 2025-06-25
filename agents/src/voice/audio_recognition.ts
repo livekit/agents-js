@@ -11,7 +11,6 @@ import { type ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream, isStreamReaderReleaseError } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
-import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { Task } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
@@ -316,8 +315,11 @@ export class AudioRecognition {
       vadStream.updateInputStream(this.vadInputStream);
 
       const abortHandler = () => {
+        this.logger.debug('VAD task aborted, detaching input stream');
         vadStream.detachInputStream();
+        this.logger.debug('VAD task aborted, closing vad stream');
         vadStream.close();
+        this.logger.debug('VAD task aborted, removing abort handler');
         signal.removeEventListener('abort', abortHandler);
       };
       signal.addEventListener('abort', abortHandler);
@@ -355,16 +357,18 @@ export class AudioRecognition {
         }
       } catch (e) {
         this.logger.error('Error in VAD task:', e);
+      } finally {
+        this.logger.debug('VAD task closed');
       }
     };
   }
 
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {
-    const mergedStream = mergeReadableStreams(
-      audioStream as any,
-      this.silenceAudioTransform.readable as any,
-    );
-    this.deferredInputStream.setSource(mergedStream as any);
+    // const mergedStream = mergeReadableStreams(
+    //   audioStream as any,
+    //   this.silenceAudioTransform.readable as any,
+    // );
+    this.deferredInputStream.setSource(audioStream as any);
   }
 
   detachInputAudioStream() {

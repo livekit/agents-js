@@ -85,20 +85,55 @@ export default defineAgent({
       },
     });
 
-    const agent = voice.createAgent<UserData>({
+    const routerAgent = voice.createAgent<UserData>({
       instructions: 'You are a helpful assistant.',
-      tools: { getWeather, toggleLight, getNumber, checkStoredNumber, updateStoredNumber },
+      tools: {
+        getWeather,
+        toggleLight,
+        playGame: llm.tool({
+          description: 'Called when the user wants to play a game (transfer user to a game agent).',
+          parameters: z.object({}),
+          execute: async (): Promise<llm.AgentHandoff> => {
+            return llm.handoff({ agent: gameAgent, returns: 'The game is now playing.' });
+          },
+        }),
+      },
       on: {
         enter: async () => {
-          console.log('[hook] agent entered');
+          console.log('[hook] router agent entered');
         },
         exit: async () => {
-          console.log('[hook] agent exited');
+          console.log('[hook] router agent exited');
         },
         userTurnCompleted: async (chatCtx, newMessage) => {
-          console.log('[hook] user turn completed');
-          console.log(chatCtx.items[chatCtx.items.length - 1]);
-          console.log(newMessage.content);
+          console.log('[hook] router agent user turn completed');
+        },
+      },
+    });
+
+    const gameAgent = voice.createAgent({
+      instructions: 'You are a game agent. You are playing a game with the user.',
+      tools: {
+        getNumber,
+        checkStoredNumber,
+        updateStoredNumber,
+        finishGame: llm.tool({
+          description: 'Called when the user wants to finish the game.',
+          parameters: z.object({}),
+          execute: async () => {
+            return llm.handoff({ agent: routerAgent, returns: 'The game is now finished.' });
+          },
+        }),
+      },
+      on: {
+        enter: async () => {
+          console.log('[hook] game agent entered');
+        },
+        exit: async () => {
+          console.log('[hook] game agent exited');
+        },
+        userTurnCompleted: async (chatCtx, newMessage) => {
+          console.log('[hook] game agent user turn completed');
         },
       },
     });
@@ -116,7 +151,7 @@ export default defineAgent({
       tts: new elevenlabs.TTS(),
       userData: { number: 0 },
     });
-    session.start(agent, ctx.room);
+    session.start(routerAgent, ctx.room);
   },
 });
 

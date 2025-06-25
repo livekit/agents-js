@@ -153,10 +153,6 @@ export class AgentSession<
 
     this.updateActivity(this.agent);
 
-    if (this.audioInput) {
-      this.activity?.updateAudioInput(this.audioInput);
-    }
-
     this.logger.debug('AgentSession started');
     this.started = true;
     this._updateAgentState('listening');
@@ -200,6 +196,10 @@ export class AgentSession<
     if (this.activity) {
       this.logger.info('updateActivity: start new activity');
       await this.activity.start();
+
+      if (this.audioInput) {
+        this.activity.updateAudioInput(this.audioInput);
+      }
     }
   }
 
