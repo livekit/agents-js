@@ -25,13 +25,13 @@ type UserData = {
 
 class RouterAgent extends voice.Agent<UserData> {
   async onEnter(): Promise<void> {
-    this.agentActivity!.say("Hello, I'm a router agent. I can help you with your tasks.");
+    this._agentActivity!.say("Hello, I'm a router agent. I can help you with your tasks.");
   }
 }
 
 class GameAgent extends voice.Agent<UserData> {
   async onEnter(): Promise<void> {
-    this.agentActivity!.say("Hello, I'm a game agent. I can help you with your tasks.");
+    this._agentActivity!.say("Hello, I'm a game agent. I can help you with your tasks.");
   }
 }
 

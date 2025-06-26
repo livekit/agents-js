@@ -861,6 +861,6 @@ export class AgentActivity implements RecognitionHooks {
     await this.audioRecognition?.close();
     await this._mainTask?.cancelAndWait();
 
-    this.agent.agentActivity = undefined;
+    this.agent._agentActivity = undefined;
   }
 }
