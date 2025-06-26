@@ -766,6 +766,17 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       newAgentTask = sanitizedOut.agentTask;
+
+      this.logger.debug(
+        {
+          speechId: speechHandle.id,
+          name: sanitizedOut.toolCall?.name,
+          args: sanitizedOut.toolCall.args,
+          output: sanitizedOut.toolCallOutput?.output,
+          isError: sanitizedOut.toolCallOutput?.isError,
+        },
+        'Tool call execution finished',
+      );
     }
 
     let draining = this.draining;

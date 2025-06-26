@@ -88,24 +88,59 @@ export default defineAgent({
       },
     });
 
-    const agent = voice.createAgent<UserData>({
+    const routerAgent = voice.createAgent<UserData>({
       instructions: 'You are a helpful assistant.',
-      tools: { getWeather, toggleLight, getNumber, checkStoredNumber, updateStoredNumber },
+      tools: {
+        getWeather,
+        toggleLight,
+        playGame: llm.tool({
+          description: 'Called when the user wants to play a game (transfer user to a game agent).',
+          parameters: z.object({}),
+          execute: async (): Promise<llm.AgentHandoff> => {
+            return llm.handoff({ agent: gameAgent, returns: 'The game is now playing.' });
+          },
+        }),
+      },
       on: {
         enter: async () => {
-          logger.info('[hook] agent entered');
-          logger.info(agent.agentActivity);
-          await agent.agentActivity!.say(
-            "Hello, I'm a powerful LiveKit agent. I can help you with your tasks.",
+          routerAgent.agentActivity!.say(
+            "Hello, I'm a router agent. I can help you with your tasks.",
           );
+          logger.info('[hook] router agent entered');
         },
         exit: async () => {
-          logger.info('[hook] agent exited');
+          logger.info('[hook] router agent exited');
         },
         userTurnCompleted: async (chatCtx, newMessage) => {
-          logger.info('[hook] user turn completed');
-          logger.info(chatCtx.items[chatCtx.items.length - 1]);
-          logger.info(newMessage.content);
+          logger.info('[hook] router agent user turn completed');
+        },
+      },
+    });
+
+    const gameAgent = voice.createAgent({
+      instructions: 'You are a game agent. You are playing a game with the user.',
+      tools: {
+        getNumber,
+        checkStoredNumber,
+        updateStoredNumber,
+        finishGame: llm.tool({
+          description: 'Called when the user wants to finish the game.',
+          parameters: z.object({}),
+          execute: async () => {
+            return llm.handoff({ agent: routerAgent, returns: 'The game is now finished.' });
+          },
+        }),
+      },
+      on: {
+        enter: async () => {
+          gameAgent.agentActivity!.say("Hello, I'm a game agent. I can help you with your tasks.");
+          logger.info('[hook] game agent entered');
+        },
+        exit: async () => {
+          logger.info('[hook] game agent exited');
+        },
+        userTurnCompleted: async (chatCtx, newMessage) => {
+          logger.info('[hook] game agent user turn completed');
         },
       },
     });
@@ -123,7 +158,8 @@ export default defineAgent({
       tts: new elevenlabs.TTS(),
       userData: { number: 0 },
     });
-    await session.start(agent, ctx.room);
+
+    session.start(routerAgent, ctx.room);
   },
 });
 
