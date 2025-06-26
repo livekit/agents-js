@@ -311,13 +311,15 @@ export class AgentActivity implements RecognitionHooks {
     this.q_updated.resolve();
   }
 
-  private generateReply(
-    userMessage?: ChatMessage,
-    chatCtx?: ChatContext,
-    instructions?: string,
-    allowInterruptions?: boolean,
-    toolChoice?: ToolChoice,
-  ): SpeechHandle {
+  generateReply(options: {
+    userMessage?: ChatMessage;
+    chatCtx?: ChatContext;
+    instructions?: string;
+    allowInterruptions?: boolean;
+    toolChoice?: ToolChoice;
+  }): SpeechHandle {
+    const { userMessage, chatCtx, instructions, allowInterruptions, toolChoice } = options;
+
     // TODO(AJS-32): Add realtime model support for generating a reply
 
     // TODO(shubhra) handle tool calls
@@ -328,10 +330,6 @@ export class AgentActivity implements RecognitionHooks {
     });
     this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
 
-    if (instructions) {
-      instructions = `${this.agent.instructions}\n${instructions}`;
-    }
-
     const task = this.createSpeechTask({
       promise: this.pipelineReplyTask(
         handle,
@@ -339,7 +337,7 @@ export class AgentActivity implements RecognitionHooks {
         this.agent.toolCtx,
         // TODO(AJS-59): make tool choice as model settings
         toolChoice || 'auto',
-        instructions,
+        instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
         userMessage,
       ),
       ownedSpeechHandle: handle,
@@ -411,7 +409,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (signal.aborted) return;
-    this.generateReply(userMessage, chatCtx);
+    this.generateReply({ userMessage, chatCtx });
   }
 
   private async ttsTask(
