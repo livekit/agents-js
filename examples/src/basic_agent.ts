@@ -37,10 +37,7 @@ export default defineAgent({
       tts: new elevenlabs.TTS(),
     });
     await session.start(agent, ctx.room);
-    session.generateReply({
-      instructions:
-        "You are a helpful assistant, you can hear the user's message and respond to it.",
-    });
+    session.say('Hello, how can I help you today?');
   },
 });
 
