@@ -762,7 +762,7 @@ export class AgentActivity implements RecognitionHooks {
       if (newAgentTask !== undefined && sanitizedOut.agentTask !== undefined) {
         this.logger.error('expected to receive only one agent task from the tool executions');
         ignoreTaskSwitch = true;
-        // TODO: should we mark the function call as failed to notify the LLM?
+        // TODO(brian): should we mark the function call as failed to notify the LLM?
       }
 
       newAgentTask = sanitizedOut.agentTask;
