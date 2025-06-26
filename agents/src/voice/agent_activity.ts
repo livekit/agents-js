@@ -359,7 +359,6 @@ export class AgentActivity implements RecognitionHooks {
 
     // TODO(AJS-32): Add realtime model support for generating a reply
 
-    // TODO(shubhra) handle tool calls
     const handle = SpeechHandle.create({
       allowInterruptions: allowInterruptions ?? this.allowInterruptions,
       stepIndex: 0,
