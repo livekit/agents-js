@@ -15,6 +15,7 @@ import type {
 } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
+import { splitWords } from '../tokenize/basic/word.js';
 import type { TTS } from '../tts/tts.js';
 import { Future, Task } from '../utils.js';
 import type { VAD, VADEvent } from '../vad.js';
@@ -34,6 +35,7 @@ import {
   performTTSInference,
   performTextForwarding,
   performToolExecutions,
+  updateInstructions,
 } from './generation.js';
 import { SpeechHandle } from './speech_handle.js';
 
@@ -81,7 +83,7 @@ export class AgentActivity implements RecognitionHooks {
     this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
     this.createSpeechTask({
       promise: this.agent.onEnter(),
-      name: 'AgentTask_on_enter',
+      name: 'AgentActivity_onEnter',
     });
 
     // TODO(shubhra): Add turn detection mode
@@ -115,6 +117,23 @@ export class AgentActivity implements RecognitionHooks {
   get turnDetection(): TurnDetectionMode | undefined {
     // TODO(brian): prioritize using agent.turn_detection
     return this.agentSession.turnDetection;
+  }
+
+  get toolCtx(): ToolContext {
+    return this.agent.toolCtx;
+  }
+
+  async updateChatCtx(chatCtx: ChatContext): Promise<void> {
+    chatCtx = chatCtx.copy({ toolCtx: this.toolCtx });
+
+    this.agent._chatCtx = chatCtx;
+
+    // TODO(AJS-132): handle realtime session
+    updateInstructions({
+      chatCtx,
+      instructions: this.agent.instructions,
+      addIfMissing: true,
+    });
   }
 
   updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
@@ -168,19 +187,33 @@ export class AgentActivity implements RecognitionHooks {
     return handle;
   }
 
-  onStartOfSpeech(ev: VADEvent): void {
-    this.logger.info('Start of speech', ev);
+  // recognition hooks
+
+  onStartOfSpeech(_ev: VADEvent): void {
+    this.agentSession._updateUserState('speaking');
   }
 
   onEndOfSpeech(ev: VADEvent): void {
     this.logger.info('End of speech', ev);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onVADInferenceDone(ev: VADEvent): void {
-    // skip speech handle interruption for manual and realtime model
     if (this.turnDetection === 'manual' || this.turnDetection === 'realtime_llm') {
+      // skip speech handle interruption for manual and realtime model
       return;
+    }
+
+    if (ev.speechDuration < this.agentSession.options.minInterruptionDuration) {
+      return;
+    }
+
+    if (this.stt && this.agentSession.options.minInterruptionWords > 0 && this.audioRecognition) {
+      const text = this.audioRecognition.currentTranscript;
+
+      // TODO(shubhra): better word splitting for multi-language
+      if (text && splitWords(text, true).length < this.agentSession.options.minInterruptionWords) {
+        return;
+      }
     }
 
     if (
@@ -188,8 +221,8 @@ export class AgentActivity implements RecognitionHooks {
       !this.currentSpeech.interrupted &&
       this.currentSpeech.allowInterruptions
     ) {
-      // this.logger.info({ 'speech id': this.currentSpeech.id }, 'speech interrupted by VAD');
-      // this.currentSpeech.interrupt();
+      this.logger.info({ 'speech id': this.currentSpeech.id }, 'speech interrupted by VAD');
+      this.currentSpeech.interrupt();
     }
   }
 
@@ -262,6 +295,8 @@ export class AgentActivity implements RecognitionHooks {
     // In practice this is OK because most speeches will be interrupted if a new turn
     // is detected. So the previous execution should complete quickly.
     await this._userTurnCompletedTask?.result;
+
+    //TODO(AJS-40) refactor with createSpeechTask
     this._userTurnCompletedTask = Task.from(({ signal }) => this.userTurnCompleted(info, signal));
     return true;
   }
@@ -305,6 +340,8 @@ export class AgentActivity implements RecognitionHooks {
 
       this.q_updated = new Future();
     }
+
+    this.logger.info('AgentActivity mainTask: exiting');
   }
 
   private wakeupMainTask(): void {
@@ -743,9 +780,8 @@ export class AgentActivity implements RecognitionHooks {
     const newToolCalls: FunctionCall[] = [];
     const newToolCallOutputs: FunctionCallOutput[] = [];
     let shouldGenerateToolReply: boolean = false;
-    // TODO(AJS-94): add support for agent handoff function
-    // newAgentTask: Agent | undefined = undefined;
-    // ignoreTaskSwitch: boolean = false;
+    let newAgentTask: Agent | null = null;
+    let ignoreTaskSwitch: boolean = false;
 
     for (const jsOut of toolOutput.output) {
       const sanitizedOut = jsOut.sanitize();
@@ -758,10 +794,31 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
 
-      // TODO(AJS-94): add support for agent handoff function
+      if (newAgentTask !== null && sanitizedOut.agentTask !== undefined) {
+        this.logger.error('expected to receive only one agent task from the tool executions');
+        ignoreTaskSwitch = true;
+        // TODO(brian): should we mark the function call as failed to notify the LLM?
+      }
+
+      newAgentTask = sanitizedOut.agentTask ?? null;
+
+      this.logger.debug(
+        {
+          speechId: speechHandle.id,
+          name: sanitizedOut.toolCall?.name,
+          args: sanitizedOut.toolCall.args,
+          output: sanitizedOut.toolCallOutput?.output,
+          isError: sanitizedOut.toolCallOutput?.isError,
+        },
+        'Tool call execution finished',
+      );
     }
 
-    // TODO(AJS-91): handle draining + agent activity switching
+    let draining = this.draining;
+    if (!ignoreTaskSwitch && newAgentTask !== null) {
+      this.agentSession.updateAgent(newAgentTask);
+      draining = true;
+    }
 
     const toolMessages = [...newToolCalls, ...newToolCallOutputs] as ChatItem[];
     if (shouldGenerateToolReply) {
@@ -773,12 +830,16 @@ export class AgentActivity implements RecognitionHooks {
         parent: speechHandle,
       });
 
+      // Avoid setting tool_choice to "required" or a specific function when
+      // passing tool response back to the LLM
+      const respondToolChoice = draining || toolChoice === 'none' ? 'none' : 'auto';
+
       const toolResponseTask = this.createSpeechTask({
         promise: this.pipelineReplyTask(
           handle,
           chatCtx,
           toolCtx,
-          toolChoice,
+          respondToolChoice,
           instructions,
           undefined,
           toolMessages,
@@ -789,7 +850,6 @@ export class AgentActivity implements RecognitionHooks {
 
       toolResponseTask.finally(() => this.onPipelineReplyDone());
 
-      // TODO(AJS-91): handle scheduling speech bypassing draining
       this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
     } else if (newToolCallOutputs.length > 0) {
       for (const msg of toolMessages) {
@@ -811,5 +871,31 @@ export class AgentActivity implements RecognitionHooks {
     // Monotonic time to avoid near 0 collisions
     this.speechQueue.push([priority, Number(process.hrtime.bigint()), speechHandle]);
     this.wakeupMainTask();
+  }
+
+  async drain(): Promise<void> {
+    // TODO(AJS-129): add lock to agent activity core lifecycle
+    if (this._draining) return;
+
+    this.createSpeechTask({
+      promise: this.agent.onExit(),
+      name: 'AgentActivity_onExit',
+    });
+
+    this.wakeupMainTask();
+    this._draining = true;
+    await this._mainTask?.result;
+  }
+
+  async close(): Promise<void> {
+    // TODO(AJS-129): add lock to agent activity core lifecycle
+    if (!this._draining) {
+      this.logger.warn('task closing without draining');
+    }
+
+    await this.audioRecognition?.close();
+    await this._mainTask?.cancelAndWait();
+
+    this.agent._agentActivity = undefined;
   }
 }

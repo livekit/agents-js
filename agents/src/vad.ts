@@ -177,6 +177,10 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     this.deferredInputStream.setSource(audioStream);
   }
 
+  detachInputStream() {
+    this.deferredInputStream.detachSource();
+  }
+
   /** @deprecated Use `updateInputStream` instead */
   pushFrame(frame: AudioFrame) {
     // TODO(AJS-395): remove this method
@@ -220,7 +224,9 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   }
 
   close() {
-    this.input.writable.close();
+    this.outputWriter.releaseLock();
+    this.outputReader.cancel();
+    this.output.writable.close();
     this.closed = true;
   }
 

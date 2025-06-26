@@ -5,8 +5,7 @@ import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
-import { ChatMessage } from '../llm/chat_context.js';
-import { ChatContext } from '../llm/chat_context.js';
+import { ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, ToolChoice } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
@@ -149,20 +148,22 @@ export class AgentSession<
     this.agent = agent;
     this._updateAgentState('initializing');
 
-    if (this.agent) {
-      await this.updateActivity(this.agent);
-    }
-
     this.roomIO = new RoomIO(this, room, this.tts.sampleRate, this.tts.numChannels);
     this.roomIO.start();
 
-    if (this.audioInput) {
-      this.activity?.updateAudioInput(this.audioInput);
-    }
+    this.updateActivity(this.agent);
 
     this.logger.debug('AgentSession started');
     this.started = true;
     this._updateAgentState('listening');
+  }
+
+  updateAgent(agent: Agent): void {
+    this.agent = agent;
+
+    if (this.started) {
+      this.updateActivity(agent);
+    }
   }
 
   commitUserTurn() {
@@ -223,15 +224,21 @@ export class AgentSession<
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
+    // TODO(AJS-129): add lock to agent activity core lifecycle
     this.nextActivity = new AgentActivity(agent, this);
 
-    // TODO(shubhra): Drain and close the old activity
+    if (this.activity) {
+      await this.activity.drain();
+      await this.activity.close();
+    }
 
     this.activity = this.nextActivity;
     this.nextActivity = undefined;
 
-    if (this.activity) {
-      await this.activity.start();
+    await this.activity.start();
+
+    if (this.audioInput) {
+      this.activity.updateAudioInput(this.audioInput);
     }
   }
 
@@ -241,6 +248,14 @@ export class AgentSession<
 
   get agentState(): AgentState {
     return this._agentState;
+  }
+
+  get currentAgent(): Agent {
+    if (!this.agent) {
+      throw new Error('AgentSession is not running');
+    }
+
+    return this.agent;
   }
 
   /** @internal */
