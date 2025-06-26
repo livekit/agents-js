@@ -24,6 +24,18 @@ type UserData = {
   number: number;
 };
 
+class RouterAgent extends voice.Agent<UserData> {
+  async onEnter(): Promise<void> {
+    this.agentActivity!.say("Hello, I'm a router agent. I can help you with your tasks.");
+  }
+}
+
+class GameAgent extends voice.Agent<UserData> {
+  async onEnter(): Promise<void> {
+    this.agentActivity!.say("Hello, I'm a game agent. I can help you with your tasks.");
+  }
+}
+
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
     proc.userData.vad = await silero.VAD.load();
@@ -88,7 +100,7 @@ export default defineAgent({
       },
     });
 
-    const routerAgent = voice.createAgent<UserData>({
+    const routerAgent = new RouterAgent({
       instructions: 'You are a helpful assistant.',
       tools: {
         getWeather,
@@ -101,23 +113,9 @@ export default defineAgent({
           },
         }),
       },
-      on: {
-        enter: async () => {
-          routerAgent.agentActivity!.say(
-            "Hello, I'm a router agent. I can help you with your tasks.",
-          );
-          logger.info('[hook] router agent entered');
-        },
-        exit: async () => {
-          logger.info('[hook] router agent exited');
-        },
-        userTurnCompleted: async (chatCtx, newMessage) => {
-          logger.info('[hook] router agent user turn completed');
-        },
-      },
     });
 
-    const gameAgent = voice.createAgent({
+    const gameAgent = new GameAgent({
       instructions: 'You are a game agent. You are playing a game with the user.',
       tools: {
         getNumber,
@@ -130,18 +128,6 @@ export default defineAgent({
             return llm.handoff({ agent: routerAgent, returns: 'The game is now finished.' });
           },
         }),
-      },
-      on: {
-        enter: async () => {
-          gameAgent.agentActivity!.say("Hello, I'm a game agent. I can help you with your tasks.");
-          logger.info('[hook] game agent entered');
-        },
-        exit: async () => {
-          logger.info('[hook] game agent exited');
-        },
-        userTurnCompleted: async (chatCtx, newMessage) => {
-          logger.info('[hook] game agent user turn completed');
-        },
       },
     });
 
