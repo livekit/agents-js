@@ -347,9 +347,11 @@ export class AudioRecognition {
             // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
             this.lastSpeakingTime = Date.now() - ev.silenceDuration;
 
-            if (this.turnDetectionMode !== 'manual') {
+            if (
+              this.vadBaseTurnDetection ||
+              (this.turnDetectionMode === 'stt' && this.userTurnCommitted)
+            ) {
               const chatCtx = this.hooks.retrieveChatCtx();
-              this.logger.debug('running EOU detection on vad END_OF_SPEECH');
               this.runEOUDetection(chatCtx);
             }
             break;

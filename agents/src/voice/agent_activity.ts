@@ -189,8 +189,6 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    this.logger.debug({ speechDuration: ev.speechDuration }, 'VAD inference done');
-
     if (this.stt && this.agentSession.options.minInterruptionWords > 0 && this.audioRecognition) {
       const text = this.audioRecognition.currentTranscript;
 
@@ -279,6 +277,8 @@ export class AgentActivity implements RecognitionHooks {
     // In practice this is OK because most speeches will be interrupted if a new turn
     // is detected. So the previous execution should complete quickly.
     await this._userTurnCompletedTask?.result;
+
+    //TODO(AJS-40) refactor with createSpeechTask
     this._userTurnCompletedTask = Task.from(({ signal }) => this.userTurnCompleted(info, signal));
     return true;
   }
