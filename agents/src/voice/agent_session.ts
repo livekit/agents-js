@@ -5,8 +5,7 @@ import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
-import { ChatMessage } from '../llm/chat_context.js';
-import { ChatContext } from '../llm/chat_context.js';
+import { ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, ToolChoice } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
@@ -249,6 +248,14 @@ export class AgentSession<
 
   get agentState(): AgentState {
     return this._agentState;
+  }
+
+  get currentAgent(): Agent {
+    if (!this.agent) {
+      throw new Error('AgentSession is not running');
+    }
+
+    return this.agent;
   }
 
   /** @internal */
