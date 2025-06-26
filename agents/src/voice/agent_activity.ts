@@ -191,7 +191,9 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.stt && this.agentSession.options.minInterruptionWords > 0 && this.audioRecognition) {
       const text = this.audioRecognition.currentTranscript;
-      if (splitWords(text, true).length < this.agentSession.options.minInterruptionWords) {
+
+      // TODO(shubhra): better word splitting for multi-language
+      if (text && splitWords(text, true).length < this.agentSession.options.minInterruptionWords) {
         return;
       }
     }
