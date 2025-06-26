@@ -8,7 +8,6 @@ import {
   cli,
   defineAgent,
   llm,
-  log,
   voice,
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
@@ -41,8 +40,6 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    const logger = log();
-
     const getWeather = llm.tool({
       description: ' Called when the user asks about the weather.',
       parameters: z.object({
