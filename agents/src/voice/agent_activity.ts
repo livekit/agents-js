@@ -153,7 +153,9 @@ export class AgentActivity implements RecognitionHooks {
       throw new Error('trying to generate speech from text without a TTS model');
     }
 
-    const handle = SpeechHandle.create(allowInterruptions ?? this.allowInterruptions);
+    const handle = SpeechHandle.create({
+      allowInterruptions: allowInterruptions ?? this.allowInterruptions,
+    });
 
     const task = this.createSpeechTask({
       promise: this.ttsTask(handle, text, addToChatCtx, audio),
@@ -224,7 +226,7 @@ export class AgentActivity implements RecognitionHooks {
       this.speechTasks.delete(promise);
 
       if (ownedSpeechHandle) {
-        ownedSpeechHandle.markPlayoutDone();
+        ownedSpeechHandle._markPlayoutDone();
       }
 
       this.wakeupMainTask();
@@ -289,7 +291,7 @@ export class AgentActivity implements RecognitionHooks {
         }
         const speechHandle = heapItem[2];
         this.currentSpeech = speechHandle;
-        speechHandle.authorizePlayout();
+        speechHandle._authorizePlayout();
         await speechHandle.waitForPlayout();
         this.currentSpeech = undefined;
       }
@@ -321,11 +323,11 @@ export class AgentActivity implements RecognitionHooks {
     // TODO(AJS-32): Add realtime model support for generating a reply
 
     // TODO(shubhra) handle tool calls
-    const handle = SpeechHandle.create(
-      allowInterruptions === undefined ? this.allowInterruptions : allowInterruptions,
-      0,
-      this.currentSpeech,
-    );
+    const handle = SpeechHandle.create({
+      allowInterruptions: allowInterruptions ?? this.allowInterruptions,
+      stepIndex: 0,
+      parent: this.currentSpeech,
+    });
     this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
 
     const task = this.createSpeechTask({
@@ -420,7 +422,7 @@ export class AgentActivity implements RecognitionHooks {
     const audioOutput = this.agentSession.audioOutput;
 
     const replyAbortController = new AbortController();
-    await speechHandle.waitIfNotInterrupted([speechHandle.waitForAuthorization()]);
+    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
 
     if (speechHandle.interrupted) {
       return;
@@ -576,7 +578,7 @@ export class AgentActivity implements RecognitionHooks {
       tasks.push(ttsTask);
     }
 
-    await speechHandle.waitIfNotInterrupted([speechHandle.waitForAuthorization()]);
+    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
     if (speechHandle.interrupted) {
       replyAbortController.abort();
       await Promise.allSettled(
@@ -695,7 +697,7 @@ export class AgentActivity implements RecognitionHooks {
         'playout completed with interrupt',
       );
       // TODO(shubhra) add chat message to speech handle
-      speechHandle.markPlayoutDone();
+      speechHandle._markPlayoutDone();
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       return;
     }
@@ -723,7 +725,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('listening');
     }
 
-    speechHandle.markPlayoutDone();
+    speechHandle._markPlayoutDone();
     await executeToolsTask.result;
 
     if (toolOutput.output.length === 0) return;
@@ -765,11 +767,11 @@ export class AgentActivity implements RecognitionHooks {
     if (shouldGenerateToolReply) {
       chatCtx.insert(toolMessages);
 
-      const handle = SpeechHandle.create(
-        speechHandle.allowInterruptions,
-        speechHandle.stepIndex + 1,
-        speechHandle,
-      );
+      const handle = SpeechHandle.create({
+        allowInterruptions: speechHandle.allowInterruptions,
+        stepIndex: speechHandle.stepIndex + 1,
+        parent: speechHandle,
+      });
 
       const toolResponseTask = this.createSpeechTask({
         promise: this.pipelineReplyTask(
