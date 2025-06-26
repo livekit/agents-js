@@ -26,8 +26,8 @@ export interface EndOfTurnInfo {
 
 export interface RecognitionHooks {
   onStartOfSpeech: (ev: VADEvent) => void;
-  onEndOfSpeech: (ev: VADEvent) => void;
   onVADInferenceDone: (ev: VADEvent) => void;
+  onEndOfSpeech: (ev: VADEvent) => void;
   onInterimTranscript: (ev: SpeechEvent) => void;
   onFinalTranscript: (ev: SpeechEvent) => void;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
@@ -79,6 +79,16 @@ export class AudioRecognition {
     this.vadInputStream = vadInputStream;
     this.sttInputStream = sttInputStream;
     this.silenceAudioWriter = this.silenceAudioTransform.writable.getWriter();
+  }
+
+  /**
+   * Current transcript of the user's speech, including interim transcript if available.
+   */
+  get currentTranscript(): string {
+    if (this.audioInterimTranscript) {
+      return `${this.audioTranscript} ${this.audioInterimTranscript}`.trim();
+    }
+    return this.audioTranscript;
   }
 
   async start() {

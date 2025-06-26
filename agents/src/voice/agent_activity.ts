@@ -15,6 +15,7 @@ import type {
 } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
+import { splitWords } from '../tokenize/basic/word.js';
 import type { TTS } from '../tts/tts.js';
 import { Future, Task } from '../utils.js';
 import type { VAD, VADEvent } from '../vad.js';
@@ -168,19 +169,31 @@ export class AgentActivity implements RecognitionHooks {
     return handle;
   }
 
-  onStartOfSpeech(ev: VADEvent): void {
-    this.logger.info('Start of speech', ev);
+  // recognition hooks
+
+  onStartOfSpeech(_ev: VADEvent): void {
+    this.agentSession._updateUserState('speaking');
   }
 
   onEndOfSpeech(ev: VADEvent): void {
     this.logger.info('End of speech', ev);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onVADInferenceDone(ev: VADEvent): void {
-    // skip speech handle interruption for manual and realtime model
     if (this.turnDetection === 'manual' || this.turnDetection === 'realtime_llm') {
+      // skip speech handle interruption for manual and realtime model
       return;
+    }
+
+    if (ev.speechDuration < this.agentSession.options.minInterruptionDuration) {
+      return;
+    }
+
+    if (this.stt && this.agentSession.options.minInterruptionWords > 0 && this.audioRecognition) {
+      const text = this.audioRecognition.currentTranscript;
+      if (splitWords(text, true).length < this.agentSession.options.minInterruptionWords) {
+        return;
+      }
     }
 
     if (
@@ -188,8 +201,8 @@ export class AgentActivity implements RecognitionHooks {
       !this.currentSpeech.interrupted &&
       this.currentSpeech.allowInterruptions
     ) {
-      // this.logger.info({ 'speech id': this.currentSpeech.id }, 'speech interrupted by VAD');
-      // this.currentSpeech.interrupt();
+      this.logger.info({ 'speech id': this.currentSpeech.id }, 'speech interrupted by VAD');
+      this.currentSpeech.interrupt();
     }
   }
 
