@@ -226,7 +226,7 @@ export class AgentActivity implements RecognitionHooks {
       this.speechTasks.delete(promise);
 
       if (ownedSpeechHandle) {
-        ownedSpeechHandle.markPlayoutDone();
+        ownedSpeechHandle._markPlayoutDone();
       }
 
       this.wakeupMainTask();
@@ -291,7 +291,7 @@ export class AgentActivity implements RecognitionHooks {
         }
         const speechHandle = heapItem[2];
         this.currentSpeech = speechHandle;
-        speechHandle.authorizePlayout();
+        speechHandle._authorizePlayout();
         await speechHandle.waitForPlayout();
         this.currentSpeech = undefined;
       }
@@ -424,7 +424,7 @@ export class AgentActivity implements RecognitionHooks {
     const audioOutput = this.agentSession.audioOutput;
 
     const replyAbortController = new AbortController();
-    await speechHandle.waitIfNotInterrupted([speechHandle.waitForAuthorization()]);
+    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
 
     if (speechHandle.interrupted) {
       return;
@@ -580,7 +580,7 @@ export class AgentActivity implements RecognitionHooks {
       tasks.push(ttsTask);
     }
 
-    await speechHandle.waitIfNotInterrupted([speechHandle.waitForAuthorization()]);
+    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
     if (speechHandle.interrupted) {
       replyAbortController.abort();
       await Promise.allSettled(
@@ -699,7 +699,7 @@ export class AgentActivity implements RecognitionHooks {
         'playout completed with interrupt',
       );
       // TODO(shubhra) add chat message to speech handle
-      speechHandle.markPlayoutDone();
+      speechHandle._markPlayoutDone();
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       return;
     }
@@ -727,7 +727,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('listening');
     }
 
-    speechHandle.markPlayoutDone();
+    speechHandle._markPlayoutDone();
     await executeToolsTask.result;
 
     if (toolOutput.output.length === 0) return;

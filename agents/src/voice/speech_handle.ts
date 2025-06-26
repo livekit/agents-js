@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { ChatMessage } from '../llm/index.js';
 import { shortuuid } from '../llm/misc.js';
 import { Future } from '../utils.js';
 
@@ -16,16 +17,14 @@ export class SpeechHandle {
   private authorizeFut = new Future();
   private playoutDoneFut = new Future();
 
+  private _chatMessage?: ChatMessage;
+
   constructor(
     readonly id: string,
     readonly allowInterruptions: boolean,
     readonly stepIndex: number,
     readonly parent?: SpeechHandle,
   ) {}
-
-  get done(): boolean {
-    return this.playoutDoneFut.done;
-  }
 
   static create(
     options: {
@@ -39,12 +38,31 @@ export class SpeechHandle {
     return new SpeechHandle(shortuuid('speech'), allowInterruptions, stepIndex, parent);
   }
 
-  authorizePlayout() {
-    this.authorizeFut.resolve();
+  get interrupted(): boolean {
+    return this.interruptFut.done;
   }
 
-  async waitForAuthorization() {
-    return this.authorizeFut.await;
+  get done(): boolean {
+    return this.playoutDoneFut.done;
+  }
+
+  get chatMessage(): ChatMessage | undefined {
+    return this._chatMessage;
+  }
+
+  /**
+   * Interrupt the current speech generation.
+   *
+   * @throws Error If this speech handle does not allow interruptions.
+   *
+   * @returns The same speech handle that was interrupted.
+   */
+  interrupt(): SpeechHandle {
+    if (!this.allowInterruptions) {
+      throw new Error('interruptions are not allowed');
+    }
+    this.interruptFut.resolve();
+    return this;
   }
 
   async waitForPlayout() {
@@ -57,15 +75,26 @@ export class SpeechHandle {
     await Promise.race(fs);
   }
 
-  markPlayoutDone() {
-    this.playoutDoneFut.resolve();
+  /** @internal */
+  _setChatMessage(chatMessage: ChatMessage) {
+    if (this.done) {
+      throw new Error('cannot set chat message after speech has been played');
+    }
+    this._chatMessage = chatMessage;
   }
 
-  interrupt(): SpeechHandle {
-    if (!this.allowInterruptions) {
-      throw new Error('interruptions are not allowed');
-    }
-    this.interruptFut.resolve();
-    return this;
+  /** @internal */
+  _authorizePlayout() {
+    this.authorizeFut.resolve();
+  }
+
+  /** @internal */
+  async _waitForAuthorization() {
+    return this.authorizeFut.await;
+  }
+
+  /** @internal */
+  _markPlayoutDone() {
+    this.playoutDoneFut.resolve();
   }
 }
