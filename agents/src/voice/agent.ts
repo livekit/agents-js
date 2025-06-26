@@ -78,7 +78,7 @@ export class Agent<UserData = any> {
   hooks: AgentHooks<UserData>;
 
   /** @internal */
-  agentActivity?: AgentActivity;
+  _agentActivity?: AgentActivity;
 
   /** @internal */
   _chatCtx: ChatContext;
@@ -118,7 +118,7 @@ export class Agent<UserData = any> {
     this._vad = vad;
     this._llm = llm;
     this._tts = tts;
-    this.agentActivity = undefined; // TODO(shubhra): add type
+    this._agentActivity = undefined; // TODO(shubhra): add type
 
     this.hooks = {
       onEnter,
@@ -154,6 +154,13 @@ export class Agent<UserData = any> {
 
   get toolCtx(): ToolContext<UserData> {
     return { ...this._tools };
+  }
+
+  get activity(): AgentActivity {
+    if (!this._agentActivity) {
+      throw new Error('Agent activity not found');
+    }
+    return this._agentActivity;
   }
 
   async onEnter(): Promise<void> {
@@ -200,10 +207,10 @@ export class Agent<UserData = any> {
   // realtime_audio_output_node
 
   getActivityOrThrow(): AgentActivity {
-    if (!this.agentActivity) {
+    if (!this._agentActivity) {
       throw new Error('Agent activity not found');
     }
-    return this.agentActivity;
+    return this._agentActivity;
   }
 
   static default = {
@@ -305,6 +312,8 @@ export class Agent<UserData = any> {
   };
 }
 
-export function createAgent<UserData = any>(options: AgentOptions<UserData>): Agent<UserData> {
+export function createAgent<UserData = any>(
+  options: AgentOptions<UserData> & AgentHooks<UserData>,
+): Agent<UserData> {
   return new Agent(options);
 }

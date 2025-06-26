@@ -65,7 +65,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async start(): Promise<void> {
-    this.agent.agentActivity = this;
+    this.agent._agentActivity = this;
     this.audioRecognition = new AudioRecognition(
       this,
       this.vad,

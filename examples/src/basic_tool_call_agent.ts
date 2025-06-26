@@ -88,6 +88,9 @@ export default defineAgent({
     const agent = voice.createAgent<UserData>({
       instructions: 'You are a helpful assistant.',
       tools: { getWeather, toggleLight, getNumber, checkStoredNumber, updateStoredNumber },
+      onEnter: async ({ agent }) => {
+        agent.activity.say('Hello, I am a powerful LiveKit agent. I can help you with your tasks.');
+      },
     });
 
     await ctx.connect();
