@@ -77,17 +77,17 @@ export class AudioRecognition {
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
     this.vadInputStream = vadInputStream;
-    this.sttInputStream = sttInputStream;
+    this.sttInputStream = mergeReadableStreams(sttInputStream, this.silenceAudioTransform.readable);
     this.silenceAudioWriter = this.silenceAudioTransform.writable.getWriter();
   }
 
   async start() {
-    this.vadTask = Task.from(this.createVadTask());
+    this.vadTask = Task.from(({ signal }) => this.createVadTask(signal));
     this.vadTask.result.catch((err) => {
       this.logger.error(`Error running VAD task: ${err}`);
     });
 
-    this.sttTask = Task.from(this.createSttTask());
+    this.sttTask = Task.from(({ signal }) => this.createSttTask(signal));
     this.sttTask.result.catch((err) => {
       this.logger.error(`Error running STT task: ${err}`);
     });
@@ -250,76 +250,73 @@ export class AudioRecognition {
       });
   }
 
-  private createSttTask() {
-    return async (controller: AbortController) => {
-      if (!this.stt) {
-        return;
-      }
+  private async createSttTask(signal: AbortSignal) {
+    if (!this.stt) return;
 
-      this.logger.debug('createSttTask: create stt stream from stt node');
-      const sttStream = await this.stt(this.sttInputStream, {});
+    this.logger.debug('createSttTask: create stt stream from stt node');
 
-      if (controller.signal.aborted || sttStream === null) return;
+    const sttStream = await this.stt(this.sttInputStream, {});
 
-      if (sttStream instanceof ReadableStream) {
-        const reader = sttStream.getReader();
+    if (signal.aborted || sttStream === null) return;
 
-        controller.signal.addEventListener('abort', async () => {
-          try {
-            reader.releaseLock();
-            await sttStream?.cancel();
-          } catch (e) {
-            this.logger.debug('createSttTask: error during abort handler:', e);
-          }
-        });
+    if (sttStream instanceof ReadableStream) {
+      const reader = sttStream.getReader();
 
+      signal.addEventListener('abort', async () => {
         try {
-          while (true) {
-            if (controller.signal.aborted) {
-              break;
-            }
-
-            const { done, value: ev } = await reader.read();
-
-            if (done) {
-              break;
-            }
-            if (typeof ev === 'string') {
-              throw new Error('STT node must yield SpeechEvent');
-            } else {
-              await this.onSTTEvent(ev);
-            }
-          }
-        } catch (e) {
-          if (isStreamReaderReleaseError(e)) {
-            return;
-          }
-          this.logger.error({ error: e }, 'createSttTask: error reading sttStream');
-        } finally {
           reader.releaseLock();
-          try {
-            await sttStream.cancel();
-          } catch (e) {
-            this.logger.debug(
-              'createSttTask: error cancelling sttStream (may already be cancelled):',
-              e,
-            );
+          await sttStream?.cancel();
+        } catch (e) {
+          this.logger.debug('createSttTask: error during abort handler:', e);
+        }
+      });
+
+      try {
+        while (true) {
+          if (signal.aborted) break;
+
+          const { done, value: ev } = await reader.read();
+          if (done) break;
+
+          if (typeof ev === 'string') {
+            throw new Error('STT node must yield SpeechEvent');
+          } else {
+            await this.onSTTEvent(ev);
           }
         }
+      } catch (e) {
+        if (isStreamReaderReleaseError(e)) {
+          return;
+        }
+        this.logger.error({ error: e }, 'createSttTask: error reading sttStream');
+      } finally {
+        reader.releaseLock();
+        try {
+          await sttStream.cancel();
+        } catch (e) {
+          this.logger.debug(
+            'createSttTask: error cancelling sttStream (may already be cancelled):',
+            e,
+          );
+        }
       }
-    };
+    }
   }
 
-  private createVadTask() {
-    return async (controller: AbortController) => {
-      const vadStream = this.vad.stream();
-      vadStream.updateInputStream(this.vadInputStream);
+  private async createVadTask(signal: AbortSignal) {
+    const vadStream = this.vad.stream();
+    vadStream.updateInputStream(this.vadInputStream);
 
+    const abortHandler = () => {
+      vadStream.detachInputStream();
+      vadStream.close();
+      signal.removeEventListener('abort', abortHandler);
+    };
+    signal.addEventListener('abort', abortHandler);
+
+    try {
       for await (const ev of vadStream) {
-        if (controller.signal.aborted) {
-          this.logger.debug('VAD task cancelled');
-          break;
-        }
+        if (signal.aborted) break;
 
         switch (ev.type) {
           case VADEventType.START_OF_SPEECH:
@@ -345,15 +342,19 @@ export class AudioRecognition {
             break;
         }
       }
-    };
+    } catch (e) {
+      this.logger.error(e, 'Error in VAD task');
+    } finally {
+      this.logger.debug('VAD task closed');
+    }
   }
 
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {
-    const mergedStream = mergeReadableStreams(
-      audioStream as any,
-      this.silenceAudioTransform.readable as any,
-    );
-    this.deferredInputStream.setSource(mergedStream as any);
+    this.deferredInputStream.setSource(audioStream);
+  }
+
+  detachInputAudioStream() {
+    this.deferredInputStream.detachSource();
   }
 
   clearUserTurn() {
@@ -362,7 +363,7 @@ export class AudioRecognition {
     this.userTurnCommitted = false;
 
     this.sttTask?.cancelAndWait().finally(() => {
-      this.sttTask = Task.from(this.createSttTask());
+      this.sttTask = Task.from(({ signal }) => this.createSttTask(signal));
       this.sttTask.result.catch((err) => {
         this.logger.error(`Error running STT task: ${err}`);
       });
@@ -413,6 +414,14 @@ export class AudioRecognition {
           this.logger.error('Error in user turn commit task:', err);
         }
       });
+  }
+
+  async close() {
+    this.detachInputAudioStream();
+    await this.commitUserTurnTask?.cancelAndWait();
+    await this.sttTask?.cancelAndWait();
+    await this.vadTask?.cancelAndWait();
+    await this.bounceEOUTask?.cancelAndWait();
   }
 
   private get vadBaseTurnDetection() {
