@@ -19,7 +19,7 @@ import { splitWords } from '../tokenize/basic/word.js';
 import type { TTS } from '../tts/tts.js';
 import { Future, Task } from '../utils.js';
 import type { VAD, VADEvent } from '../vad.js';
-import type { Agent } from './agent.js';
+import type { Agent, ModelSettings } from './agent.js';
 import { StopResponse } from './agent.js';
 import { type AgentSession, AgentSessionEvent, type TurnDetectionMode } from './agent_session.js';
 import {
@@ -177,7 +177,7 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     const task = this.createSpeechTask({
-      promise: this.ttsTask(handle, text, addToChatCtx, audio),
+      promise: this.ttsTask(handle, text, addToChatCtx, {}, audio),
       ownedSpeechHandle: handle,
       name: 'AgentActivity.say_tts',
     });
@@ -372,8 +372,7 @@ export class AgentActivity implements RecognitionHooks {
         handle,
         chatCtx || this.agent.chatCtx,
         this.agent.toolCtx,
-        // TODO(AJS-59): make tool choice as model settings
-        toolChoice || 'auto',
+        { toolChoice: toolChoice },
         instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
         userMessage,
       ),
@@ -453,6 +452,7 @@ export class AgentActivity implements RecognitionHooks {
     speechHandle: SpeechHandle,
     text: string | ReadableStream<string>,
     addToChatCtx: boolean,
+    modelSettings: ModelSettings,
     audio?: ReadableStream<AudioFrame> | null,
   ): Promise<void> {
     const transcriptionOutput = this.agentSession._transcriptionOutput;
@@ -508,7 +508,7 @@ export class AgentActivity implements RecognitionHooks {
         const [ttsTask, ttsStream] = performTTSInference(
           (...args) => this.agent.ttsNode(...args),
           audioSource,
-          {}, // TODO(AJS-59): add model settings
+          modelSettings,
           replyAbortController,
         );
         tasks.push(ttsTask);
@@ -569,7 +569,7 @@ export class AgentActivity implements RecognitionHooks {
     speechHandle: SpeechHandle,
     chatCtx: ChatContext,
     toolCtx: ToolContext,
-    toolChoice: ToolChoice,
+    modelSettings: ModelSettings,
     instructions?: string,
     newMessage?: ChatMessage,
     toolsMessages?: ChatItem[],
@@ -596,7 +596,7 @@ export class AgentActivity implements RecognitionHooks {
       (...args) => this.agent.llmNode(...args),
       chatCtx,
       toolCtx,
-      {},
+      modelSettings,
       replyAbortController,
     );
     tasks.push(llmTask);
@@ -609,7 +609,7 @@ export class AgentActivity implements RecognitionHooks {
       [ttsTask, ttsStream] = performTTSInference(
         (...args) => this.agent.ttsNode(...args),
         ttsTextInput,
-        {},
+        modelSettings,
         replyAbortController,
       );
       tasks.push(ttsTask);
@@ -625,7 +625,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const replyStartedAt = Date.now();
-    const trNodeResult = await this.agent.transcriptionNode(llmOutput, {}); // TODO(AJS-59): add model settings
+    const trNodeResult = await this.agent.transcriptionNode(llmOutput, modelSettings);
     let textOut: _TextOut | null = null;
     if (trNodeResult) {
       const [textForwardTask, _textOut] = performTextForwarding(
@@ -663,7 +663,7 @@ export class AgentActivity implements RecognitionHooks {
       session: this.agentSession,
       speechHandle,
       toolCtx,
-      toolChoice,
+      toolChoice: modelSettings.toolChoice,
       toolCallStream: llmGenData.toolCallStream,
       controller: replyAbortController,
     });
@@ -832,14 +832,14 @@ export class AgentActivity implements RecognitionHooks {
 
       // Avoid setting tool_choice to "required" or a specific function when
       // passing tool response back to the LLM
-      const respondToolChoice = draining || toolChoice === 'none' ? 'none' : 'auto';
+      const respondToolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
 
       const toolResponseTask = this.createSpeechTask({
         promise: this.pipelineReplyTask(
           handle,
           chatCtx,
           toolCtx,
-          respondToolChoice,
+          { toolChoice: respondToolChoice },
           instructions,
           undefined,
           toolMessages,

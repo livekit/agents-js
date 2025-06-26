@@ -10,21 +10,22 @@ import type { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type { SpeechEvent } from '../stt/stt.js';
 import { Future } from '../utils.js';
+import type { ModelSettings } from './agent.js';
 
 export type STTNode = (
   audio: ReadableStream<AudioFrame>,
-  modelSettings: any, // TODO(AJS-59): add type
+  modelSettings: ModelSettings,
 ) => Promise<ReadableStream<SpeechEvent | string> | null>;
 
 export type LLMNode = (
   chatCtx: ChatContext,
   toolCtx: ToolContext,
-  modelSettings: any, // TODO(AJS-59): add type
+  modelSettings: ModelSettings,
 ) => Promise<ReadableStream<ChatChunk | string> | null>;
 
 export type TTSNode = (
   text: ReadableStream<string>,
-  modelSettings: any, // TODO(AJS-59): add type
+  modelSettings: ModelSettings,
 ) => Promise<ReadableStream<AudioFrame> | null>;
 export abstract class AudioOutput extends EventEmitter {
   static readonly EVENT_PLAYBACK_FINISHED = 'playbackFinished';

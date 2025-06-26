@@ -12,6 +12,7 @@ import {
   ChatContext,
   ChatMessage,
   type LLM,
+  type ToolChoice,
   type ToolContext,
 } from '../llm/index.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
@@ -28,6 +29,11 @@ export class StopResponse extends Error {
     super();
     this.name = 'StopResponse';
   }
+}
+
+export interface ModelSettings {
+  /* The tool choice to use when calling the LLM. */
+  toolChoice?: ToolChoice;
 }
 
 export interface AgentOptions<UserData> {
@@ -131,7 +137,7 @@ export class Agent<UserData = any> {
 
   async transcriptionNode(
     text: ReadableStream<string>,
-    modelSettings: any, // TODO(AJS-59): add type
+    modelSettings: ModelSettings,
   ): Promise<ReadableStream<string> | null> {
     return Agent.default.transcriptionNode(this, text, modelSettings);
   }
@@ -140,7 +146,7 @@ export class Agent<UserData = any> {
 
   async sttNode(
     audio: ReadableStream<AudioFrame>,
-    modelSettings: any, // TODO(AJS-59): add type
+    modelSettings: ModelSettings,
   ): Promise<ReadableStream<SpeechEvent | string> | null> {
     return Agent.default.sttNode(this, audio, modelSettings);
   }
@@ -148,14 +154,14 @@ export class Agent<UserData = any> {
   async llmNode(
     chatCtx: ChatContext,
     toolCtx: ToolContext,
-    modelSettings: any, // TODO(AJS-59): add type
+    modelSettings: ModelSettings,
   ): Promise<ReadableStream<ChatChunk | string> | null> {
     return Agent.default.llmNode(this, chatCtx, toolCtx, modelSettings);
   }
 
   async ttsNode(
     text: ReadableStream<string>,
-    modelSettings: any, // TODO(AJS-59): add type
+    modelSettings: ModelSettings,
   ): Promise<ReadableStream<AudioFrame> | null> {
     return Agent.default.ttsNode(this, text, modelSettings);
   }
@@ -182,7 +188,7 @@ export class Agent<UserData = any> {
     async sttNode(
       agent: Agent,
       audio: ReadableStream<AudioFrame>,
-      modelSettings: any, // TODO(AJS-59): add type
+      _modelSettings: ModelSettings,
     ): Promise<ReadableStream<SpeechEvent | string> | null> {
       const activity = agent.getActivityOrThrow();
 
@@ -218,7 +224,7 @@ export class Agent<UserData = any> {
       agent: Agent,
       chatCtx: ChatContext,
       toolCtx: ToolContext,
-      modelSettings: any, // TODO(AJS-59): add type
+      _modelSettings: ModelSettings,
     ): Promise<ReadableStream<ChatChunk | string> | null> {
       const activity = agent.getActivityOrThrow();
       // TODO(brian): make parallelToolCalls configurable
@@ -239,7 +245,7 @@ export class Agent<UserData = any> {
     async ttsNode(
       agent: Agent,
       text: ReadableStream<string>,
-      modelSettings: any, // TODO(AJS-59): add type
+      _modelSettings: ModelSettings,
     ): Promise<ReadableStream<AudioFrame> | null> {
       const activity = agent.getActivityOrThrow();
       let wrapped_tts = activity.tts;
@@ -270,7 +276,7 @@ export class Agent<UserData = any> {
     async transcriptionNode(
       agent: Agent,
       text: ReadableStream<string>,
-      modelSettings: any, // TODO(AJS-59): add type
+      _modelSettings: ModelSettings,
     ): Promise<ReadableStream<string> | null> {
       return text;
     },
