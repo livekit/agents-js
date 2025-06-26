@@ -587,7 +587,17 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._conversationItemAdded(newMessage);
     }
 
-    // TODO(AJS-57): handle instructions
+    if (instructions) {
+      try {
+        updateInstructions({
+          chatCtx,
+          instructions,
+          addIfMissing: true,
+        });
+      } catch (e) {
+        this.logger.error({ error: e }, 'error occurred during updateInstructions');
+      }
+    }
 
     this.agentSession._updateAgentState('thinking');
     const tasks: Array<Task<void>> = [];
