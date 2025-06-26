@@ -5,9 +5,9 @@ import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
-import type { ChatMessage } from '../llm/chat_context.js';
+import { ChatMessage } from '../llm/chat_context.js';
 import { ChatContext } from '../llm/chat_context.js';
-import type { LLM } from '../llm/index.js';
+import type { LLM, ToolChoice } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
 import type { TTS } from '../tts/tts.js';
@@ -193,6 +193,33 @@ export class AgentSession<
     }
 
     return this.activity.say(text, options);
+  }
+
+  generateReply(options?: {
+    userInput?: string;
+    instructions?: string;
+    toolChoice?: ToolChoice;
+    allowInterruptions?: boolean;
+  }): SpeechHandle {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
+    }
+
+    const userMessage = options?.userInput
+      ? new ChatMessage({
+          role: 'user',
+          content: options.userInput,
+        })
+      : undefined;
+
+    if (this.activity.draining) {
+      if (!this.nextActivity) {
+        throw new Error('AgentSession is closing, cannot use generateReply()');
+      }
+      return this.nextActivity.generateReply({ userMessage, ...options });
+    }
+
+    return this.activity.generateReply({ userMessage, ...options });
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
