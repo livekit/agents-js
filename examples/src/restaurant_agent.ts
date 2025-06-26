@@ -15,7 +15,10 @@ import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
+import type { Logger } from 'pino';
 import { z } from 'zod';
+
+const logger: Logger | null = null;
 
 type UserData = {
   customer: Partial<{
@@ -100,6 +103,19 @@ const toGreeter = llm.tool({
     });
   },
 });
+
+class BaseAgent extends voice.Agent {
+  async onEnter(): Promise<void> {
+    const agentName = this.constructor.name;
+    console.log(`entering task ${agentName}`);
+
+    const userdata: UserData = this.session.userData;
+    const chatCtx = this.chatCtx.copy();
+
+    if (userdata.prevAgent) {
+    }
+  }
+}
 
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
