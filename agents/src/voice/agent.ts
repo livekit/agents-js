@@ -52,7 +52,7 @@ export class Agent<UserData = any> {
   private _tts?: TTS;
 
   /** @internal */
-  agentActivity?: AgentActivity;
+  _agentActivity?: AgentActivity;
 
   /** @internal */
   _chatCtx: ChatContext;
@@ -89,7 +89,7 @@ export class Agent<UserData = any> {
     this._vad = vad;
     this._llm = llm;
     this._tts = tts;
-    this.agentActivity = undefined; // TODO(shubhra): add type
+    this._agentActivity = undefined;
   }
 
   get vad(): VAD | undefined {
@@ -159,10 +159,10 @@ export class Agent<UserData = any> {
   // realtime_audio_output_node
 
   getActivityOrThrow(): AgentActivity {
-    if (!this.agentActivity) {
+    if (!this._agentActivity) {
       throw new Error('Agent activity not found');
     }
-    return this.agentActivity;
+    return this._agentActivity;
   }
 
   static default = {
