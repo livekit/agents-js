@@ -153,7 +153,9 @@ export class AgentActivity implements RecognitionHooks {
       throw new Error('trying to generate speech from text without a TTS model');
     }
 
-    const handle = SpeechHandle.create(allowInterruptions ?? this.allowInterruptions);
+    const handle = SpeechHandle.create({
+      allowInterruptions: allowInterruptions ?? this.allowInterruptions,
+    });
 
     const task = this.createSpeechTask({
       promise: this.ttsTask(handle, text, addToChatCtx, audio),
@@ -319,11 +321,11 @@ export class AgentActivity implements RecognitionHooks {
     // TODO(AJS-32): Add realtime model support for generating a reply
 
     // TODO(shubhra) handle tool calls
-    const handle = SpeechHandle.create(
-      allowInterruptions === undefined ? this.allowInterruptions : allowInterruptions,
-      0,
-      this.currentSpeech,
-    );
+    const handle = SpeechHandle.create({
+      allowInterruptions: allowInterruptions ?? this.allowInterruptions,
+      stepIndex: 0,
+      parent: this.currentSpeech,
+    });
     this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
 
     if (instructions) {
@@ -767,11 +769,11 @@ export class AgentActivity implements RecognitionHooks {
     if (shouldGenerateToolReply) {
       chatCtx.insert(toolMessages);
 
-      const handle = SpeechHandle.create(
-        speechHandle.allowInterruptions,
-        speechHandle.stepIndex + 1,
-        speechHandle,
-      );
+      const handle = SpeechHandle.create({
+        allowInterruptions: speechHandle.allowInterruptions,
+        stepIndex: speechHandle.stepIndex + 1,
+        parent: speechHandle,
+      });
 
       const toolResponseTask = this.createSpeechTask({
         promise: this.pipelineReplyTask(
