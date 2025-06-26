@@ -596,7 +596,7 @@ export class AgentActivity implements RecognitionHooks {
       (...args) => this.agent.llmNode(...args),
       chatCtx,
       toolCtx,
-      {},
+      modelSettings,
       replyAbortController,
     );
     tasks.push(llmTask);
@@ -609,7 +609,7 @@ export class AgentActivity implements RecognitionHooks {
       [ttsTask, ttsStream] = performTTSInference(
         (...args) => this.agent.ttsNode(...args),
         ttsTextInput,
-        {},
+        modelSettings,
         replyAbortController,
       );
       tasks.push(ttsTask);
@@ -663,7 +663,7 @@ export class AgentActivity implements RecognitionHooks {
       session: this.agentSession,
       speechHandle,
       toolCtx,
-      toolChoice: modelSettings.toolChoice ?? 'auto',
+      toolChoice: modelSettings.toolChoice,
       toolCallStream: llmGenData.toolCallStream,
       controller: replyAbortController,
     });

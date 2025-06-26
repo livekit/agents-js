@@ -519,7 +519,7 @@ export function performToolExecutions({
   session: AgentSession;
   speechHandle: SpeechHandle;
   toolCtx: ToolContext;
-  toolChoice: ToolChoice;
+  toolChoice?: ToolChoice;
   toolCallStream: ReadableStream<FunctionCall>;
   controller: AbortController;
 }): [Task<void>, _ToolOutput] {
