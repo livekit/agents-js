@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
 import { type ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
@@ -338,6 +338,7 @@ async function forwardAudio(
   signal?: AbortSignal,
 ): Promise<void> {
   const reader = ttsStream.getReader();
+  let resampler: AudioResampler | null = null;
   try {
     while (true) {
       if (signal?.aborted) {
@@ -346,21 +347,39 @@ async function forwardAudio(
 
       const { done, value: frame } = await reader.read();
       if (done) break;
-      // TODO(AJS-56) handle resampling
-      await audioOuput.captureFrame(frame);
+
       out.audio.push(frame);
+
+      if (
+        !out.firstFrameFut.done &&
+        audioOuput.sampleRate &&
+        audioOuput.sampleRate !== frame.sampleRate &&
+        !resampler
+      ) {
+        resampler = new AudioResampler(frame.sampleRate, audioOuput.sampleRate, 1);
+      }
+
+      if (resampler) {
+        for (const f of resampler.push(frame)) {
+          await audioOuput.captureFrame(f);
+        }
+      } else {
+        await audioOuput.captureFrame(frame);
+      }
+
+      // set the first frame future if not already set
+      // (after completing the first frame)
       if (!out.firstFrameFut.done) {
         out.firstFrameFut.resolve();
       }
     }
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      // Abort signal was triggered, handle gracefully
-      return;
-    }
-    throw error;
   } finally {
     reader?.releaseLock();
+    if (resampler) {
+      for (const f of resampler.flush()) {
+        await audioOuput.captureFrame(f);
+      }
+    }
     audioOuput.flush();
   }
 }
