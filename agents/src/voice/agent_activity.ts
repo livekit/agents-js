@@ -34,6 +34,7 @@ import {
   performTTSInference,
   performTextForwarding,
   performToolExecutions,
+  updateInstructions,
 } from './generation.js';
 import { SpeechHandle } from './speech_handle.js';
 
@@ -115,6 +116,23 @@ export class AgentActivity implements RecognitionHooks {
   get turnDetection(): TurnDetectionMode | undefined {
     // TODO(brian): prioritize using agent.turn_detection
     return this.agentSession.turnDetection;
+  }
+
+  get toolCtx(): ToolContext {
+    return this.agent.toolCtx;
+  }
+
+  async updateChatCtx(chatCtx: ChatContext): Promise<void> {
+    chatCtx = chatCtx.copy({ toolCtx: this.toolCtx });
+
+    this.agent._chatCtx = chatCtx;
+
+    // TODO(AJS-132): handle realtime session
+    updateInstructions({
+      chatCtx,
+      instructions: this.agent.instructions,
+      addIfMissing: true,
+    });
   }
 
   updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {

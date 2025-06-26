@@ -4,7 +4,12 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
-import { type ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
+import {
+  type ChatContext,
+  ChatMessage,
+  FunctionCall,
+  FunctionCallOutput,
+} from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import { shortuuid } from '../llm/misc.js';
 import {
@@ -185,6 +190,51 @@ export class _JsOutput {
       replyRequired: toolOutput !== undefined, // require a reply if the tool returned an output
       agentTask,
     });
+  }
+}
+
+const INSTRUCTIONS_MESSAGE_ID = 'lk.agent_task.instructions';
+
+/**
+ * Update the instruction message in the chat context or insert a new one if missing.
+ *
+ * This function looks for an existing instruction message in the chat context using the identifier
+ * 'INSTRUCTIONS_MESSAGE_ID'.
+ *
+ * @param options - The options for updating the instructions.
+ * @param options.chatCtx - The chat context to update.
+ * @param options.instructions - The instructions to add.
+ * @param options.addIfMissing - Whether to add the instructions if they are missing.
+ */
+export function updateInstructions(options: {
+  chatCtx: ChatContext;
+  instructions: string;
+  addIfMissing: boolean;
+}) {
+  const { chatCtx, instructions, addIfMissing } = options;
+
+  const idx = chatCtx.indexById(INSTRUCTIONS_MESSAGE_ID);
+  if (idx !== undefined) {
+    if (chatCtx.items[idx]!.type === 'message') {
+      // create a new instance to avoid mutating the original
+      chatCtx.items[idx] = ChatMessage.create({
+        id: INSTRUCTIONS_MESSAGE_ID,
+        role: 'system',
+        content: [instructions],
+        createdAt: chatCtx.items[idx]!.createdAt,
+      });
+    } else {
+      throw new Error('expected the instructions inside the chatCtx to be of type "message"');
+    }
+  } else if (addIfMissing) {
+    // insert the instructions at the beginning of the chat context
+    chatCtx.items.unshift(
+      ChatMessage.create({
+        id: INSTRUCTIONS_MESSAGE_ID,
+        role: 'system',
+        content: [instructions],
+      }),
+    );
   }
 }
 
