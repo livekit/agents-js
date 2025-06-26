@@ -201,10 +201,10 @@ export class AgentSession<
     // TODO(AJS-129): add lock to agent activity core lifecycle
     this.nextActivity = new AgentActivity(agent, this);
 
-    // if (this.activity) {
-    //   await this.activity.drain();
-    //   await this.activity.aclose();
-    // }
+    if (this.activity) {
+      await this.activity.drain();
+      await this.activity.close();
+    }
 
     this.activity = this.nextActivity;
     this.nextActivity = undefined;
