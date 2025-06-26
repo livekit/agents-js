@@ -133,9 +133,9 @@ class BaseAgent extends voice.Agent<UserData> {
       chatCtx.items.push(...newItems);
     }
 
-    // add an instructions including the user data as assistant message
+    // add an instructions including the user data as system message
     chatCtx.addMessage({
-      role: 'assistant',
+      role: 'system',
       content: `You are ${agentName} agent. Current user data is ${summarize(userdata)}`,
     });
 
@@ -160,7 +160,7 @@ class BaseAgent extends voice.Agent<UserData> {
   }
 }
 
-function createGreaterAgent(menu: string) {
+function createGreeterAgent(menu: string) {
   const greeter = new BaseAgent({
     instructions: `You are a friendly restaurant receptionist. The menu is: ${menu}\nYour jobs are to greet the caller and understand if they want to make a reservation or order takeaway. Guide them to the right agent using tools.`,
     // TODO(brian): support parallel tool calls
@@ -281,7 +281,7 @@ function createTakeawayAgent(menu: string) {
 
 function createCheckoutAgent(menu: string) {
   const checkout = new BaseAgent({
-    instructions: ` f"You are a checkout agent at a restaurant. The menu is: {menu}\nYour are responsible for confirming the expense of the order and then collecting customer's name, phone number and credit card information, including the card number, expiry date, and CVV step by step.`,
+    instructions: `You are a checkout agent at a restaurant. The menu is: ${menu}\nYour are responsible for confirming the expense of the order and then collecting customer's name, phone number and credit card information, including the card number, expiry date, and CVV step by step.`,
     // TODO(brian): add voice
     tts: new elevenlabs.TTS(),
     tools: {
@@ -362,7 +362,7 @@ export default defineAgent({
 
     const menu = 'Pizza: $10, Salad: $5, Ice Cream: $3, Coffee: $2';
     const userData = createUserData({
-      greeter: createGreaterAgent(menu),
+      greeter: createGreeterAgent(menu),
       reservation: createReservationAgent(),
       takeaway: createTakeawayAgent(menu),
       checkout: createCheckoutAgent(menu),
