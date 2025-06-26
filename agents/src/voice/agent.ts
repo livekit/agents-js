@@ -89,7 +89,7 @@ export class Agent<UserData = any> {
     this._vad = vad;
     this._llm = llm;
     this._tts = tts;
-    this._agentActivity = undefined; // TODO(shubhra): add type
+    this._agentActivity = undefined;
   }
 
   get vad(): VAD | undefined {
