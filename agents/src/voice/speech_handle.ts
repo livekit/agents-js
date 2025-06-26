@@ -26,14 +26,12 @@ export class SpeechHandle {
     readonly parent?: SpeechHandle,
   ) {}
 
-  static create(
-    options: {
-      allowInterruptions?: boolean;
-      stepIndex?: number;
-      parent?: SpeechHandle;
-    } = {},
-  ) {
-    const { allowInterruptions = false, stepIndex = 0, parent } = options;
+  static create(options: {
+    allowInterruptions?: boolean;
+    stepIndex?: number;
+    parent?: SpeechHandle;
+  }) {
+    const { allowInterruptions = false, stepIndex = 0, parent } = options ?? {};
 
     return new SpeechHandle(shortuuid('speech'), allowInterruptions, stepIndex, parent);
   }
