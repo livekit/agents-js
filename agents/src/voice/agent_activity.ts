@@ -306,7 +306,7 @@ export class AgentActivity implements RecognitionHooks {
       this.q_updated = new Future();
     }
 
-    this.logger.info('mainTask: exiting');
+    this.logger.info('AgentActivity mainTask: exiting');
   }
 
   private wakeupMainTask(): void {
