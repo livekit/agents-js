@@ -197,7 +197,7 @@ export class ChatContext {
     return new ChatContext([]);
   }
 
-  get items(): ReadonlyArray<ChatItem> {
+  get items(): ChatItem[] {
     return this._items;
   }
 
@@ -251,7 +251,7 @@ export class ChatContext {
       excludeFunctionCall?: boolean;
       excludeInstructions?: boolean;
       excludeEmptyMessage?: boolean;
-      toolCtx?: ToolContext;
+      toolCtx?: ToolContext<any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     } = {},
   ): ChatContext {
     const {
@@ -296,33 +296,19 @@ export class ChatContext {
   truncate(maxItems: number): ChatContext {
     if (maxItems <= 0) return this;
 
-    const instructions = this._items.find(
-      (i) => i.type === 'message' && (i as ChatMessage).role === 'system',
-    ) as ChatMessage | undefined;
+    const instructions = this._items.find((i) => i.type === 'message' && i.role === 'system') as
+      | ChatMessage
+      | undefined;
 
     let newItems = this._items.slice(-maxItems);
 
     // Ensure the first item is not a function-call artefact.
-    while (newItems.length > 0) {
-      const first = newItems[0]!;
-      if (first.type === 'function_call' || first.type === 'function_call_output') {
-        newItems.shift();
-      } else {
-        break;
-      }
+    while (
+      newItems.length > 0 &&
+      ['function_call', 'function_call_output'].includes(newItems[0]!.type)
+    ) {
+      newItems.shift();
     }
-
-    let nonFunctionItemIdx = 0;
-    for (let i = 0; i < newItems.length; i++) {
-      const item = newItems[i]!;
-      if (item.type !== 'function_call' && item.type !== 'function_call_output') {
-        nonFunctionItemIdx = i;
-        break;
-      }
-    }
-
-    // Trim chat ctx start on any function_call or function_call_output
-    newItems = newItems.slice(nonFunctionItemIdx);
 
     if (instructions) {
       // At this point `instructions` is defined, so it is safe to pass to `includes`.

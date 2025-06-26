@@ -21,7 +21,7 @@ import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
-import type { TurnDetectionMode } from './agent_session.js';
+import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 
 export class StopResponse extends Error {
   constructor() {
@@ -121,6 +121,10 @@ export class Agent<UserData = any> {
     return { ...this._tools };
   }
 
+  get session(): AgentSession {
+    return this.getActivityOrThrow().agentSession;
+  }
+
   async onEnter(): Promise<void> {}
 
   async onExit(): Promise<void> {}
@@ -163,6 +167,15 @@ export class Agent<UserData = any> {
       throw new Error('Agent activity not found');
     }
     return this._agentActivity;
+  }
+
+  async updateChatCtx(chatCtx: ChatContext): Promise<void> {
+    if (!this._agentActivity) {
+      this._chatCtx = chatCtx.copy({ toolCtx: this.toolCtx });
+      return;
+    }
+
+    this._agentActivity.updateChatCtx(chatCtx);
   }
 
   static default = {
