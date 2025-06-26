@@ -189,6 +189,8 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
+    this.logger.debug({ speechDuration: ev.speechDuration }, 'VAD inference done');
+
     if (this.stt && this.agentSession.options.minInterruptionWords > 0 && this.audioRecognition) {
       const text = this.audioRecognition.currentTranscript;
 
