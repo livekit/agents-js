@@ -745,7 +745,7 @@ export class AgentActivity implements RecognitionHooks {
     const newToolCalls: FunctionCall[] = [];
     const newToolCallOutputs: FunctionCallOutput[] = [];
     let shouldGenerateToolReply: boolean = false;
-    let newAgentTask: Agent | undefined = undefined;
+    let newAgentTask: Agent | null = null;
     let ignoreTaskSwitch: boolean = false;
 
     for (const jsOut of toolOutput.output) {
@@ -759,13 +759,13 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
 
-      if (newAgentTask !== undefined && sanitizedOut.agentTask !== undefined) {
+      if (newAgentTask !== null && sanitizedOut.agentTask !== undefined) {
         this.logger.error('expected to receive only one agent task from the tool executions');
         ignoreTaskSwitch = true;
         // TODO(brian): should we mark the function call as failed to notify the LLM?
       }
 
-      newAgentTask = sanitizedOut.agentTask;
+      newAgentTask = sanitizedOut.agentTask ?? null;
 
       this.logger.debug(
         {
@@ -780,7 +780,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     let draining = this.draining;
-    if (!ignoreTaskSwitch && newAgentTask !== undefined) {
+    if (!ignoreTaskSwitch && newAgentTask !== null) {
       this.agentSession.updateAgent(newAgentTask);
       draining = true;
     }

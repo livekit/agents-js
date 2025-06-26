@@ -343,7 +343,7 @@ export class AudioRecognition {
         }
       }
     } catch (e) {
-      this.logger.error('Error in VAD task:', e);
+      this.logger.error(e, 'Error in VAD task');
     } finally {
       this.logger.debug('VAD task closed');
     }
