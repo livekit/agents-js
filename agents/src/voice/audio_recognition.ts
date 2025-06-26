@@ -325,37 +325,41 @@ export class AudioRecognition {
       const vadStream = this.vad.stream();
       vadStream.updateInputStream(this.vadInputStream);
 
-      for await (const ev of vadStream) {
-        if (controller.signal.aborted) {
-          this.logger.debug('VAD task cancelled');
-          break;
+      try {
+        for await (const ev of vadStream) {
+          if (controller.signal.aborted) {
+            this.logger.debug('VAD task cancelled');
+            break;
+          }
+
+          switch (ev.type) {
+            case VADEventType.START_OF_SPEECH:
+              this.hooks.onStartOfSpeech(ev);
+              this.speaking = true;
+
+              this.bounceEOUTask?.cancel();
+              break;
+            case VADEventType.INFERENCE_DONE:
+              this.hooks.onVADInferenceDone(ev);
+              break;
+            case VADEventType.END_OF_SPEECH:
+              this.hooks.onEndOfSpeech(ev);
+              this.speaking = false;
+              // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
+              this.lastSpeakingTime = Date.now() - ev.silenceDuration;
+
+              if (
+                this.vadBaseTurnDetection ||
+                (this.turnDetectionMode === 'stt' && this.userTurnCommitted)
+              ) {
+                const chatCtx = this.hooks.retrieveChatCtx();
+                this.runEOUDetection(chatCtx);
+              }
+              break;
+          }
         }
-
-        switch (ev.type) {
-          case VADEventType.START_OF_SPEECH:
-            this.hooks.onStartOfSpeech(ev);
-            this.speaking = true;
-
-            this.bounceEOUTask?.cancel();
-            break;
-          case VADEventType.INFERENCE_DONE:
-            this.hooks.onVADInferenceDone(ev);
-            break;
-          case VADEventType.END_OF_SPEECH:
-            this.hooks.onEndOfSpeech(ev);
-            this.speaking = false;
-            // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
-            this.lastSpeakingTime = Date.now() - ev.silenceDuration;
-
-            if (
-              this.vadBaseTurnDetection ||
-              (this.turnDetectionMode === 'stt' && this.userTurnCommitted)
-            ) {
-              const chatCtx = this.hooks.retrieveChatCtx();
-              this.runEOUDetection(chatCtx);
-            }
-            break;
-        }
+      } finally {
+        vadStream.close();
       }
     };
   }
