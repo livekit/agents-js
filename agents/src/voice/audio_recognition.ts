@@ -11,6 +11,7 @@ import { type ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream, isStreamReaderReleaseError } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
+import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { Task } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
@@ -76,7 +77,7 @@ export class AudioRecognition {
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
     this.vadInputStream = vadInputStream;
-    this.sttInputStream = sttInputStream;
+    this.sttInputStream = mergeReadableStreams(sttInputStream, this.silenceAudioTransform.readable);
     this.silenceAudioWriter = this.silenceAudioTransform.writable.getWriter();
   }
 
@@ -253,6 +254,7 @@ export class AudioRecognition {
     if (!this.stt) return;
 
     this.logger.debug('createSttTask: create stt stream from stt node');
+
     const sttStream = await this.stt(this.sttInputStream, {});
 
     if (signal.aborted || sttStream === null) return;
@@ -348,11 +350,7 @@ export class AudioRecognition {
   }
 
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {
-    // const mergedStream = mergeReadableStreams(
-    //   audioStream as any,
-    //   this.silenceAudioTransform.readable as any,
-    // );
-    this.deferredInputStream.setSource(audioStream as any);
+    this.deferredInputStream.setSource(audioStream);
   }
 
   detachInputAudioStream() {
