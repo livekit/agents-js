@@ -374,6 +374,7 @@ export default defineAgent({
       stt: new deepgram.STT(),
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
+      userData,
       voiceOptions: {
         maxToolSteps: 5,
       },
