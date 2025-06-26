@@ -30,23 +30,27 @@ export class StopResponse extends Error {
   }
 }
 
-export interface AgentHooks {
+export interface AgentHooks<UserData = unknown> {
   /**
    * Invoked when the agent is initialized.
    */
-  onEnter?: () => Promise<void>;
+  onEnter?: (options: { agent: Agent<UserData> }) => Promise<void>;
 
   /**
    * Invoked when the agent exits, e.g.
    * - when the user ends the conversation
    * - when the current agent is transferred to a new agent
    */
-  onExit?: () => Promise<void>;
+  onExit?: (options: { agent: Agent<UserData> }) => Promise<void>;
 
   /**
    * Invoked when the user finishes the speech turn.
    */
-  onUserTurnCompleted?: (chatCtx: ChatContext, newMessage: ChatMessage) => Promise<void>;
+  onUserTurnCompleted?: (options: {
+    agent: Agent<UserData>;
+    chatCtx: ChatContext;
+    newMessage: ChatMessage;
+  }) => Promise<void>;
 }
 
 export interface AgentOptions<UserData> {
@@ -71,7 +75,7 @@ export class Agent<UserData = any> {
   private _tts?: TTS;
 
   /** @internal */
-  hooks: AgentHooks;
+  hooks: AgentHooks<UserData>;
 
   /** @internal */
   agentActivity?: AgentActivity;
@@ -97,7 +101,7 @@ export class Agent<UserData = any> {
     onEnter,
     onExit,
     onUserTurnCompleted,
-  }: AgentOptions<UserData> & AgentHooks) {
+  }: AgentOptions<UserData> & AgentHooks<UserData>) {
     this._instructions = instructions;
     this._tools = { ...tools };
     this._chatCtx =
@@ -153,15 +157,15 @@ export class Agent<UserData = any> {
   }
 
   async onEnter(): Promise<void> {
-    await this.hooks.onEnter?.();
+    await this.hooks.onEnter?.({ agent: this });
   }
 
   async onExit(): Promise<void> {
-    await this.hooks.onExit?.();
+    await this.hooks.onExit?.({ agent: this });
   }
 
   async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage): Promise<void> {
-    await this.hooks.onUserTurnCompleted?.(chatCtx, newMessage);
+    await this.hooks.onUserTurnCompleted?.({ agent: this, chatCtx, newMessage });
   }
 
   async transcriptionNode(
