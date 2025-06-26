@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
+import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioResampler } from '@livekit/rtc-node';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
 import { type ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
@@ -17,6 +18,7 @@ import { toError } from '../llm/utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task } from '../utils.js';
+import type { ModelSettings } from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
 import { RunContext } from './run_context.js';
@@ -137,7 +139,7 @@ export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
   toolCtx: ToolContext,
-  modelSettings: any, // TODO(AJS-59): add type
+  modelSettings: ModelSettings,
   controller: AbortController,
 ): [Task<void>, _LLMGenerationData] {
   const textStream = new IdentityTransform<string>();
@@ -226,7 +228,7 @@ export function performLLMInference(
 export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string>,
-  modelSettings: any, // TODO(AJS-59): add type
+  modelSettings: ModelSettings,
   controller: AbortController,
 ): [Task<void>, ReadableStream<AudioFrame>] {
   const audioStream = new IdentityTransform<AudioFrame>();
