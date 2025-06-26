@@ -8,7 +8,6 @@ import {
   cli,
   defineAgent,
   llm,
-  log,
   voice,
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
@@ -17,8 +16,6 @@ import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-
-let logger: any | null = null;
 
 type UserData = {
   customer: Partial<{
@@ -354,8 +351,6 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    logger = log();
-
     await ctx.connect();
     const participant = await ctx.waitForParticipant();
     console.log('participant joined: ', participant.identity);
