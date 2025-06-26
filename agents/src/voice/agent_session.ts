@@ -140,7 +140,7 @@ export class AgentSession<
     this._userData = value;
   }
 
-  async start(agent: Agent, room: Room): Promise<void> {
+  async start(agent: Agent<any>, room: Room): Promise<void> {
     if (this.started) {
       return;
     }

@@ -121,8 +121,8 @@ export class Agent<UserData = any> {
     return { ...this._tools };
   }
 
-  get session(): AgentSession {
-    return this.getActivityOrThrow().agentSession;
+  get session(): AgentSession<UserData> {
+    return this.getActivityOrThrow().agentSession as AgentSession<UserData>;
   }
 
   async onEnter(): Promise<void> {}

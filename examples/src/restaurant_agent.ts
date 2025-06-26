@@ -8,6 +8,7 @@ import {
   cli,
   defineAgent,
   llm,
+  log,
   voice,
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
@@ -15,10 +16,9 @@ import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
-import type { Logger } from 'pino';
 import { z } from 'zod';
 
-const logger: Logger | null = null;
+let logger: any | null = null;
 
 type UserData = {
   customer: Partial<{
@@ -37,6 +37,14 @@ type UserData = {
   agents: Record<string, voice.Agent<UserData>>;
   prevAgent?: voice.Agent<UserData>;
 };
+
+function createUserData(agents: Record<string, voice.Agent<UserData>>) {
+  return {
+    customer: {},
+    creditCard: {},
+    agents,
+  };
+}
 
 function summarize({
   customer,
@@ -96,25 +104,249 @@ const toGreeter = llm.tool({
     'Called when user asks any unrelated questions or requests any other services not in your job description.',
   parameters: z.object({}),
   execute: async (_, { ctx }: llm.ToolOptions<UserData>) => {
-    ctx.userData.prevAgent = ctx.session.currentAgent;
-    return llm.handoff({
-      agent: ctx.userData.agents.greeter,
-      returns: 'The greeter is now playing.',
+    const currAgent = ctx.session.currentAgent as BaseAgent;
+    return await currAgent.transferToAgent({
+      name: 'greeter',
+      ctx,
     });
   },
 });
 
-class BaseAgent extends voice.Agent {
+class BaseAgent extends voice.Agent<UserData> {
   async onEnter(): Promise<void> {
     const agentName = this.constructor.name;
     console.log(`entering task ${agentName}`);
 
-    const userdata: UserData = this.session.userData;
+    const userdata = this.session.userData;
     const chatCtx = this.chatCtx.copy();
 
+    // add the previous agent's chat history to the current agent
     if (userdata.prevAgent) {
+      const truncatedChatCtx = userdata.prevAgent.chatCtx
+        .copy({
+          excludeInstructions: true,
+          excludeFunctionCall: false,
+        })
+        .truncate(6);
+      const existingIds = new Set(chatCtx.items.map((item) => item.id));
+      const newItems = truncatedChatCtx.items.filter((item) => !existingIds.has(item.id));
+      chatCtx.items.push(...newItems);
     }
+
+    // add an instructions including the user data as assistant message
+    chatCtx.addMessage({
+      role: 'assistant',
+      content: `You are ${agentName} agent. Current user data is ${summarize(userdata)}`,
+    });
+
+    await this.updateChatCtx(chatCtx);
+    this.session.generateReply({ toolChoice: 'none' });
   }
+
+  async transferToAgent(options: { name: string; ctx: voice.RunContext<UserData> }) {
+    const { name, ctx } = options;
+    const userdata = ctx.userData;
+    const currentAgent = ctx.session.currentAgent;
+    const nextAgent = userdata.agents[name];
+    if (!nextAgent) {
+      throw new Error(`Agent ${name} not found`);
+    }
+    userdata.prevAgent = currentAgent;
+
+    return llm.handoff({
+      agent: nextAgent,
+      returns: `Transferring to ${name}`,
+    });
+  }
+}
+
+function createGreaterAgent(menu: string) {
+  const greeter = new BaseAgent({
+    instructions: `You are a friendly restaurant receptionist. The menu is: ${menu}\nYour jobs are to greet the caller and understand if they want to make a reservation or order takeaway. Guide them to the right agent using tools.`,
+    // TODO(brian): support parallel tool calls
+    llm: new openai.LLM(),
+    // TODO(brian): add voice
+    tts: new elevenlabs.TTS(),
+    tools: {
+      toReservation: llm.tool({
+        description: `Called when user wants to make or update a reservation.
+        This function handles transitioning to the reservation agent
+        who will collect the necessary details like reservation time,
+        customer name and phone number.`,
+        parameters: z.object({}),
+        execute: async (_, { ctx }): Promise<llm.AgentHandoff> => {
+          return await greeter.transferToAgent({
+            name: 'reservation',
+            ctx,
+          });
+        },
+      }),
+      toTakeaway: llm.tool({
+        description: `Called when the user wants to place a takeaway order.
+        This includes handling orders for pickup, delivery, or when the user wants to
+        proceed to checkout with their existing order.`,
+        parameters: z.object({}),
+        execute: async (_, { ctx }): Promise<llm.AgentHandoff> => {
+          return await greeter.transferToAgent({
+            name: 'takeaway',
+            ctx,
+          });
+        },
+      }),
+    },
+  });
+
+  return greeter;
+}
+
+function createReservationAgent() {
+  const reservation = new BaseAgent({
+    instructions: `You are a reservation agent at a restaurant. Your jobs are to ask for the reservation time, then customer's name, and phone number. Then confirm the reservation details with the customer.`,
+    // TODO(brian): add voice
+    tts: new elevenlabs.TTS(),
+    tools: {
+      updateName,
+      updatePhone,
+      toGreeter,
+      updateReservationTime: llm.tool({
+        description: `Called when the user provides their reservation time.
+        Confirm the time with the user before calling the function.`,
+        parameters: z.object({
+          time: z.string().describe('The reservation time'),
+        }),
+        execute: async ({ time }, { ctx }) => {
+          ctx.userData.reservationTime = time;
+          return `The reservation time is updated to ${time}`;
+        },
+      }),
+      confirmReservation: llm.tool({
+        description: `Called when the user confirms the reservation.`,
+        parameters: z.object({}),
+        execute: async (_, { ctx }): Promise<llm.AgentHandoff | string> => {
+          const userdata = ctx.userData;
+          if (!userdata.customer.name || !userdata.customer.phone) {
+            return 'Please provide your name and phone number first.';
+          }
+          if (!userdata.reservationTime) {
+            return 'Please provide reservation time first.';
+          }
+          return await reservation.transferToAgent({
+            name: 'greeter',
+            ctx,
+          });
+        },
+      }),
+    },
+  });
+
+  return reservation;
+}
+
+function createTakeawayAgent(menu: string) {
+  const takeaway = new BaseAgent({
+    instructions: `Your are a takeaway agent that takes orders from the customer. Our menu is: ${menu}\nClarify special requests and confirm the order with the customer.`,
+    // TODO(brian): add voice
+    tts: new elevenlabs.TTS(),
+    tools: {
+      toGreeter,
+      updateOrder: llm.tool({
+        description: `Called when the user provides their order.`,
+        parameters: z.object({
+          items: z.array(z.string()).describe('The items of the full order'),
+        }),
+        execute: async ({ items }, { ctx }) => {
+          ctx.userData.order = items;
+          return `The order is updated to ${items}`;
+        },
+      }),
+      toCheckout: llm.tool({
+        description: `Called when the user confirms the order.`,
+        parameters: z.object({}),
+        execute: async (_, { ctx }): Promise<llm.AgentHandoff | string> => {
+          const userdata = ctx.userData;
+          if (!userdata.order) {
+            return 'No takeaway order found. Please make an order first.';
+          }
+          return await takeaway.transferToAgent({
+            name: 'checkout',
+            ctx,
+          });
+        },
+      }),
+    },
+  });
+
+  return takeaway;
+}
+
+function createCheckoutAgent(menu: string) {
+  const checkout = new BaseAgent({
+    instructions: ` f"You are a checkout agent at a restaurant. The menu is: {menu}\nYour are responsible for confirming the expense of the order and then collecting customer's name, phone number and credit card information, including the card number, expiry date, and CVV step by step.`,
+    // TODO(brian): add voice
+    tts: new elevenlabs.TTS(),
+    tools: {
+      updateName,
+      updatePhone,
+      toGreeter,
+      confirmExpense: llm.tool({
+        description: `Called when the user confirms the expense.`,
+        parameters: z.object({
+          expense: z.number().describe('The expense of the order'),
+        }),
+        execute: async ({ expense }, { ctx }) => {
+          ctx.userData.expense = expense;
+          return `The expense is confirmed to be ${expense}`;
+        },
+      }),
+      updateCreditCard: llm.tool({
+        description: `Called when the user provides their credit card number, expiry date, and CVV.
+        Confirm the spelling with the user before calling the function.`,
+        parameters: z.object({
+          number: z.string().describe('The credit card number'),
+          expiry: z.string().describe('The expiry date of the credit card'),
+          cvv: z.string().describe('The CVV of the credit card'),
+        }),
+        execute: async ({ number, expiry, cvv }, { ctx }) => {
+          ctx.userData.creditCard = { number, expiry, cvv };
+          return `The credit card number is updated to ${number}`;
+        },
+      }),
+      confirmCheckout: llm.tool({
+        description: `Called when the user confirms the checkout.`,
+        parameters: z.object({}),
+        execute: async (_, { ctx }): Promise<llm.AgentHandoff | string> => {
+          const userdata = ctx.userData;
+          if (!userdata.expense) {
+            return 'Please confirm the expense first.';
+          }
+          if (
+            !userdata.creditCard.number ||
+            !userdata.creditCard.expiry ||
+            !userdata.creditCard.cvv
+          ) {
+            return 'Please provide the credit card information first.';
+          }
+          userdata.checkedOut = true;
+          return await checkout.transferToAgent({
+            name: 'greeter',
+            ctx,
+          });
+        },
+      }),
+      toTakeaway: llm.tool({
+        description: `Called when the user wants to update their order.`,
+        parameters: z.object({}),
+        execute: async (_, { ctx }): Promise<llm.AgentHandoff> => {
+          return await checkout.transferToAgent({
+            name: 'takeaway',
+            ctx,
+          });
+        },
+      }),
+    },
+  });
+
+  return checkout;
 }
 
 export default defineAgent({
@@ -122,24 +354,33 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    const agent = new voice.Agent({
-      instructions:
-        "You are a helpful assistant, you can hear the user's message and respond to it.",
-    });
+    logger = log();
+
     await ctx.connect();
     const participant = await ctx.waitForParticipant();
     console.log('participant joined: ', participant.identity);
 
-    const vad = ctx.proc.userData.vad! as silero.VAD;
+    const menu = 'Pizza: $10, Salad: $5, Ice Cream: $3, Coffee: $2';
+    const userData = createUserData({
+      greeter: createGreaterAgent(menu),
+      reservation: createReservationAgent(),
+      takeaway: createTakeawayAgent(menu),
+      checkout: createCheckoutAgent(menu),
+    });
 
+    const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
       vad,
       stt: new deepgram.STT(),
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
+      voiceOptions: {
+        maxToolSteps: 5,
+      },
     });
-    await session.start(agent, ctx.room);
-    session.say('Hello, how are you? My name is LiveKit Agents');
+
+    await session.start(userData.agents.greeter!, ctx.room);
+    await session.say('Welcome to our restaurant! How may I assist you today?');
   },
 });
 
