@@ -80,7 +80,10 @@ export default defineAgent({
       },
     );
 
-    session.start(agent, ctx.room);
+    session.start({
+      agent,
+      room: ctx.room,
+    });
   },
 });
 

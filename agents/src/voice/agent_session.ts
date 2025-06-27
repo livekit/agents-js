@@ -16,7 +16,7 @@ import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import type { UserState } from './events.js';
 import type { AudioOutput, TextOutput } from './io.js';
-import { RoomIO } from './room_io/index.js';
+import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 
@@ -140,7 +140,17 @@ export class AgentSession<
     this._userData = value;
   }
 
-  async start(agent: Agent<any>, room: Room): Promise<void> {
+  async start({
+    agent,
+    room,
+    inputOptions,
+    outputOptions,
+  }: {
+    agent: Agent;
+    room: Room;
+    inputOptions?: Partial<RoomInputOptions>;
+    outputOptions?: Partial<RoomOutputOptions>;
+  }): Promise<void> {
     if (this.started) {
       return;
     }
@@ -148,7 +158,12 @@ export class AgentSession<
     this.agent = agent;
     this._updateAgentState('initializing');
 
-    this.roomIO = new RoomIO(this, room, this.tts.sampleRate, this.tts.numChannels);
+    this.roomIO = new RoomIO({
+      agentSession: this,
+      room,
+      inputOptions,
+      outputOptions,
+    });
     this.roomIO.start();
 
     this.updateActivity(this.agent);

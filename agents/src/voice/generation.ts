@@ -24,7 +24,7 @@ import { toError } from '../llm/utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task } from '../utils.js';
-import type { Agent } from './agent.js';
+import type { Agent, ModelSettings } from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
 import { RunContext } from './run_context.js';
@@ -242,7 +242,7 @@ export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
   toolCtx: ToolContext,
-  modelSettings: any, // TODO(AJS-59): add type
+  modelSettings: ModelSettings,
   controller: AbortController,
 ): [Task<void>, _LLMGenerationData] {
   const textStream = new IdentityTransform<string>();
@@ -331,7 +331,7 @@ export function performLLMInference(
 export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string>,
-  modelSettings: any, // TODO(AJS-59): add type
+  modelSettings: ModelSettings,
   controller: AbortController,
 ): [Task<void>, ReadableStream<AudioFrame>] {
   const audioStream = new IdentityTransform<AudioFrame>();
@@ -519,7 +519,7 @@ export function performToolExecutions({
   session: AgentSession;
   speechHandle: SpeechHandle;
   toolCtx: ToolContext;
-  toolChoice: ToolChoice;
+  toolChoice?: ToolChoice;
   toolCallStream: ReadableStream<FunctionCall>;
   controller: AbortController;
 }): [Task<void>, _ToolOutput] {

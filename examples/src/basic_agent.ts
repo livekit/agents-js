@@ -36,8 +36,11 @@ export default defineAgent({
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
     });
-    await session.start(agent, ctx.room);
-    session.say('Hello, how are you? My name is LiveKit Agents');
+    await session.start({
+      agent,
+      room: ctx.room,
+    });
+    session.say('Hello, how can I help you today?');
   },
 });
 

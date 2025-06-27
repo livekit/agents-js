@@ -15,10 +15,11 @@ import type {
 } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
+import { splitWords } from '../tokenize/basic/word.js';
 import type { TTS } from '../tts/tts.js';
 import { Future, Task } from '../utils.js';
 import type { VAD, VADEvent } from '../vad.js';
-import type { Agent } from './agent.js';
+import type { Agent, ModelSettings } from './agent.js';
 import { StopResponse } from './agent.js';
 import { type AgentSession, AgentSessionEvent, type TurnDetectionMode } from './agent_session.js';
 import {
@@ -54,7 +55,7 @@ export class AgentActivity implements RecognitionHooks {
 
   /** @internal */
   _mainTask?: Task<void>;
-  _userTurnCompletedTask?: Task<void>;
+  _userTurnCompletedTask?: Promise<void>;
 
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
@@ -176,7 +177,7 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     const task = this.createSpeechTask({
-      promise: this.ttsTask(handle, text, addToChatCtx, audio),
+      promise: this.ttsTask(handle, text, addToChatCtx, {}, audio),
       ownedSpeechHandle: handle,
       name: 'AgentActivity.say_tts',
     });
@@ -186,19 +187,33 @@ export class AgentActivity implements RecognitionHooks {
     return handle;
   }
 
-  onStartOfSpeech(ev: VADEvent): void {
-    this.logger.info('Start of speech', ev);
+  // recognition hooks
+
+  onStartOfSpeech(_ev: VADEvent): void {
+    this.agentSession._updateUserState('speaking');
   }
 
   onEndOfSpeech(ev: VADEvent): void {
     this.logger.info('End of speech', ev);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onVADInferenceDone(ev: VADEvent): void {
-    // skip speech handle interruption for manual and realtime model
     if (this.turnDetection === 'manual' || this.turnDetection === 'realtime_llm') {
+      // skip speech handle interruption for manual and realtime model
       return;
+    }
+
+    if (ev.speechDuration < this.agentSession.options.minInterruptionDuration) {
+      return;
+    }
+
+    if (this.stt && this.agentSession.options.minInterruptionWords > 0 && this.audioRecognition) {
+      const text = this.audioRecognition.currentTranscript;
+
+      // TODO(shubhra): better word splitting for multi-language
+      if (text && splitWords(text, true).length < this.agentSession.options.minInterruptionWords) {
+        return;
+      }
     }
 
     if (
@@ -206,8 +221,8 @@ export class AgentActivity implements RecognitionHooks {
       !this.currentSpeech.interrupted &&
       this.currentSpeech.allowInterruptions
     ) {
-      // this.logger.info({ 'speech id': this.currentSpeech.id }, 'speech interrupted by VAD');
-      // this.currentSpeech.interrupt();
+      this.logger.info({ 'speech id': this.currentSpeech.id }, 'speech interrupted by VAD');
+      this.currentSpeech.interrupt();
     }
   }
 
@@ -275,12 +290,11 @@ export class AgentActivity implements RecognitionHooks {
       return false;
     }
 
-    // We never cancel user code as this is very confusing.
-    // So we wait for the old execution of on_user_turn_completed to finish.
-    // In practice this is OK because most speeches will be interrupted if a new turn
-    // is detected. So the previous execution should complete quickly.
-    await this._userTurnCompletedTask?.result;
-    this._userTurnCompletedTask = Task.from(({ signal }) => this.userTurnCompleted(info, signal));
+    const oldTask = this._userTurnCompletedTask;
+    this._userTurnCompletedTask = this.createSpeechTask({
+      promise: this.userTurnCompleted(info, oldTask),
+      name: 'AgentActivity.userTurnCompleted',
+    });
     return true;
   }
 
@@ -342,7 +356,6 @@ export class AgentActivity implements RecognitionHooks {
 
     // TODO(AJS-32): Add realtime model support for generating a reply
 
-    // TODO(shubhra) handle tool calls
     const handle = SpeechHandle.create({
       allowInterruptions: allowInterruptions ?? this.allowInterruptions,
       stepIndex: 0,
@@ -355,8 +368,7 @@ export class AgentActivity implements RecognitionHooks {
         handle,
         chatCtx || this.agent.chatCtx,
         this.agent.toolCtx,
-        // TODO(AJS-59): make tool choice as model settings
-        toolChoice || 'auto',
+        { toolChoice: toolChoice },
         instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
         userMessage,
       ),
@@ -376,9 +388,16 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private async userTurnCompleted(info: EndOfTurnInfo, signal: AbortSignal): Promise<void> {
+  private async userTurnCompleted(info: EndOfTurnInfo, oldTask?: Promise<void>): Promise<void> {
     this.logger.info('userTurnCompleted', info);
-    // TODO(AJS-40) handle old task cancellation
+
+    if (oldTask) {
+      // We never cancel user code as this is very confusing.
+      // So we wait for the old execution of onUserTurnCompleted to finish.
+      // In practice this is OK because most speeches will be interrupted if a new turn
+      // is detected. So the previous execution should complete quickly.
+      await oldTask;
+    }
 
     // When the audio recognition detects the end of a user turn:
     //  - check if realtime model server-side turn detection is enabled
@@ -417,8 +436,6 @@ export class AgentActivity implements RecognitionHooks {
     // Agent.chatCtx
     const chatCtx = this.agent.chatCtx.copy();
 
-    if (signal.aborted) return;
-
     try {
       await this.agent.onUserTurnCompleted(chatCtx, userMessage);
     } catch (e) {
@@ -428,7 +445,6 @@ export class AgentActivity implements RecognitionHooks {
       this.logger.error({ error: e }, 'error occurred during onUserTurnCompleted');
     }
 
-    if (signal.aborted) return;
     this.generateReply({ userMessage, chatCtx });
   }
 
@@ -436,6 +452,7 @@ export class AgentActivity implements RecognitionHooks {
     speechHandle: SpeechHandle,
     text: string | ReadableStream<string>,
     addToChatCtx: boolean,
+    modelSettings: ModelSettings,
     audio?: ReadableStream<AudioFrame> | null,
   ): Promise<void> {
     const transcriptionOutput = this.agentSession._transcriptionOutput;
@@ -491,7 +508,7 @@ export class AgentActivity implements RecognitionHooks {
         const [ttsTask, ttsStream] = performTTSInference(
           (...args) => this.agent.ttsNode(...args),
           audioSource,
-          {}, // TODO(AJS-59): add model settings
+          modelSettings,
           replyAbortController,
         );
         tasks.push(ttsTask);
@@ -552,7 +569,7 @@ export class AgentActivity implements RecognitionHooks {
     speechHandle: SpeechHandle,
     chatCtx: ChatContext,
     toolCtx: ToolContext,
-    toolChoice: ToolChoice,
+    modelSettings: ModelSettings,
     instructions?: string,
     newMessage?: ChatMessage,
     toolsMessages?: ChatItem[],
@@ -570,7 +587,17 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._conversationItemAdded(newMessage);
     }
 
-    // TODO(AJS-57): handle instructions
+    if (instructions) {
+      try {
+        updateInstructions({
+          chatCtx,
+          instructions,
+          addIfMissing: true,
+        });
+      } catch (e) {
+        this.logger.error({ error: e }, 'error occurred during updateInstructions');
+      }
+    }
 
     this.agentSession._updateAgentState('thinking');
     const tasks: Array<Task<void>> = [];
@@ -579,7 +606,7 @@ export class AgentActivity implements RecognitionHooks {
       (...args) => this.agent.llmNode(...args),
       chatCtx,
       toolCtx,
-      {},
+      modelSettings,
       replyAbortController,
     );
     tasks.push(llmTask);
@@ -592,7 +619,7 @@ export class AgentActivity implements RecognitionHooks {
       [ttsTask, ttsStream] = performTTSInference(
         (...args) => this.agent.ttsNode(...args),
         ttsTextInput,
-        {},
+        modelSettings,
         replyAbortController,
       );
       tasks.push(ttsTask);
@@ -608,7 +635,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const replyStartedAt = Date.now();
-    const trNodeResult = await this.agent.transcriptionNode(llmOutput, {}); // TODO(AJS-59): add model settings
+    const trNodeResult = await this.agent.transcriptionNode(llmOutput, modelSettings);
     let textOut: _TextOut | null = null;
     if (trNodeResult) {
       const [textForwardTask, _textOut] = performTextForwarding(
@@ -646,7 +673,7 @@ export class AgentActivity implements RecognitionHooks {
       session: this.agentSession,
       speechHandle,
       toolCtx,
-      toolChoice,
+      toolChoice: modelSettings.toolChoice,
       toolCallStream: llmGenData.toolCallStream,
       controller: replyAbortController,
     });
@@ -815,14 +842,14 @@ export class AgentActivity implements RecognitionHooks {
 
       // Avoid setting tool_choice to "required" or a specific function when
       // passing tool response back to the LLM
-      const respondToolChoice = draining || toolChoice === 'none' ? 'none' : 'auto';
+      const respondToolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
 
       const toolResponseTask = this.createSpeechTask({
         promise: this.pipelineReplyTask(
           handle,
           chatCtx,
           toolCtx,
-          respondToolChoice,
+          { toolChoice: respondToolChoice },
           instructions,
           undefined,
           toolMessages,

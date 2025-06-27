@@ -142,7 +142,10 @@ export default defineAgent({
       userData: { number: 0 },
     });
 
-    session.start(routerAgent, ctx.room);
+    session.start({
+      agent: routerAgent,
+      room: ctx.room,
+    });
   },
 });
 
