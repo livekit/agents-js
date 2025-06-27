@@ -42,7 +42,7 @@ const defaultSTTOptions: STTOptions = {
   detectLanguage: false,
   interimResults: true,
   punctuate: true,
-  model: 'nova-2-general',
+  model: 'nova-3-general',
   smartFormat: true,
   noDelay: true,
   endpointing: 25,
