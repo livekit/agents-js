@@ -17,6 +17,29 @@ import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
+const voices = {
+  greeter: {
+    id: '9BWtsMINqrJLrRacOk9x', // Aria - calm, professional female voice
+    name: 'Aria',
+    category: 'premade',
+  },
+  reservation: {
+    id: 'EXAVITQu4vr4xnSDxMaL', // Sarah - warm, reassuring professional tone
+    name: 'Sarah',
+    category: 'premade',
+  },
+  takeaway: {
+    id: 'CwhRBWXzGAHq8TQ4Fs17', // Roger - confident middle-aged male
+    name: 'Roger',
+    category: 'premade',
+  },
+  checkout: {
+    id: '5Q0t7uMcjvnagumLfvZi', // Paul - authoritative middle-aged male
+    name: 'Paul',
+    category: 'premade',
+  },
+};
+
 type UserData = {
   customer: Partial<{
     name: string;
@@ -162,8 +185,7 @@ function createGreeterAgent(menu: string) {
     instructions: `You are a friendly restaurant receptionist. The menu is: ${menu}\nYour jobs are to greet the caller and understand if they want to make a reservation or order takeaway. Guide them to the right agent using tools.`,
     // TODO(brian): support parallel tool calls
     llm: new openai.LLM(),
-    // TODO(brian): add voice
-    tts: new elevenlabs.TTS(),
+    tts: new elevenlabs.TTS({ voice: voices.greeter }),
     tools: {
       toReservation: llm.tool({
         description: `Called when user wants to make or update a reservation.
@@ -199,8 +221,7 @@ function createGreeterAgent(menu: string) {
 function createReservationAgent() {
   const reservation = new BaseAgent({
     instructions: `You are a reservation agent at a restaurant. Your jobs are to ask for the reservation time, then customer's name, and phone number. Then confirm the reservation details with the customer.`,
-    // TODO(brian): add voice
-    tts: new elevenlabs.TTS(),
+    tts: new elevenlabs.TTS({ voice: voices.reservation }),
     tools: {
       updateName,
       updatePhone,
@@ -242,8 +263,7 @@ function createReservationAgent() {
 function createTakeawayAgent(menu: string) {
   const takeaway = new BaseAgent({
     instructions: `Your are a takeaway agent that takes orders from the customer. Our menu is: ${menu}\nClarify special requests and confirm the order with the customer.`,
-    // TODO(brian): add voice
-    tts: new elevenlabs.TTS(),
+    tts: new elevenlabs.TTS({ voice: voices.takeaway }),
     tools: {
       toGreeter,
       updateOrder: llm.tool({
@@ -279,8 +299,7 @@ function createTakeawayAgent(menu: string) {
 function createCheckoutAgent(menu: string) {
   const checkout = new BaseAgent({
     instructions: `You are a checkout agent at a restaurant. The menu is: ${menu}\nYour are responsible for confirming the expense of the order and then collecting customer's name, phone number and credit card information, including the card number, expiry date, and CVV step by step.`,
-    // TODO(brian): add voice
-    tts: new elevenlabs.TTS(),
+    tts: new elevenlabs.TTS({ voice: voices.checkout }),
     tools: {
       updateName,
       updatePhone,
@@ -379,7 +398,6 @@ export default defineAgent({
       agent: userData.agents.greeter!,
       room: ctx.room,
     });
-    await session.say('Welcome to our restaurant! How may I assist you today?');
   },
 });
 
