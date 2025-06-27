@@ -375,7 +375,10 @@ export default defineAgent({
       },
     });
 
-    await session.start(userData.agents.greeter!, ctx.room);
+    await session.start({
+      agent: userData.agents.greeter!,
+      room: ctx.room,
+    });
     await session.say('Welcome to our restaurant! How may I assist you today?');
   },
 });
