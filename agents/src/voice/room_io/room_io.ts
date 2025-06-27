@@ -29,11 +29,47 @@ import {
   ParticipantTranscriptionOutput,
 } from './_output.js';
 
+export interface RoomInputOptions {
+  audioSampleRate: number;
+  audioNumChannels: number;
+  textEnabled: boolean;
+  audioEnabled: boolean;
+  videoEnabled: boolean;
+  participantIdentity?: string;
+}
+
+export interface RoomOutputOptions {
+  transcriptionEnabled: boolean;
+  audioEnabled: boolean;
+  audioSampleRate: number;
+  audioNumChannels: number;
+  syncTranscription: boolean;
+  audioPublishOptions: TrackPublishOptions;
+}
+
+const DEFAULT_ROOM_INPUT_OPTIONS: RoomInputOptions = {
+  audioSampleRate: 24000,
+  audioNumChannels: 1,
+  textEnabled: true,
+  audioEnabled: true,
+  videoEnabled: false,
+};
+
+const DEFAULT_ROOM_OUTPUT_OPTIONS: RoomOutputOptions = {
+  audioSampleRate: 24000,
+  audioNumChannels: 1,
+  transcriptionEnabled: true,
+  audioEnabled: true,
+  syncTranscription: true,
+  audioPublishOptions: new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
+};
+
 export class RoomIO {
   private agentSession: AgentSession;
   private participantAudioInputStream: ReadableStream<AudioFrame>;
-
   private room: Room;
+  private inputOptions: RoomInputOptions;
+  private outputOptions: RoomOutputOptions;
 
   private _deferredAudioInputStream = new DeferredReadableStream<AudioFrame>();
   private participantAudioOutput?: ParticipantAudioOutput;
@@ -47,24 +83,36 @@ export class RoomIO {
 
   private logger = log();
 
-  constructor(
-    agentSession: AgentSession,
-    room: Room,
-    private readonly sampleRate: number,
-    private readonly numChannels: number,
-  ) {
+  constructor({
+    agentSession,
+    room,
+    participant,
+    inputOptions,
+    outputOptions,
+  }: {
+    agentSession: AgentSession;
+    room: Room;
+    participant?: Participant;
+    inputOptions?: Partial<RoomInputOptions>;
+    outputOptions?: Partial<RoomOutputOptions>;
+  }) {
     this.agentSession = agentSession;
     this.room = room;
+    this.inputOptions = { ...DEFAULT_ROOM_INPUT_OPTIONS, ...inputOptions };
+    this.outputOptions = { ...DEFAULT_ROOM_OUTPUT_OPTIONS, ...outputOptions };
     this.participantAudioInputStream = this._deferredAudioInputStream.stream;
+    this.participantIdentity = participant?.identity ?? this.inputOptions.participantIdentity;
+    if (!this.participantIdentity && this.inputOptions.participantIdentity !== undefined) {
+      this.participantIdentity = this.inputOptions.participantIdentity;
+    }
   }
 
   private onTrackSubscribed = (track: RemoteTrack) => {
     if (track.kind === TrackKind.KIND_AUDIO) {
       this._deferredAudioInputStream.setSource(
         new AudioStream(track, {
-          // TODO(AJS-41) remove hardcoded sample rate
-          sampleRate: 16000,
-          numChannels: 1,
+          sampleRate: this.inputOptions.audioSampleRate,
+          numChannels: this.inputOptions.audioNumChannels,
         }),
       );
     }
@@ -165,9 +213,9 @@ export class RoomIO {
   start() {
     // -- create outputs --
     this.participantAudioOutput = new ParticipantAudioOutput(this.room, {
-      sampleRate: this.sampleRate,
-      numChannels: this.numChannels,
-      trackPublishOptions: new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
+      sampleRate: this.outputOptions.audioSampleRate,
+      numChannels: this.outputOptions.audioNumChannels,
+      trackPublishOptions: this.outputOptions.audioPublishOptions,
     });
 
     this.userTranscriptOutput = this.createTranscriptionOutput({
