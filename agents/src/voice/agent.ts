@@ -81,14 +81,11 @@ export class Agent<UserData = any> {
   }: AgentOptions<UserData>) {
     this._instructions = instructions;
     this._tools = { ...tools };
-    this._chatCtx =
-      chatCtx ||
-      new ChatContext([
-        ChatMessage.create({
-          role: 'system',
-          content: instructions,
-        }),
-      ]);
+    this._chatCtx = chatCtx
+      ? chatCtx.copy({
+          toolCtx: this._tools,
+        })
+      : ChatContext.empty();
 
     this.turnDetection = turnDetection;
     this._stt = stt;
@@ -127,8 +124,8 @@ export class Agent<UserData = any> {
     return { ...this._tools };
   }
 
-  get session(): AgentSession {
-    return this.getActivityOrThrow().agentSession;
+  get session(): AgentSession<UserData> {
+    return this.getActivityOrThrow().agentSession as AgentSession<UserData>;
   }
 
   async onEnter(): Promise<void> {}

@@ -68,6 +68,17 @@ export class AgentActivity implements RecognitionHooks {
 
   async start(): Promise<void> {
     this.agent._agentActivity = this;
+
+    try {
+      updateInstructions({
+        chatCtx: this.agent._chatCtx,
+        instructions: this.agent.instructions,
+        addIfMissing: true,
+      });
+    } catch (error) {
+      this.logger.error('failed to update the instructions', error);
+    }
+
     this.audioRecognition = new AudioRecognition(
       this,
       this.vad,
