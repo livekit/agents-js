@@ -55,7 +55,7 @@ export class AgentActivity implements RecognitionHooks {
 
   /** @internal */
   _mainTask?: Task<void>;
-  _userTurnCompletedTask?: Task<void>;
+  _userTurnCompletedTask?: Promise<void>;
 
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
@@ -290,14 +290,11 @@ export class AgentActivity implements RecognitionHooks {
       return false;
     }
 
-    // We never cancel user code as this is very confusing.
-    // So we wait for the old execution of on_user_turn_completed to finish.
-    // In practice this is OK because most speeches will be interrupted if a new turn
-    // is detected. So the previous execution should complete quickly.
-    await this._userTurnCompletedTask?.result;
-
-    //TODO(AJS-40) refactor with createSpeechTask
-    this._userTurnCompletedTask = Task.from(({ signal }) => this.userTurnCompleted(info, signal));
+    const oldTask = this._userTurnCompletedTask;
+    this._userTurnCompletedTask = this.createSpeechTask({
+      promise: this.userTurnCompleted(info, oldTask),
+      name: 'AgentActivity.userTurnCompleted',
+    });
     return true;
   }
 
@@ -391,9 +388,16 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private async userTurnCompleted(info: EndOfTurnInfo, signal: AbortSignal): Promise<void> {
+  private async userTurnCompleted(info: EndOfTurnInfo, oldTask?: Promise<void>): Promise<void> {
     this.logger.info('userTurnCompleted', info);
-    // TODO(AJS-40) handle old task cancellation
+
+    if (oldTask) {
+      // We never cancel user code as this is very confusing.
+      // So we wait for the old execution of onUserTurnCompleted to finish.
+      // In practice this is OK because most speeches will be interrupted if a new turn
+      // is detected. So the previous execution should complete quickly.
+      await oldTask;
+    }
 
     // When the audio recognition detects the end of a user turn:
     //  - check if realtime model server-side turn detection is enabled
@@ -432,8 +436,6 @@ export class AgentActivity implements RecognitionHooks {
     // Agent.chatCtx
     const chatCtx = this.agent.chatCtx.copy();
 
-    if (signal.aborted) return;
-
     try {
       await this.agent.onUserTurnCompleted(chatCtx, userMessage);
     } catch (e) {
@@ -443,7 +445,6 @@ export class AgentActivity implements RecognitionHooks {
       this.logger.error({ error: e }, 'error occurred during onUserTurnCompleted');
     }
 
-    if (signal.aborted) return;
     this.generateReply({ userMessage, chatCtx });
   }
 
