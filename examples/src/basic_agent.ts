@@ -24,9 +24,6 @@ export default defineAgent({
       instructions:
         "You are a helpful assistant, you can hear the user's message and respond to it.",
     });
-    await ctx.connect();
-    const participant = await ctx.waitForParticipant();
-    console.log('participant joined: ', participant.identity);
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
 
@@ -36,10 +33,15 @@ export default defineAgent({
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
     });
+
     await session.start({
       agent,
       room: ctx.room,
     });
+
+    // join the room when agent is ready
+    await ctx.connect();
+
     session.say('Hello, how can I help you today?');
   },
 });
