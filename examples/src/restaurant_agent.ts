@@ -133,10 +133,15 @@ const toGreeter = llm.tool({
 });
 
 class BaseAgent extends voice.Agent<UserData> {
-  async onEnter(): Promise<void> {
-    const agentName = this.constructor.name;
-    console.log(`entering task ${agentName}`);
+  name: string;
 
+  constructor(options: voice.AgentOptions<UserData> & { name: string }) {
+    const { name, ...opts } = options;
+    super(opts);
+    this.name = name;
+  }
+
+  async onEnter(): Promise<void> {
     const userdata = this.session.userData;
     const chatCtx = this.chatCtx.copy();
 
@@ -156,7 +161,7 @@ class BaseAgent extends voice.Agent<UserData> {
     // add an instructions including the user data as system message
     chatCtx.addMessage({
       role: 'system',
-      content: `You are ${agentName} agent. Current user data is ${summarize(userdata)}`,
+      content: `You are ${this.name} agent. Current user data is ${summarize(userdata)}`,
     });
 
     await this.updateChatCtx(chatCtx);
@@ -182,6 +187,7 @@ class BaseAgent extends voice.Agent<UserData> {
 
 function createGreeterAgent(menu: string) {
   const greeter = new BaseAgent({
+    name: 'greeter',
     instructions: `You are a friendly restaurant receptionist. The menu is: ${menu}\nYour jobs are to greet the caller and understand if they want to make a reservation or order takeaway. Guide them to the right agent using tools.`,
     // TODO(brian): support parallel tool calls
     llm: new openai.LLM(),
@@ -220,6 +226,7 @@ function createGreeterAgent(menu: string) {
 
 function createReservationAgent() {
   const reservation = new BaseAgent({
+    name: 'reservation',
     instructions: `You are a reservation agent at a restaurant. Your jobs are to ask for the reservation time, then customer's name, and phone number. Then confirm the reservation details with the customer.`,
     tts: new elevenlabs.TTS({ voice: voices.reservation }),
     tools: {
@@ -262,6 +269,7 @@ function createReservationAgent() {
 
 function createTakeawayAgent(menu: string) {
   const takeaway = new BaseAgent({
+    name: 'takeaway',
     instructions: `Your are a takeaway agent that takes orders from the customer. Our menu is: ${menu}\nClarify special requests and confirm the order with the customer.`,
     tts: new elevenlabs.TTS({ voice: voices.takeaway }),
     tools: {
@@ -298,6 +306,7 @@ function createTakeawayAgent(menu: string) {
 
 function createCheckoutAgent(menu: string) {
   const checkout = new BaseAgent({
+    name: 'checkout',
     instructions: `You are a checkout agent at a restaurant. The menu is: ${menu}\nYour are responsible for confirming the expense of the order and then collecting customer's name, phone number and credit card information, including the card number, expiry date, and CVV step by step.`,
     tts: new elevenlabs.TTS({ voice: voices.checkout }),
     tools: {
