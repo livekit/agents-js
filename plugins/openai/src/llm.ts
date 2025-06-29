@@ -100,6 +100,7 @@ export class LLM extends llm.LLM {
     return new LLM({
       temperature: opts.temperature,
       user: opts.user,
+      apiKey: opts.apiKey, // this is redundant, but we need to set it to bypass the LLM's default apiKey check
       client: new AzureOpenAI(opts),
     });
   }
