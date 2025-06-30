@@ -122,7 +122,7 @@ export class RoomIO {
     }
   };
 
-  private onParticipantConnected(participant: Participant) {
+  private onParticipantConnected = (participant: Participant) => {
     this.logger.debug({ participant }, 'participant connected');
     if (this.participantAvailableFuture.done) {
       return;
@@ -142,7 +142,7 @@ export class RoomIO {
     // TODO(AJS-105): allow user to specify accepted participany kinds
 
     this.participantAvailableFuture.resolve(participant);
-  }
+  };
 
   private onUserInputTranscribed = (ev: UserInputTranscribedEvent) => {
     this.logger.debug({ ev }, 'user input transcribed');
