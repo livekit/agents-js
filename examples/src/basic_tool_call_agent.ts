@@ -128,6 +128,10 @@ export default defineAgent({
       },
     });
 
+    await ctx.connect();
+    const participant = await ctx.waitForParticipant();
+    console.log('participant joined: ', participant.identity);
+
     const vad = ctx.proc.userData.vad! as silero.VAD;
 
     const session = new voice.AgentSession({
@@ -138,11 +142,10 @@ export default defineAgent({
       userData: { number: 0 },
     });
 
-    await session.start({
+    session.start({
       agent: routerAgent,
       room: ctx.room,
     });
-    await ctx.connect();
   },
 });
 

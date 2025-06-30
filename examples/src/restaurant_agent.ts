@@ -379,6 +379,10 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
+    await ctx.connect();
+    const participant = await ctx.waitForParticipant();
+    console.log('participant joined: ', participant.identity);
+
     const menu = 'Pizza: $10, Salad: $5, Ice Cream: $3, Coffee: $2';
     const userData = createUserData({
       greeter: createGreeterAgent(menu),
@@ -396,6 +400,7 @@ export default defineAgent({
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
       userData,
+      turnDetection: 'stt',
       voiceOptions: {
         maxToolSteps: 5,
       },
@@ -405,8 +410,6 @@ export default defineAgent({
       agent: userData.agents.greeter!,
       room: ctx.room,
     });
-
-    await ctx.connect();
   },
 });
 
