@@ -24,9 +24,6 @@ export default defineAgent({
       instructions:
         "You are a helpful assistant, you can hear the user's message and respond to it.",
     });
-    await ctx.connect();
-    const participant = await ctx.waitForParticipant();
-    console.log('participant joined: ', participant.identity);
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
 
@@ -80,10 +77,12 @@ export default defineAgent({
       },
     );
 
-    session.start({
+    await session.start({
       agent,
       room: ctx.room,
     });
+
+    await ctx.connect();
   },
 });
 
