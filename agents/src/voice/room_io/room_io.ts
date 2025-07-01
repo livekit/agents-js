@@ -290,22 +290,4 @@ export class RoomIO {
 
     this.agentSession.on(AgentSessionEvent.UserInputTranscribed, this.onUserInputTranscribed);
   }
-
-  async stop() {
-    // Close the writer to signal end of stream
-    try {
-      await this.userTranscriptWriter.close();
-    } catch (error) {
-      this.logger.debug({ error }, 'Error closing transcript writer');
-    }
-
-    if (this.userTranscriptProcessingTask) {
-      await this.userTranscriptProcessingTask;
-    }
-
-    // Remove event listeners
-    this.agentSession.off(AgentSessionEvent.UserInputTranscribed, this.onUserInputTranscribed);
-    this.room.off(RoomEvent.ParticipantConnected, this.onParticipantConnected);
-    this.room.off(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
-  }
 }
