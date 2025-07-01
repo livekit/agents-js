@@ -195,7 +195,12 @@ export class RoomIO {
         if (done) break;
 
         const event = value;
-        this.userTranscriptOutput?.captureText(event.transcript);
+
+        this.logger.info(
+          { event },
+          `======= processing transcript =======: "${event.transcript}". isFinal: ${event.isFinal}`,
+        );
+        await this.userTranscriptOutput?.captureText(event.transcript);
         if (event.isFinal) {
           this.userTranscriptOutput?.flush();
         }

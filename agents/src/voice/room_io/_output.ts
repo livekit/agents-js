@@ -259,6 +259,7 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
       return;
     }
 
+    this.logger.info({ text: this.pushedText }, '======= flushing transcription =======');
     this.flushTask = this.publishTranscription(this.currentId, this.pushedText, true);
     this.resetState();
   }
@@ -279,6 +280,9 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
           trackSid: this.trackId,
           segments: [{ id, text, final, startTime: BigInt(0), endTime: BigInt(0), language: '' }],
         });
+        if (final) {
+          this.logger.info({ id, text, final }, '======= published transcription [done] =======');
+        }
       }
     } catch (error) {
       this.logger.error(error, 'failed to publish transcription');

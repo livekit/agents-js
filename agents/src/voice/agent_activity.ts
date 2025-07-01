@@ -247,6 +247,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onFinalTranscript(ev: SpeechEvent): void {
+    this.logger.info({ ev }, 'onFinalTranscript');
     this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
       transcript: ev.alternatives![0].text,
       isFinal: true,
