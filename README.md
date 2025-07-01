@@ -145,12 +145,12 @@ cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
 
 ```ts
 type StoryData = {
-  name: string;
-  location: string;
-}
+  name?: string;
+  location?: string;
+};
 
 // Use inheritance to create agent with custom hooks
-class IntroAgent extends voice.Agent {
+class IntroAgent extends voice.Agent<StoryData> {
   async onEnter() {
     this.session.generateReply({
       instructions: '"greet the user and gather information"',
@@ -158,29 +158,30 @@ class IntroAgent extends voice.Agent {
   }
 
   static create() {
-    const informationGathered = llm.tool({
-      description: 'Called when the user has provided the information needed to make the story personalized and engaging.',
-      parameters: z.object({
-        name: z.string().describe('The name of the user'),
-        location: z.string().describe('The location of the user'),
-      }),
-      execute: async ({ name, location }, { ctx }) => {
-        ctx.userData.name = name;
-        ctx.userData.location = location;
-        
-        const storyAgent = StoryAgent.create(name, location);
-        return llm.handoff({ agent: storyAgent, returns: 'Let\'s start the story!' });
-      },
-    });
-
     return new IntroAgent({
-      instructions: `You are a story teller. Your goal is to gather a few pieces of information from the user   to make the story personalized and engaging. Ask the user for their name and where they are from.`,
-      tools: { informationGathered },
+      instructions: `You are a story teller. Your goal is to gather a few pieces of information from the user to make the story personalized and engaging. Ask the user for their name and where they are from.`,
+      tools: {
+        informationGathered: llm.tool({
+          description:
+            'Called when the user has provided the information needed to make the story personalized and engaging.',
+          parameters: z.object({
+            name: z.string().describe('The name of the user'),
+            location: z.string().describe('The location of the user'),
+          }),
+          execute: async ({ name, location }, { ctx }) => {
+            ctx.userData.name = name;
+            ctx.userData.location = location;
+
+            const storyAgent = StoryAgent.create(name, location);
+            return llm.handoff({ agent: storyAgent, returns: "Let's start the story!" });
+          },
+        }),
+      },
     });
   }
 }
 
-class StoryAgent extends voice.Agent {
+class StoryAgent extends voice.Agent<StoryData> {
   async onEnter() {
     this.session.generateReply();
   }
@@ -188,7 +189,7 @@ class StoryAgent extends voice.Agent {
   static create(name: string, location: string) {
     return new StoryAgent({
       instructions: `You are a storyteller. Use the user's information in order to make the story personalized.
-      The user's name is ${name}, from ${location}`,
+        The user's name is ${name}, from ${location}`,
     });
   }
 }
@@ -200,13 +201,11 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     await ctx.connect();
     const participant = await ctx.waitForParticipant();
+    console.log('participant joined: ', participant.identity);
 
-    const userdata: StoryData = {
-      name: 'my name',
-      location: 'my location',
-    };
+    const userdata: StoryData = {};
 
-    const session = new voice.AgentSession<StoryData>({
+    const session = new voice.AgentSession({
       vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new deepgram.STT(),
       llm: new openai.LLM(),
