@@ -213,7 +213,7 @@ export class RoomIO {
     return this.transcriptionSynchronizer.textOutput;
   }
 
-  start() {
+  async start() {
     // -- create outputs --
     this.participantAudioOutput = new ParticipantAudioOutput(this.room, {
       sampleRate: this.outputOptions.audioSampleRate,
@@ -241,7 +241,7 @@ export class RoomIO {
       this.roomConnectedFuture.resolve();
     }
 
-    this.initTask();
+    await this.initTask();
 
     // -- attatch the agent to the session --
     this.agentSession.audioInput = this.participantAudioInputStream;

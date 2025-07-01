@@ -164,9 +164,9 @@ export class AgentSession<
       inputOptions,
       outputOptions,
     });
-    this.roomIO.start();
 
-    this.updateActivity(this.agent);
+    await this.roomIO.start();
+    await this.updateActivity(this.agent);
 
     this.logger.debug('AgentSession started');
     this.started = true;
