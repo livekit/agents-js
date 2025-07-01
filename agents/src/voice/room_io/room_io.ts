@@ -17,7 +17,7 @@ import { ATTRIBUTE_PUBLISH_ON_BEHALF } from '../../constants.js';
 import { log } from '../../log.js';
 import { DeferredReadableStream } from '../../stream/deferred_stream.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
-import { Future, Task } from '../../utils.js';
+import { Future } from '../../utils.js';
 import {
   type AgentSession,
   AgentSessionEvent,
@@ -87,7 +87,7 @@ export class RoomIO {
   // Use stream API for transcript queue
   private userTranscriptStream = new IdentityTransform<UserInputTranscribedEvent>();
   private userTranscriptWriter: WritableStreamDefaultWriter<UserInputTranscribedEvent>;
-  private forwardUserTranscriptTask?: Task<void>;
+  private forwardUserTranscriptPromise?: Promise<void>;
 
   private logger = log();
 
@@ -177,32 +177,22 @@ export class RoomIO {
     });
   };
 
-  private async forwardUserTranscript(signal: AbortSignal): Promise<void> {
-    const abortFuture = new Future<{ done: true; value: undefined }>();
-    const abortHandler = () => {
-      abortFuture.resolve({ done: true, value: undefined });
-      signal.removeEventListener('abort', abortHandler);
-    };
-    signal.addEventListener('abort', abortHandler);
-
+  private async forwardUserTranscript(): Promise<void> {
     const reader = this.userTranscriptStream.readable.getReader();
     try {
-      while (!signal.aborted) {
-        const { done, value } = await Promise.race([reader.read(), abortFuture.await]);
+      while (true) {
+        const { done, value } = await reader.read();
         if (done) break;
 
         const event = value;
+        // IMPORTANT: need to await here to avoid race condition
         await this.userTranscriptOutput?.captureText(event.transcript);
         if (event.isFinal) {
           this.userTranscriptOutput?.flush();
         }
       }
-
-      reader.releaseLock();
     } catch (error) {
       this.logger.error({ error }, 'Error processing transcript stream');
-    } finally {
-      this.logger.debug('Transcript stream processing task ended');
     }
   }
 
@@ -269,8 +259,8 @@ export class RoomIO {
       this.agentTranscriptOutput,
     );
 
-    // Start the transcript processing task
-    this.forwardUserTranscriptTask = Task.from(({ signal }) => this.forwardUserTranscript(signal));
+    // Start the transcript forwarding
+    this.forwardUserTranscriptPromise = this.forwardUserTranscript();
 
     // -- set the room event handlers --
     this.room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
