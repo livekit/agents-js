@@ -7,10 +7,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
+import type { ChatMessage } from '../llm/index.js';
 import {
   type ChatChunk,
   ChatContext,
-  ChatMessage,
   type LLM,
   type ToolChoice,
   type ToolContext,

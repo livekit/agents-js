@@ -163,7 +163,7 @@ export type ToolContext<UserData = UnknownUserData> = {
  * @param execute - The function that is called with the arguments from the tool call and produces a result.
  */
 export function tool<
-  Parameters extends JSONObject = {},
+  Parameters extends JSONObject = Record<string, never>,
   UserData = UnknownUserData,
   Result = unknown,
 >({

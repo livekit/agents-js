@@ -95,19 +95,21 @@ describe('tool type inference', () => {
       execute: async () => 'done' as const,
     });
 
-    expectTypeOf(toolType).toEqualTypeOf<FunctionTool<{}, unknown, 'done'>>();
+    expectTypeOf(toolType).toEqualTypeOf<FunctionTool<Record<string, never>, unknown, 'done'>>();
   });
 
   it('should infer correct types with context but no parameters', () => {
     const toolType = tool({
       description: 'Action with context',
       execute: async (args, { ctx }: ToolOptions<{ userId: number }>) => {
-        expectTypeOf(args).toEqualTypeOf<{}>();
+        expectTypeOf(args).toEqualTypeOf<Record<string, never>>();
         expectTypeOf(ctx.userData.userId).toEqualTypeOf<number>();
         return ctx.userData.userId;
       },
     });
 
-    expectTypeOf(toolType).toEqualTypeOf<FunctionTool<{}, { userId: number }, number>>();
+    expectTypeOf(toolType).toEqualTypeOf<
+      FunctionTool<Record<string, never>, { userId: number }, number>
+    >();
   });
 });
