@@ -87,7 +87,7 @@ export class RoomIO {
   // Use stream API for transcript queue
   private userTranscriptStream = new IdentityTransform<UserInputTranscribedEvent>();
   private userTranscriptWriter: WritableStreamDefaultWriter<UserInputTranscribedEvent>;
-  private userTranscriptProcessingTask?: Task<void>;
+  private forwardUserTranscriptTask?: Task<void>;
 
   private logger = log();
 
@@ -177,7 +177,7 @@ export class RoomIO {
     });
   };
 
-  private async processTranscriptStream(signal: AbortSignal): Promise<void> {
+  private async forwardUserTranscript(signal: AbortSignal): Promise<void> {
     const abortFuture = new Future<{ done: true; value: undefined }>();
     const abortHandler = () => {
       abortFuture.resolve({ done: true, value: undefined });
@@ -270,9 +270,7 @@ export class RoomIO {
     );
 
     // Start the transcript processing task
-    this.userTranscriptProcessingTask = Task.from(({ signal }) =>
-      this.processTranscriptStream(signal),
-    );
+    this.forwardUserTranscriptTask = Task.from(({ signal }) => this.forwardUserTranscript(signal));
 
     // -- set the room event handlers --
     this.room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
