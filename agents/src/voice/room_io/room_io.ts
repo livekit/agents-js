@@ -117,7 +117,11 @@ export class RoomIO {
 
   private onConnectionStateChanged = (state: ConnectionState) => {
     this.logger.debug({ state }, 'connection state changed');
-    if (state === ConnectionState.CONN_CONNECTED) {
+    if (
+      state === ConnectionState.CONN_CONNECTED &&
+      this.room.isConnected &&
+      !this.roomConnectedFuture.done
+    ) {
       this.roomConnectedFuture.resolve();
     }
   };
@@ -235,11 +239,14 @@ export class RoomIO {
     // -- set the room event handlers --
     this.room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
     this.room.on(RoomEvent.ConnectionStateChanged, this.onConnectionStateChanged);
+
     if (this.room.isConnected) {
       this.onConnectionStateChanged(ConnectionState.CONN_CONNECTED);
     }
 
-    this.initTask();
+    this.initTask().catch((error) => {
+      this.logger.error({ error }, 'Failed to initialize RoomIO');
+    });
 
     // -- attatch the agent to the session --
     this.agentSession.audioInput = this.audioInput.audioStream;
