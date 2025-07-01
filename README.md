@@ -54,20 +54,18 @@ Currently, only the following plugins are supported:
 | [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS                         |
 | [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD                         |
 
-## Core concepts
+
+## Usage
+
+### Core concepts
 
 - Agent: An LLM-based application with defined instructions.
 - AgentSession: A container for agents that manages interactions with end users.
 - entrypoint: The starting point for an interactive session, similar to a request handler in a web server.
 - Worker: The main process that coordinates job scheduling and launches agents for user sessions.
 
-## Usage
-
 You'll need the following environment variables for this example:
 
-- LIVEKIT_URL
-- LIVEKIT_API_KEY
-- LIVEKIT_API_SECRET
 - DEEPGRAM_API_KEY
 - OPENAI_API_KEY
 - ELEVEN_API_KEY
@@ -221,72 +219,7 @@ export default defineAgent({
 });
 ```
 
-## ✨ [NEW] In-house phrase endpointing model
-
-We’ve trained a new, open weights phrase endpointing model that significantly improves end-of-turn
-detection and conversational flow between voice agents and users by reducing agent interruptions.
-Optimized to run on CPUs, it’s available via [`@livekit/agents-plugin-livekit`](plugins/livekit)
-package.
-
-> [!WARNING]
-> This SDK is in beta. During this period, you may encounter bugs, and the APIs may change.
->
-> For production, we recommend using the [more mature version](https://github.com/livekit/agents)
-> of this framework, built with Python, which supports a larger number of integrations.
->
-> We welcome and appreciate any feedback or contributions. You can create issues here or chat live
-> with us in the [LiveKit Community Slack](https://livekit.io/join-slack).
-
-## Installation
-
-To install the core Agents library:
-
-```bash
-pnpm install @livekit/agents
-```
-
-The framework includes a variety of plugins that make it easy to process streaming input or generate
-output. For example, there are plugins for converting text-to-speech or running inference with
-popular LLMs. To install a plugin:
-
-```bash
-pnpm install @livekit/agents-plugin-openai
-```
-
-The following plugins are available today:
-
-| Plugin                                                                                               | Features                    |
-|------------------------------------------------------------------------------------------------------|-----------------------------|
-| [@livekit/agents-plugin-openai](https://www.npmjs.com/package/@livekit/agents-plugin-openai)         | STT, LLM, TTS, Realtime API |
-| [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT                         |
-| [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS                         |
-| [@livekit/agents-plugin-cartesia](https://www.npmjs.com/package/@livekit/agents-plugin-cartesia)     | TTS                         |
-| [@livekit/agents-plugin-resemble](https://www.npmjs.com/package/@livekit/agents-plugin-resemble)     | TTS                         |
-| [@livekit/agents-plugin-neuphonic](https://www.npmjs.com/package/@livekit/agents-plugin-neuphonic)   | TTS                         |
-| [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD                         |
-| [@livekit/agents-plugin-livekit](https://www.npmjs.com/package/@livekit/agents-plugin-livekit)       | End-of-turn detection       |
-
-## Usage
-
-First, a few concepts:
-
-- **Agent**: A function that defines the workflow of a programmable, server-side participant. This
-  is your application code.
-- **Worker**: A container process responsible for managing job queuing with LiveKit server. Each
-  worker is capable of running multiple agents simultaneously.
-- **Plugin**: A library class that performs a specific task, *e.g.* speech-to-text, from a specific
-  provider. An agent can compose multiple plugins together to perform more complex tasks.
-
-Your main file for an agent is built of two parts:
-
-- The boilerplate code that runs when you run this file, creating a new worker to orchestrate jobs
-- The code that is exported when this file is imported into Agents, to be ran on all jobs (which
-  includes your entrypoint function, and an optional prewarm function)
-
-Refer to the [minimal voice assistant](/examples/src/multimodal_agent.ts) example to understand
-how to build a simple voice assistant with function calling using OpenAI's model.
-
-## Running
+### Running
 
 The framework exposes a CLI interface to run your agent. To get started, you'll need the following
 environment variables set:
@@ -299,13 +232,7 @@ environment variables set:
 The following command will start the worker and wait for users to connect to your LiveKit server:
 
 ```bash
-node my_agent.js start
-```
-
-To run the worker in dev mode (outputting colourful pretty-printed debug logs), run it using `dev`:
-
-```bash
-node my_agent.js dev
+pnpm run build && node ./examples/src/restaurant_agent.ts dev --log-level=debug
 ```
 
 ### Using playground for your agent UI
@@ -317,14 +244,6 @@ serve as a starting point for a completely custom agent application.
 - [Hosted playground](https://agents-playground.livekit.io)
 - [Source code](https://github.com/livekit/agents-playground)
 - [Playground docs](https://docs.livekit.io/agents/playground)
-
-### Joining a specific room
-
-To join a LiveKit room that's already active, you can use the `connect` command:
-
-```bash
-node my_agent.ts connect --room <my-room>
-```
 
 ### FAQ
 
