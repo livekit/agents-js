@@ -172,9 +172,6 @@ export class RoomIO {
   };
 
   private onUserInputTranscribed = (ev: UserInputTranscribedEvent) => {
-    this.logger.debug({ ev }, 'user input transcribed - queueing');
-
-    // Queue the event instead of processing directly
     this.userTranscriptWriter.write(ev).catch((error) => {
       this.logger.error({ error }, 'Failed to write transcript event to stream');
     });
@@ -195,11 +192,6 @@ export class RoomIO {
         if (done) break;
 
         const event = value;
-
-        this.logger.info(
-          { event },
-          `======= processing transcript =======: "${event.transcript}". isFinal: ${event.isFinal}`,
-        );
         await this.userTranscriptOutput?.captureText(event.transcript);
         if (event.isFinal) {
           this.userTranscriptOutput?.flush();
