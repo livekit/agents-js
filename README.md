@@ -31,18 +31,14 @@ This README reflects the 1.0 internal release.
 
 ## Installation
 
-To install the core Agents library:
-
-```bash
-pnpm install @livekit/agents
-```
-
 The framework includes a variety of plugins that make it easy to process streaming input or generate
 output. For example, there are plugins for converting text-to-speech or running inference with
-popular LLMs. To install a plugin:
+popular LLMs.
+
+To install the core Agents library as well as plugins in your workspace, run:
 
 ```bash
-pnpm install @livekit/agents-plugin-openai
+pnpm install
 ```
 
 Currently, only the following plugins are supported:
@@ -69,6 +65,39 @@ You'll need the following environment variables for this example:
 - DEEPGRAM_API_KEY
 - OPENAI_API_KEY
 - ELEVEN_API_KEY
+
+### Current Dev 1.0 Status
+
+We use `llm.tool` to define tools instead of using `@function_tool` decorator in python. Also, to follow idiomatic JS/TS, we use config-based approach to define agents instead of using inheritance (except for the agent hook functions, which is still under discussion on the best way to support). 
+
+> Note: Only do class inheritance if you need to override the agent hook functions. For tool definition, instructions, llm, stt, tts, vad, etc., simply pass the config to the agent constructor. 
+
+Here's an example of overriding the agent hook functions:
+
+```ts
+class MyAgent extends voice.Agent<UserData> {
+  async onEnter() {
+    // ...
+  }
+
+  async onExit() {
+    // ...
+  }
+
+  async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage) {
+    // ...
+  }
+}
+```
+
+and to fill out the instructions / tools, pass the config to the agent constructor:
+
+```ts
+const agent = new MyAgent({
+  instructions: 'You are a helpful assistant.',
+  tools: { ... },
+});
+```
 
 ### Simple voice agent
 
