@@ -165,7 +165,8 @@ class BaseAgent extends voice.Agent<UserData> {
     });
 
     await this.updateChatCtx(chatCtx);
-    this.session.generateReply({ toolChoice: 'none' });
+    // this.session.generateReply({ toolChoice: 'none' });
+    this.session.say("Hello, I'm a game agent. I can help you with your tasks.");
   }
 
   async transferToAgent(options: { name: string; ctx: voice.RunContext<UserData> }) {

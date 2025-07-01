@@ -25,13 +25,16 @@ type UserData = {
 
 class RouterAgent extends voice.Agent<UserData> {
   async onEnter(): Promise<void> {
-    this._agentActivity!.say("Hello, I'm a router agent. I can help you with your tasks.");
+    this.session.say("Hello, I'm a router agent. I can help you with your tasks.");
   }
 }
 
 class GameAgent extends voice.Agent<UserData> {
   async onEnter(): Promise<void> {
-    this._agentActivity!.say("Hello, I'm a game agent. I can help you with your tasks.");
+    this.session.generateReply({
+      userInput: 'Ask the user for a number, then check the stored number',
+      toolChoice: 'none',
+    });
   }
 }
 
@@ -138,11 +141,16 @@ export default defineAgent({
       userData: { number: 0 },
     });
 
+    console.log('starting session');
     await session.start({
       agent: routerAgent,
       room: ctx.room,
     });
+    console.log('session started');
+
+    console.log('connecting to room');
     await ctx.connect();
+    console.log('connected to room');
   },
 });
 
