@@ -12,11 +12,12 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
-import type { ReadableStream } from 'node:stream/web';
+import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
 import { ATTRIBUTE_PUBLISH_ON_BEHALF } from '../../constants.js';
 import { log } from '../../log.js';
 import { DeferredReadableStream } from '../../stream/deferred_stream.js';
-import { Future } from '../../utils.js';
+import { IdentityTransform } from '../../stream/identity_transform.js';
+import { Future, Task } from '../../utils.js';
 import {
   type AgentSession,
   AgentSessionEvent,
@@ -83,6 +84,11 @@ export class RoomIO {
   private participantAvailableFuture: Future<Participant> = new Future();
   private roomConnectedFuture: Future<void> = new Future();
 
+  // Use stream API for transcript queue
+  private userTranscriptStream = new IdentityTransform<UserInputTranscribedEvent>();
+  private userTranscriptWriter: WritableStreamDefaultWriter<UserInputTranscribedEvent>;
+  private userTranscriptProcessingTask?: Task<void>;
+
   private logger = log();
 
   constructor({
@@ -107,6 +113,8 @@ export class RoomIO {
     if (!this.participantIdentity && this.inputOptions.participantIdentity !== undefined) {
       this.participantIdentity = this.inputOptions.participantIdentity;
     }
+
+    this.userTranscriptWriter = this.userTranscriptStream.writable.getWriter();
   }
 
   private onTrackSubscribed = (track: RemoteTrack) => {
@@ -164,12 +172,42 @@ export class RoomIO {
   };
 
   private onUserInputTranscribed = (ev: UserInputTranscribedEvent) => {
-    this.logger.debug({ ev }, 'user input transcribed');
-    this.userTranscriptOutput?.captureText(ev.transcript);
-    if (ev.isFinal) {
-      this.userTranscriptOutput?.flush();
-    }
+    this.logger.debug({ ev }, 'user input transcribed - queueing');
+
+    // Queue the event instead of processing directly
+    this.userTranscriptWriter.write(ev).catch((error) => {
+      this.logger.error({ error }, 'Failed to write transcript event to stream');
+    });
   };
+
+  private async processTranscriptStream(signal: AbortSignal): Promise<void> {
+    const abortFuture = new Future<{ done: true; value: undefined }>();
+    const abortHandler = () => {
+      abortFuture.resolve({ done: true, value: undefined });
+      signal.removeEventListener('abort', abortHandler);
+    };
+    signal.addEventListener('abort', abortHandler);
+
+    const reader = this.userTranscriptStream.readable.getReader();
+    try {
+      while (!signal.aborted) {
+        const { done, value } = await Promise.race([reader.read(), abortFuture.await]);
+        if (done) break;
+
+        const event = value;
+        this.userTranscriptOutput?.captureText(event.transcript);
+        if (event.isFinal) {
+          this.userTranscriptOutput?.flush();
+        }
+      }
+
+      reader.releaseLock();
+    } catch (error) {
+      this.logger.error({ error }, 'Error processing transcript stream');
+    } finally {
+      this.logger.debug('Transcript stream processing task ended');
+    }
+  }
 
   private createTranscriptionOutput(options: { isDeltaStream: boolean; participant?: string }) {
     return new ParalellTextOutput([
@@ -234,6 +272,11 @@ export class RoomIO {
       this.agentTranscriptOutput,
     );
 
+    // Start the transcript processing task
+    this.userTranscriptProcessingTask = Task.from(({ signal }) =>
+      this.processTranscriptStream(signal),
+    );
+
     // -- set the room event handlers --
     this.room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
@@ -249,5 +292,23 @@ export class RoomIO {
     this.agentSession._transcriptionOutput = this.transcriptionOutput;
 
     this.agentSession.on(AgentSessionEvent.UserInputTranscribed, this.onUserInputTranscribed);
+  }
+
+  async stop() {
+    // Close the writer to signal end of stream
+    try {
+      await this.userTranscriptWriter.close();
+    } catch (error) {
+      this.logger.debug({ error }, 'Error closing transcript writer');
+    }
+
+    if (this.userTranscriptProcessingTask) {
+      await this.userTranscriptProcessingTask;
+    }
+
+    // Remove event listeners
+    this.agentSession.off(AgentSessionEvent.UserInputTranscribed, this.onUserInputTranscribed);
+    this.room.off(RoomEvent.ParticipantConnected, this.onParticipantConnected);
+    this.room.off(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
   }
 }
