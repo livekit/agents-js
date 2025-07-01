@@ -99,6 +99,8 @@ const agent = new MyAgent({
 });
 ```
 
+Below are some simple examples to help you get started. For more complete examples, check out the code in the [examples](examples/src/) directory.
+
 ### Simple voice agent
 
 ---
