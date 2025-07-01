@@ -122,7 +122,6 @@ const updatePhone = llm.tool({
 const toGreeter = llm.tool({
   description:
     'Called when user asks any unrelated questions or requests any other services not in your job description.',
-  parameters: z.object({}),
   execute: async (_, { ctx }: llm.ToolOptions<UserData>) => {
     const currAgent = ctx.session.currentAgent as BaseAgent;
     return await currAgent.transferToAgent({
@@ -198,7 +197,6 @@ function createGreeterAgent(menu: string) {
         This function handles transitioning to the reservation agent
         who will collect the necessary details like reservation time,
         customer name and phone number.`,
-        parameters: z.object({}),
         execute: async (_, { ctx }): Promise<llm.AgentHandoff> => {
           return await greeter.transferToAgent({
             name: 'reservation',
@@ -210,7 +208,6 @@ function createGreeterAgent(menu: string) {
         description: `Called when the user wants to place a takeaway order.
         This includes handling orders for pickup, delivery, or when the user wants to
         proceed to checkout with their existing order.`,
-        parameters: z.object({}),
         execute: async (_, { ctx }): Promise<llm.AgentHandoff> => {
           return await greeter.transferToAgent({
             name: 'takeaway',
@@ -246,7 +243,6 @@ function createReservationAgent() {
       }),
       confirmReservation: llm.tool({
         description: `Called when the user confirms the reservation.`,
-        parameters: z.object({}),
         execute: async (_, { ctx }): Promise<llm.AgentHandoff | string> => {
           const userdata = ctx.userData;
           if (!userdata.customer.name || !userdata.customer.phone) {
@@ -286,7 +282,6 @@ function createTakeawayAgent(menu: string) {
       }),
       toCheckout: llm.tool({
         description: `Called when the user confirms the order.`,
-        parameters: z.object({}),
         execute: async (_, { ctx }): Promise<llm.AgentHandoff | string> => {
           const userdata = ctx.userData;
           if (!userdata.order) {
@@ -338,7 +333,6 @@ function createCheckoutAgent(menu: string) {
       }),
       confirmCheckout: llm.tool({
         description: `Called when the user confirms the checkout.`,
-        parameters: z.object({}),
         execute: async (_, { ctx }): Promise<llm.AgentHandoff | string> => {
           const userdata = ctx.userData;
           if (!userdata.expense) {
@@ -360,7 +354,6 @@ function createCheckoutAgent(menu: string) {
       }),
       toTakeaway: llm.tool({
         description: `Called when the user wants to update their order.`,
-        parameters: z.object({}),
         execute: async (_, { ctx }): Promise<llm.AgentHandoff> => {
           return await checkout.transferToAgent({
             name: 'takeaway',
