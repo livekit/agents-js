@@ -26,6 +26,119 @@ This is a Node.js distribution of the [LiveKit Agents framework](https://livekit
 originally written in Python.
 
 <!--END_DESCRIPTION-->
+## ✨ 1.0 Internal Beta Release ✨
+This README reflects the 1.0 internal release. 
+
+## Installation
+
+To install the core Agents library:
+
+```bash
+pnpm install @livekit/agents
+```
+
+The framework includes a variety of plugins that make it easy to process streaming input or generate
+output. For example, there are plugins for converting text-to-speech or running inference with
+popular LLMs. To install a plugin:
+
+```bash
+pnpm install @livekit/agents-plugin-openai
+```
+
+Currently, only the following plugins are supported:
+
+| Plugin                                                                                               | Features                    |
+|------------------------------------------------------------------------------------------------------|-----------------------------|
+| [@livekit/agents-plugin-openai](https://www.npmjs.com/package/@livekit/agents-plugin-openai)         | LLM                         |
+| [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT                         |
+| [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS                         |
+| [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD                         |
+
+## Core concepts
+
+- Agent: An LLM-based application with defined instructions.
+- AgentSession: A container for agents that manages interactions with end users.
+- entrypoint: The starting point for an interactive session, similar to a request handler in a web server.
+- Worker: The main process that coordinates job scheduling and launches agents for user sessions.
+
+## Usage
+
+You'll need the following environment variables for this example:
+
+- LIVEKIT_URL
+- LIVEKIT_API_KEY
+- LIVEKIT_API_SECRET
+- DEEPGRAM_API_KEY
+- OPENAI_API_KEY
+- ELEVEN_API_KEY
+
+### Simple voice agent
+
+---
+
+```ts
+import {
+  type JobContext,
+  type JobProcess,
+  WorkerOptions,
+  cli,
+  defineAgent,
+  voice,
+  llm,
+} from '@livekit/agents';
+import { z } from 'zod';
+import * as deepgram from '@livekit/agents-plugin-deepgram';
+import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
+import * as openai from '@livekit/agents-plugin-openai';
+import * as silero from '@livekit/agents-plugin-silero';
+import { fileURLToPath } from 'node:url';
+
+const lookupWeather = llm.tool({
+  description: 'Used to look up weather information.',
+  parameters: z.object({ 
+    location: z.string().describe('The location to look up weather information for'),
+  }),
+  execute: async ({ location }, { ctx }) => {
+    return { weather: 'sunny', temperature: 70 };
+  },
+});
+
+export default defineAgent({
+  prewarm: async (proc: JobProcess) => {
+    proc.userData.vad = await silero.VAD.load();
+  },
+  entry: async (ctx: JobContext) => {
+    await ctx.connect();
+    const participant = await ctx.waitForParticipant();
+    console.log('participant joined: ', participant.identity);
+
+    const agent = new voice.Agent({
+      instructions:
+        "You are a friendly voice assistant built by LiveKit.",
+      tools: { lookupWeather },
+    });
+
+    const session = new voice.AgentSession({
+      vad: ctx.proc.userData.vad! as silero.VAD,
+      stt: new deepgram.STT(),
+      llm: new openai.LLM(),
+      tts: new elevenlabs.TTS(),
+    });
+
+    await session.start({
+      agent,
+      room: ctx.room,
+    });
+
+    await session.generateReply({
+      instructions: 'greet the user and ask about their day',
+    });
+  },
+});
+
+cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
+```
+
 
 ## ✨ [NEW] In-house phrase endpointing model
 
