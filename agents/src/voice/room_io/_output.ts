@@ -334,14 +334,12 @@ export class ParticipantAudioOutput extends AudioOutput {
     this.audioSource = new AudioSource(options.sampleRate, options.numChannels);
   }
 
-  get queueSizeMs(): number {
-    return this.options.queueSizeMs ?? 100000;
+  get subscribed(): boolean {
+    return this.startedFuture.done;
   }
 
   async start(): Promise<void> {
-    this.startedFuture = new Future();
-    this.publishTrack();
-    this.startedFuture.resolve();
+    await this.publishTrack();
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
@@ -422,5 +420,9 @@ export class ParticipantAudioOutput extends AudioOutput {
       new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
     );
     await this.publication?.waitForSubscription();
+
+    if (!this.startedFuture.done) {
+      this.startedFuture.resolve();
+    }
   }
 }
