@@ -617,7 +617,6 @@ export class LLMStream extends llm.LLMStream {
 
 const buildMessage = async (msg: llm.ChatMessage, cacheKey: any) => {
   const oaiMsg: Partial<OpenAI.ChatCompletionMessageParam> = {};
-  console.log(msg, '========== ChatMessage ==============');
 
   switch (msg.role) {
     case llm.ChatRole.SYSTEM:
@@ -682,7 +681,6 @@ const buildMessage = async (msg: llm.ChatMessage, cacheKey: any) => {
     }));
   }
 
-  console.log(oaiMsg, '========== oaiMessage ==============');
   return oaiMsg as OpenAI.ChatCompletionMessageParam;
 };
 
