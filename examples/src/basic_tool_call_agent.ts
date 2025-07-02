@@ -138,16 +138,12 @@ export default defineAgent({
       userData: { number: 0 },
     });
 
-    console.log('starting session');
     await session.start({
       agent: routerAgent,
       room: ctx.room,
     });
-    console.log('session started');
 
-    console.log('connecting to room');
     await ctx.connect();
-    console.log('connected to room');
   },
 });
 
