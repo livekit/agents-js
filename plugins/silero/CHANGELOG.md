@@ -1,5 +1,11 @@
 # @livekit/agents-plugin-silero
 
+## 0.5.8
+
+### Patch Changes
+
+- bugfix with speech duration calculation - [#484](https://github.com/livekit/agents-js/pull/484) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
 ## 0.5.7
 
 ### Patch Changes
