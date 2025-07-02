@@ -1,21 +1,11 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  type AudioFrame,
-  AudioStream,
-  type Participant,
-  type RemoteTrack,
-  type Room,
-  RoomEvent,
-  TrackKind,
-  TrackPublishOptions,
-  TrackSource,
-} from '@livekit/rtc-node';
-import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
+import { ConnectionState, type Participant, type Room } from '@livekit/rtc-node';
+import { RoomEvent, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
+import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ATTRIBUTE_PUBLISH_ON_BEHALF } from '../../constants.js';
 import { log } from '../../log.js';
-import { DeferredReadableStream } from '../../stream/deferred_stream.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { Future } from '../../utils.js';
 import {
@@ -25,6 +15,7 @@ import {
 } from '../agent_session.js';
 import type { AudioOutput, TextOutput } from '../io.js';
 import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
+import { ParticipantAudioInputStream } from './_input.js';
 import {
   ParalellTextOutput,
   ParticipantAudioOutput,
@@ -69,12 +60,11 @@ const DEFAULT_ROOM_OUTPUT_OPTIONS: RoomOutputOptions = {
 
 export class RoomIO {
   private agentSession: AgentSession;
-  private participantAudioInputStream: ReadableStream<AudioFrame>;
   private room: Room;
   private inputOptions: RoomInputOptions;
   private outputOptions: RoomOutputOptions;
 
-  private _deferredAudioInputStream = new DeferredReadableStream<AudioFrame>();
+  private audioInput?: ParticipantAudioInputStream;
   private participantAudioOutput?: ParticipantAudioOutput;
   private userTranscriptOutput?: ParalellTextOutput;
   private agentTranscriptOutput?: ParalellTextOutput;
@@ -94,13 +84,13 @@ export class RoomIO {
   constructor({
     agentSession,
     room,
-    participant,
+    _participant, // TODO (AJS-106): Add multi participant support
     inputOptions,
     outputOptions,
   }: {
     agentSession: AgentSession;
     room: Room;
-    participant?: Participant;
+    _participant?: Participant;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
   }) {
@@ -108,25 +98,9 @@ export class RoomIO {
     this.room = room;
     this.inputOptions = { ...DEFAULT_ROOM_INPUT_OPTIONS, ...inputOptions };
     this.outputOptions = { ...DEFAULT_ROOM_OUTPUT_OPTIONS, ...outputOptions };
-    this.participantAudioInputStream = this._deferredAudioInputStream.stream;
-    this.participantIdentity = participant?.identity ?? this.inputOptions.participantIdentity;
-    if (!this.participantIdentity && this.inputOptions.participantIdentity !== undefined) {
-      this.participantIdentity = this.inputOptions.participantIdentity;
-    }
 
     this.userTranscriptWriter = this.userTranscriptStream.writable.getWriter();
   }
-
-  private onTrackSubscribed = (track: RemoteTrack) => {
-    if (track.kind === TrackKind.KIND_AUDIO) {
-      this._deferredAudioInputStream.setSource(
-        new AudioStream(track, {
-          sampleRate: this.inputOptions.audioSampleRate,
-          numChannels: this.inputOptions.audioNumChannels,
-        }),
-      );
-    }
-  };
 
   private async initTask() {
     await this.roomConnectedFuture.await;
@@ -136,6 +110,7 @@ export class RoomIO {
     }
 
     const participant = await this.participantAvailableFuture.await;
+    this.setParticipant(participant.identity);
 
     // init user outputs
     this.updateTranscriptionOutput(this.userTranscriptOutput, participant.identity);
@@ -148,6 +123,17 @@ export class RoomIO {
 
     await this.participantAudioOutput?.start();
   }
+
+  private onConnectionStateChanged = (state: ConnectionState) => {
+    this.logger.debug({ state }, 'connection state changed');
+    if (
+      state === ConnectionState.CONN_CONNECTED &&
+      this.room.isConnected &&
+      !this.roomConnectedFuture.done
+    ) {
+      this.roomConnectedFuture.resolve();
+    }
+  };
 
   private onParticipantConnected = (participant: Participant) => {
     this.logger.debug({ participant }, 'participant connected');
@@ -238,7 +224,24 @@ export class RoomIO {
     return this.transcriptionSynchronizer.textOutput;
   }
 
+  /* Switch to a different participant */
+  setParticipant(participant: string) {
+    if (this.participantIdentity) {
+      throw new Error('Changing participant is not supported yet');
+    }
+
+    this.participantIdentity = participant;
+    this.audioInput?.setParticipant(participant);
+  }
+
   start() {
+    // -- create inputs --
+    this.audioInput = new ParticipantAudioInputStream({
+      room: this.room,
+      sampleRate: this.inputOptions.audioSampleRate,
+      numChannels: this.inputOptions.audioNumChannels,
+    });
+
     // -- create outputs --
     this.participantAudioOutput = new ParticipantAudioOutput(this.room, {
       sampleRate: this.outputOptions.audioSampleRate,
@@ -264,15 +267,18 @@ export class RoomIO {
 
     // -- set the room event handlers --
     this.room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
-    this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
+    this.room.on(RoomEvent.ConnectionStateChanged, this.onConnectionStateChanged);
+
     if (this.room.isConnected) {
-      this.roomConnectedFuture.resolve();
+      this.onConnectionStateChanged(ConnectionState.CONN_CONNECTED);
     }
 
-    this.initTask();
+    this.initTask().catch((error) => {
+      this.logger.error({ error }, 'Failed to initialize RoomIO');
+    });
 
     // -- attatch the agent to the session --
-    this.agentSession.audioInput = this.participantAudioInputStream;
+    this.agentSession.audioInput = this.audioInput.audioStream;
     this.agentSession.audioOutput = this.audioOutput;
     this.agentSession._transcriptionOutput = this.transcriptionOutput;
 
