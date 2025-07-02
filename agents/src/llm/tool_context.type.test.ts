@@ -3,12 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod';
-import {
-  type FunctionTool,
-  type ProviderDefinedTool,
-  type ToolExecutionOptions,
-  tool,
-} from './index.js';
+import { type FunctionTool, type ProviderDefinedTool, type ToolOptions, tool } from './index.js';
 
 describe('tool type inference', () => {
   it('should infer argument type from zod schema', () => {
@@ -36,7 +31,7 @@ describe('tool type inference', () => {
     const toolType = tool({
       description: 'test',
       parameters: z.object({ number: z.number() }),
-      execute: async ({ number }, { ctx }: ToolExecutionOptions<{ name: string }>) => {
+      execute: async ({ number }, { ctx }: ToolOptions<{ name: string }>) => {
         return `The number is ${number}, ${ctx.userData.name}`;
       },
     });
@@ -92,5 +87,29 @@ describe('tool type inference', () => {
         execute: async () => 'test' as const,
       });
     }).toThrowError('Tool parameters must be a Zod schema');
+  });
+
+  it('should infer empty object type when parameters are omitted', () => {
+    const toolType = tool({
+      description: 'Simple action without parameters',
+      execute: async () => 'done' as const,
+    });
+
+    expectTypeOf(toolType).toEqualTypeOf<FunctionTool<Record<string, never>, unknown, 'done'>>();
+  });
+
+  it('should infer correct types with context but no parameters', () => {
+    const toolType = tool({
+      description: 'Action with context',
+      execute: async (args, { ctx }: ToolOptions<{ userId: number }>) => {
+        expectTypeOf(args).toEqualTypeOf<Record<string, never>>();
+        expectTypeOf(ctx.userData.userId).toEqualTypeOf<number>();
+        return ctx.userData.userId;
+      },
+    });
+
+    expectTypeOf(toolType).toEqualTypeOf<
+      FunctionTool<Record<string, never>, { userId: number }, number>
+    >();
   });
 });

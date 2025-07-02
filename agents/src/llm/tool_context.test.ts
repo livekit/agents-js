@@ -260,5 +260,48 @@ describe('Tool Context', () => {
         });
       });
     });
+
+    describe('optional parameters', () => {
+      it('should create a tool without parameters', async () => {
+        const simpleAction = tool({
+          description: 'Perform a simple action',
+          execute: async () => {
+            return 'Action performed';
+          },
+        });
+
+        expect(simpleAction.type).toBe('function');
+        expect(simpleAction.description).toBe('Perform a simple action');
+        expect(simpleAction.parameters).toBeDefined();
+        expect(simpleAction.parameters._def.typeName).toBe('ZodObject');
+
+        const result = await simpleAction.execute({}, createToolOptions('123'));
+        expect(result).toBe('Action performed');
+      });
+
+      it('should handle tools with context but no parameters', async () => {
+        const greetUser = tool({
+          description: 'Greet the current user',
+          execute: async (_, { ctx }: ToolOptions<{ username: string }>) => {
+            return `Hello, ${ctx.userData.username}!`;
+          },
+        });
+
+        const result = await greetUser.execute({}, createToolOptions('123', { username: 'Alice' }));
+        expect(result).toBe('Hello, Alice!');
+      });
+
+      it('should create a tool that accesses tool call id without parameters', async () => {
+        const getCallId = tool({
+          description: 'Get the current tool call ID',
+          execute: async (_, { toolCallId }) => {
+            return `Tool call ID: ${toolCallId}`;
+          },
+        });
+
+        const result = await getCallId.execute({}, createToolOptions('test-id-456'));
+        expect(result).toBe('Tool call ID: test-id-456');
+      });
+    });
   });
 });

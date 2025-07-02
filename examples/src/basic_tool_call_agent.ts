@@ -83,7 +83,6 @@ export default defineAgent({
 
     const checkStoredNumber = llm.tool({
       description: 'Called when the user wants to check the stored number.',
-      parameters: z.object({}),
       execute: async (_, { ctx }: llm.ToolOptions<UserData>) => {
         return `The stored number is ${ctx.userData.number}.`;
       },
@@ -107,7 +106,6 @@ export default defineAgent({
         toggleLight,
         playGame: llm.tool({
           description: 'Called when the user wants to play a game (transfer user to a game agent).',
-          parameters: z.object({}),
           execute: async (): Promise<llm.AgentHandoff> => {
             return llm.handoff({ agent: gameAgent, returns: 'The game is now playing.' });
           },
@@ -123,7 +121,6 @@ export default defineAgent({
         updateStoredNumber,
         finishGame: llm.tool({
           description: 'Called when the user wants to finish the game.',
-          parameters: z.object({}),
           execute: async () => {
             return llm.handoff({ agent: routerAgent, returns: 'The game is now finished.' });
           },

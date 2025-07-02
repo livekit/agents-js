@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ConnectionState, type Participant, type Room } from '@livekit/rtc-node';
 import { RoomEvent, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
+import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ATTRIBUTE_PUBLISH_ON_BEHALF } from '../../constants.js';
 import { log } from '../../log.js';
+import { IdentityTransform } from '../../stream/identity_transform.js';
 import { Future } from '../../utils.js';
 import {
   type AgentSession,
@@ -72,6 +74,11 @@ export class RoomIO {
   private participantAvailableFuture: Future<Participant> = new Future();
   private roomConnectedFuture: Future<void> = new Future();
 
+  // Use stream API for transcript queue
+  private userTranscriptStream = new IdentityTransform<UserInputTranscribedEvent>();
+  private userTranscriptWriter: WritableStreamDefaultWriter<UserInputTranscribedEvent>;
+  private forwardUserTranscriptPromise?: Promise<void>;
+
   private logger = log();
 
   constructor({
@@ -91,6 +98,8 @@ export class RoomIO {
     this.room = room;
     this.inputOptions = { ...DEFAULT_ROOM_INPUT_OPTIONS, ...inputOptions };
     this.outputOptions = { ...DEFAULT_ROOM_OUTPUT_OPTIONS, ...outputOptions };
+
+    this.userTranscriptWriter = this.userTranscriptStream.writable.getWriter();
   }
 
   private async initTask() {
@@ -149,12 +158,29 @@ export class RoomIO {
   };
 
   private onUserInputTranscribed = (ev: UserInputTranscribedEvent) => {
-    this.logger.debug({ ev }, 'user input transcribed');
-    this.userTranscriptOutput?.captureText(ev.transcript);
-    if (ev.isFinal) {
-      this.userTranscriptOutput?.flush();
-    }
+    this.userTranscriptWriter.write(ev).catch((error) => {
+      this.logger.error({ error }, 'Failed to write transcript event to stream');
+    });
   };
+
+  private async forwardUserTranscript(): Promise<void> {
+    const reader = this.userTranscriptStream.readable.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const event = value;
+        // IMPORTANT: need to await here to avoid race condition
+        await this.userTranscriptOutput?.captureText(event.transcript);
+        if (event.isFinal) {
+          this.userTranscriptOutput?.flush();
+        }
+      }
+    } catch (error) {
+      this.logger.error({ error }, 'Error processing transcript stream');
+    }
+  }
 
   private createTranscriptionOutput(options: { isDeltaStream: boolean; participant?: string }) {
     return new ParalellTextOutput([
@@ -235,6 +261,9 @@ export class RoomIO {
       this.participantAudioOutput,
       this.agentTranscriptOutput,
     );
+
+    // Start the transcript forwarding
+    this.forwardUserTranscriptPromise = this.forwardUserTranscript();
 
     // -- set the room event handlers --
     this.room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
