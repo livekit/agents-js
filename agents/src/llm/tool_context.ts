@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type ZodObject, ZodType } from 'zod';
+import { type ZodObject, ZodType, z } from 'zod';
 import type { Agent } from '../voice/agent.js';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
 
@@ -159,16 +159,20 @@ export type ToolContext<UserData = UnknownUserData> = {
  * Create a function tool.
  *
  * @param description - The description of the tool.
- * @param parameters - The schema of the input that the tool expects.
+ * @param parameters - The schema of the input that the tool expects. If not provided, defaults to z.object({}).
  * @param execute - The function that is called with the arguments from the tool call and produces a result.
  */
-export function tool<Parameters extends JSONObject, UserData = UnknownUserData, Result = unknown>({
+export function tool<
+  Parameters extends JSONObject = Record<string, never>,
+  UserData = UnknownUserData,
+  Result = unknown,
+>({
   description,
   parameters,
   execute,
 }: {
   description: string;
-  parameters: ToolInputSchema<Parameters>;
+  parameters?: ToolInputSchema<Parameters>;
   execute: ToolExecuteFunction<Parameters, UserData, Result>;
 }): FunctionTool<Parameters, UserData, Result>;
 
@@ -187,21 +191,24 @@ export function tool({
 }): ProviderDefinedTool;
 
 export function tool(tool: any): any {
-  if (tool.parameters !== undefined && tool.execute !== undefined) {
+  if (tool.execute !== undefined) {
+    // Default parameters to z.object({}) if not provided
+    const parameters = tool.parameters ?? z.object({});
+
     // if parameters is not zod object, throw an error
-    if (!(tool.parameters instanceof ZodType)) {
+    if (!(parameters instanceof ZodType)) {
       throw new Error('Tool parameters must be a Zod schema');
     }
 
     // Check if it's specifically a ZodObject (not other Zod types like ZodString, ZodNumber, etc.)
-    if (tool.parameters._def.typeName !== 'ZodObject') {
+    if (parameters._def.typeName !== 'ZodObject') {
       throw new Error('Tool parameters must be a Zod object schema (z.object(...))');
     }
 
     return {
       type: 'function',
       description: tool.description,
-      parameters: tool.parameters,
+      parameters,
       execute: tool.execute,
       [TOOL_SYMBOL]: true,
       [FUNCTION_TOOL_SYMBOL]: true,
