@@ -211,6 +211,13 @@ export class AgentSession<
     return this.activity.say(text, options);
   }
 
+  interrupt() {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
+    }
+    return this.activity.interrupt();
+  }
+
   generateReply(options?: {
     userInput?: string;
     instructions?: string;

@@ -393,6 +393,30 @@ export class AgentActivity implements RecognitionHooks {
     return handle;
   }
 
+  interrupt() {
+    const future = new Future<void>();
+    const currentSpeech = this.currentSpeech;
+
+    currentSpeech?.interrupt();
+
+    for (const [_, __, speech] of this.speechQueue) {
+      speech.interrupt();
+    }
+
+    // TODO(AJS-32): Add realtime model support
+
+    if (currentSpeech === undefined) {
+      future.resolve();
+    } else {
+      currentSpeech.then(() => {
+        if (future.done) return;
+        future.resolve();
+      });
+    }
+
+    return future;
+  }
+
   private onPipelineReplyDone(): void {
     if (!this.speechQueue.peek() && (!this.currentSpeech || this.currentSpeech.done)) {
       this.agentSession._updateAgentState('listening');

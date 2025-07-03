@@ -59,8 +59,15 @@ export class SpeechHandle {
     if (!this.allowInterruptions) {
       throw new Error('interruptions are not allowed');
     }
+
+    if (this.done) return this;
+
     this.interruptFut.resolve();
     return this;
+  }
+
+  then(callback: (sh: SpeechHandle) => void) {
+    return this.playoutDoneFut.await.finally(() => callback(this));
   }
 
   async waitForPlayout() {
