@@ -24,7 +24,7 @@ import { toError } from '../llm/utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task } from '../utils.js';
-import type { Agent, ModelSettings } from './agent.js';
+import { type Agent, type ModelSettings, asyncLocalStorage } from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
 import { RunContext } from './run_context.js';
@@ -607,10 +607,12 @@ export function performToolExecutions({
         'executing tool',
       );
 
-      const toolExecution = tool.execute(parsedArgs, {
-        ctx: new RunContext(session, speechHandle, toolCall),
-        toolCallId: toolCall.callId,
-        abortSignal: signal,
+      const toolExecution = asyncLocalStorage.run({ functionCall: toolCall }, async () => {
+        return await tool.execute(parsedArgs, {
+          ctx: new RunContext(session, speechHandle, toolCall),
+          toolCallId: toolCall.callId,
+          abortSignal: signal,
+        });
       });
 
       const task = async (toolExecTask: Promise<any>) => {
