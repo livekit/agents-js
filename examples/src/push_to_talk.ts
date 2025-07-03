@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 class MyAgent extends voice.Agent {
   async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage) {
-    if (newMessage.textContent === undefined) {
+    if (!newMessage.textContent || newMessage.textContent.length === 0) {
       console.log('ignore empty user turn');
       throw new voice.StopResponse();
     }
