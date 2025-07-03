@@ -20,7 +20,7 @@ import type { TTS } from '../tts/tts.js';
 import { Future, Task } from '../utils.js';
 import type { VAD, VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
-import { StopResponse } from './agent.js';
+import { StopResponse, asyncLocalStorage } from './agent.js';
 import { type AgentSession, AgentSessionEvent, type TurnDetectionMode } from './agent_session.js';
 import {
   AudioRecognition,
@@ -367,6 +367,12 @@ export class AgentActivity implements RecognitionHooks {
 
     // TODO(AJS-32): Add realtime model support for generating a reply
 
+    let replyToolChoice = toolChoice;
+    const functionCall = asyncLocalStorage.getStore()?.functionCall;
+    if (toolChoice === undefined && functionCall !== undefined) {
+      replyToolChoice = 'none';
+    }
+
     const handle = SpeechHandle.create({
       allowInterruptions: allowInterruptions ?? this.allowInterruptions,
       stepIndex: 0,
@@ -379,7 +385,7 @@ export class AgentActivity implements RecognitionHooks {
         handle,
         chatCtx || this.agent.chatCtx,
         this.agent.toolCtx,
-        { toolChoice: toolChoice },
+        { toolChoice: replyToolChoice },
         instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
         userMessage,
       ),

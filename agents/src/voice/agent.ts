@@ -6,8 +6,9 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { AudioFrame } from '@livekit/rtc-node';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
-import type { ChatMessage } from '../llm/index.js';
+import type { ChatMessage, FunctionCall } from '../llm/index.js';
 import {
   type ChatChunk,
   ChatContext,
@@ -23,6 +24,8 @@ import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/inde
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+
+export const asyncLocalStorage = new AsyncLocalStorage<{ functionCall?: FunctionCall }>();
 
 export class StopResponse extends Error {
   constructor() {
