@@ -19,8 +19,6 @@ export const isPending = async (promise: Promise<any>): Promise<boolean> => {
   return result === sentinel;
 };
 
-export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 /**
  * Merge one or more {@link AudioFrame}s into a single one.
  *
