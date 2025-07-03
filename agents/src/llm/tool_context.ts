@@ -50,19 +50,6 @@ export class ToolError extends Error {
   }
 }
 
-/**
- * Exception raised within AI functions.
- *
- * This exception can be raised by the user to indicate that
- * the agent should not generate a response for the current
- * function call.
- */
-export class StopResponse extends Error {
-  constructor() {
-    super();
-  }
-}
-
 export interface AgentHandoff {
   /**
    * The agent to handoff to.

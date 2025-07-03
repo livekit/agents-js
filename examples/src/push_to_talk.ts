@@ -7,7 +7,6 @@ import {
   WorkerOptions,
   cli,
   defineAgent,
-  llm,
   voice,
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
@@ -21,7 +20,7 @@ class MyAgent extends voice.Agent {
   async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage) {
     if (newMessage.textContent === undefined) {
       console.log('ignore empty user turn');
-      throw new llm.StopResponse();
+      throw new voice.StopResponse();
     }
   }
 }
