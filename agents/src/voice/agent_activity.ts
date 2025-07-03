@@ -399,7 +399,6 @@ export class AgentActivity implements RecognitionHooks {
 
     currentSpeech?.interrupt();
 
-    // iterate through heap
     for (const [_, __, speech] of this.speechQueue) {
       speech.interrupt();
     }
