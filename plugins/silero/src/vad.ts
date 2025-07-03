@@ -35,9 +35,9 @@ export interface VADOptions {
 
 const defaultVADOptions: VADOptions = {
   minSpeechDuration: 50,
-  minSilenceDuration: 250,
+  minSilenceDuration: 550,
   prefixPaddingDuration: 500,
-  maxBufferedSpeech: 60000,
+  maxBufferedSpeech: 60000, // 60 seconds
   activationThreshold: 0.5,
   sampleRate: 16000,
   forceCPU: true,
@@ -232,7 +232,7 @@ export class VADStream extends baseStream {
 
           // copy the inference window to the speech buffer
           const availableSpace = this.#speechBuffer.length - speechBufferIndex;
-          const toCopyBuffer = Math.min(this.#model.windowSizeSamples, availableSpace);
+          const toCopyBuffer = Math.min(toCopyInt, availableSpace);
           if (toCopyBuffer > 0) {
             this.#speechBuffer.set(inputFrame.data.subarray(0, toCopyBuffer), speechBufferIndex);
             speechBufferIndex += toCopyBuffer;
@@ -255,9 +255,9 @@ export class VADStream extends baseStream {
           }
 
           if (pubSpeaking) {
-            pubSpeechDuration += inferenceDuration;
+            pubSpeechDuration += windowDuration;
           } else {
-            pubSilenceDuration += inferenceDuration;
+            pubSilenceDuration += windowDuration;
           }
 
           this.outputWriter.write({

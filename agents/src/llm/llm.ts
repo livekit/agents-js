@@ -3,15 +3,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import { AsyncIterableQueue } from '../utils.js';
-import type { ChatContext, ChatRole } from './chat_context.js';
-import type { FunctionCallInfo, FunctionContext } from './function_context.js';
+import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
+import type { ToolContext } from './tool_context.js';
 
 export interface ChoiceDelta {
   role: ChatRole;
   content?: string;
-  toolCalls?: FunctionCallInfo[];
+  toolCalls?: FunctionCall[];
 }
 
 export interface CompletionUsage {
@@ -20,14 +21,9 @@ export interface CompletionUsage {
   totalTokens: number;
 }
 
-export interface Choice {
-  delta: ChoiceDelta;
-  index: number;
-}
-
 export interface ChatChunk {
-  requestId: string;
-  choices: Choice[];
+  id: string;
+  delta?: ChoiceDelta;
   usage?: CompletionUsage;
 }
 
@@ -45,13 +41,13 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
    */
   abstract chat({
     chatCtx,
-    fncCtx,
+    toolCtx,
     temperature,
     n,
     parallelToolCalls,
   }: {
     chatCtx: ChatContext;
-    fncCtx?: FunctionContext;
+    toolCtx?: ToolContext;
     temperature?: number;
     n?: number;
     parallelToolCalls?: boolean;
@@ -62,30 +58,39 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected output = new AsyncIterableQueue<ChatChunk>();
   protected queue = new AsyncIterableQueue<ChatChunk>();
   protected closed = false;
-  protected _functionCalls: FunctionCallInfo[] = [];
+  protected abortController = new AbortController();
+  protected logger = log();
   abstract label: string;
 
   #llm: LLM;
   #chatCtx: ChatContext;
-  #fncCtx?: FunctionContext;
+  #toolCtx?: ToolContext;
 
-  constructor(llm: LLM, chatCtx: ChatContext, fncCtx?: FunctionContext) {
+  constructor(llm: LLM, chatCtx: ChatContext, toolCtx?: ToolContext) {
     this.#llm = llm;
     this.#chatCtx = chatCtx;
-    this.#fncCtx = fncCtx;
+    this.#toolCtx = toolCtx;
     this.monitorMetrics();
+    this.abortController.signal.addEventListener('abort', () => {
+      // TODO (AJS-37) clean this up when we refactor with streams
+      this.output.close();
+      this.closed = true;
+    });
   }
 
   protected async monitorMetrics() {
     const startTime = process.hrtime.bigint();
-    let ttft: bigint | undefined;
+    let ttft: bigint = BigInt(-1);
     let requestId = '';
     let usage: CompletionUsage | undefined;
 
     for await (const ev of this.queue) {
+      if (this.abortController.signal.aborted) {
+        break;
+      }
       this.output.put(ev);
-      requestId = ev.requestId;
-      if (!ttft) {
+      requestId = ev.id;
+      if (ttft === BigInt(-1)) {
         ttft = process.hrtime.bigint() - startTime;
       }
       if (ev.usage) {
@@ -98,7 +103,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     const metrics: LLMMetrics = {
       timestamp: Date.now(),
       requestId,
-      ttft: Math.trunc(Number(ttft! / BigInt(1000000))),
+      ttft: ttft === BigInt(-1) ? -1 : Math.trunc(Number(ttft / BigInt(1000000))),
       duration: Math.trunc(Number(duration / BigInt(1000000))),
       cancelled: false, // XXX(nbsp)
       label: this.label,
@@ -111,14 +116,9 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     this.#llm.emit(LLMEvent.METRICS_COLLECTED, metrics);
   }
 
-  /** List of called functions from this stream. */
-  get functionCalls(): FunctionCallInfo[] {
-    return this._functionCalls;
-  }
-
   /** The function context of this stream. */
-  get fncCtx(): FunctionContext | undefined {
-    return this.#fncCtx;
+  get toolCtx(): ToolContext | undefined {
+    return this.#toolCtx;
   }
 
   /** The initial chat context of this stream. */
@@ -126,26 +126,12 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     return this.#chatCtx;
   }
 
-  /** Execute all deferred functions of this stream concurrently. */
-  executeFunctions(): FunctionCallInfo[] {
-    this._functionCalls.forEach(
-      (f) =>
-        (f.task = f.func.execute(f.params).then(
-          (result) => ({ name: f.name, toolCallId: f.toolCallId, result }),
-          (error) => ({ name: f.name, toolCallId: f.toolCallId, error }),
-        )),
-    );
-    return this._functionCalls;
-  }
-
   next(): Promise<IteratorResult<ChatChunk>> {
     return this.output.next();
   }
 
   close() {
-    this.output.close();
-    this.queue.close();
-    this.closed = true;
+    this.abortController.abort();
   }
 
   [Symbol.asyncIterator](): LLMStream {

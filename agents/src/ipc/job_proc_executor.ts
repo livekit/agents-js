@@ -12,7 +12,7 @@ import type { IPCMessage } from './message.js';
 import { SupervisedProc } from './supervised_proc.js';
 
 export class JobProcExecutor extends SupervisedProc implements JobExecutor {
-  #userArgs?: any;
+  #userArgs?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
   #jobStatus?: JobStatus;
   #runningJob?: RunningJobInfo;
   #agent: string;
@@ -64,7 +64,7 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
   }
 
   createProcess(): ChildProcess {
-    return fork(new URL(import.meta.resolve('./job_proc_lazy_main.js')), [this.#agent]);
+    return fork(new URL('./job_proc_lazy_main.js', import.meta.url), [this.#agent]);
   }
 
   async mainTask(proc: ChildProcess) {

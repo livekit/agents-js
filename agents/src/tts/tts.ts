@@ -121,6 +121,7 @@ export abstract class SynthesizeStream
   #metricsPendingTexts: string[] = [];
   #metricsText = '';
   #monitorMetricsTask?: Promise<void>;
+  protected abortController = new AbortController();
 
   private deferredInputStream: DeferredReadableStream<
     string | typeof SynthesizeStream.FLUSH_SENTINEL
@@ -131,6 +132,13 @@ export abstract class SynthesizeStream
     this.#tts = tts;
     this.deferredInputStream = new DeferredReadableStream();
     this.mainTask();
+    this.abortController.signal.addEventListener('abort', () => {
+      this.deferredInputStream.detachSource();
+      // TODO (AJS-36) clean this up when we refactor with streams
+      this.input.close();
+      this.output.close();
+      this.closed = true;
+    });
   }
 
   // TODO(AJS-37) Remove when refactoring TTS to use streams
@@ -144,17 +152,23 @@ export abstract class SynthesizeStream
         }
         this.pushText(value);
       }
-      this.flush();
       this.endInput();
     } catch (error) {
       this.logger.error(error, 'Error reading deferred input stream');
+    } finally {
+      reader.releaseLock();
+      // Ensure output is closed when the stream ends
+      if (!this.#monitorMetricsTask) {
+        // No text was received, close the output directly
+        this.output.close();
+      }
     }
   }
 
   protected async monitorMetrics() {
     const startTime = process.hrtime.bigint();
     let audioDuration = 0;
-    let ttfb: bigint | undefined;
+    let ttfb: bigint = BigInt(-1);
     let requestId = '';
 
     const emit = () => {
@@ -164,7 +178,7 @@ export abstract class SynthesizeStream
         const metrics: TTSMetrics = {
           timestamp: Date.now(),
           requestId,
-          ttfb: Math.trunc(Number(ttfb! / BigInt(1000000))),
+          ttfb: ttfb === BigInt(-1) ? -1 : Math.trunc(Number(ttfb / BigInt(1000000))),
           duration: Math.trunc(Number(duration / BigInt(1000000))),
           charactersCount: text.length,
           audioDuration,
@@ -177,10 +191,13 @@ export abstract class SynthesizeStream
     };
 
     for await (const audio of this.queue) {
+      if (this.abortController.signal.aborted) {
+        break;
+      }
       this.output.put(audio);
       if (audio === SynthesizeStream.END_OF_STREAM) continue;
       requestId = audio.requestId;
-      if (!ttfb) {
+      if (ttfb === BigInt(-1)) {
         ttfb = process.hrtime.bigint() - startTime;
       }
       audioDuration += audio.frame.samplesPerChannel / audio.frame.sampleRate;
@@ -192,7 +209,6 @@ export abstract class SynthesizeStream
     if (requestId) {
       emit();
     }
-    this.output.close();
   }
 
   updateInputStream(text: ReadableStream<string>) {
@@ -204,6 +220,8 @@ export abstract class SynthesizeStream
   pushText(text: string) {
     if (!this.#monitorMetricsTask) {
       this.#monitorMetricsTask = this.monitorMetrics();
+      // Close output when metrics task completes
+      this.#monitorMetricsTask.finally(() => this.output.close());
     }
     this.#metricsText += text;
 
@@ -233,6 +251,7 @@ export abstract class SynthesizeStream
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
+    this.flush();
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
@@ -248,9 +267,7 @@ export abstract class SynthesizeStream
 
   /** Close both the input and output of the TTS stream */
   close() {
-    this.input.close();
-    this.output.close();
-    this.closed = true;
+    this.abortController.abort();
   }
 
   [Symbol.asyncIterator](): SynthesizeStream {
@@ -290,7 +307,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   protected async monitorMetrics() {
     const startTime = process.hrtime.bigint();
     let audioDuration = 0;
-    let ttfb: bigint | undefined;
+    let ttfb: bigint = BigInt(-1);
     let requestId = '';
 
     for await (const audio of this.queue) {
@@ -307,7 +324,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     const metrics: TTSMetrics = {
       timestamp: Date.now(),
       requestId,
-      ttfb: Math.trunc(Number(ttfb! / BigInt(1000000))),
+      ttfb: ttfb === BigInt(-1) ? -1 : Math.trunc(Number(ttfb / BigInt(1000000))),
       duration: Math.trunc(Number(duration / BigInt(1000000))),
       charactersCount: this.#text.length,
       audioDuration,

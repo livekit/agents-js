@@ -13,6 +13,7 @@ interface WorkerResponse {
   agent_name: string;
   worker_type: string;
   active_jobs: number;
+  sdk_version: string;
 }
 
 export class HTTPServer {

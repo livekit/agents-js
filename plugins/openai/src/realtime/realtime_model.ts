@@ -143,16 +143,17 @@ class ConversationItem {
     });
   }
 
-  create(message: llm.ChatMessage, previousItemId?: string): void {
-    if (!message.content) {
+  create(message: llm.ChatItem, previousItemId?: string): void {
+    if (message.type === 'message' && !message.content) {
       return;
     }
 
-    let event: api_proto.ConversationItemCreateEvent;
+    let event: api_proto.ConversationItemCreateEvent | undefined = undefined;
 
-    if (message.toolCallId) {
-      if (typeof message.content !== 'string') {
-        throw new TypeError('message.content must be a string');
+    if (message.type === 'function_call_output') {
+      const { callId: call_id, output } = message;
+      if (typeof output !== 'string') {
+        throw new TypeError('message.output must be a string');
       }
 
       event = {
@@ -160,17 +161,17 @@ class ConversationItem {
         previous_item_id: previousItemId,
         item: {
           type: 'function_call_output',
-          call_id: message.toolCallId,
-          output: message.content,
+          call_id,
+          output,
         },
       };
-    } else {
+    } else if (message.type === 'message') {
       let content = message.content;
       if (!Array.isArray(content)) {
         content = [content];
       }
 
-      if (message.role === llm.ChatRole.USER) {
+      if (message.role === 'user') {
         const contents: (api_proto.InputTextContent | api_proto.InputAudioContent)[] = [];
         for (const c of content) {
           if (typeof c === 'string') {
@@ -180,8 +181,8 @@ class ConversationItem {
             });
           } else if (
             // typescript type guard for determining ChatAudio vs ChatImage
-            ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatAudio => {
-              return (c as llm.ChatAudio).frame !== undefined;
+            ((c: llm.AudioContent | llm.ImageContent): c is llm.AudioContent => {
+              return (c as llm.AudioContent).frame !== undefined;
             })(c)
           ) {
             contents.push({
@@ -200,7 +201,7 @@ class ConversationItem {
             content: contents,
           },
         };
-      } else if (message.role === llm.ChatRole.ASSISTANT) {
+      } else if (message.role === 'assistant') {
         const contents: api_proto.TextContent[] = [];
         for (const c of content) {
           if (typeof c === 'string') {
@@ -210,8 +211,8 @@ class ConversationItem {
             });
           } else if (
             // typescript type guard for determining ChatAudio vs ChatImage
-            ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatAudio => {
-              return (c as llm.ChatAudio).frame !== undefined;
+            ((c: llm.AudioContent | llm.ImageContent): c is llm.AudioContent => {
+              return (c as llm.AudioContent).frame !== undefined;
             })(c)
           ) {
             this.#logger.warn('audio content in assistant message is not supported');
@@ -227,7 +228,7 @@ class ConversationItem {
             content: contents,
           },
         };
-      } else if (message.role === llm.ChatRole.SYSTEM) {
+      } else if (message.role === 'system') {
         const contents: api_proto.InputTextContent[] = [];
         for (const c of content) {
           if (typeof c === 'string') {
@@ -237,8 +238,8 @@ class ConversationItem {
             });
           } else if (
             // typescript type guard for determining ChatAudio vs ChatImage
-            ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatAudio => {
-              return (c as llm.ChatAudio).frame !== undefined;
+            ((c: llm.AudioContent | llm.ImageContent): c is llm.AudioContent => {
+              return (c as llm.AudioContent).frame !== undefined;
             })(c)
           ) {
             this.#logger.warn('audio content in system message is not supported');
@@ -262,7 +263,9 @@ class ConversationItem {
       }
     }
 
-    this.#session.queueMsg(event);
+    if (event) {
+      this.#session.queueMsg(event);
+    }
   }
 }
 
@@ -429,7 +432,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
   }
 
   session({
-    fncCtx,
+    toolCtx,
     chatCtx,
     modalities = this.#defaultOpts.modalities,
     instructions = this.#defaultOpts.instructions,
@@ -441,7 +444,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     temperature = this.#defaultOpts.temperature,
     maxResponseOutputTokens = this.#defaultOpts.maxResponseOutputTokens,
   }: {
-    fncCtx?: llm.FunctionContext;
+    toolCtx?: llm.ToolContext;
     chatCtx?: llm.ChatContext;
     modalities?: ['text', 'audio'] | ['text'];
     instructions?: string;
@@ -471,12 +474,9 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       entraToken: this.#defaultOpts.entraToken,
     };
 
-    const newSession = new RealtimeSession(opts, {
-      chatCtx: chatCtx || new llm.ChatContext(),
-      fncCtx,
-    });
-    this.#sessions.push(newSession);
-    return newSession;
+    const session = new RealtimeSession(opts, { toolCtx, chatCtx });
+    this.#sessions.push(session);
+    return session;
   }
 
   async close() {
@@ -486,7 +486,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
 
 export class RealtimeSession extends multimodal.RealtimeSession {
   #chatCtx: llm.ChatContext | undefined = undefined;
-  #fncCtx: llm.FunctionContext | undefined = undefined;
+  #toolCtx: llm.ToolContext | undefined = undefined;
   #opts: ModelOptions;
   #pendingResponses: { [id: string]: RealtimeResponse } = {};
   #sessionId = 'not-connected';
@@ -499,13 +499,13 @@ export class RealtimeSession extends multimodal.RealtimeSession {
 
   constructor(
     opts: ModelOptions,
-    { fncCtx, chatCtx }: { fncCtx?: llm.FunctionContext; chatCtx?: llm.ChatContext },
+    { toolCtx, chatCtx }: { toolCtx?: llm.ToolContext; chatCtx?: llm.ChatContext },
   ) {
     super();
 
     this.#opts = opts;
     this.#chatCtx = chatCtx;
-    this.#fncCtx = fncCtx;
+    this.#toolCtx = toolCtx;
 
     this.#task = this.#start();
 
@@ -527,12 +527,12 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     return this.#chatCtx;
   }
 
-  get fncCtx(): llm.FunctionContext | undefined {
-    return this.#fncCtx;
+  get toolCtx(): llm.ToolContext | undefined {
+    return this.#toolCtx;
   }
 
-  set fncCtx(ctx: llm.FunctionContext | undefined) {
-    this.#fncCtx = ctx;
+  set toolCtx(ctx: llm.ToolContext | undefined) {
+    this.#toolCtx = ctx;
   }
 
   get conversation(): Conversation {
@@ -599,7 +599,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     temperature = this.#opts.temperature,
     maxResponseOutputTokens = this.#opts.maxResponseOutputTokens,
     toolChoice = 'auto',
-    selectedTools = Object.keys(this.#fncCtx || {}),
+    selectedTools = Object.keys(this.#toolCtx || {}),
   }: {
     modalities: ['text', 'audio'] | ['text'];
     instructions?: string;
@@ -631,18 +631,14 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       entraToken: this.#opts.entraToken,
     };
 
-    const tools = this.#fncCtx
-      ? Object.entries(this.#fncCtx)
+    const tools = this.#toolCtx
+      ? Object.entries(this.#toolCtx)
           .filter(([name]) => selectedTools.includes(name))
           .map(([name, func]) => ({
             type: 'function' as const,
             name,
             description: func.description,
-            parameters:
-              // don't format parameters if they are raw openai params
-              func.parameters.type == ('object' as const)
-                ? func.parameters
-                : llm.oaiParams(func.parameters),
+            parameters: llm.oaiParams(func.parameters),
           }))
       : [];
 
@@ -677,16 +673,21 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   /** Create an empty audio message with the given duration. */
   #createEmptyUserAudioMessage(duration: number): llm.ChatMessage {
     const samples = duration * api_proto.SAMPLE_RATE;
-    return new llm.ChatMessage({
-      role: llm.ChatRole.USER,
-      content: {
-        frame: new AudioFrame(
-          new Int16Array(samples * api_proto.NUM_CHANNELS),
-          api_proto.SAMPLE_RATE,
-          api_proto.NUM_CHANNELS,
-          samples,
-        ),
-      },
+    return llm.ChatMessage.create({
+      role: 'user',
+      content: [
+        {
+          type: 'audio_content',
+          frame: [
+            new AudioFrame(
+              new Int16Array(samples * api_proto.NUM_CHANNELS),
+              api_proto.SAMPLE_RATE,
+              api_proto.NUM_CHANNELS,
+              samples,
+            ),
+          ],
+        },
+      ],
     });
   }
 
@@ -1089,8 +1090,8 @@ export class RealtimeSession extends multimodal.RealtimeSession {
     const output = response!.output[outputIndex];
 
     if (output?.type === 'function_call') {
-      if (!this.#fncCtx) {
-        this.#logger.error('function call received but no fncCtx is available');
+      if (!this.#toolCtx) {
+        this.#logger.error('function call received but no toolCtx is available');
         return;
       }
 
@@ -1099,9 +1100,9 @@ export class RealtimeSession extends multimodal.RealtimeSession {
       if (item.type !== 'function_call') {
         throw new Error('Expected function_call item');
       }
-      const func = this.#fncCtx[item.name];
+      const func = this.#toolCtx[item.name];
       if (!func) {
-        this.#logger.error(`no function with name ${item.name} in fncCtx`);
+        this.#logger.error(`no function with name ${item.name} in toolCtx`);
         return;
       }
 
@@ -1115,30 +1116,35 @@ export class RealtimeSession extends multimodal.RealtimeSession {
         `[Function Call ${item.call_id}] Executing ${item.name} with arguments ${parsedArgs}`,
       );
 
-      func.execute(parsedArgs).then(
-        (content) => {
-          this.#logger.debug(`[Function Call ${item.call_id}] ${item.name} returned ${content}`);
-          this.emit('function_call_completed', {
-            callId: item.call_id,
-          });
-          this.conversation.item.create(
-            llm.ChatMessage.createToolFromFunctionResult({
-              name: item.name,
-              toolCallId: item.call_id,
-              result: content,
-            }),
-            output.itemId,
-          );
-          this.response.create();
-        },
-        (error) => {
-          this.#logger.error(`[Function Call ${item.call_id}] ${item.name} failed with ${error}`);
-          // TODO: send it back up as failed?
-          this.emit('function_call_failed', {
-            callId: item.call_id,
-          });
-        },
-      );
+      func
+        .execute(parsedArgs, {
+          ctx: {} as any, // TODO: provide proper RunContext
+          toolCallId: item.call_id,
+        })
+        .then(
+          (content) => {
+            this.#logger.debug(`[Function Call ${item.call_id}] ${item.name} returned ${content}`);
+            this.emit('function_call_completed', {
+              callId: item.call_id,
+            });
+            this.conversation.item.create(
+              llm.FunctionCallOutput.create({
+                callId: item.call_id,
+                output: content,
+                isError: false,
+              }),
+              output.itemId,
+            );
+            this.response.create();
+          },
+          (error) => {
+            this.#logger.error(`[Function Call ${item.call_id}] ${item.name} failed with ${error}`);
+            // TODO: send it back up as failed?
+            this.emit('function_call_failed', {
+              callId: item.call_id,
+            });
+          },
+        );
     }
 
     output?.doneFut.resolve();

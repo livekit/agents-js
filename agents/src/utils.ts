@@ -1,14 +1,12 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type {
-  LocalParticipant,
-  RemoteParticipant,
-  Room,
-  TrackPublication,
-} from '@livekit/rtc-node';
-import { AudioFrame, TrackSource } from '@livekit/rtc-node';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { AudioFrame } from '@livekit/rtc-node';
+import { delay } from '@std/async';
 import { EventEmitter, once } from 'node:events';
+import { log } from './log.js';
 
 /** Union of a single and a list of {@link AudioFrame}s */
 export type AudioBuffer = AudioFrame[] | AudioFrame;
@@ -26,7 +24,7 @@ export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve
 /**
  * Merge one or more {@link AudioFrame}s into a single one.
  *
- * @param buffer Either an {@link AudioFrame} or a list thereof
+ * @param buffer - Either an {@link AudioFrame} or a list thereof
  * @throws
  * {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypeError
  * | TypeError} if sample rate or channel count are mismatched
@@ -60,33 +58,6 @@ export const mergeFrames = (buffer: AudioBuffer): AudioFrame => {
   }
 
   return buffer;
-};
-
-export const findMicroTrackId = (room: Room, identity: string): string => {
-  let p: RemoteParticipant | LocalParticipant | undefined = room.remoteParticipants.get(identity);
-
-  if (identity === room.localParticipant?.identity) {
-    p = room.localParticipant;
-  }
-
-  if (!p) {
-    throw new Error(`participant ${identity} not found`);
-  }
-
-  // find first micro track
-  let trackId: string | undefined;
-  p.trackPublications.forEach((track: TrackPublication) => {
-    if (track.source === TrackSource.SOURCE_MICROPHONE) {
-      trackId = track.sid;
-      return;
-    }
-  });
-
-  if (!trackId) {
-    throw new Error(`participant ${identity} does not have a microphone track`);
-  }
-
-  return trackId;
 };
 
 /** @internal */
@@ -390,4 +361,157 @@ export class AudioEnergyFilter {
 
     return false;
   }
+}
+
+export const TASK_TIMEOUT_ERROR = new Error('Task cancellation timed out');
+
+export enum TaskResult {
+  Timeout = 'timeout',
+  Completed = 'completed',
+  Aborted = 'aborted',
+}
+
+/** @internal */
+/**
+ * A task that can be cancelled.
+ *
+ * We recommend using the `Task.from` method to create a task. When creating subtasks, pass the same controller to all subtasks.
+ *
+ * @example
+ * ```ts
+ * const parent = Task.from((controller) => {
+ *   const child1 = Task.from(() => { ... }, controller);
+ *   const child2 = Task.from(() => { ... }, controller);
+ * });
+ * parent.cancel();
+ * ```
+ *
+ * This will cancel all subtasks when the parent is cancelled.
+ *
+ * @param T - The type of the task result
+ */
+export class Task<T> {
+  private resultFuture: Future<T>;
+
+  #logger = log();
+
+  constructor(
+    private readonly fn: (controller: AbortController) => Promise<T>,
+    private readonly controller: AbortController,
+    readonly name?: string,
+  ) {
+    this.resultFuture = new Future();
+    this.runTask();
+  }
+
+  /**
+   * Creates a new task from a function.
+   *
+   * @param fn - The function to run
+   * @param controller - The abort controller to use
+   * @returns A new task
+   */
+  static from<T>(
+    fn: (controller: AbortController) => Promise<T>,
+    controller?: AbortController,
+    name?: string,
+  ) {
+    const abortController = controller ?? new AbortController();
+    return new Task(fn, abortController, name);
+  }
+
+  private async runTask() {
+    const run = async () => {
+      if (this.name) {
+        this.#logger.debug(`Task.runTask: task ${this.name} started`);
+      }
+      return await this.fn(this.controller);
+    };
+
+    return run()
+      .then((value) => {
+        this.resultFuture.resolve(value);
+        return value;
+      })
+      .catch((error) => {
+        this.resultFuture.reject(error);
+      })
+      .finally(() => {
+        if (this.name) {
+          this.#logger.debug(`Task.runTask: task ${this.name} done`);
+        }
+      });
+  }
+
+  /**
+   * Cancels the task.
+   */
+  cancel() {
+    this.controller.abort();
+  }
+
+  /**
+   * Cancels the task and waits for it to complete.
+   *
+   * @param timeout - The timeout in milliseconds
+   * @returns The result status of the task (timeout, completed, aborted)
+   */
+  async cancelAndWait(timeout?: number) {
+    this.cancel();
+
+    try {
+      // Race between task completion and timeout
+      const promises = [
+        this.result
+          .then(() => TaskResult.Completed)
+          .catch((error) => {
+            if (error.name === 'AbortError') {
+              return TaskResult.Aborted;
+            }
+            throw error;
+          }),
+      ];
+
+      if (timeout) {
+        promises.push(delay(timeout).then(() => TaskResult.Timeout));
+      }
+
+      const result = await Promise.race(promises);
+
+      // Check what happened
+      if (result === TaskResult.Timeout) {
+        throw TASK_TIMEOUT_ERROR;
+      }
+
+      return result;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * The result of the task.
+   */
+  get result(): Promise<T> {
+    return this.resultFuture.await;
+  }
+
+  /**
+   * Whether the task has completed.
+   */
+  get done(): boolean {
+    return this.resultFuture.done;
+  }
+}
+
+export function withResolvers<T = unknown>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: any) => void;
+
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  return { promise, resolve, reject };
 }

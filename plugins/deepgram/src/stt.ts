@@ -42,7 +42,7 @@ const defaultSTTOptions: STTOptions = {
   detectLanguage: false,
   interimResults: true,
   punctuate: true,
-  model: 'nova-2-general',
+  model: 'nova-3-general',
   smartFormat: true,
   noDelay: true,
   endpointing: 25,
@@ -250,7 +250,7 @@ export class SpeechStream extends stt.SpeechStream {
       ws.once('close', (code, reason) => {
         if (!closing) {
           this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-          reject();
+          reject(new Error('WebSocket closed'));
         }
       }),
     );

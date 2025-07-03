@@ -55,7 +55,7 @@ export class InferenceProcExecutor extends SupervisedProc implements InferenceEx
   }
 
   createProcess(): ChildProcess {
-    return fork(new URL(import.meta.resolve('./inference_proc_lazy_main.js')), [
+    return fork(new URL('./inference_proc_lazy_main.js', import.meta.url), [
       JSON.stringify(this.#runners),
     ]);
   }

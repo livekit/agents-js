@@ -5,7 +5,7 @@ import type { RunningJobInfo } from '../job.js';
 
 export interface JobExecutor {
   started: boolean;
-  userArguments: any;
+  userArguments: any; // eslint-disable-line @typescript-eslint/no-explicit-any
   runningJob: RunningJobInfo | undefined;
   status: JobStatus;
 

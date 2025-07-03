@@ -20,20 +20,29 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    const agent = new voice.Agent('You are a helpful assistant.');
-    await ctx.connect();
-    const participant = await ctx.waitForParticipant();
-    console.log('participant joined: ', participant.identity);
+    const agent = new voice.Agent({
+      instructions:
+        "You are a helpful assistant, you can hear the user's message and respond to it.",
+    });
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
 
-    const session = new voice.AgentSession(
+    const session = new voice.AgentSession({
       vad,
-      new deepgram.STT(),
-      new openai.LLM(),
-      new elevenlabs.TTS(),
-    );
-    session.start(agent, ctx.room);
+      stt: new deepgram.STT(),
+      llm: new openai.LLM(),
+      tts: new elevenlabs.TTS(),
+    });
+
+    await session.start({
+      agent,
+      room: ctx.room,
+    });
+
+    // join the room when agent is ready
+    await ctx.connect();
+
+    session.say('Hello, how can I help you today?');
   },
 });
 

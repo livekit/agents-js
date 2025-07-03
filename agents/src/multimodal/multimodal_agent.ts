@@ -29,7 +29,7 @@ import * as llm from '../llm/index.js';
 import { log } from '../log.js';
 import type { MultimodalLLMMetrics } from '../metrics/base.js';
 import { TextAudioSynchronizer, defaultTextSyncOptions } from '../transcription.js';
-import { findMicroTrackId } from '../utils.js';
+import { findMicrophoneTrackId } from '../voice/transcription/index.js';
 import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
 
 /**
@@ -37,11 +37,9 @@ import { AgentPlayout, type PlayoutHandle } from './agent_playout.js';
  * @beta
  */
 export abstract class RealtimeSession extends EventEmitter {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   abstract conversation: any; // openai.realtime.Conversation
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   abstract inputAudioBuffer: any; // openai.realtime.InputAudioBuffer
-  abstract fncCtx: llm.FunctionContext | undefined;
+  abstract toolCtx: llm.ToolContext | undefined;
   abstract recoverFromTextResponse(itemId: string): void;
 }
 
@@ -50,7 +48,6 @@ export abstract class RealtimeSession extends EventEmitter {
  * @beta
  */
 export abstract class RealtimeModel {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   abstract session(options: any): RealtimeSession; // openai.realtime.ModelOptions
   abstract close(): Promise<void>;
   abstract sampleRate: number;
@@ -76,20 +73,20 @@ export class MultimodalAgent extends EventEmitter {
   constructor({
     model,
     chatCtx,
-    fncCtx,
+    toolCtx,
     maxTextResponseRetries = 5,
     noiseCancellation,
   }: {
     model: RealtimeModel;
     chatCtx?: llm.ChatContext;
-    fncCtx?: llm.FunctionContext;
+    toolCtx?: llm.ToolContext;
     maxTextResponseRetries?: number;
     noiseCancellation?: NoiseCancellationOptions;
   }) {
     super();
     this.model = model;
     this.#chatCtx = chatCtx;
-    this.#fncCtx = fncCtx;
+    this.#toolCtx = toolCtx;
     this.#maxTextResponseRetries = maxTextResponseRetries;
     this.#noiseCancellation = noiseCancellation;
   }
@@ -102,7 +99,7 @@ export class MultimodalAgent extends EventEmitter {
   #playingHandle: PlayoutHandle | undefined = undefined;
   #logger = log();
   #session: RealtimeSession | null = null;
-  #fncCtx: llm.FunctionContext | undefined = undefined;
+  #toolCtx: llm.ToolContext | undefined = undefined;
   #chatCtx: llm.ChatContext | undefined = undefined;
   #noiseCancellation: NoiseCancellationOptions | undefined = undefined;
 
@@ -110,14 +107,14 @@ export class MultimodalAgent extends EventEmitter {
   #_pendingFunctionCalls: Set<string> = new Set();
   #_speaking: boolean = false;
 
-  get fncCtx(): llm.FunctionContext | undefined {
-    return this.#fncCtx;
+  get toolCtx(): llm.ToolContext | undefined {
+    return this.#toolCtx;
   }
 
-  set fncCtx(ctx: llm.FunctionContext | undefined) {
-    this.#fncCtx = ctx;
+  set toolCtx(ctx: llm.ToolContext | undefined) {
+    this.#toolCtx = ctx;
     if (this.#session) {
-      this.#session.fncCtx = ctx;
+      this.#session.toolCtx = ctx;
     }
   }
 
@@ -204,9 +201,9 @@ export class MultimodalAgent extends EventEmitter {
           if (interrupted) {
             text += '…';
           }
-          const msg = llm.ChatMessage.create({
-            role: llm.ChatRole.ASSISTANT,
-            text,
+          const msg = new llm.ChatMessage({
+            role: 'assistant',
+            content: text,
           });
 
           if (interrupted) {
@@ -247,10 +244,9 @@ export class MultimodalAgent extends EventEmitter {
         }
       }
 
-      this.#session = this.model.session({ fncCtx: this.#fncCtx, chatCtx: this.#chatCtx });
+      this.#session = this.model.session({ toolCtx: this.#toolCtx, chatCtx: this.#chatCtx });
       this.#started = true;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('response_content_added', (message: any) => {
         // openai.realtime.RealtimeContent
         if (message.contentType === 'text') return;
@@ -276,7 +272,6 @@ export class MultimodalAgent extends EventEmitter {
         this.#playingHandle = handle;
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('response_content_done', (message: any) => {
         // openai.realtime.RealtimeContent
         if (message.contentType === 'text') {
@@ -306,7 +301,6 @@ export class MultimodalAgent extends EventEmitter {
         }
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('input_speech_committed', async (ev: any) => {
         // openai.realtime.InputSpeechCommittedEvent
         const participantIdentity = this.linkedParticipant?.identity;
@@ -318,7 +312,6 @@ export class MultimodalAgent extends EventEmitter {
         }
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('input_speech_transcription_completed', async (ev: any) => {
         // openai.realtime.InputSpeechTranscriptionCompletedEvent
         const transcription = ev.transcript;
@@ -335,9 +328,9 @@ export class MultimodalAgent extends EventEmitter {
         } else {
           this.#logger.error('Participant or track not set');
         }
-        const userMsg = llm.ChatMessage.create({
-          role: llm.ChatRole.USER,
-          text: transcription,
+        const userMsg = new llm.ChatMessage({
+          role: 'user',
+          content: transcription,
         });
         this.emit('user_speech_committed', userMsg);
         this.#logger.child({ transcription }).debug('committed user speech');
@@ -364,24 +357,20 @@ export class MultimodalAgent extends EventEmitter {
         }
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      this.#session.on('input_speech_stopped', (ev: any) => {
+      this.#session.on('input_speech_stopped', () => {
         this.emit('user_stopped_speaking');
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('function_call_started', (ev: any) => {
         this.#pendingFunctionCalls.add(ev.callId);
         this.#updateState();
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('function_call_completed', (ev: any) => {
         this.#pendingFunctionCalls.delete(ev.callId);
         this.#updateState();
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.#session.on('function_call_failed', (ev: any) => {
         this.#pendingFunctionCalls.delete(ev.callId);
         this.#updateState();
@@ -481,7 +470,7 @@ export class MultimodalAgent extends EventEmitter {
 
   #getLocalTrackSid(): string | null {
     if (!this.#localTrackSid && this.room && this.room.localParticipant) {
-      this.#localTrackSid = findMicroTrackId(this.room, this.room.localParticipant!.identity!);
+      this.#localTrackSid = findMicrophoneTrackId(this.room, this.room.localParticipant!.identity!);
     }
     return this.#localTrackSid;
   }

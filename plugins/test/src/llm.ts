@@ -5,23 +5,23 @@ import { initializeLogger, llm as llmlib } from '@livekit/agents';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-const fncCtx: llmlib.FunctionContext = {
-  getWeather: {
+const toolCtx: llmlib.ToolContext = {
+  getWeather: llmlib.tool({
     description: 'Get the current weather in a given location',
     parameters: z.object({
       location: z.string().describe('The city and state, e.g. San Francisco, CA'),
       unit: z.enum(['celsius', 'fahrenheit']).describe('The temperature unit to use'),
     }),
     execute: async () => {},
-  },
-  playMusic: {
+  }),
+  playMusic: llmlib.tool({
     description: 'Play music',
     parameters: z.object({
       name: z.string().describe('The artist and name of the song'),
     }),
     execute: async () => {},
-  },
-  toggleLight: {
+  }),
+  toggleLight: llmlib.tool({
     description: 'Turn on/off the lights in a room',
     parameters: z.object({
       name: z.string().describe('The room to control'),
@@ -30,8 +30,8 @@ const fncCtx: llmlib.FunctionContext = {
     execute: async () => {
       await new Promise((resolve) => setTimeout(resolve, 60_000));
     },
-  },
-  selectCurrencies: {
+  }),
+  selectCurrencies: llmlib.tool({
     description: 'Currencies of a specific area',
     parameters: z.object({
       currencies: z
@@ -39,8 +39,8 @@ const fncCtx: llmlib.FunctionContext = {
         .describe('The currencies to select'),
     }),
     execute: async () => {},
-  },
-  updateUserInfo: {
+  }),
+  updateUserInfo: llmlib.tool({
     description: 'Update user info',
     parameters: z.object({
       email: z.string().optional().describe("User's email address"),
@@ -48,98 +48,89 @@ const fncCtx: llmlib.FunctionContext = {
       address: z.string().optional().describe("User's home address"),
     }),
     execute: async () => {},
-  },
-  simulateFailure: {
+  }),
+  simulateFailure: llmlib.tool({
     description: 'Simulate a failure',
     parameters: z.object({}),
     execute: async () => {
       throw new Error('Simulated failure');
     },
-  },
+  }),
 };
 
 export const llm = async (llm: llmlib.LLM) => {
   initializeLogger({ pretty: false });
   describe('LLM', async () => {
     it('should properly respond to chat', async () => {
-      const chatCtx = new llmlib.ChatContext().append({
-        text: 'You are an assistant at a drive-thru restaurant "Live-Burger". Ask the customer what they would like to order.',
-        role: llmlib.ChatRole.SYSTEM,
+      const chatCtx = new llmlib.ChatContext();
+      chatCtx.addMessage({
+        role: 'system',
+        content:
+          'You are an assistant at a drive-thru restaurant "Live-Burger". Ask the customer what they would like to order.',
       });
 
       const stream = llm.chat({ chatCtx });
       let text = '';
       for await (const chunk of stream) {
-        if (!chunk.choices.length) continue;
-        text += chunk.choices[0]?.delta.content;
+        if (!chunk.delta) continue;
+        text += chunk.delta.content;
       }
 
       expect(text.length).toBeGreaterThan(0);
     });
     describe('function calling', async () => {
       it('should handle function calling', async () => {
-        const stream = await requestFncCall(
+        const calls = await requestFncCall(
           llm,
           "What's the weather in San Francisco and what's the weather in Paris?",
-          fncCtx,
+          toolCtx,
         );
-        const calls = stream.executeFunctions();
-        await Promise.all(calls.map((call) => call.task));
-        stream.close();
 
         expect(calls.length).toStrictEqual(2);
       });
       it('should handle exceptions', async () => {
-        const stream = await requestFncCall(llm, 'Call the failing function', fncCtx);
-        const calls = stream.executeFunctions();
-        stream.close();
+        const calls = await requestFncCall(llm, 'Call the failing function', toolCtx);
+        const results = await executeCalls(calls);
 
         expect(calls.length).toStrictEqual(1);
-        const task = await calls[0]!.task!;
-        expect(task.error).toBeInstanceOf(Error);
-        expect(task.error.message).toStrictEqual('Simulated failure');
+        expect(results[0]!.isError).toBe(true);
+        expect(results[0]!.output).toContain('Simulated failure');
       });
       it('should handle arrays', async () => {
-        const stream = await requestFncCall(
+        const calls = await requestFncCall(
           llm,
           'Can you select all currencies in Europe at once from given choices?',
-          fncCtx,
+          toolCtx,
           0.2,
         );
-        const calls = stream.executeFunctions();
-        stream.close();
 
         expect(calls.length).toStrictEqual(1);
-        expect(calls[0]!.params.currencies.length).toStrictEqual(3);
-        expect(calls[0]!.params.currencies).toContain('EUR');
-        expect(calls[0]!.params.currencies).toContain('GBP');
-        expect(calls[0]!.params.currencies).toContain('SEK');
+        expect(JSON.parse(calls[0]!.args).currencies.length).toStrictEqual(3);
+        expect(JSON.parse(calls[0]!.args).currencies).toContain('EUR');
+        expect(JSON.parse(calls[0]!.args).currencies).toContain('GBP');
+        expect(JSON.parse(calls[0]!.args).currencies).toContain('SEK');
       });
       it('should handle enums', async () => {
-        const stream = await requestFncCall(
+        const calls = await requestFncCall(
           llm,
           "What's the weather in San Francisco, in Celsius?",
-          fncCtx,
+          toolCtx,
         );
-        const calls = stream.executeFunctions();
-        stream.close();
 
         expect(calls.length).toStrictEqual(1);
-        expect(calls[0]!.params.unit).toStrictEqual('celsius');
+        expect(JSON.parse(calls[0]!.args).unit).toStrictEqual('celsius');
       });
       it('should handle optional arguments', async () => {
-        const stream = await requestFncCall(
+        const calls = await requestFncCall(
           llm,
           'Use a tool call to update the user info to name Theo',
-          fncCtx,
+          toolCtx,
         );
-        const calls = stream.executeFunctions();
-        stream.close();
 
         expect(calls.length).toStrictEqual(1);
-        expect(calls[0]!.params.name).toStrictEqual('Theo');
-        expect(calls[0]!.params.email).toBeUndefined();
-        expect(calls[0]!.params.address).toBeUndefined();
+        expect(JSON.parse(calls[0]!.args).name).toStrictEqual('Theo');
+        expect(JSON.parse(calls[0]!.args).email).toBeUndefined();
+        expect(JSON.parse(calls[0]!.args).address).toBeUndefined();
       });
     });
   });
@@ -148,24 +139,52 @@ export const llm = async (llm: llmlib.LLM) => {
 const requestFncCall = async (
   llm: llmlib.LLM,
   text: string,
-  fncCtx: llmlib.FunctionContext,
+  toolCtx: llmlib.ToolContext,
   temperature: number | undefined = undefined,
   parallelToolCalls: boolean | undefined = undefined,
 ) => {
   const stream = llm.chat({
-    chatCtx: new llmlib.ChatContext()
-      .append({
-        text: 'You are an helpful assistant. Follow the instructions provided by the user. You can use multiple tool calls at once.',
-        role: llmlib.ChatRole.SYSTEM,
-      })
-      .append({ text, role: llmlib.ChatRole.USER }),
-    fncCtx,
+    chatCtx: new llmlib.ChatContext([
+      new llmlib.ChatMessage({
+        role: 'system',
+        content:
+          'You are an helpful assistant. Follow the instructions provided by the user. You can use multiple tool calls at once.',
+      }),
+      new llmlib.ChatMessage({
+        role: 'user',
+        content: text,
+      }),
+    ]),
+    toolCtx,
     temperature,
     parallelToolCalls,
   });
 
-  for await (const _ of stream) {
-    _;
+  const calls: llmlib.FunctionCall[] = [];
+
+  for await (const chunk of stream) {
+    if (chunk.delta?.toolCalls) {
+      calls.push(...chunk.delta.toolCalls);
+    }
   }
-  return stream;
+
+  stream.close();
+  return calls;
+};
+
+const executeCalls = async (calls: llmlib.FunctionCall[]) => {
+  const results: llmlib.FunctionCallOutput[] = [];
+
+  for (const call of calls) {
+    const tool = toolCtx[call.name];
+    if (!tool) {
+      throw new Error(`Tool ${call.name} not found`);
+    }
+
+    // execute function
+    const result = await llmlib.executeToolCall(call, toolCtx);
+    results.push(result);
+  }
+
+  return results;
 };

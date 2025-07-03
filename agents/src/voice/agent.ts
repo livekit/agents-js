@@ -7,15 +7,22 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
-import type { ChatChunk, ChatMessage, LLM } from '../llm/index.js';
-import { ChatContext } from '../llm/index.js';
-import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
+import type { ChatMessage } from '../llm/index.js';
+import {
+  type ChatChunk,
+  ChatContext,
+  type LLM,
+  type ToolChoice,
+  type ToolContext,
+} from '../llm/index.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
+import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
+import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 
 export class StopResponse extends Error {
   constructor() {
@@ -24,49 +31,101 @@ export class StopResponse extends Error {
   }
 }
 
-export class Agent {
-  private _instructions: string;
-  private tools: any; // TODO(shubhra): add type
-  private turnDetection: any; // TODO(shubhra): add type
-  private stt: STT | undefined;
-  private vad: VAD | undefined;
-  private llm: LLM | any;
-  private tts: TTS | undefined;
+export interface ModelSettings {
+  /* The tool choice to use when calling the LLM. */
+  toolChoice?: ToolChoice;
+}
+
+export interface AgentOptions<UserData> {
+  instructions: string;
+  chatCtx?: ChatContext;
+  tools?: ToolContext<UserData>;
+  turnDetection?: TurnDetectionMode;
+  stt?: STT;
+  vad?: VAD;
+  llm?: LLM; // TODO: support realtime model
+  tts?: TTS;
+  mcpServers?: any[]; // TODO: support MCP servers
+  allowInterruptions?: boolean;
+  minConsecutiveSpeechDelay?: number;
+}
+
+export class Agent<UserData = any> {
+  private turnDetection?: TurnDetectionMode;
+  private _stt?: STT;
+  private _vad?: VAD;
+  private _llm?: LLM;
+  private _tts?: TTS;
 
   /** @internal */
-  agentActivity?: AgentActivity;
+  _agentActivity?: AgentActivity;
+
   /** @internal */
   _chatCtx: ChatContext;
 
-  constructor(
-    instructions: string,
-    chatCtx?: ChatContext,
-    tools?: any, // TODO(shubhra): add type
-    turnDetection?: any, // TODO(shubhra): add type
-    stt?: STT,
-    vad?: VAD,
-    llm?: LLM | any,
-    tts?: TTS,
-    allowInterruptions?: boolean,
-  ) {
+  /** @internal */
+  _instructions: string;
+
+  /** @internal */
+  _tools?: ToolContext<UserData>;
+
+  constructor({
+    instructions,
+    chatCtx,
+    tools,
+    turnDetection,
+    stt,
+    vad,
+    llm,
+    tts,
+  }: AgentOptions<UserData>) {
     this._instructions = instructions;
-    // TODO(AJS-42): copy tools when provided
-    this._chatCtx = chatCtx || new ChatContext();
-    this.tools = tools;
+    this._tools = { ...tools };
+    this._chatCtx = chatCtx
+      ? chatCtx.copy({
+          toolCtx: this._tools,
+        })
+      : ChatContext.empty();
+
     this.turnDetection = turnDetection;
-    this.stt = stt;
-    this.vad = vad;
-    this.llm = llm;
-    this.tts = tts;
-    this.agentActivity = undefined; // TODO(shubhra): add type
+    this._stt = stt;
+    this._vad = vad;
+    this._llm = llm;
+    this._tts = tts;
+    this._agentActivity = undefined;
+  }
+
+  get vad(): VAD | undefined {
+    return this._vad;
+  }
+
+  get stt(): STT | undefined {
+    return this._stt;
+  }
+
+  get llm(): LLM | undefined {
+    return this._llm;
+  }
+
+  get tts(): TTS | undefined {
+    return this._tts;
   }
 
   get chatCtx(): ChatContext {
+    // TODO(brian): make it readonly
     return this._chatCtx;
   }
 
   get instructions(): string {
     return this._instructions;
+  }
+
+  get toolCtx(): ToolContext<UserData> {
+    return { ...this._tools };
+  }
+
+  get session(): AgentSession<UserData> {
+    return this.getActivityOrThrow().agentSession as AgentSession<UserData>;
   }
 
   async onEnter(): Promise<void> {}
@@ -75,7 +134,7 @@ export class Agent {
 
   async transcriptionNode(
     text: ReadableStream<string>,
-    modelSettings: any, // TODO(shubhra): add type
+    modelSettings: ModelSettings,
   ): Promise<ReadableStream<string> | null> {
     return Agent.default.transcriptionNode(this, text, modelSettings);
   }
@@ -84,21 +143,22 @@ export class Agent {
 
   async sttNode(
     audio: ReadableStream<AudioFrame>,
-    modelSettings: any, // TODO(AJS-59): add type
+    modelSettings: ModelSettings,
   ): Promise<ReadableStream<SpeechEvent | string> | null> {
     return Agent.default.sttNode(this, audio, modelSettings);
   }
 
   async llmNode(
     chatCtx: ChatContext,
-    modelSettings: any, // TODO(AJS-59): add type
+    toolCtx: ToolContext,
+    modelSettings: ModelSettings,
   ): Promise<ReadableStream<ChatChunk | string> | null> {
-    return Agent.default.llmNode(this, chatCtx, modelSettings);
+    return Agent.default.llmNode(this, chatCtx, toolCtx, modelSettings);
   }
 
   async ttsNode(
     text: ReadableStream<string>,
-    modelSettings: any, // TODO(AJS-59): add type
+    modelSettings: ModelSettings,
   ): Promise<ReadableStream<AudioFrame> | null> {
     return Agent.default.ttsNode(this, text, modelSettings);
   }
@@ -106,17 +166,26 @@ export class Agent {
   // realtime_audio_output_node
 
   getActivityOrThrow(): AgentActivity {
-    if (!this.agentActivity) {
+    if (!this._agentActivity) {
       throw new Error('Agent activity not found');
     }
-    return this.agentActivity;
+    return this._agentActivity;
+  }
+
+  async updateChatCtx(chatCtx: ChatContext): Promise<void> {
+    if (!this._agentActivity) {
+      this._chatCtx = chatCtx.copy({ toolCtx: this.toolCtx });
+      return;
+    }
+
+    this._agentActivity.updateChatCtx(chatCtx);
   }
 
   static default = {
     async sttNode(
       agent: Agent,
       audio: ReadableStream<AudioFrame>,
-      modelSettings: any, // TODO(AJS-59): add type
+      _modelSettings: ModelSettings,
     ): Promise<ReadableStream<SpeechEvent | string> | null> {
       const activity = agent.getActivityOrThrow();
 
@@ -141,16 +210,22 @@ export class Agent {
           }
           controller.close();
         },
+        cancel() {
+          stream.detachInputStream();
+          stream.close();
+        },
       });
     },
 
     async llmNode(
       agent: Agent,
       chatCtx: ChatContext,
-      modelSettings: any, // TODO(AJS-59): add type
+      toolCtx: ToolContext,
+      _modelSettings: ModelSettings,
     ): Promise<ReadableStream<ChatChunk | string> | null> {
       const activity = agent.getActivityOrThrow();
-      const stream = activity.llm.chat({ chatCtx });
+      // TODO(brian): make parallelToolCalls configurable
+      const stream = activity.llm.chat({ chatCtx, toolCtx, parallelToolCalls: true });
       return new ReadableStream({
         async start(controller) {
           for await (const chunk of stream) {
@@ -158,13 +233,16 @@ export class Agent {
           }
           controller.close();
         },
+        cancel() {
+          stream.close();
+        },
       });
     },
 
     async ttsNode(
       agent: Agent,
       text: ReadableStream<string>,
-      modelSettings: any, // TODO(AJS-59): add type
+      _modelSettings: ModelSettings,
     ): Promise<ReadableStream<AudioFrame> | null> {
       const activity = agent.getActivityOrThrow();
       let wrapped_tts = activity.tts;
@@ -180,11 +258,14 @@ export class Agent {
         async start(controller) {
           for await (const chunk of stream) {
             if (chunk === SynthesizeStream.END_OF_STREAM) {
-              controller.close();
               break;
             }
             controller.enqueue(chunk.frame);
           }
+          controller.close();
+        },
+        cancel() {
+          stream.close();
         },
       });
     },
@@ -192,9 +273,13 @@ export class Agent {
     async transcriptionNode(
       agent: Agent,
       text: ReadableStream<string>,
-      modelSettings: any, // TODO(shubhra): add type
+      _modelSettings: ModelSettings,
     ): Promise<ReadableStream<string> | null> {
       return text;
     },
   };
+}
+
+export function createAgent<UserData = any>(options: AgentOptions<UserData>): Agent<UserData> {
+  return new Agent(options);
 }

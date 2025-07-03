@@ -1,5 +1,19 @@
 # @livekit/agents
 
+## 0.7.6
+
+### Patch Changes
+
+- fix memory leak when job completed - [#418](https://github.com/livekit/agents-js/pull/418) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+## 0.7.5
+
+### Patch Changes
+
+- cleanup resources with onnx runtime - [#377](https://github.com/livekit/agents-js/pull/377) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- upgrade livekit rtc version - [#384](https://github.com/livekit/agents-js/pull/384) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
 ## 0.7.4
 
 ### Patch Changes
