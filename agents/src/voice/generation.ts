@@ -24,7 +24,7 @@ import { toError } from '../llm/utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task } from '../utils.js';
-import type { Agent, ModelSettings } from './agent.js';
+import { type Agent, type ModelSettings, isStopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
 import { RunContext } from './run_context.js';
@@ -144,7 +144,11 @@ export class _JsOutput {
       });
     }
 
-    // TODO(AJS-116): support OpenAI stop response
+    if (isStopResponse(this.exception)) {
+      return _SanitizedOutput.create({
+        toolCall: { ...this.toolCall },
+      });
+    }
 
     if (this.exception !== undefined) {
       return _SanitizedOutput.create({
