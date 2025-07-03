@@ -11,6 +11,14 @@ import { log } from './log.js';
 /** Union of a single and a list of {@link AudioFrame}s */
 export type AudioBuffer = AudioFrame[] | AudioFrame;
 
+export const noop = () => {};
+
+export const isPending = async (promise: Promise<any>): Promise<boolean> => {
+  const sentinel = Symbol('sentinel');
+  const result = await Promise.race([promise, Promise.resolve(sentinel)]);
+  return result === sentinel;
+};
+
 /**
  * Merge one or more {@link AudioFrame}s into a single one.
  *
@@ -117,6 +125,48 @@ export class Future<T = void> {
   reject(error: Error) {
     this.#done = true;
     this.#rejectPromise(error);
+  }
+}
+
+/** @internal */
+export class Event {
+  #isSet = false;
+  #waiters: Array<() => void> = [];
+
+  async wait() {
+    if (this.#isSet) return true;
+
+    let resolve: () => void = noop;
+    const waiter = new Promise<void>((r) => {
+      resolve = r;
+      this.#waiters.push(resolve);
+    });
+
+    try {
+      await waiter;
+      return true;
+    } finally {
+      const index = this.#waiters.indexOf(resolve);
+      if (index !== -1) {
+        this.#waiters.splice(index, 1);
+      }
+    }
+  }
+
+  get isSet(): boolean {
+    return this.#isSet;
+  }
+
+  set(): void {
+    if (this.#isSet) return;
+
+    this.#isSet = true;
+    this.#waiters.forEach((resolve) => resolve());
+    this.#waiters = [];
+  }
+
+  clear(): void {
+    this.#isSet = false;
   }
 }
 
