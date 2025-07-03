@@ -7,82 +7,65 @@ import {
   WorkerOptions,
   cli,
   defineAgent,
+  llm,
   voice,
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
+import type { ChatContext, ChatMessage } from 'agents/dist/llm/chat_context.js';
 import { fileURLToPath } from 'node:url';
+
+class MyAgent extends voice.Agent {
+  async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage) {
+    if (newMessage.textContent === undefined) {
+      console.log('ignore empty user turn');
+      throw new llm.StopResponse();
+    }
+  }
+}
 
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    const agent = new voice.Agent({
-      instructions:
-        "You are a helpful assistant, you can hear the user's message and respond to it.",
-    });
-
-    const vad = ctx.proc.userData.vad! as silero.VAD;
+    await ctx.connect();
 
     const session = new voice.AgentSession({
-      vad,
+      vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new deepgram.STT(),
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
       turnDetection: 'manual',
     });
 
-    if (!ctx.room.localParticipant) {
-      throw new Error('Local participant not found');
-    }
-
-    const startTurn = (callerIdentity: string) => {
-      // session.interrupt();
-      session.clearUserTurn();
-      // session.input.setAudioEnabled(true);
-      console.log('start turn', callerIdentity);
-    };
-
-    const endTurn = (callerIdentity: string) => {
-      // session.input.setAudioEnabled(false);
-      session.commitUserTurn();
-      console.log('end turn', callerIdentity);
-    };
-
-    const cancelTurn = (callerIdentity: string) => {
-      // session.input.setAudioEnabled(false);
-      session.clearUserTurn();
-      console.log('cancel turn', callerIdentity);
-    };
-
-    ctx.room.localParticipant.registerRpcMethod(
-      'turn-toggle',
-      async ({ callerIdentity, payload }) => {
-        if (payload !== 'start' && payload !== 'end' && payload !== 'cancel') {
-          throw new Error('Invalid payload');
-        }
-
-        if (payload === 'start') {
-          startTurn(callerIdentity);
-        } else if (payload === 'end') {
-          endTurn(callerIdentity);
-        } else if (payload === 'cancel') {
-          cancelTurn(callerIdentity);
-        }
-
-        return 'ok';
-      },
-    );
+    const agent = new MyAgent({
+      instructions:
+        "You are a helpful assistant, you can hear the user's message and respond to it.",
+    });
 
     await session.start({
       agent,
       room: ctx.room,
     });
 
-    await ctx.connect();
+    ctx.room.localParticipant?.registerRpcMethod('start_turn', async () => {
+      session.interrupt();
+      session.clearUserTurn();
+      return 'ok';
+    });
+
+    ctx.room.localParticipant?.registerRpcMethod('end_turn', async () => {
+      session.commitUserTurn();
+      return 'ok';
+    });
+
+    ctx.room.localParticipant?.registerRpcMethod('cancel_turn', async () => {
+      session.clearUserTurn();
+      return 'ok';
+    });
   },
 });
 
