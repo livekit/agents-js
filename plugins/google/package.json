@@ -6,13 +6,10 @@
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",
   "exports": {
-    "import": {
+    ".": {
       "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    },
-    "require": {
-      "types": "./dist/index.d.cts",
-      "default": "./dist/index.cjs"
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     }
   },
   "author": "LiveKit",
@@ -25,8 +22,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup --onSuccess \"pnpm build:types\"",
-    "build:types": "tsc --declaration --emitDeclarationOnly && node ../../scripts/copyDeclarationOutput.js",
+    "build": "tsup --onSuccess \"tsc --declaration --emitDeclarationOnly\"",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.{ts,js}\"",
