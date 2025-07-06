@@ -3,6 +3,7 @@ import type * as protos from '@google-cloud/speech/build/protos/protos.js';
 import { type AudioBuffer, AudioByteStream, AudioEnergyFilter, log, stt } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import {
+  AudioEncoding,
   type GoogleCredentials,
   type LanguageCode,
   type LanguageType,
@@ -182,7 +183,7 @@ export class STT extends stt.STT {
       config.languages = [config.languages];
     } else if (!config.detectLanguage && config.languages.length > 1) {
       this.#logger.warn('Multiple languages provided, but language detection is disabled');
-      config.languages = [config.languages[0]];
+      config.languages = [(config.languages as [string])[0]];
     }
 
     return config;
@@ -526,9 +527,9 @@ export class SpeechStream extends stt.SpeechStream {
       if (!result.alternatives || result.alternatives.length === 0) {
         continue;
       }
-      text += result.alternatives[0].transcript || '';
-      confidence += result.alternatives[0].confidence || 0;
-      language = result.languageCode || language;
+      text += result?.alternatives?.[0]?.transcript || '';
+      confidence += result?.alternatives?.[0]?.confidence || 0;
+      language = result?.languageCode || language;
     }
 
     confidence /= response.results.length;
