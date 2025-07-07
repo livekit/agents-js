@@ -4,13 +4,13 @@
 import { delay } from '@std/async';
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../src/log.js';
-import { TASK_TIMEOUT_ERROR, Task, TaskResult } from '../src/utils.js';
+import { Event, TASK_TIMEOUT_ERROR, Task, TaskResult, isPending } from '../src/utils.js';
 
-describe('AbortableTask', () => {
+describe('utils', () => {
   // initialize logger
   initializeLogger({ pretty: true, level: 'debug' });
 
-  describe('AbortableTask.from', () => {
+  describe('Task', () => {
     it('should execute task successfully and return result', async () => {
       const expectedResult = 'task completed';
       const task = Task.from(async () => {
@@ -466,6 +466,76 @@ describe('AbortableTask', () => {
         expect((error as Error).message).toBe('Custom error');
         expect((error as Error).name).toBe('TypeError');
       }
+    });
+  });
+
+  describe('Event', () => {
+    it('wait resolves immediately when the event is already set', async () => {
+      const event = new Event();
+      event.set();
+
+      const result = await event.wait();
+      expect(result).toBe(true);
+    });
+
+    it('wait resolves after set is called', async () => {
+      // check promise is pending
+      const event = new Event();
+      const waiterPromise = event.wait();
+
+      await delay(10);
+      expect(await isPending(waiterPromise)).toBe(true);
+
+      // check promise is resolved after set is called
+      event.set();
+      const result = await waiterPromise;
+      expect(result).toBe(true);
+    });
+
+    it('all waiters resolve once set is called', async () => {
+      const event = new Event();
+      const waiters = [event.wait(), event.wait(), event.wait()];
+
+      await delay(10);
+      const pendings = await Promise.all(waiters.map((w) => isPending(w)));
+      expect(pendings).toEqual([true, true, true]);
+
+      event.set();
+      const results = await Promise.all(waiters);
+      expect(results).toEqual([true, true, true]);
+    });
+
+    it('wait after 2 seconds is still pending before set', async () => {
+      const event = new Event();
+      const waiter = event.wait();
+
+      await delay(2000);
+      expect(await isPending(waiter)).toBe(true);
+
+      event.set();
+      const result = await waiter;
+      expect(result).toBe(true);
+    });
+
+    it('wait after set and clear should be pending', async () => {
+      const event = new Event();
+      const waiterBeforeSet = event.wait();
+      event.set();
+      event.clear();
+
+      const waiterAfterSet = event.wait();
+
+      const result = await Promise.race([
+        waiterBeforeSet.then(() => 'before'),
+        waiterAfterSet.then(() => 'after'),
+      ]);
+
+      expect(result).toBe('before');
+      expect(await isPending(waiterBeforeSet)).toBe(false);
+      expect(await isPending(waiterAfterSet)).toBe(true);
+
+      event.set();
+      expect(await waiterAfterSet).toBe(true);
     });
   });
 });
