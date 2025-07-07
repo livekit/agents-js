@@ -48,10 +48,8 @@ export default defineAgent({
       parameters: z.object({
         location: z.string().describe('The location to get the weather for'),
       }),
-      execute: async ({ location }) => {
-        // if (Math.random() < 0.5) {
-        //   throw new llm.ToolError('Internal server error, please try again later.');
-        // }
+      execute: async ({ location }, { ctx }) => {
+        ctx.session.say('Checking the weather, please wait a moment haha...');
         return `The weather in ${location} is sunny today.`;
       },
     });
@@ -136,7 +134,9 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT(),
+      stt: new deepgram.STT({
+        sampleRate: 24000,
+      }),
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
       userData: { number: 0 },
