@@ -24,6 +24,7 @@ export interface LLMOptions {
   user?: string;
   temperature?: number;
   client?: OpenAI;
+  toolChoice?: llm.ToolChoice;
 }
 
 const defaultLLMOptions: LLMOptions = {
@@ -415,17 +416,20 @@ export class LLM extends llm.LLM {
   chat({
     chatCtx,
     toolCtx,
+    toolChoice,
     temperature,
     n,
     parallelToolCalls,
   }: {
     chatCtx: llm.ChatContext;
     toolCtx?: llm.ToolContext | undefined;
+    toolChoice?: llm.ToolChoice;
     temperature?: number | undefined;
     n?: number | undefined;
     parallelToolCalls?: boolean | undefined;
   }): LLMStream {
     temperature = temperature || this.#opts.temperature;
+    toolChoice = toolChoice || this.#opts.toolChoice;
 
     return new LLMStream(
       this,
@@ -436,6 +440,7 @@ export class LLM extends llm.LLM {
       parallelToolCalls,
       temperature,
       n,
+      toolChoice,
     );
   }
 }
@@ -460,13 +465,20 @@ export class LLMStream extends llm.LLMStream {
     parallelToolCalls?: boolean,
     temperature?: number,
     n?: number,
+    toolChoice?: llm.ToolChoice,
   ) {
     super(llm, chatCtx, toolCtx);
     this.#client = client;
-    this.#run(opts, n, parallelToolCalls, temperature);
+    this.#run(opts, n, parallelToolCalls, temperature, toolChoice);
   }
 
-  async #run(opts: LLMOptions, n?: number, parallelToolCalls?: boolean, temperature?: number) {
+  async #run(
+    opts: LLMOptions,
+    n?: number,
+    parallelToolCalls?: boolean,
+    temperature?: number,
+    toolChoice?: llm.ToolChoice,
+  ) {
     const tools = this.toolCtx
       ? Object.entries(this.toolCtx).map(([name, func]) => ({
           type: 'function' as const,
@@ -493,6 +505,7 @@ export class LLMStream extends llm.LLMStream {
         messages,
         tools,
         parallel_tool_calls: this.toolCtx && parallelToolCalls,
+        tool_choice: toolChoice,
       });
 
       for await (const chunk of stream) {

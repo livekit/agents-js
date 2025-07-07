@@ -224,11 +224,18 @@ export class Agent<UserData = any> {
       agent: Agent,
       chatCtx: ChatContext,
       toolCtx: ToolContext,
-      _modelSettings: ModelSettings,
+      modelSettings: ModelSettings,
     ): Promise<ReadableStream<ChatChunk | string> | null> {
       const activity = agent.getActivityOrThrow();
       // TODO(brian): make parallelToolCalls configurable
-      const stream = activity.llm.chat({ chatCtx, toolCtx, parallelToolCalls: true });
+      const { toolChoice } = modelSettings;
+
+      const stream = activity.llm.chat({
+        chatCtx,
+        toolCtx,
+        toolChoice,
+        parallelToolCalls: true,
+      });
       return new ReadableStream({
         async start(controller) {
           for await (const chunk of stream) {

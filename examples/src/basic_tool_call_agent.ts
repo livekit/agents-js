@@ -62,7 +62,11 @@ export default defineAgent({
         room: roomNameSchema.describe('The room to turn the light in'),
         switchTo: z.enum(['on', 'off']).describe('The state to turn the light to'),
       }),
-      execute: async ({ room, switchTo }) => {
+      execute: async ({ room, switchTo }, { ctx }) => {
+        ctx.session.generateReply({
+          userInput: 'Tell user that are turning on the light, wait a moment',
+        });
+
         return `The light in the ${room} is now ${switchTo}.`;
       },
     });
@@ -132,7 +136,9 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT(),
+      stt: new deepgram.STT({
+        sampleRate: 24000,
+      }),
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
       userData: { number: 0 },

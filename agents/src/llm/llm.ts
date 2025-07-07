@@ -7,7 +7,7 @@ import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import { AsyncIterableQueue } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
-import type { ToolContext } from './tool_context.js';
+import type { ToolChoice, ToolContext } from './tool_context.js';
 
 export interface ChoiceDelta {
   role: ChatRole;
@@ -42,12 +42,14 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
   abstract chat({
     chatCtx,
     toolCtx,
+    toolChoice,
     temperature,
     n,
     parallelToolCalls,
   }: {
     chatCtx: ChatContext;
     toolCtx?: ToolContext;
+    toolChoice?: ToolChoice;
     temperature?: number;
     n?: number;
     parallelToolCalls?: boolean;

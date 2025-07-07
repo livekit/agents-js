@@ -61,8 +61,14 @@ export class AgentActivity implements RecognitionHooks {
     this.agent = agent;
     this.agentSession = agentSession;
 
-    // relies on JavaScript's built-in lexicographic array comparison behavior, which checks elements of the array one by one
-    this.speechQueue = new Heap<[number, number, SpeechHandle]>(Heap.maxComparator);
+    /**
+     * Custom comparator to prioritize speech handles with higher priority
+     * - Prefer higher priority
+     * - Prefer earlier timestamp (so calling a sequence of generateReply() will execute in FIFO order)
+     */
+    this.speechQueue = new Heap<[number, number, SpeechHandle]>(([p1, t1, _], [p2, t2, __]) => {
+      return p1 === p2 ? t1 - t2 : p2 - p1;
+    });
     this.q_updated = new Future();
   }
 
