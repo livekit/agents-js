@@ -24,11 +24,21 @@ import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 
+export const STOP_RESPONSE_SYMBOL = Symbol('StopResponse');
+
 export class StopResponse extends Error {
   constructor() {
     super();
     this.name = 'StopResponse';
+
+    Object.defineProperty(this, STOP_RESPONSE_SYMBOL, {
+      value: true,
+    });
   }
+}
+
+export function isStopResponse(value: any): value is StopResponse {
+  return value !== undefined && value !== null && value[STOP_RESPONSE_SYMBOL] === true;
 }
 
 export interface ModelSettings {
