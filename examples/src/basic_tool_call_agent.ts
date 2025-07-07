@@ -136,9 +136,7 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT({
-        sampleRate: 24000,
-      }),
+      stt: new deepgram.STT(),
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
       userData: { number: 0 },
