@@ -64,7 +64,7 @@ export default defineAgent({
       }),
       execute: async ({ room, switchTo }, { ctx }) => {
         ctx.session.generateReply({
-          userInput: 'Tell user that are turning on the light, wait a moment',
+          userInput: 'Tell user that you are turning on the light, wait a moment',
         });
 
         return `The light in the ${room} is now ${switchTo}.`;
