@@ -37,6 +37,8 @@ export {
   type LLMCallbacks,
 } from './llm.js';
 
+export { RealtimeModel, RealtimeSession, type RealtimeCapabilities } from './realtime.js';
+
 export {
   createToolOptions,
   executeToolCall,
