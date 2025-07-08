@@ -76,7 +76,6 @@ export class EOURunner extends InferenceRunner {
 export class EOUModel {
   #executor: ipc.InferenceExecutor;
   #unlikelyThreshold: number;
-  #logger = log();
 
   constructor(unlikelyThreshold: number = 0.15) {
     this.#unlikelyThreshold = unlikelyThreshold;
