@@ -38,7 +38,6 @@ export interface RecognitionHooks {
 export interface _TurnDetector {
   unlikelyThreshold: (language?: string) => number | null;
   supportsLanguage: (language?: string) => boolean;
-
   predictEndOfTurn(chatCtx: ChatContext): Promise<number>;
 }
 
