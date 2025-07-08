@@ -89,8 +89,9 @@ export class EOUModel {
     return parts[0] === 'en' || parts[0] === 'english';
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   unlikelyThreshold(language?: string) {
-    // TODO(brian): add language support
+    // TODO(AJS-155): add language support
     return this.#unlikelyThreshold;
   }
 
@@ -121,7 +122,7 @@ export class EOUModel {
     }
     messages = messages.slice(-MAX_HISTORY_TURNS);
     const result = await this.#executor.doInference(EOURunner.INFERENCE_METHOD, messages);
-    return result as any;
+    return result as number;
   }
 }
 
