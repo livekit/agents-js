@@ -12,6 +12,7 @@ import {
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
+import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
@@ -140,6 +141,7 @@ export default defineAgent({
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
       userData: { number: 0 },
+      turnDetection: new livekit.turnDetector.EOUModel(),
     });
 
     await session.start({
