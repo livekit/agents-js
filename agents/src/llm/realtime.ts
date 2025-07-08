@@ -13,7 +13,7 @@ export interface RealtimeCapabilities {
 }
 
 export abstract class RealtimeModel {
-  protected _capabilities: RealtimeCapabilities;
+  private _capabilities: RealtimeCapabilities;
 
   constructor(capabilities: RealtimeCapabilities) {
     this._capabilities = capabilities;
@@ -29,7 +29,7 @@ export abstract class RealtimeModel {
 }
 
 export abstract class RealtimeSession {
-  protected _realtimeModel: RealtimeModel;
+  private _realtimeModel: RealtimeModel;
 
   constructor(realtimeModel: RealtimeModel) {
     this._realtimeModel = realtimeModel;
