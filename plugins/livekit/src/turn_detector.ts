@@ -121,7 +121,6 @@ export class EOUModel {
     }
     messages = messages.slice(-MAX_HISTORY_TURNS);
     const result = await this.#executor.doInference(EOURunner.INFERENCE_METHOD, messages);
-    this.#logger.debug({ result, message: messages.slice(-1)[0]?.content }, 'EOU Prediction');
     return result as any;
   }
 }
