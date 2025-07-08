@@ -20,7 +20,7 @@ import type { TTS } from '../tts/tts.js';
 import { Future, Task } from '../utils.js';
 import type { VAD, VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
-import { StopResponse } from './agent.js';
+import { StopResponse, asyncLocalStorage } from './agent.js';
 import { type AgentSession, AgentSessionEvent, type TurnDetectionMode } from './agent_session.js';
 import {
   AudioRecognition,
@@ -61,8 +61,14 @@ export class AgentActivity implements RecognitionHooks {
     this.agent = agent;
     this.agentSession = agentSession;
 
-    // relies on JavaScript's built-in lexicographic array comparison behavior, which checks elements of the array one by one
-    this.speechQueue = new Heap<[number, number, SpeechHandle]>(Heap.maxComparator);
+    /**
+     * Custom comparator to prioritize speech handles with higher priority
+     * - Prefer higher priority
+     * - Prefer earlier timestamp (so calling a sequence of generateReply() will execute in FIFO order)
+     */
+    this.speechQueue = new Heap<[number, number, SpeechHandle]>(([p1, t1, _], [p2, t2, __]) => {
+      return p1 === p2 ? t1 - t2 : p2 - p1;
+    });
     this.q_updated = new Future();
   }
 
@@ -367,6 +373,12 @@ export class AgentActivity implements RecognitionHooks {
 
     // TODO(AJS-32): Add realtime model support for generating a reply
 
+    let replyToolChoice = toolChoice;
+    const functionCall = asyncLocalStorage.getStore()?.functionCall;
+    if (toolChoice === undefined && functionCall !== undefined) {
+      replyToolChoice = 'none';
+    }
+
     const handle = SpeechHandle.create({
       allowInterruptions: allowInterruptions ?? this.allowInterruptions,
       stepIndex: 0,
@@ -379,7 +391,7 @@ export class AgentActivity implements RecognitionHooks {
         handle,
         chatCtx || this.agent.chatCtx,
         this.agent.toolCtx,
-        { toolChoice: toolChoice },
+        { toolChoice: replyToolChoice },
         instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
         userMessage,
       ),

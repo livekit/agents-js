@@ -6,8 +6,9 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { AudioFrame } from '@livekit/rtc-node';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
-import type { ChatMessage } from '../llm/index.js';
+import type { ChatMessage, FunctionCall } from '../llm/index.js';
 import {
   type ChatChunk,
   ChatContext,
@@ -24,6 +25,7 @@ import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 
+export const asyncLocalStorage = new AsyncLocalStorage<{ functionCall?: FunctionCall }>();
 export const STOP_RESPONSE_SYMBOL = Symbol('StopResponse');
 
 export class StopResponse extends Error {
@@ -231,11 +233,18 @@ export class Agent<UserData = any> {
       agent: Agent,
       chatCtx: ChatContext,
       toolCtx: ToolContext,
-      _modelSettings: ModelSettings,
+      modelSettings: ModelSettings,
     ): Promise<ReadableStream<ChatChunk | string> | null> {
       const activity = agent.getActivityOrThrow();
       // TODO(brian): make parallelToolCalls configurable
-      const stream = activity.llm.chat({ chatCtx, toolCtx, parallelToolCalls: true });
+      const { toolChoice } = modelSettings;
+
+      const stream = activity.llm.chat({
+        chatCtx,
+        toolCtx,
+        toolChoice,
+        parallelToolCalls: true,
+      });
       return new ReadableStream({
         async start(controller) {
           for await (const chunk of stream) {
