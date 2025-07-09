@@ -11,6 +11,7 @@ import {
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
+import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
@@ -29,9 +30,12 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT(),
+      stt: new deepgram.STT({
+        sampleRate: 24000,
+      }),
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
+      turnDetection: new livekit.turnDetector.EOUModel(),
     });
 
     await session.start({

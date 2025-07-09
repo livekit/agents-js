@@ -26,6 +26,7 @@ import {
   AudioRecognition,
   type EndOfTurnInfo,
   type RecognitionHooks,
+  type _TurnDetector,
 } from './audio_recognition.js';
 import {
   type _AudioOut,
@@ -43,6 +44,7 @@ export class AgentActivity implements RecognitionHooks {
   private static readonly REPLY_TASK_CANCEL_TIMEOUT = 5000;
   private started = false;
   private audioRecognition?: AudioRecognition;
+  private turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
   private logger = log();
   private _draining = false;
   private currentSpeech?: SpeechHandle;
@@ -70,6 +72,9 @@ export class AgentActivity implements RecognitionHooks {
       return p1 === p2 ? t1 - t2 : p2 - p1;
     });
     this.q_updated = new Future();
+
+    this.turnDetectionMode =
+      typeof this.turnDetection === 'string' ? this.turnDetection : undefined;
   }
 
   async start(): Promise<void> {
@@ -85,15 +90,15 @@ export class AgentActivity implements RecognitionHooks {
       this.logger.error('failed to update the instructions', error);
     }
 
-    this.audioRecognition = new AudioRecognition(
-      this,
-      this.vad,
-      this.agentSession.options.minEndpointingDelay,
-      this.agentSession.options.maxEndpointingDelay,
-      // Arrow function preserves the Agent context
-      (...args) => this.agent.sttNode(...args),
-      this.agentSession.turnDetection,
-    );
+    this.audioRecognition = new AudioRecognition({
+      recognitionHooks: this,
+      stt: (...args) => this.agent.sttNode(...args),
+      vad: this.vad,
+      turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
+      turnDetectionMode: this.turnDetectionMode,
+      minEndpointingDelay: this.agentSession.options.minEndpointingDelay,
+      maxEndpointingDelay: this.agentSession.options.maxEndpointingDelay,
+    });
     this.audioRecognition.start();
     this.started = true;
 

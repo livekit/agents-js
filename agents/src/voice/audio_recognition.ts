@@ -38,11 +38,29 @@ export interface RecognitionHooks {
 export interface _TurnDetector {
   unlikelyThreshold: (language?: string) => number | null;
   supportsLanguage: (language?: string) => boolean;
-
   predictEndOfTurn(chatCtx: ChatContext): Promise<number>;
 }
 
+export interface AudioRecognitionOptions {
+  recognitionHooks: RecognitionHooks;
+  stt?: STTNode;
+  vad?: VAD;
+  turnDetector?: _TurnDetector;
+  turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
+  minEndpointingDelay: number;
+  maxEndpointingDelay: number;
+}
+
 export class AudioRecognition {
+  private hooks: RecognitionHooks;
+  private stt?: STTNode;
+  private vad?: VAD;
+  private turnDetector?: _TurnDetector;
+  private turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
+  private minEndpointingDelay: number;
+  private maxEndpointingDelay: number;
+  private lastLanguage?: string;
+
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
   private lastFinalTranscriptTime = 0;
@@ -64,16 +82,16 @@ export class AudioRecognition {
   private vadTask?: Task<void>;
   private sttTask?: Task<void>;
 
-  constructor(
-    private readonly hooks: RecognitionHooks,
-    private vad: VAD,
-    private readonly minEndpointingDelay: number,
-    private readonly maxEndpointingDelay: number,
-    private stt?: STTNode,
-    private turnDetectionMode?: TurnDetectionMode,
-    private turnDetector?: _TurnDetector,
-    private lastLanguage?: string,
-  ) {
+  constructor(opts: AudioRecognitionOptions) {
+    this.hooks = opts.recognitionHooks;
+    this.stt = opts.stt;
+    this.vad = opts.vad;
+    this.turnDetector = opts.turnDetector;
+    this.turnDetectionMode = opts.turnDetectionMode;
+    this.minEndpointingDelay = opts.minEndpointingDelay;
+    this.maxEndpointingDelay = opts.maxEndpointingDelay;
+    this.lastLanguage = undefined;
+
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
     this.vadInputStream = vadInputStream;
@@ -92,12 +110,12 @@ export class AudioRecognition {
   }
 
   async start() {
-    this.vadTask = Task.from(({ signal }) => this.createVadTask(signal));
+    this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
     this.vadTask.result.catch((err) => {
       this.logger.error(`Error running VAD task: ${err}`);
     });
 
-    this.sttTask = Task.from(({ signal }) => this.createSttTask(signal));
+    this.sttTask = Task.from(({ signal }) => this.createSttTask(this.stt, signal));
     this.sttTask.result.catch((err) => {
       this.logger.error(`Error running STT task: ${err}`);
     });
@@ -260,12 +278,12 @@ export class AudioRecognition {
       });
   }
 
-  private async createSttTask(signal: AbortSignal) {
-    if (!this.stt) return;
+  private async createSttTask(stt: STTNode | undefined, signal: AbortSignal) {
+    if (!stt) return;
 
     this.logger.debug('createSttTask: create stt stream from stt node');
 
-    const sttStream = await this.stt(this.sttInputStream, {});
+    const sttStream = await stt(this.sttInputStream, {});
 
     if (signal.aborted || sttStream === null) return;
 
@@ -313,8 +331,10 @@ export class AudioRecognition {
     }
   }
 
-  private async createVadTask(signal: AbortSignal) {
-    const vadStream = this.vad.stream();
+  private async createVadTask(vad: VAD | undefined, signal: AbortSignal) {
+    if (!vad) return;
+
+    const vadStream = vad.stream();
     vadStream.updateInputStream(this.vadInputStream);
 
     const abortHandler = () => {
@@ -375,7 +395,7 @@ export class AudioRecognition {
     this.userTurnCommitted = false;
 
     this.sttTask?.cancelAndWait().finally(() => {
-      this.sttTask = Task.from(({ signal }) => this.createSttTask(signal));
+      this.sttTask = Task.from(({ signal }) => this.createSttTask(this.stt, signal));
       this.sttTask.result.catch((err) => {
         this.logger.error(`Error running STT task: ${err}`);
       });
@@ -437,6 +457,6 @@ export class AudioRecognition {
   }
 
   private get vadBaseTurnDetection() {
-    return this.turnDetectionMode === undefined || this.turnDetectionMode === 'vad';
+    return ['vad', undefined].includes(this.turnDetectionMode);
   }
 }

@@ -8,7 +8,7 @@ import { CurrentJobContext, InferenceRunner, log } from '@livekit/agents';
 import { fileURLToPath } from 'node:url';
 import { InferenceSession, Tensor } from 'onnxruntime-node';
 
-const MAX_HISTORY = 4;
+const MAX_HISTORY_TURNS = 6;
 
 type RawChatContext = { role: string; content: string }[];
 
@@ -74,11 +74,11 @@ export class EOURunner extends InferenceRunner {
 }
 
 export class EOUModel {
-  readonly unlikelyThreshold: number;
   #executor: ipc.InferenceExecutor;
+  #unlikelyThreshold: number;
 
-  constructor(unlikelyThreshold = 0.15) {
-    this.unlikelyThreshold = unlikelyThreshold;
+  constructor(unlikelyThreshold: number = 0.15) {
+    this.#unlikelyThreshold = unlikelyThreshold;
     this.#executor = CurrentJobContext.getCurrent().inferenceExecutor;
   }
 
@@ -86,6 +86,12 @@ export class EOUModel {
     if (!language) return false;
     const parts = language.toLowerCase().split('-');
     return parts[0] === 'en' || parts[0] === 'english';
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  unlikelyThreshold(language?: string) {
+    // TODO(AJS-155): add language support
+    return this.#unlikelyThreshold;
   }
 
   async predictEndOfTurn(chatCtx: llm.ChatContext): Promise<number> {
@@ -113,9 +119,9 @@ export class EOUModel {
         }
       }
     }
-    messages = messages.slice(-MAX_HISTORY);
+    messages = messages.slice(-MAX_HISTORY_TURNS);
     const result = await this.#executor.doInference(EOURunner.INFERENCE_METHOD, messages);
-    return result as any;
+    return result as number;
   }
 }
 
