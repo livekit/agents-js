@@ -37,7 +37,16 @@ export {
   type LLMCallbacks,
 } from './llm.js';
 
-export { RealtimeModel, RealtimeSession, type RealtimeCapabilities } from './realtime.js';
+export {
+  RealtimeModel,
+  RealtimeSession,
+  type RealtimeCapabilities,
+  type InputSpeechStartedEvent,
+  type InputSpeechStoppedEvent,
+  type MessageGeneration,
+  type GenerationCreatedEvent,
+  type InputTranscriptionCompleted,
+} from './realtime.js';
 
 export {
   createToolOptions,

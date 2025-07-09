@@ -2,14 +2,39 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
-import type { ChatContext } from './chat_context.js';
+import { EventEmitter } from 'events';
+import type { ChatContext, FunctionCall } from './chat_context.js';
 import type { ToolContext } from './tool_context.js';
+
+export type InputSpeechStartedEvent = object;
+
+export interface InputSpeechStoppedEvent {
+  userTranscriptionEnabled: boolean;
+}
+
+export interface MessageGeneration {
+  messageId: string;
+  textStream: ReadableStream<string>;
+  audioStream: ReadableStream<AudioFrame>;
+}
+
+export interface GenerationCreatedEvent {
+  messageStream: ReadableStream<MessageGeneration>;
+  functionStream: ReadableStream<FunctionCall>;
+  userInitiated: boolean;
+}
 
 export interface RealtimeCapabilities {
   messageTruncation: boolean;
   turnDetection: boolean;
   userTranscription: boolean;
   autoToolReplyGeneration: boolean;
+}
+
+export interface InputTranscriptionCompleted {
+  itemId: string;
+  transcript: string;
+  isFinal: boolean;
 }
 
 export abstract class RealtimeModel {
@@ -28,10 +53,11 @@ export abstract class RealtimeModel {
   abstract close(): Promise<void>;
 }
 
-export abstract class RealtimeSession {
+export abstract class RealtimeSession extends EventEmitter {
   private _realtimeModel: RealtimeModel;
 
   constructor(realtimeModel: RealtimeModel) {
+    super();
     this._realtimeModel = realtimeModel;
   }
 

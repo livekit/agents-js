@@ -5,13 +5,19 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { Heap } from 'heap-js';
 import { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
-import type {
-  ChatItem,
-  FunctionCall,
-  FunctionCallOutput,
+import {
+  type ChatItem,
+  type FunctionCall,
+  type FunctionCallOutput,
+  type GenerationCreatedEvent,
+  type InputSpeechStartedEvent,
+  type InputSpeechStoppedEvent,
+  type InputTranscriptionCompleted,
   LLM,
-  ToolChoice,
-  ToolContext,
+  RealtimeModel,
+  type RealtimeSession,
+  type ToolChoice,
+  type ToolContext,
 } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
@@ -44,6 +50,7 @@ export class AgentActivity implements RecognitionHooks {
   private static readonly REPLY_TASK_CANCEL_TIMEOUT = 5000;
   private started = false;
   private audioRecognition?: AudioRecognition;
+  private realtimeSession?: RealtimeSession;
   private turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
   private logger = log();
   private _draining = false;
@@ -80,14 +87,26 @@ export class AgentActivity implements RecognitionHooks {
   async start(): Promise<void> {
     this.agent._agentActivity = this;
 
-    try {
-      updateInstructions({
-        chatCtx: this.agent._chatCtx,
-        instructions: this.agent.instructions,
-        addIfMissing: true,
-      });
-    } catch (error) {
-      this.logger.error('failed to update the instructions', error);
+    if (this.llm instanceof RealtimeModel) {
+      this.realtimeSession = this.llm.session();
+      this.realtimeSession.on('generation_created', this.onGenerationCreated);
+      this.realtimeSession.on('input_speech_started', this.onInputSpeechStarted);
+      this.realtimeSession.on('input_speech_stopped', this.onInputSpeechStopped);
+      this.realtimeSession.on(
+        'input_audio_transcription_completed',
+        this.onInputAudioTranscriptionCompleted,
+      );
+      // TODO(shubhra): add metrics_collected and error handlers
+    } else if (this.llm instanceof LLM) {
+      try {
+        updateInstructions({
+          chatCtx: this.agent._chatCtx,
+          instructions: this.agent.instructions,
+          addIfMissing: true,
+        });
+      } catch (error) {
+        this.logger.error('failed to update the instructions', error);
+      }
     }
 
     this.audioRecognition = new AudioRecognition({
@@ -207,6 +226,87 @@ export class AgentActivity implements RecognitionHooks {
     task.finally(() => this.onPipelineReplyDone());
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
     return handle;
+  }
+
+  // -- Realtime Session events --
+
+  onInputSpeechStarted(ev: InputSpeechStartedEvent): void {
+    this.logger.info(ev, 'onInputSpeechStarted');
+
+    if (!this.vad) {
+      this.agentSession._updateUserState('speaking');
+    }
+
+    try {
+      this.interrupt();
+    } catch (error) {
+      this.logger.error(
+        'RealtimeAPI input_speech_started, but current speech is not interruptable, this should never happen!',
+        error,
+      );
+    }
+  }
+
+  onInputSpeechStopped(ev: InputSpeechStoppedEvent): void {
+    this.logger.info(ev, 'onInputSpeechStopped');
+
+    if (!this.vad) {
+      this.agentSession._updateUserState('listening');
+    }
+
+    if (ev.userTranscriptionEnabled) {
+      this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
+        transcript: '',
+        isFinal: false,
+        speakerId: null,
+      });
+    }
+  }
+
+  onInputAudioTranscriptionCompleted(ev: InputTranscriptionCompleted): void {
+    this.logger.info('onInputAudioTranscriptionCompleted');
+    this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
+      transcript: ev.transcript,
+      isFinal: ev.isFinal,
+      speakerId: null,
+    });
+
+    if (ev.isFinal) {
+      const message = ChatMessage.create({
+        role: 'user',
+        content: ev.transcript,
+        id: ev.itemId,
+      });
+      this.agent._chatCtx.items.push(message);
+      this.agentSession._conversationItemAdded(message);
+    }
+  }
+
+  onGenerationCreated(ev: GenerationCreatedEvent): void {
+    if (ev.userInitiated) {
+      // user initiated generations are directly handled inside _realtime_reply_task
+      return;
+    }
+
+    if (this.draining) {
+      // copied from python:
+      // TODO(shubhra): should we "forward" this new turn to the next agent?
+      this.logger.warn('skipping new realtime generation, the agent is draining');
+      return;
+    }
+
+    const handle = SpeechHandle.create({
+      allowInterruptions: this.allowInterruptions,
+    });
+    this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
+
+    this.createSpeechTask({
+      promise: this.realtimeGenerationTask(handle, ev),
+      ownedSpeechHandle: handle,
+      name: 'AgentActivity.realtimeGeneration',
+    });
+
+    this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
   }
 
   // recognition hooks
@@ -919,6 +1019,13 @@ export class AgentActivity implements RecognitionHooks {
       }
       this.agent._chatCtx.insert(toolMessages);
     }
+  }
+
+  private async realtimeGenerationTask(
+    _speechHandle: SpeechHandle,
+    _ev: GenerationCreatedEvent,
+  ): Promise<void> {
+    throw new Error('not implemented');
   }
 
   private scheduleSpeech(
