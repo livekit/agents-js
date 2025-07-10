@@ -10,7 +10,7 @@ type RawChatItem = { role: string; content: string };
 
 type EOUOutput = { eouProbability: number; input: string; duration: number };
 
-abstract class _EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOutput> {
+export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOutput> {
   private modelType: EOUModelType;
   private modelRevision: string;
 
@@ -70,7 +70,7 @@ abstract class _EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOutput> 
     const result = {
       eouProbability,
       input: text,
-      duration: endTime - startTime,
+      duration: (endTime - startTime) / 1000,
     };
 
     this.#logger.child({ result }).debug('eou prediction');
@@ -111,7 +111,7 @@ abstract class _EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOutput> 
 
 export interface EOUModelOptions {
   modelType: EOUModelType;
-  executor: ipc.InferenceExecutor;
+  executor?: ipc.InferenceExecutor;
   unlikelyThreshold?: number;
   loadLanguages?: boolean;
 }
@@ -122,7 +122,8 @@ export abstract class EOUModelBase {
   private threshold: number | undefined;
   private loadLanguages: boolean;
 
-  private languages: Record<string, any> = {};
+  // TODO(brian): add type annotation for languages
+  protected languages: Record<string, any> = {};
 
   #logger = log();
 
@@ -141,7 +142,7 @@ export abstract class EOUModelBase {
 
     if (loadLanguages) {
       // TODO(brian): support load languages.json from HF hub
-      throw new Error('Not implemented');
+      this.#logger.warn('Loading languages.json from HF hub is not implemented');
     }
   }
 
@@ -176,7 +177,8 @@ export abstract class EOUModelBase {
     return (await this.unlikelyThreshold(language)) !== undefined;
   }
 
-  async predictEndOfTurn(chatCtx: llm.ChatContext, timeout: number): Promise<number> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async predictEndOfTurn(chatCtx: llm.ChatContext, timeout: number = 3): Promise<number> {
     let messages: RawChatItem[] = [];
 
     for (const message of chatCtx.items) {
