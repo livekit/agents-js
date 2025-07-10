@@ -16,22 +16,28 @@ import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
-interface ModelOptions {
-  modalities: ['text', 'audio'] | ['text'];
-  instructions: string;
-  voice: api_proto.Voice;
-  inputAudioFormat: api_proto.AudioFormat;
-  outputAudioFormat: api_proto.AudioFormat;
-  inputAudioTranscription: api_proto.InputAudioTranscription | null;
-  turnDetection: api_proto.TurnDetectionType | null;
-  temperature: number;
-  maxResponseOutputTokens: number;
+const SAMPLE_RATE = 24000;
+const NUM_CHANNELS = 1;
+const BASE_URL = 'https://api.openai.com/v1';
+
+interface RealtimeOptions {
   model: api_proto.Model;
+  voice: api_proto.Voice;
+  temperature: number;
+  toolChoice: llm.ToolChoice;
+  inputAudioTranscription?: api_proto.InputAudioTranscription;
+  // TODO(shubhra): add inputAudioNoiseReduction
+  turnDetection?: api_proto.TurnDetectionType;
+  maxResponseOutputTokens?: number | 'inf';
+  speed?: number;
+  // TODO(shubhra): add openai tracing options
   apiKey?: string;
   baseURL: string;
   isAzure: boolean;
   entraToken?: string;
   apiVersion?: string;
+  maxSessionDuration?: number;
+  // TODO(shubhra): add connOptions
 }
 
 export interface RealtimeResponse {
@@ -307,124 +313,206 @@ interface ContentPtr {
   content_index: number;
 }
 
-export class RealtimeModel extends multimodal.RealtimeModel {
+// default values got from a "default" session from their API
+const DEFAULT_TEMPERATURE = 0.8;
+const DEFAULT_TURN_DETECTION: api_proto.TurnDetectionType = {
+  type: 'server_vad',
+  threshold: 0.5,
+  prefix_padding_ms: 300,
+  silence_duration_ms: 200,
+  create_response: true,
+  interrupt_response: true,
+};
+const DEFAULT_INPUT_AUDIO_TRANSCRIPTION: api_proto.InputAudioTranscription = {
+  model: 'gpt-4o-mini-transcribe',
+};
+const DEFAULT_TOOL_CHOICE = 'auto';
+const DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS = 'inf';
+
+const AZURE_DEFAULT_INPUT_AUDIO_TRANSCRIPTION: api_proto.InputAudioTranscription = {
+  model: 'whisper-1',
+};
+
+const AZURE_DEFAULT_TURN_DETECTION: api_proto.TurnDetectionType = {
+  type: 'server_vad',
+  threshold: 0.5,
+  prefix_padding_ms: 300,
+  silence_duration_ms: 200,
+  create_response: true,
+};
+
+const DEFAULT_MAX_SESSION_DURATION = 20 * 60 * 1000; // 20 minutes
+
+const DEFAULT_REALTIME_MODEL_OPTIONS: RealtimeOptions = {
+  model: 'gpt-4o-realtime-preview',
+  voice: 'alloy',
+  temperature: DEFAULT_TEMPERATURE,
+  inputAudioTranscription: DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
+  turnDetection: DEFAULT_TURN_DETECTION,
+  toolChoice: DEFAULT_TOOL_CHOICE,
+  maxResponseOutputTokens: DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS,
+  maxSessionDuration: DEFAULT_MAX_SESSION_DURATION,
+};
+export class RealtimeModel extends llm.RealtimeModel {
   sampleRate = api_proto.SAMPLE_RATE;
   numChannels = api_proto.NUM_CHANNELS;
   inFrameSize = api_proto.IN_FRAME_SIZE;
   outFrameSize = api_proto.OUT_FRAME_SIZE;
 
-  #defaultOpts: ModelOptions;
+  /* @internal */
+  _options: RealtimeOptions;
   #sessions: RealtimeSession[] = [];
 
-  static withAzure({
-    baseURL,
-    azureDeployment,
-    apiVersion = '2024-10-01-preview',
-    apiKey = undefined,
-    entraToken = undefined,
-    instructions = '',
-    modalities = ['text', 'audio'],
-    voice = 'alloy',
-    inputAudioFormat = 'pcm16',
-    outputAudioFormat = 'pcm16',
-    inputAudioTranscription = { model: 'whisper-1' },
-    turnDetection = { type: 'server_vad' },
-    temperature = 0.8,
-    maxResponseOutputTokens = Infinity,
-  }: {
-    baseURL: string;
-    azureDeployment: string;
-    apiVersion?: string;
-    apiKey?: string;
-    entraToken?: string;
-    instructions?: string;
-    modalities?: ['text', 'audio'] | ['text'];
-    voice?: api_proto.Voice;
-    inputAudioFormat?: api_proto.AudioFormat;
-    outputAudioFormat?: api_proto.AudioFormat;
-    inputAudioTranscription?: api_proto.InputAudioTranscription;
-    turnDetection?: api_proto.TurnDetectionType;
+  constructor(options: {
+    model?: string;
+    voice?: string;
     temperature?: number;
-    maxResponseOutputTokens?: number;
-  }) {
-    return new RealtimeModel({
-      isAzure: true,
-      baseURL: new URL('openai', baseURL).toString(),
-      model: azureDeployment,
-      apiVersion,
-      apiKey,
-      entraToken,
-      instructions,
-      modalities,
-      voice,
-      inputAudioFormat,
-      outputAudioFormat,
-      inputAudioTranscription,
-      turnDetection,
-      temperature,
-      maxResponseOutputTokens,
-    });
-  }
-
-  constructor({
-    modalities = ['text', 'audio'],
-    instructions = '',
-    voice = 'alloy',
-    inputAudioFormat = 'pcm16',
-    outputAudioFormat = 'pcm16',
-    inputAudioTranscription = { model: 'whisper-1' },
-    turnDetection = { type: 'server_vad' },
-    temperature = 0.8,
-    maxResponseOutputTokens = Infinity,
-    model = 'gpt-4o-realtime-preview-2024-10-01',
-    apiKey = process.env.OPENAI_API_KEY || '',
-    baseURL = api_proto.BASE_URL,
-    // used for microsoft
-    isAzure = false,
-    apiVersion = undefined,
-    entraToken = undefined,
-  }: {
-    modalities?: ['text', 'audio'] | ['text'];
-    instructions?: string;
-    voice?: api_proto.Voice;
-    inputAudioFormat?: api_proto.AudioFormat;
-    outputAudioFormat?: api_proto.AudioFormat;
-    inputAudioTranscription?: api_proto.InputAudioTranscription;
-    turnDetection?: api_proto.TurnDetectionType;
-    temperature?: number;
-    maxResponseOutputTokens?: number;
-    model?: api_proto.Model;
-    apiKey?: string;
+    toolChoice?: llm.ToolChoice;
     baseURL?: string;
-    isAzure?: boolean;
-    apiVersion?: string;
+    inputAudioTranscription?: api_proto.InputAudioTranscription;
+    // TODO(shubhra): add inputAudioNoiseReduction
+    turnDetection?: api_proto.TurnDetectionType;
+    speed?: number;
+    // TODO(shubhra): add openai tracing options
+    azureDeployment?: string;
+    apiKey?: string;
     entraToken?: string;
+    apiVersion?: string;
+    maxSessionDuration?: number;
+    // TODO(shubhra): add connOptions
   }) {
-    super();
+    super({
+      messageTruncation: true,
+      turnDetection: options.turnDetection != null,
+      userTranscription: options.inputAudioTranscription != null,
+      autoToolReplyGeneration: false,
+    });
 
-    if (apiKey === '' && !(isAzure && entraToken)) {
+    this._options = {
+      ...DEFAULT_REALTIME_MODEL_OPTIONS,
+      ...options,
+    };
+
+    const isAzure = options.apiVersion || options.entraToken || options.azureDeployment;
+
+    if (options.apiKey === '' && !isAzure) {
       throw new Error(
         'OpenAI API key is required, either using the argument or by setting the OPENAI_API_KEY environmental variable',
       );
     }
 
-    this.#defaultOpts = {
-      modalities,
-      instructions,
+    const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
+
+    if (!apiKey && !isAzure) {
+      throw new Error(
+        'OpenAI API key is required, either using the argument or by setting the OPENAI_API_KEY environmental variable',
+      );
+    }
+
+    if (!options.baseURL) {
+      if (isAzure) {
+        const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
+        if (!azureEndpoint) {
+          throw new Error(
+            'Missing Azure endpoint. Please pass base_url or set AZURE_OPENAI_ENDPOINT environment variable.',
+          );
+        }
+        this._options.baseURL = `${azureEndpoint.replace(/\/$/, '')}/openai`;
+      } else {
+        this._options.baseURL = BASE_URL;
+      }
+    }
+
+    this._options = {
+      ...DEFAULT_REALTIME_MODEL_OPTIONS,
+      ...options,
+      baseURL: this._options.baseURL,
+    };
+  }
+
+  /**
+   * Create a RealtimeModel instance configured for Azure OpenAI Service.
+   *
+   * @param azureDeployment - The name of your Azure OpenAI deployment.
+   * @param azureEndpoint - The endpoint URL for your Azure OpenAI resource. If undefined, will attempt to read from the environment variable AZURE_OPENAI_ENDPOINT.
+   * @param apiVersion - API version to use with Azure OpenAI Service. If undefined, will attempt to read from the environment variable OPENAI_API_VERSION.
+   * @param apiKey - Azure OpenAI API key. If undefined, will attempt to read from the environment variable AZURE_OPENAI_API_KEY.
+   * @param entraToken - Azure Entra authentication token. Required if not using API key authentication.
+   * @param baseURL - Base URL for the API endpoint. If undefined, constructed from the azure_endpoint.
+   * @param voice - Voice setting for audio outputs. Defaults to "alloy".
+   * @param inputAudioTranscription - Options for transcribing input audio. Defaults to @see DEFAULT_INPUT_AUDIO_TRANSCRIPTION.
+   * @param turnDetection - Options for server-based voice activity detection (VAD). Defaults to @see DEFAULT_SERVER_VAD_OPTIONS.
+   * @param temperature - Sampling temperature for response generation. Defaults to @see DEFAULT_TEMPERATURE.
+   * @param speed - Speed of the audio output. Defaults to 1.0.
+   * @param maxResponseOutputTokens - Maximum number of tokens in the response. Defaults to @see DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS.
+   * @param maxSessionDuration - Maximum duration of the session in milliseconds. Defaults to @see DEFAULT_MAX_SESSION_DURATION.
+   *
+   * @returns A RealtimeModel instance configured for Azure OpenAI Service.
+   *
+   * @throws Error if required Azure parameters are missing or invalid.
+   */
+  static withAzure({
+    azureDeployment,
+    azureEndpoint,
+    apiVersion,
+    apiKey,
+    entraToken,
+    baseURL,
+    voice = 'alloy',
+    inputAudioTranscription = AZURE_DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
+    turnDetection = AZURE_DEFAULT_TURN_DETECTION,
+    temperature = 0.8,
+    speed,
+  }: {
+    azureDeployment: string;
+    azureEndpoint?: string;
+    apiVersion?: string;
+    apiKey?: string;
+    entraToken?: string;
+    baseURL?: string;
+    voice?: string;
+    inputAudioTranscription?: api_proto.InputAudioTranscription;
+    // TODO(shubhra): add inputAudioNoiseReduction
+    turnDetection?: api_proto.TurnDetectionType;
+    temperature?: number;
+    speed?: number;
+  }) {
+    apiKey = apiKey || process.env.AZURE_OPENAI_API_KEY;
+    if (!apiKey && !entraToken) {
+      throw new Error(
+        'Missing credentials. Please pass one of `apiKey`, `entraToken`, or the `AZURE_OPENAI_API_KEY` environment variable.',
+      );
+    }
+
+    apiVersion = apiVersion || process.env.OPENAI_API_VERSION;
+    if (!apiVersion) {
+      throw new Error(
+        'Must provide either the `apiVersion` argument or the `OPENAI_API_VERSION` environment variable',
+      );
+    }
+
+    if (!baseURL) {
+      azureEndpoint = azureEndpoint || process.env.AZURE_OPENAI_ENDPOINT;
+      if (!azureEndpoint) {
+        throw new Error(
+          'Missing Azure endpoint. Please pass the `azure_endpoint` parameter or set the `AZURE_OPENAI_ENDPOINT` environment variable.',
+        );
+      }
+      baseURL = `${azureEndpoint.replace(/\/$/, '')}/openai`;
+    }
+
+    return new RealtimeModel({
       voice,
-      inputAudioFormat,
-      outputAudioFormat,
       inputAudioTranscription,
       turnDetection,
       temperature,
-      maxResponseOutputTokens,
-      model,
+      speed,
       apiKey,
-      baseURL,
-      isAzure,
+      azureDeployment,
       apiVersion,
       entraToken,
-    };
+      baseURL,
+    });
   }
 
   get sessions(): RealtimeSession[] {
@@ -434,15 +522,15 @@ export class RealtimeModel extends multimodal.RealtimeModel {
   session({
     toolCtx,
     chatCtx,
-    modalities = this.#defaultOpts.modalities,
-    instructions = this.#defaultOpts.instructions,
-    voice = this.#defaultOpts.voice,
-    inputAudioFormat = this.#defaultOpts.inputAudioFormat,
-    outputAudioFormat = this.#defaultOpts.outputAudioFormat,
-    inputAudioTranscription = this.#defaultOpts.inputAudioTranscription,
-    turnDetection = this.#defaultOpts.turnDetection,
-    temperature = this.#defaultOpts.temperature,
-    maxResponseOutputTokens = this.#defaultOpts.maxResponseOutputTokens,
+    modalities = this._options.modalities,
+    instructions = this._options.instructions,
+    voice = this._options.voice,
+    inputAudioFormat = this._options.inputAudioFormat,
+    outputAudioFormat = this._options.outputAudioFormat,
+    inputAudioTranscription = this._options.inputAudioTranscription,
+    turnDetection = this._options.turnDetection,
+    temperature = this._options.temperature,
+    maxResponseOutputTokens = this._options.maxResponseOutputTokens,
   }: {
     toolCtx?: llm.ToolContext;
     chatCtx?: llm.ChatContext;
@@ -456,7 +544,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
     temperature?: number;
     maxResponseOutputTokens?: number;
   }): RealtimeSession {
-    const opts: ModelOptions = {
+    const opts: RealtimeOptions = {
       modalities,
       instructions,
       voice,
@@ -466,12 +554,12 @@ export class RealtimeModel extends multimodal.RealtimeModel {
       turnDetection,
       temperature,
       maxResponseOutputTokens,
-      model: this.#defaultOpts.model,
-      apiKey: this.#defaultOpts.apiKey,
-      baseURL: this.#defaultOpts.baseURL,
-      isAzure: this.#defaultOpts.isAzure,
-      apiVersion: this.#defaultOpts.apiVersion,
-      entraToken: this.#defaultOpts.entraToken,
+      model: this._options.model,
+      apiKey: this._options.apiKey,
+      baseURL: this._options.baseURL,
+      isAzure: this._options.isAzure,
+      apiVersion: this._options.apiVersion,
+      entraToken: this._options.entraToken,
     };
 
     const session = new RealtimeSession(opts, { toolCtx, chatCtx });
@@ -487,7 +575,7 @@ export class RealtimeModel extends multimodal.RealtimeModel {
 export class RealtimeSession extends multimodal.RealtimeSession {
   #chatCtx: llm.ChatContext | undefined = undefined;
   #toolCtx: llm.ToolContext | undefined = undefined;
-  #opts: ModelOptions;
+  #opts: RealtimeOptions;
   #pendingResponses: { [id: string]: RealtimeResponse } = {};
   #sessionId = 'not-connected';
   #ws: WebSocket | null = null;
@@ -498,7 +586,7 @@ export class RealtimeSession extends multimodal.RealtimeSession {
   #sendQueue = new Queue<api_proto.ClientEvent>();
 
   constructor(
-    opts: ModelOptions,
+    opts: RealtimeOptions,
     { toolCtx, chatCtx }: { toolCtx?: llm.ToolContext; chatCtx?: llm.ChatContext },
   ) {
     super();

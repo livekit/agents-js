@@ -48,6 +48,8 @@ export {
   type InputTranscriptionCompleted,
 } from './realtime.js';
 
+export { RemoteChatContext } from './remote_chat_context.js';
+
 export {
   createToolOptions,
   executeToolCall,
