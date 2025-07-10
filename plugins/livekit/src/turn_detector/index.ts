@@ -5,6 +5,7 @@ import { InferenceRunner } from '@livekit/agents';
 import { INFERENCE_METHOD_EN } from './english.js';
 import { INFERENCE_METHOD_MULTILINGUAL } from './multilingual.js';
 
+export { downloadFileToCacheDir } from '../hf_utils.js';
 export { EnglishModel } from './english.js';
 export { MultilingualModel } from './multilingual.js';
 
