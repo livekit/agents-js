@@ -126,7 +126,7 @@ export abstract class EOUModelBase {
   private loadLanguages: boolean;
 
   // TODO(brian): add type annotation for languages
-  protected languages: Record<string, any> = {};
+  protected languages: Record<string, any> = {}; // eslint-disable-line @typescript-eslint/no-explicit-any
 
   #logger = log();
 

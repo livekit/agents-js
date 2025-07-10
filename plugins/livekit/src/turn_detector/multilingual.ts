@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { llm, log } from '@livekit/agents';
+import type { llm } from '@livekit/agents';
+import { log } from '@livekit/agents';
 import { EOUModelBase, EOURunnerBase } from './base.js';
 
 const REMOTE_INFERENCE_TIMEOUT = 2000;
