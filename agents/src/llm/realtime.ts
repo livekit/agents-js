@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
+import type { AsyncIterableQueue } from '../utils.js';
 import type { ChatContext, FunctionCall } from './chat_context.js';
 import type { ToolContext } from './tool_context.js';
 
@@ -14,13 +15,13 @@ export interface InputSpeechStoppedEvent {
 
 export interface MessageGeneration {
   messageId: string;
-  textStream: ReadableStream<string>;
-  audioStream: ReadableStream<AudioFrame>;
+  textStream: AsyncIterableQueue<string>;
+  audioStream: AsyncIterableQueue<AudioFrame>;
 }
 
 export interface GenerationCreatedEvent {
-  messageStream: ReadableStream<MessageGeneration>;
-  functionStream: ReadableStream<FunctionCall>;
+  messageStream: AsyncIterableQueue<MessageGeneration>;
+  functionStream: AsyncIterableQueue<FunctionCall>;
   userInitiated: boolean;
 }
 

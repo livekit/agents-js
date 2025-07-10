@@ -244,6 +244,7 @@ export interface ResponseResource {
   status_details: ResponseStatusDetails;
   output: ItemResource[];
   usage?: ModelUsage;
+  metadata?: Record<string, string>;
 }
 
 // Client Events
@@ -485,6 +486,7 @@ export interface ResponseContentPartAddedEvent extends BaseServerEvent {
 export interface ResponseContentPartDoneEvent extends BaseServerEvent {
   type: 'response.content_part.done';
   response_id: string;
+  item_id: string;
   output_index: number;
   content_index: number;
   part: ContentPart;
@@ -509,6 +511,7 @@ export interface ResponseTextDoneEvent extends BaseServerEvent {
 export interface ResponseAudioTranscriptDeltaEvent extends BaseServerEvent {
   type: 'response.audio_transcript.delta';
   response_id: string;
+  item_id: string;
   output_index: number;
   content_index: number;
   delta: string;
@@ -525,6 +528,7 @@ export interface ResponseAudioTranscriptDoneEvent extends BaseServerEvent {
 export interface ResponseAudioDeltaEvent extends BaseServerEvent {
   type: 'response.audio.delta';
   response_id: string;
+  item_id: string;
   output_index: number;
   content_index: number;
   delta: AudioBase64Bytes;
