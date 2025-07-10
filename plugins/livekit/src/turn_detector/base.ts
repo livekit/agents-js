@@ -1,12 +1,13 @@
 import { AutoTokenizer, type PreTrainedTokenizer } from '@huggingface/transformers';
-import { InferenceRunner } from 'agents/dist/inference_runner.js';
-import { log } from 'agents/dist/log.js';
+import type { ipc, llm } from '@livekit/agents';
+import { CurrentJobContext, InferenceRunner, log } from '@livekit/agents';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { InferenceSession, Tensor } from 'onnxruntime-node';
-import { fileURLToPath } from 'url';
-import { type EOUModelType, MODEL_REVISIONS } from './constants.js';
+import { type EOUModelType, MAX_HISTORY_TURNS, MODEL_REVISIONS } from './constants.js';
 
 type RawChatItem = { role: string; content: string };
+
 type EOUOutput = { eouProbability: number; input: string; duration: number };
 
 abstract class _EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOutput> {
@@ -106,4 +107,103 @@ abstract class _EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOutput> 
     // remove the EOU token from current utterance
     return convoText.slice(0, convoText.lastIndexOf('<|im_end|>'));
   }
+}
+
+export interface EOUModelOptions {
+  modelType: EOUModelType;
+  executor: ipc.InferenceExecutor;
+  unlikelyThreshold?: number;
+  loadLanguages?: boolean;
+}
+
+export abstract class EOUModelBase {
+  private modelType: EOUModelType;
+  private executor: ipc.InferenceExecutor;
+  private threshold: number | undefined;
+  private loadLanguages: boolean;
+
+  private languages: Record<string, any> = {};
+
+  #logger = log();
+
+  constructor(opts: EOUModelOptions) {
+    const {
+      modelType = 'en',
+      executor = CurrentJobContext.getCurrent().inferenceExecutor,
+      unlikelyThreshold,
+      loadLanguages = true,
+    } = opts;
+
+    this.modelType = modelType;
+    this.executor = executor;
+    this.threshold = unlikelyThreshold;
+    this.loadLanguages = loadLanguages;
+
+    if (loadLanguages) {
+      // TODO(brian): support load languages.json from HF hub
+      throw new Error('Not implemented');
+    }
+  }
+
+  async unlikelyThreshold(language?: string): Promise<number | undefined> {
+    if (language === undefined) {
+      return undefined;
+    }
+
+    const lang = language.toLowerCase();
+    // try the full language code first
+    let langData = this.languages[lang];
+
+    if (langData === undefined && lang.includes('-')) {
+      const baseLang = lang.split('-')[0]!;
+      langData = this.languages[baseLang];
+    }
+
+    if (langData === undefined) {
+      this.#logger.warn(`Language ${language} not supported by EOU model`);
+      return undefined;
+    }
+
+    // if a custom threshold is provided, use it
+    if (this.threshold !== undefined) {
+      return this.threshold;
+    }
+
+    return langData.threshold;
+  }
+
+  async supportsLanguage(language?: string): Promise<boolean> {
+    return (await this.unlikelyThreshold(language)) !== undefined;
+  }
+
+  async predictEndOfTurn(chatCtx: llm.ChatContext, timeout: number): Promise<number> {
+    let messages: RawChatItem[] = [];
+
+    for (const message of chatCtx.items) {
+      // skip system and developer messages or tool call messages
+      if (message.type !== 'message' || message.role in ['system', 'developer']) {
+        continue;
+      }
+
+      for (const content of message.content) {
+        if (typeof content === 'string') {
+          messages.push({
+            role: message.role === 'assistant' ? 'assistant' : 'user',
+            content: content,
+          });
+        }
+      }
+    }
+
+    messages = messages.slice(-MAX_HISTORY_TURNS);
+
+    const result = await this.executor.doInference(this.inferenceMethod(), messages);
+    if (result === undefined) {
+      throw new Error('EOU inference should always returns a result');
+    }
+
+    return (result as EOUOutput).eouProbability;
+  }
+
+  abstract inferenceMethod(): string;
 }
