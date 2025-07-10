@@ -263,7 +263,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     return this.#sessions;
   }
 
-  session(): RealtimeSession {
+  session() {
     const session = new RealtimeSession(this);
     this.#sessions.push(session);
     return session;
@@ -330,7 +330,7 @@ function processBaseURL({
  * - openai_client_event_queued: expose the raw client events sent to the OpenAI Realtime API
  */
 export class RealtimeSession extends llm.RealtimeSession {
-  private tools: llm.ToolContext = {};
+  private _tools: llm.ToolContext = {};
   private remoteChatCtx: llm.RemoteChatContext = new llm.RemoteChatContext();
   private messageChannel = new Queue<api_proto.ClientEvent>();
   private inputResampler?: AudioResampler;
@@ -344,7 +344,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private textModeRecoveryRetries: number = 0;
 
-  #sessionId = 'not-connected';
   #ws: WebSocket | null = null;
   #expiresAt: number | null = null;
   #logger = log();
