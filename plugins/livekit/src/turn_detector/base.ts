@@ -131,7 +131,7 @@ export abstract class EOUModelBase {
     const {
       modelType = 'en',
       executor = CurrentJobContext.getCurrent().inferenceExecutor,
-      unlikelyThreshold,
+      unlikelyThreshold = 0.15,
       loadLanguages = true,
     } = opts;
 

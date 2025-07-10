@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /** @internal */
-export abstract class InferenceRunner<InputType, OutputType> {
-  static INFERENCE_METHOD: string;
+export abstract class InferenceRunner<InputType = unknown, OutputType = unknown> {
   static registeredRunners: { [id: string]: string } = {};
 
   static registerRunner(method: string, importPath: string) {

@@ -9,7 +9,7 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     await ctx.connect();
 
-    const eouModel = new turnDetector.EOUModel();
+    const eouModel = new turnDetector.EnglishModel();
 
     const chatCtx = llm.ChatContext.empty();
 

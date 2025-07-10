@@ -389,7 +389,7 @@ export default defineAgent({
       }),
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
-      turnDetection: new livekit.turnDetector.EOUModel(),
+      turnDetection: new livekit.turnDetector.EnglishModel(),
       userData,
       voiceOptions: {
         maxToolSteps: 5,

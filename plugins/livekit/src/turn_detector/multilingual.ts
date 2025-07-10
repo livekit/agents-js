@@ -3,9 +3,9 @@ import { EOUModelBase, EOURunnerBase } from './base.js';
 
 const REMOTE_INFERENCE_TIMEOUT = 2000;
 
-class EUORunnerMultilingual extends EOURunnerBase {
-  INFERENCE_METHOD = 'lk_end_of_utterance_multilingual';
+export const INFERENCE_METHOD_MULTILINGUAL = 'lk_end_of_utterance_multilingual';
 
+export class EUORunnerMultilingual extends EOURunnerBase {
   constructor() {
     super('multilingual');
   }
@@ -22,7 +22,7 @@ export class MultilingualModel extends EOUModelBase {
   }
 
   inferenceMethod(): string {
-    return EUORunnerMultilingual.INFERENCE_METHOD;
+    return INFERENCE_METHOD_MULTILINGUAL;
   }
 
   async unlikelyThreshold(language?: string): Promise<number | undefined> {
@@ -106,3 +106,5 @@ function remoteInferenceUrl() {
   }
   return `${urlBase}/eot/multi`;
 }
+
+export default EUORunnerMultilingual;
