@@ -1,15 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AsyncIterableQueue, Future, Queue, llm, log, mergeFrames, metrics } from '@livekit/agents';
+import { AsyncIterableQueue, Future, Queue, llm, log } from '@livekit/agents';
+import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
-const SAMPLE_RATE = 24000;
-const NUM_CHANNELS = 1;
 const BASE_URL = 'https://api.openai.com/v1';
 
 interface RealtimeOptions {
@@ -111,7 +110,6 @@ export class RealtimeModel extends llm.RealtimeModel {
 
   /* @internal */
   _options: RealtimeOptions;
-  #sessions: RealtimeSession[] = [];
 
   constructor(options: {
     model?: string;
@@ -259,18 +257,12 @@ export class RealtimeModel extends llm.RealtimeModel {
     });
   }
 
-  get sessions(): RealtimeSession[] {
-    return this.#sessions;
-  }
-
   session() {
-    const session = new RealtimeSession(this);
-    this.#sessions.push(session);
-    return session;
+    return new RealtimeSession(this);
   }
 
   async close() {
-    await Promise.allSettled(this.#sessions.map((session) => session.close()));
+    return;
   }
 }
 
@@ -342,6 +334,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private itemCreateFutures: { [id: string]: Future } = {};
   private itemDeleteFutures: { [id: string]: Future } = {};
 
+  private updateChatCtxLock = new Mutex();
+
   private textModeRecoveryRetries: number = 0;
 
   #ws: WebSocket | null = null;
@@ -387,6 +381,58 @@ export class RealtimeSession extends llm.RealtimeSession {
         speed: this.oaiRealtimeModel._options.speed,
       },
     };
+  }
+
+  get chatCtx() {
+    return this.remoteChatCtx.toChatCtx();
+  }
+
+  get tools() {
+    // TODO(shubhra): return a copy of the tools
+    return this._tools;
+  }
+
+  async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
+    // const unlock = await this.updateChatCtxLock.lock();
+    throw new Error('not implemented');
+    // unlock();
+    return;
+  }
+
+  async updateInstructions(_instructions: string): Promise<void> {
+    throw new Error('not implemented');
+  }
+
+  pushAudio(_frame: AudioFrame): void {
+    throw new Error('not implemented');
+  }
+
+  async updateTools(_tools: llm.ToolContext): Promise<void> {
+    throw new Error('not implemented');
+  }
+
+  async commitAudio(): Promise<void> {
+    throw new Error('not implemented');
+  }
+
+  async clearAudio(): Promise<void> {
+    throw new Error('not implemented');
+  }
+
+  async generateReply(_options: { instructions: string }): Promise<void> {
+    throw new Error('not implemented');
+  }
+
+  async interrupt(): Promise<void> {
+    throw new Error('not implemented');
+  }
+
+  async truncate(_options: { messageId: string; audioEndMs: number }): Promise<void> {
+    throw new Error('not implemented');
+  }
+
+  startUserActivity(): void {
+    throw new Error('not implemented');
   }
 
   /// Truncates the data field of the event to the specified maxLength to avoid overwhelming logs
