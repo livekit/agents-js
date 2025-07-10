@@ -255,6 +255,7 @@ interface BaseClientEvent {
 export interface SessionUpdateEvent extends BaseClientEvent {
   type: 'session.update';
   session: Partial<{
+    model: Model;
     modalities: ['text', 'audio'] | ['text'];
     instructions: string;
     voice: Voice;
@@ -266,6 +267,7 @@ export interface SessionUpdateEvent extends BaseClientEvent {
     tool_choice: ToolChoice;
     temperature: number;
     max_response_output_tokens?: number | 'inf';
+    speed?: number;
   }>;
 }
 

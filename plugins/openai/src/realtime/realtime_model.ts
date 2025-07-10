@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AsyncIterableQueue, Future, Queue, llm, log, mergeFrames, metrics } from '@livekit/agents';
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
@@ -97,20 +97,20 @@ class InputAudioBuffer {
   }
 
   append(frame: AudioFrame) {
-    this.#session.queueMsg({
+    this.#session.sendEvent({
       type: 'input_audio_buffer.append',
       audio: Buffer.from(frame.data.buffer).toString('base64'),
     });
   }
 
   clear() {
-    this.#session.queueMsg({
+    this.#session.sendEvent({
       type: 'input_audio_buffer.clear',
     });
   }
 
   commit() {
-    this.#session.queueMsg({
+    this.#session.sendEvent({
       type: 'input_audio_buffer.commit',
     });
   }
@@ -125,7 +125,7 @@ class ConversationItem {
   }
 
   truncate(itemId: string, contentIndex: number, audioEnd: number) {
-    this.#session.queueMsg({
+    this.#session.sendEvent({
       type: 'conversation.item.truncate',
       item_id: itemId,
       content_index: contentIndex,
@@ -134,7 +134,7 @@ class ConversationItem {
   }
 
   delete(itemId: string) {
-    this.#session.queueMsg({
+    this.#session.sendEvent({
       type: 'conversation.item.delete',
       item_id: itemId,
     });
@@ -261,7 +261,7 @@ class ConversationItem {
     }
 
     if (event) {
-      this.#session.queueMsg(event);
+      this.#session.sendEvent(event);
     }
   }
 }
@@ -286,13 +286,13 @@ class Response {
   }
 
   create() {
-    this.#session.queueMsg({
+    this.#session.sendEvent({
       type: 'response.create',
     });
   }
 
   cancel() {
-    this.#session.queueMsg({
+    this.#session.sendEvent({
       type: 'response.cancel',
     });
   }
@@ -526,9 +526,13 @@ export class RealtimeModel extends llm.RealtimeModel {
  * - openai_client_event_queued: expose the raw client events sent to the OpenAI Realtime API
  */
 export class RealtimeSession extends llm.RealtimeSession {
-  #chatCtx: llm.ChatContext | undefined = undefined;
-  #toolCtx: llm.ToolContext | undefined = undefined;
-  #opts: RealtimeOptions;
+  private tools: llm.ToolContext = {};
+  private remoteChatCtx: llm.RemoteChatContext = new llm.RemoteChatContext();
+  private messageChannel = new Queue<api_proto.ClientEvent>();
+  private inputResampler?: AudioResampler;
+  private instructions?: string;
+  private realtimeModel: RealtimeModel;
+
   #pendingResponses: { [id: string]: RealtimeResponse } = {};
   #sessionId = 'not-connected';
   #ws: WebSocket | null = null;
@@ -536,67 +540,44 @@ export class RealtimeSession extends llm.RealtimeSession {
   #logger = log();
   #task: Promise<void>;
   #closing = true;
-  #sendQueue = new Queue<api_proto.ClientEvent>();
 
-  constructor(
-    opts: RealtimeOptions,
-    { toolCtx, chatCtx }: { toolCtx?: llm.ToolContext; chatCtx?: llm.ChatContext },
-  ) {
-    super();
+  constructor(realtimeModel: RealtimeModel) {
+    super(realtimeModel);
 
-    this.#opts = opts;
-    this.#chatCtx = chatCtx;
-    this.#toolCtx = toolCtx;
+    this.realtimeModel = realtimeModel;
 
     this.#task = this.#start();
 
-    this.sessionUpdate({
-      modalities: this.#opts.modalities,
-      instructions: this.#opts.instructions,
-      voice: this.#opts.voice,
-      inputAudioFormat: this.#opts.inputAudioFormat,
-      outputAudioFormat: this.#opts.outputAudioFormat,
-      inputAudioTranscription: this.#opts.inputAudioTranscription,
-      turnDetection: this.#opts.turnDetection,
-      temperature: this.#opts.temperature,
-      maxResponseOutputTokens: this.#opts.maxResponseOutputTokens,
-      toolChoice: 'auto',
-    });
+    this.sendEvent(this.createSessionUpdateEvent());
   }
 
-  get chatCtx(): llm.ChatContext | undefined {
-    return this.#chatCtx;
+  sendEvent(command: api_proto.ClientEvent): void {
+    this.messageChannel.put(command);
   }
 
-  get toolCtx(): llm.ToolContext | undefined {
-    return this.#toolCtx;
-  }
-
-  set toolCtx(ctx: llm.ToolContext | undefined) {
-    this.#toolCtx = ctx;
-  }
-
-  get conversation(): Conversation {
-    return new Conversation(this);
-  }
-
-  get inputAudioBuffer(): InputAudioBuffer {
-    return new InputAudioBuffer(this);
-  }
-
-  get response(): Response {
-    return new Response(this);
-  }
-
-  get expiration(): number {
-    if (!this.#expiresAt) {
-      throw new Error('session not started');
-    }
-    return this.#expiresAt * 1000;
-  }
-
-  queueMsg(command: api_proto.ClientEvent): void {
-    this.#sendQueue.put(command);
+  private createSessionUpdateEvent(): api_proto.SessionUpdateEvent {
+    return {
+      type: 'session.update',
+      session: {
+        model: this.realtimeModel._options.model,
+        voice: this.realtimeModel._options.voice,
+        input_audio_format: 'pcm16',
+        output_audio_format: 'pcm16',
+        modalities: ['text', 'audio'],
+        turn_detection: this.realtimeModel._options.turnDetection,
+        input_audio_transcription: this.realtimeModel._options.inputAudioTranscription,
+        // TODO(shubhra): add inputAudioNoiseReduction
+        temperature: this.realtimeModel._options.temperature,
+        tool_choice: toOaiToolChoice(this.realtimeModel._options.toolChoice),
+        max_response_output_tokens:
+          this.realtimeModel._options.maxResponseOutputTokens === Infinity
+            ? 'inf'
+            : this.realtimeModel._options.maxResponseOutputTokens,
+        // TODO(shubhra): add tracing options
+        instructions: this.instructions,
+        speed: this.realtimeModel._options.speed,
+      },
+    };
   }
 
   /// Truncates the data field of the event to the specified maxLength to avoid overwhelming logs
@@ -708,7 +689,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       sessionUpdateEvent.session.max_response_output_tokens = undefined;
     }
 
-    this.queueMsg(sessionUpdateEvent);
+    this.sendEvent(sessionUpdateEvent);
   }
 
   /** Create an empty audio message with the given duration. */
@@ -893,7 +874,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const sendTask = async () => {
         while (this.#ws && !this.#closing && this.#ws.readyState === WebSocket.OPEN) {
           try {
-            const event = await this.#sendQueue.get();
+            const event = await this.messageChannel.get();
             if (event.type !== 'input_audio_buffer.append') {
               this.#logger.debug(`-> ${JSON.stringify(this.#loggableEvent(event))}`);
             }
@@ -1277,4 +1258,16 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   #handleRateLimitsUpdated(event: api_proto.RateLimitsUpdatedEvent): void {}
+}
+
+function toOaiToolChoice(toolChoice: llm.ToolChoice | null): api_proto.ToolChoice {
+  if (typeof toolChoice === 'string') {
+    return toolChoice;
+  }
+
+  if (toolChoice?.type === 'function') {
+    return toolChoice.function.name;
+  }
+
+  return 'auto';
 }
