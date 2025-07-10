@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import { EOUModelBase, EOURunnerBase } from './base.js';
 
 export const INFERENCE_METHOD_EN = 'lk_end_of_utterance_en';
