@@ -148,7 +148,7 @@ export abstract class EOUModelBase {
 
   async unlikelyThreshold(language?: string): Promise<number | undefined> {
     if (language === undefined) {
-      return undefined;
+      return this.threshold;
     }
 
     const lang = language.toLowerCase();
@@ -162,7 +162,7 @@ export abstract class EOUModelBase {
 
     if (langData === undefined) {
       this.#logger.warn(`Language ${language} not supported by EOU model`);
-      return undefined;
+      return this.threshold;
     }
 
     // if a custom threshold is provided, use it

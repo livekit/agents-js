@@ -234,6 +234,11 @@ export class AudioRecognition {
           this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
         } else {
           const endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
+          this.logger.debug(
+            { endOfTurnProbability, language: this.lastLanguage },
+            'end of turn probability',
+          );
+
           const unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
           if (unlikelyThreshold && endOfTurnProbability < unlikelyThreshold) {
             endpointingDelay = this.maxEndpointingDelay;
