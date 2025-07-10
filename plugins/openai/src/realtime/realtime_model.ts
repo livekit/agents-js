@@ -519,50 +519,8 @@ export class RealtimeModel extends llm.RealtimeModel {
     return this.#sessions;
   }
 
-  session({
-    toolCtx,
-    chatCtx,
-    modalities = this._options.modalities,
-    instructions = this._options.instructions,
-    voice = this._options.voice,
-    inputAudioFormat = this._options.inputAudioFormat,
-    outputAudioFormat = this._options.outputAudioFormat,
-    inputAudioTranscription = this._options.inputAudioTranscription,
-    turnDetection = this._options.turnDetection,
-    temperature = this._options.temperature,
-    maxResponseOutputTokens = this._options.maxResponseOutputTokens,
-  }: {
-    toolCtx?: llm.ToolContext;
-    chatCtx?: llm.ChatContext;
-    modalities?: ['text', 'audio'] | ['text'];
-    instructions?: string;
-    voice?: api_proto.Voice;
-    inputAudioFormat?: api_proto.AudioFormat;
-    outputAudioFormat?: api_proto.AudioFormat;
-    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
-    turnDetection?: api_proto.TurnDetectionType | null;
-    temperature?: number;
-    maxResponseOutputTokens?: number;
-  }): RealtimeSession {
-    const opts: RealtimeOptions = {
-      modalities,
-      instructions,
-      voice,
-      inputAudioFormat,
-      outputAudioFormat,
-      inputAudioTranscription,
-      turnDetection,
-      temperature,
-      maxResponseOutputTokens,
-      model: this._options.model,
-      apiKey: this._options.apiKey,
-      baseURL: this._options.baseURL,
-      isAzure: this._options.isAzure,
-      apiVersion: this._options.apiVersion,
-      entraToken: this._options.entraToken,
-    };
-
-    const session = new RealtimeSession(opts, { toolCtx, chatCtx });
+  session(): RealtimeSession {
+    const session = new RealtimeSession(this);
     this.#sessions.push(session);
     return session;
   }
