@@ -1,16 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  AsyncIterableQueue,
-  Future,
-  Queue,
-  llm,
-  log,
-  mergeFrames,
-  metrics,
-  multimodal,
-} from '@livekit/agents';
+import { AsyncIterableQueue, Future, Queue, llm, log, mergeFrames, metrics } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
@@ -25,9 +16,9 @@ interface RealtimeOptions {
   voice: api_proto.Voice;
   temperature: number;
   toolChoice: llm.ToolChoice;
-  inputAudioTranscription?: api_proto.InputAudioTranscription;
+  inputAudioTranscription?: api_proto.InputAudioTranscription | null;
   // TODO(shubhra): add inputAudioNoiseReduction
-  turnDetection?: api_proto.TurnDetectionType;
+  turnDetection?: api_proto.TurnDetectionType | null;
   maxResponseOutputTokens?: number | 'inf';
   speed?: number;
   // TODO(shubhra): add openai tracing options
@@ -326,8 +317,8 @@ const DEFAULT_TURN_DETECTION: api_proto.TurnDetectionType = {
 const DEFAULT_INPUT_AUDIO_TRANSCRIPTION: api_proto.InputAudioTranscription = {
   model: 'gpt-4o-mini-transcribe',
 };
-const DEFAULT_TOOL_CHOICE = 'auto';
-const DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS = 'inf';
+const DEFAULT_TOOL_CHOICE: llm.ToolChoice = 'auto';
+const DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS: number | 'inf' = 'inf';
 
 const AZURE_DEFAULT_INPUT_AUDIO_TRANSCRIPTION: api_proto.InputAudioTranscription = {
   model: 'whisper-1',
@@ -343,7 +334,7 @@ const AZURE_DEFAULT_TURN_DETECTION: api_proto.TurnDetectionType = {
 
 const DEFAULT_MAX_SESSION_DURATION = 20 * 60 * 1000; // 20 minutes
 
-const DEFAULT_REALTIME_MODEL_OPTIONS: RealtimeOptions = {
+const DEFAULT_REALTIME_MODEL_OPTIONS = {
   model: 'gpt-4o-realtime-preview',
   voice: 'alloy',
   temperature: DEFAULT_TEMPERATURE,
@@ -369,9 +360,9 @@ export class RealtimeModel extends llm.RealtimeModel {
     temperature?: number;
     toolChoice?: llm.ToolChoice;
     baseURL?: string;
-    inputAudioTranscription?: api_proto.InputAudioTranscription;
+    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
     // TODO(shubhra): add inputAudioNoiseReduction
-    turnDetection?: api_proto.TurnDetectionType;
+    turnDetection?: api_proto.TurnDetectionType | null;
     speed?: number;
     // TODO(shubhra): add openai tracing options
     azureDeployment?: string;
@@ -383,17 +374,12 @@ export class RealtimeModel extends llm.RealtimeModel {
   }) {
     super({
       messageTruncation: true,
-      turnDetection: options.turnDetection != null,
-      userTranscription: options.inputAudioTranscription != null,
+      turnDetection: options.turnDetection !== null,
+      userTranscription: options.inputAudioTranscription !== null,
       autoToolReplyGeneration: false,
     });
 
-    this._options = {
-      ...DEFAULT_REALTIME_MODEL_OPTIONS,
-      ...options,
-    };
-
-    const isAzure = options.apiVersion || options.entraToken || options.azureDeployment;
+    const isAzure = !!(options.apiVersion || options.entraToken || options.azureDeployment);
 
     if (options.apiKey === '' && !isAzure) {
       throw new Error(
@@ -409,24 +395,23 @@ export class RealtimeModel extends llm.RealtimeModel {
       );
     }
 
-    if (!options.baseURL) {
-      if (isAzure) {
-        const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
-        if (!azureEndpoint) {
-          throw new Error(
-            'Missing Azure endpoint. Please pass base_url or set AZURE_OPENAI_ENDPOINT environment variable.',
-          );
-        }
-        this._options.baseURL = `${azureEndpoint.replace(/\/$/, '')}/openai`;
-      } else {
-        this._options.baseURL = BASE_URL;
+    if (!options.baseURL && isAzure) {
+      const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
+      if (!azureEndpoint) {
+        throw new Error(
+          'Missing Azure endpoint. Please pass base_url or set AZURE_OPENAI_ENDPOINT environment variable.',
+        );
       }
+      options.baseURL = `${azureEndpoint.replace(/\/$/, '')}/openai`;
     }
 
     this._options = {
       ...DEFAULT_REALTIME_MODEL_OPTIONS,
       ...options,
-      baseURL: this._options.baseURL,
+      baseURL: options.baseURL || BASE_URL,
+      apiKey,
+      isAzure,
+      model: options.model || DEFAULT_REALTIME_MODEL_OPTIONS.model,
     };
   }
 
@@ -530,7 +515,17 @@ export class RealtimeModel extends llm.RealtimeModel {
   }
 }
 
-export class RealtimeSession extends multimodal.RealtimeSession {
+/**
+ * A session for the OpenAI Realtime API.
+ *
+ * This class is used to interact with the OpenAI Realtime API.
+ * It is responsible for sending events to the OpenAI Realtime API and receiving events from it.
+ *
+ * It exposes two more events:
+ * - openai_server_event_received: expose the raw server events from the OpenAI Realtime API
+ * - openai_client_event_queued: expose the raw client events sent to the OpenAI Realtime API
+ */
+export class RealtimeSession extends llm.RealtimeSession {
   #chatCtx: llm.ChatContext | undefined = undefined;
   #toolCtx: llm.ToolContext | undefined = undefined;
   #opts: RealtimeOptions;
