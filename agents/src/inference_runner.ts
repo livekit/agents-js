@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /** @internal */
-export abstract class InferenceRunner {
-  static INFERENCE_METHOD: string;
+export abstract class InferenceRunner<InputType = unknown, OutputType = unknown> {
   static registeredRunners: { [id: string]: string } = {};
 
   static registerRunner(method: string, importPath: string) {
@@ -15,6 +14,6 @@ export abstract class InferenceRunner {
   }
 
   abstract initialize(): Promise<void>;
-  abstract run(data: unknown): Promise<unknown>;
+  abstract run(data: InputType): Promise<OutputType>;
   abstract close(): Promise<void>;
 }

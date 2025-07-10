@@ -36,8 +36,8 @@ export interface RecognitionHooks {
 }
 
 export interface _TurnDetector {
-  unlikelyThreshold: (language?: string) => number | null;
-  supportsLanguage: (language?: string) => boolean;
+  unlikelyThreshold: (language?: string) => Promise<number | undefined>;
+  supportsLanguage: (language?: string) => Promise<boolean>;
   predictEndOfTurn(chatCtx: ChatContext): Promise<number>;
 }
 
@@ -234,7 +234,12 @@ export class AudioRecognition {
           this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
         } else {
           const endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
-          const unlikelyThreshold = turnDetector.unlikelyThreshold(this.lastLanguage);
+          this.logger.debug(
+            { endOfTurnProbability, language: this.lastLanguage },
+            'end of turn probability',
+          );
+
+          const unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
           if (unlikelyThreshold && endOfTurnProbability < unlikelyThreshold) {
             endpointingDelay = this.maxEndpointingDelay;
           }

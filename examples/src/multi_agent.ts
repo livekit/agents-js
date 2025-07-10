@@ -87,7 +87,7 @@ export default defineAgent({
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
       userData: userdata,
-      turnDetection: new livekit.turnDetector.EOUModel(),
+      turnDetection: new livekit.turnDetector.EnglishModel(),
     });
 
     await session.start({

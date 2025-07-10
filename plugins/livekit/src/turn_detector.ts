@@ -25,6 +25,7 @@ export class EOURunner extends InferenceRunner {
       revision: 'v1.2.0',
       // local_files_only: true, // TODO(nbsp): can't find it
     });
+
     this.#session = InferenceSession.create(
       fileURLToPath(new URL('turn_detector.onnx', import.meta.url).href),
       {
