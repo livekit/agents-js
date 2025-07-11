@@ -280,6 +280,9 @@ importers:
 
   plugins/livekit:
     dependencies:
+      '@huggingface/hub':
+        specifier: ^2.4.0
+        version: 2.4.0
       '@huggingface/transformers':
         specifier: ^3.2.1
         version: 3.2.1
@@ -1070,9 +1073,17 @@ packages:
     resolution: {integrity: sha512-Ys+3g2TaW7gADOJzPt83SJtCDhMjndcDMFVQ/Tj9iA1BfJzFKD9mAUXT3OenpuPHbI6P/myECxRJrofUsDx/5g==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
 
+  '@huggingface/hub@2.4.0':
+    resolution: {integrity: sha512-8H9uLOIBJNPw6lUV1g/t+7pAVNOhBW5g7CNAOJ0JVkA1QObEb7u0O7vMVkjmu3311SUU39aSx8l1Fgsw586g4g==}
+    engines: {node: '>=18'}
+    hasBin: true
+
   '@huggingface/jinja@0.3.2':
     resolution: {integrity: sha512-F2FvuIc+w1blGsaqJI/OErRbWH6bVJDCBI8Rm5D86yZ2wlwrGERsfIaru7XUv9eYC3DMP3ixDRRtF0h6d8AZcQ==}
     engines: {node: '>=18'}
+
+  '@huggingface/tasks@0.19.22':
+    resolution: {integrity: sha512-jtRXsJZTES01X4gJ5VOUnEm3ONyyfXUcWKObbWkr/SQmjaH/kxtWqc2zVWKaxL4QLoXqXJ+T+Pi5xupMStSudQ==}
 
   '@huggingface/transformers@3.2.1':
     resolution: {integrity: sha512-GTKnLUP5WX1L05f46mErDY11uAAmvU5+ONuFP5ggTKB8yuNzq45MUlpWZeWpMM4kewOOOEfOX6FyxDPulZQRbA==}
@@ -4944,7 +4955,13 @@ snapshots:
 
   '@eslint/js@8.57.0': {}
 
+  '@huggingface/hub@2.4.0':
+    dependencies:
+      '@huggingface/tasks': 0.19.22
+
   '@huggingface/jinja@0.3.2': {}
+
+  '@huggingface/tasks@0.19.22': {}
 
   '@huggingface/transformers@3.2.1':
     dependencies:
