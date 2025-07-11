@@ -7,40 +7,39 @@ import { fileURLToPath } from 'node:url';
 
 export default defineAgent({
   entry: async (ctx: JobContext) => {
-    await ctx.connect();
     const logger = log();
 
-    const eouModel = new turnDetector.EnglishModel();
+    await ctx.connect();
+
+    // const eouModel = new turnDetector.EnglishModel();
+    const eouModel = new turnDetector.MultilingualModel();
+
+    const unlikelyThreshold = await eouModel.unlikelyThreshold('en');
+    logger.info({ unlikelyThreshold }, 'unlikelyThreshold');
 
     const chatCtx = llm.ChatContext.empty();
-
-    chatCtx.addMessage({
-      role: 'user',
-      content: 'Hello, how are you? My name is Brian.',
-    });
-
     chatCtx.addMessage({
       role: 'assistant',
-      content: 'Hello, Brian. How can I help you today?',
+      content: 'Hi, how can I help you today?',
     });
 
-    const chatCtxNonEndingTurn = chatCtx.copy();
-    chatCtxNonEndingTurn.addMessage({
+    const nonEndingTurn = chatCtx.copy();
+    nonEndingTurn.addMessage({
       role: 'user',
-      content: 'What is weather in',
+      content: 'What is the weather in',
     });
 
-    const chatCtxEndingTurn = chatCtx.copy();
-    chatCtxEndingTurn.addMessage({
+    const nonEndingTurnResult = await eouModel.predictEndOfTurn(nonEndingTurn);
+    logger.info({ nonEndingTurnResult }, 'nonEndingTurnResult');
+
+    const endingTurn = chatCtx.copy();
+    endingTurn.addMessage({
       role: 'user',
-      content: 'What is weather in San Francisco?',
+      content: 'What is the weather in San Francisco?',
     });
 
-    const resultNonEndingTurn = await eouModel.predictEndOfTurn(chatCtxNonEndingTurn);
-    const resultEndingTurn = await eouModel.predictEndOfTurn(chatCtxEndingTurn);
-
-    logger.info({ resultNonEndingTurn }, 'Non-ending turn result:');
-    logger.info({ resultEndingTurn }, 'Ending turn result:');
+    const endingTurnResult = await eouModel.predictEndOfTurn(endingTurn);
+    logger.info({ endingTurnResult }, 'endingTurnResult');
   },
 });
 

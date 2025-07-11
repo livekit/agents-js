@@ -25,7 +25,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup --onSuccess \"pnpm build:types\" && cp src/turn_detector/turn_detector.onnx dist/turn_detector/",
+    "build": "tsup --onSuccess \"pnpm build:types\"",
     "build:types": "tsc --declaration --emitDeclarationOnly && node ../../scripts/copyDeclarationOutput.js",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",

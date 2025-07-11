@@ -240,6 +240,16 @@ export class AudioRecognition {
           );
 
           const unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
+          this.logger.debug(
+            {
+              unlikelyThreshold,
+              endOfTurnProbability,
+              language: this.lastLanguage,
+              transcript: this.audioTranscript,
+            },
+            'EOU Detection',
+          );
+
           if (unlikelyThreshold && endOfTurnProbability < unlikelyThreshold) {
             endpointingDelay = this.maxEndpointingDelay;
           }
