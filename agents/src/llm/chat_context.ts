@@ -420,10 +420,6 @@ export class ChatContext {
           createdAt: item.createdAt,
         });
 
-        if (item.hash) {
-          processedItem.hash = item.hash;
-        }
-
         // Filter content based on options
         if (excludeImage) {
           processedItem.content = processedItem.content.filter((c) => {
