@@ -4,7 +4,7 @@
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
 import { shortuuid } from '../utils.js';
 import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
-import type { ToolContext } from './tool_context.js';
+import type { JSONObject, JSONValue, ToolContext } from './tool_context.js';
 
 export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
 export interface ImageContent {
@@ -93,14 +93,36 @@ export class ChatMessage {
     return parts.length > 0 ? parts.join('\n') : undefined;
   }
 
+  toJSONContent(): JSONValue[] {
+    return this.content.map((c) => {
+      if (typeof c === 'string') {
+        return c as JSONValue;
+      } else if (c.type === 'image_content') {
+        return {
+          id: c.id,
+          type: c.type,
+          image: c.image,
+          inferenceDetail: c.inferenceDetail,
+          inferenceWidth: c.inferenceWidth,
+          inferenceHeight: c.inferenceHeight,
+          mimeType: c.mimeType,
+        } as JSONObject;
+      } else {
+        return {
+          type: c.type,
+          transcript: c.transcript,
+        } as JSONObject;
+      }
+    });
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  toJSON(excludeTimestamp: boolean = false): Record<string, any> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result: Record<string, any> = {
+  toJSON(excludeTimestamp: boolean = false): JSONValue {
+    const result: JSONValue = {
       id: this.id,
       type: this.type,
       role: this.role,
-      content: this.content,
+      content: this.toJSONContent(),
       interrupted: this.interrupted,
     };
 
@@ -151,9 +173,8 @@ export class FunctionCall {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  toJSON(excludeTimestamp: boolean = false): Record<string, any> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result: Record<string, any> = {
+  toJSON(excludeTimestamp: boolean = false): JSONValue {
+    const result: JSONValue = {
       id: this.id,
       type: this.type,
       callId: this.callId,
@@ -219,10 +240,8 @@ export class FunctionCallOutput {
     return new FunctionCallOutput(params);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  toJSON(excludeTimestamp: boolean = false): Record<string, any> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result: Record<string, any> = {
+  toJSON(excludeTimestamp: boolean = false): JSONValue {
+    const result: JSONValue = {
       id: this.id,
       type: this.type,
       name: this.name,
@@ -384,7 +403,7 @@ export class ChatContext {
       excludeFunctionCall?: boolean;
     } = {},
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ): { items: Record<string, any>[] } {
+  ): JSONObject {
     const {
       excludeImage = true,
       excludeAudio = true,
