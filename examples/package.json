@@ -6,8 +6,7 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
-    "lint": "eslint -f unix \"src/**/*.ts\"",
-    "minimal": "pnpm exec tsx src/multimodal_agent.ts"
+    "lint": "eslint -f unix \"src/**/*.ts\""
   },
   "devDependencies": {
     "@types/node": "^22.5.5",
