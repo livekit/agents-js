@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AutoTokenizer, type PreTrainedTokenizer } from '@huggingface/transformers';
+import { type PreTrainedTokenizer } from '@huggingface/transformers';
 import type { ipc, llm } from '@livekit/agents';
 import { CurrentJobContext, InferenceRunner, log } from '@livekit/agents';
 import os from 'node:os';
@@ -29,7 +29,7 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
   }
 
   async initialize() {
-    // TODO(brian): dynamic import of the HF tokenizer
+    const { AutoTokenizer } = await import('@huggingface/transformers');
 
     // TODO(brian): remove hardcoded path and support downloading the model from HF hub
     const onnxModelPath = fileURLToPath(new URL('turn_detector.onnx', import.meta.url).href);
