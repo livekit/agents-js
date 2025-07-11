@@ -173,6 +173,71 @@ describe('HuggingFace Download Fixed Implementation', () => {
       const refsPath = join(getCachePath(TEST_REPO, TEST_CACHE_DIR), 'refs', 'v1.2.2-en');
       expect(existsSync(refsPath)).toBe(true);
     });
+
+    it('should handle multiple files from same revision without overwriting refs', async () => {
+      // Download two different files from the same revision
+      const file1Path = await downloadFileToCacheDir({
+        repo: TEST_REPO,
+        path: 'onnx/model_q8.onnx',
+        revision: 'v1.2.2-en',
+        cacheDir: TEST_CACHE_DIR,
+      });
+
+      const file2Path = await downloadFileToCacheDir({
+        repo: TEST_REPO,
+        path: 'languages.json',
+        revision: 'v1.2.2-en',
+        cacheDir: TEST_CACHE_DIR,
+      });
+
+      // Both files should exist
+      expect(existsSync(file1Path)).toBe(true);
+      expect(existsSync(file2Path)).toBe(true);
+
+      // Now test that both files can be retrieved with localFileOnly
+      const cachedFile1 = await downloadFileToCacheDir({
+        repo: TEST_REPO,
+        path: 'onnx/model_q8.onnx',
+        revision: 'v1.2.2-en',
+        cacheDir: TEST_CACHE_DIR,
+        localFileOnly: true,
+      });
+
+      const cachedFile2 = await downloadFileToCacheDir({
+        repo: TEST_REPO,
+        path: 'languages.json',
+        revision: 'v1.2.2-en',
+        cacheDir: TEST_CACHE_DIR,
+        localFileOnly: true,
+      });
+
+      // Both should be found in cache
+      expect(cachedFile1).toBe(file1Path);
+      expect(cachedFile2).toBe(file2Path);
+
+      // Check that both files are in the same snapshot folder (same commit hash)
+      // Extract commit hash from paths
+      const match1 = file1Path.match(/snapshots\/([a-f0-9]{40})\//);
+      const match2 = file2Path.match(/snapshots\/([a-f0-9]{40})\//);
+
+      expect(match1).toBeTruthy();
+      expect(match2).toBeTruthy();
+
+      const commitHash1 = match1![1];
+      const commitHash2 = match2![1];
+
+      // FIXED: All files from the same revision should use the same HEAD commit
+      expect(commitHash1).toBe(commitHash2);
+
+      // Check that the refs file contains the single HEAD commit
+      const { readFileSync } = await import('fs');
+      const refsPath = join(getCachePath(TEST_REPO, TEST_CACHE_DIR), 'refs', 'v1.2.2-en');
+      const refsContent = readFileSync(refsPath, 'utf-8').trim();
+
+      // The refs file should contain just the commit hash, not a JSON mapping
+      expect(refsContent).toMatch(/^[a-f0-9]{40}$/);
+      expect(refsContent).toBe(commitHash1);
+    });
   });
 
   describe('Error Handling', () => {
