@@ -11,6 +11,6 @@ export const MODEL_REVISIONS: Record<EOUModelType, string> = {
   multilingual: 'v0.2.0-intl',
 };
 
-export const HG_MODEL = 'livekit/turn-detector';
+export const HG_MODEL_REPO = 'livekit/turn-detector';
 
-export const ONNX_FILENAME = 'model_q8.onnx';
+export const ONNX_FILEPATH = 'onnx/model_q8.onnx';
