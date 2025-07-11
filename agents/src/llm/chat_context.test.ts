@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   type AudioContent,
   ChatContext,
@@ -10,350 +10,291 @@ import {
   type ImageContent,
 } from './chat_context.js';
 
-describe('ChatContext', () => {
-  describe('toJSON', () => {
-    let context: ChatContext;
+describe('ChatContext.toJSON', () => {
+  it('should match snapshot for empty context', () => {
+    const context = new ChatContext();
+    expect(context.toJSON()).toMatchSnapshot();
+  });
 
-    beforeEach(() => {
-      context = new ChatContext();
+  it('should match snapshot for simple conversation', () => {
+    const context = new ChatContext();
+
+    context.addMessage({
+      id: 'msg_system_1',
+      role: 'system',
+      content: 'You are a helpful assistant.',
+      createdAt: 1000000000,
     });
 
-    it('should convert empty context to JSON', () => {
-      const result = context.toJSON();
-      expect(result).toEqual({ items: [] });
+    context.addMessage({
+      id: 'msg_user_1',
+      role: 'user',
+      content: 'Hello, how are you?',
+      createdAt: 1000000001,
     });
 
-    it('should exclude timestamps by default', () => {
-      const message = context.addMessage({
-        role: 'user',
-        content: 'Hello',
-        createdAt: 1234567890,
-      });
-
-      const result = context.toJSON();
-      expect(result.items).toHaveLength(1);
-      expect(result.items[0]).not.toHaveProperty('createdAt');
-      expect(result.items[0]).toMatchObject({
-        id: message.id,
-        type: 'message',
-        role: 'user',
-        content: ['Hello'],
-        interrupted: false,
-      });
+    context.addMessage({
+      id: 'msg_assistant_1',
+      role: 'assistant',
+      content: "I'm doing well, thank you! How can I help you today?",
+      createdAt: 1000000002,
     });
 
-    it('should include timestamps when excludeTimestamp is false', () => {
-      const createdAt = 1234567890;
-      context.addMessage({
-        role: 'user',
-        content: 'Hello',
-        createdAt,
-      });
+    // Default options (excludes timestamps)
+    expect(context.toJSON()).toMatchSnapshot('simple-conversation-no-timestamps');
 
-      const result = context.toJSON({ excludeTimestamp: false });
-      expect(result.items).toHaveLength(1);
-      expect(result.items[0]).toHaveProperty('createdAt', createdAt);
-    });
+    // Include timestamps
+    expect(context.toJSON({ excludeTimestamp: false })).toMatchSnapshot(
+      'simple-conversation-with-timestamps',
+    );
+  });
 
-    it('should exclude image content by default', () => {
-      const imageContent: ImageContent = {
-        id: 'img_123',
-        type: 'image_content',
-        image: 'https://example.com/image.jpg',
-        inferenceDetail: 'auto',
-        _cache: {},
-      };
+  it('should match snapshot for multimodal content', () => {
+    const context = new ChatContext();
 
-      context.addMessage({
-        role: 'user',
-        content: ['Look at this image:', imageContent, 'What do you see?'],
-      });
+    const imageContent: ImageContent = {
+      id: 'img_test_1',
+      type: 'image_content',
+      image: 'https://example.com/test-image.jpg',
+      inferenceDetail: 'high',
+      inferenceWidth: 1024,
+      inferenceHeight: 768,
+      mimeType: 'image/jpeg',
+      _cache: {},
+    };
 
-      const result = context.toJSON();
-      expect(result.items).toHaveLength(1);
-      expect(result.items[0]!.content).toEqual(['Look at this image:', 'What do you see?']);
-      expect(result.items[0]!.content).not.toContainEqual(
-        expect.objectContaining({ type: 'image_content' }),
-      );
-    });
+    const audioContent: AudioContent = {
+      type: 'audio_content',
+      frame: [], // This won't be included in JSON
+      transcript: 'This is a test audio transcript',
+    };
 
-    it('should include image content when excludeImage is false', () => {
-      const imageContent: ImageContent = {
-        id: 'img_123',
-        type: 'image_content',
-        image: 'https://example.com/image.jpg',
-        inferenceDetail: 'high',
-        inferenceWidth: 512,
-        inferenceHeight: 512,
-        mimeType: 'image/jpeg',
-        _cache: {},
-      };
-
-      context.addMessage({
-        role: 'user',
-        content: ['Look at this:', imageContent],
-      });
-
-      const result = context.toJSON({ excludeImage: false });
-      expect(result.items).toHaveLength(1);
-      expect(result.items[0]!.content).toHaveLength(2);
-      expect(result.items[0]!.content[1]).toMatchObject({
-        id: 'img_123',
-        type: 'image_content',
-        image: 'https://example.com/image.jpg',
-        inferenceDetail: 'high',
-        inferenceWidth: 512,
-        inferenceHeight: 512,
-        mimeType: 'image/jpeg',
-      });
-    });
-
-    it('should exclude audio content by default', () => {
-      const audioContent: AudioContent = {
-        type: 'audio_content',
-        frame: [], // Empty array for simplicity
-        transcript: 'Hello world',
-      };
-
-      context.addMessage({
-        role: 'user',
-        content: ['Listen to this:', audioContent, 'What did you hear?'],
-      });
-
-      const result = context.toJSON();
-      expect(result.items).toHaveLength(1);
-      expect(result.items[0]!.content).toEqual(['Listen to this:', 'What did you hear?']);
-      expect(result.items[0]!.content).not.toContainEqual(
-        expect.objectContaining({ type: 'audio_content' }),
-      );
-    });
-
-    it('should include audio content when excludeAudio is false', () => {
-      const audioContent: AudioContent = {
-        type: 'audio_content',
-        frame: [],
-        transcript: 'Hello world',
-      };
-
-      context.addMessage({
-        role: 'user',
-        content: ['Listen:', audioContent],
-      });
-
-      const result = context.toJSON({ excludeAudio: false });
-      expect(result.items).toHaveLength(1);
-      expect(result.items[0]!.content).toHaveLength(2);
-      expect(result.items[0]!.content[1]).toMatchObject({
-        type: 'audio_content',
-        frame: [],
-        transcript: 'Hello world',
-      });
-    });
-
-    it('should include function calls by default', () => {
-      const functionCall = new FunctionCall({
-        callId: 'call_123',
-        name: 'get_weather',
-        args: '{"location": "San Francisco"}',
-      });
-
-      const functionOutput = new FunctionCallOutput({
-        callId: 'call_123',
-        output: 'Sunny, 72°F',
-        isError: false,
-        name: 'get_weather',
-      });
-
-      context.insert([functionCall, functionOutput]);
-
-      const result = context.toJSON();
-      expect(result.items).toHaveLength(2);
-      expect(result.items[0]).toMatchObject({
-        id: functionCall.id,
-        type: 'function_call',
-        callId: 'call_123',
-        name: 'get_weather',
-        args: '{"location": "San Francisco"}',
-      });
-      expect(result.items[1]).toMatchObject({
-        id: functionOutput.id,
-        type: 'function_call_output',
-        callId: 'call_123',
-        output: 'Sunny, 72°F',
-        isError: false,
-        name: 'get_weather',
-      });
-    });
-
-    it('should exclude function calls when excludeFunctionCall is true', () => {
-      context.addMessage({ role: 'user', content: 'What is the weather?' });
-
-      const functionCall = new FunctionCall({
-        callId: 'call_123',
-        name: 'get_weather',
-        args: '{"location": "San Francisco"}',
-      });
-
-      const functionOutput = new FunctionCallOutput({
-        callId: 'call_123',
-        output: 'Sunny, 72°F',
-        isError: false,
-      });
-
-      context.insert([functionCall, functionOutput]);
-
-      context.addMessage({ role: 'assistant', content: 'The weather is sunny and 72°F.' });
-
-      const result = context.toJSON({ excludeFunctionCall: true });
-      expect(result.items).toHaveLength(2);
-      expect(result.items.every((item) => item.type === 'message')).toBe(true);
-      expect(result.items[0]!.role).toBe('user');
-      expect(result.items[1]!.role).toBe('assistant');
-    });
-
-    it('should handle mixed content types with various options', () => {
-      const imageContent: ImageContent = {
-        id: 'img_456',
-        type: 'image_content',
-        image: 'data:image/png;base64,iVBORw0KG...',
-        inferenceDetail: 'low',
-        _cache: {},
-      };
-
-      const audioContent: AudioContent = {
-        type: 'audio_content',
-        frame: [],
-        transcript: 'Test audio',
-      };
-
-      context.addMessage({
-        role: 'user',
-        content: ['Text part', imageContent, audioContent, 'Another text'],
-      });
-
-      // Test with default options (exclude image and audio)
-      const result1 = context.toJSON();
-      expect(result1.items[0]!.content).toEqual(['Text part', 'Another text']);
-
-      // Test with only images excluded
-      const result2 = context.toJSON({ excludeImage: true, excludeAudio: false });
-      expect(result2.items[0]!.content).toHaveLength(3);
-      expect(result2.items[0]!.content).toEqual(['Text part', audioContent, 'Another text']);
-
-      // Test with nothing excluded
-      const result3 = context.toJSON({ excludeImage: false, excludeAudio: false });
-      expect(result3.items[0]!.content).toHaveLength(4);
-      expect(result3.items[0]!.content).toEqual([
-        'Text part',
+    context.addMessage({
+      id: 'msg_user_2',
+      role: 'user',
+      content: [
+        'Check out this image and audio:',
         imageContent,
         audioContent,
-        'Another text',
-      ]);
+        'What do you think?',
+      ],
+      createdAt: 2000000000,
     });
 
-    it('should handle messages with different roles', () => {
-      context.addMessage({ role: 'developer', content: 'Developer instructions' });
-      context.addMessage({ role: 'system', content: 'System prompt' });
-      context.addMessage({ role: 'user', content: 'User message' });
-      context.addMessage({ role: 'assistant', content: 'Assistant response' });
+    // Default (excludes image and audio)
+    expect(context.toJSON()).toMatchSnapshot('multimodal-default-exclusions');
 
-      const result = context.toJSON();
-      expect(result.items).toHaveLength(4);
-      expect(result.items[0]!.role).toBe('developer');
-      expect(result.items[1]!.role).toBe('system');
-      expect(result.items[2]!.role).toBe('user');
-      expect(result.items[3]!.role).toBe('assistant');
+    // Include only images
+    expect(
+      context.toJSON({
+        excludeImage: false,
+        excludeAudio: true,
+      }),
+    ).toMatchSnapshot('multimodal-with-images-only');
+
+    // Include only audio
+    expect(
+      context.toJSON({
+        excludeImage: true,
+        excludeAudio: false,
+      }),
+    ).toMatchSnapshot('multimodal-with-audio-only');
+
+    // Include everything
+    expect(
+      context.toJSON({
+        excludeImage: false,
+        excludeAudio: false,
+        excludeTimestamp: false,
+      }),
+    ).toMatchSnapshot('multimodal-full-content');
+  });
+
+  it('should match snapshot for function calls', () => {
+    const context = new ChatContext();
+
+    context.addMessage({
+      id: 'msg_user_3',
+      role: 'user',
+      content: "What's the weather in Paris?",
+      createdAt: 3000000000,
     });
 
-    it('should preserve message properties', () => {
-      const message = context.addMessage({
-        role: 'user',
-        content: 'Test message',
-        id: 'custom_id_123',
-        interrupted: true,
-      });
+    const functionCall = new FunctionCall({
+      id: 'func_call_1',
+      callId: 'call_weather_123',
+      name: 'get_weather',
+      args: '{"location": "Paris, France", "unit": "celsius"}',
+      createdAt: 3000000001,
+    });
+    context.insert(functionCall);
 
-      message.hash = new Uint8Array([1, 2, 3, 4]);
+    const functionOutput = new FunctionCallOutput({
+      id: 'func_output_1',
+      callId: 'call_weather_123',
+      name: 'get_weather',
+      output: '{"temperature": 22, "condition": "partly cloudy", "humidity": 65}',
+      isError: false,
+      createdAt: 3000000002,
+    });
+    context.insert(functionOutput);
 
-      const result = context.toJSON();
-      expect(result.items[0]).toMatchObject({
-        id: 'custom_id_123',
-        type: 'message',
-        role: 'user',
-        content: ['Test message'],
-        interrupted: true,
-      });
+    context.addMessage({
+      id: 'msg_assistant_2',
+      role: 'assistant',
+      content: 'The weather in Paris is currently 22°C and partly cloudy with 65% humidity.',
+      createdAt: 3000000003,
     });
 
-    it('should handle complex conversation flow', () => {
-      // User asks a question
-      context.addMessage({ role: 'user', content: 'What is the capital of France?' });
+    // With function calls (default)
+    expect(context.toJSON()).toMatchSnapshot('conversation-with-function-calls');
 
-      // Assistant makes a function call
-      const functionCall = new FunctionCall({
-        callId: 'call_789',
-        name: 'search_capital',
-        args: '{"country": "France"}',
-      });
-      context.insert(functionCall);
+    // Without function calls
+    expect(
+      context.toJSON({
+        excludeFunctionCall: true,
+      }),
+    ).toMatchSnapshot('conversation-without-function-calls');
 
-      // Function returns result
-      const functionOutput = new FunctionCallOutput({
-        callId: 'call_789',
-        output: 'Paris',
-        isError: false,
-        name: 'search_capital',
-      });
-      context.insert(functionOutput);
+    // Full details with timestamps
+    expect(
+      context.toJSON({
+        excludeTimestamp: false,
+      }),
+    ).toMatchSnapshot('conversation-with-function-calls-and-timestamps');
+  });
 
-      // Assistant responds
-      context.addMessage({ role: 'assistant', content: 'The capital of France is Paris.' });
+  it('should match snapshot for edge cases', () => {
+    const context = new ChatContext();
 
-      // Test with all items included
-      const result1 = context.toJSON();
-      expect(result1.items).toHaveLength(4);
-
-      // Test with function calls excluded
-      const result2 = context.toJSON({ excludeFunctionCall: true });
-      expect(result2.items).toHaveLength(2);
-      expect(result2.items[0]!.content).toEqual(['What is the capital of France?']);
-      expect(result2.items[1]!.content).toEqual(['The capital of France is Paris.']);
+    // Empty content
+    context.addMessage({
+      id: 'msg_empty_1',
+      role: 'user',
+      content: [],
+      createdAt: 5000000000,
     });
 
-    it('should handle empty content arrays', () => {
-      context.addMessage({ role: 'user', content: [] });
+    // Audio without transcript
+    const silentAudio: AudioContent = {
+      type: 'audio_content',
+      frame: [],
+      transcript: undefined,
+    };
 
-      const result = context.toJSON();
-      expect(result.items).toHaveLength(1);
-      expect(result.items[0]!.content).toEqual([]);
+    context.addMessage({
+      id: 'msg_silent_audio',
+      role: 'user',
+      content: [silentAudio],
+      createdAt: 5000000001,
     });
 
-    it('should handle function call with error output', () => {
-      const functionCall = new FunctionCall({
-        callId: 'call_error',
-        name: 'failing_function',
-        args: '{}',
-      });
-
-      const functionOutput = new FunctionCallOutput({
-        callId: 'call_error',
-        output: 'Error: Function failed',
-        isError: true,
-        name: 'failing_function',
-      });
-
-      context.insert([functionCall, functionOutput]);
-
-      const result = context.toJSON({ excludeTimestamp: false });
-      expect(result.items).toHaveLength(2);
-      expect(result.items[1]).toMatchObject({
-        type: 'function_call_output',
-        callId: 'call_error',
-        output: 'Error: Function failed',
-        isError: true,
-        name: 'failing_function',
-      });
-      expect(result.items[1]).toHaveProperty('createdAt');
+    // Multiple text parts
+    context.addMessage({
+      id: 'msg_multi_text',
+      role: 'assistant',
+      content: ['Part 1. ', 'Part 2. ', 'Part 3.'],
+      createdAt: 5000000002,
     });
+
+    // Function with minimal data
+    const minimalCall = new FunctionCall({
+      id: 'func_minimal',
+      callId: 'minimal',
+      name: 'test',
+      args: '{}',
+      createdAt: 5000000003,
+    });
+    context.insert(minimalCall);
+
+    // Function output with no name
+    const namelessOutput = new FunctionCallOutput({
+      id: 'func_output_nameless',
+      callId: 'minimal',
+      output: 'OK',
+      isError: false,
+      createdAt: 5000000004,
+    });
+    context.insert(namelessOutput);
+
+    // Special characters in content
+    context.addMessage({
+      id: 'msg_special_chars',
+      role: 'user',
+      content:
+        'Test with special chars: \n\t\r "quotes" \'apostrophes\' \\backslashes\\ {braces} [brackets]',
+      createdAt: 5000000005,
+    });
+
+    expect(context.toJSON()).toMatchSnapshot('edge-cases-default');
+    expect(
+      context.toJSON({
+        excludeTimestamp: false,
+        excludeAudio: false,
+      }),
+    ).toMatchSnapshot('edge-cases-with-details');
+  });
+
+  it('should match snapshot for message property variations', () => {
+    const context = new ChatContext();
+
+    // Message with custom ID
+    context.addMessage({
+      id: 'custom-message-id-123',
+      role: 'user',
+      content: 'Message with custom ID',
+      createdAt: 6000000000,
+    });
+
+    // Interrupted message
+    context.addMessage({
+      id: 'msg_interrupted',
+      role: 'assistant',
+      content: 'This response was interrupted...',
+      interrupted: true,
+      createdAt: 6000000001,
+    });
+
+    // All role types
+    context.addMessage({
+      id: 'msg_dev_2',
+      role: 'developer',
+      content: 'Developer message',
+      createdAt: 6000000002,
+    });
+
+    context.addMessage({
+      id: 'msg_system_3',
+      role: 'system',
+      content: 'System message',
+      createdAt: 6000000003,
+    });
+
+    // Image with all properties
+    const detailedImage: ImageContent = {
+      id: 'img_detailed',
+      type: 'image_content',
+      image: 'https://example.com/image.jpg',
+      inferenceDetail: 'low',
+      inferenceWidth: 512,
+      inferenceHeight: 512,
+      mimeType: 'image/png',
+      _cache: { cached: true },
+    };
+
+    context.addMessage({
+      id: 'msg_with_image',
+      role: 'user',
+      content: ['Image with all properties:', detailedImage],
+      createdAt: 6000000004,
+    });
+
+    expect(context.toJSON()).toMatchSnapshot('message-properties-default');
+    expect(
+      context.toJSON({
+        excludeImage: false,
+        excludeTimestamp: false,
+      }),
+    ).toMatchSnapshot('message-properties-full');
   });
 });
