@@ -150,19 +150,19 @@ export class AgentActivity implements RecognitionHooks {
     // TODO(shubhra): Add turn detection mode
   }
 
-  get vad(): VAD {
+  get vad(): VAD | undefined {
     return this.agent.vad || this.agentSession.vad;
   }
 
-  get stt(): STT {
+  get stt(): STT | undefined {
     return this.agent.stt || this.agentSession.stt;
   }
 
-  get llm(): LLM {
+  get llm(): LLM | RealtimeModel | undefined {
     return this.agent.llm || this.agentSession.llm;
   }
 
-  get tts(): TTS {
+  get tts(): TTS | undefined {
     return this.agent.tts || this.agentSession.tts;
   }
 

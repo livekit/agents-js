@@ -123,24 +123,26 @@ export class RealtimeModel extends llm.RealtimeModel {
   /* @internal */
   _options: RealtimeOptions;
 
-  constructor(options: {
-    model?: string;
-    voice?: string;
-    temperature?: number;
-    toolChoice?: llm.ToolChoice;
-    baseURL?: string;
-    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
-    // TODO(shubhra): add inputAudioNoiseReduction
-    turnDetection?: api_proto.TurnDetectionType | null;
-    speed?: number;
-    // TODO(shubhra): add openai tracing options
-    azureDeployment?: string;
-    apiKey?: string;
-    entraToken?: string;
-    apiVersion?: string;
-    maxSessionDuration?: number;
-    // TODO(shubhra): add connOptions
-  }) {
+  constructor(
+    options: {
+      model?: string;
+      voice?: string;
+      temperature?: number;
+      toolChoice?: llm.ToolChoice;
+      baseURL?: string;
+      inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+      // TODO(shubhra): add inputAudioNoiseReduction
+      turnDetection?: api_proto.TurnDetectionType | null;
+      speed?: number;
+      // TODO(shubhra): add openai tracing options
+      azureDeployment?: string;
+      apiKey?: string;
+      entraToken?: string;
+      apiVersion?: string;
+      maxSessionDuration?: number;
+      // TODO(shubhra): add connOptions
+    } = {},
+  ) {
     super({
       messageTruncation: true,
       turnDetection: options.turnDetection !== null,
