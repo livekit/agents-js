@@ -7,7 +7,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext, ChatMessage, type ImageContent } from './chat_context.js';
 import { computeChatCtxDiff, serializeImage } from './utils.js';
 
-// Helper functions for creating test data
 function createChatMessage(
   id: string,
   content: string,
@@ -153,7 +152,7 @@ describe('computeChatCtxDiff', () => {
     expect(result.toRemove).toEqual([]);
     expect(result.toCreate).toEqual([
       [null, '1'], // first item goes to root
-      ['1', '2'], // second item goes after first
+      ['1', '2'],
     ]);
   });
 
@@ -181,9 +180,7 @@ describe('computeChatCtxDiff', () => {
     const result = computeChatCtxDiff(oldCtx, newCtx);
 
     expect(result.toRemove).toEqual([]);
-    expect(result.toCreate).toEqual([
-      ['2', '3'], // new item goes after the last existing item
-    ]);
+    expect(result.toCreate).toEqual([['2', '3']]);
   });
 
   it('should handle removing items from the end', () => {
@@ -211,9 +208,7 @@ describe('computeChatCtxDiff', () => {
     const result = computeChatCtxDiff(oldCtx, newCtx);
 
     expect(result.toRemove).toEqual([]);
-    expect(result.toCreate).toEqual([
-      [null, '1'], // new item goes to root (beginning)
-    ]);
+    expect(result.toCreate).toEqual([[null, '1']]);
   });
 
   it('should handle removing items from the beginning', () => {
@@ -242,9 +237,7 @@ describe('computeChatCtxDiff', () => {
     const result = computeChatCtxDiff(oldCtx, newCtx);
 
     expect(result.toRemove).toEqual([]);
-    expect(result.toCreate).toEqual([
-      ['1', '2'], // new item goes after msg1
-    ]);
+    expect(result.toCreate).toEqual([['1', '2']]);
   });
 
   it('should handle removing items from the middle', () => {
@@ -282,8 +275,8 @@ describe('computeChatCtxDiff', () => {
 
     expect(result.toRemove).toEqual(['2', '4']);
     expect(result.toCreate).toEqual([
-      ['1', '5'], // msg5 goes after msg1
-      ['3', '6'], // msg6 goes after msg3
+      ['1', '5'],
+      ['3', '6'],
     ]);
   });
 
@@ -356,9 +349,9 @@ describe('computeChatCtxDiff', () => {
 
     expect(result.toRemove).toEqual([]);
     expect(result.toCreate).toEqual([
-      ['1', '2'], // msg2 after msg1
-      ['3', '4'], // msg4 after msg3
-      ['5', '6'], // msg6 after msg5
+      ['1', '2'],
+      ['3', '4'],
+      ['5', '6'],
     ]);
   });
 });
