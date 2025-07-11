@@ -31,11 +31,6 @@ path = ["**/silero_vad.onnx"]
 SPDX-FileCopyrightText = "2024 Silero Team"
 SPDX-License-Identifier = "CC-BY-NC-SA-4.0"
 
-# livekit model files
-[[annotations]]
-SPDX-FileCopyrightText = "2024 LiveKit, Inc."
-SPDX-License-Identifier = "LicenseRef-LiveKitModelLicense"
-
 # testing files
 [[annotations]]
 path = ["**/.gitattributes", "**.wav"]
