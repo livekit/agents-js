@@ -1,15 +1,27 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AsyncIterableQueue, Future, Queue, llm, log } from '@livekit/agents';
+import {
+  AsyncIterableQueue,
+  AudioByteStream,
+  Future,
+  Queue,
+  llm,
+  log,
+  shortuuid,
+} from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
+const SAMPLE_RATE = 24000;
+const NUM_CHANNELS = 1;
 const BASE_URL = 'https://api.openai.com/v1';
+
+const MOCK_AUDIO_ID_PREFIX = 'lk_mock_audio_item_';
 
 interface RealtimeOptions {
   model: api_proto.Model;
@@ -331,12 +343,18 @@ export class RealtimeSession extends llm.RealtimeSession {
   private currentGeneration?: ResponseGeneration;
   private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
 
+  private textModeRecoveryRetries: number = 0;
+
   private itemCreateFutures: { [id: string]: Future } = {};
   private itemDeleteFutures: { [id: string]: Future } = {};
 
   private updateChatCtxLock = new Mutex();
+  private updateFuncCtxLock = new Mutex();
 
-  private textModeRecoveryRetries: number = 0;
+  // 100ms chunks
+  private bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, SAMPLE_RATE / 10);
+
+  private pushedDurationMs: number = 0;
 
   #ws: WebSocket | null = null;
   #expiresAt: number | null = null;
@@ -388,51 +406,144 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   get tools() {
-    // TODO(shubhra): return a copy of the tools
+    // TODO(AJS-151): return a copy of the tools
     return this._tools;
   }
 
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
-    // const unlock = await this.updateChatCtxLock.lock();
-    throw new Error('not implemented');
-    // unlock();
+    const unlock = await this.updateChatCtxLock.lock();
+    const events = this.createChatCtxUpdateEvents(_chatCtx);
+    for (const event of events) {
+      this.sendEvent(event);
+    }
+    unlock();
     return;
   }
 
-  async updateInstructions(_instructions: string): Promise<void> {
-    throw new Error('not implemented');
-  }
+  private createChatCtxUpdateEvents(
+    chatCtx: llm.ChatContext,
+    addMockAudio: boolean = false,
+  ): (api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[] {
+    const newChatCtx = chatCtx.copy();
+    if (addMockAudio) {
+      newChatCtx.items.push(createMockAudioItem());
+    } else {
+      // clean up existing mock audio items
+      newChatCtx.items = newChatCtx.items.filter(
+        (item) => !item.id.startsWith(MOCK_AUDIO_ID_PREFIX),
+      );
+    }
 
-  pushAudio(_frame: AudioFrame): void {
-    throw new Error('not implemented');
+    const events: (
+      | api_proto.ConversationItemCreateEvent
+      | api_proto.ConversationItemDeleteEvent
+    )[] = [];
+
+    const diffOps = llm.computeChatCtxDiff(this.chatCtx, newChatCtx);
+    for (const op of diffOps.toRemove) {
+      events.push({
+        type: 'conversation.item.delete',
+        item_id: op,
+        event_id: shortuuid('chat_ctx_delete_'),
+      } as api_proto.ConversationItemDeleteEvent);
+    }
+
+    for (const [previousId, id] of diffOps.toCreate) {
+      const chatItem = newChatCtx.getById(id);
+      if (!chatItem) {
+        throw new Error(`Chat item ${id} not found`);
+      }
+      events.push({
+        type: 'conversation.item.create',
+        item: livekitItemToOpenAIItem(chatItem),
+        previous_item_id: previousId,
+        event_id: shortuuid('chat_ctx_create_'),
+      } as api_proto.ConversationItemCreateEvent);
+    }
+    return events;
   }
 
   async updateTools(_tools: llm.ToolContext): Promise<void> {
+    const unlock = await this.updateFuncCtxLock.lock();
+    const ev = this.createToolsUpdateEvent(_tools);
+    this.sendEvent(ev);
+
+    if (!ev.session.tools) {
+      throw new Error('Tools are missing in the session update event');
+    }
+    // TODO(AJS-151) Handle retained tools
+    this._tools = _tools;
+
+    unlock();
+  }
+
+  private createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
+    // TODO(AJS-151) Add tool calls to realtime model
     throw new Error('not implemented');
+  }
+
+  async updateInstructions(_instructions: string): Promise<void> {
+    const eventId = shortuuid('instructions_update_');
+    this.sendEvent({
+      type: 'session.update',
+      session: {
+        instructions: _instructions,
+      },
+      event_id: eventId,
+    } as api_proto.SessionUpdateEvent);
+    this.instructions = _instructions;
+  }
+
+  pushAudio(frame: AudioFrame): void {
+    for (const f of this.resampleAudio(frame)) {
+      for (const nf of this.bstream.write(f.data)) {
+        this.sendEvent({
+          type: 'input_audio_buffer.append',
+          audio: Buffer.from(nf.data).toString('base64'),
+        } as api_proto.InputAudioBufferAppendEvent);
+        // TODO(AJS-102): use frame.durationMs once available in rtc-node
+        this.pushedDurationMs += nf.samplesPerChannel / nf.sampleRate;
+      }
+    }
   }
 
   async commitAudio(): Promise<void> {
-    throw new Error('not implemented');
+    if (this.pushedDurationMs > 100) {
+      // OpenAI requires at least 100ms of audio
+      this.sendEvent({
+        type: 'input_audio_buffer.commit',
+        duration_ms: this.pushedDurationMs,
+      } as api_proto.InputAudioBufferCommitEvent);
+      this.pushedDurationMs = 0;
+    }
   }
 
   async clearAudio(): Promise<void> {
-    throw new Error('not implemented');
+    this.sendEvent({
+      type: 'input_audio_buffer.clear',
+    } as api_proto.InputAudioBufferClearEvent);
+    this.pushedDurationMs = 0;
   }
 
-  async generateReply(_options: { instructions: string }): Promise<void> {
-    throw new Error('not implemented');
+  async generateReply(instructions: string): Promise<llm.GenerationCreatedEvent> {
+    const handle = this.createResponse({ instructions, userInitiated: true });
+    this.textModeRecoveryRetries = 0;
+    return handle.doneFut.await;
   }
 
   async interrupt(): Promise<void> {
-    throw new Error('not implemented');
+    this.sendEvent({
+      type: 'response.cancel',
+    } as api_proto.ResponseCancelEvent);
   }
 
   async truncate(_options: { messageId: string; audioEndMs: number }): Promise<void> {
-    throw new Error('not implemented');
-  }
-
-  startUserActivity(): void {
-    throw new Error('not implemented');
+    this.sendEvent({
+      type: 'conversation.item.truncate',
+      content_index: 0,
+      item_id: _options.messageId,
+      audio_end_ms: _options.audioEndMs,
+    } as api_proto.ConversationItemTruncateEvent);
   }
 
   /// Truncates the data field of the event to the specified maxLength to avoid overwhelming logs
@@ -922,6 +1033,37 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.#logger.error({ error: event.error }, 'OpenAI Realtime API returned an error');
   }
 
+  private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
+    yield frame;
+  }
+
+  private createResponse({
+    userInitiated,
+    instructions,
+    oldHandle,
+  }: {
+    userInitiated: boolean;
+    instructions?: string;
+    oldHandle?: CreateResponseHandle;
+  }): CreateResponseHandle {
+    const handle = oldHandle || new CreateResponseHandle({ instructions });
+    if (oldHandle && instructions) {
+      handle.instructions = instructions;
+    }
+
+    const eventId = shortuuid('response_create_');
+    if (userInitiated) {
+      this.responseCreatedFutures[eventId] = handle;
+    }
+
+    this.sendEvent({
+      type: 'response.create',
+      event_id: eventId,
+    } as api_proto.ResponseCreateEvent);
+
+    return handle;
+  }
+
   private emitGenerationEvent(responseId: string): void {
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
@@ -945,6 +1087,54 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     this.emit('generation_created', generation_ev);
+  }
+}
+
+function livekitItemToOpenAIItem(item: llm.ChatItem): api_proto.ItemResource {
+  switch (item.type) {
+    case 'function_call':
+      return {
+        id: item.id,
+        type: 'function_call',
+        call_id: item.callId,
+        name: item.name,
+        arguments: item.args,
+      } as api_proto.FunctionCallItem;
+    case 'function_call_output':
+      return {
+        id: item.id,
+        type: 'function_call_output',
+        call_id: item.callId,
+        output: item.output,
+      } as api_proto.FunctionCallOutputItem;
+    case 'message':
+      const role = item.role === 'developer' ? 'system' : item.role;
+      const contentList: api_proto.Content[] = [];
+      for (const c of item.content) {
+        if (typeof c === 'string') {
+          contentList.push({
+            type: role === 'assistant' ? 'text' : 'input_text',
+            text: c,
+          } as api_proto.InputTextContent);
+        } else if (c.type === 'image_content') {
+          // not supported for now
+          continue;
+        } else if (c.type === 'audio_content') {
+          if (role === 'user') {
+            const encodedAudio = Buffer.from(combineAudioFrames(c.frame).data).toString('base64');
+            contentList.push({
+              type: 'input_audio',
+              audio: encodedAudio,
+            } as api_proto.InputAudioContent);
+          }
+        }
+      }
+      return {
+        id: item.id,
+        type: 'message',
+        role,
+        content: contentList,
+      } as api_proto.UserItem;
   }
 }
 
@@ -983,6 +1173,27 @@ function openAIItemToLivekitItem(item: api_proto.ItemResource): llm.ChatItem {
         content,
       });
   }
+}
+
+function createMockAudioItem(durationSeconds: number = 2): llm.ChatMessage {
+  const audioData = Buffer.alloc(durationSeconds * SAMPLE_RATE);
+  return llm.ChatMessage.create({
+    id: shortuuid(MOCK_AUDIO_ID_PREFIX),
+    role: 'user',
+    content: [
+      {
+        type: 'audio_content',
+        frame: [
+          new AudioFrame(
+            new Int16Array(audioData.buffer),
+            SAMPLE_RATE,
+            NUM_CHANNELS,
+            audioData.length / 2,
+          ),
+        ],
+      } as llm.AudioContent,
+    ],
+  });
 }
 
 function toOaiToolChoice(toolChoice: llm.ToolChoice | null): api_proto.ToolChoice {

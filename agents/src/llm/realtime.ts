@@ -84,7 +84,7 @@ export abstract class RealtimeSession extends EventEmitter {
   /**
    * @throws RealtimeError on Timeout
    */
-  abstract generateReply(options: { instructions: string }): Promise<void>;
+  abstract generateReply(instructions: string): Promise<GenerationCreatedEvent>;
 
   /**
    * Commit the input audio buffer to the server
@@ -111,5 +111,7 @@ export abstract class RealtimeSession extends EventEmitter {
   /**
    * Notifies the model that user activity has started
    */
-  abstract startUserActivity(): void;
+  startUserActivity(): void {
+    return;
+  }
 }
