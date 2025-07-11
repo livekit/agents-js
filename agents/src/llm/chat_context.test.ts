@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
@@ -40,10 +40,8 @@ describe('ChatContext.toJSON', () => {
       createdAt: 1000000002,
     });
 
-    // Default options (excludes timestamps)
     expect(context.toJSON()).toMatchSnapshot('simple-conversation-no-timestamps');
 
-    // Include timestamps
     expect(context.toJSON({ excludeTimestamp: false })).toMatchSnapshot(
       'simple-conversation-with-timestamps',
     );
@@ -81,10 +79,8 @@ describe('ChatContext.toJSON', () => {
       createdAt: 2000000000,
     });
 
-    // Default (excludes image and audio)
     expect(context.toJSON()).toMatchSnapshot('multimodal-default-exclusions');
 
-    // Include only images
     expect(
       context.toJSON({
         excludeImage: false,
@@ -92,7 +88,6 @@ describe('ChatContext.toJSON', () => {
       }),
     ).toMatchSnapshot('multimodal-with-images-only');
 
-    // Include only audio
     expect(
       context.toJSON({
         excludeImage: true,
@@ -100,7 +95,6 @@ describe('ChatContext.toJSON', () => {
       }),
     ).toMatchSnapshot('multimodal-with-audio-only');
 
-    // Include everything
     expect(
       context.toJSON({
         excludeImage: false,
@@ -146,17 +140,14 @@ describe('ChatContext.toJSON', () => {
       createdAt: 3000000003,
     });
 
-    // With function calls (default)
     expect(context.toJSON()).toMatchSnapshot('conversation-with-function-calls');
 
-    // Without function calls
     expect(
       context.toJSON({
         excludeFunctionCall: true,
       }),
     ).toMatchSnapshot('conversation-without-function-calls');
 
-    // Full details with timestamps
     expect(
       context.toJSON({
         excludeTimestamp: false,
@@ -167,7 +158,6 @@ describe('ChatContext.toJSON', () => {
   it('should match snapshot for edge cases', () => {
     const context = new ChatContext();
 
-    // Empty content
     context.addMessage({
       id: 'msg_empty_1',
       role: 'user',
@@ -175,7 +165,6 @@ describe('ChatContext.toJSON', () => {
       createdAt: 5000000000,
     });
 
-    // Audio without transcript
     const silentAudio: AudioContent = {
       type: 'audio_content',
       frame: [],
@@ -189,7 +178,6 @@ describe('ChatContext.toJSON', () => {
       createdAt: 5000000001,
     });
 
-    // Multiple text parts
     context.addMessage({
       id: 'msg_multi_text',
       role: 'assistant',
@@ -197,7 +185,6 @@ describe('ChatContext.toJSON', () => {
       createdAt: 5000000002,
     });
 
-    // Function with minimal data
     const minimalCall = new FunctionCall({
       id: 'func_minimal',
       callId: 'minimal',
@@ -207,7 +194,6 @@ describe('ChatContext.toJSON', () => {
     });
     context.insert(minimalCall);
 
-    // Function output with no name
     const namelessOutput = new FunctionCallOutput({
       id: 'func_output_nameless',
       callId: 'minimal',
@@ -217,7 +203,6 @@ describe('ChatContext.toJSON', () => {
     });
     context.insert(namelessOutput);
 
-    // Special characters in content
     context.addMessage({
       id: 'msg_special_chars',
       role: 'user',
@@ -238,7 +223,6 @@ describe('ChatContext.toJSON', () => {
   it('should match snapshot for message property variations', () => {
     const context = new ChatContext();
 
-    // Message with custom ID
     context.addMessage({
       id: 'custom-message-id-123',
       role: 'user',
@@ -246,7 +230,6 @@ describe('ChatContext.toJSON', () => {
       createdAt: 6000000000,
     });
 
-    // Interrupted message
     context.addMessage({
       id: 'msg_interrupted',
       role: 'assistant',
@@ -255,7 +238,6 @@ describe('ChatContext.toJSON', () => {
       createdAt: 6000000001,
     });
 
-    // All role types
     context.addMessage({
       id: 'msg_dev_2',
       role: 'developer',
@@ -270,7 +252,6 @@ describe('ChatContext.toJSON', () => {
       createdAt: 6000000003,
     });
 
-    // Image with all properties
     const detailedImage: ImageContent = {
       id: 'img_detailed',
       type: 'image_content',
