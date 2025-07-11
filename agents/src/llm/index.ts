@@ -53,6 +53,7 @@ export { RemoteChatContext } from './remote_chat_context.js';
 export {
   createToolOptions,
   executeToolCall,
+  computeChatCtxDiff,
   oaiBuildFunctionInfo,
   oaiParams,
   type OpenAIFunctionParameters,

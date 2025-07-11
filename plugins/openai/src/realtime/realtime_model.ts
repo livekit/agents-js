@@ -12,7 +12,7 @@ import {
 } from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
@@ -20,6 +20,8 @@ import * as api_proto from './api_proto.js';
 const SAMPLE_RATE = 24000;
 const NUM_CHANNELS = 1;
 const BASE_URL = 'https://api.openai.com/v1';
+
+const MOCK_AUDIO_ID_PREFIX = 'lk_mock_audio_item_';
 
 interface RealtimeOptions {
   model: api_proto.Model;
@@ -410,32 +412,55 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
     const unlock = await this.updateChatCtxLock.lock();
-    const ev = this.createChatCtxUpdateEvents(_chatCtx);
-    this.sendEvent(ev);
+    const events = this.createChatCtxUpdateEvents(_chatCtx);
+    for (const event of events) {
+      this.sendEvent(event);
+    }
     unlock();
     return;
   }
 
   private createChatCtxUpdateEvents(
     chatCtx: llm.ChatContext,
+    addMockAudio: boolean = false,
   ): (api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[] {
     const newChatCtx = chatCtx.copy();
-    const evs: (api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[] =
-      [];
-    for (const item of newChatCtx.items) {
-      if (item.type === 'tool_call') {
-        evs.push({
-          type: 'conversation.item.create',
-          item: {
-            id: item.id,
-            role: item.role,
-            content: item.content,
-            tool_calls: item.toolCalls,
-          },
-        });
-      }
+    if (addMockAudio) {
+      newChatCtx.items.push(createMockAudioItem());
+    } else {
+      // clean up existing mock audio items
+      newChatCtx.items = newChatCtx.items.filter(
+        (item) => !item.id.startsWith(MOCK_AUDIO_ID_PREFIX),
+      );
     }
-    return evs;
+
+    const events: (
+      | api_proto.ConversationItemCreateEvent
+      | api_proto.ConversationItemDeleteEvent
+    )[] = [];
+
+    const diffOps = llm.computeChatCtxDiff(this.chatCtx, newChatCtx);
+    for (const op of diffOps.toRemove) {
+      events.push({
+        type: 'conversation.item.delete',
+        item_id: op,
+        event_id: shortuuid('chat_ctx_delete_'),
+      } as api_proto.ConversationItemDeleteEvent);
+    }
+
+    for (const [previousId, id] of diffOps.toCreate) {
+      const chatItem = newChatCtx.getById(id);
+      if (!chatItem) {
+        throw new Error(`Chat item ${id} not found`);
+      }
+      events.push({
+        type: 'conversation.item.create',
+        item: livekitItemToOpenAIItem(chatItem),
+        previous_item_id: previousId,
+        event_id: shortuuid('chat_ctx_create_'),
+      } as api_proto.ConversationItemCreateEvent);
+    }
+    return events;
   }
 
   async updateTools(_tools: llm.ToolContext): Promise<void> {
@@ -1065,6 +1090,54 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 }
 
+function livekitItemToOpenAIItem(item: llm.ChatItem): api_proto.ItemResource {
+  switch (item.type) {
+    case 'function_call':
+      return {
+        id: item.id,
+        type: 'function_call',
+        call_id: item.callId,
+        name: item.name,
+        arguments: item.args,
+      } as api_proto.FunctionCallItem;
+    case 'function_call_output':
+      return {
+        id: item.id,
+        type: 'function_call_output',
+        call_id: item.callId,
+        output: item.output,
+      } as api_proto.FunctionCallOutputItem;
+    case 'message':
+      const role = item.role === 'developer' ? 'system' : item.role;
+      const contentList: api_proto.Content[] = [];
+      for (const c of item.content) {
+        if (typeof c === 'string') {
+          contentList.push({
+            type: role === 'assistant' ? 'text' : 'input_text',
+            text: c,
+          } as api_proto.InputTextContent);
+        } else if (c.type === 'image_content') {
+          // not supported for now
+          continue;
+        } else if (c.type === 'audio_content') {
+          if (role === 'user') {
+            const encodedAudio = Buffer.from(combineAudioFrames(c.frame).data).toString('base64');
+            contentList.push({
+              type: 'input_audio',
+              audio: encodedAudio,
+            } as api_proto.InputAudioContent);
+          }
+        }
+      }
+      return {
+        id: item.id,
+        type: 'message',
+        role,
+        content: contentList,
+      } as api_proto.UserItem;
+  }
+}
+
 function openAIItemToLivekitItem(item: api_proto.ItemResource): llm.ChatItem {
   if (!item.id) {
     throw new Error('item.id is not set');
@@ -1100,6 +1173,27 @@ function openAIItemToLivekitItem(item: api_proto.ItemResource): llm.ChatItem {
         content,
       });
   }
+}
+
+function createMockAudioItem(durationSeconds: number = 2): llm.ChatMessage {
+  const audioData = Buffer.alloc(durationSeconds * SAMPLE_RATE);
+  return llm.ChatMessage.create({
+    id: shortuuid(MOCK_AUDIO_ID_PREFIX),
+    role: 'user',
+    content: [
+      {
+        type: 'audio_content',
+        frame: [
+          new AudioFrame(
+            new Int16Array(audioData.buffer),
+            SAMPLE_RATE,
+            NUM_CHANNELS,
+            audioData.length / 2,
+          ),
+        ],
+      } as llm.AudioContent,
+    ],
+  });
 }
 
 function toOaiToolChoice(toolChoice: llm.ToolChoice | null): api_proto.ToolChoice {
