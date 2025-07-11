@@ -376,16 +376,6 @@ export class ChatContext {
     return this;
   }
 
-  /**
-   * Convert the chat context to a JSON representation.
-   *
-   * @param options - Options for filtering content
-   * @param options.excludeImage - Whether to exclude image content from messages (default: true)
-   * @param options.excludeAudio - Whether to exclude audio content from messages (default: true)
-   * @param options.excludeTimestamp - Whether to exclude timestamp fields (default: true)
-   * @param options.excludeFunctionCall - Whether to exclude function calls and outputs (default: false)
-   * @returns JSON representation of the chat context
-   */
   toJSON(
     options: {
       excludeImage?: boolean;
