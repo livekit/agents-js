@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
-import { shortuuid } from './misc.js';
+import { shortuuid } from '../utils.js';
 import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
 import type { ToolContext } from './tool_context.js';
 
