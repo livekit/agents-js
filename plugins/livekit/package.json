@@ -44,7 +44,6 @@
     "@livekit/agents": "workspace:^x"
   },
   "dependencies": {
-    "@huggingface/hub": "^2.4.0",
     "@huggingface/transformers": "^3.2.1",
     "onnxruntime-node": "^1.19.2"
   }
