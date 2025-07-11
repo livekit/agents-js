@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, WorkerOptions, cli, defineAgent, llm } from '@livekit/agents';
+import { type JobContext, WorkerOptions, cli, defineAgent, llm, log } from '@livekit/agents';
 import { turnDetector } from '@livekit/agents-plugin-livekit';
 import { fileURLToPath } from 'node:url';
 
 export default defineAgent({
   entry: async (ctx: JobContext) => {
     await ctx.connect();
+    const logger = log();
 
     const eouModel = new turnDetector.EnglishModel();
 
@@ -23,14 +24,23 @@ export default defineAgent({
       content: 'Hello, Brian. How can I help you today?',
     });
 
-    chatCtx.addMessage({
+    const chatCtxNonEndingTurn = chatCtx.copy();
+    chatCtxNonEndingTurn.addMessage({
       role: 'user',
-      content: 'I am looking for a uh',
+      content: 'What is weather in',
     });
 
-    const result = await eouModel.predictEndOfTurn(chatCtx);
+    const chatCtxEndingTurn = chatCtx.copy();
+    chatCtxEndingTurn.addMessage({
+      role: 'user',
+      content: 'What is weather in San Francisco?',
+    });
 
-    console.log(result);
+    const resultNonEndingTurn = await eouModel.predictEndOfTurn(chatCtxNonEndingTurn);
+    const resultEndingTurn = await eouModel.predictEndOfTurn(chatCtxEndingTurn);
+
+    logger.info({ resultNonEndingTurn }, 'Non-ending turn result:');
+    logger.info({ resultEndingTurn }, 'Ending turn result:');
   },
 });
 
