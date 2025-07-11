@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AsyncIterableQueue, Future, Queue, llm, log } from '@livekit/agents';
+import { AsyncIterableQueue, AudioByteStream, Future, Queue, llm, log } from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame } from '@livekit/rtc-node';
@@ -9,6 +9,8 @@ import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
+const SAMPLE_RATE = 24000;
+const NUM_CHANNELS = 1;
 const BASE_URL = 'https://api.openai.com/v1';
 
 interface RealtimeOptions {
@@ -331,12 +333,18 @@ export class RealtimeSession extends llm.RealtimeSession {
   private currentGeneration?: ResponseGeneration;
   private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
 
+  private textModeRecoveryRetries: number = 0;
+
   private itemCreateFutures: { [id: string]: Future } = {};
   private itemDeleteFutures: { [id: string]: Future } = {};
 
   private updateChatCtxLock = new Mutex();
+  private updateFuncCtxLock = new Mutex();
 
-  private textModeRecoveryRetries: number = 0;
+  // 100ms chunks
+  private bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, SAMPLE_RATE / 10);
+
+  private pushedDurationMs: number = 0;
 
   #ws: WebSocket | null = null;
   #expiresAt: number | null = null;
@@ -403,8 +411,17 @@ export class RealtimeSession extends llm.RealtimeSession {
     throw new Error('not implemented');
   }
 
-  pushAudio(_frame: AudioFrame): void {
-    throw new Error('not implemented');
+  pushAudio(frame: AudioFrame): void {
+    for (const f of this.resampleAudio(frame)) {
+      for (const nf of this.bstream.write(f.data)) {
+        this.sendEvent({
+          type: 'input_audio_buffer.append',
+          audio: Buffer.from(nf.data).toString('base64'),
+        } as api_proto.InputAudioBufferAppendEvent);
+        // TODO(AJS-102): use frame.durationMs once available in rtc-node
+        this.pushedDurationMs += nf.samplesPerChannel / nf.sampleRate;
+      }
+    }
   }
 
   async updateTools(_tools: llm.ToolContext): Promise<void> {
@@ -412,27 +429,42 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async commitAudio(): Promise<void> {
-    throw new Error('not implemented');
+    if (this.pushedDurationMs > 100) {
+      // OpenAI requires at least 100ms of audio
+      this.sendEvent({
+        type: 'input_audio_buffer.commit',
+        duration_ms: this.pushedDurationMs,
+      } as api_proto.InputAudioBufferCommitEvent);
+      this.pushedDurationMs = 0;
+    }
   }
 
   async clearAudio(): Promise<void> {
-    throw new Error('not implemented');
+    this.sendEvent({
+      type: 'input_audio_buffer.clear',
+    } as api_proto.InputAudioBufferClearEvent);
+    this.pushedDurationMs = 0;
   }
 
-  async generateReply(_options: { instructions: string }): Promise<void> {
-    throw new Error('not implemented');
+  async generateReply(instructions: string): Promise<llm.GenerationCreatedEvent> {
+    const handle = this.createResponse({ instructions, userInitiated: true });
+    this.textModeRecoveryRetries = 0;
+    return handle.doneFut.await;
   }
 
   async interrupt(): Promise<void> {
-    throw new Error('not implemented');
+    this.sendEvent({
+      type: 'response.cancel',
+    } as api_proto.ResponseCancelEvent);
   }
 
   async truncate(_options: { messageId: string; audioEndMs: number }): Promise<void> {
-    throw new Error('not implemented');
-  }
-
-  startUserActivity(): void {
-    throw new Error('not implemented');
+    this.sendEvent({
+      type: 'conversation.item.truncate',
+      content_index: 0,
+      item_id: _options.messageId,
+      audio_end_ms: _options.audioEndMs,
+    } as api_proto.ConversationItemTruncateEvent);
   }
 
   /// Truncates the data field of the event to the specified maxLength to avoid overwhelming logs
@@ -920,6 +952,37 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     this.#logger.error({ error: event.error }, 'OpenAI Realtime API returned an error');
+  }
+
+  private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
+    yield frame;
+  }
+
+  private createResponse({
+    userInitiated,
+    instructions,
+    oldHandle,
+  }: {
+    userInitiated: boolean;
+    instructions?: string;
+    oldHandle?: CreateResponseHandle;
+  }): CreateResponseHandle {
+    const handle = oldHandle || new CreateResponseHandle({ instructions });
+    if (oldHandle && instructions) {
+      handle.instructions = instructions;
+    }
+
+    const eventId = utils.shortuuid('response_create_');
+    if (userInitiated) {
+      this.responseCreatedFutures[eventId] = handle;
+    }
+
+    this.sendEvent({
+      type: 'response.create',
+      event_id: eventId,
+    } as api_proto.ResponseCreateEvent);
+
+    return handle;
   }
 
   private emitGenerationEvent(responseId: string): void {

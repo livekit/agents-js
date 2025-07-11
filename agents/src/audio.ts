@@ -51,7 +51,7 @@ export class AudioByteStream {
       return [];
     }
 
-    return [
+    const frames = [
       new AudioFrame(
         new Int16Array(this.#buf.buffer),
         this.#sampleRate,
@@ -59,5 +59,8 @@ export class AudioByteStream {
         this.#buf.length / 2,
       ),
     ];
+
+    this.#buf = new Int8Array(); // Clear buffer after flushing
+    return frames;
   }
 }
