@@ -336,6 +336,9 @@ importers:
 
   plugins/openai:
     dependencies:
+      '@livekit/mutex':
+        specifier: ^1.1.1
+        version: 1.1.1
       openai:
         specifier: ^4.91.1
         version: 4.91.1(ws@8.17.0)(zod@3.23.8)
