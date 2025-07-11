@@ -1,7 +1,15 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AsyncIterableQueue, AudioByteStream, Future, Queue, llm, log } from '@livekit/agents';
+import {
+  AsyncIterableQueue,
+  AudioByteStream,
+  Future,
+  Queue,
+  llm,
+  log,
+  shortuuid,
+} from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame } from '@livekit/rtc-node';
@@ -396,19 +404,69 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   get tools() {
-    // TODO(shubhra): return a copy of the tools
+    // TODO(AJS-151): return a copy of the tools
     return this._tools;
   }
 
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
-    // const unlock = await this.updateChatCtxLock.lock();
-    throw new Error('not implemented');
-    // unlock();
+    const unlock = await this.updateChatCtxLock.lock();
+    const ev = this.createChatCtxUpdateEvents(_chatCtx);
+    this.sendEvent(ev);
+    unlock();
     return;
   }
 
-  async updateInstructions(_instructions: string): Promise<void> {
+  private createChatCtxUpdateEvents(
+    chatCtx: llm.ChatContext,
+  ): (api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[] {
+    const newChatCtx = chatCtx.copy();
+    const evs: (api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[] =
+      [];
+    for (const item of newChatCtx.items) {
+      if (item.type === 'tool_call') {
+        evs.push({
+          type: 'conversation.item.create',
+          item: {
+            id: item.id,
+            role: item.role,
+            content: item.content,
+            tool_calls: item.toolCalls,
+          },
+        });
+      }
+    }
+    return evs;
+  }
+
+  async updateTools(_tools: llm.ToolContext): Promise<void> {
+    const unlock = await this.updateFuncCtxLock.lock();
+    const ev = this.createToolsUpdateEvent(_tools);
+    this.sendEvent(ev);
+
+    if (!ev.session.tools) {
+      throw new Error('Tools are missing in the session update event');
+    }
+    // TODO(AJS-151) Handle retained tools
+    this._tools = _tools;
+
+    unlock();
+  }
+
+  private createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
+    // TODO(AJS-151) Add tool calls to realtime model
     throw new Error('not implemented');
+  }
+
+  async updateInstructions(_instructions: string): Promise<void> {
+    const eventId = shortuuid('instructions_update_');
+    this.sendEvent({
+      type: 'session.update',
+      session: {
+        instructions: _instructions,
+      },
+      event_id: eventId,
+    } as api_proto.SessionUpdateEvent);
+    this.instructions = _instructions;
   }
 
   pushAudio(frame: AudioFrame): void {
@@ -422,10 +480,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.pushedDurationMs += nf.samplesPerChannel / nf.sampleRate;
       }
     }
-  }
-
-  async updateTools(_tools: llm.ToolContext): Promise<void> {
-    throw new Error('not implemented');
   }
 
   async commitAudio(): Promise<void> {
@@ -972,7 +1026,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       handle.instructions = instructions;
     }
 
-    const eventId = utils.shortuuid('response_create_');
+    const eventId = shortuuid('response_create_');
     if (userInitiated) {
       this.responseCreatedFutures[eventId] = handle;
     }
