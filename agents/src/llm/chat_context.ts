@@ -1,10 +1,10 @@
-// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
 import { shortuuid } from '../utils.js';
 import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
-import type { ToolContext } from './tool_context.js';
+import type { JSONObject, JSONValue, ToolContext } from './tool_context.js';
 
 export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
 export interface ImageContent {
@@ -92,6 +92,46 @@ export class ChatMessage {
     const parts = this.content.filter((c): c is string => typeof c === 'string');
     return parts.length > 0 ? parts.join('\n') : undefined;
   }
+
+  toJSONContent(): JSONValue[] {
+    return this.content.map((c) => {
+      if (typeof c === 'string') {
+        return c as JSONValue;
+      } else if (c.type === 'image_content') {
+        return {
+          id: c.id,
+          type: c.type,
+          image: c.image,
+          inferenceDetail: c.inferenceDetail,
+          inferenceWidth: c.inferenceWidth,
+          inferenceHeight: c.inferenceHeight,
+          mimeType: c.mimeType,
+        } as JSONObject;
+      } else {
+        return {
+          type: c.type,
+          transcript: c.transcript,
+        } as JSONObject;
+      }
+    });
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  toJSON(excludeTimestamp: boolean = false): JSONValue {
+    const result: JSONValue = {
+      id: this.id,
+      type: this.type,
+      role: this.role,
+      content: this.toJSONContent(),
+      interrupted: this.interrupted,
+    };
+
+    if (!excludeTimestamp) {
+      result.createdAt = this.createdAt;
+    }
+
+    return result;
+  }
 }
 
 export class FunctionCall {
@@ -130,6 +170,23 @@ export class FunctionCall {
     createdAt?: number;
   }) {
     return new FunctionCall(params);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  toJSON(excludeTimestamp: boolean = false): JSONValue {
+    const result: JSONValue = {
+      id: this.id,
+      type: this.type,
+      callId: this.callId,
+      name: this.name,
+      args: this.args,
+    };
+
+    if (!excludeTimestamp) {
+      result.createdAt = this.createdAt;
+    }
+
+    return result;
   }
 }
 
@@ -181,6 +238,23 @@ export class FunctionCallOutput {
     name?: string;
   }) {
     return new FunctionCallOutput(params);
+  }
+
+  toJSON(excludeTimestamp: boolean = false): JSONValue {
+    const result: JSONValue = {
+      id: this.id,
+      type: this.type,
+      name: this.name,
+      callId: this.callId,
+      output: this.output,
+      isError: this.isError,
+    };
+
+    if (!excludeTimestamp) {
+      result.createdAt = this.createdAt;
+    }
+
+    return result;
   }
 }
 
@@ -319,6 +393,62 @@ export class ChatContext {
 
     this._items = newItems;
     return this;
+  }
+
+  toJSON(
+    options: {
+      excludeImage?: boolean;
+      excludeAudio?: boolean;
+      excludeTimestamp?: boolean;
+      excludeFunctionCall?: boolean;
+    } = {},
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ): JSONObject {
+    const {
+      excludeImage = true,
+      excludeAudio = true,
+      excludeTimestamp = true,
+      excludeFunctionCall = false,
+    } = options;
+
+    const items: ChatItem[] = [];
+
+    for (const item of this._items) {
+      let processedItem = item;
+
+      if (excludeFunctionCall && ['function_call', 'function_call_output'].includes(item.type)) {
+        continue;
+      }
+
+      if (item.type === 'message') {
+        processedItem = ChatMessage.create({
+          role: item.role,
+          content: item.content,
+          id: item.id,
+          interrupted: item.interrupted,
+          createdAt: item.createdAt,
+        });
+
+        // Filter content based on options
+        if (excludeImage) {
+          processedItem.content = processedItem.content.filter((c) => {
+            return !(typeof c === 'object' && c.type === 'image_content');
+          });
+        }
+
+        if (excludeAudio) {
+          processedItem.content = processedItem.content.filter((c) => {
+            return !(typeof c === 'object' && c.type === 'audio_content');
+          });
+        }
+      }
+
+      items.push(processedItem);
+    }
+
+    return {
+      items: items.map((item) => item.toJSON(excludeTimestamp)),
+    };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

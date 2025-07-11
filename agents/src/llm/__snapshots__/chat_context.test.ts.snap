@@ -1,0 +1,527 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`ChatContext.toJSON > should match snapshot for edge cases > edge-cases-default 1`] = `
+{
+  "items": [
+    {
+      "content": [],
+      "id": "msg_empty_1",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+    {
+      "content": [],
+      "id": "msg_silent_audio",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+    {
+      "content": [
+        "Part 1. ",
+        "Part 2. ",
+        "Part 3.",
+      ],
+      "id": "msg_multi_text",
+      "interrupted": false,
+      "role": "assistant",
+      "type": "message",
+    },
+    {
+      "args": "{}",
+      "callId": "minimal",
+      "id": "func_minimal",
+      "name": "test",
+      "type": "function_call",
+    },
+    {
+      "callId": "minimal",
+      "id": "func_output_nameless",
+      "isError": false,
+      "name": "",
+      "output": "OK",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        "Test with special chars: 
+	
+ "quotes" 'apostrophes' \\backslashes\\ {braces} [brackets]",
+      ],
+      "id": "msg_special_chars",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+  ],
+}
+`;
+
+exports[`ChatContext.toJSON > should match snapshot for edge cases > edge-cases-with-details 1`] = `
+{
+  "items": [
+    {
+      "content": [],
+      "createdAt": 5000000000,
+      "id": "msg_empty_1",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+    {
+      "content": [
+        {
+          "transcript": undefined,
+          "type": "audio_content",
+        },
+      ],
+      "createdAt": 5000000001,
+      "id": "msg_silent_audio",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+    {
+      "content": [
+        "Part 1. ",
+        "Part 2. ",
+        "Part 3.",
+      ],
+      "createdAt": 5000000002,
+      "id": "msg_multi_text",
+      "interrupted": false,
+      "role": "assistant",
+      "type": "message",
+    },
+    {
+      "args": "{}",
+      "callId": "minimal",
+      "createdAt": 5000000003,
+      "id": "func_minimal",
+      "name": "test",
+      "type": "function_call",
+    },
+    {
+      "callId": "minimal",
+      "createdAt": 5000000004,
+      "id": "func_output_nameless",
+      "isError": false,
+      "name": "",
+      "output": "OK",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        "Test with special chars: 
+	
+ "quotes" 'apostrophes' \\backslashes\\ {braces} [brackets]",
+      ],
+      "createdAt": 5000000005,
+      "id": "msg_special_chars",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+  ],
+}
+`;
+
+exports[`ChatContext.toJSON > should match snapshot for empty context 1`] = `
+{
+  "items": [],
+}
+`;
+
+exports[`ChatContext.toJSON > should match snapshot for function calls > conversation-with-function-calls 1`] = `
+{
+  "items": [
+    {
+      "content": [
+        "What's the weather in Paris?",
+      ],
+      "id": "msg_user_3",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+    {
+      "args": "{"location": "Paris, France", "unit": "celsius"}",
+      "callId": "call_weather_123",
+      "id": "func_call_1",
+      "name": "get_weather",
+      "type": "function_call",
+    },
+    {
+      "callId": "call_weather_123",
+      "id": "func_output_1",
+      "isError": false,
+      "name": "get_weather",
+      "output": "{"temperature": 22, "condition": "partly cloudy", "humidity": 65}",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        "The weather in Paris is currently 22°C and partly cloudy with 65% humidity.",
+      ],
+      "id": "msg_assistant_2",
+      "interrupted": false,
+      "role": "assistant",
+      "type": "message",
+    },
+  ],
+}
+`;
+
+exports[`ChatContext.toJSON > should match snapshot for function calls > conversation-with-function-calls-and-timestamps 1`] = `
+{
+  "items": [
+    {
+      "content": [
+        "What's the weather in Paris?",
+      ],
+      "createdAt": 3000000000,
+      "id": "msg_user_3",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+    {
+      "args": "{"location": "Paris, France", "unit": "celsius"}",
+      "callId": "call_weather_123",
+      "createdAt": 3000000001,
+      "id": "func_call_1",
+      "name": "get_weather",
+      "type": "function_call",
+    },
+    {
+      "callId": "call_weather_123",
+      "createdAt": 3000000002,
+      "id": "func_output_1",
+      "isError": false,
+      "name": "get_weather",
+      "output": "{"temperature": 22, "condition": "partly cloudy", "humidity": 65}",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        "The weather in Paris is currently 22°C and partly cloudy with 65% humidity.",
+      ],
+      "createdAt": 3000000003,
+      "id": "msg_assistant_2",
+      "interrupted": false,
+      "role": "assistant",
+      "type": "message",
+    },
+  ],
+}
+`;
+
+exports[`ChatContext.toJSON > should match snapshot for function calls > conversation-without-function-calls 1`] = `
+{
+  "items": [
+    {
+      "content": [
+        "What's the weather in Paris?",
+      ],
+      "id": "msg_user_3",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+    {
+      "content": [
+        "The weather in Paris is currently 22°C and partly cloudy with 65% humidity.",
+      ],
+      "id": "msg_assistant_2",
+      "interrupted": false,
+      "role": "assistant",
+      "type": "message",
+    },
+  ],
+}
+`;
+
+exports[`ChatContext.toJSON > should match snapshot for message property variations > message-properties-default 1`] = `
+{
+  "items": [
+    {
+      "content": [
+        "Message with custom ID",
+      ],
+      "id": "custom-message-id-123",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+    {
+      "content": [
+        "This response was interrupted...",
+      ],
+      "id": "msg_interrupted",
+      "interrupted": true,
+      "role": "assistant",
+      "type": "message",
+    },
+    {
+      "content": [
+        "Developer message",
+      ],
+      "id": "msg_dev_2",
+      "interrupted": false,
+      "role": "developer",
+      "type": "message",
+    },
+    {
+      "content": [
+        "System message",
+      ],
+      "id": "msg_system_3",
+      "interrupted": false,
+      "role": "system",
+      "type": "message",
+    },
+    {
+      "content": [
+        "Image with all properties:",
+      ],
+      "id": "msg_with_image",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+  ],
+}
+`;
+
+exports[`ChatContext.toJSON > should match snapshot for message property variations > message-properties-full 1`] = `
+{
+  "items": [
+    {
+      "content": [
+        "Message with custom ID",
+      ],
+      "createdAt": 6000000000,
+      "id": "custom-message-id-123",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+    {
+      "content": [
+        "This response was interrupted...",
+      ],
+      "createdAt": 6000000001,
+      "id": "msg_interrupted",
+      "interrupted": true,
+      "role": "assistant",
+      "type": "message",
+    },
+    {
+      "content": [
+        "Developer message",
+      ],
+      "createdAt": 6000000002,
+      "id": "msg_dev_2",
+      "interrupted": false,
+      "role": "developer",
+      "type": "message",
+    },
+    {
+      "content": [
+        "System message",
+      ],
+      "createdAt": 6000000003,
+      "id": "msg_system_3",
+      "interrupted": false,
+      "role": "system",
+      "type": "message",
+    },
+    {
+      "content": [
+        "Image with all properties:",
+        {
+          "id": "img_detailed",
+          "image": "https://example.com/image.jpg",
+          "inferenceDetail": "low",
+          "inferenceHeight": 512,
+          "inferenceWidth": 512,
+          "mimeType": "image/png",
+          "type": "image_content",
+        },
+      ],
+      "createdAt": 6000000004,
+      "id": "msg_with_image",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+  ],
+}
+`;
+
+exports[`ChatContext.toJSON > should match snapshot for multimodal content > multimodal-default-exclusions 1`] = `
+{
+  "items": [
+    {
+      "content": [
+        "Check out this image and audio:",
+        "What do you think?",
+      ],
+      "id": "msg_user_2",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+  ],
+}
+`;
+
+exports[`ChatContext.toJSON > should match snapshot for multimodal content > multimodal-full-content 1`] = `
+{
+  "items": [
+    {
+      "content": [
+        "Check out this image and audio:",
+        {
+          "id": "img_test_1",
+          "image": "https://example.com/test-image.jpg",
+          "inferenceDetail": "high",
+          "inferenceHeight": 768,
+          "inferenceWidth": 1024,
+          "mimeType": "image/jpeg",
+          "type": "image_content",
+        },
+        {
+          "transcript": "This is a test audio transcript",
+          "type": "audio_content",
+        },
+        "What do you think?",
+      ],
+      "createdAt": 2000000000,
+      "id": "msg_user_2",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+  ],
+}
+`;
+
+exports[`ChatContext.toJSON > should match snapshot for multimodal content > multimodal-with-audio-only 1`] = `
+{
+  "items": [
+    {
+      "content": [
+        "Check out this image and audio:",
+        {
+          "transcript": "This is a test audio transcript",
+          "type": "audio_content",
+        },
+        "What do you think?",
+      ],
+      "id": "msg_user_2",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+  ],
+}
+`;
+
+exports[`ChatContext.toJSON > should match snapshot for multimodal content > multimodal-with-images-only 1`] = `
+{
+  "items": [
+    {
+      "content": [
+        "Check out this image and audio:",
+        {
+          "id": "img_test_1",
+          "image": "https://example.com/test-image.jpg",
+          "inferenceDetail": "high",
+          "inferenceHeight": 768,
+          "inferenceWidth": 1024,
+          "mimeType": "image/jpeg",
+          "type": "image_content",
+        },
+        "What do you think?",
+      ],
+      "id": "msg_user_2",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+  ],
+}
+`;
+
+exports[`ChatContext.toJSON > should match snapshot for simple conversation > simple-conversation-no-timestamps 1`] = `
+{
+  "items": [
+    {
+      "content": [
+        "You are a helpful assistant.",
+      ],
+      "id": "msg_system_1",
+      "interrupted": false,
+      "role": "system",
+      "type": "message",
+    },
+    {
+      "content": [
+        "Hello, how are you?",
+      ],
+      "id": "msg_user_1",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+    {
+      "content": [
+        "I'm doing well, thank you! How can I help you today?",
+      ],
+      "id": "msg_assistant_1",
+      "interrupted": false,
+      "role": "assistant",
+      "type": "message",
+    },
+  ],
+}
+`;
+
+exports[`ChatContext.toJSON > should match snapshot for simple conversation > simple-conversation-with-timestamps 1`] = `
+{
+  "items": [
+    {
+      "content": [
+        "You are a helpful assistant.",
+      ],
+      "createdAt": 1000000000,
+      "id": "msg_system_1",
+      "interrupted": false,
+      "role": "system",
+      "type": "message",
+    },
+    {
+      "content": [
+        "Hello, how are you?",
+      ],
+      "createdAt": 1000000001,
+      "id": "msg_user_1",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+    {
+      "content": [
+        "I'm doing well, thank you! How can I help you today?",
+      ],
+      "createdAt": 1000000002,
+      "id": "msg_assistant_1",
+      "interrupted": false,
+      "role": "assistant",
+      "type": "message",
+    },
+  ],
+}
+`;
