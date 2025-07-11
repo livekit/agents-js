@@ -6,7 +6,13 @@ import sharp from 'sharp';
 import type { ZodObject } from 'zod';
 import { z } from 'zod';
 import type { UnknownUserData } from '../voice/run_context.js';
-import { FunctionCall, FunctionCallOutput, type ImageContent } from './chat_context.js';
+import type { ChatContext } from './chat_context.js';
+import {
+  type ChatItem,
+  FunctionCall,
+  FunctionCallOutput,
+  type ImageContent,
+} from './chat_context.js';
 import type { ToolContext, ToolOptions } from './tool_context.js';
 
 export interface SerializedImage {
@@ -261,4 +267,86 @@ export function toError(error: unknown): Error {
     return error;
   }
   return new Error(String(error));
+}
+
+/**
+ * Standard dynamic-programming LCS to get the common subsequence
+ * of IDs (in order) that appear in both old_ids and new_ids.
+ *
+ * @param oldIds - The old list of IDs.
+ * @param newIds - The new list of IDs.
+ * @returns The longest common subsequence of the two lists of IDs.
+ */
+function computeLCS(oldIds: string[], newIds: string[]): string[] {
+  const n = oldIds.length;
+  const m = newIds.length;
+  const dp: number[][] = Array(n + 1)
+    .fill(null)
+    .map(() => Array(m + 1).fill(0));
+
+  // Fill DP table
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      if (oldIds[i - 1] === newIds[j - 1]) {
+        dp[i]![j] = dp[i - 1]![j - 1]! + 1;
+      } else {
+        dp[i]![j] = Math.max(dp[i - 1]![j]!, dp[i]![j - 1]!);
+      }
+    }
+  }
+
+  // Backtrack to find the actual LCS sequence
+  const lcsIds: string[] = [];
+  let i = n;
+  let j = m;
+  while (i > 0 && j > 0) {
+    if (oldIds[i - 1] === newIds[j - 1]) {
+      lcsIds.push(oldIds[i - 1]!);
+      i--;
+      j--;
+    } else if (dp[i - 1]![j]! > dp[i]![j - 1]!) {
+      i--;
+    } else {
+      j--;
+    }
+  }
+
+  return lcsIds.reverse();
+}
+
+interface DiffOps {
+  toRemove: string[];
+  toCreate: Array<[string | null, string]>; // (previous_item_id, id), if previous_item_id is null, add to the root
+}
+
+/**
+ * Compute the minimal list of create/remove operations to transform oldCtx into newCtx.
+ *
+ * @param oldCtx - The old chat context.
+ * @param newCtx - The new chat context.
+ * @returns The minimal list of create/remove operations to transform oldCtx into newCtx.
+ */
+export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): DiffOps {
+  const oldIds = oldCtx.items.map((item: ChatItem) => item.id);
+  const newIds = newCtx.items.map((item: ChatItem) => item.id);
+  const lcsIds = new Set(computeLCS(oldIds, newIds));
+
+  const toRemove = oldCtx.items.filter((msg) => !lcsIds.has(msg.id)).map((msg) => msg.id);
+  const toCreate: Array<[string | null, string]> = [];
+
+  let lastIdInSequence: string | null = null;
+  for (const newItem of newCtx.items) {
+    if (lcsIds.has(newItem.id)) {
+      lastIdInSequence = newItem.id;
+    } else {
+      const prevId = lastIdInSequence; // null if root
+      toCreate.push([prevId, newItem.id]);
+      lastIdInSequence = newItem.id;
+    }
+  }
+
+  return {
+    toRemove,
+    toCreate,
+  };
 }

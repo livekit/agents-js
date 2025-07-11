@@ -4,8 +4,29 @@
 import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import sharp from 'sharp';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ImageContent } from './chat_context.js';
-import { serializeImage } from './utils.js';
+import { ChatContext, ChatMessage, type ImageContent } from './chat_context.js';
+import { computeChatCtxDiff, serializeImage } from './utils.js';
+
+// Helper functions for creating test data
+function createChatMessage(
+  id: string,
+  content: string,
+  role: 'user' | 'assistant' | 'system' = 'user',
+): ChatMessage {
+  return ChatMessage.create({
+    id,
+    content,
+    role,
+  });
+}
+
+function createChatContext(messages: ChatMessage[]): ChatContext {
+  const ctx = new ChatContext();
+  for (const message of messages) {
+    ctx.items.push(message);
+  }
+  return ctx;
+}
 
 function createImageContent(
   image: string | VideoFrame,
@@ -105,6 +126,242 @@ function expectPixel(
   expect(data[index + 2]).toBe(expected.b);
   expect(data[index + 3]).toBe(expected.a);
 }
+
+describe('computeChatCtxDiff', () => {
+  it('should return empty operations for identical contexts', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const msg2 = createChatMessage('2', 'Hi there', 'assistant');
+
+    const oldCtx = createChatContext([msg1, msg2]);
+    const newCtx = createChatContext([msg1, msg2]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    expect(result.toRemove).toEqual([]);
+    expect(result.toCreate).toEqual([]);
+  });
+
+  it('should handle empty old context', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const msg2 = createChatMessage('2', 'Hi there', 'assistant');
+
+    const oldCtx = createChatContext([]);
+    const newCtx = createChatContext([msg1, msg2]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    expect(result.toRemove).toEqual([]);
+    expect(result.toCreate).toEqual([
+      [null, '1'], // first item goes to root
+      ['1', '2'], // second item goes after first
+    ]);
+  });
+
+  it('should handle empty new context', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const msg2 = createChatMessage('2', 'Hi there', 'assistant');
+
+    const oldCtx = createChatContext([msg1, msg2]);
+    const newCtx = createChatContext([]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    expect(result.toRemove).toEqual(['1', '2']);
+    expect(result.toCreate).toEqual([]);
+  });
+
+  it('should handle adding items to the end', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const msg2 = createChatMessage('2', 'Hi there', 'assistant');
+    const msg3 = createChatMessage('3', 'How are you?', 'user');
+
+    const oldCtx = createChatContext([msg1, msg2]);
+    const newCtx = createChatContext([msg1, msg2, msg3]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    expect(result.toRemove).toEqual([]);
+    expect(result.toCreate).toEqual([
+      ['2', '3'], // new item goes after the last existing item
+    ]);
+  });
+
+  it('should handle removing items from the end', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const msg2 = createChatMessage('2', 'Hi there', 'assistant');
+    const msg3 = createChatMessage('3', 'How are you?', 'user');
+
+    const oldCtx = createChatContext([msg1, msg2, msg3]);
+    const newCtx = createChatContext([msg1, msg2]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    expect(result.toRemove).toEqual(['3']);
+    expect(result.toCreate).toEqual([]);
+  });
+
+  it('should handle adding items to the beginning', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const msg2 = createChatMessage('2', 'Hi there', 'assistant');
+    const msg3 = createChatMessage('3', 'How are you?', 'user');
+
+    const oldCtx = createChatContext([msg2, msg3]);
+    const newCtx = createChatContext([msg1, msg2, msg3]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    expect(result.toRemove).toEqual([]);
+    expect(result.toCreate).toEqual([
+      [null, '1'], // new item goes to root (beginning)
+    ]);
+  });
+
+  it('should handle removing items from the beginning', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const msg2 = createChatMessage('2', 'Hi there', 'assistant');
+    const msg3 = createChatMessage('3', 'How are you?', 'user');
+
+    const oldCtx = createChatContext([msg1, msg2, msg3]);
+    const newCtx = createChatContext([msg2, msg3]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    expect(result.toRemove).toEqual(['1']);
+    expect(result.toCreate).toEqual([]);
+  });
+
+  it('should handle adding items in the middle', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const msg2 = createChatMessage('2', 'Hi there', 'assistant');
+    const msg3 = createChatMessage('3', 'How are you?', 'user');
+    const msg4 = createChatMessage('4', 'Fine thanks', 'assistant');
+
+    const oldCtx = createChatContext([msg1, msg3, msg4]);
+    const newCtx = createChatContext([msg1, msg2, msg3, msg4]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    expect(result.toRemove).toEqual([]);
+    expect(result.toCreate).toEqual([
+      ['1', '2'], // new item goes after msg1
+    ]);
+  });
+
+  it('should handle removing items from the middle', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const msg2 = createChatMessage('2', 'Hi there', 'assistant');
+    const msg3 = createChatMessage('3', 'How are you?', 'user');
+    const msg4 = createChatMessage('4', 'Fine thanks', 'assistant');
+
+    const oldCtx = createChatContext([msg1, msg2, msg3, msg4]);
+    const newCtx = createChatContext([msg1, msg3, msg4]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    expect(result.toRemove).toEqual(['2']);
+    expect(result.toCreate).toEqual([]);
+  });
+
+  it('should handle complex mixed operations', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const msg2 = createChatMessage('2', 'Hi there', 'assistant');
+    const msg3 = createChatMessage('3', 'How are you?', 'user');
+    const msg4 = createChatMessage('4', 'Fine thanks', 'assistant');
+    const msg5 = createChatMessage('5', 'Good to hear', 'user');
+    const msg6 = createChatMessage('6', 'Anything else?', 'assistant');
+
+    // Old: [1, 2, 3, 4]
+    // New: [1, 5, 3, 6]
+    // Remove: [2, 4]
+    // Create: [5 after 1, 6 after 3]
+
+    const oldCtx = createChatContext([msg1, msg2, msg3, msg4]);
+    const newCtx = createChatContext([msg1, msg5, msg3, msg6]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    expect(result.toRemove).toEqual(['2', '4']);
+    expect(result.toCreate).toEqual([
+      ['1', '5'], // msg5 goes after msg1
+      ['3', '6'], // msg6 goes after msg3
+    ]);
+  });
+
+  it('should handle reordering items', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const msg2 = createChatMessage('2', 'Hi there', 'assistant');
+    const msg3 = createChatMessage('3', 'How are you?', 'user');
+
+    // Old: [1, 2, 3]
+    // New: [3, 1, 2]
+    // This should remove all and recreate in new order
+
+    const oldCtx = createChatContext([msg1, msg2, msg3]);
+    const newCtx = createChatContext([msg3, msg1, msg2]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    // Since order changed completely, should have some operations
+    expect(result.toRemove.length + result.toCreate.length).toBeGreaterThan(0);
+  });
+
+  it('should handle identical single item contexts', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+
+    const oldCtx = createChatContext([msg1]);
+    const newCtx = createChatContext([msg1]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    expect(result.toRemove).toEqual([]);
+    expect(result.toCreate).toEqual([]);
+  });
+
+  it('should handle longest common subsequence correctly', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const msg2 = createChatMessage('2', 'Hi there', 'assistant');
+    const msg3 = createChatMessage('3', 'How are you?', 'user');
+    const msg4 = createChatMessage('4', 'Fine thanks', 'assistant');
+    const msg5 = createChatMessage('5', 'Good to hear', 'user');
+
+    // Old: [1, 2, 3, 4, 5]
+    // New: [1, 3, 5]
+    // LCS should be [1, 3, 5], remove [2, 4]
+
+    const oldCtx = createChatContext([msg1, msg2, msg3, msg4, msg5]);
+    const newCtx = createChatContext([msg1, msg3, msg5]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    expect(result.toRemove).toEqual(['2', '4']);
+    expect(result.toCreate).toEqual([]);
+  });
+
+  it('should handle interleaved additions and common subsequence', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const msg2 = createChatMessage('2', 'Hi there', 'assistant');
+    const msg3 = createChatMessage('3', 'How are you?', 'user');
+    const msg4 = createChatMessage('4', 'Fine thanks', 'assistant');
+    const msg5 = createChatMessage('5', 'Good to hear', 'user');
+    const msg6 = createChatMessage('6', 'Anything else?', 'assistant');
+
+    // Old: [1, 3, 5]
+    // New: [1, 2, 3, 4, 5, 6]
+    // LCS: [1, 3, 5], add [2 after 1, 4 after 3, 6 after 5]
+
+    const oldCtx = createChatContext([msg1, msg3, msg5]);
+    const newCtx = createChatContext([msg1, msg2, msg3, msg4, msg5, msg6]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    expect(result.toRemove).toEqual([]);
+    expect(result.toCreate).toEqual([
+      ['1', '2'], // msg2 after msg1
+      ['3', '4'], // msg4 after msg3
+      ['5', '6'], // msg6 after msg5
+    ]);
+  });
+});
 
 describe('serializeImage', () => {
   let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
