@@ -44,7 +44,7 @@ describe('ChatContext', () => {
 
     it('should include timestamps when excludeTimestamp is false', () => {
       const createdAt = 1234567890;
-      const message = context.addMessage({
+      context.addMessage({
         role: 'user',
         content: 'Hello',
         createdAt,
