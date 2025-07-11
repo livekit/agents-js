@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { llm } from '@livekit/agents';
 import { log } from '@livekit/agents';
-import { EOUModelBase, EOURunnerBase } from './base.js';
+import { EOUModel, EOURunnerBase } from './base.js';
 
 const REMOTE_INFERENCE_TIMEOUT = 2000;
 
@@ -15,7 +15,7 @@ export class EUORunnerMultilingual extends EOURunnerBase {
   }
 }
 
-export class MultilingualModel extends EOUModelBase {
+export class MultilingualModel extends EOUModel {
   #logger = log();
 
   constructor(unlikelyThreshold?: number) {

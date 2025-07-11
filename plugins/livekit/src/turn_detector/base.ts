@@ -5,9 +5,15 @@ import { type PreTrainedTokenizer } from '@huggingface/transformers';
 import type { ipc, llm } from '@livekit/agents';
 import { CurrentJobContext, InferenceRunner, log } from '@livekit/agents';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
 import { InferenceSession, Tensor } from 'onnxruntime-node';
-import { type EOUModelType, MAX_HISTORY_TURNS, MODEL_REVISIONS } from './constants.js';
+import { downloadFileToCacheDir } from '../hf_utils.js';
+import {
+  type EOUModelType,
+  HG_MODEL_REPO,
+  MAX_HISTORY_TURNS,
+  MODEL_REVISIONS,
+  ONNX_FILEPATH,
+} from './constants.js';
 
 type RawChatItem = { role: string; content: string };
 
@@ -31,8 +37,13 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
   async initialize() {
     const { AutoTokenizer } = await import('@huggingface/transformers');
 
-    // TODO(brian): remove hardcoded path and support downloading the model from HF hub
-    const onnxModelPath = fileURLToPath(new URL('turn_detector.onnx', import.meta.url).href);
+    const onnxModelPath = await downloadFileToCacheDir({
+      repo: HG_MODEL_REPO,
+      path: ONNX_FILEPATH,
+      revision: this.modelRevision,
+    });
+
+    this.#logger.debug({ onnxModelPath }, 'onnx model path');
 
     try {
       // TODO(brian): support session config once onnxruntime-node supports it
@@ -119,7 +130,7 @@ export interface EOUModelOptions {
   loadLanguages?: boolean;
 }
 
-export abstract class EOUModelBase {
+export abstract class EOUModel {
   private modelType: EOUModelType;
   private executor: ipc.InferenceExecutor;
   private threshold: number | undefined;

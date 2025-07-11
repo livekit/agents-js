@@ -7,7 +7,7 @@ export const MAX_HISTORY_TOKENS = 128;
 export const MAX_HISTORY_TURNS = 6;
 
 export const MODEL_REVISIONS: Record<EOUModelType, string> = {
-  en: 'v1.2.0', // TODO(brian): upgrade version to v1.2.2-en
+  en: 'v1.2.2-en',
   multilingual: 'v0.2.0-intl',
 };
 
