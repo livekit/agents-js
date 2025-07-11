@@ -225,11 +225,8 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   clearUserTurn() {
-    if (!this.audioRecognition) {
-      throw new Error('AudioRecognition is not initialized');
-    }
-
-    this.audioRecognition.clearUserTurn();
+    this.audioRecognition?.clearUserTurn();
+    this.realtimeSession?.clearAudio();
   }
 
   say(
@@ -371,12 +368,15 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
+    this.realtimeSession?.startUserActivity();
+
     if (
       this.currentSpeech &&
       !this.currentSpeech.interrupted &&
       this.currentSpeech.allowInterruptions
     ) {
       this.logger.info({ 'speech id': this.currentSpeech.id }, 'speech interrupted by VAD');
+      this.realtimeSession?.interrupt();
       this.currentSpeech.interrupt();
     }
   }
@@ -553,7 +553,7 @@ export class AgentActivity implements RecognitionHooks {
       speech.interrupt();
     }
 
-    // TODO(AJS-32): Add realtime model support
+    this.realtimeSession?.interrupt();
 
     if (currentSpeech === undefined) {
       future.resolve();
@@ -591,7 +591,12 @@ export class AgentActivity implements RecognitionHooks {
     //  turn)
     //  - generate a reply to the user input
 
-    // TODO(AJS-32): Add realtime model supppourt
+    if (this.llm instanceof RealtimeModel) {
+      if (this.llm.capabilities.turnDetection) {
+        return;
+      }
+      this.realtimeSession?.commitAudio();
+    }
 
     if (this.currentSpeech) {
       if (!this.currentSpeech.allowInterruptions) {
@@ -608,7 +613,7 @@ export class AgentActivity implements RecognitionHooks {
       );
 
       this.currentSpeech.interrupt();
-      // TODO(AJS-32): Add realtime model support for interrupting the current generation
+      this.realtimeSession?.interrupt();
     }
 
     const userMessage = ChatMessage.create({
