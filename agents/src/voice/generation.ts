@@ -695,3 +695,15 @@ async function waitUntilAborted<T>(promise: Promise<T>, signal: AbortSignal): Pr
 
   return await abortFut.await;
 }
+
+export function removeInstructions(chatCtx: ChatContext) {
+  // loop in case there are items with the same id (shouldn't happen!)
+  while (true) {
+    const idx = chatCtx.indexById(INSTRUCTIONS_MESSAGE_ID);
+    if (idx !== undefined) {
+      chatCtx.items.splice(idx, 1);
+    } else {
+      break;
+    }
+  }
+}

@@ -714,6 +714,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async close() {
+    super.close();
     if (!this.#ws) return;
     this.#closing = true;
     this.#ws.close();

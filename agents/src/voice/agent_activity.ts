@@ -42,6 +42,7 @@ import {
   performTTSInference,
   performTextForwarding,
   performToolExecutions,
+  removeInstructions,
   updateInstructions,
 } from './generation.js';
 import { SpeechHandle } from './speech_handle.js';
@@ -97,6 +98,25 @@ export class AgentActivity implements RecognitionHooks {
         this.onInputAudioTranscriptionCompleted,
       );
       // TODO(shubhra): add metrics_collected and error handlers
+
+      removeInstructions(this.agent._chatCtx);
+      try {
+        await this.realtimeSession.updateInstructions(this.agent.instructions);
+      } catch (error) {
+        this.logger.error(error, 'failed to update the instructions');
+      }
+
+      try {
+        await this.realtimeSession.updateChatCtx(this.agent.chatCtx);
+      } catch (error) {
+        this.logger.error(error, 'failed to update the chat context');
+      }
+
+      try {
+        await this.realtimeSession.updateTools(this.tools);
+      } catch (error) {
+        this.logger.error(error, 'failed to update the tools');
+      }
     } else if (this.llm instanceof LLM) {
       try {
         updateInstructions({
@@ -146,8 +166,16 @@ export class AgentActivity implements RecognitionHooks {
     return this.agent.tts || this.agentSession.tts;
   }
 
+  get tools(): ToolContext {
+    return this.agent.toolCtx;
+  }
+
   get draining(): boolean {
     return this._draining;
+  }
+
+  get realtimeLLMSession(): RealtimeSession | undefined {
+    return this.realtimeSession;
   }
 
   get allowInterruptions(): boolean {
@@ -169,16 +197,21 @@ export class AgentActivity implements RecognitionHooks {
 
     this.agent._chatCtx = chatCtx;
 
-    // TODO(AJS-132): handle realtime session
-    updateInstructions({
-      chatCtx,
-      instructions: this.agent.instructions,
-      addIfMissing: true,
-    });
+    if (this.realtimeSession) {
+      removeInstructions(chatCtx);
+      this.realtimeSession.updateChatCtx(chatCtx);
+    } else {
+      updateInstructions({
+        chatCtx,
+        instructions: this.agent.instructions,
+        addIfMissing: true,
+      });
+    }
   }
 
   updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
     this.audioRecognition?.setInputAudioStream(audioStream);
+    this.realtimeSession?.setInputAudioStream(audioStream);
   }
 
   commitUserTurn() {
@@ -1025,7 +1058,9 @@ export class AgentActivity implements RecognitionHooks {
     _speechHandle: SpeechHandle,
     _ev: GenerationCreatedEvent,
   ): Promise<void> {
-    throw new Error('not implemented');
+    if (!this.realtimeSession) {
+      throw new Error('realtime session is not initialized');
+    }
   }
 
   private scheduleSpeech(

@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
+import type { ReadableStream } from 'node:stream/web';
+import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import type { AsyncIterableQueue } from '../utils.js';
+import { Task } from '../utils.js';
 import type { ChatContext, FunctionCall } from './chat_context.js';
 import type { ToolContext } from './tool_context.js';
 
@@ -56,10 +59,13 @@ export abstract class RealtimeModel {
 
 export abstract class RealtimeSession extends EventEmitter {
   private _realtimeModel: RealtimeModel;
+  private deferredInputStream = new DeferredReadableStream<AudioFrame>();
+  private _mainTask: Task<void>;
 
   constructor(realtimeModel: RealtimeModel) {
     super();
     this._realtimeModel = realtimeModel;
+    this._mainTask = Task.from((controller) => this._mainTaskImpl(controller.signal));
   }
 
   get realtimeModel() {
@@ -106,12 +112,29 @@ export abstract class RealtimeSession extends EventEmitter {
    */
   abstract truncate(options: { messageId: string; audioEndMs: number }): Promise<void>;
 
-  abstract close(): Promise<void>;
+  async close(): Promise<void> {
+    this._mainTask.cancel();
+  }
 
   /**
    * Notifies the model that user activity has started
    */
   startUserActivity(): void {
     return;
+  }
+
+  private async _mainTaskImpl(signal: AbortSignal): Promise<void> {
+    const reader = this.deferredInputStream.stream.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done || signal.aborted) {
+        break;
+      }
+      this.pushAudio(value);
+    }
+  }
+
+  setInputAudioStream(audioStream: ReadableStream<AudioFrame>): void {
+    this.deferredInputStream.setSource(audioStream);
   }
 }
