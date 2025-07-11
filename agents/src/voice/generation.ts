@@ -11,7 +11,6 @@ import {
   FunctionCallOutput,
 } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
-import { shortuuid } from '../llm/misc.js';
 import {
   type ToolChoice,
   type ToolContext,
@@ -23,7 +22,7 @@ import {
 import { toError } from '../llm/utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
-import { Future, Task } from '../utils.js';
+import { Future, Task, shortuuid } from '../utils.js';
 import { type Agent, type ModelSettings, asyncLocalStorage, isStopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';

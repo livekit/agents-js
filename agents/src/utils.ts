@@ -6,6 +6,7 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
 import { EventEmitter, once } from 'node:events';
+import { v4 as uuidv4 } from 'uuid';
 import { log } from './log.js';
 
 /** Union of a single and a list of {@link AudioFrame}s */
@@ -512,4 +513,9 @@ export function withResolvers<T = unknown>() {
   });
 
   return { promise, resolve, reject };
+}
+
+//TODO(AJS-60) refactor all calls to randomUUID to use this
+export function shortuuid(prefix: string): string {
+  return `${prefix}_${uuidv4().slice(0, 12)}`;
 }

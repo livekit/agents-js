@@ -22,9 +22,8 @@ import {
   ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
   TOPIC_TRANSCRIPTION,
 } from '../../constants.js';
-import { shortuuid } from '../../llm/misc.js';
 import { log } from '../../log.js';
-import { Future, Task } from '../../utils.js';
+import { Future, Task, shortuuid } from '../../utils.js';
 import { AudioOutput, TextOutput } from '../io.js';
 import { findMicrophoneTrackId } from '../transcription/index.js';
 

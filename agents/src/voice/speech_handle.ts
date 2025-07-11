@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatMessage } from '../llm/index.js';
-import { shortuuid } from '../llm/misc.js';
-import { Future } from '../utils.js';
+import { Future, shortuuid } from '../utils.js';
 
 export class SpeechHandle {
   /** Priority for messages that should be played after all other messages in the queue */
