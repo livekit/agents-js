@@ -57,7 +57,8 @@ export class MultilingualModel extends EOUModel {
       const data = (await resp.json()) as { threshold: number | undefined };
       threshold = data.threshold;
       if (threshold) {
-        this.languages[language] = { threshold };
+        const languages = await this.languagesFuture.await;
+        languages[language] = { threshold };
       }
     }
 
