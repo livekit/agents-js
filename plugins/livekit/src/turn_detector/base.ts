@@ -44,8 +44,6 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
       revision: this.modelRevision,
     });
 
-    this.#logger.debug({ onnxModelPath }, 'onnx model path');
-
     try {
       // TODO(brian): support session config once onnxruntime-node supports it
       const sessOptions: InferenceSession.SessionOptions = {
