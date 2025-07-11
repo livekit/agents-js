@@ -175,6 +175,13 @@ export class Agent<UserData = any> {
     return Agent.default.ttsNode(this, text, modelSettings);
   }
 
+  async realtimeAudioOutputNode(
+    audio: ReadableStream<AudioFrame>,
+    modelSettings: ModelSettings,
+  ): Promise<ReadableStream<AudioFrame> | null> {
+    return Agent.default.realtimeAudioOutputNode(this, audio, modelSettings);
+  }
+
   // realtime_audio_output_node
 
   getActivityOrThrow(): AgentActivity {
@@ -312,6 +319,14 @@ export class Agent<UserData = any> {
       _modelSettings: ModelSettings,
     ): Promise<ReadableStream<string> | null> {
       return text;
+    },
+
+    async realtimeAudioOutputNode(
+      _agent: Agent,
+      audio: ReadableStream<AudioFrame>,
+      _modelSettings: ModelSettings,
+    ): Promise<ReadableStream<AudioFrame> | null> {
+      return audio;
     },
   };
 }

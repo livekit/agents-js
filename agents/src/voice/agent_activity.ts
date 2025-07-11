@@ -1060,12 +1060,191 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async realtimeGenerationTask(
-    _speechHandle: SpeechHandle,
-    _ev: GenerationCreatedEvent,
+    speechHandle: SpeechHandle,
+    ev: GenerationCreatedEvent,
+    modelSettings: ModelSettings,
   ): Promise<void> {
     if (!this.realtimeSession) {
       throw new Error('realtime session is not initialized');
     }
+    if (!(this.llm instanceof RealtimeModel)) {
+      throw new Error('llm is not a realtime model');
+    }
+
+    this.logger.debug(
+      { speech_id: speechHandle.id, stepIndex: speechHandle.stepIndex },
+      'realtime generation started',
+    );
+
+    const audioOutput = this.agentSession.audioOutput;
+    const textOutput = this.agentSession._transcriptionOutput;
+
+    // TODO(AJS-151): add function calling to realtime model
+
+    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
+
+    if (speechHandle.interrupted) {
+      return;
+    }
+
+    const onFirstFrame = () => {
+      this.agentSession._updateAgentState('speaking');
+    };
+
+    const replyAbortController = new AbortController();
+
+    const readMessages = async (
+      abortController: AbortController,
+      outputs: Array<[string, _TextOut | null, _AudioOut | null]>,
+    ) => {
+      const forwardTasks: Array<Task<void>> = [];
+      try {
+        for await (const msg of ev.messageStream) {
+          if (forwardTasks.length > 0) {
+            this.logger.warn(
+              'expected to receive only one message generation from the realtime API',
+            );
+            break;
+          }
+          const trNodeResult = await this.agent.transcriptionNode(msg.textStream, modelSettings);
+          let textOut: _TextOut | null = null;
+          if (trNodeResult) {
+            const [textForwardTask, _textOut] = performTextForwarding(
+              trNodeResult,
+              abortController,
+              textOutput,
+            );
+            forwardTasks.push(textForwardTask);
+            textOut = _textOut;
+          }
+          let audioOut: _AudioOut | null = null;
+          if (audioOutput) {
+            const realtimeAudio = await this.agent.realtimeAudioOutputNode(
+              msg.audioStream,
+              modelSettings,
+            );
+            if (realtimeAudio) {
+              const [forwardTask, _audioOut] = performAudioForwarding(
+                realtimeAudio,
+                audioOutput,
+                abortController,
+              );
+              forwardTasks.push(forwardTask);
+              audioOut = _audioOut;
+              audioOut.firstFrameFut.await.finally(onFirstFrame);
+            }
+          } else if (textOut) {
+            textOut.firstTextFut.await.finally(onFirstFrame);
+          }
+          outputs.push([msg.messageId, textOut, audioOut]);
+        }
+        await Promise.allSettled(forwardTasks);
+      } catch (error) {
+        this.logger.error(error, 'error reading messages from the realtime API');
+      } finally {
+        await Promise.allSettled(
+          forwardTasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
+        );
+      }
+    };
+
+    const messageOutputs: Array<[string, _TextOut | null, _AudioOut | null]> = [];
+    const tasks = [
+      Task.from(
+        (controller) => readMessages(controller, messageOutputs),
+        replyAbortController,
+        'AgentActivity.realtime_generation.read_messages',
+      ),
+    ];
+
+    // TODO(AJS-151): add function calling to realtime model
+
+    await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
+
+    if (audioOutput) {
+      await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
+      this.agentSession._updateAgentState('listening');
+    }
+
+    if (speechHandle.interrupted) {
+      this.logger.debug(
+        { speech_id: speechHandle.id },
+        'Aborting all realtime generation tasks due to interruption',
+      );
+      replyAbortController.abort();
+      await Promise.allSettled(
+        tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
+      );
+
+      if (messageOutputs.length > 0) {
+        // there should be only one message
+        const [msgId, textOut, audioOut] = messageOutputs[0]!;
+        let forwardedText = textOut?.text || '';
+
+        if (audioOutput) {
+          audioOutput.clearBuffer();
+          const playbackEv = await audioOutput.waitForPlayout();
+          let playbackPosition = playbackEv.playbackPosition;
+          if (audioOut?.firstFrameFut.done) {
+            // playback EV is valid only if the first frame was already played
+            this.logger.info(
+              { speech_id: speechHandle.id, playbackPosition: playbackEv.playbackPosition },
+              'playout interrupted',
+            );
+            if (playbackEv.synchronizedTranscript) {
+              forwardedText = playbackEv.synchronizedTranscript;
+            }
+          } else {
+            forwardedText = '';
+            playbackPosition = 0;
+          }
+
+          // truncate server-side message
+          this.realtimeSession.truncate({
+            messageId: msgId,
+            audioEndMs: playbackPosition,
+          });
+        }
+
+        if (forwardedText) {
+          const message = ChatMessage.create({
+            role: 'assistant',
+            content: forwardedText,
+            id: msgId,
+            interrupted: true,
+          });
+          this.agent._chatCtx.insert(message);
+          speechHandle._setChatMessage(message);
+          this.agentSession._conversationItemAdded(message);
+        }
+        this.logger.info(
+          { speech_id: speechHandle.id, message: forwardedText },
+          'playout completed with interrupt',
+        );
+      }
+      // TODO(shubhra) add chat message to speech handle
+      speechHandle._markPlayoutDone();
+      return;
+    }
+
+    if (messageOutputs.length > 0) {
+      // there should be only one message
+      const [msgId, textOut, _] = messageOutputs[0]!;
+      const message = ChatMessage.create({
+        role: 'assistant',
+        content: textOut?.text || '',
+        id: msgId,
+        interrupted: false,
+      });
+      this.agent._chatCtx.insert(message);
+      speechHandle._setChatMessage(message);
+      this.agentSession._conversationItemAdded(message); // mark the playout done before waiting for the tool execution
+    }
+
+    // mark playout must be done before _set_chat_message
+    speechHandle._markPlayoutDone();
+
+    // TODO(AJS-151): add function calling to realtime model
   }
 
   private scheduleSpeech(
