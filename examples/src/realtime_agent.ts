@@ -34,8 +34,6 @@ export default defineAgent({
 
     // join the room when agent is ready
     await ctx.connect();
-
-    session.say('Hello, how can I help you today?');
   },
 });
 

@@ -14,6 +14,7 @@ import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { once } from 'node:events';
+import { ReadableStream } from 'node:stream/web';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
@@ -626,9 +627,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         while (this.#ws && !this.#closing && this.#ws.readyState === WebSocket.OPEN) {
           try {
             const event = await this.messageChannel.get();
-            if (event.type !== 'input_audio_buffer.append') {
-              this.#logger.debug(`-> ${JSON.stringify(this.#loggableEvent(event))}`);
-            }
+            // if (event.type !== 'input_audio_buffer.append') {
+            this.#logger.debug(`-> ${JSON.stringify(this.#loggableEvent(event))}`);
+            // }
             this.emit('openai_client_event_queued', event);
             this.#ws.send(JSON.stringify(event));
           } catch (error) {
@@ -883,8 +884,26 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       this.currentGeneration.messageChannel.put({
         messageId: itemId,
-        textStream: itemGeneration.textChannel,
-        audioStream: itemGeneration.audioChannel,
+        textStream: new ReadableStream<string>({
+          async start(controller) {
+            for await (const chunk of itemGeneration.textChannel) {
+              controller.enqueue(chunk);
+            }
+          },
+          cancel() {
+            itemGeneration.textChannel.close();
+          },
+        }),
+        audioStream: new ReadableStream<AudioFrame>({
+          async start(controller) {
+            for await (const chunk of itemGeneration.audioChannel) {
+              controller.enqueue(chunk);
+            }
+          },
+          cancel() {
+            itemGeneration.audioChannel.close();
+          },
+        }),
       });
 
       this.currentGeneration.messages.set(itemId, itemGeneration);

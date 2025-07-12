@@ -110,15 +110,19 @@ export class AudioRecognition {
   }
 
   async start() {
-    this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
-    this.vadTask.result.catch((err) => {
-      this.logger.error(`Error running VAD task: ${err}`);
-    });
+    if (this.vad) {
+      this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
+      this.vadTask.result.catch((err) => {
+        this.logger.error(`Error running VAD task: ${err}`);
+      });
+    }
 
-    this.sttTask = Task.from(({ signal }) => this.createSttTask(this.stt, signal));
-    this.sttTask.result.catch((err) => {
-      this.logger.error(`Error running STT task: ${err}`);
-    });
+    if (this.stt) {
+      this.sttTask = Task.from(({ signal }) => this.createSttTask(this.stt, signal));
+      this.sttTask.result.catch((err) => {
+        this.logger.error(`Error running STT task: ${err}`);
+      });
+    }
   }
 
   private async onSTTEvent(ev: SpeechEvent) {

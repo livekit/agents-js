@@ -210,8 +210,12 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
-    this.audioRecognition?.setInputAudioStream(audioStream);
-    this.realtimeSession?.setInputAudioStream(audioStream);
+    // TODO(shubhra): might need to tee the streams here.
+    if (this.realtimeSession) {
+      this.realtimeSession.setInputAudioStream(audioStream);
+    } else if (this.audioRecognition) {
+      this.audioRecognition.setInputAudioStream(audioStream);
+    }
   }
 
   commitUserTurn() {
@@ -331,7 +335,7 @@ export class AgentActivity implements RecognitionHooks {
     this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
 
     this.createSpeechTask({
-      promise: this.realtimeGenerationTask(handle, ev),
+      promise: this.realtimeGenerationTask(handle, ev, {}),
       ownedSpeechHandle: handle,
       name: 'AgentActivity.realtimeGeneration',
     });

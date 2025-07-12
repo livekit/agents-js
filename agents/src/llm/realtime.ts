@@ -18,8 +18,8 @@ export interface InputSpeechStoppedEvent {
 
 export interface MessageGeneration {
   messageId: string;
-  textStream: AsyncIterableQueue<string>;
-  audioStream: AsyncIterableQueue<AudioFrame>;
+  textStream: ReadableStream<string>;
+  audioStream: ReadableStream<AudioFrame>;
 }
 
 export interface GenerationCreatedEvent {
