@@ -262,10 +262,10 @@ export class FunctionCallOutput {
 export type ChatItem = ChatMessage | FunctionCall | FunctionCallOutput;
 
 export class ChatContext {
-  private _items: ChatItem[];
+  protected _items: ChatItem[];
 
   constructor(items?: ChatItem[]) {
-    this._items = items ? [...items] : [];
+    this._items = items !== undefined ? items : [];
   }
 
   static empty(): ChatContext {
@@ -277,7 +277,7 @@ export class ChatContext {
   }
 
   set items(items: ChatItem[]) {
-    this._items = [...items];
+    this._items = items;
   }
 
   /**
@@ -484,9 +484,17 @@ export class ReadonlyChatContext extends ChatContext {
     'Please use .copy() and agent.update_chat_ctx() to modify the chat context.';
 
   constructor(items: ChatItem[]) {
-    super();
-    // Directly set the immutable array without letting parent constructor copy it
-    (this as any)._items = createImmutableArray(items, ReadonlyChatContext.errorMsg);
+    super(createImmutableArray(items, ReadonlyChatContext.errorMsg));
+  }
+
+  get items(): ChatItem[] {
+    return this._items;
+  }
+
+  set items(items: ChatItem[]) {
+    throw new Error(
+      `Cannot set items on a read-only chat context. ${ReadonlyChatContext.errorMsg}`,
+    );
   }
 
   get readonly(): boolean {
