@@ -5,9 +5,12 @@ import { describe, expect, it } from 'vitest';
 import {
   type AudioContent,
   ChatContext,
+  type ChatItem,
+  ChatMessage,
   FunctionCall,
   FunctionCallOutput,
   type ImageContent,
+  ReadonlyChatContext,
 } from './chat_context.js';
 
 describe('ChatContext.toJSON', () => {
@@ -277,5 +280,171 @@ describe('ChatContext.toJSON', () => {
         excludeTimestamp: false,
       }),
     ).toMatchSnapshot('message-properties-full');
+  });
+});
+
+describe('ReadonlyChatContext with immutable array', () => {
+  it('should have readonly property set to true', () => {
+    const items: ChatItem[] = [
+      new ChatMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: ['Test'],
+        interrupted: false,
+        createdAt: Date.now(),
+      }),
+    ];
+    const readonlyContext = new ReadonlyChatContext(items);
+
+    expect(readonlyContext.readonly).toBe(true);
+  });
+
+  it('should prevent setting items property', () => {
+    const items: ChatItem[] = [
+      new ChatMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: ['Test'],
+        interrupted: false,
+        createdAt: Date.now(),
+      }),
+    ];
+    const readonlyContext = new ReadonlyChatContext(items);
+    expect(() => {
+      readonlyContext.items = [];
+    }).toThrow(
+      `Cannot set items on a read-only chat context. Please use .copy() and agent.update_chat_ctx() to modify the chat context.`,
+    );
+  });
+
+  it('should prevent modifications through array methods', () => {
+    const items: ChatItem[] = [
+      new ChatMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: ['Test'],
+        interrupted: false,
+        createdAt: Date.now(),
+      }),
+    ];
+    const readonlyContext = new ReadonlyChatContext(items);
+    const newItem = new ChatMessage({
+      id: 'msg_2',
+      role: 'assistant',
+      content: ['Response'],
+      interrupted: false,
+      createdAt: Date.now(),
+    });
+
+    const mutableItems = readonlyContext.items;
+    expect(() => mutableItems.push(newItem)).toThrow(
+      'Cannot call push() on a read-only array. Please use .copy() and agent.update_chat_ctx() to modify the chat context.',
+    );
+
+    expect(() => mutableItems.pop()).toThrow(
+      'Cannot call pop() on a read-only array. Please use .copy() and agent.update_chat_ctx() to modify the chat context.',
+    );
+
+    expect(() => mutableItems.shift()).toThrow(
+      'Cannot call shift() on a read-only array. Please use .copy() and agent.update_chat_ctx() to modify the chat context.',
+    );
+
+    expect(() => mutableItems.unshift(newItem)).toThrow(
+      'Cannot call unshift() on a read-only array. Please use .copy() and agent.update_chat_ctx() to modify the chat context.',
+    );
+
+    expect(() => mutableItems.splice(0, 1)).toThrow(
+      'Cannot call splice() on a read-only array. Please use .copy() and agent.update_chat_ctx() to modify the chat context.',
+    );
+
+    expect(() => mutableItems.sort()).toThrow(
+      'Cannot call sort() on a read-only array. Please use .copy() and agent.update_chat_ctx() to modify the chat context.',
+    );
+
+    expect(() => mutableItems.reverse()).toThrow(
+      'Cannot call reverse() on a read-only array. Please use .copy() and agent.update_chat_ctx() to modify the chat context.',
+    );
+
+    expect(() => mutableItems.fill(newItem)).toThrow(
+      'Cannot call fill() on a read-only array. Please use .copy() and agent.update_chat_ctx() to modify the chat context.',
+    );
+
+    expect(() => mutableItems.copyWithin(0, 1)).toThrow(
+      'Cannot call copyWithin() on a read-only array. Please use .copy() and agent.update_chat_ctx() to modify the chat context.',
+    );
+  });
+
+  it('should prevent bracket notation assignment and deletion', () => {
+    const items: ChatItem[] = [
+      new ChatMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: ['Test'],
+        interrupted: false,
+        createdAt: Date.now(),
+      }),
+    ];
+    const readonlyContext = new ReadonlyChatContext(items);
+    const newItem = new ChatMessage({
+      id: 'msg_2',
+      role: 'assistant',
+      content: ['Response'],
+      interrupted: false,
+      createdAt: Date.now(),
+    });
+
+    expect(() => {
+      readonlyContext.items[0] = newItem;
+    }).toThrow(
+      'Cannot assign to read-only array index "0". Please use .copy() and agent.update_chat_ctx() to modify the chat context.',
+    );
+
+    expect(() => {
+      delete readonlyContext.items[0];
+    }).toThrow(
+      'Cannot delete read-only array index "0". Please use .copy() and agent.update_chat_ctx() to modify the chat context.',
+    );
+
+    expect(() => {
+      readonlyContext.items[99] = newItem;
+    }).toThrow(
+      'Cannot assign to read-only array index "99". Please use .copy() and agent.update_chat_ctx() to modify the chat context.',
+    );
+  });
+
+  it('should allow read operations on the immutable array', () => {
+    const items: ChatItem[] = [
+      new ChatMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: ['Test 1'],
+        interrupted: false,
+        createdAt: 1000,
+      }),
+      new ChatMessage({
+        id: 'msg_2',
+        role: 'assistant',
+        content: ['Test 2'],
+        interrupted: false,
+        createdAt: 2000,
+      }),
+    ];
+    const readonlyContext = new ReadonlyChatContext(items);
+
+    expect(readonlyContext.items.length).toBe(2);
+    expect(readonlyContext.items[0]).toEqual(items[0]);
+    expect(readonlyContext.items[1]).toEqual(items[1]);
+    expect(readonlyContext.items.find((item: ChatItem) => item.id === 'msg_2')).toEqual(items[1]);
+    expect(readonlyContext.items.map((item: ChatItem) => item.id)).toEqual(['msg_1', 'msg_2']);
+    expect(
+      readonlyContext.items.filter(
+        (item: ChatItem) => item.type === 'message' && item.role === 'user',
+      ),
+    ).toHaveLength(1);
+
+    // forEach should work for reading
+    const ids: string[] = [];
+    readonlyContext.items.forEach((item) => ids.push(item.id));
+    expect(ids).toEqual(['msg_1', 'msg_2']);
   });
 });

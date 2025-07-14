@@ -519,3 +519,71 @@ export function withResolvers<T = unknown>() {
 export function shortuuid(prefix: string): string {
   return `${prefix}_${uuidv4().slice(0, 12)}`;
 }
+
+const READONLY_SYMBOL = Symbol('Readonly');
+
+const MUTATION_METHODS = [
+  'push',
+  'pop',
+  'shift',
+  'unshift',
+  'splice',
+  'sort',
+  'reverse',
+  'fill',
+  'copyWithin',
+] as const;
+
+// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy
+/**
+ * Creates a read-only proxy for an array.
+ * @param array - The array to make read-only.
+ * @param additionalErrorMessage - An additional error message to include in the error thrown when a mutation method is called.
+ * @returns A read-only proxy for the array.
+ */
+export function createImmutableArray<T>(array: T[], additionalErrorMessage: string = ''): T[] {
+  return new Proxy(array, {
+    get(target, key) {
+      if (key === READONLY_SYMBOL) {
+        return true;
+      }
+
+      // Intercept mutation methods
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (typeof key === 'string' && MUTATION_METHODS.includes(key as any)) {
+        return function () {
+          throw new TypeError(
+            `Cannot call ${key}() on a read-only array. ${additionalErrorMessage}`.trim(),
+          );
+        };
+      }
+
+      return Reflect.get(target, key);
+    },
+    set(_, prop) {
+      throw new TypeError(
+        `Cannot assign to read-only array index "${String(prop)}". ${additionalErrorMessage}`.trim(),
+      );
+    },
+    deleteProperty(_, prop) {
+      throw new TypeError(
+        `Cannot delete read-only array index "${String(prop)}". ${additionalErrorMessage}`.trim(),
+      );
+    },
+    defineProperty(_, prop) {
+      throw new TypeError(
+        `Cannot define property "${String(prop)}" on a read-only array. ${additionalErrorMessage}`.trim(),
+      );
+    },
+    setPrototypeOf() {
+      throw new TypeError(
+        `Cannot change prototype of a read-only array. ${additionalErrorMessage}`.trim(),
+      );
+    },
+  });
+}
+
+export function isImmutableArray(array: unknown): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return typeof array === 'object' && !!(array as any)[READONLY_SYMBOL];
+}
