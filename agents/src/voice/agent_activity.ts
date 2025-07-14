@@ -1205,7 +1205,7 @@ export class AgentActivity implements RecognitionHooks {
           // truncate server-side message
           this.realtimeSession.truncate({
             messageId: msgId,
-            audioEndMs: playbackPosition,
+            audioEndMs: Math.floor(playbackPosition),
           });
         }
 

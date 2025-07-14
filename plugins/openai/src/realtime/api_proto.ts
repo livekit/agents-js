@@ -416,6 +416,7 @@ export interface InputAudioBufferSpeechStoppedEvent extends BaseServerEvent {
 
 export interface ConversationItemCreatedEvent extends BaseServerEvent {
   type: 'conversation.item.created';
+  previous_item_id: string;
   item: ItemResource;
 }
 
