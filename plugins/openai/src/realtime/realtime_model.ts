@@ -626,9 +626,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         while (this.#ws && !this.#closing && this.#ws.readyState === WebSocket.OPEN) {
           try {
             const event = await this.messageChannel.get();
-            // if (event.type !== 'input_audio_buffer.append') {
-            this.#logger.debug(`-> ${JSON.stringify(this.#loggableEvent(event))}`);
-            // }
+            if (event.type !== 'input_audio_buffer.append') {
+              this.#logger.debug(`-> ${JSON.stringify(this.#loggableEvent(event))}`);
+            }
             this.emit('openai_client_event_queued', event);
             this.#ws.send(JSON.stringify(event));
           } catch (error) {
