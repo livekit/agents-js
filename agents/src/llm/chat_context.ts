@@ -264,7 +264,7 @@ export class ChatContext {
   protected _items: ChatItem[];
 
   constructor(items?: ChatItem[]) {
-    this._items = items !== undefined ? items : [];
+    this._items = items ? items : [];
   }
 
   static empty(): ChatContext {
