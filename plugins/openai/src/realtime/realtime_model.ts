@@ -796,11 +796,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     try {
-      this.#logger.debug({ item: event.item }, 'inserting conversation item');
-      this.#logger.debug(
-        { item: openAIItemToLivekitItem(event.item) },
-        '(lk item) inserting conversation item',
-      );
       this.remoteChatCtx.insert(event.previous_item_id, openAIItemToLivekitItem(event.item));
     } catch (error) {
       this.#logger.error({ error, itemId: event.item.id }, 'failed to insert conversation item');
