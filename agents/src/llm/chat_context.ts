@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
 import { shortuuid } from '../utils.js';
+import { createImmutableArray } from './immutable_array.js';
 import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
 import type { JSONObject, JSONValue, ToolContext } from './tool_context.js';
 
@@ -475,5 +476,20 @@ export class ChatContext {
    */
   get readonly(): boolean {
     return false;
+  }
+}
+
+export class ReadonlyChatContext extends ChatContext {
+  static readonly errorMsg =
+    'Please use .copy() and agent.update_chat_ctx() to modify the chat context.';
+
+  constructor(items: ChatItem[]) {
+    super();
+    // Directly set the immutable array without letting parent constructor copy it
+    (this as any)._items = createImmutableArray(items, ReadonlyChatContext.errorMsg);
+  }
+
+  get readonly(): boolean {
+    return true;
   }
 }
