@@ -90,12 +90,11 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.llm instanceof RealtimeModel) {
       this.realtimeSession = this.llm.session();
-      this.realtimeSession.on('generation_created', this.onGenerationCreated);
-      this.realtimeSession.on('input_speech_started', this.onInputSpeechStarted);
-      this.realtimeSession.on('input_speech_stopped', this.onInputSpeechStopped);
-      this.realtimeSession.on(
-        'input_audio_transcription_completed',
-        this.onInputAudioTranscriptionCompleted,
+      this.realtimeSession.on('generation_created', (ev) => this.onGenerationCreated(ev));
+      this.realtimeSession.on('input_speech_started', (ev) => this.onInputSpeechStarted(ev));
+      this.realtimeSession.on('input_speech_stopped', (ev) => this.onInputSpeechStopped(ev));
+      this.realtimeSession.on('input_audio_transcription_completed', (ev) =>
+        this.onInputAudioTranscriptionCompleted(ev),
       );
       // TODO(shubhra): add metrics_collected and error handlers
 
@@ -113,7 +112,7 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       try {
-        await this.realtimeSession.updateTools(this.tools);
+        // await this.realtimeSession.updateTools(this.tools);
       } catch (error) {
         this.logger.error(error, 'failed to update the tools');
       }
@@ -264,8 +263,8 @@ export class AgentActivity implements RecognitionHooks {
 
   // -- Realtime Session events --
 
-  onInputSpeechStarted(ev: InputSpeechStartedEvent): void {
-    this.logger.info(ev, 'onInputSpeechStarted');
+  onInputSpeechStarted(_ev: InputSpeechStartedEvent): void {
+    this.logger.info('onInputSpeechStarted');
 
     if (!this.vad) {
       this.agentSession._updateUserState('speaking');

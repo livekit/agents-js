@@ -499,10 +499,10 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   pushAudio(frame: AudioFrame): void {
     for (const f of this.resampleAudio(frame)) {
-      for (const nf of this.bstream.write(f.data)) {
+      for (const nf of this.bstream.write(f.data.buffer)) {
         this.sendEvent({
           type: 'input_audio_buffer.append',
-          audio: Buffer.from(nf.data).toString('base64'),
+          audio: Buffer.from(nf.data.buffer).toString('base64'),
         } as api_proto.InputAudioBufferAppendEvent);
         // TODO(AJS-102): use frame.durationMs once available in rtc-node
         this.pushedDurationMs += nf.samplesPerChannel / nf.sampleRate;
@@ -515,7 +515,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       // OpenAI requires at least 100ms of audio
       this.sendEvent({
         type: 'input_audio_buffer.commit',
-        duration_ms: this.pushedDurationMs,
       } as api_proto.InputAudioBufferCommitEvent);
       this.pushedDurationMs = 0;
     }
