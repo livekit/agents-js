@@ -1,15 +1,11 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-/* eslint-disable @typescript-eslint/no-unused-vars */
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
 import { ReadonlyChatContext } from '../llm/chat_context.js';
-import type { ChatMessage, FunctionCall } from '../llm/index.js';
+import type { ChatMessage, FunctionCall, RealtimeModel } from '../llm/index.js';
 import {
   type ChatChunk,
   ChatContext,
@@ -40,8 +36,13 @@ export class StopResponse extends Error {
   }
 }
 
-export function isStopResponse(value: any): value is StopResponse {
-  return value !== undefined && value !== null && value[STOP_RESPONSE_SYMBOL] === true;
+export function isStopResponse(value: unknown): value is StopResponse {
+  return (
+    value !== undefined &&
+    value !== null &&
+    typeof value === 'object' &&
+    STOP_RESPONSE_SYMBOL in value
+  );
 }
 
 export interface ModelSettings {
@@ -56,9 +57,8 @@ export interface AgentOptions<UserData> {
   turnDetection?: TurnDetectionMode;
   stt?: STT;
   vad?: VAD;
-  llm?: LLM; // TODO: support realtime model
+  llm?: LLM | RealtimeModel;
   tts?: TTS;
-  mcpServers?: any[]; // TODO: support MCP servers
   allowInterruptions?: boolean;
   minConsecutiveSpeechDelay?: number;
 }
@@ -67,7 +67,7 @@ export class Agent<UserData = any> {
   private turnDetection?: TurnDetectionMode;
   private _stt?: STT;
   private _vad?: VAD;
-  private _llm?: LLM;
+  private _llm?: LLM | RealtimeModel;
   private _tts?: TTS;
 
   /** @internal */
@@ -116,7 +116,7 @@ export class Agent<UserData = any> {
     return this._stt;
   }
 
-  get llm(): LLM | undefined {
+  get llm(): LLM | RealtimeModel | undefined {
     return this._llm;
   }
 
@@ -151,7 +151,7 @@ export class Agent<UserData = any> {
     return Agent.default.transcriptionNode(this, text, modelSettings);
   }
 
-  async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage): Promise<void> {}
+  async onUserTurnCompleted(_chatCtx: ChatContext, _newMessage: ChatMessage): Promise<void> {}
 
   async sttNode(
     audio: ReadableStream<AudioFrame>,
