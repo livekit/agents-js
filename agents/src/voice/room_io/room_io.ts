@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { ConnectionState, type Participant, type Room } from '@livekit/rtc-node';
+import {
+  ConnectionState,
+  type NoiseCancellationOptions,
+  type Participant,
+  type Room,
+} from '@livekit/rtc-node';
 import { RoomEvent, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ATTRIBUTE_PUBLISH_ON_BEHALF } from '../../constants.js';
@@ -30,6 +35,7 @@ export interface RoomInputOptions {
   audioEnabled: boolean;
   videoEnabled: boolean;
   participantIdentity?: string;
+  noiseCancellation?: NoiseCancellationOptions;
 }
 
 export interface RoomOutputOptions {
@@ -240,6 +246,7 @@ export class RoomIO {
       room: this.room,
       sampleRate: this.inputOptions.audioSampleRate,
       numChannels: this.inputOptions.audioNumChannels,
+      noiseCancellation: this.inputOptions.noiseCancellation,
     });
 
     // -- create outputs --
