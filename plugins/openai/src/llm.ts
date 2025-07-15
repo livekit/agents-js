@@ -485,8 +485,9 @@ export class LLMStream extends llm.LLMStream {
           function: {
             name,
             description: func.description,
-            // don't format parameters if they are raw openai params
-            parameters: llm.oaiParams(func.parameters),
+            parameters: llm.toJsonSchema(
+              func.parameters,
+            ) as unknown as OpenAI.Chat.Completions.ChatCompletionTool['function']['parameters'],
           },
         }))
       : undefined;

@@ -4,6 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
+import { ZodObject } from 'zod';
 import {
   type ChatContext,
   ChatMessage,
@@ -578,7 +579,13 @@ export function performToolExecutions({
 
       // Ensure valid arguments
       try {
-        parsedArgs = tool.parameters.parse(JSON.parse(toolCall.args));
+        const jsonArgs = JSON.parse(toolCall.args);
+
+        if (tool.parameters instanceof ZodObject) {
+          parsedArgs = tool.parameters.parse(jsonArgs);
+        } else {
+          parsedArgs = jsonArgs;
+        }
       } catch (rawError) {
         const error = toError(rawError);
         logger.error(

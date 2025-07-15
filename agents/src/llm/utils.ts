@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
+import type { JSONSchema7 } from 'json-schema';
 import sharp from 'sharp';
-import type { ZodObject } from 'zod';
-import { z } from 'zod';
+import { ZodObject, z } from 'zod';
 import type { UnknownUserData } from '../voice/run_context.js';
 import type { ChatContext } from './chat_context.js';
 import {
@@ -13,7 +13,7 @@ import {
   FunctionCallOutput,
   type ImageContent,
 } from './chat_context.js';
-import type { ToolContext, ToolOptions } from './tool_context.js';
+import type { ToolContext, ToolInputSchema, ToolOptions } from './tool_context.js';
 
 export interface SerializedImage {
   inferenceDetail: 'auto' | 'high' | 'low';
@@ -237,7 +237,11 @@ export async function executeToolCall(
 
   // Ensure valid arguments schema
   try {
-    params = tool.parameters.parse(args);
+    if (tool.parameters instanceof ZodObject) {
+      params = tool.parameters.parse(args);
+    } else {
+      params = args;
+    }
   } catch (error) {
     return FunctionCallOutput.create({
       callId: toolCall.callId,
@@ -349,4 +353,11 @@ export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): Di
     toRemove,
     toCreate,
   };
+}
+
+export function toJsonSchema(schema: ToolInputSchema<any>): JSONSchema7 {
+  if (schema instanceof ZodObject) {
+    return oaiParams(schema);
+  }
+  return schema;
 }

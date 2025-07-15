@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type ZodObject, ZodType, z } from 'zod';
+import type { JSONSchema7 } from 'json-schema';
+import { ZodObject, ZodType, z } from 'zod';
 import type { Agent } from '../voice/agent.js';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
 
@@ -25,7 +26,7 @@ export type JSONObject = {
 };
 
 // TODO(AJS-111): support Zod cross-version compatibility, raw JSON schema, both strict and non-strict versions
-export type ToolInputSchema<T extends JSONObject> = ZodObject<any, any, any, T, T>;
+export type ToolInputSchema<T extends JSONObject> = ZodObject<any, any, any, T, T> | JSONSchema7;
 
 export type ToolType = 'function' | 'provider-defined';
 
@@ -196,13 +197,12 @@ export function tool(tool: any): any {
     const parameters = tool.parameters ?? z.object({});
 
     // if parameters is not zod object, throw an error
-    if (!(parameters instanceof ZodType)) {
-      throw new Error('Tool parameters must be a Zod schema');
+    if (parameters instanceof ZodType && parameters._def.typeName !== 'ZodObject') {
+      throw new Error('Tool parameters must be a Zod object schema (z.object(...))');
     }
 
-    // Check if it's specifically a ZodObject (not other Zod types like ZodString, ZodNumber, etc.)
-    if (parameters._def.typeName !== 'ZodObject') {
-      throw new Error('Tool parameters must be a Zod object schema (z.object(...))');
+    if (!(parameters instanceof ZodObject) && !(typeof parameters === 'object')) {
+      throw new Error('Tool parameters must be a Zod object schema or a raw JSON schema');
     }
 
     return {

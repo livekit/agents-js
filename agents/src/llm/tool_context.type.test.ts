@@ -83,10 +83,10 @@ describe('tool type inference', () => {
       tool({
         name: 'test',
         description: 'test',
-        parameters: { notAZodSchema: true },
+        parameters: 'invalid schema',
         execute: async () => 'test' as const,
       });
-    }).toThrowError('Tool parameters must be a Zod schema');
+    }).toThrowError('Tool parameters must be a Zod object schema or a raw JSON schema');
   });
 
   it('should infer empty object type when parameters are omitted', () => {
