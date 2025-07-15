@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
@@ -284,8 +282,8 @@ export class AudioRecognition {
       .then(() => {
         this.logger.debug('EOU detection task completed');
       })
-      .catch((err: any) => {
-        if (err.name === 'AbortError') {
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.name === 'AbortError') {
           this.logger.debug('EOU detection task was aborted');
         } else {
           this.logger.error('Error in EOU detection task:', err);
@@ -454,8 +452,8 @@ export class AudioRecognition {
       .then(() => {
         this.logger.debug('User turn committed');
       })
-      .catch((err: any) => {
-        if (err.name === 'AbortError') {
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.name === 'AbortError') {
           this.logger.debug('User turn commit task was aborted');
         } else {
           this.logger.error('Error in user turn commit task:', err);
