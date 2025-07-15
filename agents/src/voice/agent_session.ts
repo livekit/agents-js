@@ -6,7 +6,7 @@ import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { ChatContext, ChatMessage } from '../llm/chat_context.js';
-import type { LLM, ToolChoice } from '../llm/index.js';
+import type { LLM, RealtimeModel, ToolChoice } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
 import type { TTS } from '../tts/tts.js';
@@ -61,10 +61,10 @@ export type AgentSessionCallbacks = {
 export type AgentSessionOptions<UserData = UnknownUserData> = {
   turnDetection?: TurnDetectionMode;
   // TODO: Make voice pipeline components optional
-  stt: STT;
-  vad: VAD;
-  llm: LLM;
-  tts: TTS;
+  stt?: STT;
+  vad?: VAD;
+  llm?: LLM | RealtimeModel;
+  tts?: TTS;
   userData?: UserData;
   voiceOptions?: Partial<VoiceOptions>;
 };
@@ -72,10 +72,10 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
 export class AgentSession<
   UserData = UnknownUserData,
 > extends (EventEmitter as new () => TypedEmitter<AgentSessionCallbacks>) {
-  vad: VAD;
-  stt: STT;
-  llm: LLM;
-  tts: TTS;
+  vad?: VAD;
+  stt?: STT;
+  llm?: LLM | RealtimeModel;
+  tts?: TTS;
   turnDetection?: TurnDetectionMode;
 
   readonly options: VoiceOptions;

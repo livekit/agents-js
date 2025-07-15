@@ -13,7 +13,7 @@ import type { ChatMessage, FunctionCall } from '../llm/index.js';
 import {
   type ChatChunk,
   ChatContext,
-  type LLM,
+  LLM,
   type ToolChoice,
   type ToolContext,
 } from '../llm/index.js';
@@ -175,6 +175,13 @@ export class Agent<UserData = any> {
     return Agent.default.ttsNode(this, text, modelSettings);
   }
 
+  async realtimeAudioOutputNode(
+    audio: ReadableStream<AudioFrame>,
+    modelSettings: ModelSettings,
+  ): Promise<ReadableStream<AudioFrame> | null> {
+    return Agent.default.realtimeAudioOutputNode(this, audio, modelSettings);
+  }
+
   // realtime_audio_output_node
 
   getActivityOrThrow(): AgentActivity {
@@ -200,6 +207,9 @@ export class Agent<UserData = any> {
       _modelSettings: ModelSettings,
     ): Promise<ReadableStream<SpeechEvent | string> | null> {
       const activity = agent.getActivityOrThrow();
+      if (!activity.stt) {
+        throw new Error('sttNode called but no STT node is available');
+      }
 
       let wrapped_stt = activity.stt;
 
@@ -236,6 +246,16 @@ export class Agent<UserData = any> {
       modelSettings: ModelSettings,
     ): Promise<ReadableStream<ChatChunk | string> | null> {
       const activity = agent.getActivityOrThrow();
+      if (!activity.llm) {
+        throw new Error('llmNode called but no LLM node is available');
+      }
+
+      if (!(activity.llm instanceof LLM)) {
+        throw new Error(
+          'llmNode should only be used with LLM (non-multimodal/realtime APIs) nodes',
+        );
+      }
+
       // TODO(brian): make parallelToolCalls configurable
       const { toolChoice } = modelSettings;
 
@@ -264,6 +284,10 @@ export class Agent<UserData = any> {
       _modelSettings: ModelSettings,
     ): Promise<ReadableStream<AudioFrame> | null> {
       const activity = agent.getActivityOrThrow();
+      if (!activity.tts) {
+        throw new Error('ttsNode called but no TTS node is available');
+      }
+
       let wrapped_tts = activity.tts;
 
       if (!activity.tts.capabilities.streaming) {
@@ -295,6 +319,14 @@ export class Agent<UserData = any> {
       _modelSettings: ModelSettings,
     ): Promise<ReadableStream<string> | null> {
       return text;
+    },
+
+    async realtimeAudioOutputNode(
+      _agent: Agent,
+      audio: ReadableStream<AudioFrame>,
+      _modelSettings: ModelSettings,
+    ): Promise<ReadableStream<AudioFrame> | null> {
+      return audio;
     },
   };
 }

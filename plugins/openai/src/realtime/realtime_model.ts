@@ -14,6 +14,7 @@ import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { once } from 'node:events';
+import { ReadableStream } from 'node:stream/web';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
@@ -123,24 +124,26 @@ export class RealtimeModel extends llm.RealtimeModel {
   /* @internal */
   _options: RealtimeOptions;
 
-  constructor(options: {
-    model?: string;
-    voice?: string;
-    temperature?: number;
-    toolChoice?: llm.ToolChoice;
-    baseURL?: string;
-    inputAudioTranscription?: api_proto.InputAudioTranscription | null;
-    // TODO(shubhra): add inputAudioNoiseReduction
-    turnDetection?: api_proto.TurnDetectionType | null;
-    speed?: number;
-    // TODO(shubhra): add openai tracing options
-    azureDeployment?: string;
-    apiKey?: string;
-    entraToken?: string;
-    apiVersion?: string;
-    maxSessionDuration?: number;
-    // TODO(shubhra): add connOptions
-  }) {
+  constructor(
+    options: {
+      model?: string;
+      voice?: string;
+      temperature?: number;
+      toolChoice?: llm.ToolChoice;
+      baseURL?: string;
+      inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+      // TODO(shubhra): add inputAudioNoiseReduction
+      turnDetection?: api_proto.TurnDetectionType | null;
+      speed?: number;
+      // TODO(shubhra): add openai tracing options
+      azureDeployment?: string;
+      apiKey?: string;
+      entraToken?: string;
+      apiVersion?: string;
+      maxSessionDuration?: number;
+      // TODO(shubhra): add connOptions
+    } = {},
+  ) {
     super({
       messageTruncation: true,
       turnDetection: options.turnDetection !== null,
@@ -496,10 +499,10 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   pushAudio(frame: AudioFrame): void {
     for (const f of this.resampleAudio(frame)) {
-      for (const nf of this.bstream.write(f.data)) {
+      for (const nf of this.bstream.write(f.data.buffer)) {
         this.sendEvent({
           type: 'input_audio_buffer.append',
-          audio: Buffer.from(nf.data).toString('base64'),
+          audio: Buffer.from(nf.data.buffer).toString('base64'),
         } as api_proto.InputAudioBufferAppendEvent);
         // TODO(AJS-102): use frame.durationMs once available in rtc-node
         this.pushedDurationMs += nf.samplesPerChannel / nf.sampleRate;
@@ -512,7 +515,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       // OpenAI requires at least 100ms of audio
       this.sendEvent({
         type: 'input_audio_buffer.commit',
-        duration_ms: this.pushedDurationMs,
       } as api_proto.InputAudioBufferCommitEvent);
       this.pushedDurationMs = 0;
     }
@@ -714,6 +716,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async close() {
+    super.close();
     if (!this.#ws) return;
     this.#closing = true;
     this.#ws.close();
@@ -793,7 +796,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     try {
-      this.remoteChatCtx.insert(event.item.id, openAIItemToLivekitItem(event.item));
+      this.remoteChatCtx.insert(event.previous_item_id, openAIItemToLivekitItem(event.item));
     } catch (error) {
       this.#logger.error({ error, itemId: event.item.id }, 'failed to insert conversation item');
     }
@@ -880,8 +883,26 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       this.currentGeneration.messageChannel.put({
         messageId: itemId,
-        textStream: itemGeneration.textChannel,
-        audioStream: itemGeneration.audioChannel,
+        textStream: new ReadableStream<string>({
+          async start(controller) {
+            for await (const chunk of itemGeneration.textChannel) {
+              controller.enqueue(chunk);
+            }
+          },
+          cancel() {
+            itemGeneration.textChannel.close();
+          },
+        }),
+        audioStream: new ReadableStream<AudioFrame>({
+          async start(controller) {
+            for await (const chunk of itemGeneration.audioChannel) {
+              controller.enqueue(chunk);
+            }
+          },
+          cancel() {
+            itemGeneration.audioChannel.close();
+          },
+        }),
       });
 
       this.currentGeneration.messages.set(itemId, itemGeneration);
