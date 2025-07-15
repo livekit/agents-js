@@ -110,19 +110,15 @@ export class AudioRecognition {
   }
 
   async start() {
-    if (this.vad) {
-      this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
-      this.vadTask.result.catch((err) => {
-        this.logger.error(`Error running VAD task: ${err}`);
-      });
-    }
+    this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
+    this.vadTask.result.catch((err) => {
+      this.logger.error(`Error running VAD task: ${err}`);
+    });
 
-    if (this.stt) {
-      this.sttTask = Task.from(({ signal }) => this.createSttTask(this.stt, signal));
-      this.sttTask.result.catch((err) => {
-        this.logger.error(`Error running STT task: ${err}`);
-      });
-    }
+    this.sttTask = Task.from(({ signal }) => this.createSttTask(this.stt, signal));
+    this.sttTask.result.catch((err) => {
+      this.logger.error(`Error running STT task: ${err}`);
+    });
   }
 
   private async onSTTEvent(ev: SpeechEvent) {
@@ -244,6 +240,16 @@ export class AudioRecognition {
           );
 
           const unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
+          this.logger.debug(
+            {
+              unlikelyThreshold,
+              endOfTurnProbability,
+              language: this.lastLanguage,
+              transcript: this.audioTranscript,
+            },
+            'EOU Detection',
+          );
+
           if (unlikelyThreshold && endOfTurnProbability < unlikelyThreshold) {
             endpointingDelay = this.maxEndpointingDelay;
           }
