@@ -286,7 +286,7 @@ export class AudioRecognition {
         if (err instanceof Error && err.name === 'AbortError') {
           this.logger.debug('EOU detection task was aborted');
         } else {
-          this.logger.error('Error in EOU detection task:', err);
+          this.logger.error(err, 'Error in EOU detection task:');
         }
       });
   }
@@ -456,7 +456,7 @@ export class AudioRecognition {
         if (err instanceof Error && err.name === 'AbortError') {
           this.logger.debug('User turn commit task was aborted');
         } else {
-          this.logger.error('Error in user turn commit task:', err);
+          this.logger.error(err, 'Error in user turn commit task:');
         }
       });
   }
