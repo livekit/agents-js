@@ -209,7 +209,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
-    // TODO(shubhra): might need to tee the streams here.
+    // TODO(AJS-164): might need to tee the streams here.
     if (this.realtimeSession) {
       this.realtimeSession.setInputAudioStream(audioStream);
     } else if (this.audioRecognition) {
