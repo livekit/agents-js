@@ -199,7 +199,6 @@ export class AgentSession<
   say(
     text: string | ReadableStream<string>,
     options?: {
-      justShareAudio?: boolean;
       audio?: ReadableStream<AudioFrame>;
       allowInterruptions?: boolean;
       addToChatCtx?: boolean;
