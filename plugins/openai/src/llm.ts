@@ -638,8 +638,9 @@ const buildMessage = async (msg: llm.ChatMessage, cacheKey: any) => {
 
   if (msg.role === llm.ChatRole.TOOL) {
     try {
-      const toolCallOutput = JSON.stringify(msg.content);
-      oaiMsg.content = toolCallOutput;
+      const serializedContent =
+        typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+      oaiMsg.content = serializedContent;
     } catch (e) {
       throw Error(`Tool call output is not JSON serializable: ${e}`);
     }
