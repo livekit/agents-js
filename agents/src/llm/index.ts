@@ -40,21 +40,22 @@ export {
 export {
   RealtimeModel,
   RealtimeSession,
-  type RealtimeCapabilities,
+  type GenerationCreatedEvent,
   type InputSpeechStartedEvent,
   type InputSpeechStoppedEvent,
-  type MessageGeneration,
-  type GenerationCreatedEvent,
   type InputTranscriptionCompleted,
+  type MessageGeneration,
+  type RealtimeCapabilities,
 } from './realtime.js';
 
 export { RemoteChatContext } from './remote_chat_context.js';
 
 export {
+  computeChatCtxDiff,
   createToolOptions,
   executeToolCall,
-  computeChatCtxDiff,
   oaiBuildFunctionInfo,
   oaiParams,
+  toJsonSchema,
   type OpenAIFunctionParameters,
 } from './utils.js';
