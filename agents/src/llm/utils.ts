@@ -125,6 +125,7 @@ export const createToolOptions = <UserData extends UnknownUserData>(
 /** @internal */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const oaiParams = (p: ZodObject<any>): OpenAIFunctionParameters => {
+  // TODO(AJS-162): make zod to JSON parsing able to handle z.optional(v.field())
   const { properties, required, additionalProperties } = zodToJsonSchema(p, {
     target: 'openAi',
   }) as OpenAIFunctionParameters;
