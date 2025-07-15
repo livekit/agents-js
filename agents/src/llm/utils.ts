@@ -4,7 +4,7 @@
 import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import sharp from 'sharp';
 import type { ZodObject } from 'zod';
-import { z } from 'zod';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { UnknownUserData } from '../voice/run_context.js';
 import type { ChatContext } from './chat_context.js';
 import {
@@ -139,61 +139,15 @@ const looksLikeInstanceof = <T>(value: unknown, target: new (...args: any[]) => 
 /** @internal */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const oaiParams = (p: ZodObject<any>): OpenAIFunctionParameters => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const properties: Record<string, any> = {};
-  const requiredProperties: string[] = [];
+  const { properties, required, additionalProperties } = zodToJsonSchema(p, {
+    target: 'openAi',
+  }) as OpenAIFunctionParameters;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const processZodType = (field: z.ZodTypeAny): any => {
-    const isOptional = field instanceof z.ZodOptional;
-    const nestedField = isOptional ? field._def.innerType : field;
-    const description = field._def.description;
-
-    if (looksLikeInstanceof(nestedField, z.ZodEnum)) {
-      return {
-        type: typeof nestedField._def.values[0],
-        ...(description && { description }),
-        enum: nestedField._def.values,
-      };
-    } else if (looksLikeInstanceof(nestedField, z.ZodArray)) {
-      const elementType = nestedField._def.type;
-      return {
-        type: 'array',
-        ...(description && { description }),
-        items: processZodType(elementType),
-      };
-    } else if (looksLikeInstanceof(nestedField, z.ZodObject)) {
-      const { properties, required } = oaiParams(nestedField);
-      return {
-        type: 'object',
-        ...(description && { description }),
-        properties,
-        required,
-      };
-    } else {
-      let type = nestedField._def.typeName.toLowerCase();
-      type = type.includes('zod') ? type.substring(3) : type;
-      return {
-        type,
-        ...(description && { description }),
-      };
-    }
-  };
-
-  for (const key in p.shape) {
-    const field = p.shape[key];
-    properties[key] = processZodType(field);
-
-    if (!(field instanceof z.ZodOptional)) {
-      requiredProperties.push(key);
-    }
-  }
-
-  const type = 'object' as const;
   return {
-    type,
+    type: 'object',
     properties,
-    required: requiredProperties,
+    required,
+    additionalProperties,
   };
 };
 
