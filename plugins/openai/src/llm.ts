@@ -636,27 +636,36 @@ const buildMessage = async (msg: llm.ChatMessage, cacheKey: any) => {
       break;
   }
 
-  if (typeof msg.content === 'string') {
-    oaiMsg.content = msg.content;
-  } else if (Array.isArray(msg.content)) {
-    oaiMsg.content = (await Promise.all(
-      msg.content.map(async (c) => {
-        if (typeof c === 'string') {
-          return { type: 'text', text: c };
-        } else if (
-          // typescript type guard for determining ChatAudio vs ChatImage
-          ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatImage => {
-            return (c as llm.ChatImage).image !== undefined;
-          })(c)
-        ) {
-          return await buildImageContent(c, cacheKey);
-        } else {
-          throw new Error('ChatAudio is not supported');
-        }
-      }),
-    )) as OpenAI.ChatCompletionContentPart[];
-  } else if (msg.content === undefined) {
-    oaiMsg.content = '';
+  if (msg.role === llm.ChatRole.TOOL) {
+    try {
+      const toolCallOutput = JSON.stringify(msg.content);
+      oaiMsg.content = toolCallOutput;
+    } catch (e) {
+      throw Error(`Tool call output is not JSON serializable: ${e}`);
+    }
+  } else {
+    if (typeof msg.content === 'string') {
+      oaiMsg.content = msg.content;
+    } else if (Array.isArray(msg.content)) {
+      oaiMsg.content = (await Promise.all(
+        msg.content.map(async (c) => {
+          if (typeof c === 'string') {
+            return { type: 'text', text: c };
+          } else if (
+            // typescript type guard for determining ChatAudio vs ChatImage
+            ((c: llm.ChatAudio | llm.ChatImage): c is llm.ChatImage => {
+              return (c as llm.ChatImage).image !== undefined;
+            })(c)
+          ) {
+            return await buildImageContent(c, cacheKey);
+          } else {
+            throw new Error('ChatAudio is not supported');
+          }
+        }),
+      )) as OpenAI.ChatCompletionContentPart[];
+    } else if (msg.content === undefined) {
+      oaiMsg.content = '';
+    }
   }
 
   // make sure to provide when function has been called inside the context
