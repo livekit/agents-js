@@ -1,5 +1,13 @@
 # @livekit/agents-plugin-openai
 
+## 0.9.3
+
+### Patch Changes
+
+- remove duplicated stringify for string tool output - [#537](https://github.com/livekit/agents-js/pull/537) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Fix tool parsing to allow return object - [#535](https://github.com/livekit/agents-js/pull/535) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
 ## 0.9.2
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-openai",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "OpenAI plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
