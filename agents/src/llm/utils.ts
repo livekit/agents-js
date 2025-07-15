@@ -122,20 +122,6 @@ export const createToolOptions = <UserData extends UnknownUserData>(
   return { ctx: { userData }, toolCallId } as unknown as ToolOptions<UserData>;
 };
 
-// XXX: Zod is victim to the dual-package hazard. this is a hacky sorta-fix
-// until Zod v4.0.0 is released.
-// https://github.com/colinhacks/zod/issues/2241#issuecomment-2142688925
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const looksLikeInstanceof = <T>(value: unknown, target: new (...args: any[]) => T): value is T => {
-  let current = value?.constructor;
-  do {
-    if (current?.name === target.name) return true;
-    // eslint-disable-next-line @typescript-eslint/ban-types
-    current = Object.getPrototypeOf(current) as Function;
-  } while (current?.name);
-  return false;
-};
-
 /** @internal */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const oaiParams = (p: ZodObject<any>): OpenAIFunctionParameters => {
