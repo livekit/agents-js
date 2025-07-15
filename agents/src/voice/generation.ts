@@ -133,7 +133,7 @@ export class _JsOutput {
   sanitize(): _SanitizedOutput {
     if (isToolError(this.exception)) {
       return _SanitizedOutput.create({
-        toolCall: { ...this.toolCall },
+        toolCall: FunctionCall.create({ ...this.toolCall }),
         toolCallOutput: FunctionCallOutput.create({
           name: this.toolCall.name,
           callId: this.toolCall.callId,
@@ -145,13 +145,13 @@ export class _JsOutput {
 
     if (isStopResponse(this.exception)) {
       return _SanitizedOutput.create({
-        toolCall: { ...this.toolCall },
+        toolCall: FunctionCall.create({ ...this.toolCall }),
       });
     }
 
     if (this.exception !== undefined) {
       return _SanitizedOutput.create({
-        toolCall: { ...this.toolCall },
+        toolCall: FunctionCall.create({ ...this.toolCall }),
         toolCallOutput: FunctionCallOutput.create({
           name: this.toolCall.name,
           callId: this.toolCall.callId,
@@ -177,13 +177,13 @@ export class _JsOutput {
         `AI function ${this.toolCall.name} returned an invalid output`,
       );
       return _SanitizedOutput.create({
-        toolCall: { ...this.toolCall },
+        toolCall: FunctionCall.create({ ...this.toolCall }),
         toolCallOutput: undefined,
       });
     }
 
     return _SanitizedOutput.create({
-      toolCall: { ...this.toolCall },
+      toolCall: FunctionCall.create({ ...this.toolCall }),
       toolCallOutput: FunctionCallOutput.create({
         name: this.toolCall.name,
         callId: this.toolCall.callId,

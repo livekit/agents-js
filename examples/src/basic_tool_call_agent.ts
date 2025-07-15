@@ -74,7 +74,7 @@ export default defineAgent({
       description:
         'Called when the user wants to get a number value, None if user want a random value',
       parameters: z.object({
-        value: z.number().optional().describe('The number value'),
+        value: z.number().nullable().describe('The number value'),
       }),
       execute: async ({ value }) => {
         if (value === undefined) {

@@ -8,6 +8,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
+import { ReadonlyChatContext } from '../llm/chat_context.js';
 import type { ChatMessage, FunctionCall } from '../llm/index.js';
 import {
   type ChatChunk,
@@ -123,9 +124,8 @@ export class Agent<UserData = any> {
     return this._tts;
   }
 
-  get chatCtx(): ChatContext {
-    // TODO(brian): make it readonly
-    return this._chatCtx;
+  get chatCtx(): ReadonlyChatContext {
+    return new ReadonlyChatContext(this._chatCtx.items);
   }
 
   get instructions(): string {

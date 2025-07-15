@@ -3,11 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type PreTrainedTokenizer } from '@huggingface/transformers';
 import type { ipc, llm } from '@livekit/agents';
-import { CurrentJobContext, InferenceRunner, log } from '@livekit/agents';
+import { CurrentJobContext, Future, InferenceRunner, log } from '@livekit/agents';
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
 import { InferenceSession, Tensor } from 'onnxruntime-node';
-import { type EOUModelType, MAX_HISTORY_TURNS, MODEL_REVISIONS } from './constants.js';
+import { downloadFileToCacheDir } from '../hf_utils.js';
+import {
+  type EOUModelType,
+  HG_MODEL_REPO,
+  MAX_HISTORY_TURNS,
+  MODEL_REVISIONS,
+  ONNX_FILEPATH,
+} from './constants.js';
 
 type RawChatItem = { role: string; content: string };
 
@@ -31,8 +38,11 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
   async initialize() {
     const { AutoTokenizer } = await import('@huggingface/transformers');
 
-    // TODO(brian): remove hardcoded path and support downloading the model from HF hub
-    const onnxModelPath = fileURLToPath(new URL('turn_detector.onnx', import.meta.url).href);
+    const onnxModelPath = await downloadFileToCacheDir({
+      repo: HG_MODEL_REPO,
+      path: ONNX_FILEPATH,
+      revision: this.modelRevision,
+    });
 
     try {
       // TODO(brian): support session config once onnxruntime-node supports it
@@ -119,14 +129,17 @@ export interface EOUModelOptions {
   loadLanguages?: boolean;
 }
 
-export abstract class EOUModelBase {
+type LanguageData = {
+  threshold: number;
+};
+
+export abstract class EOUModel {
   private modelType: EOUModelType;
   private executor: ipc.InferenceExecutor;
   private threshold: number | undefined;
   private loadLanguages: boolean;
 
-  // TODO(brian): add type annotation for languages
-  protected languages: Record<string, any> = {}; // eslint-disable-line @typescript-eslint/no-explicit-any
+  protected languagesFuture: Future<Record<string, LanguageData>> = new Future();
 
   #logger = log();
 
@@ -134,7 +147,7 @@ export abstract class EOUModelBase {
     const {
       modelType = 'en',
       executor = CurrentJobContext.getCurrent().inferenceExecutor,
-      unlikelyThreshold = 0.15,
+      unlikelyThreshold,
       loadLanguages = true,
     } = opts;
 
@@ -144,8 +157,13 @@ export abstract class EOUModelBase {
     this.loadLanguages = loadLanguages;
 
     if (loadLanguages) {
-      // TODO(brian): support load languages.json from HF hub
-      this.#logger.warn('Loading languages.json from HF hub is not implemented');
+      downloadFileToCacheDir({
+        repo: HG_MODEL_REPO,
+        path: 'languages.json',
+        revision: MODEL_REVISIONS[modelType],
+      }).then((path) => {
+        this.languagesFuture.resolve(JSON.parse(readFileSync(path, 'utf8')));
+      });
     }
   }
 
@@ -155,25 +173,23 @@ export abstract class EOUModelBase {
     }
 
     const lang = language.toLowerCase();
+    const languages = await this.languagesFuture.await;
+
     // try the full language code first
-    let langData = this.languages[lang];
+    let langData = languages[lang];
 
     if (langData === undefined && lang.includes('-')) {
       const baseLang = lang.split('-')[0]!;
-      langData = this.languages[baseLang];
+      langData = languages[baseLang];
     }
 
     if (langData === undefined) {
       this.#logger.warn(`Language ${language} not supported by EOU model`);
-      return this.threshold;
+      return undefined;
     }
 
     // if a custom threshold is provided, use it
-    if (this.threshold !== undefined) {
-      return this.threshold;
-    }
-
-    return langData.threshold;
+    return this.threshold !== undefined ? this.threshold : langData.threshold;
   }
 
   async supportsLanguage(language?: string): Promise<boolean> {

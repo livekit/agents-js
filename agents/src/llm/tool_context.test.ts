@@ -16,20 +16,7 @@ describe('Tool Context', () => {
 
       const result = oaiParams(schema);
 
-      expect(result).toEqual({
-        type: 'object',
-        properties: {
-          name: {
-            type: 'string',
-            description: 'The user name',
-          },
-          age: {
-            type: 'number',
-            description: 'The user age',
-          },
-        },
-        required: ['name', 'age'],
-      });
+      expect(result).toMatchSnapshot();
     });
 
     it('should handle enum fields', () => {
@@ -39,17 +26,7 @@ describe('Tool Context', () => {
 
       const result = oaiParams(schema);
 
-      expect(result).toEqual({
-        type: 'object',
-        properties: {
-          color: {
-            type: 'string',
-            description: 'Choose a color',
-            enum: ['red', 'blue', 'green'],
-          },
-        },
-        required: ['color'],
-      });
+      expect(result).toMatchSnapshot();
     });
 
     it('should handle array fields', () => {
@@ -59,19 +36,7 @@ describe('Tool Context', () => {
 
       const result = oaiParams(schema);
 
-      expect(result).toEqual({
-        type: 'object',
-        properties: {
-          tags: {
-            type: 'array',
-            description: 'List of tags',
-            items: {
-              type: 'string',
-            },
-          },
-        },
-        required: ['tags'],
-      });
+      expect(result).toMatchSnapshot();
     });
 
     it('should handle array of enums', () => {
@@ -81,20 +46,7 @@ describe('Tool Context', () => {
 
       const result = oaiParams(schema);
 
-      expect(result).toEqual({
-        type: 'object',
-        properties: {
-          colors: {
-            type: 'array',
-            description: 'List of colors',
-            items: {
-              type: 'string',
-              enum: ['red', 'blue', 'green'],
-            },
-          },
-        },
-        required: ['colors'],
-      });
+      expect(result).toMatchSnapshot();
     });
 
     it('should handle optional fields', () => {
@@ -105,20 +57,7 @@ describe('Tool Context', () => {
 
       const result = oaiParams(schema);
 
-      expect(result).toEqual({
-        type: 'object',
-        properties: {
-          name: {
-            type: 'string',
-            description: 'The user name',
-          },
-          age: {
-            type: 'number',
-            description: 'The user age',
-          },
-        },
-        required: ['name'], // age should not be required
-      });
+      expect(result).toMatchSnapshot();
     });
 
     it('should handle fields without descriptions', () => {
@@ -129,20 +68,7 @@ describe('Tool Context', () => {
 
       const result = oaiParams(schema);
 
-      expect(result).toEqual({
-        type: 'object',
-        properties: {
-          name: {
-            type: 'string',
-            description: undefined,
-          },
-          age: {
-            type: 'number',
-            description: undefined,
-          },
-        },
-        required: ['name', 'age'],
-      });
+      expect(result).toMatchSnapshot();
     });
   });
 
@@ -222,42 +148,7 @@ describe('Tool Context', () => {
           ),
         });
         const result = oaiParams(schema);
-        expect(result).toEqual({
-          type: 'object',
-          properties: {
-            items: {
-              type: 'array',
-              description: undefined,
-              items: {
-                type: 'object',
-                properties: {
-                  name: {
-                    type: 'string',
-                    description: 'the item name',
-                  },
-                  modifiers: {
-                    type: 'array',
-                    description: 'list of the modifiers applied on this item, such as size',
-                    items: {
-                      type: 'object',
-                      properties: {
-                        modifier_name: {
-                          type: 'string',
-                        },
-                        modifier_value: {
-                          type: 'string',
-                        },
-                      },
-                      required: ['modifier_name', 'modifier_value'],
-                    },
-                  },
-                },
-                required: ['name', 'modifiers'],
-              },
-            },
-          },
-          required: ['items'],
-        });
+        expect(result).toMatchSnapshot();
       });
     });
 
