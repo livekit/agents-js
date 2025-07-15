@@ -1,10 +1,19 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
+import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../src/log.js';
-import { Event, TASK_TIMEOUT_ERROR, Task, TaskResult, isPending } from '../src/utils.js';
+import {
+  Event,
+  TASK_TIMEOUT_ERROR,
+  Task,
+  TaskResult,
+  isPending,
+  resampleStream,
+} from '../src/utils.js';
 
 describe('utils', () => {
   // initialize logger
@@ -536,6 +545,114 @@ describe('utils', () => {
 
       event.set();
       expect(await waiterAfterSet).toBe(true);
+    });
+  });
+
+  describe('resampleStream', () => {
+    const createAudioFrame = (sampleRate: number, samples: number, channels = 1): AudioFrame => {
+      const data = new Int16Array(samples * channels);
+      for (let i = 0; i < data.length; i++) {
+        data[i] = Math.sin((i / samples) * Math.PI * 2) * 16000;
+      }
+      return new AudioFrame(data, sampleRate, channels, samples);
+    };
+
+    const streamToArray = async (stream: ReadableStream<AudioFrame>): Promise<AudioFrame[]> => {
+      const reader = stream.getReader();
+      const chunks: AudioFrame[] = [];
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      return chunks;
+    };
+
+    it('should resample audio frames to target sample rate', async () => {
+      const inputRate = 48000;
+      const outputRate = 16000;
+      const inputFrame = createAudioFrame(inputRate, 960); // 20ms at 48kHz
+
+      const inputStream = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(inputFrame);
+          controller.close();
+        },
+      });
+
+      const outputStream = resampleStream({ stream: inputStream, outputRate });
+      const outputFrames = await streamToArray(outputStream);
+
+      expect(outputFrames.length).toBeGreaterThan(0);
+
+      for (const frame of outputFrames) {
+        expect(frame.sampleRate).toBe(outputRate);
+        expect(frame.channels).toBe(inputFrame.channels);
+      }
+    });
+
+    it('should handle same input and output rate', async () => {
+      const sampleRate = 44100;
+      const inputFrame = createAudioFrame(sampleRate, 1024);
+
+      const inputStream = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(inputFrame);
+          controller.close();
+        },
+      });
+
+      const outputStream = resampleStream({ stream: inputStream, outputRate: sampleRate });
+      const outputFrames = await streamToArray(outputStream);
+
+      expect(outputFrames.length).toBeGreaterThan(0);
+
+      for (const frame of outputFrames) {
+        expect(frame.sampleRate).toBe(sampleRate);
+        expect(frame.channels).toBe(inputFrame.channels);
+      }
+    });
+
+    it('should handle multiple input frames', async () => {
+      const inputRate = 32000;
+      const outputRate = 48000;
+      const frame1 = createAudioFrame(inputRate, 640);
+      const frame2 = createAudioFrame(inputRate, 640);
+
+      const inputStream = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(frame1);
+          controller.enqueue(frame2);
+          controller.close();
+        },
+      });
+
+      const outputStream = resampleStream({ stream: inputStream, outputRate });
+      const outputFrames = await streamToArray(outputStream);
+
+      expect(outputFrames.length).toBeGreaterThan(0);
+
+      for (const frame of outputFrames) {
+        expect(frame.sampleRate).toBe(outputRate);
+        expect(frame.channels).toBe(frame1.channels);
+      }
+    });
+
+    it('should handle empty stream', async () => {
+      const inputStream = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.close();
+        },
+      });
+
+      const outputStream = resampleStream({ stream: inputStream, outputRate: 44100 });
+      const outputFrames = await streamToArray(outputStream);
+
+      expect(outputFrames).toEqual([]);
     });
   });
 });
