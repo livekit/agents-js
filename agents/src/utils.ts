@@ -3,9 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
 import { EventEmitter, once } from 'node:events';
+import type { ReadableStream } from 'node:stream/web';
+import { TransformStream, type TransformStreamDefaultController } from 'node:stream/web';
 import { v4 as uuidv4 } from 'uuid';
 import { log } from './log.js';
 
@@ -586,4 +589,37 @@ export function createImmutableArray<T>(array: T[], additionalErrorMessage: stri
 export function isImmutableArray(array: unknown): boolean {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return typeof array === 'object' && !!(array as any)[READONLY_SYMBOL];
+}
+
+/**
+ * Resamples an audio stream to a target sample rate.
+ *
+ * WARINING: The input stream will be locked until the resampled stream is closed.
+ *
+ * @param stream - The input stream to resample.
+ * @param outputRate - The target sample rate.
+ * @returns A new stream with the resampled audio.
+ */
+export function resampleStream({
+  stream,
+  outputRate,
+}: {
+  stream: ReadableStream<AudioFrame>;
+  outputRate: number;
+}): ReadableStream<AudioFrame> {
+  let resampler: AudioResampler | null = null;
+  const transformStream = new TransformStream<AudioFrame, AudioFrame>({
+    transform(chunk: AudioFrame, controller: TransformStreamDefaultController<AudioFrame>) {
+      if (!resampler) {
+        resampler = new AudioResampler(chunk.sampleRate, outputRate);
+      }
+      for (const frame of resampler.push(chunk)) {
+        controller.enqueue(frame);
+      }
+      for (const frame of resampler.flush()) {
+        controller.enqueue(frame);
+      }
+    },
+  });
+  return stream.pipeThrough(transformStream);
 }
