@@ -392,6 +392,8 @@ export class RealtimeSession extends llm.RealtimeSession {
         input_audio_transcription: this.oaiRealtimeModel._options.inputAudioTranscription,
         // TODO(shubhra): add inputAudioNoiseReduction
         temperature: this.oaiRealtimeModel._options.temperature,
+        // TODO(AJS-151): support tools
+        tools: [],
         tool_choice: toOaiToolChoice(this.oaiRealtimeModel._options.toolChoice),
         max_response_output_tokens:
           this.oaiRealtimeModel._options.maxResponseOutputTokens === Infinity
@@ -417,8 +419,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     const unlock = await this.updateChatCtxLock.lock();
     const events = this.createChatCtxUpdateEvents(_chatCtx);
     for (const event of events) {
+      // TODO(AJS-170): handle item create/delete events
       this.sendEvent(event);
     }
+
+    // TODO(AJS-170): properly wait for the event futures
     unlock();
     return;
   }
@@ -611,6 +616,15 @@ export class RealtimeSession extends llm.RealtimeSession {
     return ws;
   }
 
+  #isSilentAudio(audio: string): boolean {
+    // all AAA, create a set of char
+    const silentChars = new Set();
+    for (let i = 0; i < audio.length; i += 1) {
+      silentChars.add(audio[i]);
+    }
+    return silentChars.size === 1 && silentChars.has('A');
+  }
+
   #start(): Promise<void> {
     return new Promise(async (resolve, reject) => {
       this.#ws = this.createWsConn();
@@ -627,7 +641,20 @@ export class RealtimeSession extends llm.RealtimeSession {
           try {
             const event = await this.messageChannel.get();
             if (event.type !== 'input_audio_buffer.append') {
-              this.#logger.debug(`-> ${JSON.stringify(this.#loggableEvent(event))}`);
+              this.#logger.debug(
+                `(client) -> ${JSON.stringify(this.#loggableEvent(event), null, 2)}`,
+              );
+            } else if (!this.#isSilentAudio(event.audio)) {
+              this.#logger.debug(
+                `(client) -> ${JSON.stringify(
+                  {
+                    ...event,
+                    audio: event.audio.slice(0, 10) + '...',
+                  },
+                  null,
+                  2,
+                )}`,
+              );
             }
             this.emit('openai_client_event_queued', event);
             this.#ws.send(JSON.stringify(event));
@@ -641,7 +668,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         const event: api_proto.ServerEvent = JSON.parse(message.data as string);
 
         this.emit('openai_server_event_received', event);
-        this.#logger.debug(`<- ${JSON.stringify(this.#loggableEvent(event))}`);
+        this.#logger.debug(`(server) <- ${JSON.stringify(this.#loggableEvent(event), null, 2)}`);
         switch (event.type) {
           case 'input_audio_buffer.speech_started':
             this.handleInputAudioBufferSpeechStarted(event);
