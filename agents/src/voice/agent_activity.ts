@@ -112,7 +112,7 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       try {
-        // await this.realtimeSession.updateTools(this.tools);
+        await this.realtimeSession.updateTools(this.tools);
       } catch (error) {
         this.logger.error(error, 'failed to update the tools');
       }
