@@ -524,7 +524,7 @@ export function withResolvers<T = unknown>() {
  * @param prefix - The prefix to add to the UUID.
  * @returns A short UUID with the prefix.
  */
-export function shortuuid(prefix: string): string {
+export function shortuuid(prefix: string = ''): string {
   return `${prefix}${uuidv4().slice(0, 12)}`;
 }
 

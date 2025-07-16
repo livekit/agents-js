@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { randomUUID } from 'node:crypto';
-import { AsyncIterableQueue } from '../utils.js';
+import { AsyncIterableQueue, shortuuid } from '../utils.js';
 import type { TokenData } from './tokenizer.js';
 import { SentenceStream, WordStream } from './tokenizer.js';
 
@@ -25,7 +24,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
     this.#minTokenLength = minTokenLength;
     this.#minContextLength = minContextLength;
 
-    this.#currentSegmentId = randomUUID();
+    this.#currentSegmentId = shortuuid();
   }
 
   /** Push a string of text into the token stream */
@@ -90,7 +89,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
         this.queue.put({ token: this.#outBuf, segmentId: this.#currentSegmentId });
       }
 
-      this.#currentSegmentId = randomUUID();
+      this.#currentSegmentId = shortuuid();
     }
 
     this.#inBuf = '';

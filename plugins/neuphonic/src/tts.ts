@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, log, tts } from '@livekit/agents';
+import { AudioByteStream, log, shortuuid, tts } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { randomUUID } from 'node:crypto';
 import { request } from 'node:https';
 import { WebSocket } from 'ws';
 import { type TTSEncodings, type TTSLangCodes, type TTSModels } from './models.js';
@@ -74,7 +73,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   }
 
   async #run() {
-    const requestId = randomUUID();
+    const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const json = {
       text: this.#text,
@@ -152,7 +151,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   async #run() {
-    const requestId = randomUUID();
+    const requestId = shortuuid();
     let closing = false;
 
     const sendTask = async (ws: WebSocket) => {

@@ -1,9 +1,15 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AsyncIterableQueue, AudioByteStream, log, tokenize, tts } from '@livekit/agents';
+import {
+  AsyncIterableQueue,
+  AudioByteStream,
+  log,
+  shortuuid,
+  tokenize,
+  tts,
+} from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { randomUUID } from 'node:crypto';
 import { URL } from 'node:url';
 import { type RawData, WebSocket } from 'ws';
 import type { TTSEncoding, TTSModels } from './models.js';
@@ -209,8 +215,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
     }
 
-    const requestId = randomUUID();
-    const segmentId = randomUUID();
+    const requestId = shortuuid();
+    const segmentId = shortuuid();
 
     ws.send(
       JSON.stringify({

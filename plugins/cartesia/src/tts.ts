@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioByteStream, log, tokenize, tts } from '@livekit/agents';
+import { shortuuid } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { randomUUID } from 'node:crypto';
 import { request } from 'node:https';
 import { WebSocket } from 'ws';
 import {
@@ -88,7 +88,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   }
 
   async #run() {
-    const requestId = randomUUID();
+    const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const json = toCartesiaOptions(this.#opts);
     json.transcript = this.#text;
@@ -153,7 +153,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   async #run() {
-    const requestId = randomUUID();
+    const requestId = shortuuid();
     let closing = false;
 
     const sentenceStreamTask = async (ws: WebSocket) => {
