@@ -40,8 +40,7 @@ export class _LLMGenerationData {
     public readonly textStream: ReadableStream<string>,
     public readonly toolCallStream: ReadableStream<FunctionCall>,
   ) {
-    // TODO(AJS-60): standardize id generation - same as python
-    this.id = shortuuid('item');
+    this.id = shortuuid('item_');
     this.generatedToolCalls = [];
   }
 }

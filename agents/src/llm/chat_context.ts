@@ -63,7 +63,7 @@ export class ChatMessage {
     const {
       role,
       content,
-      id = shortuuid('item'),
+      id = shortuuid('item_'),
       interrupted = false,
       createdAt = Date.now(),
     } = params;
@@ -154,7 +154,7 @@ export class FunctionCall {
     id?: string;
     createdAt?: number;
   }) {
-    const { callId, name, args, id = shortuuid('item'), createdAt = Date.now() } = params;
+    const { callId, name, args, id = shortuuid('item_'), createdAt = Date.now() } = params;
     this.id = id;
     this.callId = callId;
     this.args = args;
@@ -217,7 +217,7 @@ export class FunctionCallOutput {
       callId,
       output,
       isError,
-      id = shortuuid('item'),
+      id = shortuuid('item_'),
       createdAt = Date.now(),
       name = '',
     } = params;

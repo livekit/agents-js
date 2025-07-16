@@ -94,7 +94,7 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   };
 
   protected generateCurrentId(): string {
-    return shortuuid('SG');
+    return shortuuid('SG_');
   }
 
   protected resetState() {
