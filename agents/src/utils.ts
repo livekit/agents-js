@@ -591,6 +591,15 @@ export function isImmutableArray(array: unknown): boolean {
   return typeof array === 'object' && !!(array as any)[READONLY_SYMBOL];
 }
 
+/**
+ * Resamples an audio stream to a target sample rate.
+ *
+ * WARINING: The input stream will be locked until the resampled stream is closed.
+ *
+ * @param stream - The input stream to resample.
+ * @param outputRate - The target sample rate.
+ * @returns A new stream with the resampled audio.
+ */
 export function resampleStream({
   stream,
   outputRate,
