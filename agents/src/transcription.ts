@@ -4,11 +4,10 @@
 import { TranscriptionSegment } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
-import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { basic } from './tokenize/index.js';
 import type { SentenceStream, SentenceTokenizer } from './tokenize/tokenizer.js';
-import { AsyncIterableQueue, Future } from './utils.js';
+import { AsyncIterableQueue, Future, shortuuid } from './utils.js';
 
 // standard speech rate in hyphens/ms
 const STANDARD_SPEECH_RATE = 3830;
@@ -215,7 +214,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
       realSpeed = this.#calcHyphens(textData.pushedText).length / audioData.pushedDuration;
     }
 
-    const segId = 'SG_' + randomUUID();
+    const segId = shortuuid('SG_');
     const words = this.#opts.splitWords(sentence);
     const processedWords: string[] = [];
 

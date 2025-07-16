@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ChildProcess } from 'node:child_process';
 import { fork } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { log } from '../log.js';
+import { shortuuid } from '../utils.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
 import { SupervisedProc } from './supervised_proc.js';
@@ -79,7 +79,7 @@ export class InferenceProcExecutor extends SupervisedProc implements InferenceEx
   }
 
   async doInference(method: string, data: unknown): Promise<unknown> {
-    const requestId = 'inference_req_' + randomUUID();
+    const requestId = shortuuid('inference_req_');
     const fut = new PendingInference();
     this.proc!.send({ case: 'inferenceRequest', value: { requestId, method, data } });
     this.#activeRequests[requestId] = fut;

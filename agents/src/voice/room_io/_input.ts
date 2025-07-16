@@ -15,6 +15,7 @@ import {
 import type { ReadableStream } from 'node:stream/web';
 import { log } from '../../log.js';
 import { DeferredReadableStream } from '../../stream/deferred_stream.js';
+import { resampleStream } from '../../utils.js';
 
 export class ParticipantAudioInputStream {
   private room: Room;
@@ -83,7 +84,12 @@ export class ParticipantAudioInputStream {
     }
     this.publication = publication;
     this.logger.debug({ track, publication, participant }, 'track subscribed');
-    this.deferredStream.setSource(this.createStream(track));
+    this.deferredStream.setSource(
+      resampleStream({
+        stream: this.createStream(track),
+        outputRate: this.sampleRate,
+      }),
+    );
     return true;
   };
 
