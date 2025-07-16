@@ -32,7 +32,7 @@ export class SpeechHandle {
   }) {
     const { allowInterruptions = false, stepIndex = 0, parent } = options ?? {};
 
-    return new SpeechHandle(shortuuid('speech'), allowInterruptions, stepIndex, parent);
+    return new SpeechHandle(shortuuid('speech_'), allowInterruptions, stepIndex, parent);
   }
 
   get interrupted(): boolean {

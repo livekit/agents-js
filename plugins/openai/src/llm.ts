@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { llm, log } from '@livekit/agents';
-import { randomUUID } from 'node:crypto';
 import { AzureOpenAI, OpenAI } from 'openai';
 import type {
   CerebrasChatModels,
@@ -453,7 +452,6 @@ export class LLMStream extends llm.LLMStream {
   #toolIndex?: number;
   #client: OpenAI;
   #logger = log();
-  #id = randomUUID();
   label = 'openai.LLMStream';
 
   constructor(

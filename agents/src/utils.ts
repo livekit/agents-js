@@ -518,9 +518,14 @@ export function withResolvers<T = unknown>() {
   return { promise, resolve, reject };
 }
 
-//TODO(AJS-60) refactor all calls to randomUUID to use this
-export function shortuuid(prefix: string): string {
-  return `${prefix}_${uuidv4().slice(0, 12)}`;
+/**
+ * Generates a short UUID with a prefix. Mirrors the python agents implementation.
+ *
+ * @param prefix - The prefix to add to the UUID.
+ * @returns A short UUID with the prefix.
+ */
+export function shortuuid(prefix: string = ''): string {
+  return `${prefix}${uuidv4().slice(0, 12)}`;
 }
 
 const READONLY_SYMBOL = Symbol('Readonly');
