@@ -411,8 +411,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   get tools() {
-    // TODO(AJS-151): return a copy of the tools
-    return this._tools;
+    return { ...this._tools } as llm.ToolContext;
   }
 
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
@@ -486,8 +485,40 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
-    // TODO(AJS-151) Add tool calls to realtime model
-    throw new Error('not implemented');
+    const oaiTools: api_proto.Tool[] = [];
+
+    for (const [name, tool] of Object.entries(_tools)) {
+      if (!llm.isFunctionTool(tool)) {
+        this.#logger.error({ name, tool }, "OpenAI Realtime API doesn't support this tool type");
+        continue;
+      }
+
+      const { parameters: toolParameters, description } = tool;
+      try {
+        const parameters = llm.toJsonSchema(
+          toolParameters,
+        ) as unknown as api_proto.Tool['parameters'];
+
+        oaiTools.push({
+          name,
+          description,
+          parameters: parameters,
+          type: 'function',
+        });
+      } catch (e) {
+        this.#logger.error({ name, tool }, "OpenAI Realtime API doesn't support this tool type");
+        continue;
+      }
+    }
+
+    return {
+      type: 'session.update',
+      session: {
+        model: this.oaiRealtimeModel._options.model,
+        tools: oaiTools,
+      },
+      event_id: shortuuid('tools_update_'),
+    };
   }
 
   async updateInstructions(_instructions: string): Promise<void> {
