@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { AudioResampler } from '@livekit/rtc-node';
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { delay } from '@std/async';
 import { EventEmitter, once } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
@@ -262,6 +261,7 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
   private static readonly CLOSE_SENTINEL = Symbol('CLOSE_SENTINEL');
   #queue = new Queue<T | typeof AsyncIterableQueue.CLOSE_SENTINEL>();
   #closed = false;
+  #logger = log();
 
   get closed(): boolean {
     return this.#closed;
@@ -281,10 +281,12 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 
   async next(): Promise<IteratorResult<T>> {
     if (this.#closed && this.#queue.items.length === 0) {
+      this.#logger.debug('=== AsyncIterableQueue.next: closed and empty');
       return { value: undefined, done: true };
     }
     const item = await this.#queue.get();
     if (item === AsyncIterableQueue.CLOSE_SENTINEL && this.#closed) {
+      this.#logger.debug('=== AsyncIterableQueue.next: closed and sentinel');
       return { value: undefined, done: true };
     }
     return { value: item as T, done: false };
