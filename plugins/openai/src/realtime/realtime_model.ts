@@ -478,8 +478,17 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!ev.session.tools) {
       throw new Error('Tools are missing in the session update event');
     }
-    // TODO(AJS-151) Handle retained tools
-    this._tools = _tools;
+
+    // TODO(brian): these logics below are noops I think, leaving it here to keep
+    // parity with the python but we should remove them later
+    const retainedToolNames = new Set(ev.session.tools.map((tool) => tool.name));
+    const retainedTools = Object.fromEntries(
+      Object.entries(_tools).filter(
+        ([name, tool]) => llm.isFunctionTool(tool) && retainedToolNames.has(name),
+      ),
+    );
+
+    this._tools = retainedTools as llm.ToolContext;
 
     unlock();
   }
