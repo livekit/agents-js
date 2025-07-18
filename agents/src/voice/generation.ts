@@ -15,6 +15,7 @@ import type { ChatChunk } from '../llm/llm.js';
 import {
   type ToolChoice,
   type ToolContext,
+  ToolError,
   isAgentHandoff,
   isFunctionTool,
   isToolError,
@@ -44,7 +45,6 @@ export class _LLMGenerationData {
   }
 }
 
-// TODO(brian): remove this class in favor of ToolOutput
 export class _ToolOutput {
   output: _JsOutput[];
   firstToolFut: Future;
@@ -55,7 +55,6 @@ export class _ToolOutput {
   }
 }
 
-// TODO(brian): remove this class in favor of ToolExecutionOutput
 export class _SanitizedOutput {
   toolCall: FunctionCall;
   toolCallOutput?: FunctionCallOutput;
@@ -113,49 +112,6 @@ function isValidToolOutput(toolOutput: unknown): boolean {
   return false;
 }
 
-export class ToolExecutionOutput {
-  constructor(
-    public readonly toolCall: FunctionCall,
-    public readonly toolCallOutput: FunctionCallOutput | undefined,
-    public readonly agentTask: Agent | undefined,
-    public readonly rawOutput: unknown,
-    public readonly rawException: Error | undefined,
-    public readonly replyRequired: boolean,
-  ) {}
-
-  static create(params: {
-    toolCall: FunctionCall;
-    toolCallOutput?: FunctionCallOutput;
-    agentTask?: Agent;
-    rawOutput: unknown;
-    rawException?: Error;
-    replyRequired?: boolean;
-  }) {
-    const {
-      toolCall,
-      toolCallOutput,
-      agentTask,
-      rawOutput,
-      rawException,
-      replyRequired = true,
-    } = params;
-    return new ToolExecutionOutput(
-      toolCall,
-      toolCallOutput,
-      agentTask,
-      rawOutput,
-      rawException,
-      replyRequired,
-    );
-  }
-}
-
-export interface ToolOutput {
-  output: ToolExecutionOutput[];
-  firstToolStartedFuture: Future<void>;
-}
-
-// TODO(brian): remove this class in favor of ToolExecutionOutput
 export class _JsOutput {
   toolCall: FunctionCall;
   output: unknown;
@@ -238,95 +194,6 @@ export class _JsOutput {
       agentTask,
     });
   }
-}
-
-export function createToolOutput(params: {
-  toolCall: FunctionCall;
-  output?: unknown;
-  exception?: Error;
-}): ToolExecutionOutput {
-  const { toolCall, output, exception } = params;
-  const logger = log();
-
-  // support returning Exception instead of raising them (for devex purposes inside evals)
-  let finalOutput = output;
-  let finalException = exception;
-  if (output instanceof Error) {
-    finalException = output;
-    finalOutput = undefined;
-  }
-
-  if (isToolError(finalException)) {
-    return ToolExecutionOutput.create({
-      toolCall: FunctionCall.create({ ...toolCall }),
-      toolCallOutput: FunctionCallOutput.create({
-        name: toolCall.name,
-        callId: toolCall.callId,
-        output: finalException.message,
-        isError: true,
-      }),
-      rawOutput: finalOutput,
-      rawException: finalException,
-    });
-  }
-
-  if (isStopResponse(finalException)) {
-    return ToolExecutionOutput.create({
-      toolCall: FunctionCall.create({ ...toolCall }),
-      rawOutput: finalOutput,
-      rawException: finalException,
-    });
-  }
-
-  if (finalException !== undefined) {
-    return ToolExecutionOutput.create({
-      toolCall: FunctionCall.create({ ...toolCall }),
-      toolCallOutput: FunctionCallOutput.create({
-        name: toolCall.name,
-        callId: toolCall.callId,
-        output: 'An internal error occurred', // Don't send the actual error message, as it may contain sensitive information
-        isError: true,
-      }),
-      rawOutput: finalOutput,
-      rawException: finalException,
-    });
-  }
-
-  let agentTask: Agent | undefined = undefined;
-  let toolOutput: unknown = finalOutput;
-  if (isAgentHandoff(finalOutput)) {
-    agentTask = finalOutput.agent;
-    toolOutput = finalOutput.returns;
-  }
-
-  if (!isValidToolOutput(toolOutput)) {
-    logger.error(
-      {
-        callId: toolCall.callId,
-        output: finalOutput,
-      },
-      `AI function ${toolCall.name} returned an invalid output`,
-    );
-    return ToolExecutionOutput.create({
-      toolCall: FunctionCall.create({ ...toolCall }),
-      rawOutput: finalOutput,
-      rawException: finalException,
-    });
-  }
-
-  return ToolExecutionOutput.create({
-    toolCall: FunctionCall.create({ ...toolCall }),
-    toolCallOutput: FunctionCallOutput.create({
-      name: toolCall.name,
-      callId: toolCall.callId,
-      output: toolOutput !== undefined ? JSON.stringify(toolOutput) : '', // take the string representation of the output
-      isError: false,
-    }),
-    replyRequired: toolOutput !== undefined, // require a reply if the tool returned an output
-    agentTask,
-    rawOutput: finalOutput,
-    rawException: finalException,
-  });
 }
 
 const INSTRUCTIONS_MESSAGE_ID = 'lk.agent_task.instructions';
@@ -651,8 +518,6 @@ export function performToolExecutions({
   toolCtx,
   toolChoice,
   toolCallStream,
-  onToolExecutionStarted = () => {},
-  onToolExecutionCompleted = () => {},
   controller,
 }: {
   session: AgentSession;
@@ -660,20 +525,10 @@ export function performToolExecutions({
   toolCtx: ToolContext;
   toolChoice?: ToolChoice;
   toolCallStream: ReadableStream<FunctionCall>;
-  onToolExecutionStarted?: (toolCall: FunctionCall) => void;
-  onToolExecutionCompleted?: (toolExecutionOutput: ToolExecutionOutput) => void;
   controller: AbortController;
-}): [Task<void>, ToolOutput] {
+}): [Task<void>, _ToolOutput] {
   const logger = log();
-  const toolOutput: ToolOutput = {
-    output: [],
-    firstToolStartedFuture: new Future(),
-  };
-
-  const toolCompleted = (out: ToolExecutionOutput) => {
-    onToolExecutionCompleted(out);
-    toolOutput.output.push(out);
-  };
+  const toolOutput = new _ToolOutput();
 
   const executeToolsTask = async (controller: AbortController) => {
     const signal = controller.signal;
@@ -695,8 +550,6 @@ export function performToolExecutions({
         );
         continue;
       }
-
-      // TODO(brian): assert other toolChoice values
 
       const tool = toolCtx[toolCall.name];
       if (!tool) {
@@ -722,6 +575,7 @@ export function performToolExecutions({
       }
 
       let parsedArgs: object | undefined;
+      const jsOut = _JsOutput.create({ toolCall });
 
       // Ensure valid arguments
       try {
@@ -743,20 +597,16 @@ export function performToolExecutions({
           },
           `tried to call AI function ${toolCall.name} with invalid arguments`,
         );
-        toolCompleted(
-          createToolOutput({
-            toolCall,
-            exception: error,
-          }),
+        jsOut.exception = new ToolError(
+          `Error when parsing arguments for tool ${toolCall.name}: ${error.message}. Make sure to pass the valid arguments.`,
         );
+        toolOutput.output.push(jsOut);
         continue;
       }
 
-      if (!toolOutput.firstToolStartedFuture.done) {
-        toolOutput.firstToolStartedFuture.resolve();
+      if (!toolOutput.firstToolFut.done) {
+        toolOutput.firstToolFut.resolve();
       }
-
-      onToolExecutionStarted(toolCall);
 
       logger.debug(
         {
@@ -775,18 +625,12 @@ export function performToolExecutions({
         });
       });
 
-      const tracableToolExecution = async (toolExecTask: Promise<unknown>) => {
-        // TODO(brian): add tracing
-
+      const task = async (toolExecTask: Promise<any>) => {
         // await for task to complete, if task is aborted, set exception
-        let toolOutput: ToolExecutionOutput | undefined;
         try {
           const { result, isAborted } = await waitUntilAborted(toolExecTask, signal);
-          toolOutput = createToolOutput({
-            toolCall,
-            exception: isAborted ? new Error('tool call was aborted') : undefined,
-            output: isAborted ? undefined : result,
-          });
+          jsOut.exception = isAborted ? new Error('tool call was aborted') : undefined;
+          jsOut.output = isAborted ? undefined : result;
         } catch (rawError) {
           logger.error(
             {
@@ -796,18 +640,14 @@ export function performToolExecutions({
             },
             'exception occurred while executing tool',
           );
-          toolOutput = createToolOutput({
-            toolCall,
-            exception: toError(rawError),
-          });
+          jsOut.exception = toError(rawError);
         } finally {
-          if (!toolOutput) throw new Error('toolOutput is undefined');
-          toolCompleted(toolOutput);
+          toolOutput.output.push(jsOut);
         }
       };
 
       // wait, not cancelling all tool calling tasks
-      tasks.push(tracableToolExecution(toolExecution));
+      tasks.push(task(toolExecution));
     }
 
     await Promise.allSettled(tasks);
