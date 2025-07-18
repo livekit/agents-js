@@ -243,7 +243,7 @@ export class AgentActivity implements RecognitionHooks {
   ): SpeechHandle {
     const { audio, allowInterruptions, addToChatCtx = true } = options ?? {};
 
-    if (!audio && !this.tts && this.agentSession.audioOutput) {
+    if (!audio && !this.tts && this.agentSession._audioOutput) {
       throw new Error('trying to generate speech from text without a TTS model');
     }
 
@@ -650,7 +650,7 @@ export class AgentActivity implements RecognitionHooks {
     audio?: ReadableStream<AudioFrame> | null,
   ): Promise<void> {
     const transcriptionOutput = this.agentSession._transcriptionOutput;
-    const audioOutput = this.agentSession.audioOutput;
+    const audioOutput = this.agentSession._audioOutput;
 
     const replyAbortController = new AbortController();
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
@@ -770,7 +770,7 @@ export class AgentActivity implements RecognitionHooks {
   ): Promise<void> {
     const replyAbortController = new AbortController();
 
-    const audioOutput = this.agentSession.audioOutput;
+    const audioOutput = this.agentSession._audioOutput;
     const transcriptionOutput = this.agentSession._transcriptionOutput;
 
     chatCtx = chatCtx.copy();
@@ -1088,7 +1088,7 @@ export class AgentActivity implements RecognitionHooks {
       'realtime generation started',
     );
 
-    const audioOutput = this.agentSession.audioOutput;
+    const audioOutput = this.agentSession._audioOutput;
     const textOutput = this.agentSession._transcriptionOutput;
     const toolCtx = this.realtimeSession.tools;
 
