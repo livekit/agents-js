@@ -931,13 +931,19 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('itemGeneration is not set');
     }
 
-    const data = Buffer.from(event.delta, 'base64');
+    const binaryString = atob(event.delta);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
     itemGeneration.audioChannel.write(
       new AudioFrame(
-        new Int16Array(data.buffer, data.byteOffset, data.length / 2),
+        new Int16Array(bytes.buffer),
         api_proto.SAMPLE_RATE,
         api_proto.NUM_CHANNELS,
-        data.length / 2,
+        bytes.length / 2,
       ),
     );
   }
