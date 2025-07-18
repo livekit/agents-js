@@ -209,6 +209,12 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  updateOptions({ toolChoice }: { toolChoice?: ToolChoice }): void {
+    if (this.realtimeSession) {
+      this.realtimeSession.updateOptions({ toolChoice });
+    }
+  }
+
   updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
     // TODO(AJS-164): might need to tee the streams here.
     if (this.realtimeSession) {
@@ -1387,22 +1393,28 @@ export class AgentActivity implements RecognitionHooks {
 
     this.realtimeSession.interrupt();
 
+    const handle = SpeechHandle.create({
+      allowInterruptions: speechHandle.allowInterruptions,
+      stepIndex: speechHandle.stepIndex + 1,
+      parent: speechHandle,
+    });
+
     const toolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
     this.createSpeechTask({
       promise: this.realtimeReplyTask({
-        speechHandle,
+        speechHandle: handle,
         modelSettings: { toolChoice },
       }),
-      ownedSpeechHandle: speechHandle,
+      ownedSpeechHandle: handle,
       name: 'AgentActivity.realtime_reply',
     });
 
-    this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
+    this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
   }
 
   private async realtimeReplyTask({
     speechHandle,
-    modelSettings,
+    modelSettings: { toolChoice },
     userInput,
     instructions,
   }: {
@@ -1413,6 +1425,30 @@ export class AgentActivity implements RecognitionHooks {
   }): Promise<void> {
     if (!this.realtimeSession) {
       throw new Error('realtime session is not available');
+    }
+
+    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
+
+    if (userInput) {
+      const chatCtx = this.realtimeSession.chatCtx.copy();
+      const message = chatCtx.addMessage({
+        role: 'user',
+        content: userInput,
+      });
+      await this.realtimeSession.updateChatCtx(chatCtx);
+      this.agent._chatCtx.insert(message);
+      this.agentSession._conversationItemAdded(message);
+    }
+
+    if (toolChoice) {
+      this.realtimeSession.updateOptions({ toolChoice });
+    }
+
+    try {
+      const generationEvent = await this.realtimeSession.generateReply(instructions);
+      await this.realtimeGenerationTask(speechHandle, generationEvent, { toolChoice });
+    } finally {
+      this.realtimeSession.interrupt();
     }
   }
 

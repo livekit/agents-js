@@ -531,6 +531,25 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.instructions = _instructions;
   }
 
+  updateOptions({ toolChoice }: { toolChoice?: llm.ToolChoice }): void {
+    const options: api_proto.SessionUpdateEvent['session'] = {};
+
+    if (toolChoice) {
+      this.oaiRealtimeModel._options.toolChoice = toolChoice;
+      options.tool_choice = toOaiToolChoice(toolChoice);
+    }
+
+    // TODO(brian): add other options here
+
+    if (Object.keys(options).length > 0) {
+      this.sendEvent({
+        type: 'session.update',
+        session: options,
+        event_id: shortuuid('options_update_'),
+      });
+    }
+  }
+
   pushAudio(frame: AudioFrame): void {
     for (const f of this.resampleAudio(frame)) {
       for (const nf of this.bstream.write(f.data.buffer)) {
@@ -561,7 +580,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.pushedDurationMs = 0;
   }
 
-  async generateReply(instructions: string): Promise<llm.GenerationCreatedEvent> {
+  async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
     const handle = this.createResponse({ instructions, userInitiated: true });
     this.textModeRecoveryRetries = 0;
     return handle.doneFut.await;
@@ -1107,7 +1126,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.sendEvent({
       type: 'response.create',
       event_id: eventId,
-    } as api_proto.ResponseCreateEvent);
+      response: instructions ? { instructions } : undefined,
+    });
 
     return handle;
   }

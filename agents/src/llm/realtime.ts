@@ -7,7 +7,7 @@ import type { ReadableStream } from 'node:stream/web';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { Task } from '../utils.js';
 import type { ChatContext, FunctionCall } from './chat_context.js';
-import type { ToolContext } from './tool_context.js';
+import type { ToolChoice, ToolContext } from './tool_context.js';
 
 export type InputSpeechStartedEvent = object;
 
@@ -84,12 +84,14 @@ export abstract class RealtimeSession extends EventEmitter {
 
   abstract updateTools(tools: ToolContext): Promise<void>;
 
+  abstract updateOptions(options: { toolChoice?: ToolChoice }): void;
+
   abstract pushAudio(frame: AudioFrame): void;
 
   /**
    * @throws RealtimeError on Timeout
    */
-  abstract generateReply(instructions: string): Promise<GenerationCreatedEvent>;
+  abstract generateReply(instructions?: string): Promise<GenerationCreatedEvent>;
 
   /**
    * Commit the input audio buffer to the server
