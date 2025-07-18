@@ -984,7 +984,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         return;
       }
       // text response doesn't have itemGeneration
-      this.#logger.debug({ itemId }, 'Closing audio/text channels in handleResponseOutputItemDone');
       itemGeneration.textChannel.close();
       itemGeneration.audioChannel.close();
     }
@@ -1003,15 +1002,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       },
       'Closing generation channels in handleResponseDone',
     );
-    // for (const generation of this.currentGeneration.messages.values()) {
-    //   // close all messages that haven't been closed yet
-    //   if (!generation.textChannel.closed) {
-    //     generation.textChannel.close();
-    //   }
-    //   if (!generation.audioChannel.closed) {
-    //     generation.audioChannel.close();
-    //   }
-    // }
+
+    for (const generation of this.currentGeneration.messages.values()) {
+      generation.textChannel.close();
+      generation.audioChannel.close();
+    }
 
     this.currentGeneration.functionChannel.close();
     this.currentGeneration.messageChannel.close();
