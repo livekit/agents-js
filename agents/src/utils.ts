@@ -261,7 +261,6 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
   private static readonly CLOSE_SENTINEL = Symbol('CLOSE_SENTINEL');
   #queue = new Queue<T | typeof AsyncIterableQueue.CLOSE_SENTINEL>();
   #closed = false;
-  #logger = log();
 
   get closed(): boolean {
     return this.#closed;
