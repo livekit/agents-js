@@ -986,9 +986,7 @@ export class AgentActivity implements RecognitionHooks {
     let newAgentTask: Agent | null = null;
     let ignoreTaskSwitch: boolean = false;
 
-    for (const jsOut of toolOutput.output) {
-      const sanitizedOut = jsOut.sanitize();
-
+    for (const sanitizedOut of toolOutput.output) {
       if (sanitizedOut.toolCallOutput !== undefined) {
         newToolCalls.push(sanitizedOut.toolCall);
         newToolCallOutputs.push(sanitizedOut.toolCallOutput);
