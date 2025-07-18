@@ -1,20 +1,10 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  AsyncIterableQueue,
-  AudioByteStream,
-  Future,
-  Queue,
-  llm,
-  log,
-  shortuuid,
-} from '@livekit/agents';
+import { AudioByteStream, Future, Queue, llm, log, shortuuid, stream } from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
-import type { AudioResampler } from '@livekit/rtc-node';
-import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler, combineAudioFrames } from '@livekit/rtc-node';
 import { once } from 'node:events';
-import { ReadableStream } from 'node:stream/web';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
@@ -47,14 +37,14 @@ interface RealtimeOptions {
 
 interface MessageGeneration {
   messageId: string;
-  textChannel: AsyncIterableQueue<string>;
-  audioChannel: AsyncIterableQueue<AudioFrame>;
+  textChannel: stream.StreamChannel<string>;
+  audioChannel: stream.StreamChannel<AudioFrame>;
   audioTranscript: string;
 }
 
 interface ResponseGeneration {
-  messageChannel: AsyncIterableQueue<llm.MessageGeneration>;
-  functionChannel: AsyncIterableQueue<llm.FunctionCall>;
+  messageChannel: stream.StreamChannel<llm.MessageGeneration>;
+  functionChannel: stream.StreamChannel<llm.FunctionCall>;
   messages: Map<string, MessageGeneration>;
 
   /** @internal */
@@ -548,7 +538,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           audio: Buffer.from(nf.data.buffer).toString('base64'),
         } as api_proto.InputAudioBufferAppendEvent);
         // TODO(AJS-102): use frame.durationMs once available in rtc-node
-        this.pushedDurationMs += nf.samplesPerChannel / nf.sampleRate;
+        this.pushedDurationMs += (nf.samplesPerChannel / nf.sampleRate) * 1000;
       }
     }
   }
@@ -808,8 +798,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     this.currentGeneration = {
-      messageChannel: new AsyncIterableQueue(),
-      functionChannel: new AsyncIterableQueue(),
+      messageChannel: stream.createStreamChannel<llm.MessageGeneration>(),
+      functionChannel: stream.createStreamChannel<llm.FunctionCall>(),
       messages: new Map(),
       _doneFut: new Future(),
       _createdTimestamp: Date.now(),
@@ -941,33 +931,15 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       const itemGeneration: MessageGeneration = {
         messageId: itemId,
-        textChannel: new AsyncIterableQueue(),
-        audioChannel: new AsyncIterableQueue(),
+        textChannel: stream.createStreamChannel<string>(),
+        audioChannel: stream.createStreamChannel<AudioFrame>(),
         audioTranscript: '',
       };
 
-      this.currentGeneration.messageChannel.put({
+      this.currentGeneration.messageChannel.write({
         messageId: itemId,
-        textStream: new ReadableStream<string>({
-          async start(controller) {
-            for await (const chunk of itemGeneration.textChannel) {
-              controller.enqueue(chunk);
-            }
-          },
-          cancel() {
-            itemGeneration.textChannel.close();
-          },
-        }),
-        audioStream: new ReadableStream<AudioFrame>({
-          async start(controller) {
-            for await (const chunk of itemGeneration.audioChannel) {
-              controller.enqueue(chunk);
-            }
-          },
-          cancel() {
-            itemGeneration.audioChannel.close();
-          },
-        }),
+        textStream: itemGeneration.textChannel.stream(),
+        audioStream: itemGeneration.audioChannel.stream(),
       });
 
       this.currentGeneration.messages.set(itemId, itemGeneration);
@@ -1009,7 +981,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!itemGeneration) {
       throw new Error('itemGeneration is not set');
     } else {
-      itemGeneration.textChannel.put(delta);
+      itemGeneration.textChannel.write(delta);
       itemGeneration.audioTranscript += delta;
     }
   }
@@ -1024,13 +996,19 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('itemGeneration is not set');
     }
 
-    const data = Buffer.from(event.delta, 'base64');
-    itemGeneration.audioChannel.put(
+    const binaryString = atob(event.delta);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    itemGeneration.audioChannel.write(
       new AudioFrame(
-        new Int16Array(data.buffer),
+        new Int16Array(bytes.buffer),
         api_proto.SAMPLE_RATE,
         api_proto.NUM_CHANNELS,
-        data.length / 2,
+        bytes.length / 2,
       ),
     );
   }
@@ -1062,7 +1040,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       if (!item.call_id || !item.name || !item.arguments) {
         throw new Error('item is not a function call');
       }
-      this.currentGeneration.functionChannel.put({
+      this.currentGeneration.functionChannel.write({
         callId: item.call_id,
         name: item.name,
         args: item.arguments,
@@ -1085,14 +1063,16 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
+    this.#logger.debug(
+      {
+        messageCount: this.currentGeneration.messages.size,
+      },
+      'Closing generation channels in handleResponseDone',
+    );
+
     for (const generation of this.currentGeneration.messages.values()) {
-      // close all messages that haven't been closed yet
-      if (!generation.textChannel.closed) {
-        generation.textChannel.close();
-      }
-      if (!generation.audioChannel.closed) {
-        generation.audioChannel.close();
-      }
+      generation.textChannel.close();
+      generation.audioChannel.close();
     }
 
     this.currentGeneration.functionChannel.close();
@@ -1155,11 +1135,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('currentGeneration is not set');
     }
 
-    const generation_ev = {
-      messageStream: this.currentGeneration.messageChannel,
-      functionStream: this.currentGeneration.functionChannel,
+    const generation_ev: llm.GenerationCreatedEvent = {
+      messageStream: this.currentGeneration.messageChannel.stream(),
+      functionStream: this.currentGeneration.functionChannel.stream(),
       userInitiated: false,
-    } as llm.GenerationCreatedEvent;
+    };
 
     const handle = this.responseCreatedFutures[responseId];
     if (handle) {
@@ -1172,6 +1152,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }
 
+    this.#logger.debug({ responseId }, 'Emitting generation_created event');
     this.emit('generation_created', generation_ev);
   }
 }

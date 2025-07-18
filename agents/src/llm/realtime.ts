@@ -5,7 +5,6 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import type { ReadableStream } from 'node:stream/web';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
-import type { AsyncIterableQueue } from '../utils.js';
 import { Task } from '../utils.js';
 import type { ChatContext, FunctionCall } from './chat_context.js';
 import type { ToolContext } from './tool_context.js';
@@ -23,8 +22,8 @@ export interface MessageGeneration {
 }
 
 export interface GenerationCreatedEvent {
-  messageStream: AsyncIterableQueue<MessageGeneration>;
-  functionStream: AsyncIterableQueue<FunctionCall>;
+  messageStream: ReadableStream<MessageGeneration>;
+  functionStream: ReadableStream<FunctionCall>;
   userInitiated: boolean;
 }
 
