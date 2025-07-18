@@ -1405,7 +1405,7 @@ export class AgentActivity implements RecognitionHooks {
       { speech_id: speechHandle.id, tool_choice: modelSettings.toolChoice },
       'realtime reply task started',
     );
-    // TODO(brian): implement realtime reply task
+    // TODO(AJS-117): implement realtime reply task
   }
 
   private scheduleSpeech(
