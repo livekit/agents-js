@@ -95,7 +95,7 @@ export class AgentSession<
   /** @internal */
   _audioInput?: ReadableStream<AudioFrame>;
   /** @internal */
-  audioOutput?: AudioOutput;
+  _audioOutput?: AudioOutput;
   /** @internal */
   _transcriptionOutput?: TextOutput;
 
