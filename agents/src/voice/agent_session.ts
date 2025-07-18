@@ -60,7 +60,6 @@ export type AgentSessionCallbacks = {
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
   turnDetection?: TurnDetectionMode;
-  // TODO: Make voice pipeline components optional
   stt?: STT;
   vad?: VAD;
   llm?: LLM | RealtimeModel;
@@ -89,11 +88,8 @@ export class AgentSession<
   private roomIO?: RoomIO;
   private logger = log();
 
-  /** @internal */
   private _chatCtx: ChatContext;
-  /** @internal */
   private _userData: UserData | undefined;
-  /** @internal */
   private _agentState: AgentState = 'initializing';
 
   /** @internal */
