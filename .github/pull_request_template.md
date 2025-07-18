@@ -1,13 +1,4 @@
 ## Description
-<!-- Provide a clear and concise description of what this PR does -->
-
-## Changes Made
-<!-- List the main changes in this PR -->
-- 
-- 
-- 
-
-## Why These Changes Are Included
 <!-- Explain why each change is necessary for this PR. If any changes seem unrelated to the PR title, explain why they're included here or consider moving them to a follow-up PR -->
 
 ## Pre-Review Checklist
