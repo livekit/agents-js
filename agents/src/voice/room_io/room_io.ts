@@ -285,7 +285,7 @@ export class RoomIO {
     });
 
     // -- attatch the agent to the session --
-    this.agentSession.audioInput = this.audioInput.audioStream;
+    this.agentSession._audioInput = this.audioInput.audioStream;
     this.agentSession.audioOutput = this.audioOutput;
     this.agentSession._transcriptionOutput = this.transcriptionOutput;
 

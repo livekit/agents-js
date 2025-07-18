@@ -93,7 +93,7 @@ export class AgentSession<
   private _agentState: AgentState = 'initializing';
 
   /** @internal */
-  audioInput?: ReadableStream<AudioFrame>;
+  _audioInput?: ReadableStream<AudioFrame>;
   /** @internal */
   audioOutput?: AudioOutput;
   /** @internal */
@@ -255,8 +255,8 @@ export class AgentSession<
 
     await this.activity.start();
 
-    if (this.audioInput) {
-      this.activity.updateAudioInput(this.audioInput);
+    if (this._audioInput) {
+      this.activity.updateAudioInput(this._audioInput);
     }
   }
 
