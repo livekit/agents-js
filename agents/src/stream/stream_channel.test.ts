@@ -51,7 +51,7 @@ describe('StreamChannel', () => {
 
     const result = await reader.read();
     expect(result.value).toEqual(testArray);
-    expect(result.value).toBe(testArray); // Should be the same reference
+    expect(result.value).toBe(testArray);
   });
 
   it('should work with concurrent writing and reading', async () => {
@@ -61,7 +61,6 @@ describe('StreamChannel', () => {
     const testData = ['chunk1', 'chunk2', 'chunk3'];
     const results: string[] = [];
 
-    // Start reading concurrently
     const readPromise = (async () => {
       let result = await reader.read();
       while (!result.done) {
@@ -70,7 +69,6 @@ describe('StreamChannel', () => {
       }
     })();
 
-    // Write data asynchronously
     for (const chunk of testData) {
       await channel.write(chunk);
     }
@@ -101,7 +99,6 @@ describe('StreamChannel', () => {
     }
     channel.close();
 
-    // Read all numbers
     const results: number[] = [];
     let result = await reader.read();
     while (!result.done) {
@@ -110,5 +107,23 @@ describe('StreamChannel', () => {
     }
 
     expect(results).toEqual(testNumbers);
+  });
+
+  it('should handle double closing without error', async () => {
+    const channel = createStreamChannel<string>();
+    const reader = channel.stream().getReader();
+
+    await channel.write('test');
+
+    await channel.close();
+    // Close again - should not throw
+    await expect(channel.close()).resolves.toBeUndefined();
+
+    const result = await reader.read();
+    expect(result.done).toBe(false);
+    expect(result.value).toBe('test');
+
+    const nextResult = await reader.read();
+    expect(nextResult.done).toBe(true);
   });
 });
