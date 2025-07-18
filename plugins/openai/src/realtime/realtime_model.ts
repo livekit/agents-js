@@ -645,15 +645,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     return ws;
   }
 
-  #isSilentAudio(audio: string): boolean {
-    // all AAA, create a set of char
-    const silentChars = new Set();
-    for (let i = 0; i < audio.length; i += 1) {
-      silentChars.add(audio[i]);
-    }
-    return silentChars.size === 1 && silentChars.has('A');
-  }
-
   #start(): Promise<void> {
     return new Promise(async (resolve, reject) => {
       this.#ws = this.createWsConn();
@@ -673,18 +664,8 @@ export class RealtimeSession extends llm.RealtimeSession {
               this.#logger.debug(
                 `(client) -> ${JSON.stringify(this.#loggableEvent(event), null, 2)}`,
               );
-            } else if (!this.#isSilentAudio(event.audio)) {
-              this.#logger.debug(
-                `(client) -> ${JSON.stringify(
-                  {
-                    ...event,
-                    audio: event.audio.slice(0, 10) + '...',
-                  },
-                  null,
-                  2,
-                )}`,
-              );
             }
+
             this.emit('openai_client_event_queued', event);
             this.#ws.send(JSON.stringify(event));
           } catch (error) {
