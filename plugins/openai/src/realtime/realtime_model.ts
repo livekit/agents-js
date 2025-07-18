@@ -920,7 +920,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!itemGeneration) {
       throw new Error('itemGeneration is not set');
     } else {
-      console.log('=== putting text delta', delta);
       itemGeneration.textChannel.write(delta);
       itemGeneration.audioTranscript += delta;
     }
@@ -937,24 +936,14 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const data = Buffer.from(event.delta, 'base64');
-    const audioFrame = new AudioFrame(
-      new Int16Array(data.buffer, data.byteOffset, data.length / 2),
-      api_proto.SAMPLE_RATE,
-      api_proto.NUM_CHANNELS,
-      data.length / 2,
+    itemGeneration.audioChannel.write(
+      new AudioFrame(
+        new Int16Array(data.buffer, data.byteOffset, data.length / 2),
+        api_proto.SAMPLE_RATE,
+        api_proto.NUM_CHANNELS,
+        data.length / 2,
+      ),
     );
-
-    this.#logger.debug(
-      {
-        itemId: event.item_id,
-        audioDataLength: data.length,
-        samplesPerChannel: data.length / 2,
-      },
-      'Received audio delta',
-    );
-
-    console.log('=== putting audio delta');
-    itemGeneration.audioChannel.write(audioFrame);
   }
 
   private handleResponseAudioTranscriptDone(

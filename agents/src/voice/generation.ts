@@ -447,7 +447,7 @@ async function forwardAudio(
 ): Promise<void> {
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
-  let count = 0;
+
   try {
     while (true) {
       if (signal?.aborted) {
@@ -457,7 +457,6 @@ async function forwardAudio(
       const { done, value: frame } = await reader.read();
       if (done) break;
 
-      count++;
       out.audio.push(frame);
 
       if (
@@ -491,7 +490,6 @@ async function forwardAudio(
       }
     }
     audioOuput.flush();
-    console.log('=== received audioChannel.length: ', count);
   }
 }
 

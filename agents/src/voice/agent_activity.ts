@@ -137,7 +137,7 @@ export class AgentActivity implements RecognitionHooks {
       minEndpointingDelay: this.agentSession.options.minEndpointingDelay,
       maxEndpointingDelay: this.agentSession.options.maxEndpointingDelay,
     });
-    // this.audioRecognition.start();
+    this.audioRecognition.start();
     this.started = true;
 
     this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
