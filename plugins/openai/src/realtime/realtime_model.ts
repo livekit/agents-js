@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioByteStream, Future, Queue, llm, log, shortuuid, stream } from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
-import { AudioFrame, AudioResampler, combineAudioFrames } from '@livekit/rtc-node';
+import type { AudioResampler } from '@livekit/rtc-node';
+import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';

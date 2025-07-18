@@ -34,8 +34,8 @@ import {
   type RecognitionHooks,
   type _TurnDetector,
 } from './audio_recognition.js';
+import type { ToolExecutionOutput } from './generation.js';
 import {
-  ToolExecutionOutput,
   type _AudioOut,
   type _TextOut,
   performAudioForwarding,
@@ -863,11 +863,11 @@ export class AgentActivity implements RecognitionHooks {
       textOut?.firstTextFut.await.finally(onFirstFrame);
     }
 
-    const onToolExecutionStarted = (toolCall: FunctionCall) => {
+    const onToolExecutionStarted = (_: FunctionCall) => {
       // TODO(brian): handle speech_handle item_added
     };
 
-    const onToolExecutionCompleted = (toolExecutionOutput: ToolExecutionOutput) => {
+    const onToolExecutionCompleted = (_: ToolExecutionOutput) => {
       // TODO(brian): handle speech_handle item_added
     };
 
@@ -1168,7 +1168,7 @@ export class AgentActivity implements RecognitionHooks {
       ),
     ];
 
-    const [toolStream, toolStreamForTracing] = ev.functionStream.tee();
+    const [toolCallStream, toolCallStreamForTracing] = ev.functionStream.tee();
     // TODO(brian): append to tracing tees
     const toolCalls: FunctionCall[] = [];
 
@@ -1190,17 +1190,17 @@ export class AgentActivity implements RecognitionHooks {
 
     tasks.push(
       Task.from(
-        (controller) => readToolStreamTask(controller, toolStreamForTracing),
+        (controller) => readToolStreamTask(controller, toolCallStreamForTracing),
         replyAbortController,
         'AgentActivity.realtime_generation.read_tool_stream',
       ),
     );
 
-    const onToolExecutionStarted = (toolCall: FunctionCall) => {
+    const onToolExecutionStarted = (_: FunctionCall) => {
       // TODO(brian): handle speech_handle item_added
     };
 
-    const onToolExecutionCompleted = (toolExecutionOutput: ToolExecutionOutput) => {
+    const onToolExecutionCompleted = (_: ToolExecutionOutput) => {
       // TODO(brian): handle speech_handle item_added
     };
 
@@ -1208,8 +1208,8 @@ export class AgentActivity implements RecognitionHooks {
       session: this.agentSession,
       speechHandle,
       toolCtx,
+      toolCallStream,
       toolChoice: modelSettings.toolChoice,
-      toolCallStream: ev.functionStream,
       controller: replyAbortController,
       onToolExecutionStarted,
       onToolExecutionCompleted,
@@ -1327,7 +1327,6 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    // const newToolCalls: FunctionCall[] = [];
     const newToolCallOutputs: FunctionCallOutput[] = [];
     let shouldGenerateToolReply: boolean = false;
     let newAgentTask: Agent | null = null;
@@ -1348,8 +1347,6 @@ export class AgentActivity implements RecognitionHooks {
 
       newAgentTask = sanitizedOut.agentTask ?? null;
 
-      // TODO(brian): emit function_tools_executed event
-
       this.logger.debug(
         {
           speechId: speechHandle.id,
@@ -1361,6 +1358,8 @@ export class AgentActivity implements RecognitionHooks {
         'Tool call execution finished',
       );
     }
+
+    // TODO(brian): emit function_tools_executed event
 
     let draining = this.draining;
     if (!ignoreTaskSwitch && newAgentTask !== null) {
@@ -1388,14 +1387,25 @@ export class AgentActivity implements RecognitionHooks {
 
     this.realtimeSession.interrupt();
 
+    const toolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
     this.createSpeechTask({
-      // TODO(brian): replace with realtime reply task
-      promise: Promise.resolve(),
+      promise: this.realtimeReplyTask(speechHandle, { toolChoice }),
       ownedSpeechHandle: speechHandle,
       name: 'AgentActivity.realtime_reply',
     });
 
     this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
+  }
+
+  private async realtimeReplyTask(
+    speechHandle: SpeechHandle,
+    modelSettings: ModelSettings,
+  ): Promise<void> {
+    this.logger.info(
+      { speech_id: speechHandle.id, tool_choice: modelSettings.toolChoice },
+      'realtime reply task started',
+    );
+    // TODO(brian): implement realtime reply task
   }
 
   private scheduleSpeech(

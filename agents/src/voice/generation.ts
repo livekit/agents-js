@@ -775,7 +775,7 @@ export function performToolExecutions({
         });
       });
 
-      const tracableToolExecution = async (toolExecTask: Promise<any>) => {
+      const tracableToolExecution = async (toolExecTask: Promise<unknown>) => {
         // TODO(brian): add tracing
 
         // await for task to complete, if task is aborted, set exception
