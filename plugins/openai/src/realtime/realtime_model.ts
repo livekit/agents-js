@@ -871,10 +871,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         audioTranscript: '',
       };
 
-      const log = (message: string) => {
-        this.#logger.debug({ itemId }, message);
-      };
-
       this.currentGeneration.messageChannel.write({
         messageId: itemId,
         textStream: itemGeneration.textChannel.stream(),
