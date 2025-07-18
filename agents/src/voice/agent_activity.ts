@@ -1305,7 +1305,7 @@ export class AgentActivity implements RecognitionHooks {
       // TODO(brian): add tracing span
     }
 
-    // mark playout must be done before _set_chat_message
+    // mark the playout done before waiting for the tool execution
     speechHandle._markPlayoutDone();
     // TODO(brian): close tees
 
@@ -1389,7 +1389,10 @@ export class AgentActivity implements RecognitionHooks {
 
     const toolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
     this.createSpeechTask({
-      promise: this.realtimeReplyTask(speechHandle, { toolChoice }),
+      promise: this.realtimeReplyTask({
+        speechHandle,
+        modelSettings: { toolChoice },
+      }),
       ownedSpeechHandle: speechHandle,
       name: 'AgentActivity.realtime_reply',
     });
@@ -1397,15 +1400,20 @@ export class AgentActivity implements RecognitionHooks {
     this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
   }
 
-  private async realtimeReplyTask(
-    speechHandle: SpeechHandle,
-    modelSettings: ModelSettings,
-  ): Promise<void> {
-    this.logger.info(
-      { speech_id: speechHandle.id, tool_choice: modelSettings.toolChoice },
-      'realtime reply task started',
-    );
-    // TODO(AJS-117): implement realtime reply task
+  private async realtimeReplyTask({
+    speechHandle,
+    modelSettings,
+    userInput,
+    instructions,
+  }: {
+    speechHandle: SpeechHandle;
+    modelSettings: ModelSettings;
+    userInput?: string;
+    instructions?: string;
+  }): Promise<void> {
+    if (!this.realtimeSession) {
+      throw new Error('realtime session is not available');
+    }
   }
 
   private scheduleSpeech(
