@@ -17,6 +17,16 @@ export function createStreamChannel<T>(): StreamChannel<T> {
   return {
     write: (chunk: T) => writer.write(chunk),
     stream: () => transform.readable,
-    close: () => writer.close(),
+    close: async () => {
+      try {
+        return await writer.close();
+      } catch (e) {
+        if (e instanceof Error && e.name === 'TypeError') {
+          // Ignore error if the stream is already closed
+          return;
+        }
+        throw e;
+      }
+    },
   };
 }
