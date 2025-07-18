@@ -1,5 +1,11 @@
 ## Description
-<!-- Explain why each change is necessary for this PR. If any changes seem unrelated to the PR title, explain why they're included here or consider moving them to a follow-up PR -->
+<!-- Provide a clear and concise description of what this PR does -->
+
+## Changes Made
+<!-- List the main changes in this PR. If any changes seem unrelated to the PR title, explain why they're included here or consider moving them to a follow-up PR -->
+- 
+- 
+- 
 
 ## Pre-Review Checklist
 - [ ] **Build passes**: All builds (lint, typecheck, tests) pass locally
@@ -11,7 +17,7 @@
 <!-- Describe how you tested these changes -->
 - [ ] Automated tests added/updated (if applicable)
 - [ ] All tests pass
-- [ ] Make sure both `restaurant_agent.ts` and `realtime_agent.ts` work properly
+- [ ] Make sure both `restaurant_agent.ts` and `realtime_agent.ts` work properly (for major changes)
 
 ## Additional Notes
 <!-- Any additional context, screenshots, or information that reviewers should know -->
