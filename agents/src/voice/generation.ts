@@ -447,6 +447,7 @@ async function forwardAudio(
 ): Promise<void> {
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
+
   try {
     while (true) {
       if (signal?.aborted) {
