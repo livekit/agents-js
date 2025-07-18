@@ -392,8 +392,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         input_audio_transcription: this.oaiRealtimeModel._options.inputAudioTranscription,
         // TODO(shubhra): add inputAudioNoiseReduction
         temperature: this.oaiRealtimeModel._options.temperature,
-        // TODO(AJS-151): support tools
-        tools: [],
         tool_choice: toOaiToolChoice(this.oaiRealtimeModel._options.toolChoice),
         max_response_output_tokens:
           this.oaiRealtimeModel._options.maxResponseOutputTokens === Infinity

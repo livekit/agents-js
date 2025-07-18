@@ -986,9 +986,7 @@ export class AgentActivity implements RecognitionHooks {
     let newAgentTask: Agent | null = null;
     let ignoreTaskSwitch: boolean = false;
 
-    for (const jsOut of toolOutput.output) {
-      const sanitizedOut = jsOut.sanitize();
-
+    for (const sanitizedOut of toolOutput.output) {
       if (sanitizedOut.toolCallOutput !== undefined) {
         newToolCalls.push(sanitizedOut.toolCall);
         newToolCallOutputs.push(sanitizedOut.toolCallOutput);
@@ -1081,8 +1079,7 @@ export class AgentActivity implements RecognitionHooks {
 
     const audioOutput = this.agentSession.audioOutput;
     const textOutput = this.agentSession._transcriptionOutput;
-
-    // TODO(AJS-151): add function calling to realtime model
+    const toolCtx = this.realtimeSession.tools;
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
 
@@ -1160,7 +1157,16 @@ export class AgentActivity implements RecognitionHooks {
       ),
     ];
 
-    // TODO(AJS-151): add function calling to realtime model
+    const toolCalls: FunctionCall[] = [];
+
+    performToolExecutions({
+      session: this.agentSession,
+      speechHandle,
+      toolCtx,
+      toolChoice: modelSettings.toolChoice,
+      toolCallStream: ev.functionStream,
+      controller: replyAbortController,
+    });
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
