@@ -1446,12 +1446,8 @@ export class AgentActivity implements RecognitionHooks {
       this.realtimeSession.updateOptions({ toolChoice });
     }
 
-    try {
-      const generationEvent = await this.realtimeSession.generateReply(instructions);
-      await this.realtimeGenerationTask(speechHandle, generationEvent, { toolChoice });
-    } finally {
-      this.realtimeSession.interrupt();
-    }
+    const generationEvent = await this.realtimeSession.generateReply(instructions);
+    await this.realtimeGenerationTask(speechHandle, generationEvent, { toolChoice });
   }
 
   private scheduleSpeech(

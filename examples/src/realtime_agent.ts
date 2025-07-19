@@ -45,7 +45,7 @@ export default defineAgent({
 
     const agent = new voice.Agent({
       instructions:
-        "You are a helpful assistant always speaking English, you can hear the user's message and respond to it.",
+        "You are a helpful assistant created by LiveKit, always speaking English, you can hear the user's message and respond to it.",
       tools: {
         getWeather,
         toggleLight,

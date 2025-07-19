@@ -804,20 +804,20 @@ export class RealtimeSession extends llm.RealtimeSession {
       _createdTimestamp: Date.now(),
     };
 
-    if (
-      event.response.metadata &&
-      typeof event.response.metadata === 'object' &&
-      event.response.metadata['client_event_id']
-    ) {
-      const clientEventId = event.response.metadata['client_event_id'];
-      const handle = this.responseCreatedFutures[clientEventId];
+    if (!event.response.metadata || !event.response.metadata.client_event_id) return;
 
-      // set key to the response id
-      if (handle) {
-        delete this.responseCreatedFutures[clientEventId];
-        this.responseCreatedFutures[event.response.id] = handle;
-      }
-    }
+    const handle = this.responseCreatedFutures[event.response.metadata.client_event_id];
+    if (!handle) return;
+
+    delete this.responseCreatedFutures[event.response.metadata.client_event_id];
+
+    // set key to the response id
+    this.responseCreatedFutures[event.response.id] = handle;
+
+    // the generation_created event is emitted when
+    // 1. the response is not a message on response.output_item.added event
+    // 2. the content is audio on response.content_part.added event
+    // will try to recover from text response on response.content_part.done event
   }
 
   private handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
@@ -1121,10 +1121,14 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.responseCreatedFutures[eventId] = handle;
     }
 
+    const response: api_proto.ResponseCreateEvent['response'] = {};
+    if (instructions) response.instructions = instructions;
+    if (userInitiated) response.metadata = { client_event_id: eventId };
+
     this.sendEvent({
       type: 'response.create',
       event_id: eventId,
-      response: instructions ? { instructions } : undefined,
+      response: Object.keys(response).length > 0 ? response : undefined,
     });
 
     return handle;
