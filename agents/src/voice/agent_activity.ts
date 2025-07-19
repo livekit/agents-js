@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { Heap } from 'heap-js';
 import { ReadableStream } from 'node:stream/web';
@@ -65,6 +66,7 @@ export class AgentActivity implements RecognitionHooks {
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private q_updated: Future;
   private speechTasks: Set<Promise<unknown>> = new Set();
+  private lock = new Mutex();
 
   agent: Agent;
   agentSession: AgentSession;
@@ -92,67 +94,72 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async start(): Promise<void> {
-    this.agent._agentActivity = this;
+    const unlock = await this.lock.lock();
+    try {
+      this.agent._agentActivity = this;
 
-    if (this.llm instanceof RealtimeModel) {
-      this.realtimeSession = this.llm.session();
-      this.realtimeSession.on('generation_created', (ev) => this.onGenerationCreated(ev));
-      this.realtimeSession.on('input_speech_started', (ev) => this.onInputSpeechStarted(ev));
-      this.realtimeSession.on('input_speech_stopped', (ev) => this.onInputSpeechStopped(ev));
-      this.realtimeSession.on('input_audio_transcription_completed', (ev) =>
-        this.onInputAudioTranscriptionCompleted(ev),
-      );
-      // TODO(shubhra): add metrics_collected and error handlers
+      if (this.llm instanceof RealtimeModel) {
+        this.realtimeSession = this.llm.session();
+        this.realtimeSession.on('generation_created', (ev) => this.onGenerationCreated(ev));
+        this.realtimeSession.on('input_speech_started', (ev) => this.onInputSpeechStarted(ev));
+        this.realtimeSession.on('input_speech_stopped', (ev) => this.onInputSpeechStopped(ev));
+        this.realtimeSession.on('input_audio_transcription_completed', (ev) =>
+          this.onInputAudioTranscriptionCompleted(ev),
+        );
+        // TODO(shubhra): add metrics_collected and error handlers
 
-      removeInstructions(this.agent._chatCtx);
-      try {
-        await this.realtimeSession.updateInstructions(this.agent.instructions);
-      } catch (error) {
-        this.logger.error(error, 'failed to update the instructions');
+        removeInstructions(this.agent._chatCtx);
+        try {
+          await this.realtimeSession.updateInstructions(this.agent.instructions);
+        } catch (error) {
+          this.logger.error(error, 'failed to update the instructions');
+        }
+
+        try {
+          await this.realtimeSession.updateChatCtx(this.agent.chatCtx);
+        } catch (error) {
+          this.logger.error(error, 'failed to update the chat context');
+        }
+
+        try {
+          await this.realtimeSession.updateTools(this.tools);
+        } catch (error) {
+          this.logger.error(error, 'failed to update the tools');
+        }
+      } else if (this.llm instanceof LLM) {
+        try {
+          updateInstructions({
+            chatCtx: this.agent._chatCtx,
+            instructions: this.agent.instructions,
+            addIfMissing: true,
+          });
+        } catch (error) {
+          this.logger.error('failed to update the instructions', error);
+        }
       }
 
-      try {
-        await this.realtimeSession.updateChatCtx(this.agent.chatCtx);
-      } catch (error) {
-        this.logger.error(error, 'failed to update the chat context');
-      }
+      this.audioRecognition = new AudioRecognition({
+        recognitionHooks: this,
+        stt: (...args) => this.agent.sttNode(...args),
+        vad: this.vad,
+        turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
+        turnDetectionMode: this.turnDetectionMode,
+        minEndpointingDelay: this.agentSession.options.minEndpointingDelay,
+        maxEndpointingDelay: this.agentSession.options.maxEndpointingDelay,
+      });
+      this.audioRecognition.start();
+      this.started = true;
 
-      try {
-        await this.realtimeSession.updateTools(this.tools);
-      } catch (error) {
-        this.logger.error(error, 'failed to update the tools');
-      }
-    } else if (this.llm instanceof LLM) {
-      try {
-        updateInstructions({
-          chatCtx: this.agent._chatCtx,
-          instructions: this.agent.instructions,
-          addIfMissing: true,
-        });
-      } catch (error) {
-        this.logger.error('failed to update the instructions', error);
-      }
+      this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
+      this.createSpeechTask({
+        promise: this.agent.onEnter(),
+        name: 'AgentActivity_onEnter',
+      });
+
+      // TODO(shubhra): Add turn detection mode
+    } finally {
+      unlock();
     }
-
-    this.audioRecognition = new AudioRecognition({
-      recognitionHooks: this,
-      stt: (...args) => this.agent.sttNode(...args),
-      vad: this.vad,
-      turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
-      turnDetectionMode: this.turnDetectionMode,
-      minEndpointingDelay: this.agentSession.options.minEndpointingDelay,
-      maxEndpointingDelay: this.agentSession.options.maxEndpointingDelay,
-    });
-    this.audioRecognition.start();
-    this.started = true;
-
-    this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
-    this.createSpeechTask({
-      promise: this.agent.onEnter(),
-      name: 'AgentActivity_onEnter',
-    });
-
-    // TODO(shubhra): Add turn detection mode
   }
 
   get vad(): VAD | undefined {
@@ -1501,28 +1508,36 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async drain(): Promise<void> {
-    // TODO(AJS-129): add lock to agent activity core lifecycle
-    if (this._draining) return;
+    const unlock = await this.lock.lock();
+    try {
+      if (this._draining) return;
 
-    this.createSpeechTask({
-      promise: this.agent.onExit(),
-      name: 'AgentActivity_onExit',
-    });
+      this.createSpeechTask({
+        promise: this.agent.onExit(),
+        name: 'AgentActivity_onExit',
+      });
 
-    this.wakeupMainTask();
-    this._draining = true;
-    await this._mainTask?.result;
+      this.wakeupMainTask();
+      this._draining = true;
+      await this._mainTask?.result;
+    } finally {
+      unlock();
+    }
   }
 
   async close(): Promise<void> {
-    // TODO(AJS-129): add lock to agent activity core lifecycle
-    if (!this._draining) {
-      this.logger.warn('task closing without draining');
+    const unlock = await this.lock.lock();
+    try {
+      if (!this._draining) {
+        this.logger.warn('task closing without draining');
+      }
+
+      await this.audioRecognition?.close();
+      await this._mainTask?.cancelAndWait();
+
+      this.agent._agentActivity = undefined;
+    } finally {
+      unlock();
     }
-
-    await this.audioRecognition?.close();
-    await this._mainTask?.cancelAndWait();
-
-    this.agent._agentActivity = undefined;
   }
 }
