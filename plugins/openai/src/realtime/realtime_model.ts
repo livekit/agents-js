@@ -19,7 +19,7 @@ interface RealtimeOptions {
   model: api_proto.Model;
   voice: api_proto.Voice;
   temperature: number;
-  toolChoice: llm.ToolChoice;
+  toolChoice?: llm.ToolChoice;
   inputAudioTranscription?: api_proto.InputAudioTranscription | null;
   // TODO(shubhra): add inputAudioNoiseReduction
   turnDetection?: api_proto.TurnDetectionType | null;
@@ -534,20 +534,16 @@ export class RealtimeSession extends llm.RealtimeSession {
   updateOptions({ toolChoice }: { toolChoice?: llm.ToolChoice }): void {
     const options: api_proto.SessionUpdateEvent['session'] = {};
 
-    if (toolChoice) {
-      this.oaiRealtimeModel._options.toolChoice = toolChoice;
-      options.tool_choice = toOaiToolChoice(toolChoice);
-    }
+    this.oaiRealtimeModel._options.toolChoice = toolChoice;
+    options.tool_choice = toOaiToolChoice(toolChoice);
 
     // TODO(brian): add other options here
 
-    if (Object.keys(options).length > 0) {
-      this.sendEvent({
-        type: 'session.update',
-        session: options,
-        event_id: shortuuid('options_update_'),
-      });
-    }
+    this.sendEvent({
+      type: 'session.update',
+      session: options,
+      event_id: shortuuid('options_update_'),
+    });
   }
 
   pushAudio(frame: AudioFrame): void {
@@ -1267,7 +1263,7 @@ function createMockAudioItem(durationSeconds: number = 2): llm.ChatMessage {
   });
 }
 
-function toOaiToolChoice(toolChoice: llm.ToolChoice | null): api_proto.ToolChoice {
+function toOaiToolChoice(toolChoice: llm.ToolChoice | undefined): api_proto.ToolChoice {
   if (typeof toolChoice === 'string') {
     return toolChoice;
   }
