@@ -127,19 +127,19 @@ export const createConversationItemAddedEvent = (
 export type FunctionToolsExecutedEvent = {
   type: 'function_tools_executed';
   functionCalls: FunctionCall[];
-  functionCallOutputs: (FunctionCallOutput | null)[];
+  functionCallOutputs: FunctionCallOutput[];
   createdAt: number;
 };
 
-export const createFunctionToolsExecutedEvent = (
-  functionCalls: FunctionCall[],
-  functionCallOutputs: (FunctionCallOutput | null)[],
-  createdAt: number = Date.now(),
-): FunctionToolsExecutedEvent => {
-  if (functionCalls.length !== functionCallOutputs.length) {
-    throw new Error('The number of function_calls and function_call_outputs must match.');
-  }
-
+export const createFunctionToolsExecutedEvent = ({
+  functionCalls,
+  functionCallOutputs,
+  createdAt = Date.now(),
+}: {
+  functionCalls: FunctionCall[];
+  functionCallOutputs: FunctionCallOutput[];
+  createdAt?: number;
+}): FunctionToolsExecutedEvent => {
   return {
     type: 'function_tools_executed',
     functionCalls,
@@ -150,7 +150,7 @@ export const createFunctionToolsExecutedEvent = (
 
 export const zipFunctionCallsAndOutputs = (
   event: FunctionToolsExecutedEvent,
-): Array<[FunctionCall, FunctionCallOutput | null]> => {
+): Array<[FunctionCall, FunctionCallOutput]> => {
   return event.functionCalls.map((call, index) => [call, event.functionCallOutputs[index]!]);
 };
 
