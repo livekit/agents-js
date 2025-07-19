@@ -1263,7 +1263,7 @@ function createMockAudioItem(durationSeconds: number = 2): llm.ChatMessage {
   });
 }
 
-function toOaiToolChoice(toolChoice: llm.ToolChoice | undefined): api_proto.ToolChoice {
+function toOaiToolChoice(toolChoice?: llm.ToolChoice): api_proto.ToolChoice {
   if (typeof toolChoice === 'string') {
     return toolChoice;
   }
