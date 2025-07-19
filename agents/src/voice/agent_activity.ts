@@ -36,6 +36,7 @@ import {
 } from './audio_recognition.js';
 import {
   AgentSessionEventTypes,
+  createFunctionToolsExecutedEvent,
   createSpeechCreatedEvent,
   createUserInputTranscribedEvent,
 } from './events.js';
@@ -1018,8 +1019,10 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    const newToolCalls: FunctionCall[] = [];
-    const newToolCallOutputs: FunctionCallOutput[] = [];
+    const functionToolsExecutedEvent = createFunctionToolsExecutedEvent({
+      functionCalls: [],
+      functionCallOutputs: [],
+    });
     let shouldGenerateToolReply: boolean = false;
     let newAgentTask: Agent | null = null;
     let ignoreTaskSwitch: boolean = false;
@@ -1028,8 +1031,8 @@ export class AgentActivity implements RecognitionHooks {
       const sanitizedOut = jsOut.sanitize();
 
       if (sanitizedOut.toolCallOutput !== undefined) {
-        newToolCalls.push(sanitizedOut.toolCall);
-        newToolCallOutputs.push(sanitizedOut.toolCallOutput);
+        functionToolsExecutedEvent.functionCalls.push(sanitizedOut.toolCall);
+        functionToolsExecutedEvent.functionCallOutputs.push(sanitizedOut.toolCallOutput);
         if (sanitizedOut.replyRequired) {
           shouldGenerateToolReply = true;
         }
@@ -1055,13 +1058,21 @@ export class AgentActivity implements RecognitionHooks {
       );
     }
 
+    this.agentSession.emit(
+      AgentSessionEventTypes.FunctionToolsExecuted,
+      functionToolsExecutedEvent,
+    );
+
     let draining = this.draining;
     if (!ignoreTaskSwitch && newAgentTask !== null) {
       this.agentSession.updateAgent(newAgentTask);
       draining = true;
     }
 
-    const toolMessages = [...newToolCalls, ...newToolCallOutputs] as ChatItem[];
+    const toolMessages = [
+      ...functionToolsExecutedEvent.functionCalls,
+      ...functionToolsExecutedEvent.functionCallOutputs,
+    ] as ChatItem[];
     if (shouldGenerateToolReply) {
       chatCtx.insert(toolMessages);
 
@@ -1070,6 +1081,14 @@ export class AgentActivity implements RecognitionHooks {
         stepIndex: speechHandle.stepIndex + 1,
         parent: speechHandle,
       });
+      this.agentSession.emit(
+        AgentSessionEventTypes.SpeechCreated,
+        createSpeechCreatedEvent({
+          userInitiated: false,
+          source: 'tool_response',
+          speechHandle: handle,
+        }),
+      );
 
       // Avoid setting tool_choice to "required" or a specific function when
       // passing tool response back to the LLM
@@ -1092,7 +1111,7 @@ export class AgentActivity implements RecognitionHooks {
       toolResponseTask.finally(() => this.onPipelineReplyDone());
 
       this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
-    } else if (newToolCallOutputs.length > 0) {
+    } else if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
       for (const msg of toolMessages) {
         msg.createdAt = replyStartedAt;
       }

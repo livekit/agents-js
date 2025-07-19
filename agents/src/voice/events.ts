@@ -131,15 +131,15 @@ export type FunctionToolsExecutedEvent = {
   createdAt: number;
 };
 
-export const createFunctionToolsExecutedEvent = (
-  functionCalls: FunctionCall[],
-  functionCallOutputs: (FunctionCallOutput | null)[],
-  createdAt: number = Date.now(),
-): FunctionToolsExecutedEvent => {
-  if (functionCalls.length !== functionCallOutputs.length) {
-    throw new Error('The number of function_calls and function_call_outputs must match.');
-  }
-
+export const createFunctionToolsExecutedEvent = ({
+  functionCalls,
+  functionCallOutputs,
+  createdAt = Date.now(),
+}: {
+  functionCalls: FunctionCall[];
+  functionCallOutputs: (FunctionCallOutput | null)[];
+  createdAt?: number;
+}): FunctionToolsExecutedEvent => {
   return {
     type: 'function_tools_executed',
     functionCalls,
