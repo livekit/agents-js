@@ -13,11 +13,9 @@ import { ATTRIBUTE_PUBLISH_ON_BEHALF } from '../../constants.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { Future } from '../../utils.js';
-import {
-  type AgentSession,
-  AgentSessionEvent,
-  type UserInputTranscribedEvent,
-} from '../agent_session.js';
+import { type AgentSession } from '../agent_session.js';
+import { type UserInputTranscribedEvent } from '../events.js';
+import { AgentSessionEventTypes } from '../events.js';
 import type { AudioOutput, TextOutput } from '../io.js';
 import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
 import { ParticipantAudioInputStream } from './_input.js';
@@ -289,6 +287,6 @@ export class RoomIO {
     this.agentSession._audioOutput = this.audioOutput;
     this.agentSession._transcriptionOutput = this.transcriptionOutput;
 
-    this.agentSession.on(AgentSessionEvent.UserInputTranscribed, this.onUserInputTranscribed);
+    this.agentSession.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
   }
 }

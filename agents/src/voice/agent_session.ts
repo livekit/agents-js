@@ -14,13 +14,26 @@ import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
-import type { UserState } from './events.js';
+import {
+  AgentSessionEventTypes,
+  type AgentState,
+  type AgentStateChangedEvent,
+  type ConversationItemAddedEvent,
+  type FunctionToolsExecutedEvent,
+  type MetricsCollectedEvent,
+  type SpeechCreatedEvent,
+  type UserInputTranscribedEvent,
+  type UserState,
+  type UserStateChangedEvent,
+  createAgentStateChangedEvent,
+  createConversationItemAddedEvent,
+  createUserStateChangedEvent,
+} from './events.js';
 import type { AudioOutput, TextOutput } from './io.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 
-export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
 export interface VoiceOptions {
   allowInterruptions: boolean;
   discardAudioIfUninterruptible: boolean;
@@ -43,19 +56,14 @@ const defaultVoiceOptions: VoiceOptions = {
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
 
-// TODO(AJS-102): add and organize all agent session callbacks
-export enum AgentSessionEvent {
-  UserInputTranscribed = 'user_input_transcribed',
-}
-
-export type UserInputTranscribedEvent = {
-  transcript: string;
-  isFinal: boolean;
-  speakerId: string | null;
-};
-
 export type AgentSessionCallbacks = {
-  [AgentSessionEvent.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
+  [AgentSessionEventTypes.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
+  [AgentSessionEventTypes.AgentStateChanged]: (ev: AgentStateChangedEvent) => void;
+  [AgentSessionEventTypes.UserStateChanged]: (ev: UserStateChangedEvent) => void;
+  [AgentSessionEventTypes.ConversationItemAdded]: (ev: ConversationItemAddedEvent) => void;
+  [AgentSessionEventTypes.FunctionToolsExecuted]: (ev: FunctionToolsExecutedEvent) => void;
+  [AgentSessionEventTypes.MetricsCollected]: (ev: MetricsCollectedEvent) => void;
+  [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
@@ -279,15 +287,34 @@ export class AgentSession<
   /** @internal */
   _conversationItemAdded(item: ChatMessage): void {
     this._chatCtx.insert(item);
+    this.emit(AgentSessionEventTypes.ConversationItemAdded, createConversationItemAddedEvent(item));
   }
 
   /** @internal */
   _updateAgentState(state: AgentState) {
+    if (this._agentState === state) {
+      return;
+    }
+
+    const oldState = this._agentState;
     this._agentState = state;
+    this.emit(
+      AgentSessionEventTypes.AgentStateChanged,
+      createAgentStateChangedEvent(oldState, state),
+    );
   }
 
   /** @internal */
   _updateUserState(state: UserState) {
+    if (this.userState === state) {
+      return;
+    }
+
+    const oldState = this.userState;
     this.userState = state;
+    this.emit(
+      AgentSessionEventTypes.UserStateChanged,
+      createUserStateChangedEvent(oldState, state),
+    );
   }
 }
