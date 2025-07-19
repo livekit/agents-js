@@ -344,6 +344,7 @@ export interface ResponseCreateEvent extends BaseClientEvent {
     tool_choice: ToolChoice;
     temperature: number;
     max_output_tokens: number | 'inf';
+    metadata?: Record<string, string>;
   }>;
 }
 
