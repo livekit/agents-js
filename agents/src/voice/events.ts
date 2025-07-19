@@ -127,7 +127,7 @@ export const createConversationItemAddedEvent = (
 export type FunctionToolsExecutedEvent = {
   type: 'function_tools_executed';
   functionCalls: FunctionCall[];
-  functionCallOutputs: (FunctionCallOutput | null)[];
+  functionCallOutputs: FunctionCallOutput[];
   createdAt: number;
 };
 
@@ -137,7 +137,7 @@ export const createFunctionToolsExecutedEvent = ({
   createdAt = Date.now(),
 }: {
   functionCalls: FunctionCall[];
-  functionCallOutputs: (FunctionCallOutput | null)[];
+  functionCallOutputs: FunctionCallOutput[];
   createdAt?: number;
 }): FunctionToolsExecutedEvent => {
   return {
@@ -150,7 +150,7 @@ export const createFunctionToolsExecutedEvent = ({
 
 export const zipFunctionCallsAndOutputs = (
   event: FunctionToolsExecutedEvent,
-): Array<[FunctionCall, FunctionCallOutput | null]> => {
+): Array<[FunctionCall, FunctionCallOutput]> => {
   return event.functionCalls.map((call, index) => [call, event.functionCallOutputs[index]!]);
 };
 
