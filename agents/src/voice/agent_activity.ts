@@ -249,7 +249,7 @@ export class AgentActivity implements RecognitionHooks {
   ): SpeechHandle {
     const { audio, allowInterruptions, addToChatCtx = true } = options ?? {};
 
-    if (!audio && !this.tts && this.agentSession.audioOutput) {
+    if (!audio && !this.tts && this.agentSession._audioOutput) {
       throw new Error('trying to generate speech from text without a TTS model');
     }
 
@@ -656,7 +656,7 @@ export class AgentActivity implements RecognitionHooks {
     audio?: ReadableStream<AudioFrame> | null,
   ): Promise<void> {
     const transcriptionOutput = this.agentSession._transcriptionOutput;
-    const audioOutput = this.agentSession.audioOutput;
+    const audioOutput = this.agentSession._audioOutput;
 
     const replyAbortController = new AbortController();
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
@@ -776,7 +776,7 @@ export class AgentActivity implements RecognitionHooks {
   ): Promise<void> {
     const replyAbortController = new AbortController();
 
-    const audioOutput = this.agentSession.audioOutput;
+    const audioOutput = this.agentSession._audioOutput;
     const transcriptionOutput = this.agentSession._transcriptionOutput;
 
     chatCtx = chatCtx.copy();
@@ -1094,7 +1094,7 @@ export class AgentActivity implements RecognitionHooks {
       'realtime generation started',
     );
 
-    const audioOutput = this.agentSession.audioOutput;
+    const audioOutput = this.agentSession._audioOutput;
     const textOutput = this.agentSession._transcriptionOutput;
     const toolCtx = this.realtimeSession.tools;
 
@@ -1187,6 +1187,8 @@ export class AgentActivity implements RecognitionHooks {
         while (!controller.signal.aborted) {
           const { done, value } = await reader.read();
           if (done) break;
+
+          this.logger.debug({ tool_call: value }, 'received tool call from the realtime API');
           toolCalls.push(value);
         }
       } finally {
@@ -1393,7 +1395,7 @@ export class AgentActivity implements RecognitionHooks {
 
     this.realtimeSession.interrupt();
 
-    const handle = SpeechHandle.create({
+    const replySpeechHandle = SpeechHandle.create({
       allowInterruptions: speechHandle.allowInterruptions,
       stepIndex: speechHandle.stepIndex + 1,
       parent: speechHandle,
@@ -1402,14 +1404,14 @@ export class AgentActivity implements RecognitionHooks {
     const toolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
     this.createSpeechTask({
       promise: this.realtimeReplyTask({
-        speechHandle: handle,
+        speechHandle: replySpeechHandle,
         modelSettings: { toolChoice },
       }),
-      ownedSpeechHandle: handle,
+      ownedSpeechHandle: replySpeechHandle,
       name: 'AgentActivity.realtime_reply',
     });
 
-    this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
+    this.scheduleSpeech(replySpeechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
   }
 
   private async realtimeReplyTask({
@@ -1463,11 +1465,17 @@ export class AgentActivity implements RecognitionHooks {
 
     // Monotonic time to avoid near 0 collisions
     this.speechQueue.push([priority, Number(process.hrtime.bigint()), speechHandle]);
+    this.wakeupMainTask();
   }
 
   async drain(): Promise<void> {
     // TODO(AJS-129): add lock to agent activity core lifecycle
     if (this._draining) return;
+
+    this.createSpeechTask({
+      promise: this.agent.onExit(),
+      name: 'AgentActivity_onExit',
+    });
 
     this.wakeupMainTask();
     this._draining = true;
