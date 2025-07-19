@@ -34,6 +34,7 @@ import {
   type RecognitionHooks,
   type _TurnDetector,
 } from './audio_recognition.js';
+import type { ToolExecutionOutput } from './generation.js';
 import {
   AgentSessionEventTypes,
   createFunctionToolsExecutedEvent,
@@ -118,7 +119,7 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       try {
-        // await this.realtimeSession.updateTools(this.tools);
+        await this.realtimeSession.updateTools(this.tools);
       } catch (error) {
         this.logger.error(error, 'failed to update the tools');
       }
@@ -901,6 +902,14 @@ export class AgentActivity implements RecognitionHooks {
       textOut?.firstTextFut.await.finally(onFirstFrame);
     }
 
+    const onToolExecutionStarted = (_: FunctionCall) => {
+      // TODO(brian): handle speech_handle item_added
+    };
+
+    const onToolExecutionCompleted = (_: ToolExecutionOutput) => {
+      // TODO(brian): handle speech_handle item_added
+    };
+
     const [executeToolsTask, toolOutput] = performToolExecutions({
       session: this.agentSession,
       speechHandle,
@@ -908,6 +917,8 @@ export class AgentActivity implements RecognitionHooks {
       toolChoice: modelSettings.toolChoice,
       toolCallStream: llmGenData.toolCallStream,
       controller: replyAbortController,
+      onToolExecutionStarted,
+      onToolExecutionCompleted,
     });
     tasks.push(executeToolsTask);
 
@@ -1027,9 +1038,7 @@ export class AgentActivity implements RecognitionHooks {
     let newAgentTask: Agent | null = null;
     let ignoreTaskSwitch: boolean = false;
 
-    for (const jsOut of toolOutput.output) {
-      const sanitizedOut = jsOut.sanitize();
-
+    for (const sanitizedOut of toolOutput.output) {
       if (sanitizedOut.toolCallOutput !== undefined) {
         functionToolsExecutedEvent.functionCalls.push(sanitizedOut.toolCall);
         functionToolsExecutedEvent.functionCallOutputs.push(sanitizedOut.toolCallOutput);
@@ -1138,8 +1147,7 @@ export class AgentActivity implements RecognitionHooks {
 
     const audioOutput = this.agentSession._audioOutput;
     const textOutput = this.agentSession._transcriptionOutput;
-
-    // TODO(AJS-151): add function calling to realtime model
+    const toolCtx = this.realtimeSession.tools;
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
 
@@ -1217,9 +1225,58 @@ export class AgentActivity implements RecognitionHooks {
       ),
     ];
 
-    // TODO(AJS-151): add function calling to realtime model
+    const [toolCallStream, toolCallStreamForTracing] = ev.functionStream.tee();
+    // TODO(brian): append to tracing tees
+    const toolCalls: FunctionCall[] = [];
+
+    const readToolStreamTask = async (
+      controller: AbortController,
+      stream: ReadableStream<FunctionCall>,
+    ) => {
+      const reader = stream.getReader();
+      try {
+        while (!controller.signal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          this.logger.debug({ tool_call: value }, 'received tool call from the realtime API');
+          toolCalls.push(value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    };
+
+    tasks.push(
+      Task.from(
+        (controller) => readToolStreamTask(controller, toolCallStreamForTracing),
+        replyAbortController,
+        'AgentActivity.realtime_generation.read_tool_stream',
+      ),
+    );
+
+    const onToolExecutionStarted = (_: FunctionCall) => {
+      // TODO(brian): handle speech_handle item_added
+    };
+
+    const onToolExecutionCompleted = (_: ToolExecutionOutput) => {
+      // TODO(brian): handle speech_handle item_added
+    };
+
+    const [executeToolsTask, toolOutput] = performToolExecutions({
+      session: this.agentSession,
+      speechHandle,
+      toolCtx,
+      toolCallStream,
+      toolChoice: modelSettings.toolChoice,
+      controller: replyAbortController,
+      onToolExecutionStarted,
+      onToolExecutionCompleted,
+    });
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
+
+    // TODO(brian): add tracing span
 
     if (audioOutput) {
       await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
@@ -1276,6 +1333,8 @@ export class AgentActivity implements RecognitionHooks {
           this.agent._chatCtx.insert(message);
           speechHandle._setChatMessage(message);
           this.agentSession._conversationItemAdded(message);
+
+          // TODO(brian): add tracing span
         }
         this.logger.info(
           { speech_id: speechHandle.id, message: forwardedText },
@@ -1284,6 +1343,9 @@ export class AgentActivity implements RecognitionHooks {
       }
       // TODO(shubhra) add chat message to speech handle
       speechHandle._markPlayoutDone();
+      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+
+      // TODO(brian): close tees
       return;
     }
 
@@ -1298,13 +1360,117 @@ export class AgentActivity implements RecognitionHooks {
       });
       this.agent._chatCtx.insert(message);
       speechHandle._setChatMessage(message);
-      this.agentSession._conversationItemAdded(message); // mark the playout done before waiting for the tool execution
+      this.agentSession._conversationItemAdded(message); // mark the playout done before waiting for the tool execution\
+      // TODO(brian): add tracing span
     }
 
     // mark playout must be done before _set_chat_message
     speechHandle._markPlayoutDone();
+    // TODO(brian): close tees
 
-    // TODO(AJS-151): add function calling to realtime model
+    toolOutput.firstToolStartedFuture.await.finally(() => {
+      this.agentSession._updateAgentState('thinking');
+    });
+
+    await executeToolsTask.result;
+
+    if (toolOutput.output.length === 0) return;
+
+    // important: no agent ouput should be used after this point
+    const { maxToolSteps } = this.agentSession.options;
+    if (speechHandle.stepIndex >= maxToolSteps) {
+      this.logger.warn(
+        { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
+        'maximum number of function calls steps reached',
+      );
+      return;
+    }
+
+    const newToolCallOutputs: FunctionCallOutput[] = [];
+    let shouldGenerateToolReply: boolean = false;
+    let newAgentTask: Agent | null = null;
+    let ignoreTaskSwitch: boolean = false;
+
+    for (const sanitizedOut of toolOutput.output) {
+      if (sanitizedOut.toolCallOutput !== undefined) {
+        newToolCallOutputs.push(sanitizedOut.toolCallOutput);
+        if (sanitizedOut.replyRequired) {
+          shouldGenerateToolReply = true;
+        }
+      }
+
+      if (newAgentTask !== null && sanitizedOut.agentTask !== undefined) {
+        this.logger.error('expected to receive only one agent task from the tool executions');
+        ignoreTaskSwitch = true;
+      }
+
+      newAgentTask = sanitizedOut.agentTask ?? null;
+
+      this.logger.debug(
+        {
+          speechId: speechHandle.id,
+          name: sanitizedOut.toolCall?.name,
+          args: sanitizedOut.toolCall.args,
+          output: sanitizedOut.toolCallOutput?.output,
+          isError: sanitizedOut.toolCallOutput?.isError,
+        },
+        'Tool call execution finished',
+      );
+    }
+
+    // TODO(brian): emit function_tools_executed event
+
+    let draining = this.draining;
+    if (!ignoreTaskSwitch && newAgentTask !== null) {
+      this.agentSession.updateAgent(newAgentTask);
+      draining = true;
+    }
+
+    if (newToolCallOutputs.length > 0) {
+      const chatCtx = this.realtimeSession.chatCtx.copy();
+      chatCtx.items.push(...newToolCallOutputs);
+      try {
+        await this.realtimeSession.updateChatCtx(chatCtx);
+      } catch (error) {
+        this.logger.warn(
+          { error },
+          'failed to update chat context before generating the function calls results',
+        );
+      }
+    }
+
+    // skip realtime reply if not required or auto-generated
+    if (!shouldGenerateToolReply || this.llm.capabilities.autoToolReplyGeneration) {
+      return;
+    }
+
+    this.realtimeSession.interrupt();
+
+    const replySpeechHandle = SpeechHandle.create({
+      allowInterruptions: speechHandle.allowInterruptions,
+      stepIndex: speechHandle.stepIndex + 1,
+      parent: speechHandle,
+    });
+
+    const toolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
+    this.createSpeechTask({
+      promise: this.realtimeReplyTask(replySpeechHandle, { toolChoice }),
+      ownedSpeechHandle: replySpeechHandle,
+      name: 'AgentActivity.realtime_reply',
+    });
+
+    this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
+  }
+
+  private async realtimeReplyTask(
+    speechHandle: SpeechHandle,
+    modelSettings: ModelSettings,
+  ): Promise<void> {
+    this.logger.info(
+      { speech_id: speechHandle.id, tool_choice: modelSettings.toolChoice },
+      'realtime reply task started',
+    );
+    // TODO(AJS-117): implement realtime reply task
   }
 
   private scheduleSpeech(

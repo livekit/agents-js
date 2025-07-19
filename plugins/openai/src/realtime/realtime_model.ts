@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioByteStream, Future, Queue, llm, log, shortuuid, stream } from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
-import { AudioFrame, AudioResampler, combineAudioFrames } from '@livekit/rtc-node';
+import type { AudioResampler } from '@livekit/rtc-node';
+import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
@@ -399,16 +400,18 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   get tools() {
-    // TODO(AJS-151): return a copy of the tools
-    return this._tools;
+    return { ...this._tools } as llm.ToolContext;
   }
 
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
     const unlock = await this.updateChatCtxLock.lock();
     const events = this.createChatCtxUpdateEvents(_chatCtx);
     for (const event of events) {
+      // TODO(AJS-170): handle item create/delete events
       this.sendEvent(event);
     }
+
+    // TODO(AJS-170): properly wait for the event futures
     unlock();
     return;
   }
@@ -464,15 +467,56 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!ev.session.tools) {
       throw new Error('Tools are missing in the session update event');
     }
-    // TODO(AJS-151) Handle retained tools
-    this._tools = _tools;
+
+    // TODO(brian): these logics below are noops I think, leaving it here to keep
+    // parity with the python but we should remove them later
+    const retainedToolNames = new Set(ev.session.tools.map((tool) => tool.name));
+    const retainedTools = Object.fromEntries(
+      Object.entries(_tools).filter(
+        ([name, tool]) => llm.isFunctionTool(tool) && retainedToolNames.has(name),
+      ),
+    );
+
+    this._tools = retainedTools as llm.ToolContext;
 
     unlock();
   }
 
   private createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
-    // TODO(AJS-151) Add tool calls to realtime model
-    throw new Error('not implemented');
+    const oaiTools: api_proto.Tool[] = [];
+
+    for (const [name, tool] of Object.entries(_tools)) {
+      if (!llm.isFunctionTool(tool)) {
+        this.#logger.error({ name, tool }, "OpenAI Realtime API doesn't support this tool type");
+        continue;
+      }
+
+      const { parameters: toolParameters, description } = tool;
+      try {
+        const parameters = llm.toJsonSchema(
+          toolParameters,
+        ) as unknown as api_proto.Tool['parameters'];
+
+        oaiTools.push({
+          name,
+          description,
+          parameters: parameters,
+          type: 'function',
+        });
+      } catch (e) {
+        this.#logger.error({ name, tool }, "OpenAI Realtime API doesn't support this tool type");
+        continue;
+      }
+    }
+
+    return {
+      type: 'session.update',
+      session: {
+        model: this.oaiRealtimeModel._options.model,
+        tools: oaiTools,
+      },
+      event_id: shortuuid('tools_update_'),
+    };
   }
 
   async updateInstructions(_instructions: string): Promise<void> {
@@ -617,8 +661,9 @@ export class RealtimeSession extends llm.RealtimeSession {
           try {
             const event = await this.messageChannel.get();
             if (event.type !== 'input_audio_buffer.append') {
-              this.#logger.debug(`-> ${JSON.stringify(this.#loggableEvent(event))}`);
+              this.#logger.debug(`(client) -> ${JSON.stringify(this.#loggableEvent(event))}`);
             }
+
             this.emit('openai_client_event_queued', event);
             this.#ws.send(JSON.stringify(event));
           } catch (error) {
@@ -631,7 +676,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         const event: api_proto.ServerEvent = JSON.parse(message.data as string);
 
         this.emit('openai_server_event_received', event);
-        this.#logger.debug(`<- ${JSON.stringify(this.#loggableEvent(event))}`);
+        this.#logger.debug(`(server) <- ${JSON.stringify(this.#loggableEvent(event))}`);
         switch (event.type) {
           case 'input_audio_buffer.speech_started':
             this.handleInputAudioBufferSpeechStarted(event);
