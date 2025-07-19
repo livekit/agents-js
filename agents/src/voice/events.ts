@@ -76,12 +76,17 @@ export type UserInputTranscribedEvent = {
   createdAt: number;
 };
 
-export const createUserInputTranscribedEvent = (
-  transcript: string,
-  isFinal: boolean,
-  speakerId: string | null = null,
-  createdAt: number = Date.now(),
-): UserInputTranscribedEvent => ({
+export const createUserInputTranscribedEvent = ({
+  transcript,
+  isFinal,
+  speakerId = null,
+  createdAt = Date.now(),
+}: {
+  transcript: string;
+  isFinal: boolean;
+  speakerId?: string | null;
+  createdAt?: number;
+}): UserInputTranscribedEvent => ({
   type: 'user_input_transcribed',
   transcript,
   isFinal,
@@ -170,12 +175,17 @@ export type SpeechCreatedEvent = {
   createdAt: number;
 };
 
-export const createSpeechCreatedEvent = (
-  userInitiated: boolean,
-  source: SpeechSource,
-  speechHandle: SpeechHandle,
-  createdAt: number = Date.now(),
-): SpeechCreatedEvent => ({
+export const createSpeechCreatedEvent = ({
+  userInitiated,
+  source,
+  speechHandle,
+  createdAt = Date.now(),
+}: {
+  userInitiated: boolean;
+  source: SpeechSource;
+  speechHandle: SpeechHandle;
+  createdAt?: number;
+}): SpeechCreatedEvent => ({
   type: 'speech_created',
   userInitiated,
   source,

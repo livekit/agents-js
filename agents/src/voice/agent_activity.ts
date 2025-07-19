@@ -27,13 +27,18 @@ import { Future, Task } from '../utils.js';
 import type { VAD, VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import { StopResponse, asyncLocalStorage } from './agent.js';
-import { type AgentSession, AgentSessionEvent, type TurnDetectionMode } from './agent_session.js';
+import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
 import {
   AudioRecognition,
   type EndOfTurnInfo,
   type RecognitionHooks,
   type _TurnDetector,
 } from './audio_recognition.js';
+import {
+  AgentSessionEventTypes,
+  createSpeechCreatedEvent,
+  createUserInputTranscribedEvent,
+} from './events.js';
 import {
   type _AudioOut,
   type _TextOut,
@@ -250,6 +255,15 @@ export class AgentActivity implements RecognitionHooks {
       allowInterruptions: allowInterruptions ?? this.allowInterruptions,
     });
 
+    this.agentSession.emit(
+      AgentSessionEventTypes.SpeechCreated,
+      createSpeechCreatedEvent({
+        userInitiated: true,
+        source: 'say',
+        speechHandle: handle,
+      }),
+    );
+
     const task = this.createSpeechTask({
       promise: this.ttsTask(handle, text, addToChatCtx, {}, audio),
       ownedSpeechHandle: handle,
@@ -288,21 +302,25 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (ev.userTranscriptionEnabled) {
-      this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
-        transcript: '',
-        isFinal: false,
-        speakerId: null,
-      });
+      this.agentSession.emit(
+        AgentSessionEventTypes.UserInputTranscribed,
+        createUserInputTranscribedEvent({
+          isFinal: false,
+          transcript: '',
+        }),
+      );
     }
   }
 
   onInputAudioTranscriptionCompleted(ev: InputTranscriptionCompleted): void {
     this.logger.info('onInputAudioTranscriptionCompleted');
-    this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
-      transcript: ev.transcript,
-      isFinal: ev.isFinal,
-      speakerId: null,
-    });
+    this.agentSession.emit(
+      AgentSessionEventTypes.UserInputTranscribed,
+      createUserInputTranscribedEvent({
+        transcript: ev.transcript,
+        isFinal: ev.isFinal,
+      }),
+    );
 
     if (ev.isFinal) {
       const message = ChatMessage.create({
@@ -331,6 +349,14 @@ export class AgentActivity implements RecognitionHooks {
     const handle = SpeechHandle.create({
       allowInterruptions: this.allowInterruptions,
     });
+    this.agentSession.emit(
+      AgentSessionEventTypes.SpeechCreated,
+      createSpeechCreatedEvent({
+        userInitiated: false,
+        source: 'generate_reply',
+        speechHandle: handle,
+      }),
+    );
     this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
 
     this.createSpeechTask({
@@ -385,21 +411,25 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onInterimTranscript(ev: SpeechEvent): void {
-    this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
-      transcript: ev.alternatives![0].text,
-      isFinal: false,
-      // TODO(AJS-106): add multi participant support
-      speakerId: null,
-    });
+    this.agentSession.emit(
+      AgentSessionEventTypes.UserInputTranscribed,
+      createUserInputTranscribedEvent({
+        transcript: ev.alternatives![0].text,
+        isFinal: false,
+        // TODO(AJS-106): add multi participant support
+      }),
+    );
   }
 
   onFinalTranscript(ev: SpeechEvent): void {
-    this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
-      transcript: ev.alternatives![0].text,
-      isFinal: true,
-      // TODO(AJS-106): add multi participant support
-      speakerId: null,
-    });
+    this.agentSession.emit(
+      AgentSessionEventTypes.UserInputTranscribed,
+      createUserInputTranscribedEvent({
+        transcript: ev.alternatives![0].text,
+        isFinal: true,
+        // TODO(AJS-106): add multi participant support
+      }),
+    );
   }
 
   private createSpeechTask<T>(options: {
@@ -525,6 +555,14 @@ export class AgentActivity implements RecognitionHooks {
       stepIndex: 0,
       parent: this.currentSpeech,
     });
+    this.agentSession.emit(
+      AgentSessionEventTypes.SpeechCreated,
+      createSpeechCreatedEvent({
+        userInitiated: true,
+        source: 'generate_reply',
+        speechHandle: handle,
+      }),
+    );
     this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
 
     const task = this.createSpeechTask({
