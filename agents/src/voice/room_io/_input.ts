@@ -5,7 +5,7 @@ import {
   type AudioFrame,
   AudioStream,
   type NoiseCancellationOptions,
-  type RemoteParticipant,
+  RemoteParticipant,
   type RemoteTrack,
   type RemoteTrackPublication,
   type Room,
@@ -23,7 +23,7 @@ export class ParticipantAudioInputStream {
   private numChannels: number;
   private noiseCancellation?: NoiseCancellationOptions;
   private publication?: RemoteTrackPublication;
-  private participantIdentity?: string;
+  private participantIdentity: string | null = null;
   private logger = log();
   private deferredStream: DeferredReadableStream<AudioFrame> =
     new DeferredReadableStream<AudioFrame>();
@@ -52,22 +52,38 @@ export class ParticipantAudioInputStream {
   }
 
   setParticipant(participant: RemoteParticipant | string | null) {
-    this.logger.debug({ participant }, 'setting participant');
-    if (this.participantIdentity) {
-      throw new Error('Changing participant is not supported yet');
+    this.logger.debug({ participant }, 'setting participant audio input');
+    const participantIdentity =
+      participant instanceof RemoteParticipant ? participant.identity : participant;
+
+    if (this.participantIdentity === participantIdentity) {
+      return;
+    }
+    this.participantIdentity = participantIdentity;
+    this.closeStream();
+
+    if (!participantIdentity) {
+      return;
     }
 
-    this.participantIdentity =
-      typeof participant === 'string' ? participant : participant?.identity;
+    const participantValue =
+      participant instanceof RemoteParticipant
+        ? participant
+        : this.room.remoteParticipants.get(participantIdentity);
 
-    for (const [_, participant] of this.room.remoteParticipants) {
-      for (const publication of Object.values(participant.trackPublications)) {
+    if (participantValue) {
+      // iterate over the specific participant's publications, not all participants
+      for (const publication of Object.values(participantValue.trackPublications)) {
         if (publication.track && publication.source === TrackSource.SOURCE_MICROPHONE) {
-          this.onTrackSubscribed(publication.track, publication, participant);
+          this.onTrackSubscribed(publication.track, publication, participantValue);
           break;
         }
       }
     }
+  }
+
+  private closeStream() {
+    this.deferredStream.detachSource();
   }
 
   private onTrackSubscribed = (
