@@ -34,12 +34,12 @@ import {
   type RecognitionHooks,
   type _TurnDetector,
 } from './audio_recognition.js';
-import type { ToolExecutionOutput } from './generation.js';
 import {
   AgentSessionEventTypes,
   createSpeechCreatedEvent,
   createUserInputTranscribedEvent,
 } from './events.js';
+import type { ToolExecutionOutput } from './generation.js';
 import {
   type _AudioOut,
   type _TextOut,
