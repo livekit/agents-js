@@ -240,35 +240,44 @@ export class RoomIO {
 
   start() {
     // -- create inputs --
-    this.audioInput = new ParticipantAudioInputStream({
-      room: this.room,
-      sampleRate: this.inputOptions.audioSampleRate,
-      numChannels: this.inputOptions.audioNumChannels,
-      noiseCancellation: this.inputOptions.noiseCancellation,
-    });
+    if (this.inputOptions.audioEnabled) {
+      this.audioInput = new ParticipantAudioInputStream({
+        room: this.room,
+        sampleRate: this.inputOptions.audioSampleRate,
+        numChannels: this.inputOptions.audioNumChannels,
+        noiseCancellation: this.inputOptions.noiseCancellation,
+      });
+    }
 
     // -- create outputs --
-    this.participantAudioOutput = new ParticipantAudioOutput(this.room, {
-      sampleRate: this.outputOptions.audioSampleRate,
-      numChannels: this.outputOptions.audioNumChannels,
-      trackPublishOptions: this.outputOptions.audioPublishOptions,
-    });
+    if (this.outputOptions.audioEnabled) {
+      this.participantAudioOutput = new ParticipantAudioOutput(this.room, {
+        sampleRate: this.outputOptions.audioSampleRate,
+        numChannels: this.outputOptions.audioNumChannels,
+        trackPublishOptions: this.outputOptions.audioPublishOptions,
+      });
+    }
+    if (this.outputOptions.transcriptionEnabled) {
+      this.userTranscriptOutput = this.createTranscriptionOutput({
+        isDeltaStream: false,
+        participant: this.participantIdentity,
+      });
+      // Start the transcript forwarding
+      this.forwardUserTranscriptPromise = this.forwardUserTranscript();
+      this.agentTranscriptOutput = this.createTranscriptionOutput({
+        isDeltaStream: true,
+      });
 
-    this.userTranscriptOutput = this.createTranscriptionOutput({
-      isDeltaStream: false,
-      participant: this.participantIdentity,
-    });
-    this.agentTranscriptOutput = this.createTranscriptionOutput({
-      isDeltaStream: true,
-    });
-
-    this.transcriptionSynchronizer = new TranscriptionSynchronizer(
-      this.participantAudioOutput,
-      this.agentTranscriptOutput,
-    );
-
-    // Start the transcript forwarding
-    this.forwardUserTranscriptPromise = this.forwardUserTranscript();
+      // use the RoomIO's audio output if available, otherwise use the agent's audio output
+      // TODO(AJS-176): check for agent output
+      const audioOutput = this.participantAudioOutput;
+      if (this.outputOptions.syncTranscription && audioOutput) {
+        this.transcriptionSynchronizer = new TranscriptionSynchronizer(
+          audioOutput,
+          this.agentTranscriptOutput,
+        );
+      }
+    }
 
     // -- set the room event handlers --
     this.room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
@@ -283,7 +292,7 @@ export class RoomIO {
     });
 
     // -- attatch the agent to the session --
-    this.agentSession._audioInput = this.audioInput.audioStream;
+    this.agentSession._audioInput = this.audioInput?.audioStream;
     this.agentSession._audioOutput = this.audioOutput;
     this.agentSession._transcriptionOutput = this.transcriptionOutput;
 
