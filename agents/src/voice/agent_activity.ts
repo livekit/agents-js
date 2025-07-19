@@ -8,7 +8,6 @@ import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
 import {
   type ChatItem,
   type FunctionCall,
-  type FunctionCallOutput,
   type GenerationCreatedEvent,
   type InputSpeechStartedEvent,
   type InputSpeechStoppedEvent,
