@@ -169,6 +169,15 @@ export class RoomIO {
     this.participantAvailableFuture.resolve(participant);
   };
 
+  private onParticipantDisconnected = (participant: RemoteParticipant) => {
+    if (participant.identity !== this.participantIdentity) {
+      return;
+    }
+
+    // TODO(AJS-177): close the session if the participant disconnects unless opted out
+    this.unsetParticipant();
+  };
+
   private onUserInputTranscribed = (ev: UserInputTranscribedEvent) => {
     this.userTranscriptWriter.write(ev).catch((error) => {
       this.logger.error({ error }, 'Failed to write transcript event to stream');
@@ -329,7 +338,7 @@ export class RoomIO {
     // -- set the room event handlers --
     this.room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
     this.room.on(RoomEvent.ConnectionStateChanged, this.onConnectionStateChanged);
-
+    this.room.on(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
     if (this.room.isConnected) {
       this.onConnectionStateChanged(ConnectionState.CONN_CONNECTED);
     }
