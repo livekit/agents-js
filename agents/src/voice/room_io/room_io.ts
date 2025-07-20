@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { Participant, RemoteParticipant } from '@livekit/rtc-node';
+import { ParticipantKind } from '@livekit/rtc-node';
 import { ConnectionState, type NoiseCancellationOptions, type Room } from '@livekit/rtc-node';
 import { RoomEvent, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
@@ -22,12 +23,9 @@ import {
   ParticipantTranscriptionOutput,
 } from './_output.js';
 
-// Default participant kinds to accept for auto subscription
-// Using numeric values for now since enum constants aren't available
-// 0 = STANDARD, 1 = SIP, 2 = AGENT, 3 = EGRESS, 4 = INGRESS
-const DEFAULT_PARTICIPANT_KINDS: number[] = [
-  0, // STANDARD participant
-  1, // SIP participant
+const DEFAULT_PARTICIPANT_KINDS: ParticipantKind[] = [
+  ParticipantKind.SIP,
+  ParticipantKind.STANDARD,
 ];
 
 export interface RoomInputOptions {
@@ -38,7 +36,7 @@ export interface RoomInputOptions {
   videoEnabled: boolean;
   participantIdentity?: string;
   noiseCancellation?: NoiseCancellationOptions;
-  participantKinds?: number[];
+  participantKinds?: ParticipantKind[];
 }
 
 export interface RoomOutputOptions {
@@ -163,10 +161,8 @@ export class RoomIO {
       return;
     }
 
-    // Check if participant kind is accepted
     const acceptedKinds = this.inputOptions.participantKinds ?? DEFAULT_PARTICIPANT_KINDS;
     if (participant.info.kind !== undefined && !acceptedKinds.includes(participant.info.kind)) {
-      // not an accepted participant kind, skip
       return;
     }
 

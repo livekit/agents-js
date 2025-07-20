@@ -22,7 +22,7 @@ export class ParticipantAudioInputStream {
   private sampleRate: number;
   private numChannels: number;
   private noiseCancellation?: NoiseCancellationOptions;
-  private publication?: RemoteTrackPublication;
+  private publication: RemoteTrackPublication | null = null;
   private participantIdentity: string | null = null;
   private logger = log();
   private deferredStream: DeferredReadableStream<AudioFrame> =
@@ -45,6 +45,7 @@ export class ParticipantAudioInputStream {
     this.noiseCancellation = noiseCancellation;
 
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
+    this.room.on(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
   }
 
   get audioStream(): ReadableStream<AudioFrame> {
@@ -72,7 +73,6 @@ export class ParticipantAudioInputStream {
         : this.room.remoteParticipants.get(participantIdentity);
 
     if (participantValue) {
-      // iterate over the specific participant's publications, not all participants
       for (const publication of Object.values(participantValue.trackPublications)) {
         if (publication.track && publication.source === TrackSource.SOURCE_MICROPHONE) {
           this.onTrackSubscribed(publication.track, publication, participantValue);
@@ -82,8 +82,34 @@ export class ParticipantAudioInputStream {
     }
   }
 
+  private onTrackUnpublished = (
+    publication: RemoteTrackPublication,
+    participant: RemoteParticipant,
+  ) => {
+    if (
+      this.publication?.sid !== publication.sid ||
+      participant.identity !== this.participantIdentity
+    ) {
+      return;
+    }
+    this.closeStream();
+
+    // subscribe to the first available track
+    for (const publication of participant.trackPublications.values()) {
+      if (
+        publication.track &&
+        this.onTrackSubscribed(publication.track, publication, participant)
+      ) {
+        return;
+      }
+    }
+  };
+
   private closeStream() {
-    this.deferredStream.detachSource();
+    if (this.deferredStream.isSourceSet) {
+      this.deferredStream.detachSource();
+    }
+    this.publication = null;
   }
 
   private onTrackSubscribed = (
@@ -98,14 +124,15 @@ export class ParticipantAudioInputStream {
     ) {
       return false;
     }
+    this.closeStream();
     this.publication = publication;
-    this.logger.debug({ track, publication, participant }, 'track subscribed');
     this.deferredStream.setSource(
       resampleStream({
         stream: this.createStream(track),
         outputRate: this.sampleRate,
       }),
     );
+    this.logger.debug({ track, publication, participant }, 'track subscribed');
     return true;
   };
 
