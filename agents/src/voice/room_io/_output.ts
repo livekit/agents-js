@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type {
-  AudioFrame,
-  Participant,
+import {
+  type AudioFrame,
+  type Participant,
   RemoteParticipant,
-  RemoteTrackPublication,
-  Room,
-  TextStreamWriter,
+  type RemoteTrackPublication,
+  type Room,
+  type TextStreamWriter,
 } from '@livekit/rtc-node';
 import {
   AudioSource,
@@ -30,14 +30,14 @@ import { findMicrophoneTrackId } from '../transcription/index.js';
 abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected room: Room;
   protected isDeltaStream: boolean;
-  protected participantIdentity?: string;
+  protected participantIdentity: string | null = null;
   protected trackId?: string;
   protected capturing: boolean = false;
   protected latestText: string = '';
   protected currentId: string = this.generateCurrentId();
   protected logger = log();
 
-  constructor(room: Room, isDeltaStream: boolean, participant?: Participant | string) {
+  constructor(room: Room, isDeltaStream: boolean, participant: Participant | string | null) {
     super();
     this.room = room;
     this.isDeltaStream = isDeltaStream;
@@ -48,15 +48,15 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
     this.setParticipant(participant);
   }
 
-  setParticipant(participant?: Participant | string) {
-    if (!participant) {
-      return;
-    }
-
-    if (typeof participant === 'string') {
+  setParticipant(participant: Participant | string | null) {
+    if (typeof participant === 'string' || participant === null) {
       this.participantIdentity = participant;
     } else {
       this.participantIdentity = participant.identity;
+    }
+
+    if (!this.participantIdentity) {
+      return;
     }
 
     try {
