@@ -309,7 +309,7 @@ export function createToolOutput(params: {
         callId: toolCall.callId,
         output: finalOutput,
       },
-      `AI function ${toolCall.name} returned an invalid output ${JSON.stringify(finalOutput)}`,
+      `AI function ${toolCall.name} returned an invalid output`,
     );
     return ToolExecutionOutput.create({
       toolCall: FunctionCall.create({ ...toolCall }),
