@@ -879,7 +879,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const fut = this.itemCreateFutures[event.item.id];
-    this.#logger.debug({ fut }, 'item create future');
     if (fut) {
       fut.resolve();
       delete this.itemCreateFutures[event.item.id];
@@ -898,7 +897,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const fut = this.itemDeleteFutures[event.item_id];
-    this.#logger.debug({ fut }, 'item delete future');
     if (fut) {
       fut.resolve();
       delete this.itemDeleteFutures[event.item_id];
