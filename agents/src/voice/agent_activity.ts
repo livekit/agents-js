@@ -733,7 +733,7 @@ export class AgentActivity implements RecognitionHooks {
       this.realtimeSession?.interrupt();
     }
 
-    const userMessage = ChatMessage.create({
+    let userMessage: ChatMessage | undefined = ChatMessage.create({
       role: 'user',
       content: info.newTranscript,
     });
@@ -742,6 +742,7 @@ export class AgentActivity implements RecognitionHooks {
     // the user can edit it for the current generation, but changes will not be kept inside the
     // Agent.chatCtx
     const chatCtx = this.agent.chatCtx.copy();
+    const startTime = Date.now();
 
     try {
       await this.agent.onUserTurnCompleted(chatCtx, userMessage);
@@ -750,6 +751,15 @@ export class AgentActivity implements RecognitionHooks {
         return;
       }
       this.logger.error({ error: e }, 'error occurred during onUserTurnCompleted');
+    }
+
+    const callbackDuration = Date.now() - startTime;
+
+    if (this.llm instanceof RealtimeModel) {
+      // ignore stt transcription for realtime model
+      userMessage = undefined;
+    } else if (this.llm === undefined) {
+      return;
     }
 
     this.generateReply({ userMessage, chatCtx });
