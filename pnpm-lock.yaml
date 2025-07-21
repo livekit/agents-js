@@ -351,6 +351,9 @@ importers:
       '@livekit/mutex':
         specifier: ^1.1.1
         version: 1.1.1
+      '@std/async':
+        specifier: npm:@jsr/std__async@^1.0.13
+        version: '@jsr/std__async@1.0.13'
       openai:
         specifier: ^4.91.1
         version: 4.91.1(ws@8.17.0)(zod@3.23.8)
