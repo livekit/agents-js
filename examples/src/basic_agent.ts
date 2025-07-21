@@ -33,9 +33,10 @@ export default defineAgent({
       stt: new deepgram.STT({
         sampleRate: 24000,
       }),
-      // llm: new openai.LLM(),
-      llm: new openai.realtime.RealtimeModel(),
       tts: new elevenlabs.TTS(),
+      llm: new openai.LLM(),
+      // to use realtime model, replace the stt, llm, tts and vad with the following
+      // llm: new openai.realtime.RealtimeModel(),
       turnDetection: new livekit.turnDetector.EnglishModel(),
     });
 

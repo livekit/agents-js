@@ -54,8 +54,9 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       llm: new openai.realtime.RealtimeModel(),
+      // enable to allow chaining of tool calls
       voiceOptions: {
-        maxToolSteps: 10,
+        maxToolSteps: 5,
       },
     });
 
