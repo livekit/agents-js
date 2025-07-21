@@ -44,7 +44,7 @@ npm install -g pnpm
 
 - Install global dependencies:
 ```bash
-pnpm install -g turbo typescript @types/node
+pnpm add -g ts-node@10.9.2 turbo@2.5.4 typescript@5.8.3
 ```
 
 - Prepare the environment variables:
