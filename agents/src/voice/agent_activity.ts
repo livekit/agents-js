@@ -575,11 +575,12 @@ export class AgentActivity implements RecognitionHooks {
     const {
       userMessage,
       chatCtx,
-      instructions,
+      instructions: defaultInstructions,
       toolChoice: defaultToolChoice,
       allowInterruptions: defaultAllowInterruptions,
     } = options;
 
+    let instructions = defaultInstructions;
     let toolChoice = defaultToolChoice;
     let allowInterruptions = defaultAllowInterruptions;
 
