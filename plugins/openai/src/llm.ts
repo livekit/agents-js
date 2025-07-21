@@ -525,6 +525,7 @@ export class LLMStream extends llm.LLMStream {
             usage: {
               completionTokens: usage.completion_tokens,
               promptTokens: usage.prompt_tokens,
+              promptCachedTokens: usage.prompt_tokens_details?.cached_tokens || 0,
               totalTokens: usage.total_tokens,
             },
           });
