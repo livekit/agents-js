@@ -387,7 +387,8 @@ export default defineAgent({
       stt: new deepgram.STT({
         sampleRate: 24000,
       }),
-      llm: new openai.LLM(),
+      // llm: new openai.LLM(),
+      llm: new openai.realtime.RealtimeModel(),
       tts: new elevenlabs.TTS(),
       turnDetection: new livekit.turnDetector.EnglishModel(),
       userData,
