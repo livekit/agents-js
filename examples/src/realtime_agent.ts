@@ -54,6 +54,9 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       llm: new openai.realtime.RealtimeModel(),
+      voiceOptions: {
+        maxToolSteps: 10,
+      },
     });
 
     await session.start({
