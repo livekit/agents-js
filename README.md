@@ -37,9 +37,42 @@ popular LLMs.
 
 To install the core Agents library as well as plugins in your workspace, run:
 
+- Install `pnpm` if you haven't already:
 ```bash
-pnpm install
+npm install -g pnpm
 ```
+
+- Install global dependencies:
+```bash
+pnpm add -g ts-node@10.9.2 turbo@2.5.4 typescript@5.8.3
+```
+
+- Prepare the environment variables:
+```bash
+export LIVEKIT_URL=your-livekit-url
+export LIVEKIT_API_KEY=your-livekit-api-key
+export LIVEKIT_API_SECRET=your-livekit-api-secret
+
+export DEEPGRAM_API_KEY=your-deepgram-api-key
+export OPENAI_API_KEY=your-openai-api-key
+export ELEVEN_API_KEY=your-eleven-api-key
+```
+
+or directly save it to your `~/.zshrc` file to make it permanent.
+
+- Build the workspace:
+```bash
+pnpm build
+```
+
+- Check to see if agent is working:
+```bash
+node ./examples/src/basic_agent.ts dev --log-level=info
+```
+
+- Open [Agent Playground](https://agents-playground.livekit.io), and connect to your LiveKit server having the same `LIVEKIT_URL` and `LIVEKIT_API_KEY` as you configured above.
+
+- Click on "Connect" button, and you should expect to see agent been connected to the room.
 
 Currently, only the following plugins are supported:
 
