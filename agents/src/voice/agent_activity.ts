@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { Heap } from 'heap-js';
 import { ReadableStream } from 'node:stream/web';
@@ -8,7 +9,6 @@ import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
 import {
   type ChatItem,
   type FunctionCall,
-  type FunctionCallOutput,
   type GenerationCreatedEvent,
   type InputSpeechStartedEvent,
   type InputSpeechStoppedEvent,
@@ -27,13 +27,19 @@ import { Future, Task } from '../utils.js';
 import type { VAD, VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import { StopResponse, asyncLocalStorage } from './agent.js';
-import { type AgentSession, AgentSessionEvent, type TurnDetectionMode } from './agent_session.js';
+import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
 import {
   AudioRecognition,
   type EndOfTurnInfo,
   type RecognitionHooks,
   type _TurnDetector,
 } from './audio_recognition.js';
+import {
+  AgentSessionEventTypes,
+  createFunctionToolsExecutedEvent,
+  createSpeechCreatedEvent,
+  createUserInputTranscribedEvent,
+} from './events.js';
 import type { ToolExecutionOutput } from './generation.js';
 import {
   type _AudioOut,
@@ -60,6 +66,7 @@ export class AgentActivity implements RecognitionHooks {
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private q_updated: Future;
   private speechTasks: Set<Promise<unknown>> = new Set();
+  private lock = new Mutex();
 
   agent: Agent;
   agentSession: AgentSession;
@@ -87,67 +94,72 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async start(): Promise<void> {
-    this.agent._agentActivity = this;
+    const unlock = await this.lock.lock();
+    try {
+      this.agent._agentActivity = this;
 
-    if (this.llm instanceof RealtimeModel) {
-      this.realtimeSession = this.llm.session();
-      this.realtimeSession.on('generation_created', (ev) => this.onGenerationCreated(ev));
-      this.realtimeSession.on('input_speech_started', (ev) => this.onInputSpeechStarted(ev));
-      this.realtimeSession.on('input_speech_stopped', (ev) => this.onInputSpeechStopped(ev));
-      this.realtimeSession.on('input_audio_transcription_completed', (ev) =>
-        this.onInputAudioTranscriptionCompleted(ev),
-      );
-      // TODO(shubhra): add metrics_collected and error handlers
+      if (this.llm instanceof RealtimeModel) {
+        this.realtimeSession = this.llm.session();
+        this.realtimeSession.on('generation_created', (ev) => this.onGenerationCreated(ev));
+        this.realtimeSession.on('input_speech_started', (ev) => this.onInputSpeechStarted(ev));
+        this.realtimeSession.on('input_speech_stopped', (ev) => this.onInputSpeechStopped(ev));
+        this.realtimeSession.on('input_audio_transcription_completed', (ev) =>
+          this.onInputAudioTranscriptionCompleted(ev),
+        );
+        // TODO(shubhra): add metrics_collected and error handlers
 
-      removeInstructions(this.agent._chatCtx);
-      try {
-        await this.realtimeSession.updateInstructions(this.agent.instructions);
-      } catch (error) {
-        this.logger.error(error, 'failed to update the instructions');
+        removeInstructions(this.agent._chatCtx);
+        try {
+          await this.realtimeSession.updateInstructions(this.agent.instructions);
+        } catch (error) {
+          this.logger.error(error, 'failed to update the instructions');
+        }
+
+        try {
+          await this.realtimeSession.updateChatCtx(this.agent.chatCtx);
+        } catch (error) {
+          this.logger.error(error, 'failed to update the chat context');
+        }
+
+        try {
+          await this.realtimeSession.updateTools(this.tools);
+        } catch (error) {
+          this.logger.error(error, 'failed to update the tools');
+        }
+      } else if (this.llm instanceof LLM) {
+        try {
+          updateInstructions({
+            chatCtx: this.agent._chatCtx,
+            instructions: this.agent.instructions,
+            addIfMissing: true,
+          });
+        } catch (error) {
+          this.logger.error('failed to update the instructions', error);
+        }
       }
 
-      try {
-        await this.realtimeSession.updateChatCtx(this.agent.chatCtx);
-      } catch (error) {
-        this.logger.error(error, 'failed to update the chat context');
-      }
+      this.audioRecognition = new AudioRecognition({
+        recognitionHooks: this,
+        stt: (...args) => this.agent.sttNode(...args),
+        vad: this.vad,
+        turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
+        turnDetectionMode: this.turnDetectionMode,
+        minEndpointingDelay: this.agentSession.options.minEndpointingDelay,
+        maxEndpointingDelay: this.agentSession.options.maxEndpointingDelay,
+      });
+      this.audioRecognition.start();
+      this.started = true;
 
-      try {
-        await this.realtimeSession.updateTools(this.tools);
-      } catch (error) {
-        this.logger.error(error, 'failed to update the tools');
-      }
-    } else if (this.llm instanceof LLM) {
-      try {
-        updateInstructions({
-          chatCtx: this.agent._chatCtx,
-          instructions: this.agent.instructions,
-          addIfMissing: true,
-        });
-      } catch (error) {
-        this.logger.error('failed to update the instructions', error);
-      }
+      this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
+      this.createSpeechTask({
+        promise: this.agent.onEnter(),
+        name: 'AgentActivity_onEnter',
+      });
+
+      // TODO(shubhra): Add turn detection mode
+    } finally {
+      unlock();
     }
-
-    this.audioRecognition = new AudioRecognition({
-      recognitionHooks: this,
-      stt: (...args) => this.agent.sttNode(...args),
-      vad: this.vad,
-      turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
-      turnDetectionMode: this.turnDetectionMode,
-      minEndpointingDelay: this.agentSession.options.minEndpointingDelay,
-      maxEndpointingDelay: this.agentSession.options.maxEndpointingDelay,
-    });
-    this.audioRecognition.start();
-    this.started = true;
-
-    this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
-    this.createSpeechTask({
-      promise: this.agent.onEnter(),
-      name: 'AgentActivity_onEnter',
-    });
-
-    // TODO(shubhra): Add turn detection mode
   }
 
   get vad(): VAD | undefined {
@@ -257,6 +269,15 @@ export class AgentActivity implements RecognitionHooks {
       allowInterruptions: allowInterruptions ?? this.allowInterruptions,
     });
 
+    this.agentSession.emit(
+      AgentSessionEventTypes.SpeechCreated,
+      createSpeechCreatedEvent({
+        userInitiated: true,
+        source: 'say',
+        speechHandle: handle,
+      }),
+    );
+
     const task = this.createSpeechTask({
       promise: this.ttsTask(handle, text, addToChatCtx, {}, audio),
       ownedSpeechHandle: handle,
@@ -295,21 +316,25 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (ev.userTranscriptionEnabled) {
-      this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
-        transcript: '',
-        isFinal: false,
-        speakerId: null,
-      });
+      this.agentSession.emit(
+        AgentSessionEventTypes.UserInputTranscribed,
+        createUserInputTranscribedEvent({
+          isFinal: false,
+          transcript: '',
+        }),
+      );
     }
   }
 
   onInputAudioTranscriptionCompleted(ev: InputTranscriptionCompleted): void {
     this.logger.info('onInputAudioTranscriptionCompleted');
-    this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
-      transcript: ev.transcript,
-      isFinal: ev.isFinal,
-      speakerId: null,
-    });
+    this.agentSession.emit(
+      AgentSessionEventTypes.UserInputTranscribed,
+      createUserInputTranscribedEvent({
+        transcript: ev.transcript,
+        isFinal: ev.isFinal,
+      }),
+    );
 
     if (ev.isFinal) {
       const message = ChatMessage.create({
@@ -338,6 +363,14 @@ export class AgentActivity implements RecognitionHooks {
     const handle = SpeechHandle.create({
       allowInterruptions: this.allowInterruptions,
     });
+    this.agentSession.emit(
+      AgentSessionEventTypes.SpeechCreated,
+      createSpeechCreatedEvent({
+        userInitiated: false,
+        source: 'generate_reply',
+        speechHandle: handle,
+      }),
+    );
     this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
 
     this.createSpeechTask({
@@ -392,21 +425,25 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onInterimTranscript(ev: SpeechEvent): void {
-    this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
-      transcript: ev.alternatives![0].text,
-      isFinal: false,
-      // TODO(AJS-106): add multi participant support
-      speakerId: null,
-    });
+    this.agentSession.emit(
+      AgentSessionEventTypes.UserInputTranscribed,
+      createUserInputTranscribedEvent({
+        transcript: ev.alternatives![0].text,
+        isFinal: false,
+        // TODO(AJS-106): add multi participant support
+      }),
+    );
   }
 
   onFinalTranscript(ev: SpeechEvent): void {
-    this.agentSession.emit(AgentSessionEvent.UserInputTranscribed, {
-      transcript: ev.alternatives![0].text,
-      isFinal: true,
-      // TODO(AJS-106): add multi participant support
-      speakerId: null,
-    });
+    this.agentSession.emit(
+      AgentSessionEventTypes.UserInputTranscribed,
+      createUserInputTranscribedEvent({
+        transcript: ev.alternatives![0].text,
+        isFinal: true,
+        // TODO(AJS-106): add multi participant support
+      }),
+    );
   }
 
   private createSpeechTask<T>(options: {
@@ -532,6 +569,14 @@ export class AgentActivity implements RecognitionHooks {
       stepIndex: 0,
       parent: this.currentSpeech,
     });
+    this.agentSession.emit(
+      AgentSessionEventTypes.SpeechCreated,
+      createSpeechCreatedEvent({
+        userInitiated: true,
+        source: 'generate_reply',
+        speechHandle: handle,
+      }),
+    );
     this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
 
     const task = this.createSpeechTask({
@@ -997,16 +1042,18 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    const newToolCalls: FunctionCall[] = [];
-    const newToolCallOutputs: FunctionCallOutput[] = [];
+    const functionToolsExecutedEvent = createFunctionToolsExecutedEvent({
+      functionCalls: [],
+      functionCallOutputs: [],
+    });
     let shouldGenerateToolReply: boolean = false;
     let newAgentTask: Agent | null = null;
     let ignoreTaskSwitch: boolean = false;
 
     for (const sanitizedOut of toolOutput.output) {
       if (sanitizedOut.toolCallOutput !== undefined) {
-        newToolCalls.push(sanitizedOut.toolCall);
-        newToolCallOutputs.push(sanitizedOut.toolCallOutput);
+        functionToolsExecutedEvent.functionCalls.push(sanitizedOut.toolCall);
+        functionToolsExecutedEvent.functionCallOutputs.push(sanitizedOut.toolCallOutput);
         if (sanitizedOut.replyRequired) {
           shouldGenerateToolReply = true;
         }
@@ -1032,13 +1079,21 @@ export class AgentActivity implements RecognitionHooks {
       );
     }
 
+    this.agentSession.emit(
+      AgentSessionEventTypes.FunctionToolsExecuted,
+      functionToolsExecutedEvent,
+    );
+
     let draining = this.draining;
     if (!ignoreTaskSwitch && newAgentTask !== null) {
       this.agentSession.updateAgent(newAgentTask);
       draining = true;
     }
 
-    const toolMessages = [...newToolCalls, ...newToolCallOutputs] as ChatItem[];
+    const toolMessages = [
+      ...functionToolsExecutedEvent.functionCalls,
+      ...functionToolsExecutedEvent.functionCallOutputs,
+    ] as ChatItem[];
     if (shouldGenerateToolReply) {
       chatCtx.insert(toolMessages);
 
@@ -1047,6 +1102,14 @@ export class AgentActivity implements RecognitionHooks {
         stepIndex: speechHandle.stepIndex + 1,
         parent: speechHandle,
       });
+      this.agentSession.emit(
+        AgentSessionEventTypes.SpeechCreated,
+        createSpeechCreatedEvent({
+          userInitiated: false,
+          source: 'tool_response',
+          speechHandle: handle,
+        }),
+      );
 
       // Avoid setting tool_choice to "required" or a specific function when
       // passing tool response back to the LLM
@@ -1069,7 +1132,7 @@ export class AgentActivity implements RecognitionHooks {
       toolResponseTask.finally(() => this.onPipelineReplyDone());
 
       this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
-    } else if (newToolCallOutputs.length > 0) {
+    } else if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
       for (const msg of toolMessages) {
         msg.createdAt = replyStartedAt;
       }
@@ -1335,14 +1398,17 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    const newToolCallOutputs: FunctionCallOutput[] = [];
+    const functionToolsExecutedEvent = createFunctionToolsExecutedEvent({
+      functionCalls: [],
+      functionCallOutputs: [],
+    });
     let shouldGenerateToolReply: boolean = false;
     let newAgentTask: Agent | null = null;
     let ignoreTaskSwitch: boolean = false;
 
     for (const sanitizedOut of toolOutput.output) {
       if (sanitizedOut.toolCallOutput !== undefined) {
-        newToolCallOutputs.push(sanitizedOut.toolCallOutput);
+        functionToolsExecutedEvent.functionCallOutputs.push(sanitizedOut.toolCallOutput);
         if (sanitizedOut.replyRequired) {
           shouldGenerateToolReply = true;
         }
@@ -1367,7 +1433,10 @@ export class AgentActivity implements RecognitionHooks {
       );
     }
 
-    // TODO(brian): emit function_tools_executed event
+    this.agentSession.emit(
+      AgentSessionEventTypes.FunctionToolsExecuted,
+      functionToolsExecutedEvent,
+    );
 
     let draining = this.draining;
     if (!ignoreTaskSwitch && newAgentTask !== null) {
@@ -1375,9 +1444,9 @@ export class AgentActivity implements RecognitionHooks {
       draining = true;
     }
 
-    if (newToolCallOutputs.length > 0) {
+    if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
       const chatCtx = this.realtimeSession.chatCtx.copy();
-      chatCtx.items.push(...newToolCallOutputs);
+      chatCtx.items.push(...functionToolsExecutedEvent.functionCallOutputs);
       try {
         await this.realtimeSession.updateChatCtx(chatCtx);
       } catch (error) {
@@ -1400,6 +1469,14 @@ export class AgentActivity implements RecognitionHooks {
       stepIndex: speechHandle.stepIndex + 1,
       parent: speechHandle,
     });
+    this.agentSession.emit(
+      AgentSessionEventTypes.SpeechCreated,
+      createSpeechCreatedEvent({
+        userInitiated: false,
+        source: 'tool_response',
+        speechHandle: replySpeechHandle,
+      }),
+    );
 
     const toolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
     this.createSpeechTask({
@@ -1465,28 +1542,36 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async drain(): Promise<void> {
-    // TODO(AJS-129): add lock to agent activity core lifecycle
-    if (this._draining) return;
+    const unlock = await this.lock.lock();
+    try {
+      if (this._draining) return;
 
-    this.createSpeechTask({
-      promise: this.agent.onExit(),
-      name: 'AgentActivity_onExit',
-    });
+      this.createSpeechTask({
+        promise: this.agent.onExit(),
+        name: 'AgentActivity_onExit',
+      });
 
-    this.wakeupMainTask();
-    this._draining = true;
-    await this._mainTask?.result;
+      this.wakeupMainTask();
+      this._draining = true;
+      await this._mainTask?.result;
+    } finally {
+      unlock();
+    }
   }
 
   async close(): Promise<void> {
-    // TODO(AJS-129): add lock to agent activity core lifecycle
-    if (!this._draining) {
-      this.logger.warn('task closing without draining');
+    const unlock = await this.lock.lock();
+    try {
+      if (!this._draining) {
+        this.logger.warn('task closing without draining');
+      }
+
+      await this.audioRecognition?.close();
+      await this._mainTask?.cancelAndWait();
+
+      this.agent._agentActivity = undefined;
+    } finally {
+      unlock();
     }
-
-    await this.audioRecognition?.close();
-    await this._mainTask?.cancelAndWait();
-
-    this.agent._agentActivity = undefined;
   }
 }
