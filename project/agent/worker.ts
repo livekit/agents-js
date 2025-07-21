@@ -27,8 +27,7 @@ export default defineAgent({
     await ctx.connect();
 
     const agent = new voice.Agent({
-      instructions:
-        "You are a helpful assistant, you can hear the user's message and respond to it.",
+      instructions: "You are a helpful, you can hear the user's message and respond to it.",
     });
 
     const vad = ctx.proc.userData.vad! as silero.VAD;

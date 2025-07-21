@@ -3,10 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx worker.ts dev --log-level=info",
-    "dev:watch": "nodemon --exec tsx worker.ts dev --log-level=info"
+    "dev": "nodemon --exec tsx worker.ts dev --log-level=info"
   },
   "dependencies": {
     "@livekit/agents": "workspace:*",
