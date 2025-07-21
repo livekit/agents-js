@@ -223,7 +223,7 @@ export async function downloadFileToCacheDir(
     branchHeadCommit = revision;
     const pointerPath = getFilePointer(storageFolder, revision, params.path);
     if (await exists(pointerPath, true)) {
-      logger.info(
+      logger.debug(
         { pointerPath, commitHash: branchHeadCommit },
         'File found in cache (commit hash)',
       );
@@ -238,7 +238,7 @@ export async function downloadFileToCacheDir(
     // Check with revision as-is (in case it's a commit hash)
     const directPath = getFilePointer(storageFolder, revision, params.path);
     if (await exists(directPath, true)) {
-      logger.info({ directPath }, 'File found in cache (direct path)');
+      logger.debug({ directPath }, 'File found in cache (direct path)');
       return directPath;
     }
 
@@ -251,7 +251,7 @@ export async function downloadFileToCacheDir(
         logger.debug({ revision, resolvedHash }, 'Resolved revision to commit hash from refs');
         const resolvedPath = getFilePointer(storageFolder, resolvedHash, params.path);
         if (await exists(resolvedPath, true)) {
-          logger.info({ resolvedPath, resolvedHash }, 'File found in cache (via refs)');
+          logger.debug({ resolvedPath, resolvedHash }, 'File found in cache (via refs)');
           return resolvedPath;
         }
       } catch {
@@ -271,13 +271,13 @@ export async function downloadFileToCacheDir(
       throw new Error(`Failed to resolve revision ${revision} to commit hash`);
     }
     branchHeadCommit = headCommit;
-    logger.info({ revision, branchHeadCommit }, 'Resolved revision to branch HEAD commit');
+    logger.debug({ revision, branchHeadCommit }, 'Resolved revision to branch HEAD commit');
   }
 
   // Check if file exists with the branch HEAD commit
   const pointerPath = getFilePointer(storageFolder, branchHeadCommit, params.path);
   if (await exists(pointerPath, true)) {
-    logger.info({ pointerPath, branchHeadCommit }, 'File found in cache (branch HEAD)');
+    logger.debug({ pointerPath, branchHeadCommit }, 'File found in cache (branch HEAD)');
 
     await saveRevisionMapping({
       storageFolder,
@@ -334,14 +334,14 @@ export async function downloadFileToCacheDir(
   // We might already have the blob but not the pointer
   // shortcut the download if needed
   if (await exists(blobPath)) {
-    logger.info({ blobPath, etag }, 'Blob already exists in cache, creating symlink only');
+    logger.debug({ blobPath, etag }, 'Blob already exists in cache, creating symlink only');
     // create symlinks in snapshot folder to blob object
     await createSymlink(blobPath, pointerPath);
     return pointerPath;
   }
 
   const incomplete = `${blobPath}.incomplete`;
-  logger.info({ path: params.path, incomplete }, 'Starting file download');
+  logger.debug({ path: params.path, incomplete }, 'Starting file download');
 
   // Use enhanced download with retry - use branch HEAD commit for download
   const blob: Blob | null = await downloadFile({
@@ -373,6 +373,6 @@ export async function downloadFileToCacheDir(
     logger,
   });
 
-  logger.info({ pointerPath, size: blob.size }, 'File download completed successfully');
+  logger.debug({ pointerPath, size: blob.size }, 'File download completed successfully');
   return pointerPath;
 }
