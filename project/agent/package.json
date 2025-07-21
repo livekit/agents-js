@@ -1,0 +1,24 @@
+{
+  "name": "agent-worker",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx worker.ts dev --log-level=info"
+  },
+  "dependencies": {
+    "@livekit/agents": "workspace:*",
+    "@livekit/agents-plugin-deepgram": "workspace:*",
+    "@livekit/agents-plugin-elevenlabs": "workspace:*",
+    "@livekit/agents-plugin-livekit": "workspace:*",
+    "@livekit/agents-plugin-openai": "workspace:*",
+    "@livekit/agents-plugin-silero": "workspace:*",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.6.2",
+    "typescript": "^5.4.5"
+  }
+}

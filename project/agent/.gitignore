@@ -1,0 +1,18 @@
+# Environment files
+.env.local
+.env
+
+# Build outputs
+dist/
+*.js.map
+
+# Node modules
+node_modules/
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db 

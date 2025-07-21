@@ -214,13 +214,13 @@ importers:
         version: 0.13.13
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.15.30)
+        version: 7.43.7(@types/node@24.0.15)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@24.0.15))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -245,13 +245,13 @@ importers:
         version: 0.13.13
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.15.30)
+        version: 7.43.7(@types/node@24.0.15)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@24.0.15))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -276,13 +276,13 @@ importers:
         version: 0.13.13
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.15.30)
+        version: 7.43.7(@types/node@24.0.15)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@24.0.15))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -304,13 +304,13 @@ importers:
         version: link:../../agents
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.15.30)
+        version: 7.43.7(@types/node@24.0.15)
       onnxruntime-common:
         specifier: ^1.19.2
         version: 1.20.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@24.0.15))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -335,13 +335,13 @@ importers:
         version: 0.13.13
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.15.30)
+        version: 7.43.7(@types/node@24.0.15)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@24.0.15))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -375,13 +375,13 @@ importers:
         version: 0.13.13
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.15.30)
+        version: 7.43.7(@types/node@24.0.15)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@24.0.15))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -406,13 +406,13 @@ importers:
         version: 0.13.13
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.15.30)
+        version: 7.43.7(@types/node@24.0.15)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@24.0.15))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -434,7 +434,7 @@ importers:
         version: 0.13.13
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.15.30)
+        version: 7.43.7(@types/node@24.0.15)
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
@@ -443,7 +443,7 @@ importers:
         version: 1.20.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@24.0.15))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -474,6 +474,40 @@ importers:
         version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
+        version: 5.4.5
+
+  project/agent:
+    dependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/agents-plugin-deepgram':
+        specifier: workspace:*
+        version: link:../../plugins/deepgram
+      '@livekit/agents-plugin-elevenlabs':
+        specifier: workspace:*
+        version: link:../../plugins/elevenlabs
+      '@livekit/agents-plugin-livekit':
+        specifier: workspace:*
+        version: link:../../plugins/livekit
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../../plugins/openai
+      '@livekit/agents-plugin-silero':
+        specifier: workspace:*
+        version: link:../../plugins/silero
+      dotenv:
+        specifier: ^16.4.5
+        version: 16.6.1
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.10
+        version: 22.15.30
+      tsx:
+        specifier: ^4.6.2
+        version: 4.19.2
+      typescript:
+        specifier: ^5.4.5
         version: 5.4.5
 
 packages:
@@ -1643,6 +1677,9 @@ packages:
   '@types/node@22.15.30':
     resolution: {integrity: sha512-6Q7lr06bEHdlfplU6YRbgG1SFBdlsfNC4/lX+SkhiTs0cpJkOElmWls8PxDFv4yY/xKb8Y6SO0OmSX4wgqTZbA==}
 
+  '@types/node@24.0.15':
+    resolution: {integrity: sha512-oaeTSbCef7U/z7rDeJA138xpG3NuKc64/rZ2qmUFkFJmnMsAPaluIifqyWd8hSSMxyP9oie3dLAqYPblag9KgA==}
+
   '@types/normalize-package-data@2.4.4':
     resolution: {integrity: sha512-37i+OaWTh9qeK4LSHPsyRC7NahnGotNuZvjLSgcPzblpHB3rrCJxAOgI5gCdKm7coonsaX1Of0ILiTcnZjbfxA==}
 
@@ -2215,6 +2252,10 @@ packages:
 
   dotenv@16.0.3:
     resolution: {integrity: sha512-7GO6HghkA5fYG9TYnNxi14/7K9f5occMlp3zXAuSxn7CKCxt9xbNWG7yF8hTCSUchlfWSe3uLmlPfigevRItzQ==}
+    engines: {node: '>=12'}
+
+  dotenv@16.6.1:
+    resolution: {integrity: sha512-uBq4egWHTcTt33a72vpSG0z3HnPuIl6NqYcTrKEg2azoEyl2hpW0zqlxysq2pK9HlDIHyHyakeYaYnSAwd8bow==}
     engines: {node: '>=12'}
 
   dotenv@8.6.0:
@@ -4199,6 +4240,9 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
+  undici-types@7.8.0:
+    resolution: {integrity: sha512-9UJ2xGDvQ43tYyVMpuHlsgApydB8ZKfVYTsLDhXkFL/6gfkp+U8xTGdh8pMJv1SpZna0zxG1DwsKZsreLbXBxw==}
+
   universalify@0.1.2:
     resolution: {integrity: sha512-rBJeI5CXAlmy1pV+617WB9J63U6XcazHHF2f2dbJix4XzpUF0RS3Zbj0FGIOCAva5P/d/GBOYaACQ1w+0azUkg==}
     engines: {node: '>= 4.0.0'}
@@ -5183,6 +5227,14 @@ snapshots:
     transitivePeerDependencies:
       - '@types/node'
 
+  '@microsoft/api-extractor-model@7.28.17(@types/node@24.0.15)':
+    dependencies:
+      '@microsoft/tsdoc': 0.14.2
+      '@microsoft/tsdoc-config': 0.16.2
+      '@rushstack/node-core-library': 4.3.0(@types/node@24.0.15)
+    transitivePeerDependencies:
+      - '@types/node'
+
   '@microsoft/api-extractor@7.43.7(@types/node@22.15.30)':
     dependencies:
       '@microsoft/api-extractor-model': 7.28.17(@types/node@22.15.30)
@@ -5192,6 +5244,24 @@ snapshots:
       '@rushstack/rig-package': 0.5.2
       '@rushstack/terminal': 0.11.0(@types/node@22.15.30)
       '@rushstack/ts-command-line': 4.21.0(@types/node@22.15.30)
+      lodash: 4.17.21
+      minimatch: 3.0.8
+      resolve: 1.22.8
+      semver: 7.5.4
+      source-map: 0.6.1
+      typescript: 5.4.2
+    transitivePeerDependencies:
+      - '@types/node'
+
+  '@microsoft/api-extractor@7.43.7(@types/node@24.0.15)':
+    dependencies:
+      '@microsoft/api-extractor-model': 7.28.17(@types/node@24.0.15)
+      '@microsoft/tsdoc': 0.14.2
+      '@microsoft/tsdoc-config': 0.16.2
+      '@rushstack/node-core-library': 4.3.0(@types/node@24.0.15)
+      '@rushstack/rig-package': 0.5.2
+      '@rushstack/terminal': 0.11.0(@types/node@24.0.15)
+      '@rushstack/ts-command-line': 4.21.0(@types/node@24.0.15)
       lodash: 4.17.21
       minimatch: 3.0.8
       resolve: 1.22.8
@@ -5402,6 +5472,17 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.15.30
 
+  '@rushstack/node-core-library@4.3.0(@types/node@24.0.15)':
+    dependencies:
+      fs-extra: 7.0.1
+      import-lazy: 4.0.0
+      jju: 1.4.0
+      resolve: 1.22.8
+      semver: 7.5.4
+      z-schema: 5.0.5
+    optionalDependencies:
+      '@types/node': 24.0.15
+
   '@rushstack/operation-graph@0.2.19(@types/node@22.15.30)':
     dependencies:
       '@rushstack/node-core-library': 4.3.0(@types/node@22.15.30)
@@ -5421,9 +5502,25 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.15.30
 
+  '@rushstack/terminal@0.11.0(@types/node@24.0.15)':
+    dependencies:
+      '@rushstack/node-core-library': 4.3.0(@types/node@24.0.15)
+      supports-color: 8.1.1
+    optionalDependencies:
+      '@types/node': 24.0.15
+
   '@rushstack/ts-command-line@4.21.0(@types/node@22.15.30)':
     dependencies:
       '@rushstack/terminal': 0.11.0(@types/node@22.15.30)
+      '@types/argparse': 1.0.38
+      argparse: 1.0.10
+      string-argv: 0.3.2
+    transitivePeerDependencies:
+      - '@types/node'
+
+  '@rushstack/ts-command-line@4.21.0(@types/node@24.0.15)':
+    dependencies:
+      '@rushstack/terminal': 0.11.0(@types/node@24.0.15)
       '@types/argparse': 1.0.38
       argparse: 1.0.10
       string-argv: 0.3.2
@@ -5476,6 +5573,11 @@ snapshots:
   '@types/node@22.15.30':
     dependencies:
       undici-types: 6.21.0
+
+  '@types/node@24.0.15':
+    dependencies:
+      undici-types: 7.8.0
+    optional: true
 
   '@types/normalize-package-data@2.4.4': {}
 
@@ -6110,6 +6212,8 @@ snapshots:
       esutils: 2.0.3
 
   dotenv@16.0.3: {}
+
+  dotenv@16.6.1: {}
 
   dotenv@8.6.0: {}
 
@@ -8240,6 +8344,34 @@ snapshots:
       - tsx
       - yaml
 
+  tsup@8.4.0(@microsoft/api-extractor@7.43.7(@types/node@24.0.15))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5):
+    dependencies:
+      bundle-require: 5.1.0(esbuild@0.25.2)
+      cac: 6.7.14
+      chokidar: 4.0.3
+      consola: 3.4.2
+      debug: 4.4.0
+      esbuild: 0.25.2
+      joycon: 3.1.1
+      picocolors: 1.1.1
+      postcss-load-config: 6.0.1(postcss@8.4.38)(tsx@4.19.2)
+      resolve-from: 5.0.0
+      rollup: 4.40.0
+      source-map: 0.8.0-beta.0
+      sucrase: 3.35.0
+      tinyexec: 0.3.2
+      tinyglobby: 0.2.12
+      tree-kill: 1.2.2
+    optionalDependencies:
+      '@microsoft/api-extractor': 7.43.7(@types/node@24.0.15)
+      postcss: 8.4.38
+      typescript: 5.4.5
+    transitivePeerDependencies:
+      - jiti
+      - supports-color
+      - tsx
+      - yaml
+
   tsx@4.19.2:
     dependencies:
       esbuild: 0.23.1
@@ -8356,6 +8488,9 @@ snapshots:
   undici-types@5.26.5: {}
 
   undici-types@6.21.0: {}
+
+  undici-types@7.8.0:
+    optional: true
 
   universalify@0.1.2: {}
 

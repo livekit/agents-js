@@ -2,3 +2,4 @@ packages:
   - "agents"
   - "plugins/*"
   - "examples"
+  - "project/agent"
