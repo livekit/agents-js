@@ -4,6 +4,6 @@
     "next/typescript"
   ],
   "rules": {
-    "prettier/prettier": "on"
+    "prettier/prettier": "error"
   }
 } 
