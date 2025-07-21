@@ -28,11 +28,11 @@ import type {
   TTSMetrics,
   VADMetrics,
 } from '../metrics/base.js';
-import type { STT, SpeechEvent } from '../stt/stt.js';
+import { STT, type SpeechEvent } from '../stt/stt.js';
 import { splitWords } from '../tokenize/basic/word.js';
-import type { TTS } from '../tts/tts.js';
+import { TTS } from '../tts/tts.js';
 import { Future, Task } from '../utils.js';
-import type { VAD, VADEvent } from '../vad.js';
+import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import { StopResponse, asyncLocalStorage } from './agent.js';
 import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
@@ -118,7 +118,8 @@ export class AgentActivity implements RecognitionHooks {
         this.realtimeSession.on('input_audio_transcription_completed', (ev) =>
           this.onInputAudioTranscriptionCompleted(ev),
         );
-        // TODO(shubhra): add metrics_collected and error handlers
+        this.realtimeSession.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
+        // TODO(shubhra): add error handlers
 
         removeInstructions(this.agent._chatCtx);
         try {
@@ -148,6 +149,23 @@ export class AgentActivity implements RecognitionHooks {
         } catch (error) {
           this.logger.error('failed to update the instructions', error);
         }
+      }
+
+      // metrics and error handling
+      if (this.llm instanceof LLM) {
+        this.llm.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
+      }
+
+      if (this.stt instanceof STT) {
+        this.stt.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
+      }
+
+      if (this.tts instanceof TTS) {
+        this.tts.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
+      }
+
+      if (this.vad instanceof VAD) {
+        this.vad.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
       }
 
       this.audioRecognition = new AudioRecognition({

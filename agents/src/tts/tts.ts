@@ -35,12 +35,8 @@ export interface TTSCapabilities {
   streaming: boolean;
 }
 
-export enum TTSEvent {
-  METRICS_COLLECTED,
-}
-
 export type TTSCallbacks = {
-  [TTSEvent.METRICS_COLLECTED]: (metrics: TTSMetrics) => void;
+  ['metrics_collected']: (metrics: TTSMetrics) => void;
 };
 
 /**
@@ -187,7 +183,7 @@ export abstract class SynthesizeStream
           label: this.#tts.label,
           streamed: false,
         };
-        this.#tts.emit(TTSEvent.METRICS_COLLECTED, metrics);
+        this.#tts.emit('metrics_collected', metrics);
       }
     };
 
@@ -335,7 +331,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       label: this.#tts.label,
       streamed: false,
     };
-    this.#tts.emit(TTSEvent.METRICS_COLLECTED, metrics);
+    this.#tts.emit('metrics_collected', metrics);
   }
 
   /** Collect every frame into one in a single call */

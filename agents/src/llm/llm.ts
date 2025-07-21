@@ -28,12 +28,8 @@ export interface ChatChunk {
   usage?: CompletionUsage;
 }
 
-export enum LLMEvent {
-  METRICS_COLLECTED,
-}
-
 export type LLMCallbacks = {
-  [LLMEvent.METRICS_COLLECTED]: (metrics: LLMMetrics) => void;
+  ['metrics_collected']: (metrics: LLMMetrics) => void;
 };
 
 export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCallbacks>) {
@@ -118,7 +114,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       tokensPerSecond:
         (usage?.completionTokens || 0) / Math.trunc(Number(duration / BigInt(1000000000))),
     };
-    this.#llm.emit(LLMEvent.METRICS_COLLECTED, metrics);
+    this.#llm.emit('metrics_collected', metrics);
   }
 
   /** The function context of this stream. */

@@ -19,8 +19,8 @@ export class StreamAdapter extends STT {
     this.#vad = vad;
     this.label = `stt.StreamAdapter<${this.#stt.label}>`;
 
-    this.#stt.on(SpeechEventType.METRICS_COLLECTED, (metrics) => {
-      this.emit(SpeechEventType.METRICS_COLLECTED, metrics);
+    this.#stt.on('metrics_collected', (metrics) => {
+      this.emit('metrics_collected', metrics);
     });
   }
 
