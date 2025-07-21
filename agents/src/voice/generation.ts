@@ -86,13 +86,9 @@ export class _SanitizedOutput {
 }
 
 function isValidToolOutput(toolOutput: unknown): boolean {
-  const validTypes = ['string', 'number', 'boolean'];
+  const validTypes = ['string', 'number', 'boolean', undefined, null];
 
   if (validTypes.includes(typeof toolOutput)) {
-    return true;
-  }
-
-  if (toolOutput === undefined || toolOutput === null) {
     return true;
   }
 
@@ -309,7 +305,7 @@ export function createToolOutput(params: {
         callId: toolCall.callId,
         output: finalOutput,
       },
-      `AI function ${toolCall.name} returned an invalid output ${JSON.stringify(finalOutput)}`,
+      `AI function ${toolCall.name} returned an invalid output`,
     );
     return ToolExecutionOutput.create({
       toolCall: FunctionCall.create({ ...toolCall }),

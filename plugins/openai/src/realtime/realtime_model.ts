@@ -5,7 +5,6 @@ import { AudioByteStream, Future, Queue, llm, log, shortuuid, stream } from '@li
 import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
-import { delay } from '@std/async';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
@@ -407,40 +406,14 @@ export class RealtimeSession extends llm.RealtimeSession {
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
     const unlock = await this.updateChatCtxLock.lock();
     const events = this.createChatCtxUpdateEvents(_chatCtx);
-    const futures: Future<void>[] = [];
-
     for (const event of events) {
-      const future = new Future<void>();
-      futures.push(future);
-
-      if (event.type === 'conversation.item.create') {
-        this.itemCreateFutures[event.item.id] = future;
-      } else if (event.type == 'conversation.item.delete') {
-        this.itemDeleteFutures[event.item_id] = future;
-      }
-
+      // TODO(AJS-170): handle item create/delete events
       this.sendEvent(event);
     }
 
-    if (futures.length === 0) {
-      unlock();
-      return;
-    }
-
-    try {
-      // wait for futures to resolve or timeout
-      await Promise.race([
-        Promise.all(futures),
-        delay(5000).then(() => {
-          throw new Error('Chat ctx update events timed out');
-        }),
-      ]);
-    } catch (e) {
-      this.#logger.error((e as Error).message);
-      throw e;
-    } finally {
-      unlock();
-    }
+    // TODO(AJS-170): properly wait for the event futures
+    unlock();
+    return;
   }
 
   private createChatCtxUpdateEvents(
@@ -479,7 +452,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       events.push({
         type: 'conversation.item.create',
         item: livekitItemToOpenAIItem(chatItem),
-        previous_item_id: previousId ?? undefined,
+        previous_item_id: previousId,
         event_id: shortuuid('chat_ctx_create_'),
       } as api_proto.ConversationItemCreateEvent);
     }
@@ -879,10 +852,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const fut = this.itemCreateFutures[event.item.id];
-    this.#logger.debug({ fut }, 'item create future');
     if (fut) {
       fut.resolve();
-      delete this.itemCreateFutures[event.item.id];
     }
   }
 
@@ -898,10 +869,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const fut = this.itemDeleteFutures[event.item_id];
-    this.#logger.debug({ fut }, 'item delete future');
     if (fut) {
       fut.resolve();
-      delete this.itemDeleteFutures[event.item_id];
     }
   }
 
