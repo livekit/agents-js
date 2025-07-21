@@ -1643,6 +1643,7 @@ export class AgentActivity implements RecognitionHooks {
         this.vad.off('metrics_collected', this.onMetricsCollected);
       }
 
+      await this.realtimeSession?.close();
       await this.audioRecognition?.close();
       await this._mainTask?.cancelAndWait();
 
