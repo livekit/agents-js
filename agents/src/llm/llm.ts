@@ -18,6 +18,7 @@ export interface ChoiceDelta {
 export interface CompletionUsage {
   completionTokens: number;
   promptTokens: number;
+  promptCachedTokens: number;
   totalTokens: number;
 }
 
@@ -103,14 +104,16 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
 
     const duration = process.hrtime.bigint() - startTime;
     const metrics: LLMMetrics = {
+      type: 'llm_metrics',
       timestamp: Date.now(),
       requestId,
       ttft: ttft === BigInt(-1) ? -1 : Math.trunc(Number(ttft / BigInt(1000000))),
       duration: Math.trunc(Number(duration / BigInt(1000000))),
-      cancelled: false, // XXX(nbsp)
+      cancelled: this.abortController.signal.aborted,
       label: this.label,
       completionTokens: usage?.completionTokens || 0,
       promptTokens: usage?.promptTokens || 0,
+      promptCachedTokens: usage?.promptCachedTokens || 0,
       totalTokens: usage?.totalTokens || 0,
       tokensPerSecond:
         (usage?.completionTokens || 0) / Math.trunc(Number(duration / BigInt(1000000000))),
