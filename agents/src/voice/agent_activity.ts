@@ -259,7 +259,12 @@ export class AgentActivity implements RecognitionHooks {
       addToChatCtx?: boolean;
     },
   ): SpeechHandle {
-    let { audio, allowInterruptions, addToChatCtx = true } = options ?? {};
+    const {
+      audio,
+      allowInterruptions: defaultAllowInterruptions,
+      addToChatCtx = true,
+    } = options ?? {};
+    let allowInterruptions = defaultAllowInterruptions;
 
     // TODO(AJS-185): support audio output audio enabled flag
     if (!audio && !this.tts && this.agentSession._audioOutput) {
@@ -567,7 +572,16 @@ export class AgentActivity implements RecognitionHooks {
     toolChoice?: ToolChoice;
     allowInterruptions?: boolean;
   }): SpeechHandle {
-    let { userMessage, chatCtx, instructions, toolChoice, allowInterruptions } = options;
+    const {
+      userMessage,
+      chatCtx,
+      instructions,
+      toolChoice: defaultToolChoice,
+      allowInterruptions: defaultAllowInterruptions,
+    } = options;
+
+    let toolChoice = defaultToolChoice;
+    let allowInterruptions = defaultAllowInterruptions;
 
     if (
       this.llm instanceof RealtimeModel &&
