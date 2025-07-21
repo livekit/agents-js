@@ -7,6 +7,7 @@ import {
   WorkerOptions,
   cli,
   defineAgent,
+  metrics,
   voice,
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
@@ -36,6 +37,13 @@ export default defineAgent({
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
       turnDetection: new livekit.turnDetector.EnglishModel(),
+    });
+
+    const usageCollector = new metrics.UsageCollector();
+
+    session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
+      metrics.logMetrics(ev.metrics);
+      usageCollector.collect(ev.metrics);
     });
 
     await session.start({
