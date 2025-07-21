@@ -3,6 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
 import { log } from './log.js';
+import type { AudioBuffer } from './utils.js';
+
+export function calculateAudioDuration(frame: AudioBuffer) {
+  // TODO(AJS-102): use frame.durationMs once available in rtc-node
+  return Array.isArray(frame)
+    ? frame.reduce((sum, a) => sum + a.samplesPerChannel / a.sampleRate, 0)
+    : frame.samplesPerChannel / frame.sampleRate;
+}
 
 /** AudioByteStream translates between LiveKit AudioFrame packets and raw byte data. */
 export class AudioByteStream {
