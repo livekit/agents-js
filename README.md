@@ -42,7 +42,7 @@ To install the core Agents library as well as plugins in your workspace, run:
 git clone https://github.com/livekit/agents-js.git
 git checkout dev-1.0
 ```
-**Note**: You should not use the `main` branch for development, and note that `dev-1.0` is not backward-compatible.
+**Note**: `main` branch only support `0.x`, `dev-1.0` is not backward-compatible with `main`.
 
 - Install `pnpm` if you haven't already:
 ```bash
