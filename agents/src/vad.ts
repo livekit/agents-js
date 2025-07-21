@@ -152,6 +152,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
           inferenceCount++;
           if (inferenceCount >= 1 / this.#vad.capabilities.updateInterval) {
             this.#vad.emit(VADEventType.METRICS_COLLECTED, {
+              type: 'vad_metrics',
               timestamp: Date.now(),
               idleTime: Math.trunc(
                 Number((process.hrtime.bigint() - this.#lastActivityTime) / BigInt(1000000)),
