@@ -1619,6 +1619,30 @@ export class AgentActivity implements RecognitionHooks {
         this.logger.warn('task closing without draining');
       }
 
+      // Unregister event handlers to prevent duplicate metrics
+      if (this.llm instanceof LLM) {
+        this.llm.off('metrics_collected', this.onMetricsCollected);
+      }
+      if (this.realtimeSession) {
+        this.realtimeSession.off('generation_created', this.onGenerationCreated);
+        this.realtimeSession.off('input_speech_started', this.onInputSpeechStarted);
+        this.realtimeSession.off('input_speech_stopped', this.onInputSpeechStopped);
+        this.realtimeSession.off(
+          'input_audio_transcription_completed',
+          this.onInputAudioTranscriptionCompleted,
+        );
+        this.realtimeSession.off('metrics_collected', this.onMetricsCollected);
+      }
+      if (this.stt instanceof STT) {
+        this.stt.off('metrics_collected', this.onMetricsCollected);
+      }
+      if (this.tts instanceof TTS) {
+        this.tts.off('metrics_collected', this.onMetricsCollected);
+      }
+      if (this.vad instanceof VAD) {
+        this.vad.off('metrics_collected', this.onMetricsCollected);
+      }
+
       await this.audioRecognition?.close();
       await this._mainTask?.cancelAndWait();
 
