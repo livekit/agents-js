@@ -286,24 +286,28 @@ export interface InputAudioBufferClearEvent extends BaseClientEvent {
 }
 
 export interface UserItemCreate {
+  id: string;
   type: 'message';
   role: 'user';
   content: (InputTextContent | InputAudioContent)[];
 }
 
 export interface AssistantItemCreate {
+  id: string;
   type: 'message';
   role: 'assistant';
   content: TextContent[];
 }
 
 export interface SystemItemCreate {
+  id: string;
   type: 'message';
   role: 'system';
   content: InputTextContent[];
 }
 
 export interface FunctionCallOutputItemCreate {
+  id: string;
   type: 'function_call_output';
   call_id: string;
   output: string;
