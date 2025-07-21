@@ -84,8 +84,10 @@ export default defineAgent({
     const session = new voice.AgentSession({
       vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new deepgram.STT(),
-      llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
+      llm: new openai.LLM(),
+      // to use realtime model, replace the stt, llm, tts and vad with the following
+      // llm: new openai.realtime.RealtimeModel(),
       userData: userdata,
       turnDetection: new livekit.turnDetector.EnglishModel(),
     });
