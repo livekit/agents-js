@@ -9,8 +9,6 @@ import type { RunContext, UnknownUserData } from '../voice/run_context.js';
 // heavily inspired by Vercel AI's `tool()`:
 // https://github.com/vercel/ai/blob/3b0983b/packages/ai/core/tool/tool.ts
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 const TOOL_SYMBOL = Symbol('tool');
 const FUNCTION_TOOL_SYMBOL = Symbol('function_tool');
 const PROVIDER_DEFINED_TOOL_SYMBOL = Symbol('provider_defined_tool');
@@ -26,6 +24,7 @@ export type JSONObject = {
 };
 
 // TODO(AJS-111): support Zod cross-version compatibility, raw JSON schema, both strict and non-strict versions
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ToolInputSchema<T extends JSONObject> = ZodObject<any, any, any, T, T> | JSONSchema7;
 
 export type ToolType = 'function' | 'provider-defined';
@@ -60,11 +59,12 @@ export interface AgentHandoff {
   /**
    * The return value of the tool.
    */
-  returns?: any;
+  returns?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
   [HANDOFF_SYMBOL]: true;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function handoff(options: { agent: Agent; returns?: any }): AgentHandoff {
   return {
     agent: options.agent,
@@ -191,6 +191,7 @@ export function tool({
   config: Record<string, unknown>;
 }): ProviderDefinedTool;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function tool(tool: any): any {
   if (tool.execute !== undefined) {
     // Default parameters to z.object({}) if not provided
@@ -228,26 +229,31 @@ export function tool(tool: any): any {
   throw new Error('Invalid tool');
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isTool(tool: any): tool is Tool {
   return tool && tool[TOOL_SYMBOL] === true;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isFunctionTool(tool: any): tool is FunctionTool<any, any, any> {
   const isTool = tool && tool[TOOL_SYMBOL] === true;
   const isFunctionTool = tool[FUNCTION_TOOL_SYMBOL] === true;
   return isTool && isFunctionTool;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isProviderDefinedTool(tool: any): tool is ProviderDefinedTool {
   const isTool = tool && tool[TOOL_SYMBOL] === true;
   const isProviderDefinedTool = tool[PROVIDER_DEFINED_TOOL_SYMBOL] === true;
   return isTool && isProviderDefinedTool;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isToolError(error: any): error is ToolError {
   return error && error[TOOL_ERROR_SYMBOL] === true;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isAgentHandoff(handoff: any): handoff is AgentHandoff {
   return handoff && handoff[HANDOFF_SYMBOL] === true;
 }
