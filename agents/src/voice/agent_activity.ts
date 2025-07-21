@@ -221,6 +221,12 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  updateOptions({ toolChoice }: { toolChoice?: ToolChoice }): void {
+    if (this.realtimeSession) {
+      this.realtimeSession.updateOptions({ toolChoice });
+    }
+  }
+
   updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
     // TODO(AJS-164): might need to tee the streams here.
     if (this.realtimeSession) {
@@ -1370,7 +1376,7 @@ export class AgentActivity implements RecognitionHooks {
       // TODO(brian): add tracing span
     }
 
-    // mark playout must be done before _set_chat_message
+    // mark the playout done before waiting for the tool execution
     speechHandle._markPlayoutDone();
     // TODO(brian): close tees
 
@@ -1474,23 +1480,51 @@ export class AgentActivity implements RecognitionHooks {
 
     const toolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
     this.createSpeechTask({
-      promise: this.realtimeReplyTask(replySpeechHandle, { toolChoice }),
+      promise: this.realtimeReplyTask({
+        speechHandle: replySpeechHandle,
+        modelSettings: { toolChoice },
+      }),
       ownedSpeechHandle: replySpeechHandle,
       name: 'AgentActivity.realtime_reply',
     });
 
-    this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
+    this.scheduleSpeech(replySpeechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
   }
 
-  private async realtimeReplyTask(
-    speechHandle: SpeechHandle,
-    modelSettings: ModelSettings,
-  ): Promise<void> {
-    this.logger.info(
-      { speech_id: speechHandle.id, tool_choice: modelSettings.toolChoice },
-      'realtime reply task started',
-    );
-    // TODO(AJS-117): implement realtime reply task
+  private async realtimeReplyTask({
+    speechHandle,
+    modelSettings: { toolChoice },
+    userInput,
+    instructions,
+  }: {
+    speechHandle: SpeechHandle;
+    modelSettings: ModelSettings;
+    userInput?: string;
+    instructions?: string;
+  }): Promise<void> {
+    if (!this.realtimeSession) {
+      throw new Error('realtime session is not available');
+    }
+
+    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
+
+    if (userInput) {
+      const chatCtx = this.realtimeSession.chatCtx.copy();
+      const message = chatCtx.addMessage({
+        role: 'user',
+        content: userInput,
+      });
+      await this.realtimeSession.updateChatCtx(chatCtx);
+      this.agent._chatCtx.insert(message);
+      this.agentSession._conversationItemAdded(message);
+    }
+
+    if (toolChoice) {
+      this.realtimeSession.updateOptions({ toolChoice });
+    }
+
+    const generationEvent = await this.realtimeSession.generateReply(instructions);
+    await this.realtimeGenerationTask(speechHandle, generationEvent, { toolChoice });
   }
 
   private scheduleSpeech(

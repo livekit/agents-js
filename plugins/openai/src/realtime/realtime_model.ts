@@ -19,7 +19,7 @@ interface RealtimeOptions {
   model: api_proto.Model;
   voice: api_proto.Voice;
   temperature: number;
-  toolChoice: llm.ToolChoice;
+  toolChoice?: llm.ToolChoice;
   inputAudioTranscription?: api_proto.InputAudioTranscription | null;
   // TODO(shubhra): add inputAudioNoiseReduction
   turnDetection?: api_proto.TurnDetectionType | null;
@@ -531,6 +531,21 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.instructions = _instructions;
   }
 
+  updateOptions({ toolChoice }: { toolChoice?: llm.ToolChoice }): void {
+    const options: api_proto.SessionUpdateEvent['session'] = {};
+
+    this.oaiRealtimeModel._options.toolChoice = toolChoice;
+    options.tool_choice = toOaiToolChoice(toolChoice);
+
+    // TODO(brian): add other options here
+
+    this.sendEvent({
+      type: 'session.update',
+      session: options,
+      event_id: shortuuid('options_update_'),
+    });
+  }
+
   pushAudio(frame: AudioFrame): void {
     for (const f of this.resampleAudio(frame)) {
       for (const nf of this.bstream.write(f.data.buffer)) {
@@ -561,7 +576,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.pushedDurationMs = 0;
   }
 
-  async generateReply(instructions: string): Promise<llm.GenerationCreatedEvent> {
+  async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
     const handle = this.createResponse({ instructions, userInitiated: true });
     this.textModeRecoveryRetries = 0;
     return handle.doneFut.await;
@@ -785,20 +800,20 @@ export class RealtimeSession extends llm.RealtimeSession {
       _createdTimestamp: Date.now(),
     };
 
-    if (
-      event.response.metadata &&
-      typeof event.response.metadata === 'object' &&
-      event.response.metadata['client_event_id']
-    ) {
-      const clientEventId = event.response.metadata['client_event_id'];
-      const handle = this.responseCreatedFutures[clientEventId];
+    if (!event.response.metadata || !event.response.metadata.client_event_id) return;
 
-      // set key to the response id
-      if (handle) {
-        delete this.responseCreatedFutures[clientEventId];
-        this.responseCreatedFutures[event.response.id] = handle;
-      }
-    }
+    const handle = this.responseCreatedFutures[event.response.metadata.client_event_id];
+    if (!handle) return;
+
+    delete this.responseCreatedFutures[event.response.metadata.client_event_id];
+
+    // set key to the response id
+    this.responseCreatedFutures[event.response.id] = handle;
+
+    // the generation_created event is emitted when
+    // 1. the response is not a message on response.output_item.added event
+    // 2. the content is audio on response.content_part.added event
+    // will try to recover from text response on response.content_part.done event
   }
 
   private handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
@@ -1102,10 +1117,15 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.responseCreatedFutures[eventId] = handle;
     }
 
+    const response: api_proto.ResponseCreateEvent['response'] = {};
+    if (instructions) response.instructions = instructions;
+    if (userInitiated) response.metadata = { client_event_id: eventId };
+
     this.sendEvent({
       type: 'response.create',
       event_id: eventId,
-    } as api_proto.ResponseCreateEvent);
+      response: Object.keys(response).length > 0 ? response : undefined,
+    });
 
     return handle;
   }
@@ -1243,7 +1263,7 @@ function createMockAudioItem(durationSeconds: number = 2): llm.ChatMessage {
   });
 }
 
-function toOaiToolChoice(toolChoice: llm.ToolChoice | null): api_proto.ToolChoice {
+function toOaiToolChoice(toolChoice?: llm.ToolChoice): api_proto.ToolChoice {
   if (typeof toolChoice === 'string') {
     return toolChoice;
   }
