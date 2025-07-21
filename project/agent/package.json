@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "node dist/index.js",
-    "dev": "nodemon --exec tsx worker.ts dev --log-level=info"
+    "start": "node dist/index.js", 
+    "dev": "nodemon --exec tsx worker.ts dev --log-level=info",
+    "lint": "echo 'No linting configured for agent-worker'"
   },
   "dependencies": {
     "@livekit/agents": "workspace:*",
