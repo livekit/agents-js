@@ -37,6 +37,13 @@ popular LLMs.
 
 To install the core Agents library as well as plugins in your workspace, run:
 
+- Clone the repository:
+```bash
+git clone https://github.com/livekit/agents-js.git
+git checkout dev-1.0
+```
+**Note**: You should not use the `main` branch for development, and note that `dev-1.0` is not backwards compatible.
+
 - Install `pnpm` if you haven't already:
 ```bash
 npm install -g pnpm
@@ -59,6 +66,11 @@ export ELEVEN_API_KEY=your-eleven-api-key
 ```
 
 or directly save it to your `~/.zshrc` file to make it permanent.
+
+- Install dependencies:
+```bash
+pnpm install
+```
 
 - Build the workspace:
 ```bash
