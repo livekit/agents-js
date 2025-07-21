@@ -11,11 +11,11 @@ pnpm install
 
 3. Run in development mode:
 ```bash
-# Normal development mode
+# Agent only (from project/agent directory)
 pnpm dev
 
-# Development mode with hot reload (restarts on file changes)
-pnpm dev:watch
+# Both agent and web with beautiful TUI (from workspace root)
+turbo dev 
 ```
 
 ## Environment Variables
