@@ -11,7 +11,11 @@ pnpm install
 
 3. Run in development mode:
 ```bash
+# Normal development mode
 pnpm dev
+
+# Development mode with hot reload (restarts on file changes)
+pnpm dev:watch
 ```
 
 ## Environment Variables

@@ -24,6 +24,8 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
+    await ctx.connect();
+
     const agent = new voice.Agent({
       instructions:
         "You are a helpful assistant, you can hear the user's message and respond to it.",
@@ -33,7 +35,7 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT(),
+      stt: new deepgram.STT({ sampleRate: 24000 }),
       tts: new elevenlabs.TTS(),
       llm: new openai.LLM(),
       // to use realtime model, replace the stt, llm, tts and vad with the following
@@ -45,9 +47,6 @@ export default defineAgent({
       agent,
       room: ctx.room,
     });
-
-    // join the room when agent is ready
-    await ctx.connect();
 
     session.say('Hello, how can I help you today?');
   },
