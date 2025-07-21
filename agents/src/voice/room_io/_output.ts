@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { RemoteParticipant } from '@livekit/rtc-node';
 import {
   type AudioFrame,
   type Participant,
-  RemoteParticipant,
   type RemoteTrackPublication,
   type Room,
   type TextStreamWriter,

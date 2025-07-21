@@ -63,7 +63,7 @@ export default defineAgent({
       }),
       execute: async ({ room, switchTo }, { ctx }) => {
         ctx.session.generateReply({
-          userInput: 'Tell user that you are turning on the light, wait a moment',
+          userInput: 'Tell user wait a moment for about 10 seconds',
         });
 
         return `The light in the ${room} is now ${switchTo}.`;
@@ -138,8 +138,10 @@ export default defineAgent({
       stt: new deepgram.STT({
         sampleRate: 24000,
       }),
-      llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
+      llm: new openai.LLM(),
+      // to use realtime model, replace the stt, llm, tts and vad with the following
+      // llm: new openai.realtime.RealtimeModel(),
       userData: { number: 0 },
       turnDetection: new livekit.turnDetector.EnglishModel(),
     });

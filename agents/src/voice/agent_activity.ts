@@ -259,10 +259,28 @@ export class AgentActivity implements RecognitionHooks {
       addToChatCtx?: boolean;
     },
   ): SpeechHandle {
-    const { audio, allowInterruptions, addToChatCtx = true } = options ?? {};
+    const {
+      audio,
+      allowInterruptions: defaultAllowInterruptions,
+      addToChatCtx = true,
+    } = options ?? {};
+    let allowInterruptions = defaultAllowInterruptions;
 
+    // TODO(AJS-185): support audio output audio enabled flag
     if (!audio && !this.tts && this.agentSession._audioOutput) {
       throw new Error('trying to generate speech from text without a TTS model');
+    }
+
+    if (
+      this.llm instanceof RealtimeModel &&
+      this.llm.capabilities.turnDetection &&
+      !allowInterruptions
+    ) {
+      this.logger.warn(
+        'the RealtimeModel uses a server-side turn detection, allowInterruptions cannot be false when using VoiceAgent.say(), ' +
+          'disable turnDetection in the RealtimeModel and use VAD on the AgentTask/VoiceAgent instead',
+      );
+      allowInterruptions = true;
     }
 
     const handle = SpeechHandle.create({
@@ -551,24 +569,47 @@ export class AgentActivity implements RecognitionHooks {
     userMessage?: ChatMessage;
     chatCtx?: ChatContext;
     instructions?: string;
-    allowInterruptions?: boolean;
     toolChoice?: ToolChoice;
+    allowInterruptions?: boolean;
   }): SpeechHandle {
-    const { userMessage, chatCtx, instructions, allowInterruptions, toolChoice } = options;
+    const {
+      userMessage,
+      chatCtx,
+      instructions: defaultInstructions,
+      toolChoice: defaultToolChoice,
+      allowInterruptions: defaultAllowInterruptions,
+    } = options;
 
-    // TODO(AJS-32): Add realtime model support for generating a reply
+    let instructions = defaultInstructions;
+    let toolChoice = defaultToolChoice;
+    let allowInterruptions = defaultAllowInterruptions;
 
-    let replyToolChoice = toolChoice;
+    if (
+      this.llm instanceof RealtimeModel &&
+      this.llm.capabilities.turnDetection &&
+      !allowInterruptions
+    ) {
+      this.logger.warn(
+        'the RealtimeModel uses a server-side turn detection, allowInterruptions cannot be false when using VoiceAgent.generateReply(), ' +
+          'disable turnDetection in the RealtimeModel and use VAD on the AgentTask/VoiceAgent instead',
+      );
+      allowInterruptions = true;
+    }
+
+    if (this.llm === undefined) {
+      throw new Error('trying to generate reply without an LLM model');
+    }
+
     const functionCall = asyncLocalStorage.getStore()?.functionCall;
     if (toolChoice === undefined && functionCall !== undefined) {
-      replyToolChoice = 'none';
+      // when generateReply is called inside a tool, set toolChoice to 'none' by default
+      toolChoice = 'none';
     }
 
     const handle = SpeechHandle.create({
       allowInterruptions: allowInterruptions ?? this.allowInterruptions,
-      stepIndex: 0,
-      parent: this.currentSpeech,
     });
+
     this.agentSession.emit(
       AgentSessionEventTypes.SpeechCreated,
       createSpeechCreatedEvent({
@@ -579,20 +620,41 @@ export class AgentActivity implements RecognitionHooks {
     );
     this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
 
-    const task = this.createSpeechTask({
-      promise: this.pipelineReplyTask(
-        handle,
-        chatCtx || this.agent.chatCtx,
-        this.agent.toolCtx,
-        { toolChoice: replyToolChoice },
-        instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
-        userMessage,
-      ),
-      ownedSpeechHandle: handle,
-      name: 'AgentActivity.pipelineReply',
-    });
+    if (this.llm instanceof RealtimeModel) {
+      this.createSpeechTask({
+        promise: this.realtimeReplyTask({
+          speechHandle: handle,
+          // TODO(brian): support llm.ChatMessage for the realtime model
+          userInput: userMessage?.textContent,
+          instructions,
+          modelSettings: { toolChoice },
+        }),
+        ownedSpeechHandle: handle,
+        name: 'AgentActivity.realtimeReply',
+      });
+    } else if (this.llm instanceof LLM) {
+      // instructions used inside generateReply are "extra" instructions.
+      // this matches the behavior of the Realtime API:
+      // https://platform.openai.com/docs/api-reference/realtime-client-events/response/create
+      if (instructions) {
+        instructions = `${this.agent.instructions}\n${instructions}`;
+      }
 
-    task.finally(() => this.onPipelineReplyDone());
+      const task = this.createSpeechTask({
+        promise: this.pipelineReplyTask(
+          handle,
+          chatCtx ?? this.agent.chatCtx,
+          this.agent.toolCtx,
+          { toolChoice },
+          instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
+          userMessage,
+        ),
+        ownedSpeechHandle: handle,
+        name: 'AgentActivity.pipelineReply',
+      });
+
+      task.finally(() => this.onPipelineReplyDone());
+    }
 
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
     return handle;
@@ -700,7 +762,9 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: ModelSettings,
     audio?: ReadableStream<AudioFrame> | null,
   ): Promise<void> {
+    // TODO(AJS-185): support audio output transcription enabled flag
     const transcriptionOutput = this.agentSession._transcriptionOutput;
+    // TODO(AJS-185): support audio output audio enabled flag
     const audioOutput = this.agentSession._audioOutput;
 
     const replyAbortController = new AbortController();
