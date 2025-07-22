@@ -21,19 +21,17 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    const agent = new voice.Agent({
-      instructions:
-        "You are a helpful assistant, you can hear the user's message and respond to it.",
-    });
-
-    const vad = ctx.proc.userData.vad! as silero.VAD;
+    await ctx.connect();
 
     const session = new voice.AgentSession({
-      vad,
+      vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new deepgram.STT(),
       tts: new elevenlabs.TTS(),
-      // llm: new openai.LLM(),
+      // To use OpenAI Realtime API
       llm: new openai.realtime.RealtimeModel({
+        voice: 'alloy',
+        // it's necessary to turn off turn detection in the OpenAI Realtime API in order to use
+        // LiveKit's turn detection model
         turnDetection: null,
         inputAudioTranscription: null,
       }),
@@ -41,12 +39,12 @@ export default defineAgent({
     });
 
     await session.start({
-      agent,
+      agent: new voice.Agent({
+        instructions:
+          "You are a helpful assistant, you can hear the user's message and respond to it.",
+      }),
       room: ctx.room,
     });
-
-    // join the room when agent is ready
-    await ctx.connect();
 
     session.say('Hello, how can I help you today?');
   },

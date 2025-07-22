@@ -29,6 +29,7 @@ import type {
   TTSMetrics,
   VADMetrics,
 } from '../metrics/base.js';
+import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { STT, type SpeechEvent } from '../stt/stt.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS } from '../tts/tts.js';
@@ -80,6 +81,7 @@ export class AgentActivity implements RecognitionHooks {
   private q_updated: Future;
   private speechTasks: Set<Promise<unknown>> = new Set();
   private lock = new Mutex();
+  private audioStream = new DeferredReadableStream<AudioFrame>();
 
   agent: Agent;
   agentSession: AgentSession;
@@ -331,13 +333,22 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
-    // TODO(AJS-164): might need to tee the streams here.
+  attachAudioInput(audioStream: ReadableStream<AudioFrame>): void {
+    this.audioStream.setSource(audioStream);
+
+    const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream.tee();
+
     if (this.realtimeSession) {
-      this.realtimeSession.setInputAudioStream(audioStream);
-    } else if (this.audioRecognition) {
-      this.audioRecognition.setInputAudioStream(audioStream);
+      this.realtimeSession.setInputAudioStream(realtimeAudioStream);
     }
+
+    if (this.audioRecognition) {
+      this.audioRecognition.setInputAudioStream(recognitionAudioStream);
+    }
+  }
+
+  detachAudioInput(): void {
+    this.audioStream.detachSource();
   }
 
   commitUserTurn() {
@@ -1804,6 +1815,7 @@ export class AgentActivity implements RecognitionHooks {
         this.vad.off('metrics_collected', this.onMetricsCollected);
       }
 
+      this.detachAudioInput();
       await this.realtimeSession?.close();
       await this.audioRecognition?.close();
       await this._mainTask?.cancelAndWait();

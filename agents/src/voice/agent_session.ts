@@ -264,7 +264,7 @@ export class AgentSession<
     await this.activity.start();
 
     if (this._audioInput) {
-      this.activity.updateAudioInput(this._audioInput);
+      this.activity.attachAudioInput(this._audioInput);
     }
   }
 
