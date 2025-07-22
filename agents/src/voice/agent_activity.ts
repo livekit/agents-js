@@ -1282,7 +1282,7 @@ export class AgentActivity implements RecognitionHooks {
           }
           outputs.push([msg.messageId, textOut, audioOut]);
         }
-        await Promise.allSettled(forwardTasks);
+        await Promise.allSettled(forwardTasks.map((task) => task.result));
       } catch (error) {
         this.logger.error(error, 'error reading messages from the realtime API');
       } finally {
