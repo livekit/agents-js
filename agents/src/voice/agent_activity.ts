@@ -4,6 +4,7 @@
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { Heap } from 'heap-js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
 import {
@@ -20,11 +21,18 @@ import {
   type ToolContext,
 } from '../llm/index.js';
 import { log } from '../log.js';
-import type { STT, SpeechEvent } from '../stt/stt.js';
+import type {
+  LLMMetrics,
+  RealtimeModelMetrics,
+  STTMetrics,
+  TTSMetrics,
+  VADMetrics,
+} from '../metrics/base.js';
+import { STT, type SpeechEvent } from '../stt/stt.js';
 import { splitWords } from '../tokenize/basic/word.js';
-import type { TTS } from '../tts/tts.js';
+import { TTS } from '../tts/tts.js';
 import { Future, Task } from '../utils.js';
-import type { VAD, VADEvent } from '../vad.js';
+import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import { StopResponse, asyncLocalStorage } from './agent.js';
 import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
@@ -37,6 +45,7 @@ import {
 import {
   AgentSessionEventTypes,
   createFunctionToolsExecutedEvent,
+  createMetricsCollectedEvent,
   createSpeechCreatedEvent,
   createUserInputTranscribedEvent,
 } from './events.js';
@@ -53,6 +62,9 @@ import {
   updateInstructions,
 } from './generation.js';
 import { SpeechHandle } from './speech_handle.js';
+
+// equivalent to Python's contextvars
+const speechHandleStorage = new AsyncLocalStorage<SpeechHandle>();
 
 export class AgentActivity implements RecognitionHooks {
   private static readonly REPLY_TASK_CANCEL_TIMEOUT = 5000;
@@ -106,7 +118,8 @@ export class AgentActivity implements RecognitionHooks {
         this.realtimeSession.on('input_audio_transcription_completed', (ev) =>
           this.onInputAudioTranscriptionCompleted(ev),
         );
-        // TODO(shubhra): add metrics_collected and error handlers
+        this.realtimeSession.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
+        // TODO(shubhra): add error handlers
 
         removeInstructions(this.agent._chatCtx);
         try {
@@ -136,6 +149,23 @@ export class AgentActivity implements RecognitionHooks {
         } catch (error) {
           this.logger.error('failed to update the instructions', error);
         }
+      }
+
+      // metrics and error handling
+      if (this.llm instanceof LLM) {
+        this.llm.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
+      }
+
+      if (this.stt instanceof STT) {
+        this.stt.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
+      }
+
+      if (this.tts instanceof TTS) {
+        this.tts.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
+      }
+
+      if (this.vad instanceof VAD) {
+        this.vad.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
       }
 
       this.audioRecognition = new AudioRecognition({
@@ -306,6 +336,21 @@ export class AgentActivity implements RecognitionHooks {
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
     return handle;
   }
+
+  // -- Metrics and errors --
+
+  private onMetricsCollected = (
+    ev: STTMetrics | TTSMetrics | VADMetrics | LLMMetrics | RealtimeModelMetrics,
+  ) => {
+    const speechHandle = speechHandleStorage.getStore();
+    if (speechHandle && (ev.type === 'llm_metrics' || ev.type === 'tts_metrics')) {
+      ev.speechId = speechHandle.id;
+    }
+    this.agentSession.emit(
+      AgentSessionEventTypes.MetricsCollected,
+      createMetricsCollectedEvent({ metrics: ev }),
+    );
+  };
 
   // -- Realtime Session events --
 
@@ -762,6 +807,8 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: ModelSettings,
     audio?: ReadableStream<AudioFrame> | null,
   ): Promise<void> {
+    speechHandleStorage.enterWith(speechHandle);
+
     // TODO(AJS-185): support audio output transcription enabled flag
     const transcriptionOutput = this.agentSession._transcriptionOutput;
     // TODO(AJS-185): support audio output audio enabled flag
@@ -883,6 +930,8 @@ export class AgentActivity implements RecognitionHooks {
     newMessage?: ChatMessage,
     toolsMessages?: ChatItem[],
   ): Promise<void> {
+    speechHandleStorage.enterWith(speechHandle);
+
     const replyAbortController = new AbortController();
 
     const audioOutput = this.agentSession._audioOutput;
@@ -1209,6 +1258,8 @@ export class AgentActivity implements RecognitionHooks {
     ev: GenerationCreatedEvent,
     modelSettings: ModelSettings,
   ): Promise<void> {
+    speechHandleStorage.enterWith(speechHandle);
+
     if (!this.realtimeSession) {
       throw new Error('realtime session is not initialized');
     }
@@ -1566,6 +1617,8 @@ export class AgentActivity implements RecognitionHooks {
     userInput?: string;
     instructions?: string;
   }): Promise<void> {
+    speechHandleStorage.enterWith(speechHandle);
+
     if (!this.realtimeSession) {
       throw new Error('realtime session is not available');
     }
@@ -1630,6 +1683,31 @@ export class AgentActivity implements RecognitionHooks {
         this.logger.warn('task closing without draining');
       }
 
+      // Unregister event handlers to prevent duplicate metrics
+      if (this.llm instanceof LLM) {
+        this.llm.off('metrics_collected', this.onMetricsCollected);
+      }
+      if (this.realtimeSession) {
+        this.realtimeSession.off('generation_created', this.onGenerationCreated);
+        this.realtimeSession.off('input_speech_started', this.onInputSpeechStarted);
+        this.realtimeSession.off('input_speech_stopped', this.onInputSpeechStopped);
+        this.realtimeSession.off(
+          'input_audio_transcription_completed',
+          this.onInputAudioTranscriptionCompleted,
+        );
+        this.realtimeSession.off('metrics_collected', this.onMetricsCollected);
+      }
+      if (this.stt instanceof STT) {
+        this.stt.off('metrics_collected', this.onMetricsCollected);
+      }
+      if (this.tts instanceof TTS) {
+        this.tts.off('metrics_collected', this.onMetricsCollected);
+      }
+      if (this.vad instanceof VAD) {
+        this.vad.off('metrics_collected', this.onMetricsCollected);
+      }
+
+      await this.realtimeSession?.close();
       await this.audioRecognition?.close();
       await this._mainTask?.cancelAndWait();
 

@@ -2,39 +2,45 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AgentMetrics } from './base.js';
-import { isLLMMetrics, isSTTMetrics, isTTSMetrics } from './utils.js';
 
 export interface UsageSummary {
   llmPromptTokens: number;
+  llmPromptCachedTokens: number;
   llmCompletionTokens: number;
   ttsCharactersCount: number;
   sttAudioDuration: number;
 }
 
 export class UsageCollector {
-  #summary: UsageSummary;
+  private summary: UsageSummary;
 
   constructor() {
-    this.#summary = {
+    this.summary = {
       llmPromptTokens: 0,
+      llmPromptCachedTokens: 0,
       llmCompletionTokens: 0,
       ttsCharactersCount: 0,
       sttAudioDuration: 0,
     };
   }
 
-  collect(metrics: AgentMetrics) {
-    if (isLLMMetrics(metrics)) {
-      this.#summary.llmPromptTokens += metrics.promptTokens;
-      this.#summary.llmCompletionTokens += metrics.completionTokens;
-    } else if (isTTSMetrics(metrics)) {
-      this.#summary.ttsCharactersCount += metrics.charactersCount;
-    } else if (isSTTMetrics(metrics)) {
-      this.#summary.sttAudioDuration += metrics.audioDuration;
+  collect(metrics: AgentMetrics): void {
+    if (metrics.type === 'llm_metrics') {
+      this.summary.llmPromptTokens += metrics.promptTokens;
+      this.summary.llmPromptCachedTokens += metrics.promptCachedTokens;
+      this.summary.llmCompletionTokens += metrics.completionTokens;
+    } else if (metrics.type === 'realtime_model_metrics') {
+      this.summary.llmPromptTokens += metrics.inputTokens;
+      this.summary.llmPromptCachedTokens += metrics.inputTokenDetails.cachedTokens;
+      this.summary.llmCompletionTokens += metrics.outputTokens;
+    } else if (metrics.type === 'tts_metrics') {
+      this.summary.ttsCharactersCount += metrics.charactersCount;
+    } else if (metrics.type === 'stt_metrics') {
+      this.summary.sttAudioDuration += metrics.audioDuration;
     }
   }
 
-  get summary(): UsageSummary {
-    return { ...this.#summary };
+  getSummary(): UsageSummary {
+    return { ...this.summary };
   }
 }

@@ -2,99 +2,54 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { log } from '../log.js';
-import type {
-  AgentMetrics,
-  LLMMetrics,
-  PipelineEOUMetrics,
-  PipelineLLMMetrics,
-  PipelineTTSMetrics,
-  STTMetrics,
-  TTSMetrics,
-  VADMetrics,
-} from './base.js';
+import type { AgentMetrics } from './base.js';
+
+function roundTwoDecimals(value: number) {
+  return Math.round(value * 100) / 100;
+}
 
 export const logMetrics = (metrics: AgentMetrics) => {
   const logger = log();
-  if (isPipelineLLMMetrics(metrics)) {
+  if (metrics.type === 'llm_metrics') {
     logger
       .child({
-        sequenceId: metrics.sequenceId,
-        ttft: metrics.ttft,
+        ttft: roundTwoDecimals(metrics.ttft),
         inputTokens: metrics.promptTokens,
+        promptCachedTokens: metrics.promptCachedTokens,
         outputTokens: metrics.completionTokens,
-        tokensPerSecond: metrics.tokensPerSecond,
-      })
-      .info('Pipeline LLM metrics');
-  } else if (isLLMMetrics(metrics)) {
-    logger
-      .child({
-        ttft: metrics.ttft,
-        inputTokens: metrics.promptTokens,
-        outputTokens: metrics.completionTokens,
-        tokensPerSecond: metrics.tokensPerSecond,
+        tokensPerSecond: roundTwoDecimals(metrics.tokensPerSecond),
       })
       .info('LLM metrics');
-  } else if (isPipelineTTSMetrics(metrics)) {
+  } else if (metrics.type === 'realtime_model_metrics') {
     logger
       .child({
-        sequenceId: metrics.sequenceId,
-        ttfb: metrics.ttfb,
-        audioDuration: metrics.audioDuration,
+        ttft: roundTwoDecimals(metrics.ttft),
+        input_tokens: metrics.inputTokens,
+        cached_input_tokens: metrics.inputTokenDetails.cachedTokens,
+        output_tokens: metrics.outputTokens,
+        total_tokens: metrics.totalTokens,
+        tokens_per_second: roundTwoDecimals(metrics.tokensPerSecond),
       })
-      .info('Pipeline TTS metrics');
-  } else if (isTTSMetrics(metrics)) {
+      .info('RealtimeModel metrics');
+  } else if (metrics.type === 'tts_metrics') {
     logger
       .child({
-        ttfb: metrics.ttfb,
+        ttfb: roundTwoDecimals(metrics.ttfb),
         audioDuration: metrics.audioDuration,
       })
       .info('TTS metrics');
-  } else if (isPipelineEOUMetrics(metrics)) {
+  } else if (metrics.type === 'eou_metrics') {
     logger
       .child({
-        sequenceId: metrics.sequenceId,
-        endOfUtteranceDelay: metrics.endOfUtteranceDelay,
-        transcriptionDelay: metrics.transcriptionDelay,
+        end_of_utterance_delay: roundTwoDecimals(metrics.endOfUtteranceDelay),
+        transcription_delay: roundTwoDecimals(metrics.transcriptionDelay),
       })
-      .info('Pipeline EOU metrics');
-  } else if (isSTTMetrics(metrics)) {
+      .info('EOU metrics');
+  } else if (metrics.type === 'stt_metrics') {
     logger
       .child({
         audioDuration: metrics.audioDuration,
       })
       .info('STT metrics');
   }
-};
-
-export const isLLMMetrics = (metrics: AgentMetrics): metrics is LLMMetrics => {
-  return !!(metrics as LLMMetrics).ttft;
-};
-
-export const isPipelineLLMMetrics = (metrics: AgentMetrics): metrics is PipelineLLMMetrics => {
-  return isLLMMetrics(metrics) && !!(metrics as PipelineLLMMetrics).sequenceId;
-};
-
-export const isVADMetrics = (metrics: AgentMetrics): metrics is VADMetrics => {
-  return !!(metrics as VADMetrics).inferenceCount;
-};
-
-export const isPipelineEOUMetrics = (metrics: AgentMetrics): metrics is PipelineEOUMetrics => {
-  return !!(metrics as PipelineEOUMetrics).endOfUtteranceDelay;
-};
-
-export const isTTSMetrics = (metrics: AgentMetrics): metrics is TTSMetrics => {
-  return !!(metrics as TTSMetrics).ttfb;
-};
-
-export const isPipelineTTSMetrics = (metrics: AgentMetrics): metrics is PipelineTTSMetrics => {
-  return isTTSMetrics(metrics) && !!(metrics as PipelineTTSMetrics).sequenceId;
-};
-
-export const isSTTMetrics = (metrics: AgentMetrics): metrics is STTMetrics => {
-  return !(
-    isLLMMetrics(metrics) ||
-    isVADMetrics(metrics) ||
-    isPipelineEOUMetrics(metrics) ||
-    isTTSMetrics(metrics)
-  );
 };
