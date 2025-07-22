@@ -47,6 +47,27 @@ export interface VADMetrics {
   label: string;
 }
 
+export interface EOUMetrics {
+  timestamp: number;
+  /**
+   * Amount of time between the end of speech from VAD and the decision to end the user's turn.
+   * Set to 0.0 if the end of speech was not detected.
+   */
+  endOfUtteranceDelay: number;
+
+  /**
+   * Time taken to obtain the transcript after the end of the user's speech.
+   * Set to 0.0 if the end of speech was not detected.
+   */
+  transcriptionDelay: number;
+
+  /**
+   * Time taken to invoke the user's `Agent.onUserTurnCompleted` callback.
+   */
+  onUserTurnCompletedDelay: number;
+  speechId: string;
+}
+
 export interface PipelineEOUMetrics {
   /**
    * Unique identifier shared across different metrics to combine related STT, LLM, and TTS metrics
@@ -116,6 +137,7 @@ export type AgentMetrics =
   | LLMMetrics
   | TTSMetrics
   | VADMetrics
+  | EOUMetrics
   | PipelineSTTMetrics
   | PipelineEOUMetrics
   | PipelineLLMMetrics

@@ -20,6 +20,7 @@ import {
   type ToolContext,
 } from '../llm/index.js';
 import { log } from '../log.js';
+import type { EOUMetrics } from '../metrics/base.js';
 import type { STT, SpeechEvent } from '../stt/stt.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import type { TTS } from '../tts/tts.js';
@@ -37,6 +38,7 @@ import {
 import {
   AgentSessionEventTypes,
   createFunctionToolsExecutedEvent,
+  createMetricsCollectedEvent,
   createSpeechCreatedEvent,
   createUserInputTranscribedEvent,
 } from './events.js';
@@ -762,7 +764,22 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    this.generateReply({ userMessage, chatCtx });
+    // Ensure the new message is passed to generateReply
+    // This preserves the original message id, making it easier for users to track responses
+    const speechHandle = this.generateReply({ userMessage, chatCtx });
+
+    const eouMetrics: EOUMetrics = {
+      timestamp: Date.now(),
+      endOfUtteranceDelay: info.endOfUtteranceDelay,
+      transcriptionDelay: info.transcriptionDelay,
+      onUserTurnCompletedDelay: callbackDuration,
+      speechId: speechHandle.id,
+    };
+
+    this.agentSession.emit(
+      AgentSessionEventTypes.MetricsCollected,
+      createMetricsCollectedEvent(eouMetrics),
+    );
   }
 
   private async ttsTask(
