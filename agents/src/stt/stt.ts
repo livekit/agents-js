@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame } from '@livekit/rtc-node';
+import { type AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
@@ -141,14 +141,17 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   protected input = new AsyncIterableQueue<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>();
   protected output = new AsyncIterableQueue<SpeechEvent>();
   protected queue = new AsyncIterableQueue<SpeechEvent>();
+  protected neededSampleRate?: number;
+  protected resampler?: AudioResampler;
   abstract label: string;
   protected closed = false;
   #stt: STT;
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
-  constructor(stt: STT) {
+  constructor(stt: STT, sampleRate?: number) {
     this.#stt = stt;
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
+    this.neededSampleRate = sampleRate;
     this.monitorMetrics();
     this.mainTask();
   }
@@ -205,7 +208,21 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(frame);
+
+    if (this.neededSampleRate && frame.sampleRate !== this.neededSampleRate) {
+      if (!this.resampler) {
+        this.resampler = new AudioResampler(frame.sampleRate, this.neededSampleRate);
+      }
+    }
+
+    if (this.resampler) {
+      const frames = this.resampler.push(frame);
+      for (const frame of frames) {
+        this.input.put(frame);
+      }
+    } else {
+      this.input.put(frame);
+    }
   }
 
   /** Flush the STT, causing it to process all pending text */
