@@ -35,12 +35,8 @@ export interface TTSCapabilities {
   streaming: boolean;
 }
 
-export enum TTSEvent {
-  METRICS_COLLECTED,
-}
-
 export type TTSCallbacks = {
-  [TTSEvent.METRICS_COLLECTED]: (metrics: TTSMetrics) => void;
+  ['metrics_collected']: (metrics: TTSMetrics) => void;
 };
 
 /**
@@ -176,17 +172,18 @@ export abstract class SynthesizeStream
         const text = this.#metricsPendingTexts.shift()!;
         const duration = process.hrtime.bigint() - startTime;
         const metrics: TTSMetrics = {
+          type: 'tts_metrics',
           timestamp: Date.now(),
           requestId,
           ttfb: ttfb === BigInt(-1) ? -1 : Math.trunc(Number(ttfb / BigInt(1000000))),
           duration: Math.trunc(Number(duration / BigInt(1000000))),
           charactersCount: text.length,
           audioDuration,
-          cancelled: false, // XXX(nbsp)
-          label: this.label,
+          cancelled: this.abortController.signal.aborted,
+          label: this.#tts.label,
           streamed: false,
         };
-        this.#tts.emit(TTSEvent.METRICS_COLLECTED, metrics);
+        this.#tts.emit('metrics_collected', metrics);
       }
     };
 
@@ -200,6 +197,7 @@ export abstract class SynthesizeStream
       if (ttfb === BigInt(-1)) {
         ttfb = process.hrtime.bigint() - startTime;
       }
+      // TODO(AJS-102): use frame.durationMs once available in rtc-node
       audioDuration += audio.frame.samplesPerChannel / audio.frame.sampleRate;
       if (audio.final) {
         emit();
@@ -322,17 +320,18 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
 
     const duration = process.hrtime.bigint() - startTime;
     const metrics: TTSMetrics = {
+      type: 'tts_metrics',
       timestamp: Date.now(),
       requestId,
       ttfb: ttfb === BigInt(-1) ? -1 : Math.trunc(Number(ttfb / BigInt(1000000))),
       duration: Math.trunc(Number(duration / BigInt(1000000))),
       charactersCount: this.#text.length,
       audioDuration,
-      cancelled: false, // XXX(nbsp)
-      label: this.label,
+      cancelled: false, // TODO(AJS-186): support ChunkedStream with 1.0 - add this.abortController.signal.aborted here
+      label: this.#tts.label,
       streamed: false,
     };
-    this.#tts.emit(TTSEvent.METRICS_COLLECTED, metrics);
+    this.#tts.emit('metrics_collected', metrics);
   }
 
   /** Collect every frame into one in a single call */

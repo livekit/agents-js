@@ -6,7 +6,6 @@ export {
   type TTSCapabilities,
   type TTSCallbacks,
   TTS,
-  TTSEvent,
   SynthesizeStream,
   ChunkedStream,
 } from './tts.js';
