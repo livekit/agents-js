@@ -384,9 +384,7 @@ export default defineAgent({
     const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT({
-        sampleRate: 24000,
-      }),
+      stt: new deepgram.STT(),
       tts: new elevenlabs.TTS(),
       llm: new openai.LLM(),
       // to use realtime model, replace the stt, llm, tts and vad with the following
