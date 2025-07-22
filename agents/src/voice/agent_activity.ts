@@ -93,6 +93,81 @@ export class AgentActivity implements RecognitionHooks {
 
     this.turnDetectionMode =
       typeof this.turnDetection === 'string' ? this.turnDetection : undefined;
+
+    if (this.turnDetectionMode === 'vad' && this.vad === undefined) {
+      this.logger.warn(
+        'turnDetection is set to "vad", but no VAD model is provided, ignoring the turnDdetection setting',
+      );
+      this.turnDetectionMode = undefined;
+    }
+
+    if (this.turnDetectionMode === 'stt' && this.stt === undefined) {
+      this.logger.warn(
+        'turnDetection is set to "stt", but no STT model is provided, ignoring the turnDetection setting',
+      );
+      this.turnDetectionMode = undefined;
+    }
+
+    if (this.llm instanceof RealtimeModel) {
+      if (this.llm.capabilities.turnDetection && !this.allowInterruptions) {
+        this.logger.warn(
+          'the RealtimeModel uses a server-side turn detection, allowInterruptions cannot be false, ' +
+            'disable turnDetection in the RealtimeModel and use VAD on the AgentSession instead',
+        );
+      }
+
+      if (this.turnDetectionMode === 'realtime_llm' && !this.llm.capabilities.turnDetection) {
+        this.logger.warn(
+          'turnDetection is set to "realtime_llm", but the LLM is not a RealtimeModel or the server-side turn detection is not supported/enabled, ignoring the turnDetection setting',
+        );
+        this.turnDetectionMode = undefined;
+      }
+
+      if (this.turnDetectionMode === 'stt') {
+        this.logger.warn(
+          'turnDetection is set to "stt", but the LLM is a RealtimeModel, ignoring the turnDetection setting',
+        );
+        this.turnDetectionMode = undefined;
+      }
+
+      if (
+        this.turnDetectionMode &&
+        this.turnDetectionMode !== 'realtime_llm' &&
+        this.llm.capabilities.turnDetection
+      ) {
+        this.logger.warn(
+          `turnDetection is set to "${this.turnDetectionMode}", but the LLM is a RealtimeModel and server-side turn detection enabled, ignoring the turnDetection setting`,
+        );
+        this.turnDetectionMode = undefined;
+      }
+
+      // fallback to VAD if server side turn detection is disabled and VAD is available
+      if (
+        !this.llm.capabilities.turnDetection &&
+        this.vad &&
+        this.turnDetectionMode === undefined
+      ) {
+        this.turnDetectionMode = 'vad';
+      }
+    } else if (this.turnDetectionMode === 'realtime_llm') {
+      this.logger.warn(
+        'turnDetection is set to "realtime_llm", but the LLM is not a RealtimeModel',
+      );
+      this.turnDetectionMode = undefined;
+    }
+
+    if (
+      !this.vad &&
+      this.stt &&
+      this.llm instanceof LLM &&
+      this.allowInterruptions &&
+      this.turnDetectionMode === undefined
+    ) {
+      this.logger.warn(
+        'VAD is not set. Enabling VAD is recommended when using LLM and STT ' +
+          'for more responsive interruption handling.',
+      );
+    }
   }
 
   async start(): Promise<void> {
@@ -157,8 +232,6 @@ export class AgentActivity implements RecognitionHooks {
         promise: this.agent.onEnter(),
         name: 'AgentActivity_onEnter',
       });
-
-      // TODO(shubhra): Add turn detection mode
     } finally {
       unlock();
     }
@@ -415,6 +488,11 @@ export class AgentActivity implements RecognitionHooks {
   onVADInferenceDone(ev: VADEvent): void {
     if (this.turnDetection === 'manual' || this.turnDetection === 'realtime_llm') {
       // skip speech handle interruption for manual and realtime model
+      return;
+    }
+
+    if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
+      // skip speech handle interruption if server side turn detection is enabled
       return;
     }
 
@@ -1660,7 +1738,15 @@ export class AgentActivity implements RecognitionHooks {
       await this.audioRecognition?.close();
       await this._mainTask?.cancelAndWait();
 
-      this.agent._agentActivity = undefined;
+      if (this.llm instanceof RealtimeModel) {
+        this.realtimeSession?.off('generation_created', this.onGenerationCreated);
+        this.realtimeSession?.off('input_speech_started', this.onInputSpeechStarted);
+        this.realtimeSession?.off('input_speech_stopped', this.onInputSpeechStopped);
+        this.realtimeSession?.off(
+          'input_audio_transcription_completed',
+          this.onInputAudioTranscriptionCompleted,
+        );
+      }
     } finally {
       unlock();
     }

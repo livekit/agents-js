@@ -10,44 +10,44 @@ import {
   voice,
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
+import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 
-/**
- * This example demonstrates how to use LiveKit's turn detection model with a realtime LLM.
- * Since the current turn detection model runs in text space, it will need to be combined
- * with a STT model, even though the audio is going directly to the Realtime API.
- * In this example, speech is being processed in parallel by both the STT and the realtime API
- */
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    await ctx.connect();
-
     const agent = new voice.Agent({
-      instructions: 'You are a helpful assistant.',
+      instructions:
+        "You are a helpful assistant, you can hear the user's message and respond to it.",
     });
+
+    const vad = ctx.proc.userData.vad! as silero.VAD;
 
     const session = new voice.AgentSession({
-      turnDetection: new livekit.turnDetector.EnglishModel(),
-      vad: ctx.proc.userData.vad! as silero.VAD,
+      vad,
       stt: new deepgram.STT(),
-      // To use OpenAI Realtime API
-      llm: new openai.LLM(),
-      // llm: new openai.realtime.RealtimeModel({
-      //   voice: 'alloy',
-      //   // it's necessary to turn off turn detection in the OpenAI Realtime API in order to use
-      //   // LiveKit's turn detection model
-      //   turnDetection: null,
-      //   inputAudioTranscription: null, // we use Deepgram STT instead
-      // }),
+      tts: new elevenlabs.TTS(),
+      llm: new openai.realtime.RealtimeModel({
+        turnDetection: null,
+        inputAudioTranscription: null,
+      }),
+      turnDetection: new livekit.turnDetector.EnglishModel(),
     });
 
-    await session.start({ agent, room: ctx.room });
+    await session.start({
+      agent,
+      room: ctx.room,
+    });
+
+    // join the room when agent is ready
+    await ctx.connect();
+
+    session.say('Hello, how can I help you today?');
   },
 });
 
