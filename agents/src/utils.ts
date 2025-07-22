@@ -503,6 +503,14 @@ export class Task<T> {
   }
 }
 
+export async function waitFor(tasks: Task<void>[]): Promise<void> {
+  await Promise.allSettled(tasks.map((task) => task.result));
+}
+
+export async function cancelAndWait(tasks: Task<void>[], timeout?: number): Promise<void> {
+  await Promise.allSettled(tasks.map((task) => task.cancelAndWait(timeout)));
+}
+
 export function withResolvers<T = unknown>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;

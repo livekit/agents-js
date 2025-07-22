@@ -31,7 +31,7 @@ import type {
 import { STT, type SpeechEvent } from '../stt/stt.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS } from '../tts/tts.js';
-import { Future, Task } from '../utils.js';
+import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import { StopResponse, asyncLocalStorage } from './agent.js';
@@ -897,9 +897,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (speechHandle.interrupted) {
       replyAbortController.abort();
-      await Promise.allSettled(
-        tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
-      );
+      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       if (audioOutput) {
         audioOutput.clearBuffer();
         await audioOutput.waitForPlayout();
@@ -986,9 +984,7 @@ export class AgentActivity implements RecognitionHooks {
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
     if (speechHandle.interrupted) {
       replyAbortController.abort();
-      await Promise.allSettled(
-        tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
-      );
+      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       return;
     }
 
@@ -1333,13 +1329,11 @@ export class AgentActivity implements RecognitionHooks {
           }
           outputs.push([msg.messageId, textOut, audioOut]);
         }
-        await Promise.allSettled(forwardTasks.map((task) => task.result));
+        await waitFor(forwardTasks);
       } catch (error) {
         this.logger.error(error, 'error reading messages from the realtime API');
       } finally {
-        await Promise.allSettled(
-          forwardTasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
-        );
+        await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       }
     };
 
@@ -1416,9 +1410,7 @@ export class AgentActivity implements RecognitionHooks {
         'Aborting all realtime generation tasks due to interruption',
       );
       replyAbortController.abort();
-      await Promise.allSettled(
-        tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
-      );
+      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
 
       if (messageOutputs.length > 0) {
         // there should be only one message
