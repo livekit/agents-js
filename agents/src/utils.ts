@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { delay } from '@std/async';
 import { EventEmitter, once } from 'node:events';
@@ -16,7 +14,7 @@ export type AudioBuffer = AudioFrame[] | AudioFrame;
 
 export const noop = () => {};
 
-export const isPending = async (promise: Promise<any>): Promise<boolean> => {
+export const isPending = async (promise: Promise<unknown>): Promise<boolean> => {
   const sentinel = Symbol('sentinel');
   const result = await Promise.race([promise, Promise.resolve(sentinel)]);
   return result === sentinel;
@@ -183,7 +181,7 @@ export class CancellablePromise<T> {
   constructor(
     executor: (
       resolve: (value: T | PromiseLike<T>) => void,
-      reject: (reason?: any) => void,
+      reject: (reason?: unknown) => void,
       onCancel: (cancelFn: () => void) => void,
     ) => void,
   ) {
@@ -218,13 +216,13 @@ export class CancellablePromise<T> {
 
   then<TResult1 = T, TResult2 = never>(
     onfulfilled?: ((value: T) => TResult1 | Promise<TResult1>) | null,
-    onrejected?: ((reason: any) => TResult2 | Promise<TResult2>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | Promise<TResult2>) | null,
   ): Promise<TResult1 | TResult2> {
     return this.#promise.then(onfulfilled, onrejected);
   }
 
   catch<TResult = never>(
-    onrejected?: ((reason: any) => TResult | Promise<TResult>) | null,
+    onrejected?: ((reason: unknown) => TResult | Promise<TResult>) | null,
   ): Promise<T | TResult> {
     return this.#promise.catch(onrejected);
   }
@@ -505,9 +503,17 @@ export class Task<T> {
   }
 }
 
+export async function waitFor(tasks: Task<void>[]): Promise<void> {
+  await Promise.allSettled(tasks.map((task) => task.result));
+}
+
+export async function cancelAndWait(tasks: Task<void>[], timeout?: number): Promise<void> {
+  await Promise.allSettled(tasks.map((task) => task.cancelAndWait(timeout)));
+}
+
 export function withResolvers<T = unknown>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: any) => void;
+  let reject!: (reason?: unknown) => void;
 
   const promise = new Promise<T>((res, rej) => {
     resolve = res;
@@ -556,8 +562,10 @@ export function createImmutableArray<T>(array: T[], additionalErrorMessage: stri
       }
 
       // Intercept mutation methods
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (typeof key === 'string' && MUTATION_METHODS.includes(key as any)) {
+      if (
+        typeof key === 'string' &&
+        MUTATION_METHODS.includes(key as (typeof MUTATION_METHODS)[number])
+      ) {
         return function () {
           throw new TypeError(
             `Cannot call ${key}() on a read-only array. ${additionalErrorMessage}`.trim(),

@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame } from '@livekit/rtc-node';
+import { type AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
+import { calculateAudioDuration } from '../audio.js';
 import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
@@ -35,7 +36,6 @@ export enum SpeechEventType {
   END_OF_SPEECH = 3,
   /** Usage event, emitted periodically to indicate usage metrics. */
   RECOGNITION_USAGE = 4,
-  METRICS_COLLECTED = 5,
 }
 
 /** SpeechData contains metadata about this {@link SpeechEvent}. */
@@ -71,7 +71,7 @@ export interface STTCapabilities {
 }
 
 export type STTCallbacks = {
-  [SpeechEventType.METRICS_COLLECTED]: (metrics: STTMetrics) => void;
+  ['metrics_collected']: (metrics: STTMetrics) => void;
 };
 
 /**
@@ -100,19 +100,17 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
     const startTime = process.hrtime.bigint();
     const event = await this._recognize(frame);
     const duration = Number((process.hrtime.bigint() - startTime) / BigInt(1000000));
-    this.emit(SpeechEventType.METRICS_COLLECTED, {
+    this.emit('metrics_collected', {
+      type: 'stt_metrics',
       requestId: event.requestId ?? '',
       timestamp: Date.now(),
       duration,
       label: this.label,
-      audioDuration: Array.isArray(frame)
-        ? frame.reduce((sum, a) => sum + a.samplesPerChannel / a.sampleRate, 0)
-        : frame.samplesPerChannel / frame.sampleRate,
+      audioDuration: calculateAudioDuration(frame),
       streamed: false,
     });
     return event;
   }
-
   protected abstract _recognize(frame: AudioBuffer): Promise<SpeechEvent>;
 
   /**
@@ -143,14 +141,17 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   protected input = new AsyncIterableQueue<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>();
   protected output = new AsyncIterableQueue<SpeechEvent>();
   protected queue = new AsyncIterableQueue<SpeechEvent>();
+  protected neededSampleRate?: number;
+  protected resampler?: AudioResampler;
   abstract label: string;
   protected closed = false;
   #stt: STT;
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
-  constructor(stt: STT) {
+  constructor(stt: STT, sampleRate?: number) {
     this.#stt = stt;
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
+    this.neededSampleRate = sampleRate;
     this.monitorMetrics();
     this.mainTask();
   }
@@ -174,21 +175,19 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   protected async monitorMetrics() {
-    const startTime = process.hrtime.bigint();
-
     for await (const event of this.queue) {
       this.output.put(event);
       if (event.type !== SpeechEventType.RECOGNITION_USAGE) continue;
-      const duration = process.hrtime.bigint() - startTime;
       const metrics: STTMetrics = {
+        type: 'stt_metrics',
         timestamp: Date.now(),
         requestId: event.requestId!,
-        duration: Math.trunc(Number(duration / BigInt(1000000))),
-        label: this.label,
+        duration: 0,
+        label: this.#stt.label,
         audioDuration: event.recognitionUsage!.audioDuration,
         streamed: true,
       };
-      this.#stt.emit(SpeechEventType.METRICS_COLLECTED, metrics);
+      this.#stt.emit('metrics_collected', metrics);
     }
     this.output.close();
   }
@@ -209,7 +208,21 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.input.put(frame);
+
+    if (this.neededSampleRate && frame.sampleRate !== this.neededSampleRate) {
+      if (!this.resampler) {
+        this.resampler = new AudioResampler(frame.sampleRate, this.neededSampleRate);
+      }
+    }
+
+    if (this.resampler) {
+      const frames = this.resampler.push(frame);
+      for (const frame of frames) {
+        this.input.put(frame);
+      }
+    } else {
+      this.input.put(frame);
+    }
   }
 
   /** Flush the STT, causing it to process all pending text */

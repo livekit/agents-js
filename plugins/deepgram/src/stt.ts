@@ -123,7 +123,7 @@ export class SpeechStream extends stt.SpeechStream {
   label = 'deepgram.SpeechStream';
 
   constructor(stt: STT, opts: STTOptions) {
-    super(stt);
+    super(stt, opts.sampleRate);
     this.#opts = opts;
     this.closed = false;
     this.#audioEnergyFilter = new AudioEnergyFilter();

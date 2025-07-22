@@ -100,10 +100,13 @@ export type MetricsCollectedEvent = {
   createdAt: number;
 };
 
-export const createMetricsCollectedEvent = (
-  metrics: AgentMetrics,
-  createdAt: number = Date.now(),
-): MetricsCollectedEvent => ({
+export const createMetricsCollectedEvent = ({
+  metrics,
+  createdAt = Date.now(),
+}: {
+  metrics: AgentMetrics;
+  createdAt?: number;
+}): MetricsCollectedEvent => ({
   type: 'metrics_collected',
   metrics,
   createdAt,
