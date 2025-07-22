@@ -29,7 +29,7 @@ import type {
   TTSMetrics,
   VADMetrics,
 } from '../metrics/base.js';
-import type { STT, SpeechEvent } from '../stt/stt.js';
+import { STT, type SpeechEvent } from '../stt/stt.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS } from '../tts/tts.js';
 import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
@@ -891,6 +891,7 @@ export class AgentActivity implements RecognitionHooks {
     const speechHandle = this.generateReply({ userMessage, chatCtx });
 
     const eouMetrics: EOUMetrics = {
+      type: 'eou_metrics',
       timestamp: Date.now(),
       endOfUtteranceDelay: info.endOfUtteranceDelay,
       transcriptionDelay: info.transcriptionDelay,
@@ -900,7 +901,7 @@ export class AgentActivity implements RecognitionHooks {
 
     this.agentSession.emit(
       AgentSessionEventTypes.MetricsCollected,
-      createMetricsCollectedEvent(eouMetrics),
+      createMetricsCollectedEvent({ metrics: eouMetrics }),
     );
   }
 

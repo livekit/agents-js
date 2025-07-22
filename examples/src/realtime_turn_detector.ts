@@ -32,6 +32,7 @@ export default defineAgent({
       vad,
       stt: new deepgram.STT(),
       tts: new elevenlabs.TTS(),
+      // llm: new openai.LLM(),
       llm: new openai.realtime.RealtimeModel({
         turnDetection: null,
         inputAudioTranscription: null,
