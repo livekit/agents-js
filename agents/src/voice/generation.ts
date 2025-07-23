@@ -86,9 +86,13 @@ export class _SanitizedOutput {
 }
 
 function isValidToolOutput(toolOutput: unknown): boolean {
-  const validTypes = ['string', 'number', 'boolean', undefined, null];
+  const validTypes = ['string', 'number', 'boolean'];
 
   if (validTypes.includes(typeof toolOutput)) {
+    return true;
+  }
+
+  if (toolOutput === undefined || toolOutput === null) {
     return true;
   }
 

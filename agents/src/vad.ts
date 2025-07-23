@@ -60,7 +60,7 @@ export interface VADCapabilities {
 }
 
 export type VADCallbacks = {
-  [VADEventType.METRICS_COLLECTED]: (metrics: VADMetrics) => void;
+  ['metrics_collected']: (metrics: VADMetrics) => void;
 };
 
 export abstract class VAD extends (EventEmitter as new () => TypedEmitter<VADCallbacks>) {
@@ -151,7 +151,8 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
         case VADEventType.START_OF_SPEECH:
           inferenceCount++;
           if (inferenceCount >= 1 / this.#vad.capabilities.updateInterval) {
-            this.#vad.emit(VADEventType.METRICS_COLLECTED, {
+            this.#vad.emit('metrics_collected', {
+              type: 'vad_metrics',
               timestamp: Date.now(),
               idleTime: Math.trunc(
                 Number((process.hrtime.bigint() - this.#lastActivityTime) / BigInt(1000000)),

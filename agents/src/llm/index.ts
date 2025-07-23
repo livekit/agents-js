@@ -30,7 +30,6 @@ export {
 
 export {
   LLM,
-  LLMEvent,
   LLMStream,
   type ChatChunk,
   type ChoiceDelta,

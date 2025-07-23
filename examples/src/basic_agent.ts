@@ -7,6 +7,7 @@ import {
   WorkerOptions,
   cli,
   defineAgent,
+  metrics,
   voice,
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
@@ -30,12 +31,19 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT({
-        sampleRate: 24000,
-      }),
-      llm: new openai.LLM(),
+      stt: new deepgram.STT(),
       tts: new elevenlabs.TTS(),
+      llm: new openai.LLM(),
+      // to use realtime model, replace the stt, llm, tts and vad with the following
+      // llm: new openai.realtime.RealtimeModel(),
       turnDetection: new livekit.turnDetector.EnglishModel(),
+    });
+
+    const usageCollector = new metrics.UsageCollector();
+
+    session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
+      metrics.logMetrics(ev.metrics);
+      usageCollector.collect(ev.metrics);
     });
 
     await session.start({
