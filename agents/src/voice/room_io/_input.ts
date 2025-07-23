@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
-  type AudioFrame,
   AudioStream,
   type NoiseCancellationOptions,
   RemoteParticipant,
@@ -12,12 +11,11 @@ import {
   RoomEvent,
   TrackSource,
 } from '@livekit/rtc-node';
-import type { ReadableStream } from 'node:stream/web';
 import { log } from '../../log.js';
-import { DeferredReadableStream } from '../../stream/deferred_stream.js';
 import { resampleStream } from '../../utils.js';
+import { AudioInput } from '../io.js';
 
-export class ParticipantAudioInputStream {
+export class ParticipantAudioInputStream extends AudioInput {
   private room: Room;
   private sampleRate: number;
   private numChannels: number;
@@ -25,9 +23,6 @@ export class ParticipantAudioInputStream {
   private publication: RemoteTrackPublication | null = null;
   private participantIdentity: string | null = null;
   private logger = log();
-  private deferredStream: DeferredReadableStream<AudioFrame> =
-    new DeferredReadableStream<AudioFrame>();
-
   constructor({
     room,
     sampleRate,
@@ -39,6 +34,7 @@ export class ParticipantAudioInputStream {
     numChannels: number;
     noiseCancellation?: NoiseCancellationOptions;
   }) {
+    super();
     this.room = room;
     this.sampleRate = sampleRate;
     this.numChannels = numChannels;
@@ -46,10 +42,6 @@ export class ParticipantAudioInputStream {
 
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
     this.room.on(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
-  }
-
-  get audioStream(): ReadableStream<AudioFrame> {
-    return this.deferredStream.stream;
   }
 
   setParticipant(participant: RemoteParticipant | string | null) {
