@@ -7,7 +7,7 @@ import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { delay } from '@std/async';
 import { once } from 'node:events';
-import { WebSocket } from 'ws';
+import { type MessageEvent, WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
 const SAMPLE_RATE = 24000;
@@ -362,7 +362,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     this.oaiRealtimeModel = realtimeModel;
 
-    this.#task = this.#start();
+    this.#task = this.#mainTask();
 
     this.sendEvent(this.createSessionUpdateEvent());
   }
@@ -687,19 +687,23 @@ export class RealtimeSession extends llm.RealtimeSession {
     return ws;
   }
 
-  #start(): Promise<void> {
+  async #mainTask(): Promise<void> {
+    this.#ws = this.createWsConn();
+
+    try {
+      await this.runWs(this.#ws);
+    } catch (error) {
+      this.#logger.error('Error running WebSocket task:', error);
+      throw error;
+    } finally {
+      this.#ws = null;
+    }
+  }
+
+  private runWs(wsConn: WebSocket): Promise<void> {
     return new Promise(async (resolve, reject) => {
-      this.#ws = this.createWsConn();
-
-      this.#ws.onerror = (error) => {
-        reject(new Error('OpenAI Realtime WebSocket error: ' + error.message));
-      };
-
-      await once(this.#ws, 'open');
-      this.#closing = false;
-
       const sendTask = async () => {
-        while (this.#ws && !this.#closing && this.#ws.readyState === WebSocket.OPEN) {
+        while (wsConn && !this.#closing && wsConn.readyState === WebSocket.OPEN) {
           try {
             const event = await this.messageChannel.get();
             if (event.type !== 'input_audio_buffer.append') {
@@ -707,14 +711,14 @@ export class RealtimeSession extends llm.RealtimeSession {
             }
 
             this.emit('openai_client_event_queued', event);
-            this.#ws.send(JSON.stringify(event));
+            wsConn.send(JSON.stringify(event));
           } catch (error) {
             this.#logger.error('Error sending event:', error);
           }
         }
       };
 
-      this.#ws.onmessage = (message) => {
+      const recvTask = (message: MessageEvent) => {
         const event: api_proto.ServerEvent = JSON.parse(message.data as string);
 
         this.emit('openai_server_event_received', event);
@@ -777,18 +781,25 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
       };
 
-      sendTask();
-
-      this.#ws.onclose = () => {
+      const closeTask = async () => {
         if (this.#expiresAt && Date.now() >= this.#expiresAt * 1000) {
           this.#closing = true;
         }
         if (!this.#closing) {
           reject(new Error('OpenAI Realtime connection closed unexpectedly'));
         }
-        this.#ws = null;
+        wsConn.close();
         resolve();
       };
+
+      wsConn.onerror = reject;
+      wsConn.onmessage = recvTask;
+      wsConn.onclose = closeTask;
+
+      await once(wsConn, 'open');
+      this.#closing = false;
+
+      sendTask();
     });
   }
 
