@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 0.7.8
+
+### Patch Changes
+
+- fix llm metrics emitting issue - [#571](https://github.com/livekit/agents-js/pull/571) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 0.7.7
 
 ### Patch Changes
