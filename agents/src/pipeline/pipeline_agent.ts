@@ -28,8 +28,7 @@ import type {
   FunctionContext,
   LLM,
 } from '../llm/index.js';
-import { LLMEvent, LLMStream } from '../llm/index.js';
-import { ChatContext, ChatMessage, ChatRole } from '../llm/index.js';
+import { ChatContext, ChatMessage, ChatRole, LLMEvent, LLMStream } from '../llm/index.js';
 import { log } from '../log.js';
 import type { AgentMetrics, PipelineEOUMetrics } from '../metrics/base.js';
 import { type STT, StreamAdapter as STTStreamAdapter, SpeechEventType } from '../stt/index.js';
@@ -52,6 +51,7 @@ import { SpeechHandle } from './speech_handle.js';
 
 export type AgentState = 'initializing' | 'thinking' | 'listening' | 'speaking';
 export const AGENT_STATE_ATTRIBUTE = 'lk.agent.state';
+let lastSpeechData: { sequenceId: string } | undefined;
 let speechData: { sequenceId: string } | undefined;
 
 export type BeforeLLMCallback = (
@@ -368,8 +368,8 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     });
 
     this.#llm.on(LLMEvent.METRICS_COLLECTED, (metrics) => {
-      if (!speechData) return;
-      this.emit(VPAEvent.METRICS_COLLECTED, { ...metrics, sequenceId: speechData.sequenceId });
+      if (!lastSpeechData) return;
+      this.emit(VPAEvent.METRICS_COLLECTED, { ...metrics, sequenceId: lastSpeechData.sequenceId });
     });
 
     this.#vad.on(VADEventType.METRICS_COLLECTED, (metrics) => {
@@ -689,6 +689,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         const synthesisHandle = this.#synthesizeAgentSpeech(handle!.id, llmStream);
         handle!.initialize(llmStream, synthesisHandle);
       } finally {
+        lastSpeechData = speechData;
         speechData = undefined;
       }
       resolve();

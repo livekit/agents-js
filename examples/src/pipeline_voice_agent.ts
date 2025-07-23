@@ -64,6 +64,11 @@ export default defineAgent({
     );
     agent.start(ctx.room, participant);
 
+    // To see metrics, uncomment the following line
+    // agent.on(pipeline.VPAEvent.METRICS_COLLECTED, (metrics) => {
+    //   console.log(metrics);
+    // });
+
     await agent.say('Hey, how can I help you today', true);
   },
 });
