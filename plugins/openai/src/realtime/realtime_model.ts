@@ -1,7 +1,16 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, Future, Queue, llm, log, shortuuid, stream } from '@livekit/agents';
+import {
+  APIError,
+  AudioByteStream,
+  Future,
+  Queue,
+  llm,
+  log,
+  shortuuid,
+  stream,
+} from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
@@ -788,7 +797,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         if (!this.#closing) {
           reject(new Error('OpenAI Realtime connection closed unexpectedly'));
         }
-        wsConn.close();
         resolve();
       };
 
@@ -1132,6 +1140,25 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     this.#logger.error({ error: event.error }, 'OpenAI Realtime API returned an error');
+    this.emitError({
+      error: new APIError(event.error.message, {
+        body: event.error,
+        retryable: true,
+      }),
+      recoverable: true,
+    });
+
+    // TODO(brian): set error for response future if it exists
+  }
+
+  private emitError({ error, recoverable }: { error: Error; recoverable: boolean }): void {
+    this.emit('error', {
+      timestamp: Date.now(),
+      // TODO(brian): add label
+      label: '',
+      error,
+      recoverable,
+    } as llm.RealtimeModelError);
   }
 
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
