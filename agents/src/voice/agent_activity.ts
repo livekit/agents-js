@@ -334,8 +334,13 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   attachAudioInput(audioStream: ReadableStream<AudioFrame>): void {
+    /**
+     * We need to add a deferred ReadableStream layer on top of the audioStream from the agent session.
+     * The tee() operation should be applied to the deferred stream, not the original audioStream.
+     * This is important because teeing the original stream directly makes it very difficult—if not
+     * impossible—to implement stream unlock logic cleanly.
+     */
     this.audioStream.setSource(audioStream);
-
     const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream.tee();
 
     if (this.realtimeSession) {
@@ -1819,16 +1824,6 @@ export class AgentActivity implements RecognitionHooks {
       await this.realtimeSession?.close();
       await this.audioRecognition?.close();
       await this._mainTask?.cancelAndWait();
-
-      if (this.llm instanceof RealtimeModel) {
-        this.realtimeSession?.off('generation_created', this.onGenerationCreated);
-        this.realtimeSession?.off('input_speech_started', this.onInputSpeechStarted);
-        this.realtimeSession?.off('input_speech_stopped', this.onInputSpeechStopped);
-        this.realtimeSession?.off(
-          'input_audio_transcription_completed',
-          this.onInputAudioTranscriptionCompleted,
-        );
-      }
     } finally {
       unlock();
     }
