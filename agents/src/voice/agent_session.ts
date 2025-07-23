@@ -29,7 +29,7 @@ import {
   createConversationItemAddedEvent,
   createUserStateChangedEvent,
 } from './events.js';
-import type { AudioOutput, TextOutput } from './io.js';
+import { AgentInput, AgentOutput } from './io.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
@@ -100,12 +100,8 @@ export class AgentSession<
   private _userData: UserData | undefined;
   private _agentState: AgentState = 'initializing';
 
-  /** @internal */
-  _audioInput?: ReadableStream<AudioFrame>;
-  /** @internal */
-  _audioOutput?: AudioOutput;
-  /** @internal */
-  _transcriptionOutput?: TextOutput;
+  private _input: AgentInput;
+  private _output: AgentOutput;
 
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
@@ -127,9 +123,21 @@ export class AgentSession<
     this.turnDetection = turnDetection;
     this._userData = userData;
 
+    // configurable IO
+    this._input = new AgentInput(this.onAudioInputChanged);
+    this._output = new AgentOutput(this.onAudioOutputChanged, this.onTextOutputChanged);
+
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
     this.options = { ...defaultVoiceOptions, ...voiceOptions };
+  }
+
+  get input(): AgentInput {
+    return this._input;
+  }
+
+  get output(): AgentOutput {
+    return this._output;
   }
 
   get userData(): UserData {
@@ -263,8 +271,8 @@ export class AgentSession<
 
     await this.activity.start();
 
-    if (this._audioInput) {
-      this.activity.attachAudioInput(this._audioInput);
+    if (this._input.audio) {
+      this.activity.attachAudioInput(this._input.audio.stream);
     }
   }
 
@@ -317,4 +325,19 @@ export class AgentSession<
       createUserStateChangedEvent(oldState, state),
     );
   }
+
+  // -- User changed input/output streams/sinks --
+  private onAudioInputChanged(): void {
+    if (!this.started) {
+      return;
+    }
+
+    if (this.activity && this._input.audio) {
+      this.activity.attachAudioInput(this._input.audio.stream);
+    }
+  }
+
+  private onAudioOutputChanged(): void {}
+
+  private onTextOutputChanged(): void {}
 }

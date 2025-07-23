@@ -334,6 +334,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   attachAudioInput(audioStream: ReadableStream<AudioFrame>): void {
+    if (this.audioStream.isSourceSet) {
+      this.logger.debug('detaching existing audio input in agent activity');
+      this.audioStream.detachSource();
+    }
+
     /**
      * We need to add a deferred ReadableStream layer on top of the audioStream from the agent session.
      * The tee() operation should be applied to the deferred stream, not the original audioStream.
@@ -386,8 +391,12 @@ export class AgentActivity implements RecognitionHooks {
     } = options ?? {};
     let allowInterruptions = defaultAllowInterruptions;
 
-    // TODO(AJS-185): support audio output audio enabled flag
-    if (!audio && !this.tts && this.agentSession._audioOutput) {
+    if (
+      !audio &&
+      !this.tts &&
+      this.agentSession.output.audio &&
+      this.agentSession.output.audioEnabled
+    ) {
       throw new Error('trying to generate speech from text without a TTS model');
     }
 
@@ -930,10 +939,13 @@ export class AgentActivity implements RecognitionHooks {
   ): Promise<void> {
     speechHandleStorage.enterWith(speechHandle);
 
-    // TODO(AJS-185): support audio output transcription enabled flag
-    const transcriptionOutput = this.agentSession._transcriptionOutput;
-    // TODO(AJS-185): support audio output audio enabled flag
-    const audioOutput = this.agentSession._audioOutput;
+    const transcriptionOutput = this.agentSession.output.transcriptionEnabled
+      ? this.agentSession.output.transcription
+      : null;
+
+    const audioOutput = this.agentSession.output.audioEnabled
+      ? this.agentSession.output.audio
+      : null;
 
     const replyAbortController = new AbortController();
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
@@ -1053,8 +1065,12 @@ export class AgentActivity implements RecognitionHooks {
 
     const replyAbortController = new AbortController();
 
-    const audioOutput = this.agentSession._audioOutput;
-    const transcriptionOutput = this.agentSession._transcriptionOutput;
+    const audioOutput = this.agentSession.output.audioEnabled
+      ? this.agentSession.output.audio
+      : null;
+    const transcriptionOutput = this.agentSession.output.transcriptionEnabled
+      ? this.agentSession.output.transcription
+      : null;
 
     chatCtx = chatCtx.copy();
 
@@ -1389,8 +1405,12 @@ export class AgentActivity implements RecognitionHooks {
       'realtime generation started',
     );
 
-    const audioOutput = this.agentSession._audioOutput;
-    const textOutput = this.agentSession._transcriptionOutput;
+    const audioOutput = this.agentSession.output.audioEnabled
+      ? this.agentSession.output.audio
+      : null;
+    const textOutput = this.agentSession.output.transcriptionEnabled
+      ? this.agentSession.output.transcription
+      : null;
     const toolCtx = this.realtimeSession.tools;
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
