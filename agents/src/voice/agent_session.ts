@@ -333,6 +333,7 @@ export class AgentSession<
     }
 
     if (this.activity && this._input.audio) {
+      this.activity.detachAudioInput();
       this.activity.attachAudioInput(this._input.audio.stream);
     }
   };
