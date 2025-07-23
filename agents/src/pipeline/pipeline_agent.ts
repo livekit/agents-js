@@ -368,8 +368,10 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     });
 
     this.#llm.on(LLMEvent.METRICS_COLLECTED, (metrics) => {
-      if (!lastSpeechData) return;
-      this.emit(VPAEvent.METRICS_COLLECTED, { ...metrics, sequenceId: lastSpeechData.sequenceId });
+      const sequenceId = speechData ? speechData.sequenceId : lastSpeechData?.sequenceId;
+      if (!sequenceId) return;
+
+      this.emit(VPAEvent.METRICS_COLLECTED, { ...metrics, sequenceId });
     });
 
     this.#vad.on(VADEventType.METRICS_COLLECTED, (metrics) => {
