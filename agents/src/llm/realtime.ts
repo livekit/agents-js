@@ -27,14 +27,6 @@ export interface GenerationCreatedEvent {
   userInitiated: boolean;
 }
 
-// class RealtimeModelError(BaseModel):
-//     model_config = ConfigDict(arbitrary_types_allowed=True)
-//     type: Literal["realtime_model_error"] = "realtime_model_error"
-//     timestamp: float
-//     label: str
-//     error: Exception = Field(..., exclude=True)
-//     recoverable: bool
-
 export interface RealtimeModelError {
   type: 'realtime_model_error';
   timestamp: number;
