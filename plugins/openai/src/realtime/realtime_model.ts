@@ -732,6 +732,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
         this.emit('openai_server_event_received', event);
         this.#logger.debug(`(server) <- ${JSON.stringify(this.#loggableEvent(event))}`);
+
         switch (event.type) {
           case 'input_audio_buffer.speech_started':
             this.handleInputAudioBufferSpeechStarted(event);

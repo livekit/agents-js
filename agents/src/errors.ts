@@ -1,6 +1,6 @@
 export interface APIErrorOptions {
   body?: object;
-  retryable: boolean;
+  retryable?: boolean;
 }
 
 export class APIError extends Error {
