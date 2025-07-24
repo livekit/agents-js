@@ -28,6 +28,7 @@ export * from './job.js';
 export * from './log.js';
 export * from './plugin.js';
 export * from './transcription.js';
+export * from './types.js';
 export * from './utils.js';
 export * from './vad.js';
 export * from './version.js';
