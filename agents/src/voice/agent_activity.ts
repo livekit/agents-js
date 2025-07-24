@@ -1808,10 +1808,6 @@ export class AgentActivity implements RecognitionHooks {
 
     const originalToolChoice = this.toolChoice;
     if (toolChoice) {
-      this.logger.debug(
-        { speech_id: speechHandle.id, toolChoice },
-        'updating tool choice for the realtime session',
-      );
       this.realtimeSession.updateOptions({ toolChoice });
     }
 

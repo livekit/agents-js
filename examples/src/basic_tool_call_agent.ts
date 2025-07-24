@@ -77,7 +77,7 @@ export default defineAgent({
         value: z.number().nullable().describe('The number value'),
       }),
       execute: async ({ value }) => {
-        if (value === undefined) {
+        if (value === null) {
           value = Math.floor(Math.random() * 100);
         }
         return `The number value is ${value}.`;

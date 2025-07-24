@@ -565,6 +565,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     options.tool_choice = toOaiToolChoice(toolChoice);
 
     // TODO(brian): add other options here
+    this.#logger.debug({ toolChoice }, 'updating tool choice for the realtime session');
 
     this.sendEvent({
       type: 'session.update',
