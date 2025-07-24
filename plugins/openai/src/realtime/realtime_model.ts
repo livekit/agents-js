@@ -702,8 +702,8 @@ export class RealtimeSession extends llm.RealtimeSession {
         while (this.#ws && !this.#closing && this.#ws.readyState === WebSocket.OPEN) {
           try {
             const event = await this.messageChannel.get();
-            if (event.type !== 'input_audio_buffer.append') {
-              // this.#logger.debug(`(client) -> ${JSON.stringify(this.#loggableEvent(event))}`);
+            if (event.type === 'session.update') {
+              this.#logger.debug(`(client) -> ${JSON.stringify(this.#loggableEvent(event))}`);
             }
 
             this.emit('openai_client_event_queued', event);
@@ -718,7 +718,17 @@ export class RealtimeSession extends llm.RealtimeSession {
         const event: api_proto.ServerEvent = JSON.parse(message.data as string);
 
         this.emit('openai_server_event_received', event);
-        // this.#logger.debug(`(server) <- ${JSON.stringify(this.#loggableEvent(event))}`);
+        if (
+          [
+            'session.updated',
+            'response.output_item.added',
+            'response.created',
+            'response.content_part.added',
+          ].includes(event.type)
+        ) {
+          this.#logger.debug(`(server) <- ${JSON.stringify(this.#loggableEvent(event))}`);
+        }
+
         switch (event.type) {
           case 'input_audio_buffer.speech_started':
             this.handleInputAudioBufferSpeechStarted(event);
