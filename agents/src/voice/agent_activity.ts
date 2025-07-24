@@ -107,6 +107,11 @@ export class AgentActivity implements RecognitionHooks {
     this.turnDetectionMode =
       typeof this.turnDetection === 'string' ? this.turnDetection : undefined;
 
+    this.logger.info(
+      { turnDetectionMode: this.turnDetectionMode ?? 'undefined' },
+      'turnDetectionMode before',
+    );
+
     if (this.turnDetectionMode === 'vad' && this.vad === undefined) {
       this.logger.warn(
         'turnDetection is set to "vad", but no VAD model is provided, ignoring the turnDdetection setting',
@@ -181,6 +186,11 @@ export class AgentActivity implements RecognitionHooks {
           'for more responsive interruption handling.',
       );
     }
+
+    this.logger.info(
+      { turnDetectionMode: this.turnDetectionMode ?? 'undefined' },
+      'turnDetectionMode after',
+    );
   }
 
   async start(): Promise<void> {
