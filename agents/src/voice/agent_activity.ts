@@ -470,6 +470,8 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateUserState('speaking');
     }
 
+    // this.interrupt() is going to raise when allow_interruptions is False,
+    // llm.InputSpeechStartedEvent is only fired by the server when the turn_detection is enabled.
     try {
       this.interrupt();
     } catch (error) {
@@ -562,6 +564,7 @@ export class AgentActivity implements RecognitionHooks {
 
   onEndOfSpeech(ev: VADEvent): void {
     this.logger.info('End of speech', ev);
+    this.agentSession._updateUserState('listening');
   }
 
   onVADInferenceDone(ev: VADEvent): void {
@@ -602,6 +605,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onInterimTranscript(ev: SpeechEvent): void {
+    if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
+      // skip stt transcription if userTranscription is enabled on the realtime model
+      return;
+    }
+
     this.agentSession.emit(
       AgentSessionEventTypes.UserInputTranscribed,
       createUserInputTranscribedEvent({
@@ -613,6 +621,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onFinalTranscript(ev: SpeechEvent): void {
+    if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
+      // skip stt transcription if userTranscription is enabled on the realtime model
+      return;
+    }
+
     this.agentSession.emit(
       AgentSessionEventTypes.UserInputTranscribed,
       createUserInputTranscribedEvent({
