@@ -250,6 +250,7 @@ export class AgentActivity implements RecognitionHooks {
 
       this.audioRecognition = new AudioRecognition({
         recognitionHooks: this,
+        // Disable stt node if stt is not provided
         stt: this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
         vad: this.vad,
         turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
