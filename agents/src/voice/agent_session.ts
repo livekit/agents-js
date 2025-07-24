@@ -272,7 +272,7 @@ export class AgentSession<
     await this.activity.start();
 
     if (this._input.audio) {
-      this.activity.attachAudioInput(this._input.audio.stream);
+      this.activity.updateAudioInput(this._input.audio.stream);
     }
   }
 
@@ -333,8 +333,7 @@ export class AgentSession<
     }
 
     if (this.activity && this._input.audio) {
-      this.activity.detachAudioInput();
-      this.activity.attachAudioInput(this._input.audio.stream);
+      this.activity.updateAudioInput(this._input.audio.stream);
     }
   };
 
