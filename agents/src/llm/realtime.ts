@@ -27,6 +27,14 @@ export interface GenerationCreatedEvent {
   userInitiated: boolean;
 }
 
+export interface RealtimeModelError {
+  type: 'realtime_model_error';
+  timestamp: number;
+  label: string;
+  error: Error;
+  recoverable: boolean;
+}
+
 export interface RealtimeCapabilities {
   messageTruncation: boolean;
   turnDetection: boolean;
