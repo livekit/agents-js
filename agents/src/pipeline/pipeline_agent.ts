@@ -538,6 +538,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         this.#transcribedInterimText,
         false,
         this.#transcriptionId,
+        this.#transcriptionId,
       );
     });
     this.#humanInput.on(HumanInputEvent.FINAL_TRANSCRIPT, async (event) => {
@@ -556,6 +557,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
         this.#humanInput!.subscribedTrack!.sid!,
         this.transcribedText,
         true,
+        this.#transcriptionId,
         this.#transcriptionId,
       );
 
@@ -933,13 +935,20 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     // TODO: where possible we would want to use deltas instead of full text segments, esp for LLM streams over the streamText API
     synchronizer.on('textUpdated', async (text) => {
       this.#agentTranscribedText = text.text;
+      if (!this.#transcriptionId) {
+        this.#transcriptionId = randomUUID();
+      }
       await this.#publishTranscription(
         this.#room!.localParticipant!.identity!,
         this.#agentPublication?.sid ?? '',
         text.text,
         text.final,
         text.id,
+        this.#transcriptionId,
       );
+      if (text.final) {
+        this.#transcriptionId = undefined;
+      }
     });
 
     if (!this.#agentOutput) {
