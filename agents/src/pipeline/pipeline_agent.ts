@@ -18,6 +18,7 @@ import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { randomUUID } from 'node:crypto';
 import EventEmitter from 'node:events';
 import {
+  ATTRIBUTE_SEGMENT_ID,
   ATTRIBUTE_TRANSCRIPTION_FINAL,
   ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
   TOPIC_TRANSCRIPTION,
@@ -895,6 +896,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
     text: string,
     isFinal: boolean,
     id: string,
+    segmentId: string,
   ) {
     this.#room!.localParticipant!.publishTranscription({
       participantIdentity: participantIdentity,
@@ -916,6 +918,7 @@ export class VoicePipelineAgent extends (EventEmitter as new () => TypedEmitter<
       attributes: {
         [ATTRIBUTE_TRANSCRIPTION_TRACK_ID]: trackSid,
         [ATTRIBUTE_TRANSCRIPTION_FINAL]: isFinal.toString(),
+        [ATTRIBUTE_SEGMENT_ID]: segmentId,
       },
     });
     await stream.write(text);
