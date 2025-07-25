@@ -18,9 +18,11 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
+import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { AudioByteStream } from '../audio.js';
 import {
+  ATTRIBUTE_SEGMENT_ID,
   ATTRIBUTE_TRANSCRIPTION_FINAL,
   ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
   TOPIC_TRANSCRIPTION,
@@ -72,6 +74,7 @@ export class MultimodalAgent extends EventEmitter {
 
   #textResponseRetries = 0;
   #maxTextResponseRetries: number;
+  #transcriptionId?: string;
 
   constructor({
     model,
@@ -257,13 +260,20 @@ export class MultimodalAgent extends EventEmitter {
 
         const synchronizer = new TextAudioSynchronizer(defaultTextSyncOptions);
         synchronizer.on('textUpdated', async (text) => {
+          if (!this.#transcriptionId) {
+            this.#transcriptionId = randomUUID();
+          }
           await this.#publishTranscription(
             this.room!.localParticipant!.identity!,
             this.#getLocalTrackSid()!,
             text.text,
             text.final,
             text.id,
+            this.#transcriptionId,
           );
+          if (text.final) {
+            this.#transcriptionId = undefined;
+          }
         });
 
         const handle = this.#agentPlayout?.play(
@@ -312,7 +322,17 @@ export class MultimodalAgent extends EventEmitter {
         const participantIdentity = this.linkedParticipant?.identity;
         const trackSid = this.subscribedTrack?.sid;
         if (participantIdentity && trackSid) {
-          await this.#publishTranscription(participantIdentity, trackSid, '…', false, ev.itemId);
+          if (!this.#transcriptionId) {
+            this.#transcriptionId = randomUUID();
+          }
+          await this.#publishTranscription(
+            participantIdentity,
+            trackSid,
+            '…',
+            false,
+            ev.itemId,
+            this.#transcriptionId,
+          );
         } else {
           this.#logger.error('Participant or track not set');
         }
@@ -325,13 +345,18 @@ export class MultimodalAgent extends EventEmitter {
         const participantIdentity = this.linkedParticipant?.identity;
         const trackSid = this.subscribedTrack?.sid;
         if (participantIdentity && trackSid) {
+          if (!this.#transcriptionId) {
+            this.#transcriptionId = randomUUID();
+          }
           await this.#publishTranscription(
             participantIdentity,
             trackSid,
             transcription,
             true,
             ev.itemId,
+            this.#transcriptionId,
           );
+          this.#transcriptionId = undefined;
         } else {
           this.#logger.error('Participant or track not set');
         }
@@ -360,7 +385,17 @@ export class MultimodalAgent extends EventEmitter {
         const participantIdentity = this.linkedParticipant?.identity;
         const trackSid = this.subscribedTrack?.sid;
         if (participantIdentity && trackSid) {
-          await this.#publishTranscription(participantIdentity, trackSid, '…', false, ev.itemId);
+          if (!this.#transcriptionId) {
+            this.#transcriptionId = randomUUID();
+          }
+          await this.#publishTranscription(
+            participantIdentity,
+            trackSid,
+            '…',
+            false,
+            ev.itemId,
+            this.#transcriptionId,
+          );
         }
       });
 
@@ -492,6 +527,7 @@ export class MultimodalAgent extends EventEmitter {
     text: string,
     isFinal: boolean,
     id: string,
+    segmentId: string,
   ): Promise<void> {
     this.#logger.debug(
       `Publishing transcription ${participantIdentity} ${trackSid} ${text} ${isFinal} ${id}`,
@@ -522,6 +558,7 @@ export class MultimodalAgent extends EventEmitter {
       attributes: {
         [ATTRIBUTE_TRANSCRIPTION_TRACK_ID]: trackSid,
         [ATTRIBUTE_TRANSCRIPTION_FINAL]: isFinal.toString(),
+        [ATTRIBUTE_SEGMENT_ID]: segmentId,
       },
     });
     await stream.write(text);
