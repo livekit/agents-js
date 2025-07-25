@@ -21,6 +21,7 @@ import {
 import { EventEmitter } from 'node:events';
 import { AudioByteStream } from '../audio.js';
 import {
+  ATTRIBUTE_SEGMENT_ID,
   ATTRIBUTE_TRANSCRIPTION_FINAL,
   ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
   TOPIC_TRANSCRIPTION,
@@ -492,6 +493,7 @@ export class MultimodalAgent extends EventEmitter {
     text: string,
     isFinal: boolean,
     id: string,
+    segmentId: string,
   ): Promise<void> {
     this.#logger.debug(
       `Publishing transcription ${participantIdentity} ${trackSid} ${text} ${isFinal} ${id}`,
@@ -522,6 +524,7 @@ export class MultimodalAgent extends EventEmitter {
       attributes: {
         [ATTRIBUTE_TRANSCRIPTION_TRACK_ID]: trackSid,
         [ATTRIBUTE_TRANSCRIPTION_FINAL]: isFinal.toString(),
+        [ATTRIBUTE_SEGMENT_ID]: segmentId,
       },
     });
     await stream.write(text);
