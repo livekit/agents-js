@@ -1,18 +1,26 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { Participant, RemoteParticipant } from '@livekit/rtc-node';
-import { ParticipantKind } from '@livekit/rtc-node';
-import { ConnectionState, type NoiseCancellationOptions, type Room } from '@livekit/rtc-node';
-import { RoomEvent, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
+import {
+  ConnectionState,
+  type NoiseCancellationOptions,
+  type Participant,
+  ParticipantKind,
+  type RemoteParticipant,
+  type Room,
+  RoomEvent,
+  type TextStreamInfo,
+  type TextStreamReader,
+  TrackPublishOptions,
+  TrackSource,
+} from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
-import { ATTRIBUTE_PUBLISH_ON_BEHALF } from '../../constants.js';
+import { ATTRIBUTE_PUBLISH_ON_BEHALF, TOPIC_CHAT } from '../../constants.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { Future } from '../../utils.js';
 import { type AgentSession } from '../agent_session.js';
-import { type UserInputTranscribedEvent } from '../events.js';
-import { AgentSessionEventTypes } from '../events.js';
+import { AgentSessionEventTypes, type UserInputTranscribedEvent } from '../events.js';
 import type { AudioOutput, TextOutput } from '../io.js';
 import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
 import { ParticipantAudioInputStream } from './_input.js';
@@ -22,6 +30,19 @@ import {
   ParticipantLegacyTranscriptionOutput,
   ParticipantTranscriptionOutput,
 } from './_output.js';
+
+export interface TextInputEvent {
+  text: string;
+  info: TextStreamInfo;
+  participant: RemoteParticipant;
+}
+
+export type TextInputCallback = (sess: AgentSession, ev: TextInputEvent) => void | Promise<void>;
+
+const DEFAULT_TEXT_INPUT_CALLBACK: TextInputCallback = (sess: AgentSession, ev: TextInputEvent) => {
+  sess.interrupt();
+  sess.generateReply({ userInput: ev.text });
+};
 
 const DEFAULT_PARTICIPANT_KINDS: ParticipantKind[] = [
   ParticipantKind.SIP,
@@ -36,6 +57,7 @@ export interface RoomInputOptions {
   videoEnabled: boolean;
   participantIdentity?: string;
   noiseCancellation?: NoiseCancellationOptions;
+  textInputCallback?: TextInputCallback;
   participantKinds?: ParticipantKind[];
 }
 
@@ -54,6 +76,7 @@ const DEFAULT_ROOM_INPUT_OPTIONS: RoomInputOptions = {
   textEnabled: true,
   audioEnabled: true,
   videoEnabled: false,
+  textInputCallback: DEFAULT_TEXT_INPUT_CALLBACK,
 };
 
 const DEFAULT_ROOM_OUTPUT_OPTIONS: RoomOutputOptions = {
@@ -85,6 +108,9 @@ export class RoomIO {
   private userTranscriptStream = new IdentityTransform<UserInputTranscribedEvent>();
   private userTranscriptWriter: WritableStreamDefaultWriter<UserInputTranscribedEvent>;
   private forwardUserTranscriptPromise?: Promise<void>;
+
+  // TODO(brian): unregister the text stream handler when the room io is closed
+  private textStreamHandlerRegistered = false; // eslint-disable-line @typescript-eslint/no-unused-vars
 
   private logger = log();
 
@@ -181,6 +207,37 @@ export class RoomIO {
   private onUserInputTranscribed = (ev: UserInputTranscribedEvent) => {
     this.userTranscriptWriter.write(ev).catch((error) => {
       this.logger.error({ error }, 'Failed to write transcript event to stream');
+    });
+  };
+
+  private onUserTextInput = (reader: TextStreamReader, participantInfo: { identity: string }) => {
+    if (participantInfo.identity !== this.participantIdentity) {
+      return;
+    }
+
+    const participant = this.room.remoteParticipants.get(participantInfo.identity);
+    if (!participant) {
+      this.logger.warn('participant not found, ignoring text input');
+      return;
+    }
+
+    const readText = async () => {
+      const text = await reader.readAll();
+
+      const textInputResult = this.inputOptions.textInputCallback!(this.agentSession, {
+        text,
+        info: reader.info,
+        participant,
+      });
+
+      // check if callback is a Promise
+      if (textInputResult instanceof Promise) {
+        await textInputResult;
+      }
+    };
+
+    readText().catch((error) => {
+      this.logger.error({ error }, 'Error reading text input');
     });
   };
 
@@ -294,6 +351,17 @@ export class RoomIO {
   }
 
   start() {
+    if (this.inputOptions.textEnabled) {
+      try {
+        this.room.registerTextStreamHandler(TOPIC_CHAT, this.onUserTextInput);
+        this.textStreamHandlerRegistered = true;
+      } catch (error) {
+        if (this.inputOptions.textEnabled) {
+          this.logger.warn(`text stream handler for topic "${TOPIC_CHAT}" already set, ignoring`);
+        }
+      }
+    }
+
     // -- create inputs --
     if (this.inputOptions.audioEnabled) {
       this.audioInput = new ParticipantAudioInputStream({
