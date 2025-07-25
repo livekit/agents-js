@@ -33,6 +33,7 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { STT, type SpeechEvent } from '../stt/stt.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS } from '../tts/tts.js';
+import { NOT_GIVEN, type NotGivenOr, isGiven } from '../types.js';
 import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
@@ -82,6 +83,7 @@ export class AgentActivity implements RecognitionHooks {
   private speechTasks: Set<Promise<unknown>> = new Set();
   private lock = new Mutex();
   private audioStream = new DeferredReadableStream<AudioFrame>();
+  private toolChoice?: ToolChoice;
 
   agent: Agent;
   agentSession: AgentSession;
@@ -248,7 +250,8 @@ export class AgentActivity implements RecognitionHooks {
 
       this.audioRecognition = new AudioRecognition({
         recognitionHooks: this,
-        stt: (...args) => this.agent.sttNode(...args),
+        // Disable stt node if stt is not provided
+        stt: this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
         vad: this.vad,
         turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
         turnDetectionMode: this.turnDetectionMode,
@@ -327,9 +330,13 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  updateOptions({ toolChoice }: { toolChoice?: ToolChoice }): void {
+  updateOptions({ toolChoice }: { toolChoice?: NotGivenOr<ToolChoice | undefined> }): void {
+    if (isGiven(toolChoice)) {
+      this.toolChoice = toolChoice;
+    }
+
     if (this.realtimeSession) {
-      this.realtimeSession.updateOptions({ toolChoice });
+      this.realtimeSession.updateOptions({ toolChoice: this.toolChoice });
     }
   }
 
@@ -460,6 +467,8 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateUserState('speaking');
     }
 
+    // this.interrupt() is going to raise when allow_interruptions is False,
+    // llm.InputSpeechStartedEvent is only fired by the server when the turn_detection is enabled.
     try {
       this.interrupt();
     } catch (error) {
@@ -552,6 +561,7 @@ export class AgentActivity implements RecognitionHooks {
 
   onEndOfSpeech(ev: VADEvent): void {
     this.logger.info('End of speech', ev);
+    this.agentSession._updateUserState('listening');
   }
 
   onVADInferenceDone(ev: VADEvent): void {
@@ -592,6 +602,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onInterimTranscript(ev: SpeechEvent): void {
+    if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
+      // skip stt transcription if userTranscription is enabled on the realtime model
+      return;
+    }
+
     this.agentSession.emit(
       AgentSessionEventTypes.UserInputTranscribed,
       createUserInputTranscribedEvent({
@@ -603,6 +618,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onFinalTranscript(ev: SpeechEvent): void {
+    if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
+      // skip stt transcription if userTranscription is enabled on the realtime model
+      return;
+    }
+
     this.agentSession.emit(
       AgentSessionEventTypes.UserInputTranscribed,
       createUserInputTranscribedEvent({
@@ -718,14 +738,14 @@ export class AgentActivity implements RecognitionHooks {
     userMessage?: ChatMessage;
     chatCtx?: ChatContext;
     instructions?: string;
-    toolChoice?: ToolChoice;
+    toolChoice?: NotGivenOr<ToolChoice>;
     allowInterruptions?: boolean;
   }): SpeechHandle {
     const {
       userMessage,
       chatCtx,
       instructions: defaultInstructions,
-      toolChoice: defaultToolChoice,
+      toolChoice: defaultToolChoice = NOT_GIVEN,
       allowInterruptions: defaultAllowInterruptions,
     } = options;
 
@@ -776,7 +796,9 @@ export class AgentActivity implements RecognitionHooks {
           // TODO(brian): support llm.ChatMessage for the realtime model
           userInput: userMessage?.textContent,
           instructions,
-          modelSettings: { toolChoice },
+          modelSettings: {
+            toolChoice: isGiven(toolChoice) ? toolChoice : undefined,
+          },
         }),
         ownedSpeechHandle: handle,
         name: 'AgentActivity.realtimeReply',
@@ -794,7 +816,7 @@ export class AgentActivity implements RecognitionHooks {
           handle,
           chatCtx ?? this.agent.chatCtx,
           this.agent.toolCtx,
-          { toolChoice },
+          { toolChoice: isGiven(toolChoice) ? toolChoice : this.toolChoice },
           instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
           userMessage,
         ),
@@ -1769,12 +1791,20 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._conversationItemAdded(message);
     }
 
+    const originalToolChoice = this.toolChoice;
     if (toolChoice) {
       this.realtimeSession.updateOptions({ toolChoice });
     }
 
-    const generationEvent = await this.realtimeSession.generateReply(instructions);
-    await this.realtimeGenerationTask(speechHandle, generationEvent, { toolChoice });
+    try {
+      const generationEvent = await this.realtimeSession.generateReply(instructions);
+      await this.realtimeGenerationTask(speechHandle, generationEvent, { toolChoice });
+    } finally {
+      // reset toolChoice value
+      if (toolChoice && toolChoice !== originalToolChoice) {
+        this.realtimeSession.updateOptions({ toolChoice: originalToolChoice });
+      }
+    }
   }
 
   private scheduleSpeech(

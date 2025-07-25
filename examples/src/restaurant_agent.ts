@@ -190,7 +190,6 @@ function createGreeterAgent(menu: string) {
     name: 'greeter',
     instructions: `You are a friendly restaurant receptionist. The menu is: ${menu}\nYour jobs are to greet the caller and understand if they want to make a reservation or order takeaway. Guide them to the right agent using tools.`,
     // TODO(brian): support parallel tool calls
-    llm: new openai.LLM(),
     tts: new elevenlabs.TTS({ voice: voices.greeter }),
     tools: {
       toReservation: llm.tool({
