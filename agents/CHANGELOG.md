@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 0.7.9
+
+### Patch Changes
+
+- add `lk.segment_id` to all generated trancription events - [#580](https://github.com/livekit/agents-js/pull/580) ([@1egoman](https://github.com/1egoman))
+
 ## 0.7.8
 
 ### Patch Changes

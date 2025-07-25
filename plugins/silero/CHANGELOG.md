@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-silero
 
+## 0.5.9
+
+### Patch Changes
+
+- Don't support onnxruntime 1.22.0 - [#582](https://github.com/livekit/agents-js/pull/582) ([@bcherry](https://github.com/bcherry))
+
+- Updated dependencies [[`133f2a84b406527a6c7d0e35d62b2ef7c581b0db`](https://github.com/livekit/agents-js/commit/133f2a84b406527a6c7d0e35d62b2ef7c581b0db)]:
+  - @livekit/agents@0.7.9
+
 ## 0.5.8
 
 ### Patch Changes
