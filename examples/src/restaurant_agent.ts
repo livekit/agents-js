@@ -385,9 +385,9 @@ export default defineAgent({
       vad,
       stt: new deepgram.STT(),
       tts: new elevenlabs.TTS(),
-      // llm: new openai.LLM(),
+      llm: new openai.LLM(),
       // to use realtime model, replace the stt, llm, tts and vad with the following
-      llm: new openai.realtime.RealtimeModel(),
+      // llm: new openai.realtime.RealtimeModel(),
       turnDetection: new livekit.turnDetector.EnglishModel(),
       userData,
       voiceOptions: {
