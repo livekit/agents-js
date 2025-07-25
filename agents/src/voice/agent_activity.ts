@@ -1874,7 +1874,6 @@ export class AgentActivity implements RecognitionHooks {
       await this.realtimeSession?.close();
       await this.audioRecognition?.close();
       await this._mainTask?.cancelAndWait();
-      this.logger.debug('AgentActivity closed');
     } finally {
       unlock();
     }
