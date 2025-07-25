@@ -348,10 +348,17 @@ export class RoomIO {
     });
 
     // -- attatch the agent to the session --
-    this.agentSession._audioInput = this.audioInput?.audioStream;
-    this.agentSession._audioOutput = this.audioOutput;
-    this.agentSession._transcriptionOutput = this.transcriptionOutput;
+    if (this.audioInput) {
+      this.agentSession.input.audio = this.audioInput;
+    }
+    if (this.audioOutput) {
+      this.agentSession.output.audio = this.audioOutput;
+    }
+    if (this.transcriptionOutput) {
+      this.agentSession.output.transcription = this.transcriptionOutput;
+    }
 
     this.agentSession.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
+    // TODO(AJS-194) add agent state change hook
   }
 }

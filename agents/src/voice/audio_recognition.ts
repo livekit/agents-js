@@ -184,6 +184,7 @@ export class AudioRecognition {
         }
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
+        this.logger.debug({ transcript: ev.alternatives?.[0]?.text }, 'interim transcript');
         this.hooks.onInterimTranscript(ev);
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
         break;
@@ -359,6 +360,7 @@ export class AudioRecognition {
 
         switch (ev.type) {
           case VADEventType.START_OF_SPEECH:
+            this.logger.debug('VAD task: START_OF_SPEECH');
             this.hooks.onStartOfSpeech(ev);
             this.speaking = true;
 
@@ -368,6 +370,7 @@ export class AudioRecognition {
             this.hooks.onVADInferenceDone(ev);
             break;
           case VADEventType.END_OF_SPEECH:
+            this.logger.debug('VAD task: END_OF_SPEECH');
             this.hooks.onEndOfSpeech(ev);
             this.speaking = false;
             // when VAD fires END_OF_SPEECH, it already waited for the silence_duration

@@ -22,15 +22,18 @@ import {
 } from '../llm/index.js';
 import { log } from '../log.js';
 import type {
+  EOUMetrics,
   LLMMetrics,
   RealtimeModelMetrics,
   STTMetrics,
   TTSMetrics,
   VADMetrics,
 } from '../metrics/base.js';
+import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { STT, type SpeechEvent } from '../stt/stt.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS } from '../tts/tts.js';
+import { NOT_GIVEN, type NotGivenOr, isGiven } from '../types.js';
 import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
@@ -79,6 +82,8 @@ export class AgentActivity implements RecognitionHooks {
   private q_updated: Future;
   private speechTasks: Set<Promise<unknown>> = new Set();
   private lock = new Mutex();
+  private audioStream = new DeferredReadableStream<AudioFrame>();
+  private toolChoice?: ToolChoice;
 
   agent: Agent;
   agentSession: AgentSession;
@@ -103,6 +108,81 @@ export class AgentActivity implements RecognitionHooks {
 
     this.turnDetectionMode =
       typeof this.turnDetection === 'string' ? this.turnDetection : undefined;
+
+    if (this.turnDetectionMode === 'vad' && this.vad === undefined) {
+      this.logger.warn(
+        'turnDetection is set to "vad", but no VAD model is provided, ignoring the turnDdetection setting',
+      );
+      this.turnDetectionMode = undefined;
+    }
+
+    if (this.turnDetectionMode === 'stt' && this.stt === undefined) {
+      this.logger.warn(
+        'turnDetection is set to "stt", but no STT model is provided, ignoring the turnDetection setting',
+      );
+      this.turnDetectionMode = undefined;
+    }
+
+    if (this.llm instanceof RealtimeModel) {
+      if (this.llm.capabilities.turnDetection && !this.allowInterruptions) {
+        this.logger.warn(
+          'the RealtimeModel uses a server-side turn detection, allowInterruptions cannot be false, ' +
+            'disable turnDetection in the RealtimeModel and use VAD on the AgentSession instead',
+        );
+      }
+
+      if (this.turnDetectionMode === 'realtime_llm' && !this.llm.capabilities.turnDetection) {
+        this.logger.warn(
+          'turnDetection is set to "realtime_llm", but the LLM is not a RealtimeModel or the server-side turn detection is not supported/enabled, ignoring the turnDetection setting',
+        );
+        this.turnDetectionMode = undefined;
+      }
+
+      if (this.turnDetectionMode === 'stt') {
+        this.logger.warn(
+          'turnDetection is set to "stt", but the LLM is a RealtimeModel, ignoring the turnDetection setting',
+        );
+        this.turnDetectionMode = undefined;
+      }
+
+      if (
+        this.turnDetectionMode &&
+        this.turnDetectionMode !== 'realtime_llm' &&
+        this.llm.capabilities.turnDetection
+      ) {
+        this.logger.warn(
+          `turnDetection is set to "${this.turnDetectionMode}", but the LLM is a RealtimeModel and server-side turn detection enabled, ignoring the turnDetection setting`,
+        );
+        this.turnDetectionMode = undefined;
+      }
+
+      // fallback to VAD if server side turn detection is disabled and VAD is available
+      if (
+        !this.llm.capabilities.turnDetection &&
+        this.vad &&
+        this.turnDetectionMode === undefined
+      ) {
+        this.turnDetectionMode = 'vad';
+      }
+    } else if (this.turnDetectionMode === 'realtime_llm') {
+      this.logger.warn(
+        'turnDetection is set to "realtime_llm", but the LLM is not a RealtimeModel',
+      );
+      this.turnDetectionMode = undefined;
+    }
+
+    if (
+      !this.vad &&
+      this.stt &&
+      this.llm instanceof LLM &&
+      this.allowInterruptions &&
+      this.turnDetectionMode === undefined
+    ) {
+      this.logger.warn(
+        'VAD is not set. Enabling VAD is recommended when using LLM and STT ' +
+          'for more responsive interruption handling.',
+      );
+    }
   }
 
   async start(): Promise<void> {
@@ -170,7 +250,8 @@ export class AgentActivity implements RecognitionHooks {
 
       this.audioRecognition = new AudioRecognition({
         recognitionHooks: this,
-        stt: (...args) => this.agent.sttNode(...args),
+        // Disable stt node if stt is not provided
+        stt: this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
         vad: this.vad,
         turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
         turnDetectionMode: this.turnDetectionMode,
@@ -185,8 +266,6 @@ export class AgentActivity implements RecognitionHooks {
         promise: this.agent.onEnter(),
         name: 'AgentActivity_onEnter',
       });
-
-      // TODO(shubhra): Add turn detection mode
     } finally {
       unlock();
     }
@@ -251,19 +330,42 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  updateOptions({ toolChoice }: { toolChoice?: ToolChoice }): void {
+  updateOptions({ toolChoice }: { toolChoice?: NotGivenOr<ToolChoice | undefined> }): void {
+    if (isGiven(toolChoice)) {
+      this.toolChoice = toolChoice;
+    }
+
     if (this.realtimeSession) {
-      this.realtimeSession.updateOptions({ toolChoice });
+      this.realtimeSession.updateOptions({ toolChoice: this.toolChoice });
     }
   }
 
-  updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
-    // TODO(AJS-164): might need to tee the streams here.
-    if (this.realtimeSession) {
-      this.realtimeSession.setInputAudioStream(audioStream);
-    } else if (this.audioRecognition) {
-      this.audioRecognition.setInputAudioStream(audioStream);
+  attachAudioInput(audioStream: ReadableStream<AudioFrame>): void {
+    if (this.audioStream.isSourceSet) {
+      this.logger.debug('detaching existing audio input in agent activity');
+      this.audioStream.detachSource();
     }
+
+    /**
+     * We need to add a deferred ReadableStream layer on top of the audioStream from the agent session.
+     * The tee() operation should be applied to the deferred stream, not the original audioStream.
+     * This is important because teeing the original stream directly makes it very difficult—if not
+     * impossible—to implement stream unlock logic cleanly.
+     */
+    this.audioStream.setSource(audioStream);
+    const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream.tee();
+
+    if (this.realtimeSession) {
+      this.realtimeSession.setInputAudioStream(realtimeAudioStream);
+    }
+
+    if (this.audioRecognition) {
+      this.audioRecognition.setInputAudioStream(recognitionAudioStream);
+    }
+  }
+
+  detachAudioInput(): void {
+    this.audioStream.detachSource();
   }
 
   commitUserTurn() {
@@ -296,8 +398,12 @@ export class AgentActivity implements RecognitionHooks {
     } = options ?? {};
     let allowInterruptions = defaultAllowInterruptions;
 
-    // TODO(AJS-185): support audio output audio enabled flag
-    if (!audio && !this.tts && this.agentSession._audioOutput) {
+    if (
+      !audio &&
+      !this.tts &&
+      this.agentSession.output.audio &&
+      this.agentSession.output.audioEnabled
+    ) {
       throw new Error('trying to generate speech from text without a TTS model');
     }
 
@@ -361,6 +467,8 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateUserState('speaking');
     }
 
+    // this.interrupt() is going to raise when allow_interruptions is False,
+    // llm.InputSpeechStartedEvent is only fired by the server when the turn_detection is enabled.
     try {
       this.interrupt();
     } catch (error) {
@@ -453,11 +561,17 @@ export class AgentActivity implements RecognitionHooks {
 
   onEndOfSpeech(ev: VADEvent): void {
     this.logger.info('End of speech', ev);
+    this.agentSession._updateUserState('listening');
   }
 
   onVADInferenceDone(ev: VADEvent): void {
     if (this.turnDetection === 'manual' || this.turnDetection === 'realtime_llm') {
       // skip speech handle interruption for manual and realtime model
+      return;
+    }
+
+    if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
+      // skip speech handle interruption if server side turn detection is enabled
       return;
     }
 
@@ -488,6 +602,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onInterimTranscript(ev: SpeechEvent): void {
+    if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
+      // skip stt transcription if userTranscription is enabled on the realtime model
+      return;
+    }
+
     this.agentSession.emit(
       AgentSessionEventTypes.UserInputTranscribed,
       createUserInputTranscribedEvent({
@@ -499,6 +618,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onFinalTranscript(ev: SpeechEvent): void {
+    if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
+      // skip stt transcription if userTranscription is enabled on the realtime model
+      return;
+    }
+
     this.agentSession.emit(
       AgentSessionEventTypes.UserInputTranscribed,
       createUserInputTranscribedEvent({
@@ -614,14 +738,14 @@ export class AgentActivity implements RecognitionHooks {
     userMessage?: ChatMessage;
     chatCtx?: ChatContext;
     instructions?: string;
-    toolChoice?: ToolChoice;
+    toolChoice?: NotGivenOr<ToolChoice>;
     allowInterruptions?: boolean;
   }): SpeechHandle {
     const {
       userMessage,
       chatCtx,
       instructions: defaultInstructions,
-      toolChoice: defaultToolChoice,
+      toolChoice: defaultToolChoice = NOT_GIVEN,
       allowInterruptions: defaultAllowInterruptions,
     } = options;
 
@@ -672,7 +796,9 @@ export class AgentActivity implements RecognitionHooks {
           // TODO(brian): support llm.ChatMessage for the realtime model
           userInput: userMessage?.textContent,
           instructions,
-          modelSettings: { toolChoice },
+          modelSettings: {
+            toolChoice: isGiven(toolChoice) ? toolChoice : undefined,
+          },
         }),
         ownedSpeechHandle: handle,
         name: 'AgentActivity.realtimeReply',
@@ -690,7 +816,7 @@ export class AgentActivity implements RecognitionHooks {
           handle,
           chatCtx ?? this.agent.chatCtx,
           this.agent.toolCtx,
-          { toolChoice },
+          { toolChoice: isGiven(toolChoice) ? toolChoice : this.toolChoice },
           instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
           userMessage,
         ),
@@ -778,7 +904,7 @@ export class AgentActivity implements RecognitionHooks {
       this.realtimeSession?.interrupt();
     }
 
-    const userMessage = ChatMessage.create({
+    let userMessage: ChatMessage | undefined = ChatMessage.create({
       role: 'user',
       content: info.newTranscript,
     });
@@ -787,6 +913,7 @@ export class AgentActivity implements RecognitionHooks {
     // the user can edit it for the current generation, but changes will not be kept inside the
     // Agent.chatCtx
     const chatCtx = this.agent.chatCtx.copy();
+    const startTime = Date.now();
 
     try {
       await this.agent.onUserTurnCompleted(chatCtx, userMessage);
@@ -797,7 +924,32 @@ export class AgentActivity implements RecognitionHooks {
       this.logger.error({ error: e }, 'error occurred during onUserTurnCompleted');
     }
 
-    this.generateReply({ userMessage, chatCtx });
+    const callbackDuration = Date.now() - startTime;
+
+    if (this.llm instanceof RealtimeModel) {
+      // ignore stt transcription for realtime model
+      userMessage = undefined;
+    } else if (this.llm === undefined) {
+      return;
+    }
+
+    // Ensure the new message is passed to generateReply
+    // This preserves the original message id, making it easier for users to track responses
+    const speechHandle = this.generateReply({ userMessage, chatCtx });
+
+    const eouMetrics: EOUMetrics = {
+      type: 'eou_metrics',
+      timestamp: Date.now(),
+      endOfUtteranceDelay: info.endOfUtteranceDelay,
+      transcriptionDelay: info.transcriptionDelay,
+      onUserTurnCompletedDelay: callbackDuration,
+      speechId: speechHandle.id,
+    };
+
+    this.agentSession.emit(
+      AgentSessionEventTypes.MetricsCollected,
+      createMetricsCollectedEvent({ metrics: eouMetrics }),
+    );
   }
 
   private async ttsTask(
@@ -809,10 +961,13 @@ export class AgentActivity implements RecognitionHooks {
   ): Promise<void> {
     speechHandleStorage.enterWith(speechHandle);
 
-    // TODO(AJS-185): support audio output transcription enabled flag
-    const transcriptionOutput = this.agentSession._transcriptionOutput;
-    // TODO(AJS-185): support audio output audio enabled flag
-    const audioOutput = this.agentSession._audioOutput;
+    const transcriptionOutput = this.agentSession.output.transcriptionEnabled
+      ? this.agentSession.output.transcription
+      : null;
+
+    const audioOutput = this.agentSession.output.audioEnabled
+      ? this.agentSession.output.audio
+      : null;
 
     const replyAbortController = new AbortController();
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
@@ -932,8 +1087,12 @@ export class AgentActivity implements RecognitionHooks {
 
     const replyAbortController = new AbortController();
 
-    const audioOutput = this.agentSession._audioOutput;
-    const transcriptionOutput = this.agentSession._transcriptionOutput;
+    const audioOutput = this.agentSession.output.audioEnabled
+      ? this.agentSession.output.audio
+      : null;
+    const transcriptionOutput = this.agentSession.output.transcriptionEnabled
+      ? this.agentSession.output.transcription
+      : null;
 
     chatCtx = chatCtx.copy();
 
@@ -1268,8 +1427,12 @@ export class AgentActivity implements RecognitionHooks {
       'realtime generation started',
     );
 
-    const audioOutput = this.agentSession._audioOutput;
-    const textOutput = this.agentSession._transcriptionOutput;
+    const audioOutput = this.agentSession.output.audioEnabled
+      ? this.agentSession.output.audio
+      : null;
+    const textOutput = this.agentSession.output.transcriptionEnabled
+      ? this.agentSession.output.transcription
+      : null;
     const toolCtx = this.realtimeSession.tools;
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
@@ -1628,12 +1791,20 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._conversationItemAdded(message);
     }
 
+    const originalToolChoice = this.toolChoice;
     if (toolChoice) {
       this.realtimeSession.updateOptions({ toolChoice });
     }
 
-    const generationEvent = await this.realtimeSession.generateReply(instructions);
-    await this.realtimeGenerationTask(speechHandle, generationEvent, { toolChoice });
+    try {
+      const generationEvent = await this.realtimeSession.generateReply(instructions);
+      await this.realtimeGenerationTask(speechHandle, generationEvent, { toolChoice });
+    } finally {
+      // reset toolChoice value
+      if (toolChoice && toolChoice !== originalToolChoice) {
+        this.realtimeSession.updateOptions({ toolChoice: originalToolChoice });
+      }
+    }
   }
 
   private scheduleSpeech(
@@ -1699,11 +1870,10 @@ export class AgentActivity implements RecognitionHooks {
         this.vad.off('metrics_collected', this.onMetricsCollected);
       }
 
+      this.detachAudioInput();
       await this.realtimeSession?.close();
       await this.audioRecognition?.close();
       await this._mainTask?.cancelAndWait();
-
-      this.agent._agentActivity = undefined;
     } finally {
       unlock();
     }

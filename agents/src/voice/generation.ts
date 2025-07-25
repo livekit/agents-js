@@ -528,7 +528,7 @@ async function forwardText(
   source: ReadableStream<string>,
   out: _TextOut,
   signal: AbortSignal,
-  textOutput?: TextOutput,
+  textOutput: TextOutput | null,
 ): Promise<void> {
   const reader = source.getReader();
   try {
@@ -539,7 +539,7 @@ async function forwardText(
       const { done, value: delta } = await reader.read();
       if (done) break;
       out.text += delta;
-      if (textOutput) {
+      if (textOutput !== null) {
         await textOutput.captureText(delta);
       }
       if (!out.firstTextFut.done) {
@@ -547,7 +547,9 @@ async function forwardText(
       }
     }
   } finally {
-    textOutput?.flush();
+    if (textOutput !== null) {
+      textOutput.flush();
+    }
     reader?.releaseLock();
   }
 }
@@ -555,7 +557,7 @@ async function forwardText(
 export function performTextForwarding(
   source: ReadableStream<string>,
   controller: AbortController,
-  textOutput?: TextOutput,
+  textOutput: TextOutput | null,
 ): [Task<void>, _TextOut] {
   const out = {
     text: '',
