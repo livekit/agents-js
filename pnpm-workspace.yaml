@@ -2,3 +2,5 @@ packages:
   - "agents"
   - "plugins/*"
   - "examples"
+  - "project/agent"
+  - "project/web"

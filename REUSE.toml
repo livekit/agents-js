@@ -36,3 +36,15 @@ SPDX-License-Identifier = "CC-BY-NC-SA-4.0"
 path = ["**/.gitattributes", "**.wav", "**/__snapshots__/**"]
 SPDX-FileCopyrightText = "2024 LiveKit, Inc."
 SPDX-License-Identifier = "Apache-2.0"
+
+# agent worker
+[[annotations]]
+path = ["project/agent/**"]
+SPDX-FileCopyrightText = "2024 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+# web
+[[annotations]]
+path = ["project/web/**"]
+SPDX-FileCopyrightText = "2024 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"

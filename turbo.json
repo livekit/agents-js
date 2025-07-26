@@ -1,5 +1,6 @@
 {
   "$schema": "https://turborepo.org/schema.json",
+  "ui": "tui",
   "globalEnv": [
     "AZURE_API_KEY",
     "AZURE_OPENAI_API_KEY",
@@ -29,7 +30,11 @@
     "RESEMBLE_API_KEY",
     "LIVEKIT_REMOTE_EOT_URL"
   ],
-  "pipeline": {
+  "tasks": {
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
