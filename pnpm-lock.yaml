@@ -296,7 +296,7 @@ importers:
         specifier: ^3.2.1
         version: 3.2.1
       onnxruntime-node:
-        specifier: ^1.19.2
+        specifier: '>=1.19.2 <1.22.0'
         version: 1.20.1
     devDependencies:
       '@livekit/agents':
@@ -306,7 +306,7 @@ importers:
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.15.30)
       onnxruntime-common:
-        specifier: ^1.19.2
+        specifier: '>=1.19.0 <1.22.0'
         version: 1.20.1
       tsup:
         specifier: ^8.3.5
@@ -423,7 +423,7 @@ importers:
   plugins/silero:
     dependencies:
       onnxruntime-node:
-        specifier: ^1.19.2
+        specifier: '>=1.19.0 <1.22.0'
         version: 1.20.1
       ws:
         specifier: ^8.16.0
@@ -442,7 +442,7 @@ importers:
         specifier: ^8.5.10
         version: 8.5.10
       onnxruntime-common:
-        specifier: ^1.19.2
+        specifier: '>=1.19.0 <1.22.0'
         version: 1.20.1
       tsup:
         specifier: ^8.3.5
@@ -7779,7 +7779,7 @@ snapshots:
 
   rimraf@5.0.10:
     dependencies:
-      glob: 10.3.10
+      glob: 10.4.5
 
   rollup@4.17.2:
     dependencies:
