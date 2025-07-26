@@ -33,7 +33,6 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { STT, type SpeechEvent } from '../stt/stt.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS } from '../tts/tts.js';
-import { NOT_GIVEN, type NotGivenOr, isGiven } from '../types.js';
 import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
@@ -83,7 +82,8 @@ export class AgentActivity implements RecognitionHooks {
   private speechTasks: Set<Promise<unknown>> = new Set();
   private lock = new Mutex();
   private audioStream = new DeferredReadableStream<AudioFrame>();
-  private toolChoice?: ToolChoice;
+  // default to null as None, which maps to the default provider tool choice value
+  private toolChoice: ToolChoice | null = null;
 
   agent: Agent;
   agentSession: AgentSession;
@@ -330,8 +330,8 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  updateOptions({ toolChoice }: { toolChoice?: NotGivenOr<ToolChoice | undefined> }): void {
-    if (isGiven(toolChoice)) {
+  updateOptions({ toolChoice }: { toolChoice?: ToolChoice | null }): void {
+    if (toolChoice !== undefined) {
       this.toolChoice = toolChoice;
     }
 
@@ -738,14 +738,14 @@ export class AgentActivity implements RecognitionHooks {
     userMessage?: ChatMessage;
     chatCtx?: ChatContext;
     instructions?: string;
-    toolChoice?: NotGivenOr<ToolChoice>;
+    toolChoice?: ToolChoice | null;
     allowInterruptions?: boolean;
   }): SpeechHandle {
     const {
       userMessage,
       chatCtx,
       instructions: defaultInstructions,
-      toolChoice: defaultToolChoice = NOT_GIVEN,
+      toolChoice: defaultToolChoice,
       allowInterruptions: defaultAllowInterruptions,
     } = options;
 
@@ -797,7 +797,8 @@ export class AgentActivity implements RecognitionHooks {
           userInput: userMessage?.textContent,
           instructions,
           modelSettings: {
-            toolChoice: isGiven(toolChoice) ? toolChoice : undefined,
+            // isGiven(toolChoice) = toolChoice !== undefined
+            toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice),
           },
         }),
         ownedSpeechHandle: handle,
@@ -816,7 +817,7 @@ export class AgentActivity implements RecognitionHooks {
           handle,
           chatCtx ?? this.agent.chatCtx,
           this.agent.toolCtx,
-          { toolChoice: isGiven(toolChoice) ? toolChoice : this.toolChoice },
+          { toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice) },
           instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
           userMessage,
         ),
@@ -1792,7 +1793,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const originalToolChoice = this.toolChoice;
-    if (toolChoice) {
+    if (toolChoice !== undefined) {
       this.realtimeSession.updateOptions({ toolChoice });
     }
 
@@ -1801,7 +1802,7 @@ export class AgentActivity implements RecognitionHooks {
       await this.realtimeGenerationTask(speechHandle, generationEvent, { toolChoice });
     } finally {
       // reset toolChoice value
-      if (toolChoice && toolChoice !== originalToolChoice) {
+      if (toolChoice !== undefined && toolChoice !== originalToolChoice) {
         this.realtimeSession.updateOptions({ toolChoice: originalToolChoice });
       }
     }
@@ -1878,4 +1879,9 @@ export class AgentActivity implements RecognitionHooks {
       unlock();
     }
   }
+}
+
+function toOaiToolChoice(toolChoice: ToolChoice | null): ToolChoice | undefined {
+  // we convert null to undefined, which maps to the default provider tool choice value
+  return toolChoice !== null ? toolChoice : undefined;
 }
