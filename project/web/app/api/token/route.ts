@@ -1,4 +1,3 @@
-import { getLiveKitCredentialsFromRequest } from '@/lib/utils';
 import { AccessToken, AccessTokenOptions, VideoGrant } from 'livekit-server-sdk';
 import { NextResponse } from 'next/server';
 
@@ -12,7 +11,9 @@ export async function POST(request: Request) {
   try {
     const req = await request.json();
     const { roomName, userId } = req;
-    const { API_KEY, API_SECRET, LIVEKIT_URL } = await getLiveKitCredentialsFromRequest(req);
+    const API_KEY = process.env.NEXT_PUBLIC_LIVEKIT_API_KEY!;
+    const API_SECRET = process.env.LIVEKIT_API_SECRET!;
+    const LIVEKIT_URL = process.env.LIVEKIT_URL!;
 
     if (!roomName || !userId) {
       throw new Error('Missing roomName or userId parameters');

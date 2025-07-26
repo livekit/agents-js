@@ -1,9 +1,9 @@
 'use client';
 
 import {
-    LiveKitRoom as LiveKitRoomCore,
-    RoomAudioRenderer,
-    useConnectionState
+  LiveKitRoom as LiveKitRoomCore,
+  RoomAudioRenderer,
+  useConnectionState
 } from '@livekit/components-react';
 import '@livekit/components-styles';
 import { useEffect, useState } from 'react';
@@ -30,9 +30,6 @@ async function fetchToken(roomName: string, userId: string): Promise<ConnectionD
     body: JSON.stringify({
       roomName,
       userId,
-      LIVEKIT_URL: process.env.NEXT_PUBLIC_LIVEKIT_URL,
-      LIVEKIT_API_KEY: process.env.NEXT_PUBLIC_LIVEKIT_API_KEY,
-      LIVEKIT_API_SECRET: process.env.NEXT_PUBLIC_LIVEKIT_API_SECRET,
     }),
   });
 
