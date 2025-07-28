@@ -229,6 +229,7 @@ export interface ModelUsage {
     cached_tokens_details: {
       text_tokens: number;
       audio_tokens: number;
+      image_tokens: number;
     };
   };
   output_token_details: {
