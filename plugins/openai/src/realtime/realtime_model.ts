@@ -929,6 +929,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     ]);
 
     // TODO(brian): handle cleanup the current generation
+    if (this.currentGeneration) {
+      await this.currentGeneration._doneFut.await;
+    }
 
     wsConn.close();
   }
