@@ -1171,6 +1171,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     };
 
     this.emit('metrics_collected', realtimeMetrics);
+    // TODO(brian): handle response done but not complete
   }
 
   private handleError(event: api_proto.ErrorEvent): void {
