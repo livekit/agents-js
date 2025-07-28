@@ -5,7 +5,7 @@ import { LiveKitRoom } from "./livekit-room";
 export const BasicRoomLayout = () => {
   // You can make these dynamic based on your needs
   const roomName = "demo-room";
-  const userId = `user-${Math.random().toString(36).substr(2, 9)}`;
+  const userId = `user`;
 
   const handleConnected = () => {
     console.log("Successfully connected to LiveKit room");
@@ -16,7 +16,7 @@ export const BasicRoomLayout = () => {
   };
 
   return (
-    <div className="room-layout">
+    <div >
       <h1 className="text-2xl font-bold mb-4">LiveKit Voice Agent Demo</h1>
       <LiveKitRoom 
         roomName={roomName}
