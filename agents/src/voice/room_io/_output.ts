@@ -180,8 +180,8 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       if (this.trackId) {
         attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
       }
-      attributes[ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID] = this.currentId;
     }
+    attributes[ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID] = this.currentId;
 
     return await this.room.localParticipant.streamText({
       topic: TOPIC_TRANSCRIPTION,
