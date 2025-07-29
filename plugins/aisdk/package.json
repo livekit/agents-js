@@ -52,6 +52,6 @@
   "peerDependencies": {
     "@livekit/agents": "workspace:^x",
     "@livekit/rtc-node": "^0.13.12",
-    "ai": "^5.0.0-beta.32"
+    "ai": "5.0.0-beta.32"
   }
 }
