@@ -2,13 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { llm, log } from '@livekit/agents';
-import {
-  type ModelMessage,
-  type ToolChoice,
-  type ToolSet,
-  type UserModelMessage,
-  streamText,
-} from 'ai';
+import { type ModelMessage, type ToolChoice, type ToolSet, streamText } from 'ai';
 
 export class LLM extends llm.LLM {
   #opts: Parameters<typeof streamText>[0];
@@ -106,75 +100,36 @@ export class LLMStream extends llm.LLMStream {
     toolChoice?: ToolChoice<ToolSet>,
   ) {
     // Convert tools to AI SDK format
-    const tools = this.toolCtx
-      ? Object.fromEntries(
-          Object.entries(this.toolCtx).map(([name, func]) => [
-            name,
-            {
-              description: func.description,
-              parameters: func.parameters,
-            },
-          ]),
-        )
-      : undefined;
 
     try {
       // Convert messages to AI SDK format
-      const messages: ModelMessage[] = this.chatCtx.items.map((item) => {
-        if (item.type === 'message') {
-          return {
-            role: item.role,
-            content: Array.isArray(item.content)
-              ? item.content.map((c) =>
-                  typeof c === 'string'
-                    ? { type: 'text' as const, text: c }
-                    : c.type === 'image_content'
-                      ? { type: 'image' as const, image: c.image }
-                      : { type: 'text' as const, text: String(c) },
-                )
-              : item.content,
-          } as ModelMessage;
-        } else if (item.type === 'function_call') {
-          return {
-            role: 'assistant',
-            content: '',
-            toolInvocations: [
-              {
-                toolCallId: item.callId,
-                toolName: item.name,
-                args: JSON.parse(item.args),
-              },
-            ],
-          } as ModelMessage;
-        } else if (item.type === 'function_call_output') {
-          return {
-            role: 'tool',
-            content: [
-              {
-                type: 'tool-result',
-                toolCallId: item.callId,
-                toolName: item.name,
-                output: {
-                  type: 'text',
-                  value: item.output,
-                },
-              },
-            ],
-          } as ModelMessage;
-        }
+      // @ts-ignore
+      const messages: ModelMessage[] = this.chatCtx.items
+        .map((item) => {
+          if (item.type === 'message') {
+            return {
+              role: item.role === 'developer' ? 'user' : item.role,
+              content: Array.isArray(item.content)
+                ? item.content.map((c) => (typeof c === 'string' ? c : '')).join('\n')
+                : item.content,
+            } satisfies ModelMessage;
+          } else if (item.type === 'function_call') {
+            return {
+              role: 'assistant',
+              content: '',
+            } satisfies ModelMessage;
+          } else if (item.type === 'function_call_output') {
+            return undefined;
+          }
+        })
+        .filter((m) => m !== undefined);
 
-        // Fallback
-        return {
-          role: 'user',
-          content: 'Invalid message type',
-        } as UserModelMessage;
-      });
+      console.log('calling stream text', messages);
 
       const result = streamText({
         model: opts.model,
-        prompt: opts.prompt,
         messages,
-        tools,
+        tools: opts.tools,
         toolChoice,
         temperature,
       });
@@ -183,19 +138,8 @@ export class LLMStream extends llm.LLMStream {
         if (this.abortController.signal.aborted) {
           break;
         }
+        console.log('received part', part.type);
         switch (part.type) {
-          case 'start': {
-            // handle start of stream
-            break;
-          }
-          case 'start-step': {
-            // handle start of step
-            break;
-          }
-          case 'text-start': {
-            // handle text start
-            break;
-          }
           case 'text-delta': {
             // handle text delta here
             this.queue.put({
@@ -207,68 +151,7 @@ export class LLMStream extends llm.LLMStream {
             });
             break;
           }
-          case 'text-end': {
-            // handle text end
-            break;
-          }
-          case 'reasoning-start': {
-            // handle reasoning start
-            break;
-          }
-          case 'reasoning-delta': {
-            // handle reasoning delta here
-            break;
-          }
-          case 'reasoning-end': {
-            // handle reasoning end
-            break;
-          }
-          case 'source': {
-            // handle source here
-            break;
-          }
-          case 'file': {
-            // handle file here
-            break;
-          }
-          case 'tool-call': {
-            switch (part.toolName) {
-              case 'cityAttractions': {
-                // handle tool call here
-                break;
-              }
-            }
-            break;
-          }
-          case 'tool-input-start': {
-            // handle tool input start
-            break;
-          }
-          case 'tool-input-delta': {
-            // handle tool input delta
-            break;
-          }
-          case 'tool-input-end': {
-            // handle tool input end
-            break;
-          }
-          case 'tool-result': {
-            switch (part.toolName) {
-              case 'cityAttractions': {
-                // handle tool result here
-                break;
-              }
-            }
-            break;
-          }
-          case 'tool-error': {
-            // handle tool error
-            break;
-          }
-          case 'finish-step': {
-            // handle finish step
-            break;
-          }
+
           case 'finish': {
             // handle finish here
             this.queue.put({
@@ -284,10 +167,7 @@ export class LLMStream extends llm.LLMStream {
           }
           case 'error': {
             // handle error here
-            break;
-          }
-          case 'raw': {
-            // handle raw value
+            console.error('error', part.error);
             break;
           }
         }

@@ -40,8 +40,7 @@ export default defineAgent({
       tts: new elevenlabs.TTS(),
       llm: new aisdk.LLM({
         model: openai('gpt-4o-mini'),
-        prompt:
-          "You are a helpful assistant called Anton, you can hear the user's message and respond to it.",
+        tools: {},
       }),
 
       // to use realtime model, replace the stt, llm, tts and vad with the following
