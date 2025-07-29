@@ -272,7 +272,7 @@ export class AgentSession<
     await this.activity.start();
 
     if (this._input.audio) {
-      this.activity.attachAudioInput(this._input.audio.stream);
+      this.activity.updateAudioInput(this._input.audio.stream);
     }
   }
 
@@ -327,17 +327,17 @@ export class AgentSession<
   }
 
   // -- User changed input/output streams/sinks --
-  private onAudioInputChanged(): void {
+  private onAudioInputChanged = (): void => {
     if (!this.started) {
       return;
     }
 
     if (this.activity && this._input.audio) {
-      this.activity.attachAudioInput(this._input.audio.stream);
+      this.activity.updateAudioInput(this._input.audio.stream);
     }
-  }
+  };
 
-  private onAudioOutputChanged(): void {}
+  private onAudioOutputChanged = (): void => {};
 
-  private onTextOutputChanged(): void {}
+  private onTextOutputChanged = (): void => {};
 }
