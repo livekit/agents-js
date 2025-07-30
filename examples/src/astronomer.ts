@@ -103,7 +103,70 @@ Agent: "Great! I'll send you a text with the registration link."
                 sendRegistrationLink(ctx.userData);
                 return "registration link sent"
               }
-            })
+            }),
+            sendColdplayMomentsRecap: llm.tool({
+              description: "Send blurry executive Coldplay photos to the user",
+              execute: async (_, { ctx }: llm.ToolOptions<CallerData>) => {
+                await sendWhatsAppMedia(ctx.userData, {
+                  type: "image",
+                  image: {
+                    link: "https://astronomer.io/media/coldplay_exec_sync.jpg",
+                    caption: "Executive Alignment Session 🎶 (Coldplay Moments Recap)",
+                  },
+                });
+                return "coldplay photos sent";
+              },
+            }),
+            sendCrisisCommsGuide: llm.tool({
+              description: "Send an internal PR crisis playbook PDF to the user",
+              execute: async (_, { ctx }: llm.ToolOptions<CallerData>) => {
+                await sendWhatsAppMedia(ctx.userData, {
+                  type: "document",
+                  document: {
+                    link: "https://astronomer.io/media/Crisis-Playbook.pdf",
+                    filename: "Astronomer_Crisis_Playbook.pdf",
+                    caption: "📄 Internal Resilience Playbook – For When Things Go Viral",
+                  },
+                });
+                return "crisis guide sent";
+              },
+            }),
+            sendCeosApologyNoteFromLiveNation: llm.tool({
+              description: "Send a fake CEO apology voice note recorded at Coldplay",
+              execute: async (_, { ctx }: llm.ToolOptions<CallerData>) => {
+                await sendWhatsAppMedia(ctx.userData, {
+                  type: "audio",
+                  audio: {
+                    link: "https://astronomer.io/media/ceo-apology.mp3",
+                  },
+                });
+                return "voice note sent";
+              },
+            }),
+            sendLimitedAffairEditionSwag: llm.tool({
+              description: "Send a limited-edition merch drop link to the user",
+              execute: async (_, { ctx }: llm.ToolOptions<CallerData>) => {
+                await sendWhatsAppMedia(ctx.userData, {
+                  type: "interactive",
+                  interactive: {
+                    type: "button",
+                    body: {
+                      text: "🛍️ Limited-Edition “Caught in the Flow” Hoodie Drop",
+                    },
+                    action: {
+                      buttons: [
+                        {
+                          type: "url",
+                          url: "https://www.astronomer.io/",
+                          title: "Shop Now",
+                        },
+                      ],
+                    },
+                  },
+                });
+                return "merch drop sent";
+              },
+            }),            
           },
       });
       
@@ -112,6 +175,33 @@ Agent: "Great! I'll send you a text with the registration link."
   async onEnter(): Promise<void> {
     this.session.say("Thank you for your interest in Astronomer. I'm Gwyneth, a spokesperson for the company.");
   }
+}
+
+async function sendWhatsAppMedia(
+  callerData: CallerData,
+  payload: Record<string, any>
+) {
+  const url = `https://graph.facebook.com/v23.0/${callerData.phoneNumberId}/messages`;
+  const fullPayload = {
+    messaging_product: 'whatsapp',
+    to: callerData.callerNumber,
+    ...payload,
+  };
+
+  console.info("Sending WhatsApp media:", fullPayload);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${callerData.accessToken}`
+    },
+    body: JSON.stringify(fullPayload),
+  });
+
+  const result = await response.json();
+  console.log('WhatsApp API Response:', result);
+  return result;
 }
 
 async function sendRegistrationLink(callerData: CallerData) {
