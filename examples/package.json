@@ -3,7 +3,6 @@
   "name": "livekit-agents-examples",
   "type": "module",
   "scripts": {
-    "build": "tsc",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\""
@@ -14,7 +13,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@ai-sdk/openai": "2.0.0-beta.14",
+    "@ai-sdk/mistral": "2.0.0-beta.9",
     "@livekit/agents": "workspace:*",
     "@livekit/agents-plugin-aisdk": "workspace:*",
     "@livekit/agents-plugin-deepgram": "workspace:*",
