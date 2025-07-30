@@ -157,11 +157,8 @@ importers:
   examples:
     dependencies:
       '@ai-sdk/mistral':
-        specifier: ^2.0.0-beta.10
-        version: 2.0.0-canary.19(zod@3.23.8)
-      '@ai-sdk/openai':
-        specifier: ^2.0.0-beta.10
-        version: 2.0.0-canary.20(zod@3.23.8)
+        specifier: 2.0.0-beta.9
+        version: 2.0.0-beta.9(zod@3.25.76)
       '@livekit/agents':
         specifier: workspace:*
         version: link:../agents
@@ -189,6 +186,9 @@ importers:
       '@livekit/rtc-node':
         specifier: ^0.13.11
         version: 0.13.13
+      ai:
+        specifier: 5.0.0-beta.32
+        version: 5.0.0-beta.32(zod@3.25.76)
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
@@ -196,8 +196,8 @@ importers:
         specifier: ^2.9.2
         version: 2.9.2
       zod:
-        specifier: ^3.23.8
-        version: 3.23.8
+        specifier: ^3.25.59
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^22.5.5
@@ -218,8 +218,8 @@ importers:
         specifier: npm:@jsr/std__async@^1.0.13
         version: '@jsr/std__async@1.0.13'
       ai:
-        specifier: ^5.0.0-beta.32
-        version: 5.0.0-canary.24(zod@3.23.8)
+        specifier: 5.0.0-beta.32
+        version: 5.0.0-beta.32(zod@3.25.76)
       sharp:
         specifier: ^0.33.5
         version: 0.33.5
@@ -454,7 +454,7 @@ importers:
         version: '@jsr/std__async@1.0.13'
       openai:
         specifier: ^4.91.1
-        version: 4.91.1(ws@8.17.0)(zod@3.23.8)
+        version: 4.91.1(ws@8.17.0)(zod@3.25.76)
       sharp:
         specifier: ^0.33.5
         version: 0.33.5
@@ -579,26 +579,26 @@ importers:
 
 packages:
 
-  '@ai-sdk/mistral@2.0.0-canary.19':
-    resolution: {integrity: sha512-OjGE7CiZDKJzy+h4u+NxJHnhs7psJqiXDpaT/TIjmuu4Mn5yZghyHAfdNidSzXsQS/Cwfvx2HnMO3sudZeccXw==}
+  '@ai-sdk/gateway@1.0.0-beta.17':
+    resolution: {integrity: sha512-ikM6U0LHc2K4GLJNVK8diC1H16ewkaXumr3rMbYOaL1zOy8TmuxMSZk8Tj7rqiJTJPjRPmB70bTCMXrmUy30pw==}
     engines: {node: '>=18'}
     peerDependencies:
-      zod: ^3.24.0
+      zod: ^3.25.76 || ^4
 
-  '@ai-sdk/openai@2.0.0-canary.20':
-    resolution: {integrity: sha512-AipaQeOz/nIPTtZLJaqG9sxf8zWqZ1UGLG1QOLhNpWwSBDXPVw5k0cWhLtReuZrL/ncKvL6BrGN9aEZLqcmWAg==}
+  '@ai-sdk/mistral@2.0.0-beta.9':
+    resolution: {integrity: sha512-lv6pEjWT0FXh714AK3kbCUYjHkmaPohigUC+7YRV0spfKtduSUVB/lv4MFoan/e1uxomFfZNBe5eL8ofSJB1vA==}
     engines: {node: '>=18'}
     peerDependencies:
-      zod: ^3.24.0
+      zod: ^3.25.76 || ^4
 
-  '@ai-sdk/provider-utils@3.0.0-canary.19':
-    resolution: {integrity: sha512-4IJw6/wkWYLYfFYPvCs5go0L/sBRZsIRW1l/R6LniF4WjAH2+R4dMbESgBmzx+Z2+W+W6gFeK8dnQByn7vaA/w==}
+  '@ai-sdk/provider-utils@3.0.0-beta.8':
+    resolution: {integrity: sha512-N8H4HhqLRe7R635i33W2MkNuckGWjC5TdektsBpFUMFncqtZlNFJ8e3LV81Udk00ac8juX57bboUIi8APJ2V/g==}
     engines: {node: '>=18'}
     peerDependencies:
-      zod: ^3.23.8
+      zod: ^3.25.76 || ^4
 
-  '@ai-sdk/provider@2.0.0-canary.14':
-    resolution: {integrity: sha512-aN83hjdjDCyhkOdulwMsxmGb91owS+bCSe6FWg1TEwusNM35vv020nY//Gid/0NdIpVkZJGzAajgCWrnno2zzA==}
+  '@ai-sdk/provider@2.0.0-beta.1':
+    resolution: {integrity: sha512-Z8SPncMtS3RsoXITmT7NVwrAq6M44dmw0DoUOYJqNNtCu8iMWuxB8Nxsoqpa0uEEy9R1V1ZThJAXTYgjTUxl3w==}
     engines: {node: '>=18'}
 
   '@ampproject/remapping@2.3.0':
@@ -1854,11 +1854,12 @@ packages:
     resolution: {integrity: sha512-5GG/5IbQQpC9FpkRGsSvZI5QYeSCzlJHdpBQntCsuTOxhKD8lqKhrleg2Yi7yvMIf82Ycmmqln9U8V9qwEiJew==}
     engines: {node: '>= 8.0.0'}
 
-  ai@5.0.0-canary.24:
-    resolution: {integrity: sha512-vqaMmM6XFwjz9mNjox9ehjkWFwXbSchhor5MiqgKZ1qRyoTvoYzAt6oCZwg5kN5jXNQ3rZVuyE8N3BbPbwma2Q==}
+  ai@5.0.0-beta.32:
+    resolution: {integrity: sha512-bi2ptrTwQ7N9yRLZWGdY5nc9l4wWFGTN2Oo0fR0bhw/dtVKZ9y75UrqILyLC4Xs4xDrtRdfjBIioLBSW36eyAQ==}
     engines: {node: '>=18'}
+    hasBin: true
     peerDependencies:
-      zod: ^3.23.8
+      zod: ^3.25.76 || ^4
 
   ajv@6.12.6:
     resolution: {integrity: sha512-j3fVLgvTo527anyYyJOGTYJbG+vnnQYvE0m5mmkc1TK+nxAppkCLMIL0aZ4dblVCNoGShhm+kzE4ZUykBoMg4g==}
@@ -2567,6 +2568,10 @@ packages:
   events@3.3.0:
     resolution: {integrity: sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q==}
     engines: {node: '>=0.8.x'}
+
+  eventsource-parser@3.0.3:
+    resolution: {integrity: sha512-nVpZkTMM9rF6AQ9gPJpFsNAMt48wIzB5TQgiTLdHiuO8XEDhUgZEhqKlZWXbIzo9VmJ/HvysHqEaVeD5v9TPvA==}
+    engines: {node: '>=20.0.0'}
 
   execa@8.0.1:
     resolution: {integrity: sha512-VyhnebXciFV2DESc+p6B+y0LjSm0krU4OgJN44qFAhBY0TJ+1V61tYD2+wHusZ6F9n5K+vl8k0sTy7PEfV4qpg==}
@@ -4576,28 +4581,32 @@ packages:
   zod@3.23.8:
     resolution: {integrity: sha512-XBx9AXhXktjUqnepgTiE5flcKIYWi/rme0Eaj+5Y0lftuGBq+jyRu/md4WnuxqgP1ubdpNCsYEYPxrzVHD8d6g==}
 
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
 snapshots:
 
-  '@ai-sdk/mistral@2.0.0-canary.19(zod@3.23.8)':
+  '@ai-sdk/gateway@1.0.0-beta.17(zod@3.25.76)':
     dependencies:
-      '@ai-sdk/provider': 2.0.0-canary.14
-      '@ai-sdk/provider-utils': 3.0.0-canary.19(zod@3.23.8)
-      zod: 3.23.8
+      '@ai-sdk/provider': 2.0.0-beta.1
+      '@ai-sdk/provider-utils': 3.0.0-beta.8(zod@3.25.76)
+      zod: 3.25.76
 
-  '@ai-sdk/openai@2.0.0-canary.20(zod@3.23.8)':
+  '@ai-sdk/mistral@2.0.0-beta.9(zod@3.25.76)':
     dependencies:
-      '@ai-sdk/provider': 2.0.0-canary.14
-      '@ai-sdk/provider-utils': 3.0.0-canary.19(zod@3.23.8)
-      zod: 3.23.8
+      '@ai-sdk/provider': 2.0.0-beta.1
+      '@ai-sdk/provider-utils': 3.0.0-beta.8(zod@3.25.76)
+      zod: 3.25.76
 
-  '@ai-sdk/provider-utils@3.0.0-canary.19(zod@3.23.8)':
+  '@ai-sdk/provider-utils@3.0.0-beta.8(zod@3.25.76)':
     dependencies:
-      '@ai-sdk/provider': 2.0.0-canary.14
+      '@ai-sdk/provider': 2.0.0-beta.1
       '@standard-schema/spec': 1.0.0
-      zod: 3.23.8
-      zod-to-json-schema: 3.24.6(zod@3.23.8)
+      eventsource-parser: 3.0.3
+      zod: 3.25.76
+      zod-to-json-schema: 3.24.6(zod@3.25.76)
 
-  '@ai-sdk/provider@2.0.0-canary.14':
+  '@ai-sdk/provider@2.0.0-beta.1':
     dependencies:
       json-schema: 0.4.0
 
@@ -5784,12 +5793,13 @@ snapshots:
     dependencies:
       humanize-ms: 1.2.1
 
-  ai@5.0.0-canary.24(zod@3.23.8):
+  ai@5.0.0-beta.32(zod@3.25.76):
     dependencies:
-      '@ai-sdk/provider': 2.0.0-canary.14
-      '@ai-sdk/provider-utils': 3.0.0-canary.19(zod@3.23.8)
+      '@ai-sdk/gateway': 1.0.0-beta.17(zod@3.25.76)
+      '@ai-sdk/provider': 2.0.0-beta.1
+      '@ai-sdk/provider-utils': 3.0.0-beta.8(zod@3.25.76)
       '@opentelemetry/api': 1.9.0
-      zod: 3.23.8
+      zod: 3.25.76
 
   ajv@6.12.6:
     dependencies:
@@ -6710,6 +6720,8 @@ snapshots:
 
   events@3.3.0: {}
 
+  eventsource-parser@3.0.3: {}
+
   execa@8.0.1:
     dependencies:
       cross-spawn: 7.0.3
@@ -7588,7 +7600,7 @@ snapshots:
       platform: 1.3.6
       protobufjs: 7.4.0
 
-  openai@4.91.1(ws@8.17.0)(zod@3.23.8):
+  openai@4.91.1(ws@8.17.0)(zod@3.25.76):
     dependencies:
       '@types/node': 18.19.64
       '@types/node-fetch': 2.6.11
@@ -7599,7 +7611,7 @@ snapshots:
       node-fetch: 2.7.0
     optionalDependencies:
       ws: 8.17.0
-      zod: 3.23.8
+      zod: 3.25.76
     transitivePeerDependencies:
       - encoding
 
@@ -8817,4 +8829,10 @@ snapshots:
     dependencies:
       zod: 3.23.8
 
+  zod-to-json-schema@3.24.6(zod@3.25.76):
+    dependencies:
+      zod: 3.25.76
+
   zod@3.23.8: {}
+
+  zod@3.25.76: {}

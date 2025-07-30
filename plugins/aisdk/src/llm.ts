@@ -152,6 +152,30 @@ export class LLMStream extends llm.LLMStream {
             break;
           }
 
+          case 'tool-call': {
+            // handle tool call here
+            this.queue.put({
+              id: part.toolCallId,
+              delta: {
+                role: 'assistant',
+                content: `_Calling tool ${part.toolName} with input ${JSON.stringify(part.input)}_\n`,
+              },
+            });
+            break;
+          }
+
+          case 'tool-result': {
+            // handle tool result here
+            this.queue.put({
+              id: part.toolCallId,
+              delta: {
+                role: 'assistant',
+                content: part.output,
+              },
+            });
+            break;
+          }
+
           case 'finish': {
             // handle finish here
             this.queue.put({
