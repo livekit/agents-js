@@ -100,73 +100,16 @@ Agent: "Great! I'll send you a text with the registration link."
             sendRegistrationLink: llm.tool({
               description: "Send a conference registration link to the user",
               execute: async (_, { ctx }: llm.ToolOptions<CallerData>) => {
-                sendRegistrationLink(ctx.userData);
-                return "registration link sent"
-              }
-            }),
-            sendColdplayMomentsRecap: llm.tool({
-              description: "Send blurry executive Coldplay photos to the user",
-              execute: async (_, { ctx }: llm.ToolOptions<CallerData>) => {
                 await sendWhatsAppMedia(ctx.userData, {
                   type: "image",
                   image: {
-                    link: "https://astronomer.io/media/coldplay_exec_sync.jpg",
-                    caption: "Executive Alignment Session 🎶 (Coldplay Moments Recap)",
+                    link: "https://raw.githubusercontent.com/livekit/agents-js/lkh2025-astronomer/examples/src/conference.png",
+                    caption: "Join us at Beyond Analytics in September!",
                   },
                 });
-                return "coldplay photos sent";
-              },
-            }),
-            sendCrisisCommsGuide: llm.tool({
-              description: "Send an internal PR crisis playbook PDF to the user",
-              execute: async (_, { ctx }: llm.ToolOptions<CallerData>) => {
-                await sendWhatsAppMedia(ctx.userData, {
-                  type: "document",
-                  document: {
-                    link: "https://astronomer.io/media/Crisis-Playbook.pdf",
-                    filename: "Astronomer_Crisis_Playbook.pdf",
-                    caption: "📄 Internal Resilience Playbook – For When Things Go Viral",
-                  },
-                });
-                return "crisis guide sent";
-              },
-            }),
-            sendCeosApologyNoteFromLiveNation: llm.tool({
-              description: "Send a fake CEO apology voice note recorded at Coldplay",
-              execute: async (_, { ctx }: llm.ToolOptions<CallerData>) => {
-                await sendWhatsAppMedia(ctx.userData, {
-                  type: "audio",
-                  audio: {
-                    link: "https://astronomer.io/media/ceo-apology.mp3",
-                  },
-                });
-                return "voice note sent";
-              },
-            }),
-            sendLimitedAffairEditionSwag: llm.tool({
-              description: "Send a limited-edition merch drop link to the user",
-              execute: async (_, { ctx }: llm.ToolOptions<CallerData>) => {
-                await sendWhatsAppMedia(ctx.userData, {
-                  type: "interactive",
-                  interactive: {
-                    type: "button",
-                    body: {
-                      text: "🛍️ Limited-Edition “Caught in the Flow” Hoodie Drop",
-                    },
-                    action: {
-                      buttons: [
-                        {
-                          type: "url",
-                          url: "https://www.astronomer.io/",
-                          title: "Shop Now",
-                        },
-                      ],
-                    },
-                  },
-                });
-                return "merch drop sent";
-              },
-            }),            
+                return "registration link sent"
+              }
+            })
           },
       });
       
