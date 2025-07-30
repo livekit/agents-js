@@ -103,7 +103,7 @@ Agent: "Great! I'll send you a text with the registration link."
                 await sendWhatsAppMedia(ctx.userData, {
                   type: "image",
                   image: {
-                    link: "https://raw.githubusercontent.com/livekit/agents-js/lkh2025-astronomer/examples/src/conference.png",
+                    link: "https://raw.githubusercontent.com/livekit/agents-js/lkh2025-astronomer/examples/src/jpeg_conf.jpg",
                     caption: "Join us at Beyond Analytics in September!",
                   },
                 });
