@@ -18,6 +18,7 @@ import {
   TrackSource,
 } from '@livekit/rtc-node';
 import {
+  ATTRIBUTE_TRANSCRIPTION_FINAL,
   ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID,
   ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
   TOPIC_TRANSCRIPTION,
@@ -175,7 +176,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
 
     if (!attributes) {
       attributes = {
-        ATTRIBUTE_TRANSCRIPTION_FINAL: 'false',
+        [ATTRIBUTE_TRANSCRIPTION_FINAL]: 'false',
       };
       if (this.trackId) {
         attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
@@ -192,7 +193,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
 
   private async flushTaskImpl(writer: TextStreamWriter | null, signal: AbortSignal): Promise<void> {
     const attributes: Record<string, string> = {
-      ATTRIBUTE_TRANSCRIPTION_FINAL: 'true',
+      [ATTRIBUTE_TRANSCRIPTION_FINAL]: 'true',
     };
     if (this.trackId) {
       attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
