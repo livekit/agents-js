@@ -36,7 +36,7 @@ const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
 class Default {
   static loadThreshold(production: boolean): number {
     if (production) {
-      return 0.65;
+      return 0.7;
     } else {
       return Infinity;
     }
@@ -44,6 +44,7 @@ class Default {
 
   static numIdleProcesses(production: boolean): number {
     if (production) {
+      // TODO: use number of cores
       return 3;
     } else {
       return 0;
@@ -298,6 +299,22 @@ export class Worker {
       throw new MissingCredentialsError(
         'API Secret is required: Set LIVEKIT_API_SECRET, run with --api-secret, or pass apiSecret in WorkerOptions',
       );
+
+    if (opts.workerToken) {
+      if (opts.loadFunc !== defaultCpuLoad) {
+        this.#logger.warn(
+          'custom loadFunc is not supported when deploying to Cloud, using defaults',
+        );
+        opts.loadFunc = defaultCpuLoad;
+      }
+      const loadThreshold = Default.loadThreshold(opts.production);
+      if (opts.loadThreshold !== loadThreshold) {
+        this.#logger.warn(
+          'custom loadThreshold is not supported when deploying to Cloud, using defaults',
+        );
+        opts.loadThreshold = loadThreshold;
+      }
+    }
 
     if (Object.entries(InferenceRunner.registeredRunners).length) {
       this.#inferenceExecutor = new InferenceProcExecutor({
