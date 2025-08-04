@@ -5,6 +5,7 @@ import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
+import type { APIConnectOptions } from '../types.js';
 import { AsyncIterableQueue } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
 import type { ToolChoice, ToolContext } from './tool_context.js';
@@ -33,24 +34,58 @@ export type LLMCallbacks = {
 };
 
 export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCallbacks>) {
+  protected _label: string;
+
+  constructor() {
+    super();
+    this._label = `${this.constructor.name}`;
+  }
+
+  get label(): string {
+    return this._label;
+  }
+
+  /**
+   * Get the model name/identifier for this LLM instance.
+   *
+   * @returns The model name if available, "unknown" otherwise.
+   *
+   * @remarks
+   * Plugins should override this property to provide their model information.
+   */
+  get model(): string {
+    return 'unknown';
+  }
+
   /**
    * Returns a {@link LLMStream} that can be used to push text and receive LLM responses.
    */
   abstract chat({
     chatCtx,
     toolCtx,
-    toolChoice,
-    temperature,
-    n,
+    connOptions,
     parallelToolCalls,
+    toolChoice,
+    extraKwargs,
   }: {
     chatCtx: ChatContext;
     toolCtx?: ToolContext;
-    toolChoice?: ToolChoice;
-    temperature?: number;
-    n?: number;
+    connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
+    toolChoice?: ToolChoice;
+    extraKwargs?: Record<string, any>;
   }): LLMStream;
+
+  /**
+   * Pre-warm connection to the LLM service
+   */
+  prewarm(): void {
+    // Default implementation - subclasses can override
+  }
+
+  async aclose(): Promise<void> {
+    // Default implementation - subclasses can override
+  }
 }
 
 export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
@@ -64,11 +99,24 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   #llm: LLM;
   #chatCtx: ChatContext;
   #toolCtx?: ToolContext;
+  #connOptions: APIConnectOptions;
 
-  constructor(llm: LLM, chatCtx: ChatContext, toolCtx?: ToolContext) {
+  constructor(
+    llm: LLM,
+    {
+      chatCtx,
+      toolCtx,
+      connOptions,
+    }: {
+      chatCtx: ChatContext;
+      toolCtx?: ToolContext;
+      connOptions: APIConnectOptions;
+    },
+  ) {
     this.#llm = llm;
     this.#chatCtx = chatCtx;
     this.#toolCtx = toolCtx;
+    this.#connOptions = connOptions;
     this.monitorMetrics();
     this.abortController.signal.addEventListener('abort', () => {
       // TODO (AJS-37) clean this up when we refactor with streams
@@ -125,6 +173,11 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   /** The initial chat context of this stream. */
   get chatCtx(): ChatContext {
     return this.#chatCtx;
+  }
+
+  /** The connection options for this stream. */
+  get connOptions(): APIConnectOptions {
+    return this.#connOptions;
   }
 
   next(): Promise<IteratorResult<ChatChunk>> {

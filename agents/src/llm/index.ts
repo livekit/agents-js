@@ -28,6 +28,8 @@ export {
   type ImageContent,
 } from './chat_context.js';
 
+export type { ProviderFormat } from './provider_format/index.js';
+
 export {
   LLM,
   LLMStream,
