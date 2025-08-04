@@ -942,9 +942,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       return Promise.race([wsCloseFuture.await, abortPromise]);
     });
 
-    const waitReconnectTask = Task.from(({ signal }) =>
-      delay(this.oaiRealtimeModel._options.maxSessionDuration, { signal }),
-    );
+    const waitReconnectTask = Task.from(async ({ signal }) => {
+      await delay(this.oaiRealtimeModel._options.maxSessionDuration, { signal });
+      return new ErrorEvent('OpenAI Realtime API connection timeout');
+    });
 
     try {
       const result = await Promise.race([wsTask.result, sendTask.result, waitReconnectTask.result]);
