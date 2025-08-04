@@ -292,6 +292,7 @@ export class LLMStream extends llm.LLMStream {
   #client: GoogleGenAI;
   #model: string;
   #connOptions: APIConnectOptions;
+  #toolCtx?: llm.ToolContext;
   #geminiTools?: types.Tool[];
   #extraKwargs: Record<string, unknown>;
   label = 'google.LLMStream';
