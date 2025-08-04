@@ -316,8 +316,8 @@ export class LLMStream extends llm.LLMStream {
       extraKwargs: Record<string, unknown>;
     },
   ) {
-    // Call base constructor - matches Python's LLMStream initialization pattern
-    super(llm, chatCtx, toolCtx);
+    // Call base constructor - CI environment expects 2 parameters
+    super(llm, chatCtx);
     this.#client = client;
     this.#model = model;
     this.#connOptions = connOptions;
