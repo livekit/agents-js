@@ -20,7 +20,8 @@ import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { Future } from '../../utils.js';
 import { type AgentSession } from '../agent_session.js';
-import { AgentSessionEventTypes, type UserInputTranscribedEvent } from '../events.js';
+import { type AgentStateChangedEvent, type UserInputTranscribedEvent } from '../events.js';
+import { AgentSessionEventTypes } from '../events.js';
 import type { AudioOutput, TextOutput } from '../io.js';
 import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
 import { ParticipantAudioInputStream } from './_input.js';
@@ -208,6 +209,14 @@ export class RoomIO {
     this.userTranscriptWriter.write(ev).catch((error) => {
       this.logger.error({ error }, 'Failed to write transcript event to stream');
     });
+  };
+
+  private onAgentStateChanged = async (ev: AgentStateChangedEvent) => {
+    if (this.room.isConnected && this.room.localParticipant) {
+      await this.room.localParticipant.setAttributes({
+        [`lk.agent.state`]: ev.newState,
+      });
+    }
   };
 
   private onUserTextInput = (reader: TextStreamReader, participantInfo: { identity: string }) => {
@@ -426,7 +435,7 @@ export class RoomIO {
       this.agentSession.output.transcription = this.transcriptionOutput;
     }
 
+    this.agentSession.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
     this.agentSession.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
-    // TODO(AJS-194) add agent state change hook
   }
 }
