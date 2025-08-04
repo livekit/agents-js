@@ -7,6 +7,10 @@ import type { APIConnectOptions } from '@livekit/agents';
 import { DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
 import type { ChatModels } from './models.js';
 
+interface GoogleFormatData {
+  systemMessages: string[] | null;
+}
+
 export interface LLMOptions {
   model?: string | ChatModels;
   apiKey?: string;
@@ -326,14 +330,28 @@ export class LLMStream extends llm.LLMStream {
     const requestId = `google_${Date.now()}`;
 
     try {
-      // Convert chat context to Google format
-      const { contents, systemInstruction } = await this.#convertChatContext();
+      // Convert chat context using native Google provider format
+      const [turns, extraData] = (await this.chatCtx.toProviderFormat('google')) as [
+        Record<string, any>[],
+        GoogleFormatData,
+      ];
 
-      // Convert tools if available
-      const functionDeclarations = this.toolCtx ? this.#convertTools() : [];
+      // Convert to Google GenAI format
+      const contents: types.Content[] = turns.map((turn: Record<string, any>) => ({
+        role: turn.role,
+        parts: turn.parts,
+      }));
 
-      // Create tools config combining function tools and gemini tools
-      const tools = this.#createTools(functionDeclarations, this.#geminiTools);
+      // Convert tools from ToolContext if available
+      const tools = this.toolCtx ? this.#convertTools() : undefined;
+
+      // Create system instruction from extra data
+      let systemInstruction: types.Content | undefined = undefined;
+      if (extraData.systemMessages && extraData.systemMessages.length > 0) {
+        systemInstruction = {
+          parts: extraData.systemMessages.map((content: string) => ({ text: content })),
+        };
+      }
 
       // Create the request parameters
       const parameters: types.GenerateContentParameters = {
@@ -412,61 +430,8 @@ export class LLMStream extends llm.LLMStream {
     }
   }
 
-  async #convertChatContext(): Promise<{
-    contents: types.Content[];
-    systemInstruction?: types.Content;
-  }> {
-    const contents: types.Content[] = [];
-    let systemInstruction: types.Content | undefined = undefined;
-    const systemMessages: string[] = [];
-
-    for (const item of this.chatCtx.items) {
-      if (item instanceof llm.ChatMessage) {
-        // Extract text content - handle both string and array cases
-        let textContent = '';
-        if (typeof item.content === 'string') {
-          textContent = item.content;
-        } else if (Array.isArray(item.content)) {
-          // Extract text from content array, focusing on text content
-          textContent = item.content
-            .map((c: any) => {
-              if (typeof c === 'string') return c;
-              if (c && typeof c === 'object' && 'text' in c) return c.text;
-              return '';
-            })
-            .join('');
-        } else if (
-          item.content &&
-          typeof item.content === 'object' &&
-          'text' in (item.content as any)
-        ) {
-          textContent = (item.content as any).text;
-        }
-
-        if (item.role === 'system') {
-          systemMessages.push(textContent);
-        } else {
-          const parts: types.Part[] = [{ text: textContent }];
-          contents.push({
-            role: item.role === 'assistant' ? 'model' : 'user',
-            parts,
-          });
-        }
-      }
-    }
-
-    if (systemMessages.length > 0) {
-      const systemParts: types.Part[] = systemMessages.map((content) => ({ text: content }));
-      systemInstruction = {
-        parts: systemParts,
-      };
-    }
-
-    return { contents, systemInstruction };
-  }
-
-  #convertTools(): types.FunctionDeclaration[] {
-    if (!this.toolCtx) return [];
+  #convertTools(): types.Tool[] | undefined {
+    if (!this.toolCtx) return undefined;
 
     const functionDeclarations: types.FunctionDeclaration[] = [];
 
@@ -483,27 +448,11 @@ export class LLMStream extends llm.LLMStream {
       });
     }
 
-    return functionDeclarations;
-  }
-
-  #createTools(
-    functionDeclarations: types.FunctionDeclaration[],
-    geminiTools?: types.Tool[],
-  ): types.Tool[] | undefined {
-    const tools: types.Tool[] = [];
-
-    if (functionDeclarations.length > 0) {
-      tools.push({ functionDeclarations });
-    }
-
-    if (geminiTools && geminiTools.length > 0) {
-      tools.push(...geminiTools);
-    }
-
-    return tools.length > 0 ? tools : undefined;
+    return functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined;
   }
 
   #parsePart(id: string, part: types.Part): llm.ChatChunk | null {
+    // Handle function calls
     if (part.functionCall) {
       return {
         id,
@@ -511,22 +460,26 @@ export class LLMStream extends llm.LLMStream {
           role: 'assistant',
           toolCalls: [
             llm.FunctionCall.create({
-              callId: part.functionCall.name || `function_call_${Date.now()}`,
+              callId: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
               name: part.functionCall.name || 'unknown_function',
               args: JSON.stringify(part.functionCall.args || {}),
             }),
           ],
-          content: part.text,
         },
       };
     }
 
-    return {
-      id,
-      delta: {
-        content: part.text,
-        role: 'assistant',
-      },
-    };
+    // Handle text content
+    if (part.text) {
+      return {
+        id,
+        delta: {
+          content: part.text,
+          role: 'assistant',
+        },
+      };
+    }
+
+    return null;
   }
 }
