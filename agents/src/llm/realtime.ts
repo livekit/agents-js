@@ -48,6 +48,8 @@ export interface InputTranscriptionCompleted {
   isFinal: boolean;
 }
 
+export interface RealtimeSessionReconnectedEvent {}
+
 export abstract class RealtimeModel {
   private _capabilities: RealtimeCapabilities;
 
