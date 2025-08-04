@@ -1,13 +1,27 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, Future, Queue, llm, log, shortuuid, stream } from '@livekit/agents';
+import {
+  type APIConnectOptions,
+  APIConnectionError,
+  APIError,
+  AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
+  Future,
+  Queue,
+  Task,
+  cancelAndWait,
+  isAPIError,
+  llm,
+  log,
+  shortuuid,
+  stream,
+} from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { delay } from '@std/async';
-import { once } from 'node:events';
-import { WebSocket } from 'ws';
+import { type MessageEvent, WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
 const SAMPLE_RATE = 24000;
@@ -33,8 +47,9 @@ interface RealtimeOptions {
   azureDeployment?: string;
   entraToken?: string;
   apiVersion?: string;
-  maxSessionDuration?: number;
-  // TODO(shubhra): add connOptions
+  maxSessionDuration: number;
+  // reset the connection after this many seconds if provided
+  connOptions: APIConnectOptions;
 }
 
 interface MessageGeneration {
@@ -68,6 +83,7 @@ class CreateResponseHandle {
 }
 
 // default values got from a "default" session from their API
+const DEFAULT_FIRST_RETRY_INTERVAL_MS = 100;
 const DEFAULT_TEMPERATURE = 0.8;
 const DEFAULT_TURN_DETECTION: api_proto.TurnDetectionType = {
   type: 'server_vad',
@@ -106,6 +122,7 @@ const DEFAULT_REALTIME_MODEL_OPTIONS = {
   toolChoice: DEFAULT_TOOL_CHOICE,
   maxResponseOutputTokens: DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS,
   maxSessionDuration: DEFAULT_MAX_SESSION_DURATION,
+  connOptions: DEFAULT_API_CONNECT_OPTIONS,
 };
 export class RealtimeModel extends llm.RealtimeModel {
   sampleRate = api_proto.SAMPLE_RATE;
@@ -133,7 +150,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       entraToken?: string;
       apiVersion?: string;
       maxSessionDuration?: number;
-      // TODO(shubhra): add connOptions
+      connOptions?: APIConnectOptions;
     } = {},
   ) {
     super({
@@ -351,18 +368,16 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private pushedDurationMs: number = 0;
 
-  #ws: WebSocket | null = null;
-  #expiresAt: number | null = null;
   #logger = log();
   #task: Promise<void>;
-  #closing = true;
+  #closed = false;
 
   constructor(realtimeModel: RealtimeModel) {
     super(realtimeModel);
 
     this.oaiRealtimeModel = realtimeModel;
 
-    this.#task = this.#start();
+    this.#task = this.#mainTask();
 
     this.sendEvent(this.createSessionUpdateEvent());
   }
@@ -654,10 +669,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     return untypedEvent;
   }
 
-  private createWsConn(): WebSocket {
+  private async createWsConn(): Promise<WebSocket> {
     const headers: Record<string, string> = {
       'User-Agent': 'LiveKit-Agents-JS',
     };
+
     if (this.oaiRealtimeModel._options.isAzure) {
       // Microsoft API has two ways of authentication
       // 1. Entra token set as `Bearer` token
@@ -673,6 +689,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       headers.Authorization = `Bearer ${this.oaiRealtimeModel._options.apiKey}`;
       headers['OpenAI-Beta'] = 'realtime=v1';
     }
+
     const url = processBaseURL({
       baseURL: this.oaiRealtimeModel._options.baseURL,
       model: this.oaiRealtimeModel._options.model,
@@ -680,126 +697,273 @@ export class RealtimeSession extends llm.RealtimeSession {
       apiVersion: this.oaiRealtimeModel._options.apiVersion,
       azureDeployment: this.oaiRealtimeModel._options.azureDeployment,
     });
+
     this.#logger.debug(`Connecting to OpenAI Realtime API at ${url}`);
-    const ws = new WebSocket(url, {
-      headers: headers,
+
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(url, { headers });
+      let waiting = true;
+
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error('WebSocket connection timeout'));
+      }, this.oaiRealtimeModel._options.connOptions.timeoutMs);
+
+      ws.once('open', () => {
+        if (!waiting) return;
+        waiting = false;
+        clearTimeout(timeout);
+        resolve(ws);
+      });
+
+      ws.once('close', () => {
+        if (!waiting) return;
+        waiting = false;
+        clearTimeout(timeout);
+        reject(new Error('OpenAI Realtime API connection closed'));
+      });
     });
-    return ws;
   }
 
-  #start(): Promise<void> {
-    return new Promise(async (resolve, reject) => {
-      this.#ws = this.createWsConn();
+  async #mainTask(): Promise<void> {
+    let reconnecting = false;
+    let numRetries = 0;
+    let wsConn: WebSocket | null = null;
+    const maxRetries = this.oaiRealtimeModel._options.connOptions.maxRetry;
 
-      this.#ws.onerror = (error) => {
-        reject(new Error('OpenAI Realtime WebSocket error: ' + error.message));
-      };
+    const reconnect = async () => {
+      this.#logger.debug(
+        {
+          maxSessionDuration: this.oaiRealtimeModel._options.maxSessionDuration,
+        },
+        'Reconnecting to OpenAI Realtime API',
+      );
 
-      await once(this.#ws, 'open');
-      this.#closing = false;
+      const events: api_proto.ClientEvent[] = [];
 
-      const sendTask = async () => {
-        while (this.#ws && !this.#closing && this.#ws.readyState === WebSocket.OPEN) {
-          try {
-            const event = await this.messageChannel.get();
-            if (event.type !== 'input_audio_buffer.append') {
-              this.#logger.debug(`(client) -> ${JSON.stringify(this.#loggableEvent(event))}`);
-            }
+      // options and instructions
+      events.push(this.createSessionUpdateEvent());
 
-            this.emit('openai_client_event_queued', event);
-            this.#ws.send(JSON.stringify(event));
-          } catch (error) {
-            this.#logger.error('Error sending event:', error);
+      // tools
+      if (Object.keys(this._tools).length > 0) {
+        events.push(this.createToolsUpdateEvent(this._tools));
+      }
+
+      // chat context
+      const chatCtx = this.chatCtx.copy({
+        excludeFunctionCall: true,
+        excludeInstructions: true,
+        excludeEmptyMessage: true,
+      });
+
+      const oldChatCtx = this.remoteChatCtx;
+      this.remoteChatCtx = new llm.RemoteChatContext();
+      events.push(...this.createChatCtxUpdateEvents(chatCtx));
+
+      try {
+        for (const ev of events) {
+          this.emit('openai_client_event_queued', ev);
+          wsConn!.send(JSON.stringify(ev));
+        }
+      } catch (error) {
+        this.remoteChatCtx = oldChatCtx;
+        throw new APIConnectionError(
+          'Failed to send message to OpenAI Realtime API during session re-connection',
+        );
+      }
+
+      this.#logger.debug('Reconnected to OpenAI Realtime API');
+
+      this.emit('session_reconnected', {} as llm.RealtimeSessionReconnectedEvent);
+    };
+
+    reconnecting = false;
+    while (!this.#closed) {
+      this.#logger.debug('Creating WebSocket connection to OpenAI Realtime API');
+      wsConn = await this.createWsConn();
+
+      try {
+        if (reconnecting) {
+          await reconnect();
+          numRetries = 0;
+        }
+        await this.runWs(wsConn);
+      } catch (error) {
+        if (!isAPIError(error)) {
+          this.emitError({ error: error as Error, recoverable: false });
+          throw error;
+        }
+
+        if (maxRetries === 0 || !error.retryable) {
+          this.emitError({ error: error as Error, recoverable: false });
+          throw error;
+        }
+
+        if (numRetries === maxRetries) {
+          this.emitError({ error: error as Error, recoverable: false });
+          throw new APIConnectionError(
+            `OpenAI Realtime API connection failed after ${numRetries} attempts`,
+            {
+              body: error,
+              retryable: false,
+            },
+          );
+        }
+
+        this.emitError({ error: error as Error, recoverable: true });
+        const retryInterval =
+          numRetries === 0
+            ? DEFAULT_FIRST_RETRY_INTERVAL_MS
+            : this.oaiRealtimeModel._options.connOptions.retryIntervalMs;
+        this.#logger.warn(
+          {
+            attempt: numRetries,
+            maxRetries,
+            error,
+          },
+          `OpenAI Realtime API connection failed, retrying in ${retryInterval / 1000}s`,
+        );
+
+        await delay(retryInterval);
+        numRetries++;
+      }
+
+      reconnecting = true;
+    }
+  }
+
+  private async runWs(wsConn: WebSocket): Promise<void> {
+    const forwardEvents = async (signal: AbortSignal): Promise<void> => {
+      while (!this.#closed && wsConn.readyState === WebSocket.OPEN && !signal.aborted) {
+        try {
+          const event = await this.messageChannel.get();
+          if (signal.aborted) {
+            break;
           }
-        }
-      };
 
-      this.#ws.onmessage = (message) => {
-        const event: api_proto.ServerEvent = JSON.parse(message.data as string);
+          if (event.type !== 'input_audio_buffer.append') {
+            this.#logger.debug(`(client) -> ${JSON.stringify(this.#loggableEvent(event))}`);
+          }
 
-        this.emit('openai_server_event_received', event);
-        if (event.type !== 'response.audio.delta') {
-          this.#logger.debug(`(server) <- ${JSON.stringify(this.#loggableEvent(event))}`);
+          this.emit('openai_client_event_queued', event);
+          wsConn.send(JSON.stringify(event));
+        } catch (error) {
+          break;
         }
+      }
 
-        switch (event.type) {
-          case 'input_audio_buffer.speech_started':
-            this.handleInputAudioBufferSpeechStarted(event);
-            break;
-          case 'input_audio_buffer.speech_stopped':
-            this.handleInputAudioBufferSpeechStopped(event);
-            break;
-          case 'response.created':
-            this.handleResponseCreated(event);
-            break;
-          case 'response.output_item.added':
-            this.handleResponseOutputItemAdded(event);
-            break;
-          case 'conversation.item.created':
-            this.handleConversationItemCreated(event);
-            break;
-          case 'conversation.item.deleted':
-            this.handleConversationItemDeleted(event);
-            break;
-          case 'conversation.item.input_audio_transcription.completed':
-            this.handleConversationItemInputAudioTranscriptionCompleted(event);
-            break;
-          case 'conversation.item.input_audio_transcription.failed':
-            this.handleConversationItemInputAudioTranscriptionFailed(event);
-            break;
-          case 'response.content_part.added':
-            this.handleResponseContentPartAdded(event);
-            break;
-          case 'response.content_part.done':
-            this.handleResponseContentPartDone(event);
-            break;
-          case 'response.audio_transcript.delta':
-            this.handleResponseAudioTranscriptDelta(event);
-            break;
-          case 'response.audio.delta':
-            this.handleResponseAudioDelta(event);
-            break;
-          case 'response.audio_transcript.done':
-            this.handleResponseAudioTranscriptDone(event);
-            break;
-          case 'response.audio.done':
-            this.handleResponseAudioDone(event);
-            break;
-          case 'response.output_item.done':
-            this.handleResponseOutputItemDone(event);
-            break;
-          case 'response.done':
-            this.handleResponseDone(event);
-            break;
-          case 'error':
-            this.handleError(event);
-            break;
-          default:
-            this.#logger.debug(`unhandled event: ${event.type}`);
-            break;
-        }
-      };
+      wsConn.close();
+    };
 
-      sendTask();
+    const wsCloseFuture = new Future<void | Error>();
 
-      this.#ws.onclose = () => {
-        if (this.#expiresAt && Date.now() >= this.#expiresAt * 1000) {
-          this.#closing = true;
-        }
-        if (!this.#closing) {
-          reject(new Error('OpenAI Realtime connection closed unexpectedly'));
-        }
-        this.#ws = null;
-        resolve();
-      };
+    wsConn.onerror = (error) => {
+      wsCloseFuture.resolve(new APIConnectionError(error.message));
+    };
+    wsConn.onclose = () => {
+      wsCloseFuture.resolve();
+    };
+
+    wsConn.onmessage = (message: MessageEvent) => {
+      const event: api_proto.ServerEvent = JSON.parse(message.data as string);
+
+      this.emit('openai_server_event_received', event);
+      this.#logger.debug(`(server) <- ${JSON.stringify(this.#loggableEvent(event))}`);
+
+      switch (event.type) {
+        case 'input_audio_buffer.speech_started':
+          this.handleInputAudioBufferSpeechStarted(event);
+          break;
+        case 'input_audio_buffer.speech_stopped':
+          this.handleInputAudioBufferSpeechStopped(event);
+          break;
+        case 'response.created':
+          this.handleResponseCreated(event);
+          break;
+        case 'response.output_item.added':
+          this.handleResponseOutputItemAdded(event);
+          break;
+        case 'conversation.item.created':
+          this.handleConversationItemCreated(event);
+          break;
+        case 'conversation.item.deleted':
+          this.handleConversationItemDeleted(event);
+          break;
+        case 'conversation.item.input_audio_transcription.completed':
+          this.handleConversationItemInputAudioTranscriptionCompleted(event);
+          break;
+        case 'conversation.item.input_audio_transcription.failed':
+          this.handleConversationItemInputAudioTranscriptionFailed(event);
+          break;
+        case 'response.content_part.added':
+          this.handleResponseContentPartAdded(event);
+          break;
+        case 'response.content_part.done':
+          this.handleResponseContentPartDone(event);
+          break;
+        case 'response.audio_transcript.delta':
+          this.handleResponseAudioTranscriptDelta(event);
+          break;
+        case 'response.audio.delta':
+          this.handleResponseAudioDelta(event);
+          break;
+        case 'response.audio_transcript.done':
+          this.handleResponseAudioTranscriptDone(event);
+          break;
+        case 'response.audio.done':
+          this.handleResponseAudioDone(event);
+          break;
+        case 'response.output_item.done':
+          this.handleResponseOutputItemDone(event);
+          break;
+        case 'response.done':
+          this.handleResponseDone(event);
+          break;
+        case 'error':
+          this.handleError(event);
+          break;
+        default:
+          this.#logger.debug(`unhandled event: ${event.type}`);
+          break;
+      }
+    };
+
+    const sendTask = Task.from(({ signal }) => forwardEvents(signal));
+
+    const wsTask = Task.from(({ signal }) => {
+      const abortPromise = new Promise<void>((resolve) => {
+        signal.addEventListener('abort', () => {
+          resolve();
+        });
+      });
+
+      return Promise.race([wsCloseFuture.await, abortPromise]);
     });
+
+    const waitReconnectTask = Task.from(async ({ signal }) => {
+      await delay(this.oaiRealtimeModel._options.maxSessionDuration, { signal });
+      return new APIConnectionError('OpenAI Realtime API connection timeout');
+    });
+
+    try {
+      const result = await Promise.race([wsTask.result, sendTask.result, waitReconnectTask.result]);
+
+      if (waitReconnectTask.done && this.currentGeneration) {
+        await this.currentGeneration._doneFut.await;
+      }
+
+      if (result instanceof Error) {
+        throw result;
+      }
+    } finally {
+      await cancelAndWait([wsTask, sendTask, waitReconnectTask], 2000);
+      wsConn.close();
+    }
   }
 
   async close() {
     super.close();
-    if (!this.#ws) return;
-    this.#closing = true;
-    this.#ws.close();
+    this.#closed = true;
     await this.#task;
   }
 
@@ -1124,6 +1288,26 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     this.#logger.error({ error: event.error }, 'OpenAI Realtime API returned an error');
+    this.emitError({
+      error: new APIError(event.error.message, {
+        body: event.error,
+        retryable: true,
+      }),
+      recoverable: true,
+    });
+
+    // TODO(brian): set error for response future if it exists
+  }
+
+  private emitError({ error, recoverable }: { error: Error; recoverable: boolean }): void {
+    // IMPORTANT: only emit error if there are listeners; otherwise emit will throw an error
+    this.emit('error', {
+      timestamp: Date.now(),
+      // TODO(brian): add label
+      label: '',
+      error,
+      recoverable,
+    } as llm.RealtimeModelError);
   }
 
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {

@@ -46,6 +46,8 @@ export {
   type InputTranscriptionCompleted,
   type MessageGeneration,
   type RealtimeCapabilities,
+  type RealtimeModelError,
+  type RealtimeSessionReconnectedEvent,
 } from './realtime.js';
 
 export { RemoteChatContext } from './remote_chat_context.js';

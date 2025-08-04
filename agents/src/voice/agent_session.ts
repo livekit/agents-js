@@ -19,6 +19,7 @@ import {
   type AgentState,
   type AgentStateChangedEvent,
   type ConversationItemAddedEvent,
+  type ErrorEvent,
   type FunctionToolsExecutedEvent,
   type MetricsCollectedEvent,
   type SpeechCreatedEvent,
@@ -64,6 +65,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.FunctionToolsExecuted]: (ev: FunctionToolsExecutedEvent) => void;
   [AgentSessionEventTypes.MetricsCollected]: (ev: MetricsCollectedEvent) => void;
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
+  [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
