@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import { initializeLogger, llm } from '@livekit/agents';
 import * as google from '@livekit/agents-plugin-google';
 import { z } from 'zod';

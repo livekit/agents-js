@@ -1,4 +1,10 @@
-# Google Gemini Plugin for LiveKit Node Agents
+<!--
+SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# LiveKit Agents Google Plugin
 
 This plugin provides Google Gemini LLM support for LiveKit Node Agents using the new unified `@google/genai` SDK.
 
