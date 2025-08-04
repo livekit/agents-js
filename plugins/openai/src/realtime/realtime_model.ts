@@ -14,6 +14,7 @@ import {
   isAPIError,
   llm,
   log,
+  metrics,
   shortuuid,
   stream,
 } from '@livekit/agents';
@@ -21,6 +22,7 @@ import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { delay } from '@std/async';
+import type { GenerationCreatedEvent } from 'agents/dist/llm/realtime.js';
 import { type MessageEvent, WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
@@ -997,17 +999,22 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!event.response.metadata || !event.response.metadata.client_event_id) return;
 
     const handle = this.responseCreatedFutures[event.response.metadata.client_event_id];
-    if (!handle) return;
+    if (handle) {
+      delete this.responseCreatedFutures[event.response.metadata.client_event_id];
 
-    delete this.responseCreatedFutures[event.response.metadata.client_event_id];
-
-    // set key to the response id
-    this.responseCreatedFutures[event.response.id] = handle;
+      // set key to the response id
+      this.responseCreatedFutures[event.response.id] = handle;
+    }
 
     // the generation_created event is emitted when
     // 1. the response is not a message on response.output_item.added event
     // 2. the content is audio on response.content_part.added event
     // will try to recover from text response on response.content_part.done event
+    this.emit('generation_created', {
+      messageStream: this.currentGeneration.messageChannel.stream(),
+      functionStream: this.currentGeneration.functionChannel.stream(),
+      userInitiated: false,
+    } as GenerationCreatedEvent);
   }
 
   private handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
@@ -1254,6 +1261,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
+    const createdTimestamp = this.currentGeneration._createdTimestamp;
+    const firstTokenTimestamp = this.currentGeneration._firstTokenTimestamp;
+
     this.#logger.debug(
       {
         messageCount: this.currentGeneration.messages.size,
@@ -1279,7 +1289,45 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.currentGeneration._doneFut.resolve();
     this.currentGeneration = undefined;
 
-    // TODO(shubhra): calculate metrics
+    // Calculate and emit metrics
+    const usage = _event.response.usage;
+    const ttft = firstTokenTimestamp ? firstTokenTimestamp - createdTimestamp : -1;
+    const duration = (Date.now() - createdTimestamp) / 1000; // Convert to seconds
+
+    const realtimeMetrics: metrics.RealtimeModelMetrics = {
+      type: 'realtime_model_metrics',
+      timestamp: createdTimestamp / 1000, // Convert to seconds
+      requestId: _event.response.id || '',
+      ttft,
+      duration,
+      cancelled: _event.response.status === 'cancelled',
+      label: 'openai_realtime',
+      inputTokens: usage?.input_tokens ?? 0,
+      outputTokens: usage?.output_tokens ?? 0,
+      totalTokens: usage?.total_tokens ?? 0,
+      tokensPerSecond: duration > 0 ? (usage?.output_tokens ?? 0) / duration : 0,
+      inputTokenDetails: {
+        audioTokens: usage?.input_token_details?.audio_tokens ?? 0,
+        textTokens: usage?.input_token_details?.text_tokens ?? 0,
+        imageTokens: 0, // Not supported yet
+        cachedTokens: usage?.input_token_details?.cached_tokens ?? 0,
+        cachedTokensDetails: usage?.input_token_details?.cached_tokens_details
+          ? {
+              audioTokens: usage?.input_token_details?.cached_tokens_details?.audio_tokens ?? 0,
+              textTokens: usage?.input_token_details?.cached_tokens_details?.text_tokens ?? 0,
+              imageTokens: usage?.input_token_details?.cached_tokens_details?.image_tokens ?? 0,
+            }
+          : undefined,
+      },
+      outputTokenDetails: {
+        textTokens: usage?.output_token_details?.text_tokens ?? 0,
+        audioTokens: usage?.output_token_details?.audio_tokens ?? 0,
+        imageTokens: 0,
+      },
+    };
+
+    this.emit('metrics_collected', realtimeMetrics);
+    // TODO(brian): handle response done but not complete
   }
 
   private handleError(event: api_proto.ErrorEvent): void {

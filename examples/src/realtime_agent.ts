@@ -65,6 +65,10 @@ export default defineAgent({
       room: ctx.room,
     });
 
+    session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
+      console.log('metrics_collected', ev);
+    });
+
     // join the room when agent is ready
     await ctx.connect();
   },
