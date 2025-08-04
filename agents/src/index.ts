@@ -21,12 +21,14 @@ import * as tts from './tts/index.js';
 import * as voice from './voice/index.js';
 
 export * from './audio.js';
+export * from './errors.js';
 export * from './generator.js';
 export * from './inference_runner.js';
 export * from './job.js';
 export * from './log.js';
 export * from './plugin.js';
 export * from './transcription.js';
+export * from './types.js';
 export * from './utils.js';
 export * from './vad.js';
 export * from './version.js';
