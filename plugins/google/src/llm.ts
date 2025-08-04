@@ -71,23 +71,23 @@ export class LLM extends llm.LLM {
    * and the location defaults to "us-central1".
    * - For Google Gemini API: Set the `apiKey` argument or the `GOOGLE_API_KEY` environment variable.
    *
-   * Args:
-   *     model (ChatModels | str, optional): The model name to use. Defaults to "gemini-2.0-flash-001".
-   *     apiKey (str, optional): The API key for Google Gemini. If not provided, it attempts to read from the `GOOGLE_API_KEY` environment variable.
-   *     vertexai (bool, optional): Whether to use VertexAI. If not provided, it attempts to read from the `GOOGLE_GENAI_USE_VERTEXAI` environment variable. Defaults to False.
-   *         project (str, optional): The Google Cloud project to use (only for VertexAI). Defaults to None.
-   *         location (str, optional): The location to use for VertexAI API requests. Defaults value is "us-central1".
-   *     temperature (float, optional): Sampling temperature for response generation. Defaults to 0.8.
-   *     maxOutputTokens (int, optional): Maximum number of tokens to generate in the output. Defaults to None.
-   *     topP (float, optional): The nucleus sampling probability for response generation. Defaults to None.
-   *     topK (int, optional): The top-k sampling value for response generation. Defaults to None.
-   *     presencePenalty (float, optional): Penalizes the model for generating previously mentioned concepts. Defaults to None.
-   *     frequencyPenalty (float, optional): Penalizes the model for repeating words. Defaults to None.
-   *     toolChoice (ToolChoice, optional): Specifies whether to use tools during response generation. Defaults to "auto".
-   *     thinkingConfig (ThinkingConfig, optional): The thinking configuration for response generation. Defaults to None.
-   *     automaticFunctionCallingConfig (AutomaticFunctionCallingConfig, optional): The automatic function calling configuration for response generation. Defaults to None.
-   *     geminiTools (Tool[], optional): The Gemini-specific tools to use for the session.
-   *     httpOptions (HttpOptions, optional): The HTTP options to use for the session.
+   * @param model - The model name to use. Defaults to "gemini-2.0-flash-001".
+   * @param apiKey - The API key for Google Gemini. If not provided, it attempts to read from the `GOOGLE_API_KEY` environment variable.
+   * @param vertexai - Whether to use VertexAI. If not provided, it attempts to read from the `GOOGLE_GENAI_USE_VERTEXAI` environment variable. Defaults to false.
+   * @param project - The Google Cloud project to use (only for VertexAI). Defaults to undefined.
+   * @param location - The location to use for VertexAI API requests. Default value is "us-central1".
+   * @param temperature - Sampling temperature for response generation. Defaults to undefined.
+   * @param maxOutputTokens - Maximum number of tokens to generate in the output. Defaults to undefined.
+   * @param topP - The nucleus sampling probability for response generation. Defaults to undefined.
+   * @param topK - The top-k sampling value for response generation. Defaults to undefined.
+   * @param presencePenalty - Penalizes the model for generating previously mentioned concepts. Defaults to undefined.
+   * @param frequencyPenalty - Penalizes the model for repeating words. Defaults to undefined.
+   * @param toolChoice - Specifies whether to use tools during response generation. Defaults to "auto".
+   * @param thinkingConfig - The thinking configuration for response generation. Defaults to undefined.
+   * @param automaticFunctionCallingConfig - The automatic function calling configuration for response generation. Defaults to undefined.
+   * @param geminiTools - The Gemini-specific tools to use for the session.
+   * @param httpOptions - The HTTP options to use for the session.
+   * @param seed - Random seed for reproducible results. Defaults to undefined.
    */
   constructor(opts: LLMOptions = {}) {
     super();
@@ -185,12 +185,13 @@ export class LLM extends llm.LLM {
     extraKwargs?: Record<string, unknown>;
     geminiTools?: types.Tool[];
   }): LLMStream {
-    const config: Partial<types.GenerateContentConfig> = {};
+    const extra: Record<string, unknown> = {};
 
     if (extraKwargs) {
-      Object.assign(config, extraKwargs);
+      Object.assign(extra, extraKwargs);
     }
 
+    // Handle tool choice - matches Python's tool_choice processing
     const finalToolChoice = toolChoice || this.#opts.toolChoice;
     if (finalToolChoice) {
       let geminiToolConfig: types.ToolConfig;
@@ -201,7 +202,7 @@ export class LLM extends llm.LLM {
             allowedFunctionNames: [finalToolChoice.function.name],
           },
         };
-        config.toolConfig = geminiToolConfig;
+        extra.toolConfig = geminiToolConfig;
       } else if (finalToolChoice === 'required') {
         const toolNames: string[] = [];
         if (toolCtx) {
@@ -216,62 +217,61 @@ export class LLM extends llm.LLM {
             allowedFunctionNames: toolNames.length > 0 ? toolNames : undefined,
           },
         };
-        config.toolConfig = geminiToolConfig;
+        extra.toolConfig = geminiToolConfig;
       } else if (finalToolChoice === 'auto') {
         geminiToolConfig = {
           functionCallingConfig: {
             mode: 'AUTO' as types.FunctionCallingConfig['mode'],
           },
         };
-        config.toolConfig = geminiToolConfig;
+        extra.toolConfig = geminiToolConfig;
       } else if (finalToolChoice === 'none') {
         geminiToolConfig = {
           functionCallingConfig: {
             mode: 'NONE' as types.FunctionCallingConfig['mode'],
           },
         };
-        config.toolConfig = geminiToolConfig;
+        extra.toolConfig = geminiToolConfig;
       }
     }
 
+    // Handle response format - matches Python's response_format processing
     if (responseFormat) {
-      config.responseSchema = responseFormat;
-      config.responseMimeType = 'application/json';
+      extra.responseSchema = responseFormat;
+      extra.responseMimeType = 'application/json';
     }
 
+    // Add individual option checks to match Python's structure
     if (this.#opts.temperature !== undefined) {
-      config.temperature = this.#opts.temperature;
+      extra.temperature = this.#opts.temperature;
     }
     if (this.#opts.maxOutputTokens !== undefined) {
-      config.maxOutputTokens = this.#opts.maxOutputTokens;
+      extra.maxOutputTokens = this.#opts.maxOutputTokens;
     }
     if (this.#opts.topP !== undefined) {
-      config.topP = this.#opts.topP;
+      extra.topP = this.#opts.topP;
     }
     if (this.#opts.topK !== undefined) {
-      config.topK = this.#opts.topK;
+      extra.topK = this.#opts.topK;
     }
     if (this.#opts.presencePenalty !== undefined) {
-      config.presencePenalty = this.#opts.presencePenalty;
+      extra.presencePenalty = this.#opts.presencePenalty;
     }
     if (this.#opts.frequencyPenalty !== undefined) {
-      config.frequencyPenalty = this.#opts.frequencyPenalty;
+      extra.frequencyPenalty = this.#opts.frequencyPenalty;
     }
     if (this.#opts.seed !== undefined) {
-      config.seed = this.#opts.seed;
+      extra.seed = this.#opts.seed;
     }
 
-    // Add thinking config if provided
+    // Add thinking config if provided - matches Python's thinking_config handling
     if (this.#opts.thinkingConfig !== undefined) {
-      config.thinkingConfig = this.#opts.thinkingConfig;
+      extra.thinkingConfig = this.#opts.thinkingConfig;
     }
 
+    // Add automatic function calling config - matches Python's automatic_function_calling_config
     if (this.#opts.automaticFunctionCallingConfig !== undefined) {
-      config.automaticFunctionCalling = this.#opts.automaticFunctionCallingConfig;
-    }
-
-    if (this.#opts.httpOptions !== undefined) {
-      config.httpOptions = this.#opts.httpOptions;
+      extra.automaticFunctionCalling = this.#opts.automaticFunctionCallingConfig;
     }
 
     const finalGeminiTools = geminiTools || this.#opts.geminiTools;
@@ -283,7 +283,7 @@ export class LLM extends llm.LLM {
       toolCtx,
       connOptions,
       geminiTools: finalGeminiTools,
-      config,
+      extraKwargs: extra,
     });
   }
 }
@@ -293,7 +293,7 @@ export class LLMStream extends llm.LLMStream {
   #model: string;
   #connOptions: APIConnectOptions;
   #geminiTools?: types.Tool[];
-  #config: Partial<types.GenerateContentConfig>;
+  #extraKwargs: Record<string, unknown>;
   label = 'google.LLMStream';
 
   constructor(
@@ -305,7 +305,7 @@ export class LLMStream extends llm.LLMStream {
       toolCtx,
       connOptions,
       geminiTools,
-      config,
+      extraKwargs,
     }: {
       client: GoogleGenAI;
       model: string;
@@ -313,7 +313,7 @@ export class LLMStream extends llm.LLMStream {
       toolCtx?: llm.ToolContext;
       connOptions: APIConnectOptions;
       geminiTools?: types.Tool[];
-      config: Partial<types.GenerateContentConfig>;
+      extraKwargs: Record<string, unknown>;
     },
   ) {
     super(llm, chatCtx, toolCtx);
@@ -321,7 +321,7 @@ export class LLMStream extends llm.LLMStream {
     this.#model = model;
     this.#connOptions = connOptions;
     this.#geminiTools = geminiTools;
-    this.#config = config;
+    this.#extraKwargs = extraKwargs;
     this.#run();
   }
 
@@ -358,7 +358,7 @@ export class LLMStream extends llm.LLMStream {
         model: this.#model,
         contents,
         config: {
-          ...this.#config,
+          ...this.#extraKwargs,
           systemInstruction,
           tools,
         },
@@ -370,7 +370,7 @@ export class LLMStream extends llm.LLMStream {
         parameters.config = {
           ...parameters.config,
           httpOptions: {
-            ...this.#config.httpOptions,
+            ...(this.#extraKwargs.httpOptions as Record<string, unknown>),
             timeout,
           },
         };
@@ -417,15 +417,34 @@ export class LLMStream extends llm.LLMStream {
         }
       }
     } catch (error: unknown) {
-      // Handle different types of Google API errors
-      const err = error as { code?: number; message?: string };
-      if (err.code === 429) {
-        throw new Error(`Google LLM: Rate limit error - ${err.message || 'Unknown error'}`);
-      } else if (err.code && err.code >= 500) {
-        throw new Error(`Google LLM: Server error - ${err.message || 'Unknown error'}`);
-      } else {
-        throw new Error(`Google LLM: API error - ${err.message || 'Unknown error'}`);
+      // Handle different types of Google API errors - matches Python's error handling structure
+      const err = error as {
+        code?: number;
+        message?: string;
+        status?: string;
+        type?: string;
+      };
+
+      // Match Python's ClientError handling (status codes 400-499)
+      if (err.code && err.code >= 400 && err.code < 500) {
+        if (err.code === 429) {
+          throw new Error(`Google LLM: Rate limit error - ${err.message || 'Unknown error'}`);
+        } else {
+          throw new Error(
+            `Google LLM: Client error (${err.code}) - ${err.message || 'Unknown error'}`,
+          );
+        }
       }
+
+      // Match Python's ServerError handling (status codes 500+)
+      if (err.code && err.code >= 500) {
+        throw new Error(
+          `Google LLM: Server error (${err.code}) - ${err.message || 'Unknown error'}`,
+        );
+      }
+
+      // Match Python's generic APIError handling
+      throw new Error(`Google LLM: API error - ${err.message || 'Unknown error'}`);
     } finally {
       this.queue.close();
     }
