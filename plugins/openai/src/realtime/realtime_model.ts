@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { metrics } from '@livekit/agents';
 import {
   type APIConnectOptions,
   APIConnectionError,
@@ -14,7 +15,6 @@ import {
   isAPIError,
   llm,
   log,
-  metrics,
   shortuuid,
   stream,
 } from '@livekit/agents';

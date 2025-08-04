@@ -170,7 +170,7 @@ export class LLM extends llm.LLM {
     chatCtx,
     toolCtx,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
-    parallelToolCalls,
+    _parallelToolCalls,
     toolChoice,
     responseFormat,
     extraKwargs,
@@ -179,10 +179,10 @@ export class LLM extends llm.LLM {
     chatCtx: llm.ChatContext;
     toolCtx?: llm.ToolContext;
     connOptions?: APIConnectOptions;
-    parallelToolCalls?: boolean;
+    _parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     responseFormat?: types.Schema;
-    extraKwargs?: Record<string, any>;
+    extraKwargs?: Record<string, unknown>;
     geminiTools?: types.Tool[];
   }): LLMStream {
     const config: Partial<types.GenerateContentConfig> = {};
@@ -197,7 +197,7 @@ export class LLM extends llm.LLM {
       if (typeof finalToolChoice === 'object' && finalToolChoice.type === 'function') {
         geminiToolConfig = {
           functionCallingConfig: {
-            mode: 'ANY' as any,
+            mode: 'ANY' as types.FunctionCallingConfig['mode'],
             allowedFunctionNames: [finalToolChoice.function.name],
           },
         };
@@ -212,7 +212,7 @@ export class LLM extends llm.LLM {
 
         geminiToolConfig = {
           functionCallingConfig: {
-            mode: 'ANY' as any,
+            mode: 'ANY' as types.FunctionCallingConfig['mode'],
             allowedFunctionNames: toolNames.length > 0 ? toolNames : undefined,
           },
         };
@@ -220,14 +220,14 @@ export class LLM extends llm.LLM {
       } else if (finalToolChoice === 'auto') {
         geminiToolConfig = {
           functionCallingConfig: {
-            mode: 'AUTO' as any,
+            mode: 'AUTO' as types.FunctionCallingConfig['mode'],
           },
         };
         config.toolConfig = geminiToolConfig;
       } else if (finalToolChoice === 'none') {
         geminiToolConfig = {
           functionCallingConfig: {
-            mode: 'NONE' as any,
+            mode: 'NONE' as types.FunctionCallingConfig['mode'],
           },
         };
         config.toolConfig = geminiToolConfig;
@@ -326,20 +326,20 @@ export class LLMStream extends llm.LLMStream {
   }
 
   async #run(): Promise<void> {
-    let retryable = true;
+    let _retryable = true;
     const requestId = `google_${Date.now()}`;
 
     try {
       // Convert chat context using native Google provider format
       const [turns, extraData] = (await this.chatCtx.toProviderFormat('google')) as [
-        Record<string, any>[],
+        Record<string, unknown>[],
         GoogleFormatData,
       ];
 
       // Convert to Google GenAI format
-      const contents: types.Content[] = turns.map((turn: Record<string, any>) => ({
-        role: turn.role,
-        parts: turn.parts,
+      const contents: types.Content[] = turns.map((turn: Record<string, unknown>) => ({
+        role: turn.role as types.Content['role'],
+        parts: turn.parts as types.Part[],
       }));
 
       // Convert tools from ToolContext if available
@@ -398,7 +398,7 @@ export class LLMStream extends llm.LLMStream {
         for (const part of chunk.candidates[0].content.parts) {
           const chatChunk = this.#parsePart(requestId, part);
           if (chatChunk) {
-            retryable = false;
+            _retryable = false;
             this.queue.put(chatChunk);
           }
         }
@@ -416,14 +416,15 @@ export class LLMStream extends llm.LLMStream {
           });
         }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Handle different types of Google API errors
-      if (error.code === 429) {
-        throw new Error(`Google LLM: Rate limit error - ${error.message}`);
-      } else if (error.code >= 500) {
-        throw new Error(`Google LLM: Server error - ${error.message}`);
+      const err = error as { code?: number; message?: string };
+      if (err.code === 429) {
+        throw new Error(`Google LLM: Rate limit error - ${err.message || 'Unknown error'}`);
+      } else if (err.code && err.code >= 500) {
+        throw new Error(`Google LLM: Server error - ${err.message || 'Unknown error'}`);
       } else {
-        throw new Error(`Google LLM: API error - ${error.message}`);
+        throw new Error(`Google LLM: API error - ${err.message || 'Unknown error'}`);
       }
     } finally {
       this.queue.close();
@@ -436,10 +437,12 @@ export class LLMStream extends llm.LLMStream {
     const functionDeclarations: types.FunctionDeclaration[] = [];
 
     for (const [name, tool] of Object.entries(this.toolCtx)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const functionTool = tool as llm.FunctionTool<any, any, any>;
       functionDeclarations.push({
         name,
         description: functionTool.description || `Function: ${name}`,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         parameters: (llm.toJsonSchema(functionTool.parameters) as any) || {
           type: 'object',
           properties: {},
