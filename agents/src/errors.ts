@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 const API_ERROR_SYMBOL = Symbol('APIError');
 
 export interface APIErrorOptions {
