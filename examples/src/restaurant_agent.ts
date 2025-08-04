@@ -10,6 +10,7 @@ import {
   llm,
   voice,
 } from '@livekit/agents';
+import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
@@ -382,11 +383,11 @@ export default defineAgent({
     const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
       vad,
-      // stt: new deepgram.STT(),
+      stt: new deepgram.STT(),
       tts: new elevenlabs.TTS(),
-      // llm: new openai.LLM(),
+      llm: new openai.LLM(),
       // to use realtime model, replace the stt, llm, tts and vad with the following
-      llm: new openai.realtime.RealtimeModel(),
+      // llm: new openai.realtime.RealtimeModel(),
       turnDetection: new livekit.turnDetector.EnglishModel(),
       userData,
       voiceOptions: {
