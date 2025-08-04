@@ -16,6 +16,7 @@ import {
   type InputTranscriptionCompleted,
   LLM,
   RealtimeModel,
+  type RealtimeModelError,
   type RealtimeSession,
   type ToolChoice,
   type ToolContext,
@@ -46,6 +47,7 @@ import {
 } from './audio_recognition.js';
 import {
   AgentSessionEventTypes,
+  createErrorEvent,
   createFunctionToolsExecutedEvent,
   createMetricsCollectedEvent,
   createSpeechCreatedEvent,
@@ -199,7 +201,7 @@ export class AgentActivity implements RecognitionHooks {
           this.onInputAudioTranscriptionCompleted(ev),
         );
         this.realtimeSession.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
-        // TODO(shubhra): add error handlers
+        this.realtimeSession.on('error', (ev) => this.onError(ev));
 
         removeInstructions(this.agent._chatCtx);
         try {
@@ -457,6 +459,17 @@ export class AgentActivity implements RecognitionHooks {
       createMetricsCollectedEvent({ metrics: ev }),
     );
   };
+
+  private onError(ev: RealtimeModelError): void {
+    // TODO(brian): handle other error types
+
+    if (ev.type === 'realtime_model_error') {
+      const errorEvent = createErrorEvent(ev.error, this.llm);
+      this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+    }
+
+    // TODO(brian): AgentSession on error
+  }
 
   // -- Realtime Session events --
 

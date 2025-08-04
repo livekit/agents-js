@@ -21,7 +21,7 @@ import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { delay } from '@std/async';
-import { type ErrorEvent, type MessageEvent, WebSocket } from 'ws';
+import { type MessageEvent, WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
 const SAMPLE_RATE = 24000;
@@ -784,7 +784,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       try {
         if (reconnecting) {
-          this.#logger.debug('Reconnecting to OpenAI Realtime API');
           await reconnect();
           numRetries = 0;
         }
@@ -812,7 +811,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
 
         this.emitError({ error: error as Error, recoverable: true });
-
         const retryInterval =
           numRetries === 0
             ? DEFAULT_FIRST_RETRY_INTERVAL_MS
@@ -857,10 +855,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       wsConn.close();
     };
 
-    const wsCloseFuture = new Future<void | ErrorEvent>();
+    const wsCloseFuture = new Future<void | Error>();
 
     wsConn.onerror = (error) => {
-      wsCloseFuture.resolve(error);
+      wsCloseFuture.resolve(new APIConnectionError(error.message));
     };
     wsConn.onclose = () => {
       wsCloseFuture.resolve();
@@ -944,7 +942,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const waitReconnectTask = Task.from(async ({ signal }) => {
       await delay(this.oaiRealtimeModel._options.maxSessionDuration, { signal });
-      return new ErrorEvent('OpenAI Realtime API connection timeout');
+      return new APIConnectionError('OpenAI Realtime API connection timeout');
     });
 
     try {
@@ -954,11 +952,8 @@ export class RealtimeSession extends llm.RealtimeSession {
         await this.currentGeneration._doneFut.await;
       }
 
-      if (result instanceof ErrorEvent) {
-        throw new APIConnectionError('OpenAI Realtime API connection closed', {
-          body: result,
-          retryable: false,
-        });
+      if (result instanceof Error) {
+        throw result;
       }
     } finally {
       await cancelAndWait([wsTask, sendTask, waitReconnectTask], 2000);
@@ -1305,7 +1300,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }): void {
-    this.#logger.error({ error }, 'OpenAI Realtime API returned an error');
+    // IMPORTANT: only emit error if there are listeners; otherwise emit will throw an error
     this.emit('error', {
       timestamp: Date.now(),
       // TODO(brian): add label
