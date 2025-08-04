@@ -92,7 +92,7 @@ export abstract class RealtimeSession extends EventEmitter {
 
   abstract updateTools(tools: ToolContext): Promise<void>;
 
-  abstract updateOptions(options: { toolChoice?: ToolChoice }): void;
+  abstract updateOptions(options: { toolChoice?: ToolChoice | null }): void;
 
   abstract pushAudio(frame: AudioFrame): void;
 
