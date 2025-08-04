@@ -165,6 +165,9 @@ importers:
       '@livekit/agents-plugin-elevenlabs':
         specifier: workspace:*
         version: link:../plugins/elevenlabs
+      '@livekit/agents-plugin-google':
+        specifier: workspace:*
+        version: link:../plugins/google
       '@livekit/agents-plugin-livekit':
         specifier: workspace:*
         version: link:../plugins/livekit
