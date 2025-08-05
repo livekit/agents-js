@@ -38,14 +38,16 @@
     "@livekit/agents-plugins-test": "workspace:^x",
     "@livekit/rtc-node": "^0.13.12",
     "@microsoft/api-extractor": "^7.35.0",
-    "typescript": "^5.0.0",
-    "tsup": "^8.3.5"
+    "tsup": "^8.3.5",
+    "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@google/genai": "^1.12.0"
+    "@google/genai": "^1.12.0",
+    "@types/json-schema": "^7.0.15",
+    "json-schema": "^0.4.0"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:^x",
     "@livekit/rtc-node": "^0.13.12"
   }
-} 
+}

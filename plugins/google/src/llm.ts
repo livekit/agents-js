@@ -1,60 +1,40 @@
-// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 import type * as types from '@google/genai';
-import { GoogleGenAI } from '@google/genai';
+import { FunctionCallingConfigMode, type GenerateContentConfig, GoogleGenAI } from '@google/genai';
 import type { APIConnectOptions } from '@livekit/agents';
-import { DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
+import { DEFAULT_API_CONNECT_OPTIONS, llm, shortuuid } from '@livekit/agents';
 import type { ChatModels } from './models.js';
+import type { LLMTool } from './tools.js';
+import { convertJSONSchemaToOpenAPISchema } from './utils.js';
 
 interface GoogleFormatData {
   systemMessages: string[] | null;
 }
 
 export interface LLMOptions {
-  model?: string | ChatModels;
+  model: string | ChatModels;
   apiKey?: string;
+  temperature?: number;
+  toolChoice?: llm.ToolChoice;
   vertexai?: boolean;
   project?: string;
   location?: string;
-  temperature?: number;
   maxOutputTokens?: number;
   topP?: number;
   topK?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
-  toolChoice?: llm.ToolChoice;
   thinkingConfig?: types.ThinkingConfig;
   automaticFunctionCallingConfig?: types.AutomaticFunctionCallingConfig;
-  geminiTools?: types.Tool[];
+  geminiTools?: LLMTool[];
   httpOptions?: types.HttpOptions;
   seed?: number;
-  client?: GoogleGenAI;
-}
-
-interface InternalLLMOptions {
-  model: string;
-  apiKey?: string;
-  vertexai: boolean;
-  project?: string;
-  location: string;
-  temperature?: number;
-  maxOutputTokens?: number;
-  topP?: number;
-  topK?: number;
-  presencePenalty?: number;
-  frequencyPenalty?: number;
-  toolChoice?: llm.ToolChoice;
-  thinkingConfig?: types.ThinkingConfig;
-  automaticFunctionCallingConfig?: types.AutomaticFunctionCallingConfig;
-  geminiTools?: types.Tool[];
-  httpOptions?: types.HttpOptions;
-  seed?: number;
-  client: GoogleGenAI;
 }
 
 export class LLM extends llm.LLM {
-  #opts: InternalLLMOptions;
+  #opts: LLMOptions;
   #client: GoogleGenAI;
 
   label(): string {
@@ -93,80 +73,96 @@ export class LLM extends llm.LLM {
    * @param httpOptions - The HTTP options to use for the session.
    * @param seed - Random seed for reproducible results. Defaults to undefined.
    */
-  constructor(opts: LLMOptions = {}) {
+  constructor(
+    {
+      model,
+      apiKey,
+      vertexai,
+      project,
+      location,
+      temperature,
+      maxOutputTokens,
+      topP,
+      topK,
+      presencePenalty,
+      frequencyPenalty,
+      toolChoice,
+      thinkingConfig,
+      automaticFunctionCallingConfig,
+      geminiTools,
+      httpOptions,
+      seed,
+    }: LLMOptions = {
+      model: 'gemini-2.0-flash-001',
+    },
+  ) {
     super();
 
-    // Set up authentication and client configuration
-    const apiKey = opts.apiKey || process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENAI_API_KEY;
     const useVertexAI =
-      opts.vertexai ??
+      vertexai ??
       (process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true' ||
         process.env.GOOGLE_GENAI_USE_VERTEXAI === '1');
 
-    let client: GoogleGenAI;
+    let gcpProject: string | undefined = project ?? process.env.GOOGLE_CLOUD_PROJECT;
+    let gcpLocation: string | undefined = location ?? process.env.GOOGLE_CLOUD_LOCATION;
+    let geminiApiKey: string | undefined = apiKey ?? process.env.GOOGLE_API_KEY;
 
-    if (opts.client) {
-      client = opts.client;
-    } else if (useVertexAI) {
-      // Vertex AI configuration
-      const project = opts.project || process.env.GOOGLE_CLOUD_PROJECT;
-      const location = opts.location || process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
-
-      if (!project) {
+    if (useVertexAI) {
+      if (!gcpProject) {
+        // TODO(brian): use default_async to get the project ID
         throw new Error(
           'Project ID is required for Vertex AI. Set via project option or GOOGLE_CLOUD_PROJECT environment variable',
         );
       }
-
-      client = new GoogleGenAI({
-        vertexai: true,
-        project,
-        location,
-      });
+      geminiApiKey = undefined;
     } else {
-      // Google AI Studio configuration
-      if (!apiKey) {
+      gcpProject = undefined;
+      gcpLocation = undefined;
+      if (!geminiApiKey) {
         throw new Error(
-          'API key is required for Google AI Studio. Set via apiKey option or GOOGLE_API_KEY environment variable',
+          'API key is required for Google API either via apiKey or GOOGLE_API_KEY environment variable',
         );
       }
-
-      client = new GoogleGenAI({
-        apiKey,
-      });
     }
 
-    // Validate thinking_config
-    if (opts.thinkingConfig?.thinkingBudget !== undefined) {
-      const budget = opts.thinkingConfig.thinkingBudget;
-      if (!Number.isInteger(budget)) {
-        throw new Error('thinkingBudget inside thinkingConfig must be an integer');
-      }
+    // Validate thinkingConfig
+    if (thinkingConfig?.thinkingBudget !== undefined) {
+      const budget = thinkingConfig.thinkingBudget;
       if (budget < 0 || budget > 24576) {
         throw new Error('thinkingBudget inside thinkingConfig must be between 0 and 24576');
       }
     }
 
-    this.#client = client;
+    const clientOptions: types.GoogleGenAIOptions = useVertexAI
+      ? {
+          vertexai: true,
+          project: gcpProject,
+          location: gcpLocation,
+        }
+      : {
+          apiKey: geminiApiKey,
+        };
+
+    this.#client = new GoogleGenAI(clientOptions);
+
     this.#opts = {
-      model: opts.model || 'gemini-2.0-flash-001',
-      apiKey,
+      model,
       vertexai: useVertexAI,
-      project: opts.project,
-      location: opts.location || 'us-central1',
-      temperature: opts.temperature,
-      maxOutputTokens: opts.maxOutputTokens,
-      topP: opts.topP,
-      topK: opts.topK,
-      presencePenalty: opts.presencePenalty,
-      frequencyPenalty: opts.frequencyPenalty,
-      toolChoice: opts.toolChoice,
-      thinkingConfig: opts.thinkingConfig,
-      automaticFunctionCallingConfig: opts.automaticFunctionCallingConfig,
-      geminiTools: opts.geminiTools,
-      httpOptions: opts.httpOptions,
-      seed: opts.seed,
-      client: this.#client,
+      project: gcpProject,
+      location: gcpLocation,
+      temperature,
+      maxOutputTokens,
+      topP,
+      topK,
+      presencePenalty,
+      frequencyPenalty,
+      toolChoice,
+      thinkingConfig,
+      automaticFunctionCallingConfig,
+      geminiTools,
+      httpOptions,
+      seed,
+      apiKey,
     };
   }
 
@@ -174,111 +170,90 @@ export class LLM extends llm.LLM {
     chatCtx,
     toolCtx,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
-    _parallelToolCalls,
     toolChoice,
-    responseFormat,
     extraKwargs,
     geminiTools,
   }: {
     chatCtx: llm.ChatContext;
     toolCtx?: llm.ToolContext;
     connOptions?: APIConnectOptions;
-    _parallelToolCalls?: boolean;
+    parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
-    responseFormat?: types.Schema;
     extraKwargs?: Record<string, unknown>;
-    geminiTools?: types.Tool[];
+    geminiTools?: LLMTool[];
   }): LLMStream {
-    const extra: Record<string, unknown> = {};
+    const extras: GenerateContentConfig = { ...extraKwargs } as GenerateContentConfig;
 
-    if (extraKwargs) {
-      Object.assign(extra, extraKwargs);
-    }
+    toolChoice = toolChoice !== undefined ? toolChoice : this.#opts.toolChoice;
 
-    // Handle tool choice - matches Python's tool_choice processing
-    const finalToolChoice = toolChoice || this.#opts.toolChoice;
-    if (finalToolChoice) {
+    if (toolChoice) {
       let geminiToolConfig: types.ToolConfig;
-      if (typeof finalToolChoice === 'object' && finalToolChoice.type === 'function') {
+
+      if (typeof toolChoice === 'object' && toolChoice.type === 'function') {
         geminiToolConfig = {
           functionCallingConfig: {
-            mode: 'ANY' as types.FunctionCallingConfig['mode'],
-            allowedFunctionNames: [finalToolChoice.function.name],
+            mode: FunctionCallingConfigMode.ANY,
+            allowedFunctionNames: [toolChoice.function.name],
           },
         };
-        extra.toolConfig = geminiToolConfig;
-      } else if (finalToolChoice === 'required') {
-        const toolNames: string[] = [];
-        if (toolCtx) {
-          for (const [name] of Object.entries(toolCtx)) {
-            toolNames.push(name);
-          }
-        }
-
+      } else if (toolChoice === 'required') {
+        const toolNames = Object.entries(toolCtx || {}).map(([name]) => name);
         geminiToolConfig = {
           functionCallingConfig: {
-            mode: 'ANY' as types.FunctionCallingConfig['mode'],
+            mode: FunctionCallingConfigMode.ANY,
             allowedFunctionNames: toolNames.length > 0 ? toolNames : undefined,
           },
         };
-        extra.toolConfig = geminiToolConfig;
-      } else if (finalToolChoice === 'auto') {
+      } else if (toolChoice === 'auto') {
         geminiToolConfig = {
           functionCallingConfig: {
-            mode: 'AUTO' as types.FunctionCallingConfig['mode'],
+            mode: FunctionCallingConfigMode.AUTO,
           },
         };
-        extra.toolConfig = geminiToolConfig;
-      } else if (finalToolChoice === 'none') {
+      } else if (toolChoice === 'none') {
         geminiToolConfig = {
           functionCallingConfig: {
-            mode: 'NONE' as types.FunctionCallingConfig['mode'],
+            mode: FunctionCallingConfigMode.NONE,
           },
         };
-        extra.toolConfig = geminiToolConfig;
+      } else {
+        throw new Error(`Invalid tool choice: ${toolChoice}`);
       }
+
+      extras.toolConfig = geminiToolConfig;
     }
 
-    // Handle response format - matches Python's response_format processing
-    if (responseFormat) {
-      extra.responseSchema = responseFormat;
-      extra.responseMimeType = 'application/json';
-    }
-
-    // Add individual option checks to match Python's structure
     if (this.#opts.temperature !== undefined) {
-      extra.temperature = this.#opts.temperature;
+      extras.temperature = this.#opts.temperature;
     }
     if (this.#opts.maxOutputTokens !== undefined) {
-      extra.maxOutputTokens = this.#opts.maxOutputTokens;
+      extras.maxOutputTokens = this.#opts.maxOutputTokens;
     }
     if (this.#opts.topP !== undefined) {
-      extra.topP = this.#opts.topP;
+      extras.topP = this.#opts.topP;
     }
     if (this.#opts.topK !== undefined) {
-      extra.topK = this.#opts.topK;
+      extras.topK = this.#opts.topK;
     }
     if (this.#opts.presencePenalty !== undefined) {
-      extra.presencePenalty = this.#opts.presencePenalty;
+      extras.presencePenalty = this.#opts.presencePenalty;
     }
     if (this.#opts.frequencyPenalty !== undefined) {
-      extra.frequencyPenalty = this.#opts.frequencyPenalty;
+      extras.frequencyPenalty = this.#opts.frequencyPenalty;
     }
     if (this.#opts.seed !== undefined) {
-      extra.seed = this.#opts.seed;
+      extras.seed = this.#opts.seed;
     }
 
-    // Add thinking config if provided - matches Python's thinking_config handling
     if (this.#opts.thinkingConfig !== undefined) {
-      extra.thinkingConfig = this.#opts.thinkingConfig;
+      extras.thinkingConfig = this.#opts.thinkingConfig;
     }
 
-    // Add automatic function calling config - matches Python's automatic_function_calling_config
     if (this.#opts.automaticFunctionCallingConfig !== undefined) {
-      extra.automaticFunctionCalling = this.#opts.automaticFunctionCallingConfig;
+      extras.automaticFunctionCalling = this.#opts.automaticFunctionCallingConfig;
     }
 
-    const finalGeminiTools = geminiTools || this.#opts.geminiTools;
+    geminiTools = geminiTools !== undefined ? geminiTools : this.#opts.geminiTools;
 
     return new LLMStream(this, {
       client: this.#client,
@@ -286,20 +261,17 @@ export class LLM extends llm.LLM {
       chatCtx,
       toolCtx,
       connOptions,
-      geminiTools: finalGeminiTools,
-      extraKwargs: extra,
+      geminiTools,
+      extraKwargs: extras,
     });
   }
 }
 
 export class LLMStream extends llm.LLMStream {
-  label = 'google.LLMStream';
-
   #client: GoogleGenAI;
   #model: string;
-  #connOptions: APIConnectOptions;
-  #geminiTools?: types.Tool[];
-  #extraKwargs: Record<string, unknown>;
+  #geminiTools?: LLMTool[];
+  #extraKwargs: GenerateContentConfig;
 
   constructor(
     llm: LLM,
@@ -317,41 +289,36 @@ export class LLMStream extends llm.LLMStream {
       chatCtx: llm.ChatContext;
       toolCtx?: llm.ToolContext;
       connOptions: APIConnectOptions;
-      geminiTools?: types.Tool[];
-      extraKwargs: Record<string, unknown>;
+      geminiTools?: LLMTool[];
+      extraKwargs: GenerateContentConfig;
     },
   ) {
     // Call base constructor with dev 1.0 object parameter pattern
     super(llm, { chatCtx, toolCtx, connOptions });
     this.#client = client;
     this.#model = model;
-    this.#connOptions = connOptions;
     this.#geminiTools = geminiTools;
     this.#extraKwargs = extraKwargs;
     this.#run();
   }
 
   async #run(): Promise<void> {
-    let _retryable = true;
+    let retryable = true;
     const requestId = `google_${Date.now()}`;
 
     try {
-      // Convert chat context using native Google provider format
       const [turns, extraData] = (await this.chatCtx.toProviderFormat('google')) as [
         Record<string, unknown>[],
         GoogleFormatData,
       ];
 
-      // Convert to Google GenAI format
       const contents: types.Content[] = turns.map((turn: Record<string, unknown>) => ({
         role: turn.role as types.Content['role'],
         parts: turn.parts as types.Part[],
       }));
 
-      // Convert tools from ToolContext if available
       const tools = this.toolCtx ? this.#convertTools() : undefined;
 
-      // Create system instruction from extra data
       let systemInstruction: types.Content | undefined = undefined;
       if (extraData.systemMessages && extraData.systemMessages.length > 0) {
         systemInstruction = {
@@ -359,40 +326,18 @@ export class LLMStream extends llm.LLMStream {
         };
       }
 
-      // Create the request parameters
-      const parameters: types.GenerateContentParameters = {
+      const response = await this.#client.models.generateContentStream({
         model: this.#model,
         contents,
         config: {
           ...this.#extraKwargs,
           systemInstruction,
-          tools,
-          // Add tool configuration to encourage function calling
-          ...(tools &&
-            tools.length > 0 && {
-              toolConfig: {
-                functionCallingConfig: {
-                  mode: 'ANY' as types.FunctionCallingConfigMode,
-                },
-              },
-            }),
-        },
-      };
-
-      // Set HTTP options with timeout
-      if (this.#connOptions.timeoutMs) {
-        const timeout = Math.floor(this.#connOptions.timeoutMs);
-        parameters.config = {
-          ...parameters.config,
-          httpOptions: {
-            ...(this.#extraKwargs.httpOptions as Record<string, unknown>),
-            timeout,
+          httpOptions: this.#extraKwargs.httpOptions ?? {
+            timeout: Math.floor(this.connOptions.timeoutMs),
           },
-        };
-      }
-
-      // Generate content stream
-      const response = await this.#client.models.generateContentStream(parameters);
+          tools,
+        },
+      });
 
       for await (const chunk of response) {
         if (chunk.promptFeedback) {
@@ -413,7 +358,7 @@ export class LLMStream extends llm.LLMStream {
         for (const part of chunk.candidates[0].content.parts) {
           const chatChunk = this.#parsePart(requestId, part);
           if (chatChunk) {
-            _retryable = false;
+            retryable = false;
             this.queue.put(chatChunk);
           }
         }
@@ -432,7 +377,6 @@ export class LLMStream extends llm.LLMStream {
         }
       }
     } catch (error: unknown) {
-      // Handle different types of Google API errors - matches Python's error handling structure
       const err = error as {
         code?: number;
         message?: string;
@@ -440,7 +384,6 @@ export class LLMStream extends llm.LLMStream {
         type?: string;
       };
 
-      // Match Python's ClientError handling (status codes 400-499)
       if (err.code && err.code >= 400 && err.code < 500) {
         if (err.code === 429) {
           throw new Error(`Google LLM: Rate limit error - ${err.message || 'Unknown error'}`);
@@ -451,14 +394,12 @@ export class LLMStream extends llm.LLMStream {
         }
       }
 
-      // Match Python's ServerError handling (status codes 500+)
       if (err.code && err.code >= 500) {
         throw new Error(
           `Google LLM: Server error (${err.code}) - ${err.message || 'Unknown error'}`,
         );
       }
 
-      // Match Python's generic APIError handling
       throw new Error(`Google LLM: API error - ${err.message || 'Unknown error'}`);
     } finally {
       this.queue.close();
@@ -471,45 +412,13 @@ export class LLMStream extends llm.LLMStream {
     const functionDeclarations: types.FunctionDeclaration[] = [];
 
     for (const [name, tool] of Object.entries(this.toolCtx)) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const functionTool = tool as llm.FunctionTool<any, any, any>;
-
-      // Get the JSON schema and fix it for Google
-      const jsonSchema = llm.toJsonSchema(functionTool.parameters) as any;
-
-      // For Google, we need to remove optional fields from required array
-      // and convert type: ["string", "null"] to just type: "string" for optionals
-      if (jsonSchema.properties && jsonSchema.required) {
-        const fixedProperties: any = {};
-        const requiredFields: string[] = [];
-
-        for (const [propName, propSchema] of Object.entries(jsonSchema.properties)) {
-          const prop = propSchema as any;
-          if (prop.type && Array.isArray(prop.type) && prop.type.includes('null')) {
-            // This is an optional field - remove null type and don't mark as required
-            fixedProperties[propName] = {
-              ...prop,
-              type: prop.type.filter((t: string) => t !== 'null')[0] || 'string',
-            };
-          } else {
-            // Required field
-            fixedProperties[propName] = prop;
-            requiredFields.push(propName);
-          }
-        }
-
-        jsonSchema.properties = fixedProperties;
-        jsonSchema.required = requiredFields;
-      }
+      const { description, parameters } = tool;
+      const jsonSchema = llm.toJsonSchema(parameters);
 
       functionDeclarations.push({
         name,
-        description: functionTool.description || `Function: ${name}`,
-        parameters: jsonSchema || {
-          type: 'object',
-          properties: {},
-          required: [],
-        },
+        description,
+        parameters: convertJSONSchemaToOpenAPISchema(jsonSchema) as types.Schema,
       });
     }
 
@@ -517,7 +426,6 @@ export class LLMStream extends llm.LLMStream {
   }
 
   #parsePart(id: string, part: types.Part): llm.ChatChunk | null {
-    // Handle function calls
     if (part.functionCall) {
       return {
         id,
@@ -525,26 +433,21 @@ export class LLMStream extends llm.LLMStream {
           role: 'assistant',
           toolCalls: [
             llm.FunctionCall.create({
-              callId: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-              name: part.functionCall.name || 'unknown_function',
-              args: JSON.stringify(part.functionCall.args || {}),
+              callId: part.functionCall.id || shortuuid('function_call_'),
+              name: part.functionCall.name!,
+              args: JSON.stringify(part.functionCall.args!),
             }),
           ],
         },
       };
     }
 
-    // Handle text content
-    if (part.text) {
-      return {
-        id,
-        delta: {
-          content: part.text,
-          role: 'assistant',
-        },
-      };
-    }
-
-    return null;
+    return {
+      id,
+      delta: {
+        content: part.text,
+        role: 'assistant',
+      },
+    };
   }
 }

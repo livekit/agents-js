@@ -88,12 +88,12 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected queue = new AsyncIterableQueue<ChatChunk>();
   protected closed = false;
   protected abortController = new AbortController();
+  protected _connOptions: APIConnectOptions;
   protected logger = log();
 
   #llm: LLM;
   #chatCtx: ChatContext;
   #toolCtx?: ToolContext;
-  #connOptions: APIConnectOptions;
 
   constructor(
     llm: LLM,
@@ -110,7 +110,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     this.#llm = llm;
     this.#chatCtx = chatCtx;
     this.#toolCtx = toolCtx;
-    this.#connOptions = connOptions;
+    this._connOptions = connOptions;
     this.monitorMetrics();
     this.abortController.signal.addEventListener('abort', () => {
       // TODO (AJS-37) clean this up when we refactor with streams
@@ -171,7 +171,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
 
   /** The connection options for this stream. */
   get connOptions(): APIConnectOptions {
-    return this.#connOptions;
+    return this._connOptions;
   }
 
   next(): Promise<IteratorResult<ChatChunk>> {
