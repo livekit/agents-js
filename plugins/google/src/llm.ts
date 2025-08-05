@@ -4,7 +4,13 @@
 import type * as types from '@google/genai';
 import { FunctionCallingConfigMode, type GenerateContentConfig, GoogleGenAI } from '@google/genai';
 import type { APIConnectOptions } from '@livekit/agents';
-import { DEFAULT_API_CONNECT_OPTIONS, llm, shortuuid } from '@livekit/agents';
+import {
+  APIConnectionError,
+  APIStatusError,
+  DEFAULT_API_CONNECT_OPTIONS,
+  llm,
+  shortuuid,
+} from '@livekit/agents';
 import type { ChatModels } from './models.js';
 import type { LLMTool } from './tools.js';
 import { convertJSONSchemaToOpenAPISchema } from './utils.js';
@@ -341,7 +347,13 @@ export class LLMStream extends llm.LLMStream {
 
       for await (const chunk of response) {
         if (chunk.promptFeedback) {
-          throw new Error(`Prompt feedback error: ${JSON.stringify(chunk.promptFeedback)}`);
+          throw new APIStatusError(
+            `Prompt feedback error: ${JSON.stringify(chunk.promptFeedback)}`,
+            {
+              retryable: false,
+              requestId,
+            },
+          );
         }
 
         if (!chunk.candidates || !chunk.candidates[0]?.content?.parts) {
@@ -386,21 +398,37 @@ export class LLMStream extends llm.LLMStream {
 
       if (err.code && err.code >= 400 && err.code < 500) {
         if (err.code === 429) {
-          throw new Error(`Google LLM: Rate limit error - ${err.message || 'Unknown error'}`);
+          throw new APIStatusError(
+            `Google LLM: Rate limit error - ${err.message || 'Unknown error'}`,
+            {
+              statusCode: 429,
+              retryable: true,
+            },
+          );
         } else {
-          throw new Error(
+          throw new APIStatusError(
             `Google LLM: Client error (${err.code}) - ${err.message || 'Unknown error'}`,
+            {
+              statusCode: err.code,
+              retryable: false,
+            },
           );
         }
       }
 
       if (err.code && err.code >= 500) {
-        throw new Error(
+        throw new APIStatusError(
           `Google LLM: Server error (${err.code}) - ${err.message || 'Unknown error'}`,
+          {
+            statusCode: err.code,
+            retryable,
+          },
         );
       }
 
-      throw new Error(`Google LLM: API error - ${err.message || 'Unknown error'}`);
+      throw new APIConnectionError(`Google LLM: API error - ${err.message || 'Unknown error'}`, {
+        retryable,
+      });
     } finally {
       this.queue.close();
     }

@@ -31,7 +31,7 @@ export class APIError extends Error {
 }
 
 export interface APIStatusErrorOptions extends APIErrorOptions {
-  statusCode: number;
+  statusCode?: number;
   requestId?: string;
 }
 
