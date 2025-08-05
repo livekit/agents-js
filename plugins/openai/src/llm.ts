@@ -533,15 +533,36 @@ export class LLMStream extends llm.LLMStream {
         this.#providerFmt,
       )) as OpenAI.ChatCompletionMessageParam[];
 
-      const stream = await this.#client.chat.completions.create({
+      // Clean extraKwargs to remove parallel_tool_calls if no tools are present
+      const cleanedExtraKwargs = { ...this.#extraKwargs };
+      if (!openaiTools || openaiTools.length === 0) {
+        delete cleanedExtraKwargs.parallelToolCalls;
+        delete (cleanedExtraKwargs as any).parallel_tool_calls;
+      }
+
+      const requestParams: OpenAI.ChatCompletionCreateParamsStreaming = {
         model,
         messages,
-        tools: openaiTools,
         stream: true,
         stream_options: { include_usage: true },
-        parallel_tool_calls: this.toolCtx && this.#extraKwargs.parallelToolCalls,
-        ...this.#extraKwargs,
-      });
+      };
+
+      // Add cleaned extra kwargs (avoiding parallel_tool_calls issues)
+      for (const [key, value] of Object.entries(cleanedExtraKwargs)) {
+        if (key !== 'parallelToolCalls' && key !== 'parallel_tool_calls') {
+          (requestParams as any)[key] = value;
+        }
+      }
+
+      // Only add tools-related parameters if tools are provided
+      if (openaiTools && openaiTools.length > 0) {
+        (requestParams as any).tools = openaiTools;
+        if (this.#extraKwargs.parallelToolCalls !== undefined) {
+          (requestParams as any).parallel_tool_calls = this.#extraKwargs.parallelToolCalls;
+        }
+      }
+
+      const stream = await this.#client.chat.completions.create(requestParams);
 
       for await (const chunk of stream) {
         for (const choice of chunk.choices) {

@@ -289,13 +289,13 @@ export class LLM extends llm.LLM {
 }
 
 export class LLMStream extends llm.LLMStream {
+  label = 'google.LLMStream';
+
   #client: GoogleGenAI;
   #model: string;
   #connOptions: APIConnectOptions;
-  #toolCtx?: llm.ToolContext;
   #geminiTools?: types.Tool[];
   #extraKwargs: Record<string, unknown>;
-  label = 'google.LLMStream';
 
   constructor(
     llm: LLM,
@@ -317,8 +317,8 @@ export class LLMStream extends llm.LLMStream {
       extraKwargs: Record<string, unknown>;
     },
   ) {
-    // Call base constructor - CI environment expects 2 parameters
-    super(llm, chatCtx);
+    // Call base constructor with dev 1.0 object parameter pattern
+    super(llm, { chatCtx, toolCtx, connOptions });
     this.#client = client;
     this.#model = model;
     this.#connOptions = connOptions;
@@ -363,6 +363,15 @@ export class LLMStream extends llm.LLMStream {
           ...this.#extraKwargs,
           systemInstruction,
           tools,
+          // Add tool configuration to encourage function calling
+          ...(tools &&
+            tools.length > 0 && {
+              toolConfig: {
+                functionCallingConfig: {
+                  mode: 'ANY' as types.FunctionCallingConfigMode,
+                },
+              },
+            }),
         },
       };
 
@@ -460,11 +469,39 @@ export class LLMStream extends llm.LLMStream {
     for (const [name, tool] of Object.entries(this.toolCtx)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const functionTool = tool as llm.FunctionTool<any, any, any>;
+
+      // Get the JSON schema and fix it for Google
+      const jsonSchema = llm.toJsonSchema(functionTool.parameters) as any;
+
+      // For Google, we need to remove optional fields from required array
+      // and convert type: ["string", "null"] to just type: "string" for optionals
+      if (jsonSchema.properties && jsonSchema.required) {
+        const fixedProperties: any = {};
+        const requiredFields: string[] = [];
+
+        for (const [propName, propSchema] of Object.entries(jsonSchema.properties)) {
+          const prop = propSchema as any;
+          if (prop.type && Array.isArray(prop.type) && prop.type.includes('null')) {
+            // This is an optional field - remove null type and don't mark as required
+            fixedProperties[propName] = {
+              ...prop,
+              type: prop.type.filter((t: string) => t !== 'null')[0] || 'string',
+            };
+          } else {
+            // Required field
+            fixedProperties[propName] = prop;
+            requiredFields.push(propName);
+          }
+        }
+
+        jsonSchema.properties = fixedProperties;
+        jsonSchema.required = requiredFields;
+      }
+
       functionDeclarations.push({
         name,
         description: functionTool.description || `Function: ${name}`,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        parameters: (llm.toJsonSchema(functionTool.parameters) as any) || {
+        parameters: jsonSchema || {
           type: 'object',
           properties: {},
           required: [],
