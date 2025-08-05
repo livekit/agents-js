@@ -302,6 +302,10 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     this.monitorMetrics();
   }
 
+  get inputText(): string {
+    return this.#text;
+  }
+
   protected async monitorMetrics() {
     const startTime = process.hrtime.bigint();
     let audioDuration = 0;
