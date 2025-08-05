@@ -34,16 +34,11 @@ export type LLMCallbacks = {
 };
 
 export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCallbacks>) {
-  protected _label: string;
-
   constructor() {
     super();
-    this._label = `${this.constructor.name}`;
   }
 
-  get label(): string {
-    return this._label;
-  }
+  abstract label(): string;
 
   /**
    * Get the model name/identifier for this LLM instance.
@@ -94,7 +89,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected closed = false;
   protected abortController = new AbortController();
   protected logger = log();
-  abstract label: string;
 
   #llm: LLM;
   #chatCtx: ChatContext;
@@ -154,7 +148,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       ttft: ttft === BigInt(-1) ? -1 : Math.trunc(Number(ttft / BigInt(1000000))),
       duration: Math.trunc(Number(duration / BigInt(1000000))),
       cancelled: this.abortController.signal.aborted,
-      label: this.label,
+      label: this.#llm.label(),
       completionTokens: usage?.completionTokens || 0,
       promptTokens: usage?.promptTokens || 0,
       promptCachedTokens: usage?.promptCachedTokens || 0,

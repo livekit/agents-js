@@ -75,6 +75,10 @@ export class LLM extends llm.LLM {
       });
   }
 
+  label(): string {
+    return 'openai.LLM';
+  }
+
   get model(): string {
     return this.#opts.model;
   }
@@ -493,7 +497,6 @@ export class LLM extends llm.LLM {
 }
 
 export class LLMStream extends llm.LLMStream {
-  // Current function call that we're waiting for full completion (args are streamed)
   #toolCallId?: string;
   #fncName?: string;
   #fncRawArguments?: string;
@@ -501,7 +504,6 @@ export class LLMStream extends llm.LLMStream {
   #client: OpenAI;
   #providerFmt: llm.ProviderFormat;
   #extraKwargs: Record<string, any>;
-  label = 'openai.LLMStream';
 
   constructor(
     llm: LLM,

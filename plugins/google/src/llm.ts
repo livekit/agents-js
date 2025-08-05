@@ -57,6 +57,10 @@ export class LLM extends llm.LLM {
   #opts: InternalLLMOptions;
   #client: GoogleGenAI;
 
+  label(): string {
+    return 'google.LLM';
+  }
+
   get model(): string {
     return this.#opts.model;
   }
