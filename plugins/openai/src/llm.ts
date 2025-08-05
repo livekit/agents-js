@@ -443,25 +443,42 @@ export class LLM extends llm.LLM {
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, any>;
   }): LLMStream {
-    const temperature = extraKwargs?.temperature || this.#opts.temperature;
+    const extras: Record<string, any> = { ...extraKwargs }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-    const finalToolChoice = toolChoice || this.#opts.toolChoice;
+    if (this.#opts.metadata) {
+      extras.metadata = this.#opts.metadata;
+    }
 
-    const finalParallelToolCalls =
+    if (this.#opts.user) {
+      extras.user = this.#opts.user;
+    }
+
+    if (this.#opts.maxCompletionTokens) {
+      extras.max_completion_tokens = this.#opts.maxCompletionTokens;
+    }
+
+    if (this.#opts.temperature) {
+      extras.temperature = this.#opts.temperature;
+    }
+
+    if (this.#opts.serviceTier) {
+      extras.service_tier = this.#opts.serviceTier;
+    }
+
+    if (this.#opts.store !== undefined) {
+      extras.store = this.#opts.store;
+    }
+
+    parallelToolCalls =
       parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
+    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+      extras.parallel_tool_calls = parallelToolCalls;
+    }
 
-    const extra: Record<string, any> = { ...extraKwargs };
-
-    if (this.#opts.metadata) extra.metadata = this.#opts.metadata;
-    if (this.#opts.user) extra.user = this.#opts.user;
-    if (this.#opts.maxCompletionTokens)
-      extra.max_completion_tokens = this.#opts.maxCompletionTokens;
-    if (this.#opts.serviceTier) extra.service_tier = this.#opts.serviceTier;
-    if (this.#opts.store !== undefined) extra.store = this.#opts.store;
-
-    if (temperature) extra.temperature = temperature;
-    if (finalParallelToolCalls !== undefined) extra.parallel_tool_calls = finalParallelToolCalls;
-    if (finalToolChoice) extra.tool_choice = finalToolChoice;
+    toolChoice = toolChoice !== undefined ? toolChoice : this.#opts.toolChoice;
+    if (toolChoice) {
+      extras.tool_choice = toolChoice;
+    }
 
     return new LLMStream(this, {
       model: this.#opts.model,
@@ -470,7 +487,7 @@ export class LLM extends llm.LLM {
       chatCtx,
       toolCtx,
       connOptions,
-      extraKwargs: extra,
+      extraKwargs: extras,
     });
   }
 }
@@ -514,55 +531,32 @@ export class LLMStream extends llm.LLMStream {
   }
 
   async #run(model: string | ChatModels) {
-    // Convert ToolContext to OpenAI format
-    const openaiTools = this.toolCtx
-      ? Object.entries(this.toolCtx).map(([name, func]) => ({
-          type: 'function' as const,
-          function: {
-            name,
-            description: func.description,
-            parameters: llm.toJsonSchema(
-              func.parameters,
-            ) as unknown as OpenAI.Chat.Completions.ChatCompletionTool['function']['parameters'],
-          },
-        }))
-      : undefined;
-
     try {
       const messages = (await this.chatCtx.toProviderFormat(
         this.#providerFmt,
       )) as OpenAI.ChatCompletionMessageParam[];
 
-      // Clean extraKwargs to remove parallel_tool_calls if no tools are present
-      const cleanedExtraKwargs = { ...this.#extraKwargs };
-      if (!openaiTools || openaiTools.length === 0) {
-        delete cleanedExtraKwargs.parallelToolCalls;
-        delete (cleanedExtraKwargs as any).parallel_tool_calls;
-      }
+      const tools = this.toolCtx
+        ? Object.entries(this.toolCtx).map(([name, func]) => ({
+            type: 'function' as const,
+            function: {
+              name,
+              description: func.description,
+              parameters: llm.toJsonSchema(
+                func.parameters,
+              ) as unknown as OpenAI.Chat.Completions.ChatCompletionTool['function']['parameters'],
+            },
+          }))
+        : undefined;
 
-      const requestParams: OpenAI.ChatCompletionCreateParamsStreaming = {
+      const stream = await this.#client.chat.completions.create({
         model,
         messages,
+        tools,
         stream: true,
         stream_options: { include_usage: true },
-      };
-
-      // Add cleaned extra kwargs (avoiding parallel_tool_calls issues)
-      for (const [key, value] of Object.entries(cleanedExtraKwargs)) {
-        if (key !== 'parallelToolCalls' && key !== 'parallel_tool_calls') {
-          (requestParams as any)[key] = value;
-        }
-      }
-
-      // Only add tools-related parameters if tools are provided
-      if (openaiTools && openaiTools.length > 0) {
-        (requestParams as any).tools = openaiTools;
-        if (this.#extraKwargs.parallelToolCalls !== undefined) {
-          (requestParams as any).parallel_tool_calls = this.#extraKwargs.parallelToolCalls;
-        }
-      }
-
-      const stream = await this.#client.chat.completions.create(requestParams);
+        ...this.#extraKwargs,
+      });
 
       for await (const chunk of stream) {
         for (const choice of chunk.choices) {
