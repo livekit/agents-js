@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { Session } from '@google/genai';
 import * as types from '@google/genai';
 import {
   ActivityHandling,
@@ -10,7 +11,6 @@ import {
   type HttpOptions,
   Modality,
   type RealtimeInputConfig,
-  Session,
 } from '@google/genai';
 import type { APIConnectOptions } from '@livekit/agents';
 import {
@@ -32,8 +32,8 @@ import { AudioFrame, AudioResampler, type VideoFrame } from '@livekit/rtc-node';
 import { delay } from '@std/async';
 import { type LLMTools } from '../../tools.js';
 import { toFunctionDeclarations } from '../../utils.js';
+import type * as api_proto from './api_proto.js';
 import type { LiveAPIModels, Voice } from './api_proto.js';
-import * as api_proto from './api_proto.js';
 
 // Audio constants
 const SAMPLE_RATE = 16000;
@@ -146,7 +146,6 @@ export class RealtimeModel extends llm.RealtimeModel {
 
       /**
        * The name of the model to use
-       * @default "gemini-2.0-flash-live-001" (Gemini API) or "gemini-2.0-flash-exp" (VertexAI)
        */
       model?: LiveAPIModels | string;
 
@@ -157,7 +156,6 @@ export class RealtimeModel extends llm.RealtimeModel {
 
       /**
        * Voice setting for audio outputs
-       * @default "Puck"
        */
       voice?: Voice | string;
 
@@ -169,13 +167,11 @@ export class RealtimeModel extends llm.RealtimeModel {
 
       /**
        * Modalities to use, such as [Modality.TEXT, Modality.AUDIO]
-       * @default [Modality.AUDIO]
        */
       modalities?: Modality[];
 
       /**
        * Whether to use VertexAI for the API
-       * @default false
        */
       vertexai?: boolean;
 
@@ -186,19 +182,16 @@ export class RealtimeModel extends llm.RealtimeModel {
 
       /**
        * The location to use for the API (for VertexAI)
-       * @default "us-central1"
        */
       location?: string;
 
       /**
        * The number of candidate responses to generate
-       * @default 1
        */
       candidateCount?: number;
 
       /**
        * Sampling temperature for response generation
-       * @default 0.8
        */
       temperature?: number;
 
@@ -244,13 +237,11 @@ export class RealtimeModel extends llm.RealtimeModel {
 
       /**
        * Whether to enable affective dialog
-       * @default false
        */
       enableAffectiveDialog?: boolean;
 
       /**
        * Whether to enable proactive audio
-       * @default false
        */
       proactivity?: boolean;
 
@@ -271,7 +262,6 @@ export class RealtimeModel extends llm.RealtimeModel {
 
       /**
        * The configuration for the API connection
-       * @default DEFAULT_API_CONNECT_OPTIONS
        */
       connOptions?: APIConnectOptions;
 
@@ -614,7 +604,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  pushVideo(frame: VideoFrame): void {
+  pushVideo(_: VideoFrame): void {
     // TODO(brian): implement push video frames
   }
 
