@@ -9,6 +9,7 @@ import {
   type HttpOptions,
   Modality,
   type RealtimeInputConfig,
+  Session,
 } from '@google/genai';
 import type { APIConnectOptions, stream } from '@livekit/agents';
 import {
@@ -358,72 +359,72 @@ export class RealtimeModel extends llm.RealtimeModel {
  */
 export class RealtimeSession extends llm.RealtimeSession {
   private _tools: llm.ToolContext = {};
-  private _geminiDeclarations: types.FunctionDeclaration[] = [];
   private _chatCtx = llm.ChatContext.empty();
-  private _messageChannel = new Queue<api_proto.ClientEvents>();
-  private _inputResampler?: AudioResampler;
-  private _instructions?: string;
-  private _realtimeModel: RealtimeModel;
-  private _currentGeneration?: ResponseGeneration;
+
+  private options: RealtimeOptions;
+  private geminiDeclarations: types.FunctionDeclaration[] = [];
+  private messageChannel = new Queue<api_proto.ClientEvents>();
+  private inputResampler?: AudioResampler;
+  private instructions?: string;
+  private currentGeneration?: ResponseGeneration;
+  private bstream: AudioByteStream;
 
   // Google-specific properties
-  private _client?: GoogleGenAI;
-  private _activeSession?: types.Session;
-  private _sessionShouldClose = new Event();
-  private _responseCreatedFutures: { [id: string]: Future<llm.GenerationCreatedEvent> } = {};
-  private _pendingGenerationFut?: Future<llm.GenerationCreatedEvent>;
-  private _sessionResumptionHandle?: string;
-  private _inUserActivity = false;
-  private _sessionLock = new Mutex();
-  private _numRetries = 0;
-
-  // Audio handling
-  private _bstream: AudioByteStream;
+  private client?: GoogleGenAI;
+  private activeSession?: Session;
+  private sessionShouldClose = new Event();
+  private responseCreatedFutures: { [id: string]: Future<llm.GenerationCreatedEvent> } = {};
+  private pendingGenerationFut?: Future<llm.GenerationCreatedEvent>;
+  private sessionResumptionHandle?: string;
+  private inUserActivity = false;
+  private sessionLock = new Mutex();
+  private numRetries = 0;
 
   #logger = log();
   #closed = false;
 
   constructor(realtimeModel: RealtimeModel) {
-    super(realtimeModel as any); // Type assertion to work around inheritance issues
+    super(realtimeModel);
 
-    this._realtimeModel = realtimeModel;
-    this._bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, SAMPLE_RATE / 10);
+    this.options = realtimeModel._options;
+    // 50ms chunks
+    this.bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, SAMPLE_RATE / 20);
 
-    this._initializeClient();
+    this.initializeClient();
   }
 
-  private _initializeClient(): void {
-    if (this._realtimeModel._options.vertexai) {
+  private initializeClient(): void {
+    if (this.options.vertexai) {
       // TODO: Initialize VertexAI client
-      if (!this._realtimeModel._options.project) {
+      if (!this.options.project) {
         throw new Error('Project is required for VertexAI');
       }
-      // this._client = new VertexAI({ project: this._realtimeModel._options.project });
+      // this.client = new VertexAI({ project: this.options.project });
     } else {
-      if (!this._realtimeModel._options.apiKey) {
+      if (!this.options.apiKey) {
         throw new Error(
           'Google API key is required, either using the argument or by setting the GOOGLE_API_KEY environmental variable',
         );
       }
-      this._client = new GoogleGenAI(this._realtimeModel._options.apiKey);
+      this.client = new GoogleGenAI({ apiKey: this.options.apiKey });
     }
   }
 
-  private async _closeActiveSession(): Promise<void> {
-    if (this._activeSession) {
+  private async closeActiveSession(): Promise<void> {
+    if (this.activeSession) {
       try {
-        await this._activeSession.close();
+        await this.activeSession.close();
       } catch (error) {
         this.#logger.warn({ error }, 'Error closing active session');
       } finally {
-        this._activeSession = undefined;
+        this.activeSession = undefined;
       }
     }
   }
 
-  private _markRestartNeeded(): void {
+  private markRestartNeeded(): void {
     this.#logger.debug('Marking session restart as needed');
-    this._sessionShouldClose.set();
+    this.sessionShouldClose.set();
   }
 
   get chatCtx(): llm.ChatContext {
@@ -439,8 +440,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateInstructions(instructions: string): Promise<void> {
-    this._instructions = instructions;
-    this._markRestartNeeded();
+    this.instructions = instructions;
+    this.markRestartNeeded();
   }
 
   async updateChatCtx(chatCtx: llm.ChatContext): Promise<void> {
@@ -464,7 +465,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this._chatCtx = chatCtx.copy();
 
       // Convert to Google's format
-      const turns = this._chatCtx
+      const [turns] = await this._chatCtx
         .copy({
           excludeEmptyMessage: true,
           excludeFunctionCall: true,
@@ -476,7 +477,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         turnComplete: false,
       };
 
-      this._sendClientEvent(content);
+      this.sendClientEvent(content);
     }
   }
 
@@ -496,20 +497,20 @@ export class RealtimeSession extends llm.RealtimeSession {
         newDeclarations.push({
           name,
           description: tool.description,
-          parameters: openApiSchema,
+          parameters: openApiSchema as types.Schema,
         });
       } catch (error) {
         this.#logger.error({ name, error }, 'Failed to convert tool to Google format');
       }
     }
 
-    const currentToolNames = new Set(this._geminiDeclarations.map((f) => f.name));
+    const currentToolNames = new Set(this.geminiDeclarations.map((f) => f.name));
     const newToolNames = new Set(newDeclarations.map((f) => f.name));
 
     if (!setsEqual(currentToolNames, newToolNames)) {
-      this._geminiDeclarations = newDeclarations;
+      this.geminiDeclarations = newDeclarations;
       this._tools = tools;
-      this._markRestartNeeded();
+      this.markRestartNeeded();
     }
   }
 
@@ -521,28 +522,28 @@ export class RealtimeSession extends llm.RealtimeSession {
     let hasChanges = false;
 
     if (options.voice !== undefined) {
-      this._realtimeModel._options.voice = options.voice;
+      this.options.voice = options.voice;
       hasChanges = true;
     }
     if (options.temperature !== undefined) {
-      this._realtimeModel._options.temperature = options.temperature;
+      this.options.temperature = options.temperature;
       hasChanges = true;
     }
 
     if (hasChanges) {
-      this._markRestartNeeded();
+      this.markRestartNeeded();
     }
   }
 
   pushAudio(frame: AudioFrame): void {
-    for (const f of this._resampleAudio(frame)) {
-      for (const nf of this._bstream.write(f.data.buffer)) {
+    for (const f of this.resampleAudio(frame)) {
+      for (const nf of this.bstream.write(f.data.buffer)) {
         const realtimeInput: types.LiveClientRealtimeInput = {
           mediaChunks: [
             { data: Buffer.from(nf.data.buffer).toString('base64'), mimeType: 'audio/pcm' },
           ],
         };
-        this._sendClientEvent(realtimeInput);
+        this.sendClientEvent(realtimeInput);
       }
     }
   }
@@ -552,24 +553,24 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.#logger.warn('Video input is not supported by Google Realtime API');
   }
 
-  private _sendClientEvent(event: api_proto.ClientEvents): void {
+  private sendClientEvent(event: api_proto.ClientEvents): void {
     if (this.#closed) {
       return;
     }
-    this._messageChannel.put(event);
+    this.messageChannel.put(event);
   }
 
   async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
-    if (this._pendingGenerationFut && !this._pendingGenerationFut.done) {
+    if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
       this.#logger.warn(
         'generate_reply called while another generation is pending, cancelling previous.',
       );
       // Since Future doesn't have cancel, we just create a new one
-      this._pendingGenerationFut = undefined;
+      this.pendingGenerationFut = undefined;
     }
 
     const fut = new Future<llm.GenerationCreatedEvent>();
-    this._pendingGenerationFut = fut;
+    this.pendingGenerationFut = fut;
 
     try {
       if (instructions) {
@@ -577,20 +578,20 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
 
       // Start generation
-      this._startNewGeneration();
+      this.startNewGeneration();
 
       return await fut.await;
     } catch (error) {
-      this._pendingGenerationFut = undefined;
+      this.pendingGenerationFut = undefined;
       throw error;
     }
   }
 
   startUserActivity(): void {
-    if (this._inUserActivity) {
+    if (this.inUserActivity) {
       return;
     }
-    this._inUserActivity = true;
+    this.inUserActivity = true;
     this.emit('input_speech_started', {} as llm.InputSpeechStartedEvent);
   }
 
@@ -610,22 +611,22 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async clearAudio() {
     // Clear the audio buffer
-    this._bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, SAMPLE_RATE / 10);
+    this.bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, SAMPLE_RATE / 10);
   }
 
-  private *_resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
+  private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
     // For now, just pass through - TODO: implement proper resampling if needed
     yield frame;
   }
 
   // TODO: Implement the remaining methods from the Python version
-  private _startNewGeneration(): void {
+  private startNewGeneration(): void {
     // TODO: Implement generation start logic
   }
 
   async close(): Promise<void> {
     this.#closed = true;
-    await this._closeActiveSession();
+    await this.closeActiveSession();
     super.close();
   }
 }
