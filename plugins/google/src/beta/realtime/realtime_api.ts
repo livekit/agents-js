@@ -25,7 +25,7 @@ import { Mutex } from '@livekit/mutex';
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import { type LLMTool } from '../../tools.js';
-import { convertJSONSchemaToOpenAPISchema } from '../../utils.js';
+import { toFunctionDeclarations } from '../../utils.js';
 import type { LiveAPIModels, Voice } from './api_proto.js';
 import * as api_proto from './api_proto.js';
 
@@ -550,28 +550,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateTools(tools: llm.ToolContext): Promise<void> {
-    const newDeclarations: types.FunctionDeclaration[] = [];
-
-    for (const [name, tool] of Object.entries(tools)) {
-      if (!llm.isFunctionTool(tool)) {
-        this.#logger.warn({ name }, 'Skipping non-function tool for Google Realtime API');
-        continue;
-      }
-
-      try {
-        const jsonSchema = llm.toJsonSchema(tool.parameters);
-        const openApiSchema = convertJSONSchemaToOpenAPISchema(jsonSchema);
-
-        newDeclarations.push({
-          name,
-          description: tool.description,
-          parameters: openApiSchema as types.Schema,
-        });
-      } catch (error) {
-        this.#logger.error({ name, error }, 'Failed to convert tool to Google format');
-      }
-    }
-
+    const newDeclarations = toFunctionDeclarations(tools);
     const currentToolNames = new Set(this.geminiDeclarations.map((f) => f.name));
     const newToolNames = new Set(newDeclarations.map((f) => f.name));
 
@@ -580,6 +559,18 @@ export class RealtimeSession extends llm.RealtimeSession {
       this._tools = tools;
       this.markRestartNeeded();
     }
+  }
+
+  get chatCtx(): llm.ChatContext {
+    return this._chatCtx.copy();
+  }
+
+  get tools(): llm.ToolContext {
+    return { ...this._tools };
+  }
+
+  get manualActivityDetection(): boolean {
+    return this.options.realtimeInputConfig?.automaticActivityDetection?.disabled ?? false;
   }
 
   pushAudio(frame: AudioFrame): void {
@@ -596,8 +587,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   pushVideo(frame: VideoFrame): void {
-    // Google Realtime API doesn't support video input yet
-    this.#logger.warn('Video input is not supported by Google Realtime API');
+    // TODO(brian): implement push video frames
   }
 
   private sendClientEvent(event: api_proto.ClientEvents): void {
@@ -675,17 +665,5 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.#closed = true;
     await this.closeActiveSession();
     super.close();
-  }
-
-  get chatCtx(): llm.ChatContext {
-    return this._chatCtx.copy();
-  }
-
-  get tools(): llm.ToolContext {
-    return { ...this._tools };
-  }
-
-  get _manualActivityDetection(): boolean {
-    return true; // Google Realtime API requires manual activity detection
   }
 }
