@@ -14,6 +14,7 @@ interface WorkerResponse {
   worker_type: string;
   active_jobs: number;
   sdk_version: string;
+  project_type: string;
 }
 
 export class HTTPServer {
