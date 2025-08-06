@@ -422,47 +422,91 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private async closeActiveSession(): Promise<void> {
+    const unlock = await this.sessionLock.lock();
+
     if (this.activeSession) {
       try {
         await this.activeSession.close();
       } catch (error) {
-        this.#logger.warn({ error }, 'Error closing active session');
+        this.#logger.warn({ error }, 'Error closing Gemini session');
       } finally {
         this.activeSession = undefined;
       }
     }
+
+    unlock();
   }
 
   private markRestartNeeded(): void {
-    this.#logger.debug('Marking session restart as needed');
-    this.sessionShouldClose.set();
+    if (!this.sessionShouldClose.isSet) {
+      this.sessionShouldClose.set();
+      this.messageChannel = new Queue();
+    }
   }
 
-  get chatCtx(): llm.ChatContext {
-    return this._chatCtx.copy();
+  private getToolResultsForRealtime(
+    ctx: llm.ChatContext,
+    vertexai: boolean,
+  ): types.LiveClientToolResponse | undefined {
+    const toolResponses: types.FunctionResponse[] = [];
+
+    for (const item of ctx.items) {
+      if (item.type === 'function_call_output') {
+        const response: types.FunctionResponse = {
+          id: item.callId,
+          name: item.name,
+          response: { output: item.output },
+        };
+
+        if (!vertexai) {
+          response.id = item.callId;
+        }
+
+        toolResponses.push(response);
+      }
+    }
+
+    return toolResponses.length > 0 ? { functionResponses: toolResponses } : undefined;
   }
 
-  get tools(): llm.ToolContext {
-    return { ...this._tools };
-  }
+  updateOptions(options: {
+    voice?: Voice | string;
+    temperature?: number;
+    toolChoice?: llm.ToolChoice;
+  }) {
+    let shouldRestart = false;
 
-  get _manualActivityDetection(): boolean {
-    return true; // Google Realtime API requires manual activity detection
+    if (options.voice !== undefined && this.options.voice !== options.voice) {
+      this.options.voice = options.voice;
+      shouldRestart = true;
+    }
+
+    if (options.temperature !== undefined && this.options.temperature !== options.temperature) {
+      this.options.temperature = options.temperature;
+      shouldRestart = true;
+    }
+
+    if (shouldRestart) {
+      this.markRestartNeeded();
+    }
   }
 
   async updateInstructions(instructions: string): Promise<void> {
-    this.instructions = instructions;
-    this.markRestartNeeded();
+    if (this.options.instructions === undefined || this.options.instructions !== instructions) {
+      this.options.instructions = instructions;
+      this.markRestartNeeded();
+    }
   }
 
   async updateChatCtx(chatCtx: llm.ChatContext): Promise<void> {
-    // Simple diff to check if context has changed significantly
-    const hasChanges =
-      this._chatCtx.items.length !== chatCtx.items.length ||
-      this._chatCtx.items.some((item, i) => item.id !== chatCtx.items[i]?.id);
-
-    if (!hasChanges) {
-      return;
+    const unlock = await this.sessionLock.lock();
+    try {
+      if (!this.activeSession) {
+        this._chatCtx = chatCtx.copy();
+        return;
+      }
+    } finally {
+      unlock();
     }
 
     const diffOps = llm.computeChatCtxDiff(this._chatCtx, chatCtx);
@@ -471,25 +515,38 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.#logger.warn('Gemini Live does not support removing messages');
     }
 
-    // For Google Realtime, we typically restart the session with new context
-    if (diffOps.toCreate.length > 0) {
-      this._chatCtx = chatCtx.copy();
+    const appendCtx = llm.ChatContext.empty();
+    for (const [, itemId] of diffOps.toCreate) {
+      const item = chatCtx.getById(itemId);
+      if (item) {
+        appendCtx.items.push(item);
+      }
+    }
 
-      // Convert to Google's format
-      const [turns] = await this._chatCtx
+    if (appendCtx.items.length > 0) {
+      const [turns] = await appendCtx
         .copy({
-          excludeEmptyMessage: true,
           excludeFunctionCall: true,
         })
-        .toProviderFormat('google');
+        .toProviderFormat('google', false);
 
-      const content: types.LiveClientContent = {
-        turns: turns.map((turn: any) => turn),
-        turnComplete: false,
-      };
+      const toolResults = this.getToolResultsForRealtime(appendCtx, this.options.vertexai);
 
-      this.sendClientEvent(content);
+      if (turns.length > 0) {
+        this.sendClientEvent({
+          turns: turns as types.Content[],
+          turnComplete: false,
+        });
+      }
+
+      if (toolResults) {
+        this.sendClientEvent(toolResults);
+      }
     }
+
+    // since we don't have a view of the history on the server side, we'll assume
+    // the current state is accurate. this isn't perfect because removals aren't done.
+    this._chatCtx = chatCtx.copy();
   }
 
   async updateTools(tools: llm.ToolContext): Promise<void> {
@@ -521,27 +578,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!setsEqual(currentToolNames, newToolNames)) {
       this.geminiDeclarations = newDeclarations;
       this._tools = tools;
-      this.markRestartNeeded();
-    }
-  }
-
-  updateOptions(options: {
-    toolChoice?: llm.ToolChoice;
-    voice?: Voice | string;
-    temperature?: number;
-  }): void {
-    let hasChanges = false;
-
-    if (options.voice !== undefined) {
-      this.options.voice = options.voice;
-      hasChanges = true;
-    }
-    if (options.temperature !== undefined) {
-      this.options.temperature = options.temperature;
-      hasChanges = true;
-    }
-
-    if (hasChanges) {
       this.markRestartNeeded();
     }
   }
@@ -639,5 +675,17 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.#closed = true;
     await this.closeActiveSession();
     super.close();
+  }
+
+  get chatCtx(): llm.ChatContext {
+    return this._chatCtx.copy();
+  }
+
+  get tools(): llm.ToolContext {
+    return { ...this._tools };
+  }
+
+  get _manualActivityDetection(): boolean {
+    return true; // Google Realtime API requires manual activity detection
   }
 }
