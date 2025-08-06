@@ -45,13 +45,11 @@ export class StreamAdapterWrapper extends SynthesizeStream {
     this.#run();
   }
 
-  async monitorMetrics() {
-    return; // do nothing
-  }
-
   async #run() {
     const forwardInput = async () => {
       for await (const input of this.input) {
+        if (this.abortController.signal.aborted) break;
+
         if (input === SynthesizeStream.FLUSH_SENTINEL) {
           this.#sentenceStream.flush();
         } else {
@@ -64,13 +62,18 @@ export class StreamAdapterWrapper extends SynthesizeStream {
 
     const synthesize = async () => {
       for await (const ev of this.#sentenceStream) {
+        if (this.abortController.signal.aborted) break;
+
         for await (const audio of this.#tts.synthesize(ev.token)) {
-          this.output.put(audio);
+          if (this.abortController.signal.aborted) break;
+          this.queue.put(audio);
         }
+
+        if (this.abortController.signal.aborted) break;
       }
-      this.output.put(SynthesizeStream.END_OF_STREAM);
+      this.queue.put(SynthesizeStream.END_OF_STREAM);
     };
 
-    Promise.all([forwardInput(), synthesize()]);
+    await Promise.all([forwardInput(), synthesize()]);
   }
 }

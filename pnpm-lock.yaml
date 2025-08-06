@@ -305,6 +305,9 @@ importers:
       '@livekit/agents':
         specifier: workspace:^x
         version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:^x
+        version: link:../openai
       '@livekit/agents-plugins-test':
         specifier: workspace:^x
         version: link:../test
