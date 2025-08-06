@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as types from '@google/genai';
 import {
+  ActivityHandling,
   type AudioTranscriptionConfig,
   type ContextWindowCompressionConfig,
   GoogleGenAI,
@@ -590,57 +591,111 @@ export class RealtimeSession extends llm.RealtimeSession {
     // TODO(brian): implement push video frames
   }
 
-  private sendClientEvent(event: api_proto.ClientEvents): void {
-    if (this.#closed) {
-      return;
-    }
+  private sendClientEvent(event: api_proto.ClientEvents) {
     this.messageChannel.put(event);
   }
 
   async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
     if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
       this.#logger.warn(
-        'generate_reply called while another generation is pending, cancelling previous.',
+        'generateReply called while another generation is pending, cancelling previous.',
       );
-      // Since Future doesn't have cancel, we just create a new one
-      this.pendingGenerationFut = undefined;
+      this.pendingGenerationFut.reject(new Error('Superseded by new generate_reply call'));
     }
 
     const fut = new Future<llm.GenerationCreatedEvent>();
     this.pendingGenerationFut = fut;
 
-    try {
-      if (instructions) {
-        await this.updateInstructions(instructions);
-      }
-
-      // Start generation
-      this.startNewGeneration();
-
-      return await fut.await;
-    } catch (error) {
-      this.pendingGenerationFut = undefined;
-      throw error;
+    if (this.inUserActivity) {
+      this.sendClientEvent({
+        activityEnd: {},
+      });
+      this.inUserActivity = false;
     }
+
+    // Gemini requires the last message to end with user's turn
+    // so we need to add a placeholder user turn in order to trigger a new generation
+    const turns: types.Content[] = [];
+    if (instructions !== undefined) {
+      turns.push({
+        parts: [{ text: instructions }],
+        role: 'model',
+      });
+    }
+    turns.push({
+      parts: [{ text: '.' }],
+      role: 'user',
+    });
+
+    this.sendClientEvent({
+      turns,
+      turnComplete: true,
+    });
+
+    const timeoutHandle = setTimeout(() => {
+      if (!fut.done) {
+        fut.reject(new Error('generateReply timed out waiting for generation_created event.'));
+        if (this.pendingGenerationFut === fut) {
+          this.pendingGenerationFut = undefined;
+        }
+      }
+    }, 5000);
+
+    fut.await.finally(() => clearTimeout(timeoutHandle));
+
+    return fut.await;
   }
 
   startUserActivity(): void {
-    if (this.inUserActivity) {
+    if (!this.manualActivityDetection) {
       return;
     }
-    this.inUserActivity = true;
-    this.emit('input_speech_started', {} as llm.InputSpeechStartedEvent);
+
+    if (!this.inUserActivity) {
+      this.inUserActivity = true;
+      this.sendClientEvent({
+        activityStart: {},
+      });
+    }
   }
 
   async interrupt() {
-    // For Google Realtime API, we use start_user_activity to interrupt
+    // Gemini Live treats activity start as interruption, so we rely on startUserActivity to handle it
+    if (this.options.realtimeInputConfig?.activityHandling === ActivityHandling.NO_INTERRUPTION) {
+      return;
+    }
     this.startUserActivity();
   }
 
   async truncate(_options: { messageId: string; audioEndMs: number; audioTranscript?: string }) {
-    // Google Realtime API doesn't support truncation
-    this.#logger.warn('Truncation is not supported by Google Realtime API');
+    this.#logger.warn('truncate is not supported by the Google Realtime API.');
   }
+
+  async close(): Promise<void> {
+    super.close();
+    this.#closed = true;
+
+    this.sessionShouldClose.set();
+
+    await this.closeActiveSession();
+
+    if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
+      this.pendingGenerationFut.reject(new Error('Session closed'));
+    }
+
+    for (const fut of Object.values(this.responseCreatedFutures)) {
+      if (!fut.done) {
+        fut.reject(new Error('Session closed before response created'));
+      }
+    }
+    this.responseCreatedFutures = {};
+
+    if (this.currentGeneration) {
+      this.markCurrentGenerationDone();
+    }
+  }
+
+  private markCurrentGenerationDone(): void {}
 
   async commitAudio() {
     // Google Realtime API auto-commits audio
@@ -654,16 +709,5 @@ export class RealtimeSession extends llm.RealtimeSession {
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
     // For now, just pass through - TODO: implement proper resampling if needed
     yield frame;
-  }
-
-  // TODO: Implement the remaining methods from the Python version
-  private startNewGeneration(): void {
-    // TODO: Implement generation start logic
-  }
-
-  async close(): Promise<void> {
-    this.#closed = true;
-    await this.closeActiveSession();
-    super.close();
   }
 }
