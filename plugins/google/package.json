@@ -45,6 +45,7 @@
   "dependencies": {
     "@google/genai": "^1.12.0",
     "@livekit/mutex": "^1.1.1",
+    "@std/async": "npm:@jsr/std__async@^1.0.14",
     "@types/json-schema": "^7.0.15",
     "json-schema": "^0.4.0"
   },

@@ -21,10 +21,21 @@ export type Voice = 'Puck' | 'Charon' | 'Kore' | 'Fenrir' | 'Aoede' | 'Leda' | '
 /**
  * Union type for all possible client events
  */
+
 export type ClientEvents =
-  | types.ContentListUnion
-  | types.LiveClientContent
-  | types.LiveClientRealtimeInput
-  | types.LiveClientToolResponse
-  | types.FunctionResponse
-  | types.FunctionResponse[];
+  | {
+      type: 'content';
+      value: types.LiveClientContent;
+    }
+  | {
+      type: 'realtime_input';
+      value: types.LiveClientRealtimeInput;
+    }
+  | {
+      type: 'tool_response';
+      value: types.LiveClientToolResponse;
+    }
+  | {
+      type: 'function_response';
+      value: types.FunctionResponse;
+    };

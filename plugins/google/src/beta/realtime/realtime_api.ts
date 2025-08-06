@@ -12,20 +12,25 @@ import {
   type RealtimeInputConfig,
   Session,
 } from '@google/genai';
-import type { APIConnectOptions, stream } from '@livekit/agents';
+import type { APIConnectOptions } from '@livekit/agents';
 import {
+  APIConnectionError,
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
   Event,
   Future,
   Queue,
+  Task,
+  cancelAndWait,
   llm,
   log,
+  shortuuid,
+  stream,
 } from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
-import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
-import { AudioResampler } from '@livekit/rtc-node';
-import { type LLMTool } from '../../tools.js';
+import { AudioFrame, AudioResampler, type VideoFrame } from '@livekit/rtc-node';
+import { delay } from '@std/async';
+import { type LLMTools } from '../../tools.js';
 import { toFunctionDeclarations } from '../../utils.js';
 import type { LiveAPIModels, Voice } from './api_proto.js';
 import * as api_proto from './api_proto.js';
@@ -92,7 +97,7 @@ interface RealtimeOptions {
   realtimeInputConfig?: RealtimeInputConfig;
   contextWindowCompression?: ContextWindowCompressionConfig;
   apiVersion?: string;
-  geminiTools?: LLMTool[];
+  geminiTools?: LLMTools;
 }
 
 /**
@@ -273,7 +278,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       /**
        * Gemini-specific tools to use for the session
        */
-      geminiTools?: LLMTool[];
+      geminiTools?: LLMTools;
     } = {},
   ) {
     super({
@@ -535,13 +540,19 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       if (turns.length > 0) {
         this.sendClientEvent({
-          turns: turns as types.Content[],
-          turnComplete: false,
+          type: 'content',
+          value: {
+            turns: turns as types.Content[],
+            turnComplete: false,
+          },
         });
       }
 
       if (toolResults) {
-        this.sendClientEvent(toolResults);
+        this.sendClientEvent({
+          type: 'tool_response',
+          value: toolResults,
+        });
       }
     }
 
@@ -582,7 +593,10 @@ export class RealtimeSession extends llm.RealtimeSession {
             { data: Buffer.from(nf.data.buffer).toString('base64'), mimeType: 'audio/pcm' },
           ],
         };
-        this.sendClientEvent(realtimeInput);
+        this.sendClientEvent({
+          type: 'realtime_input',
+          value: realtimeInput,
+        });
       }
     }
   }
@@ -608,7 +622,10 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     if (this.inUserActivity) {
       this.sendClientEvent({
-        activityEnd: {},
+        type: 'realtime_input',
+        value: {
+          activityEnd: {},
+        },
       });
       this.inUserActivity = false;
     }
@@ -628,8 +645,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
 
     this.sendClientEvent({
-      turns,
-      turnComplete: true,
+      type: 'content',
+      value: {
+        turns,
+        turnComplete: true,
+      },
     });
 
     const timeoutHandle = setTimeout(() => {
@@ -654,7 +674,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!this.inUserActivity) {
       this.inUserActivity = true;
       this.sendClientEvent({
-        activityStart: {},
+        type: 'realtime_input',
+        value: {
+          activityStart: {},
+        },
       });
     }
   }
@@ -695,11 +718,407 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  #mainTask(): Promise<void> {
-    return Promise.resolve();
+  async #mainTask(): Promise<void> {
+    const maxRetries = this.options.connOptions.maxRetry;
+
+    while (!this.#closed) {
+      // previous session might not be closed yet, we'll do it here.
+      await this.closeActiveSession();
+
+      this.sessionShouldClose.clear();
+      const config = this.buildConnectConfig();
+
+      try {
+        this.#logger.debug('Connecting to Gemini Realtime API...');
+
+        const sessionOpened = new Event();
+        const session = await this.#client.live.connect({
+          model: this.options.model,
+          callbacks: {
+            onopen: () => sessionOpened.set(),
+            onmessage: (message: types.LiveServerMessage) => {
+              this.onReceiveMessage(session, message);
+            },
+            onerror: (error: ErrorEvent) => {
+              this.#logger.error('Gemini Live session error:', error);
+              this.emitError(new Error(error.message || 'Session error'), true);
+              this.markRestartNeeded();
+              this.markCurrentGenerationDone();
+            },
+            onclose: (event: CloseEvent) => {
+              this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
+              if (!this.sessionShouldClose.isSet && !this.#closed) {
+                // Unexpected close, trigger restart
+                this.markRestartNeeded();
+              }
+              this.markCurrentGenerationDone();
+            },
+          },
+          config,
+        });
+
+        await sessionOpened.wait();
+
+        const unlock = await this.sessionLock.lock();
+        try {
+          this.activeSession = session;
+
+          // Send existing chat context
+          const [turns] = await this._chatCtx
+            .copy({
+              excludeFunctionCall: true,
+            })
+            .toProviderFormat('google', false);
+
+          if (turns.length > 0) {
+            await session.sendClientContent({
+              turns,
+              turnComplete: false,
+            });
+          }
+        } finally {
+          unlock();
+        }
+
+        const sendTask = Task.from((controller) => this.sendTask(session, controller));
+        const restartWaitTask = Task.from(({ signal }) => {
+          const abortEvent = new Event();
+          signal.addEventListener('abort', () => abortEvent.set());
+          return Promise.race([this.sessionShouldClose.wait(), abortEvent.wait()]);
+        });
+
+        await Promise.race([sendTask.result, restartWaitTask.result]);
+
+        // TODO(brian): handle error from tasks
+
+        if (!restartWaitTask.done && this.#closed) {
+          break;
+        }
+
+        await cancelAndWait([sendTask, restartWaitTask], 2000);
+      } catch (error) {
+        this.#logger.error(`Gemini Realtime API error: ${error}`);
+
+        if (this.#closed) break;
+
+        if (maxRetries === 0) {
+          this.emitError(error as Error, false);
+          throw new APIConnectionError('Failed to connect to Gemini Live');
+        }
+
+        if (this.numRetries >= maxRetries) {
+          this.emitError(error as Error, false);
+          throw new APIConnectionError(
+            `Failed to connect to Gemini Live after ${maxRetries} attempts`,
+          );
+        }
+
+        const retryInterval =
+          this.numRetries === 100 ? 0 : this.options.connOptions.retryIntervalMs;
+
+        this.#logger.warn(
+          {
+            attempt: this.numRetries,
+            maxRetries,
+          },
+          `Gemini Realtime API connection failed, retrying in ${retryInterval}ms`,
+        );
+
+        await delay(retryInterval);
+        this.numRetries++;
+      } finally {
+        await this.closeActiveSession();
+      }
+    }
   }
 
-  private markCurrentGenerationDone(): void {}
+  private async sendTask(session: types.Session, controller: AbortController): Promise<void> {
+    try {
+      while (!this.#closed && !this.sessionShouldClose.isSet && !controller.signal.aborted) {
+        const msg = await this.messageChannel.get();
+        if (controller.signal.aborted) break;
+
+        const unlock = await this.sessionLock.lock();
+        try {
+          if (this.sessionShouldClose.isSet || this.activeSession !== session) {
+            break;
+          }
+        } finally {
+          unlock();
+        }
+
+        switch (msg.type) {
+          case 'content':
+            const { turns, turnComplete } = msg.value;
+            await session.sendClientContent({
+              turns,
+              turnComplete: turnComplete ?? true,
+            });
+            break;
+          case 'tool_response':
+            const { functionResponses } = msg.value;
+            if (functionResponses) {
+              await session.sendToolResponse({
+                functionResponses,
+              });
+            }
+            break;
+          case 'realtime_input':
+            const { mediaChunks, activityStart, activityEnd } = msg.value;
+            if (mediaChunks) {
+              for (const mediaChunk of mediaChunks) {
+                await session.sendRealtimeInput({ media: mediaChunk });
+              }
+            }
+            if (activityStart) await session.sendRealtimeInput({ activityStart });
+            if (activityEnd) await session.sendRealtimeInput({ activityEnd });
+            break;
+          default:
+            this.#logger.warn(`Warning: Received unhandled message type: ${msg.type}`);
+            break;
+        }
+      }
+    } catch (e) {
+      if (!this.sessionShouldClose.isSet) {
+        this.#logger.error(`Error in send task: ${e}`);
+        this.markRestartNeeded();
+      }
+    } finally {
+      this.#logger.debug('send task finished.');
+    }
+  }
+
+  private async onReceiveMessage(
+    session: types.Session,
+    response: types.LiveServerMessage,
+  ): Promise<void> {
+    const unlock = await this.sessionLock.lock();
+
+    try {
+      if (this.sessionShouldClose.isSet || this.activeSession !== session) {
+        this.#logger.debug('onReceiveMessage: Session changed or closed, stopping receive.');
+        return;
+      }
+    } finally {
+      unlock();
+    }
+
+    if (
+      (!this.currentGeneration || this.currentGeneration._done) &&
+      (response.serverContent || response.toolCall)
+    ) {
+      this.startNewGeneration();
+    }
+
+    if (response.sessionResumptionUpdate) {
+      if (
+        response.sessionResumptionUpdate.resumable &&
+        response.sessionResumptionUpdate.newHandle
+      ) {
+        this.sessionResumptionHandle = response.sessionResumptionUpdate.newHandle;
+      }
+    }
+
+    try {
+      if (response.serverContent) {
+        this.handleServerContent(response.serverContent);
+      }
+
+      if (response.toolCall) {
+        this.handleToolCall(response.toolCall);
+      }
+
+      if (response.toolCallCancellation) {
+        this.handleToolCallCancellation(response.toolCallCancellation);
+      }
+
+      if (response.usageMetadata) {
+        this.handleUsageMetadata(response.usageMetadata);
+      }
+
+      if (response.goAway) {
+        this.handleGoAway(response.goAway);
+      }
+
+      if (this.numRetries > 0) {
+        this.numRetries = 0;
+      }
+    } catch (e) {
+      if (!this.sessionShouldClose.isSet) {
+        this.#logger.error(`Error in onReceiveMessage: ${e}`);
+        this.markRestartNeeded();
+      }
+    }
+  }
+
+  private markCurrentGenerationDone(): void {
+    if (!this.currentGeneration || this.currentGeneration._done) {
+      return;
+    }
+
+    this.handleInputSpeechStopped();
+
+    const gen = this.currentGeneration;
+
+    // The only way we'd know that the transcription is complete is by when they are
+    // done with generation
+    if (gen.inputTranscription) {
+      this.emit('input_audio_transcription_completed', {
+        itemId: gen.inputId,
+        transcript: gen.inputTranscription,
+        isFinal: true,
+      } as llm.InputTranscriptionCompleted);
+
+      // since gemini doesn't give us a view of the chat history on the server side,
+      // we would handle it manually here
+      this._chatCtx.addMessage({
+        role: 'user',
+        content: gen.inputTranscription,
+        id: gen.inputId,
+      });
+    }
+
+    if (gen.outputText) {
+      this._chatCtx.addMessage({
+        role: 'assistant',
+        content: gen.outputText,
+        id: gen.responseId,
+      });
+    }
+
+    if (this.options.outputAudioTranscription) {
+      // close the text data of transcription synchronizer
+      gen.textChannel.write('');
+    }
+
+    gen.textChannel.close();
+    gen.audioChannel.close();
+    gen.functionChannel.close();
+    gen.messageChannel.close();
+    gen._done = true;
+  }
+
+  private emitError(error: Error, recoverable: boolean): void {
+    this.emit('error', {
+      timestamp: Date.now(),
+      // TODO(brian): add label to realtime model
+      label: 'google_realtime',
+      error,
+      recoverable,
+    });
+  }
+
+  private buildConnectConfig(): types.LiveConnectConfig {
+    const opts = this.options;
+
+    const config: types.LiveConnectConfig = {
+      responseModalities: opts.responseModalities,
+      generationConfig: {
+        candidateCount: opts.candidateCount,
+        temperature: opts.temperature,
+        maxOutputTokens: opts.maxOutputTokens,
+        topP: opts.topP,
+        topK: opts.topK,
+        presencePenalty: opts.presencePenalty,
+        frequencyPenalty: opts.frequencyPenalty,
+      },
+      systemInstruction: opts.instructions
+        ? {
+            parts: [{ text: opts.instructions }],
+          }
+        : undefined,
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: opts.voice as Voice,
+          },
+        },
+        languageCode: opts.language,
+      },
+      tools: [
+        {
+          functionDeclarations: this.geminiDeclarations,
+          ...this.options.geminiTools,
+        },
+      ],
+      inputAudioTranscription: opts.inputAudioTranscription,
+      outputAudioTranscription: opts.outputAudioTranscription,
+      sessionResumption: {
+        handle: this.sessionResumptionHandle,
+      },
+    };
+
+    if (opts.proactivity !== undefined) {
+      config.proactivity = { proactiveAudio: opts.proactivity };
+    }
+
+    if (opts.enableAffectiveDialog !== undefined) {
+      config.enableAffectiveDialog = opts.enableAffectiveDialog;
+    }
+
+    if (opts.realtimeInputConfig !== undefined) {
+      config.realtimeInputConfig = opts.realtimeInputConfig;
+    }
+
+    if (opts.contextWindowCompression !== undefined) {
+      config.contextWindowCompression = opts.contextWindowCompression;
+    }
+
+    return config;
+  }
+
+  private startNewGeneration(): void {
+    if (this.currentGeneration && !this.currentGeneration._done) {
+      this.#logger.warn('Starting new generation while another is active. Finalizing previous.');
+      this.markCurrentGenerationDone();
+    }
+
+    const responseId = shortuuid('GR_');
+    this.currentGeneration = {
+      messageChannel: stream.createStreamChannel<llm.MessageGeneration>(),
+      functionChannel: stream.createStreamChannel<llm.FunctionCall>(),
+      responseId,
+      inputId: shortuuid('GI_'),
+      textChannel: stream.createStreamChannel<string>(),
+      audioChannel: stream.createStreamChannel<AudioFrame>(),
+      inputTranscription: '',
+      outputText: '',
+      _createdTimestamp: Date.now(),
+      _done: false,
+    };
+
+    this.currentGeneration.messageChannel.write({
+      messageId: responseId,
+      textStream: this.currentGeneration.textChannel.stream(),
+      audioStream: this.currentGeneration.audioChannel.stream(),
+    });
+
+    const generationEvent: llm.GenerationCreatedEvent = {
+      messageStream: this.currentGeneration.messageChannel.stream(),
+      functionStream: this.currentGeneration.functionChannel.stream(),
+      userInitiated: false,
+    };
+
+    if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
+      generationEvent.userInitiated = true;
+      this.pendingGenerationFut.resolve(generationEvent);
+      this.pendingGenerationFut = undefined;
+    } else {
+      this.handleInputSpeechStarted();
+    }
+
+    this.emit('generation_created', generationEvent);
+  }
+
+  private handleInputSpeechStarted(): void {
+    this.emit('input_speech_started', {} as llm.InputSpeechStartedEvent);
+  }
+
+  private handleInputSpeechStopped(): void {
+    this.emit('input_speech_stopped', {
+      userTranscriptionEnabled: false,
+    } as llm.InputSpeechStoppedEvent);
+  }
 
   async commitAudio() {
     // Google Realtime API auto-commits audio
@@ -713,5 +1132,95 @@ export class RealtimeSession extends llm.RealtimeSession {
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
     // For now, just pass through - TODO: implement proper resampling if needed
     yield frame;
+  }
+
+  private handleServerContent(serverContent: types.LiveServerContent): void {
+    if (!this.currentGeneration || this.currentGeneration._done) {
+      this.startNewGeneration();
+    }
+
+    if (!this.currentGeneration) return;
+
+    const gen = this.currentGeneration;
+
+    // Handle model turn (text and audio)
+    if (serverContent.modelTurn) {
+      const turn = serverContent.modelTurn;
+
+      // Handle text parts
+      for (const part of turn.parts || []) {
+        if (part.text) {
+          gen.outputText += part.text;
+          gen.textChannel.write(part.text);
+        }
+
+        if (
+          part.inlineData &&
+          part.inlineData.mimeType?.startsWith('audio/') &&
+          part.inlineData.data
+        ) {
+          // Handle audio data
+          try {
+            const audioData = Buffer.from(part.inlineData.data, 'base64');
+            const audioFrame = new AudioFrame(
+              new Int16Array(audioData.buffer),
+              SAMPLE_RATE,
+              NUM_CHANNELS,
+              audioData.length / 2,
+            );
+            gen.audioChannel.write(audioFrame);
+
+            if (!gen._firstTokenTimestamp) {
+              gen._firstTokenTimestamp = Date.now();
+            }
+          } catch (error) {
+            this.#logger.error('Error processing audio data:', error);
+          }
+        }
+      }
+    }
+
+    // Handle turn completion
+    if (serverContent.turnComplete) {
+      this.markCurrentGenerationDone();
+    }
+
+    // Handle interrupted flag
+    if (serverContent.interrupted) {
+      this.#logger.debug('Generation interrupted by server');
+      this.markCurrentGenerationDone();
+    }
+  }
+
+  private handleToolCall(toolCall: types.LiveServerToolCall): void {
+    if (!this.currentGeneration) {
+      this.startNewGeneration();
+    }
+
+    if (!this.currentGeneration) return;
+
+    // Emit function call
+    for (const fc of toolCall.functionCalls || []) {
+      this.currentGeneration.functionChannel.write({
+        callId: fc.id || shortuuid('fc_'),
+        name: fc.name,
+        args: fc.args ? JSON.stringify(fc.args) : '{}',
+      } as llm.FunctionCall);
+    }
+  }
+
+  private handleToolCallCancellation(cancellation: types.LiveServerToolCallCancellation): void {
+    this.#logger.debug('Tool call cancelled:', cancellation.ids);
+    // TODO: Implement tool call cancellation logic if needed
+  }
+
+  private handleUsageMetadata(usage: types.UsageMetadata): void {
+    // TODO: Emit metrics similar to OpenAI model
+    this.#logger.debug('Usage metadata:', usage);
+  }
+
+  private handleGoAway(goAway: types.LiveServerGoAway): void {
+    this.#logger.warn('Server sent go away message');
+    this.markRestartNeeded();
   }
 }
