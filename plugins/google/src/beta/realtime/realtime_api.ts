@@ -370,16 +370,17 @@ export class RealtimeSession extends llm.RealtimeSession {
   private bstream: AudioByteStream;
 
   // Google-specific properties
-  private client?: GoogleGenAI;
   private activeSession?: Session;
   private sessionShouldClose = new Event();
   private responseCreatedFutures: { [id: string]: Future<llm.GenerationCreatedEvent> } = {};
   private pendingGenerationFut?: Future<llm.GenerationCreatedEvent>;
+
   private sessionResumptionHandle?: string;
   private inUserActivity = false;
   private sessionLock = new Mutex();
   private numRetries = 0;
 
+  #client: GoogleGenAI;
   #logger = log();
   #closed = false;
 
@@ -387,27 +388,37 @@ export class RealtimeSession extends llm.RealtimeSession {
     super(realtimeModel);
 
     this.options = realtimeModel._options;
-    // 50ms chunks
-    this.bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, SAMPLE_RATE / 20);
+    this.bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, SAMPLE_RATE / 20); // 50ms chunks
 
-    this.initializeClient();
-  }
+    const { apiKey, project, location, vertexai, enableAffectiveDialog, proactivity } =
+      this.options;
 
-  private initializeClient(): void {
-    if (this.options.vertexai) {
-      // TODO: Initialize VertexAI client
-      if (!this.options.project) {
-        throw new Error('Project is required for VertexAI');
-      }
-      // this.client = new VertexAI({ project: this.options.project });
-    } else {
-      if (!this.options.apiKey) {
-        throw new Error(
-          'Google API key is required, either using the argument or by setting the GOOGLE_API_KEY environmental variable',
-        );
-      }
-      this.client = new GoogleGenAI({ apiKey: this.options.apiKey });
-    }
+    const apiVersion =
+      !this.options.apiVersion && (enableAffectiveDialog || proactivity)
+        ? 'v1alpha'
+        : this.options.apiVersion;
+
+    const httpOptions = {
+      ...this.options.httpOptions,
+      apiVersion,
+      timeout: this.options.connOptions.timeoutMs,
+    };
+
+    const clientOptions: types.GoogleGenAIOptions = vertexai
+      ? {
+          vertexai: true,
+          project,
+          location,
+          httpOptions,
+        }
+      : {
+          apiKey,
+          httpOptions,
+        };
+
+    this.#client = new GoogleGenAI(clientOptions);
+
+    // TODO: add main task
   }
 
   private async closeActiveSession(): Promise<void> {
