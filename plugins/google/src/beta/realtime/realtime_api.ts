@@ -38,6 +38,7 @@ import * as api_proto from './api_proto.js';
 // Audio constants
 const SAMPLE_RATE = 16000;
 const NUM_CHANNELS = 1;
+const OUTPUT_AUDIO_CHANNELS = 1;
 
 /**
  * Default image encoding options for Google Realtime API
@@ -1087,6 +1088,8 @@ export class RealtimeSession extends llm.RealtimeSession {
       _done: false,
     };
 
+    // TODO(brian): check if realtime model support audio output capability
+
     this.currentGeneration.messageChannel.write({
       messageId: responseId,
       textStream: this.currentGeneration.textChannel.stream(),
@@ -1104,6 +1107,8 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.pendingGenerationFut.resolve(generationEvent);
       this.pendingGenerationFut = undefined;
     } else {
+      // emit input_speech_started event before starting an agent initiated generation
+      // to interrupt the previous audio playout if any
       this.handleInputSpeechStarted();
     }
 
@@ -1135,44 +1140,47 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleServerContent(serverContent: types.LiveServerContent): void {
-    if (!this.currentGeneration || this.currentGeneration._done) {
-      this.startNewGeneration();
+    if (!this.currentGeneration) {
+      this.#logger.warn('received server content but no active generation.');
+      return;
     }
-
-    if (!this.currentGeneration) return;
 
     const gen = this.currentGeneration;
 
-    // Handle model turn (text and audio)
     if (serverContent.modelTurn) {
       const turn = serverContent.modelTurn;
 
-      // Handle text parts
       for (const part of turn.parts || []) {
         if (part.text) {
           gen.outputText += part.text;
           gen.textChannel.write(part.text);
         }
 
-        if (
-          part.inlineData &&
-          part.inlineData.mimeType?.startsWith('audio/') &&
-          part.inlineData.data
-        ) {
-          // Handle audio data
-          try {
-            const audioData = Buffer.from(part.inlineData.data, 'base64');
-            const audioFrame = new AudioFrame(
-              new Int16Array(audioData.buffer),
-              SAMPLE_RATE,
-              NUM_CHANNELS,
-              audioData.length / 2,
-            );
-            gen.audioChannel.write(audioFrame);
+        if (part.inlineData) {
+          if (!gen._firstTokenTimestamp) {
+            gen._firstTokenTimestamp = Date.now();
+          }
 
-            if (!gen._firstTokenTimestamp) {
-              gen._firstTokenTimestamp = Date.now();
+          try {
+            if (!part.inlineData.data) {
+              throw new Error('frameData is not bytes');
             }
+
+            const binaryString = atob(part.inlineData.data);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+
+            const audioFrame = new AudioFrame(
+              new Int16Array(bytes.buffer),
+              SAMPLE_RATE,
+              OUTPUT_AUDIO_CHANNELS,
+              len / (2 * OUTPUT_AUDIO_CHANNELS),
+            );
+
+            gen.audioChannel.write(audioFrame);
           } catch (error) {
             this.#logger.error('Error processing audio data:', error);
           }
@@ -1180,14 +1188,36 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }
 
-    // Handle turn completion
-    if (serverContent.turnComplete) {
+    if (serverContent.inputTranscription && serverContent.inputTranscription.text) {
+      let text = serverContent.inputTranscription.text;
+
+      if (gen.inputTranscription === '') {
+        text = text.trimStart();
+      }
+
+      gen.inputTranscription += text;
+      this.emit('input_audio_transcription_completed', {
+        itemId: gen.inputId,
+        transcript: gen.inputTranscription,
+        isFinal: false,
+      } as llm.InputTranscriptionCompleted);
+    }
+
+    if (serverContent.outputTranscription && serverContent.outputTranscription.text) {
+      const text = serverContent.outputTranscription.text;
+      gen.outputText += text;
+      gen.textChannel.write(text);
+    }
+
+    if (serverContent.generationComplete || serverContent.turnComplete) {
+      gen._completedTimestamp = Date.now();
+    }
+
+    if (serverContent.interrupted) {
       this.markCurrentGenerationDone();
     }
 
-    // Handle interrupted flag
-    if (serverContent.interrupted) {
-      this.#logger.debug('Generation interrupted by server');
+    if (serverContent.turnComplete) {
       this.markCurrentGenerationDone();
     }
   }
