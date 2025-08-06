@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 import * as types from '@google/genai';
@@ -382,6 +382,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private numRetries = 0;
 
   #client: GoogleGenAI;
+  #task: Promise<void>;
   #logger = log();
   #closed = false;
 
@@ -418,8 +419,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         };
 
     this.#client = new GoogleGenAI(clientOptions);
-
-    // TODO: add main task
+    this.#task = this.#mainTask();
   }
 
   private async closeActiveSession(): Promise<void> {
@@ -693,6 +693,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (this.currentGeneration) {
       this.markCurrentGenerationDone();
     }
+  }
+
+  #mainTask(): Promise<void> {
+    return Promise.resolve();
   }
 
   private markCurrentGenerationDone(): void {}
