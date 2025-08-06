@@ -32,7 +32,7 @@ import { version } from './version.js';
 const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
-const PROJECT_TYPE = "nodejs";
+const PROJECT_TYPE = 'nodejs';
 
 class Default {
   static loadThreshold(production: boolean): number {
