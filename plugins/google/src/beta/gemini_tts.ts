@@ -7,6 +7,7 @@ import {
   APIConnectionError,
   APIStatusError,
   AudioByteStream,
+  isAPIError,
   shortuuid,
   tts,
 } from '@livekit/agents';
@@ -177,82 +178,42 @@ export class ChunkedStream extends tts.ChunkedStream {
     const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#tts.sampleRate, this.#tts.numChannels);
 
-    try {
-      const config: types.GenerateContentConfig = {
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName: this.#tts.opts.voiceName,
-            },
+    const config: types.GenerateContentConfig = {
+      responseModalities: ['AUDIO'],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: this.#tts.opts.voiceName,
           },
         },
-      };
+      },
+    };
 
-      let inputText = this.inputText;
-      if (this.#tts.opts.instructions) {
-        inputText = `${this.#tts.opts.instructions}:\n"${inputText}"`;
+    let inputText = this.inputText;
+    if (this.#tts.opts.instructions) {
+      inputText = `${this.#tts.opts.instructions}:\n"${inputText}"`;
+    }
+
+    const contents: types.Content[] = [
+      {
+        role: 'user',
+        parts: [{ text: inputText }],
+      },
+    ];
+
+    const responseStream = await this.#tts.client.models.generateContentStream({
+      model: this.#tts.opts.model,
+      contents,
+      config,
+    });
+
+    try {
+      for await (const response of responseStream) {
+        await this.#processResponse(response, bstream, requestId);
       }
-
-      const contents: types.Content[] = [
-        {
-          role: 'user',
-          parts: [{ text: inputText }],
-        },
-      ];
-
-      const response = await this.#tts.client.models.generateContent({
-        model: this.#tts.opts.model,
-        contents,
-        config,
-      });
-
-      if (!response.candidates || response.candidates.length === 0) {
-        throw new APIStatusError('No audio content generated', {
-          statusCode: 400,
-          retryable: false,
-        });
-      }
-
-      const candidate = response.candidates[0];
-      if (!candidate || !candidate.content?.parts) {
-        throw new APIStatusError('No audio parts in response', {
-          statusCode: 400,
-          retryable: false,
-        });
-      }
-
-      let lastFrame: AudioFrame | undefined;
-      const sendLastFrame = (final: boolean) => {
-        if (lastFrame) {
-          this.queue.put({
-            requestId,
-            frame: lastFrame,
-            segmentId: requestId,
-            final,
-          });
-          lastFrame = undefined;
-        }
-      };
-
-      for (const part of candidate.content.parts) {
-        if (part.inlineData?.data && part.inlineData.mimeType?.startsWith('audio/')) {
-          const audioBuffer = Buffer.from(part.inlineData.data, 'base64');
-
-          for (const frame of bstream.write(audioBuffer)) {
-            sendLastFrame(false);
-            lastFrame = frame;
-          }
-        }
-      }
-
-      for (const frame of bstream.flush()) {
-        sendLastFrame(false);
-        lastFrame = frame;
-      }
-
-      sendLastFrame(true);
     } catch (error: unknown) {
+      if (isAPIError(error)) throw error;
+
       const err = error as {
         code?: number;
         message?: string;
@@ -297,5 +258,51 @@ export class ChunkedStream extends tts.ChunkedStream {
     } finally {
       this.queue.close();
     }
+  }
+
+  async #processResponse(
+    response: types.GenerateContentResponse,
+    bstream: AudioByteStream,
+    requestId: string,
+  ) {
+    if (!response.candidates || response.candidates.length === 0) {
+      return;
+    }
+
+    const candidate = response.candidates[0];
+    if (!candidate || !candidate.content?.parts) {
+      return;
+    }
+
+    let lastFrame: AudioFrame | undefined;
+    const sendLastFrame = (final: boolean) => {
+      if (lastFrame) {
+        this.queue.put({
+          requestId,
+          frame: lastFrame,
+          segmentId: requestId,
+          final,
+        });
+        lastFrame = undefined;
+      }
+    };
+
+    for (const part of candidate.content.parts) {
+      if (part.inlineData?.data && part.inlineData.mimeType?.startsWith('audio/')) {
+        const audioBuffer = Buffer.from(part.inlineData.data, 'base64');
+
+        for (const frame of bstream.write(audioBuffer)) {
+          sendLastFrame(false);
+          lastFrame = frame;
+        }
+      }
+    }
+
+    for (const frame of bstream.flush()) {
+      sendLastFrame(false);
+      lastFrame = frame;
+    }
+
+    sendLastFrame(true);
   }
 }

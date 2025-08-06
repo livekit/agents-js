@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { SentenceStream, SentenceTokenizer } from '../tokenize/index.js';
+import { Task } from '../utils.js';
 import type { ChunkedStream } from './tts.js';
 import { SynthesizeStream, TTS } from './tts.js';
 
@@ -60,20 +61,44 @@ export class StreamAdapterWrapper extends SynthesizeStream {
       this.#sentenceStream.close();
     };
 
-    const synthesize = async () => {
+    const synthesizeSentenceStream = async () => {
+      let task: Task<void> | undefined;
+      const tokenCompletionTasks: Task<void>[] = [];
+
       for await (const ev of this.#sentenceStream) {
         if (this.abortController.signal.aborted) break;
 
-        for await (const audio of this.#tts.synthesize(ev.token)) {
-          if (this.abortController.signal.aborted) break;
-          this.queue.put(audio);
-        }
+        // this will enable non-blocking synthesis of the stream of tokens
+        task = Task.from(
+          (controller) => synthesize(ev.token, task, controller),
+          this.abortController,
+        );
 
-        if (this.abortController.signal.aborted) break;
+        tokenCompletionTasks.push(task);
       }
+
+      await Promise.all(tokenCompletionTasks.map((t) => t.result));
       this.queue.put(SynthesizeStream.END_OF_STREAM);
     };
 
-    await Promise.all([forwardInput(), synthesize()]);
+    const synthesize = async (
+      token: string,
+      prevTask: Task<void> | undefined,
+      controller: AbortController,
+    ) => {
+      const audioStream = this.#tts.synthesize(token);
+
+      // wait for previous audio transcription to complete before starting
+      // to queuing audio frames of the current token
+      await prevTask?.result;
+      if (controller.signal.aborted) return;
+
+      for await (const audio of audioStream) {
+        if (controller.signal.aborted) break;
+        this.queue.put(audio);
+      }
+    };
+
+    await Promise.all([forwardInput(), synthesizeSentenceStream()]);
   }
 }
