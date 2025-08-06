@@ -40,6 +40,10 @@ const SAMPLE_RATE = 16000;
 const NUM_CHANNELS = 1;
 const OUTPUT_AUDIO_CHANNELS = 1;
 
+// Input audio constants (matching Python)
+const INPUT_AUDIO_SAMPLE_RATE = 16000;
+const INPUT_AUDIO_CHANNELS = 1;
+
 /**
  * Default image encoding options for Google Realtime API
  */
@@ -372,6 +376,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private geminiDeclarations: types.FunctionDeclaration[] = [];
   private messageChannel = new Queue<api_proto.ClientEvents>();
   private inputResampler?: AudioResampler;
+  private inputResamplerInputRate?: number;
   private instructions?: string;
   private currentGeneration?: ResponseGeneration;
   private bstream: AudioByteStream;
@@ -386,6 +391,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private inUserActivity = false;
   private sessionLock = new Mutex();
   private numRetries = 0;
+  private hasReceivedAudioInput = false;
 
   #client: GoogleGenAI;
   #task: Promise<void>;
@@ -587,11 +593,17 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   pushAudio(frame: AudioFrame): void {
+    // Track that we've received audio input
+    this.hasReceivedAudioInput = true;
+
     for (const f of this.resampleAudio(frame)) {
       for (const nf of this.bstream.write(f.data.buffer)) {
         const realtimeInput: types.LiveClientRealtimeInput = {
           mediaChunks: [
-            { data: Buffer.from(nf.data.buffer).toString('base64'), mimeType: 'audio/pcm' },
+            {
+              mimeType: 'audio/pcm',
+              data: Buffer.from(nf.data.buffer).toString('base64'),
+            },
           ],
         };
         this.sendClientEvent({
@@ -1125,20 +1137,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     } as llm.InputSpeechStoppedEvent);
   }
 
-  async commitAudio() {
-    // Google Realtime API auto-commits audio
-  }
-
-  async clearAudio() {
-    // Clear the audio buffer
-    this.bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, SAMPLE_RATE / 10);
-  }
-
-  private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
-    // For now, just pass through - TODO: implement proper resampling if needed
-    yield frame;
-  }
-
   private handleServerContent(serverContent: types.LiveServerContent): void {
     if (!this.currentGeneration) {
       this.#logger.warn('received server content but no active generation.');
@@ -1224,33 +1222,149 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private handleToolCall(toolCall: types.LiveServerToolCall): void {
     if (!this.currentGeneration) {
-      this.startNewGeneration();
+      this.#logger.warn('received tool call but no active generation.');
+      return;
     }
 
-    if (!this.currentGeneration) return;
+    const gen = this.currentGeneration;
 
-    // Emit function call
     for (const fc of toolCall.functionCalls || []) {
-      this.currentGeneration.functionChannel.write({
-        callId: fc.id || shortuuid('fc_'),
+      gen.functionChannel.write({
+        callId: fc.id || shortuuid('fnc-call-'),
         name: fc.name,
-        args: fc.args ? JSON.stringify(fc.args) : '{}',
+        args: fc.args ? JSON.stringify(fc.args) : '',
       } as llm.FunctionCall);
     }
+
+    this.markCurrentGenerationDone();
   }
 
   private handleToolCallCancellation(cancellation: types.LiveServerToolCallCancellation): void {
-    this.#logger.debug('Tool call cancelled:', cancellation.ids);
-    // TODO: Implement tool call cancellation logic if needed
+    this.#logger.warn(
+      {
+        functionCallIds: cancellation.ids,
+      },
+      'server cancelled tool calls',
+    );
   }
 
   private handleUsageMetadata(usage: types.UsageMetadata): void {
-    // TODO: Emit metrics similar to OpenAI model
-    this.#logger.debug('Usage metadata:', usage);
+    if (!this.currentGeneration) {
+      this.#logger.debug('Received usage metadata but no active generation');
+      return;
+    }
+
+    const gen = this.currentGeneration;
+    const createdTimestamp = gen._createdTimestamp;
+    const firstTokenTimestamp = gen._firstTokenTimestamp;
+    const completedTimestamp = gen._completedTimestamp || Date.now();
+
+    // Calculate metrics
+    const ttft = firstTokenTimestamp ? firstTokenTimestamp - createdTimestamp : -1;
+    const duration = (completedTimestamp - createdTimestamp) / 1000; // Convert to seconds
+
+    this.#logger.debug(
+      {
+        responseId: gen.responseId,
+        ttft,
+        duration,
+        usage,
+      },
+      'Emitting usage metadata metrics',
+    );
+
+    const inputTokens = usage.promptTokenCount || 0;
+    const outputTokens = usage.responseTokenCount || 0;
+    const totalTokens = usage.totalTokenCount || 0;
+
+    const realtimeMetrics = {
+      type: 'realtime_model_metrics',
+      timestamp: createdTimestamp / 1000,
+      requestId: gen.responseId,
+      ttft,
+      duration,
+      cancelled: gen._done && !gen._completedTimestamp,
+      label: 'google_realtime',
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      tokensPerSecond: duration > 0 ? outputTokens / duration : 0,
+      inputTokenDetails: {
+        ...this.tokenDetailsMap(usage.promptTokensDetails),
+        cachedTokens: (usage.cacheTokensDetails || []).reduce(
+          (sum, detail) => sum + (detail.tokenCount || 0),
+          0,
+        ),
+        cachedTokensDetails: this.tokenDetailsMap(usage.cacheTokensDetails),
+      },
+      outputTokenDetails: this.tokenDetailsMap(usage.responseTokensDetails),
+    };
+
+    this.emit('metrics_collected', realtimeMetrics);
+  }
+
+  private tokenDetailsMap(tokenDetails: types.ModalityTokenCount[] | undefined): {
+    audioTokens: number;
+    textTokens: number;
+    imageTokens: number;
+  } {
+    const tokenDetailsMap = { audioTokens: 0, textTokens: 0, imageTokens: 0 };
+    if (!tokenDetails) {
+      return tokenDetailsMap;
+    }
+
+    for (const tokenDetail of tokenDetails) {
+      if (!tokenDetail.tokenCount) {
+        continue;
+      }
+
+      if (tokenDetail.modality === types.MediaModality.AUDIO) {
+        tokenDetailsMap.audioTokens += tokenDetail.tokenCount;
+      } else if (tokenDetail.modality === types.MediaModality.TEXT) {
+        tokenDetailsMap.textTokens += tokenDetail.tokenCount;
+      } else if (tokenDetail.modality === types.MediaModality.IMAGE) {
+        tokenDetailsMap.imageTokens += tokenDetail.tokenCount;
+      }
+    }
+    return tokenDetailsMap;
   }
 
   private handleGoAway(goAway: types.LiveServerGoAway): void {
-    this.#logger.warn('Server sent go away message');
-    this.markRestartNeeded();
+    this.#logger.warn({ timeLeft: goAway.timeLeft }, 'Gemini server indicates disconnection soon.');
+    // TODO(brian): this isn't a seamless reconnection just yet
+    this.sessionShouldClose.set();
+  }
+
+  async commitAudio() {}
+
+  async clearAudio() {}
+
+  private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
+    if (this.inputResampler) {
+      if (frame.sampleRate !== this.inputResamplerInputRate) {
+        // input audio changed to a different sample rate
+        this.inputResampler = undefined;
+        this.inputResamplerInputRate = undefined;
+      }
+    }
+
+    if (
+      this.inputResampler === undefined &&
+      (frame.sampleRate !== INPUT_AUDIO_SAMPLE_RATE || frame.channels !== INPUT_AUDIO_CHANNELS)
+    ) {
+      this.inputResampler = new AudioResampler(
+        frame.sampleRate,
+        INPUT_AUDIO_SAMPLE_RATE,
+        INPUT_AUDIO_CHANNELS,
+      );
+      this.inputResamplerInputRate = frame.sampleRate;
+    }
+
+    if (this.inputResampler) {
+      // TODO(brian): flush the resampler when the input source is changed
+      yield* this.inputResampler.push(frame);
+    } else {
+      yield frame;
+    }
   }
 }
