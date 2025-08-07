@@ -1352,7 +1352,9 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     if (this.inputResampler) {
       // TODO(brian): flush the resampler when the input source is changed
-      yield* this.inputResampler.push(frame);
+      for (const resampledFrame of this.inputResampler.push(frame)) {
+        yield resampledFrame;
+      }
     } else {
       yield frame;
     }
