@@ -857,6 +857,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         switch (msg.type) {
           case 'content':
             const { turns, turnComplete } = msg.value;
+            this.#logger.debug(`(client) -> ${JSON.stringify(this.loggableClientEvent(msg))}`);
             await session.sendClientContent({
               turns,
               turnComplete: turnComplete ?? true,
@@ -865,6 +866,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           case 'tool_response':
             const { functionResponses } = msg.value;
             if (functionResponses) {
+              this.#logger.debug(`(client) -> ${JSON.stringify(this.loggableClientEvent(msg))}`);
               await session.sendToolResponse({
                 functionResponses,
               });
@@ -873,6 +875,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           case 'realtime_input':
             const { mediaChunks, activityStart, activityEnd } = msg.value;
             if (mediaChunks) {
+              this.#logger.debug(`(client) -> ${JSON.stringify(this.loggableClientEvent(msg))}`);
               for (const mediaChunk of mediaChunks) {
                 await session.sendRealtimeInput({ media: mediaChunk });
               }
@@ -899,6 +902,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     session: types.Session,
     response: types.LiveServerMessage,
   ): Promise<void> {
+    this.#logger.debug(`(server) <- ${JSON.stringify(this.loggableServerMessage(response))}`);
     const unlock = await this.sessionLock.lock();
 
     try {
@@ -956,6 +960,58 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.markRestartNeeded();
       }
     }
+  }
+
+  /// Truncate large base64/audio payloads for logging to avoid flooding logs
+  private truncateString(data: string, maxLength: number = 30): string {
+    return data.length > maxLength ? `${data.slice(0, maxLength)}…` : data;
+  }
+
+  private loggableClientEvent(
+    event: api_proto.ClientEvents,
+    maxLength: number = 30,
+  ): Record<string, unknown> {
+    const obj: any = { ...event };
+    if (obj.type === 'realtime_input' && obj.value?.mediaChunks) {
+      obj.value = {
+        ...obj.value,
+        mediaChunks: (obj.value.mediaChunks as Array<{ mimeType?: string; data?: string }>).map(
+          (mc) => ({
+            ...mc,
+            data: typeof mc.data === 'string' ? this.truncateString(mc.data, maxLength) : mc.data,
+          }),
+        ),
+      };
+    }
+    return obj;
+  }
+
+  private loggableServerMessage(
+    message: types.LiveServerMessage,
+    maxLength: number = 30,
+  ): Record<string, unknown> {
+    const obj: any = { ...message };
+    if (
+      obj.serverContent &&
+      obj.serverContent.modelTurn &&
+      Array.isArray(obj.serverContent.modelTurn.parts)
+    ) {
+      obj.serverContent = { ...obj.serverContent };
+      obj.serverContent.modelTurn = { ...obj.serverContent.modelTurn };
+      obj.serverContent.modelTurn.parts = obj.serverContent.modelTurn.parts.map((part: any) => {
+        if (part?.inlineData?.data && typeof part.inlineData.data === 'string') {
+          return {
+            ...part,
+            inlineData: {
+              ...part.inlineData,
+              data: this.truncateString(part.inlineData.data, maxLength),
+            },
+          };
+        }
+        return part;
+      });
+    }
+    return obj;
   }
 
   private markCurrentGenerationDone(): void {
