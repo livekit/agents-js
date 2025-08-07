@@ -276,11 +276,15 @@ export class RealtimeModel extends llm.RealtimeModel {
       geminiTools?: LLMTools;
     } = {},
   ) {
+    const serverTurnDetection = !(
+      options.realtimeInputConfig?.automaticActivityDetection?.disabled ?? false
+    );
+
     super({
       messageTruncation: false,
-      turnDetection: false,
+      turnDetection: serverTurnDetection,
       userTranscription: options.inputAudioTranscription !== undefined,
-      autoToolReplyGeneration: false,
+      autoToolReplyGeneration: true,
     });
 
     // Environment variable fallbacks
@@ -989,7 +993,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       });
     }
 
-    if (this.options.outputAudioTranscription) {
+    if (this.options.outputAudioTranscription === undefined) {
       // close the text data of transcription synchronizer
       gen.textChannel.write('');
     }
@@ -1090,7 +1094,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       _done: false,
     };
 
-    // TODO(brian): check if realtime model support audio output capability
+    // Close audio stream if audio output is not supported by the model
+    if (!this.options.responseModalities.includes(Modality.AUDIO)) {
+      this.currentGeneration.audioChannel.close();
+    }
 
     this.currentGeneration.messageChannel.write({
       messageId: responseId,
@@ -1202,7 +1209,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (serverContent.interrupted) {
-      this.markCurrentGenerationDone();
+      this.handleInputSpeechStarted();
     }
 
     if (serverContent.turnComplete) {
