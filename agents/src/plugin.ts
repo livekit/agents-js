@@ -1,22 +1,40 @@
-// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { EventEmitter } from 'events';
+
+export enum PluginEventTypes {
+  PluginRegistered = 'plugin_registered',
+}
+
+export type PluginEventMap = {
+  [PluginEventTypes.PluginRegistered]: [Plugin];
+};
 
 export abstract class Plugin {
-  registeredPlugins: Plugin[] = [];
+  static registeredPlugins = [] as Plugin[];
+  static emitter = new EventEmitter<PluginEventMap>();
+
   #title: string;
   #version: string;
+  #package: string;
 
-  constructor(title: string, version: string) {
-    this.#title = title;
-    this.#version = version;
+  constructor(opts: { title: string; version: string; package: string }) {
+    this.#title = opts.title;
+    this.#version = opts.version;
+    this.#package = opts.package;
   }
 
-  public static registerPlugins(plugin: Plugin) {
-    plugin.registeredPlugins.push(plugin);
+  public static registerPlugin(plugin: Plugin) {
+    Plugin.registeredPlugins.push(plugin);
+    Plugin.emitter.emit(PluginEventTypes.PluginRegistered, plugin);
   }
 
-  abstract downloadFiles(): void;
+  downloadFiles() {}
+
+  get package(): string {
+    return this.#package;
+  }
 
   get title(): string {
     return this.#title;
