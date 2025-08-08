@@ -67,7 +67,7 @@ export abstract class RealtimeModel {
 }
 
 export abstract class RealtimeSession extends EventEmitter {
-  private _realtimeModel: RealtimeModel;
+  protected _realtimeModel: RealtimeModel;
   private deferredInputStream = new DeferredReadableStream<AudioFrame>();
   private _mainTask: Task<void>;
 

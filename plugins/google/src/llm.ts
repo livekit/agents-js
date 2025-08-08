@@ -12,8 +12,8 @@ import {
   shortuuid,
 } from '@livekit/agents';
 import type { ChatModels } from './models.js';
-import type { LLMTool } from './tools.js';
-import { convertJSONSchemaToOpenAPISchema } from './utils.js';
+import type { LLMTools } from './tools.js';
+import { toFunctionDeclarations } from './utils.js';
 
 interface GoogleFormatData {
   systemMessages: string[] | null;
@@ -34,7 +34,7 @@ export interface LLMOptions {
   frequencyPenalty?: number;
   thinkingConfig?: types.ThinkingConfig;
   automaticFunctionCallingConfig?: types.AutomaticFunctionCallingConfig;
-  geminiTools?: LLMTool[];
+  geminiTools?: LLMTools;
   httpOptions?: types.HttpOptions;
   seed?: number;
 }
@@ -186,7 +186,7 @@ export class LLM extends llm.LLM {
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
-    geminiTools?: LLMTool[];
+    geminiTools?: LLMTools;
   }): LLMStream {
     const extras: GenerateContentConfig = { ...extraKwargs } as GenerateContentConfig;
 
@@ -276,7 +276,7 @@ export class LLM extends llm.LLM {
 export class LLMStream extends llm.LLMStream {
   #client: GoogleGenAI;
   #model: string;
-  #geminiTools?: LLMTool[];
+  #geminiTools?: LLMTools;
   #extraKwargs: GenerateContentConfig;
 
   constructor(
@@ -295,7 +295,7 @@ export class LLMStream extends llm.LLMStream {
       chatCtx: llm.ChatContext;
       toolCtx?: llm.ToolContext;
       connOptions: APIConnectOptions;
-      geminiTools?: LLMTool[];
+      geminiTools?: LLMTools;
       extraKwargs: GenerateContentConfig;
     },
   ) {
@@ -323,7 +323,8 @@ export class LLMStream extends llm.LLMStream {
         parts: turn.parts as types.Part[],
       }));
 
-      const tools = this.toolCtx ? this.#convertTools() : undefined;
+      const functionDeclarations = this.toolCtx ? toFunctionDeclarations(this.toolCtx) : undefined;
+      const tools = functionDeclarations ? [{ functionDeclarations }] : undefined;
 
       let systemInstruction: types.Content | undefined = undefined;
       if (extraData.systemMessages && extraData.systemMessages.length > 0) {
@@ -432,25 +433,6 @@ export class LLMStream extends llm.LLMStream {
     } finally {
       this.queue.close();
     }
-  }
-
-  #convertTools(): types.Tool[] | undefined {
-    if (!this.toolCtx) return undefined;
-
-    const functionDeclarations: types.FunctionDeclaration[] = [];
-
-    for (const [name, tool] of Object.entries(this.toolCtx)) {
-      const { description, parameters } = tool;
-      const jsonSchema = llm.toJsonSchema(parameters);
-
-      functionDeclarations.push({
-        name,
-        description,
-        parameters: convertJSONSchemaToOpenAPISchema(jsonSchema) as types.Schema,
-      });
-    }
-
-    return functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined;
   }
 
   #parsePart(id: string, part: types.Part): llm.ChatChunk | null {
