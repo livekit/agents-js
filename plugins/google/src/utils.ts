@@ -143,10 +143,13 @@ export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclar
     const { description, parameters } = tool;
     const jsonSchema = llm.toJsonSchema(parameters);
 
+    // Create a deep copy to prevent the Google GenAI library from mutating the schema
+    const schemaCopy = JSON.parse(JSON.stringify(jsonSchema));
+
     functionDeclarations.push({
       name,
       description,
-      parameters: convertJSONSchemaToOpenAPISchema(jsonSchema) as Schema,
+      parameters: convertJSONSchemaToOpenAPISchema(schemaCopy) as Schema,
     });
   }
 

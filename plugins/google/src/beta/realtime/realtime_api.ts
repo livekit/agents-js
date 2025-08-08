@@ -494,6 +494,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (shouldRestart) {
+      this.#logger.debug('=== updateOptions: this.markRestartNeeded()');
       this.markRestartNeeded();
     }
   }
@@ -501,6 +502,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   async updateInstructions(instructions: string): Promise<void> {
     if (this.options.instructions === undefined || this.options.instructions !== instructions) {
       this.options.instructions = instructions;
+      this.#logger.debug('=== updateInstructions: this.markRestartNeeded()');
       this.markRestartNeeded();
     }
   }
@@ -570,6 +572,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!setsEqual(currentToolNames, newToolNames)) {
       this.geminiDeclarations = newDeclarations;
       this._tools = tools;
+      this.#logger.debug('=== updateTools: this.markRestartNeeded()');
       this.markRestartNeeded();
     }
   }
@@ -748,16 +751,12 @@ export class RealtimeSession extends llm.RealtimeSession {
             },
             onerror: (error: ErrorEvent) => {
               this.#logger.error('Gemini Live session error:', error);
-              this.emitError(new Error(error.message || 'Session error'), true);
-              this.markRestartNeeded();
-              this.markCurrentGenerationDone();
+              if (!this.sessionShouldClose.isSet) {
+                this.markRestartNeeded();
+              }
             },
             onclose: (event: CloseEvent) => {
               this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
-              if (!this.sessionShouldClose.isSet && !this.#closed) {
-                // Unexpected close, trigger restart
-                this.markRestartNeeded();
-              }
               this.markCurrentGenerationDone();
             },
           },
@@ -840,6 +839,15 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private async sendTask(session: types.Session, controller: AbortController): Promise<void> {
+    this.#logger.debug(
+      {
+        closed: this.#closed,
+        sessionShouldClose: this.sessionShouldClose.isSet,
+        aborted: controller.signal.aborted,
+      },
+      '=== send task',
+    );
+
     try {
       while (!this.#closed && !this.sessionShouldClose.isSet && !controller.signal.aborted) {
         const msg = await this.messageChannel.get();
@@ -894,7 +902,14 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.markRestartNeeded();
       }
     } finally {
-      this.#logger.debug('send task finished.');
+      this.#logger.debug(
+        {
+          closed: this.#closed,
+          sessionShouldClose: this.sessionShouldClose.isSet,
+          aborted: controller.signal.aborted,
+        },
+        'send task finished.',
+      );
     }
   }
 
@@ -1076,15 +1091,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const config: types.LiveConnectConfig = {
       responseModalities: opts.responseModalities,
-      generationConfig: {
-        candidateCount: opts.candidateCount,
-        temperature: opts.temperature,
-        maxOutputTokens: opts.maxOutputTokens,
-        topP: opts.topP,
-        topK: opts.topK,
-        presencePenalty: opts.presencePenalty,
-        frequencyPenalty: opts.frequencyPenalty,
-      },
       systemInstruction: opts.instructions
         ? {
             parts: [{ text: opts.instructions }],
@@ -1110,6 +1116,20 @@ export class RealtimeSession extends llm.RealtimeSession {
         handle: this.sessionResumptionHandle,
       },
     };
+
+    // Add generation fields at TOP LEVEL (NO generationConfig!)
+    if (opts.temperature !== undefined) {
+      config.temperature = opts.temperature;
+    }
+    if (opts.maxOutputTokens !== undefined) {
+      config.maxOutputTokens = opts.maxOutputTokens;
+    }
+    if (opts.topP !== undefined) {
+      config.topP = opts.topP;
+    }
+    if (opts.topK !== undefined) {
+      config.topK = opts.topK;
+    }
 
     if (opts.proactivity !== undefined) {
       config.proactivity = { proactiveAudio: opts.proactivity };
