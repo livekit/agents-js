@@ -259,7 +259,7 @@ export async function downloadFileToCacheDir(
       }
     }
 
-    const error = `File not found in cache: ${repoId}/${params.path} (revision: ${revision})`;
+    const error = `File not found in cache: ${repoId}/${params.path} (revision: ${revision}). Make sure to run the download-files command before running the agent worker.`;
     logger.error({ repoId, path: params.path, revision }, error);
     throw new Error(error);
   }

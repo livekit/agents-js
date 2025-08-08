@@ -42,6 +42,7 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
       repo: HG_MODEL_REPO,
       path: ONNX_FILEPATH,
       revision: this.modelRevision,
+      localFileOnly: true,
     });
 
     try {
@@ -56,7 +57,7 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
 
       this.tokenizer = await AutoTokenizer.from_pretrained('livekit/turn-detector', {
         revision: this.modelRevision,
-        //   local_files_only: true,  // TODO(brian): support local_files_only
+        local_files_only: true,
       });
     } catch (e) {
       throw new Error(
@@ -161,6 +162,7 @@ export abstract class EOUModel {
         repo: HG_MODEL_REPO,
         path: 'languages.json',
         revision: MODEL_REVISIONS[modelType],
+        localFileOnly: true,
       }).then((path) => {
         this.languagesFuture.resolve(JSON.parse(readFileSync(path, 'utf8')));
       });

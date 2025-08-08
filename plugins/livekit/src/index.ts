@@ -11,7 +11,7 @@ export * as turnDetector from './turn_detector/index.js';
 class EOUPlugin extends Plugin {
   constructor() {
     super({
-      title: 'Turn Detector',
+      title: 'turn-detector',
       version: '0.1.1',
       package: '@livekit/agents-plugin-livekit',
     });
