@@ -9,7 +9,7 @@ export const OUT_FRAME_SIZE = 1200; // 50ms
 
 export const BASE_URL = 'wss://api.openai.com/v1';
 
-export type Model = 'gpt-4o-realtime-preview-2024-10-01' | string; // Open-ended, for future models
+export type Model = 'gpt-4o-realtime-preview' | string; // Open-ended, for future models
 export type Voice =
   | 'alloy'
   | 'shimmer'
