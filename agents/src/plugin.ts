@@ -25,7 +25,7 @@ export abstract class Plugin {
     this.#package = opts.package;
   }
 
-  public static registerPlugin(plugin: Plugin) {
+  static registerPlugin(plugin: Plugin) {
     Plugin.registeredPlugins.push(plugin);
     Plugin.emitter.emit(PluginEventTypes.PluginRegistered, plugin);
   }
