@@ -35,14 +35,13 @@ import { toFunctionDeclarations } from '../../utils.js';
 import type * as api_proto from './api_proto.js';
 import type { LiveAPIModels, Voice } from './api_proto.js';
 
-// Audio constants
-const SAMPLE_RATE = 16000;
-const NUM_CHANNELS = 1;
-const OUTPUT_AUDIO_CHANNELS = 1;
-
 // Input audio constants (matching Python)
 const INPUT_AUDIO_SAMPLE_RATE = 16000;
 const INPUT_AUDIO_CHANNELS = 1;
+
+// Output audio constants (matching Python)
+const OUTPUT_AUDIO_SAMPLE_RATE = 24000;
+const OUTPUT_AUDIO_CHANNELS = 1;
 
 /**
  * Default image encoding options for Google Realtime API
@@ -396,7 +395,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     super(realtimeModel);
 
     this.options = realtimeModel._options;
-    this.bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, SAMPLE_RATE / 20); // 50ms chunks
+    this.bstream = new AudioByteStream(
+      INPUT_AUDIO_SAMPLE_RATE,
+      INPUT_AUDIO_CHANNELS,
+      INPUT_AUDIO_SAMPLE_RATE / 20,
+    ); // 50ms chunks
 
     const { apiKey, project, location, vertexai, enableAffectiveDialog, proactivity } =
       this.options;
@@ -494,7 +497,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (shouldRestart) {
-      this.#logger.debug('=== updateOptions: this.markRestartNeeded()');
       this.markRestartNeeded();
     }
   }
@@ -502,7 +504,6 @@ export class RealtimeSession extends llm.RealtimeSession {
   async updateInstructions(instructions: string): Promise<void> {
     if (this.options.instructions === undefined || this.options.instructions !== instructions) {
       this.options.instructions = instructions;
-      this.#logger.debug('=== updateInstructions: this.markRestartNeeded()');
       this.markRestartNeeded();
     }
   }
@@ -572,7 +573,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!setsEqual(currentToolNames, newToolNames)) {
       this.geminiDeclarations = newDeclarations;
       this._tools = tools;
-      this.#logger.debug('=== updateTools: this.markRestartNeeded()');
       this.markRestartNeeded();
     }
   }
@@ -839,15 +839,6 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private async sendTask(session: types.Session, controller: AbortController): Promise<void> {
-    this.#logger.debug(
-      {
-        closed: this.#closed,
-        sessionShouldClose: this.sessionShouldClose.isSet,
-        aborted: controller.signal.aborted,
-      },
-      '=== send task',
-    );
-
     try {
       while (!this.#closed && !this.sessionShouldClose.isSet && !controller.signal.aborted) {
         const msg = await this.messageChannel.get();
@@ -883,7 +874,6 @@ export class RealtimeSession extends llm.RealtimeSession {
           case 'realtime_input':
             const { mediaChunks, activityStart, activityEnd } = msg.value;
             if (mediaChunks) {
-              this.#logger.debug(`(client) -> ${JSON.stringify(this.loggableClientEvent(msg))}`);
               for (const mediaChunk of mediaChunks) {
                 await session.sendRealtimeInput({ media: mediaChunk });
               }
@@ -917,7 +907,13 @@ export class RealtimeSession extends llm.RealtimeSession {
     session: types.Session,
     response: types.LiveServerMessage,
   ): Promise<void> {
-    this.#logger.debug(`(server) <- ${JSON.stringify(this.loggableServerMessage(response))}`);
+    // Skip logging verbose audio data events
+    const hasAudioData = response.serverContent?.modelTurn?.parts?.some(
+      (part) => part.inlineData?.data,
+    );
+    if (!hasAudioData) {
+      this.#logger.debug(`(server) <- ${JSON.stringify(this.loggableServerMessage(response))}`);
+    }
     const unlock = await this.sessionLock.lock();
 
     try {
@@ -1244,11 +1240,12 @@ export class RealtimeSession extends llm.RealtimeSession {
               bytes[i] = binaryString.charCodeAt(i);
             }
 
+            const int16Array = new Int16Array(bytes.buffer);
             const audioFrame = new AudioFrame(
-              new Int16Array(bytes.buffer),
-              SAMPLE_RATE,
+              int16Array,
+              OUTPUT_AUDIO_SAMPLE_RATE,
               OUTPUT_AUDIO_CHANNELS,
-              len / (2 * OUTPUT_AUDIO_CHANNELS),
+              int16Array.length / OUTPUT_AUDIO_CHANNELS,
             );
 
             gen.audioChannel.write(audioFrame);
@@ -1335,16 +1332,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     // Calculate metrics
     const ttft = firstTokenTimestamp ? firstTokenTimestamp - createdTimestamp : -1;
     const duration = (completedTimestamp - createdTimestamp) / 1000; // Convert to seconds
-
-    this.#logger.debug(
-      {
-        responseId: gen.responseId,
-        ttft,
-        duration,
-        usage,
-      },
-      'Emitting usage metadata metrics',
-    );
 
     const inputTokens = usage.promptTokenCount || 0;
     const outputTokens = usage.responseTokenCount || 0;
