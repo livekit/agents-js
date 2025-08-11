@@ -572,7 +572,7 @@ export class AgentActivity implements RecognitionHooks {
     this.agentSession._updateUserState('speaking');
   }
 
-  onEndOfSpeech(ev: VADEvent): void {
+  onEndOfSpeech(_ev: VADEvent): void {
     this.agentSession._updateUserState('listening');
   }
 
@@ -650,7 +650,7 @@ export class AgentActivity implements RecognitionHooks {
     ownedSpeechHandle?: SpeechHandle;
     name?: string;
   }): Promise<T> {
-    const { promise, ownedSpeechHandle, name } = options;
+    const { promise, ownedSpeechHandle } = options;
 
     this.speechTasks.add(promise);
 

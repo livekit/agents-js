@@ -156,12 +156,10 @@ async function saveRevisionMapping({
   storageFolder,
   revision,
   commitHash,
-  logger,
 }: {
   storageFolder: string;
   revision: string;
   commitHash: string;
-  logger?: ReturnType<typeof log>;
 }): Promise<void> {
   if (!REGEX_COMMIT_HASH.test(revision) && revision !== commitHash) {
     const refsPath = join(storageFolder, 'refs');
@@ -274,7 +272,6 @@ export async function downloadFileToCacheDir(
       storageFolder,
       revision,
       commitHash: branchHeadCommit,
-      logger,
     });
 
     return pointerPath;
@@ -361,7 +358,6 @@ export async function downloadFileToCacheDir(
     storageFolder,
     revision,
     commitHash: branchHeadCommit,
-    logger,
   });
 
   logger.debug({ pointerPath, size: blob.size }, 'File download completed successfully');
