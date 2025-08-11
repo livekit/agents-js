@@ -764,13 +764,13 @@ export function performToolExecutions({
 
       onToolExecutionStarted(toolCall);
 
-      logger.debug(
+      logger.info(
         {
           function: toolCall.name,
           arguments: parsedArgs,
           speech_id: speechHandle.id,
         },
-        'executing tool',
+        'Executing LLM tool call',
       );
 
       const toolExecution = asyncLocalStorage.run({ functionCall: toolCall }, async () => {
