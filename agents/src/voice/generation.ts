@@ -706,7 +706,7 @@ export function performToolExecutions({
 
       const tool = toolCtx[toolCall.name];
       if (!tool) {
-        logger.error(
+        logger.warn(
           {
             function: toolCall.name,
             speech_id: speechHandle.id,

@@ -1495,6 +1495,10 @@ export class AgentActivity implements RecognitionHooks {
               forwardTasks.push(forwardTask);
               audioOut = _audioOut;
               audioOut.firstFrameFut.await.finally(onFirstFrame);
+            } else {
+              this.logger.warn(
+                'audio output is enabled but neither tts nor realtime audio is available',
+              );
             }
           } else if (textOut) {
             textOut.firstTextFut.await.finally(onFirstFrame);
