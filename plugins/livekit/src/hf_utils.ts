@@ -67,7 +67,6 @@ async function getBranchHeadCommit(
       // The commit object structure varies, so we check multiple possible properties
       const commitHash = (commit as any).oid || (commit as any).id || (commit as any).commitId;
       if (commitHash) {
-        logger.debug({ revision, commitHash }, 'Resolved branch/tag to HEAD commit');
         return commitHash;
       }
       break; // Only need the first one
@@ -168,7 +167,6 @@ async function saveRevisionMapping({
     const refsPath = join(storageFolder, 'refs');
     await mkdir(refsPath, { recursive: true });
     writeFileSync(join(refsPath, revision), commitHash);
-    logger?.debug({ revision, commitHash }, 'Saved revision to commit hash mapping');
   }
 }
 
@@ -210,11 +208,6 @@ export async function downloadFileToCacheDir(
   const repoId = toRepoId(params.repo);
   // get storage folder
   const storageFolder = join(cacheDir, getRepoFolderName(repoId));
-
-  logger.debug(
-    { repoId, path: params.path, revision, cacheDir },
-    'Starting file download/cache check',
-  );
 
   let branchHeadCommit: string | undefined;
 
@@ -271,7 +264,6 @@ export async function downloadFileToCacheDir(
       throw new Error(`Failed to resolve revision ${revision} to commit hash`);
     }
     branchHeadCommit = headCommit;
-    logger.debug({ revision, branchHeadCommit }, 'Resolved revision to branch HEAD commit');
   }
 
   // Check if file exists with the branch HEAD commit
