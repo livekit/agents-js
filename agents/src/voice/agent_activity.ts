@@ -572,8 +572,7 @@ export class AgentActivity implements RecognitionHooks {
     this.agentSession._updateUserState('speaking');
   }
 
-  onEndOfSpeech(ev: VADEvent): void {
-    this.logger.info('End of speech', ev);
+  onEndOfSpeech(_ev: VADEvent): void {
     this.agentSession._updateUserState('listening');
   }
 
@@ -651,9 +650,7 @@ export class AgentActivity implements RecognitionHooks {
     ownedSpeechHandle?: SpeechHandle;
     name?: string;
   }): Promise<T> {
-    const { promise, ownedSpeechHandle, name } = options;
-
-    this.logger.info({ name, speechTasksSize: this.speechTasks.size }, 'creating speech task');
+    const { promise, ownedSpeechHandle } = options;
 
     this.speechTasks.add(promise);
 
@@ -876,8 +873,6 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async userTurnCompleted(info: EndOfTurnInfo, oldTask?: Promise<void>): Promise<void> {
-    this.logger.info('userTurnCompleted', info);
-
     if (oldTask) {
       // We never cancel user code as this is very confusing.
       // So we wait for the old execution of onUserTurnCompleted to finish.
@@ -1500,6 +1495,10 @@ export class AgentActivity implements RecognitionHooks {
               forwardTasks.push(forwardTask);
               audioOut = _audioOut;
               audioOut.firstFrameFut.await.finally(onFirstFrame);
+            } else {
+              this.logger.warn(
+                'audio output is enabled but neither tts nor realtime audio is available',
+              );
             }
           } else if (textOut) {
             textOut.firstTextFut.await.finally(onFirstFrame);

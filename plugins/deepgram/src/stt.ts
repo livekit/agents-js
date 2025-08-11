@@ -11,6 +11,7 @@ import {
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
+import { PeriodicCollector } from './_utils.js';
 import type { STTLanguages, STTModels } from './models.js';
 
 const API_BASE_URL_V1 = 'wss://api.deepgram.com/v1/listen';
@@ -120,6 +121,8 @@ export class SpeechStream extends stt.SpeechStream {
   #logger = log();
   #speaking = false;
   #resetWS = new Future();
+  #requestId = '';
+  #audioDurationCollector: PeriodicCollector<number>;
   label = 'deepgram.SpeechStream';
 
   constructor(stt: STT, opts: STTOptions) {
@@ -127,6 +130,10 @@ export class SpeechStream extends stt.SpeechStream {
     this.#opts = opts;
     this.closed = false;
     this.#audioEnergyFilter = new AudioEnergyFilter();
+    this.#audioDurationCollector = new PeriodicCollector(
+      (duration) => this.onAudioDurationReport(duration),
+      { duration: 5.0 },
+    );
 
     this.#run();
   }
@@ -226,6 +233,7 @@ export class SpeechStream extends stt.SpeechStream {
         let frames: AudioFrame[];
         if (data === SpeechStream.FLUSH_SENTINEL) {
           frames = stream.flush();
+          this.#audioDurationCollector.flush();
         } else if (
           data.sampleRate === this.#opts.sampleRate ||
           data.channels === this.#opts.numChannels
@@ -237,6 +245,8 @@ export class SpeechStream extends stt.SpeechStream {
 
         for await (const frame of frames) {
           if (this.#audioEnergyFilter.pushFrame(frame)) {
+            const frameDuration = frame.samplesPerChannel / frame.sampleRate;
+            this.#audioDurationCollector.push(frameDuration);
             ws.send(frame.data.buffer);
           }
         }
@@ -277,8 +287,11 @@ export class SpeechStream extends stt.SpeechStream {
               // https://developers.deepgram.com/docs/understand-endpointing-interim-results#using-endpointing-speech_final
               // for more information about the different types of events
               case 'Results': {
+                const metadata = json['metadata'];
+                const requestId = metadata['request_id'];
                 const isFinal = json['is_final'];
                 const isEndpoint = json['speech_final'];
+                this.#requestId = requestId;
 
                 const alternatives = liveTranscriptionToSpeechData(this.#opts.language!, json);
 
@@ -334,6 +347,17 @@ export class SpeechStream extends stt.SpeechStream {
     closing = true;
     ws.close();
     clearInterval(keepalive);
+  }
+
+  private onAudioDurationReport(duration: number) {
+    const usageEvent: stt.SpeechEvent = {
+      type: stt.SpeechEventType.RECOGNITION_USAGE,
+      requestId: this.#requestId,
+      recognitionUsage: {
+        audioDuration: duration,
+      },
+    };
+    this.queue.put(usageEvent);
   }
 }
 

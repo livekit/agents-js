@@ -20,8 +20,11 @@ import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { Future } from '../../utils.js';
 import { type AgentSession } from '../agent_session.js';
-import { type AgentStateChangedEvent, type UserInputTranscribedEvent } from '../events.js';
-import { AgentSessionEventTypes } from '../events.js';
+import {
+  AgentSessionEventTypes,
+  type AgentStateChangedEvent,
+  type UserInputTranscribedEvent,
+} from '../events.js';
 import type { AudioOutput, TextOutput } from '../io.js';
 import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
 import { ParticipantAudioInputStream } from './_input.js';
@@ -172,7 +175,6 @@ export class RoomIO {
   };
 
   private onParticipantConnected = (participant: RemoteParticipant) => {
-    this.logger.debug({ participant }, 'participant connected');
     if (this.participantAvailableFuture.done) {
       return;
     }
