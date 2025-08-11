@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { Agent } from './agent.js';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { tool } from '../llm/index.js';
-import { Agent } from './agent.js';
 
 describe('Agent', () => {
   it('should create agent with basic instructions', () => {
