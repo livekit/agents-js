@@ -52,9 +52,11 @@ export default defineAgent({
       },
     });
 
+    const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
       // llm: new openai.realtime.RealtimeModel(),
       llm: new google.beta.realtime.RealtimeModel(),
+      vad,
       // enable to allow chaining of tool calls
       voiceOptions: {
         maxToolSteps: 5,
@@ -72,6 +74,10 @@ export default defineAgent({
 
     // join the room when agent is ready
     await ctx.connect();
+
+    session.generateReply({
+      userInput: 'Greet the user',
+    });
   },
 });
 

@@ -222,12 +222,12 @@ export class RealtimeModel extends llm.RealtimeModel {
       /**
        * The configuration for input audio transcription
        */
-      inputAudioTranscription?: AudioTranscriptionConfig;
+      inputAudioTranscription?: AudioTranscriptionConfig | null;
 
       /**
        * The configuration for output audio transcription
        */
-      outputAudioTranscription?: AudioTranscriptionConfig;
+      outputAudioTranscription?: AudioTranscriptionConfig | null;
 
       /**
        * The configuration for image encoding
@@ -275,14 +275,20 @@ export class RealtimeModel extends llm.RealtimeModel {
       geminiTools?: LLMTools;
     } = {},
   ) {
-    const serverTurnDetection = !(
-      options.realtimeInputConfig?.automaticActivityDetection?.disabled ?? false
-    );
+    const inputAudioTranscription =
+      options.inputAudioTranscription === undefined ? {} : options.inputAudioTranscription;
+    const outputAudioTranscription =
+      options.outputAudioTranscription === undefined ? {} : options.outputAudioTranscription;
+
+    let serverTurnDetection = true;
+    if (options.realtimeInputConfig?.automaticActivityDetection?.disabled) {
+      serverTurnDetection = false;
+    }
 
     super({
       messageTruncation: false,
       turnDetection: serverTurnDetection,
-      userTranscription: options.inputAudioTranscription !== undefined,
+      userTranscription: inputAudioTranscription !== null,
       autoToolReplyGeneration: true,
     });
 
@@ -312,8 +318,8 @@ export class RealtimeModel extends llm.RealtimeModel {
       presencePenalty: options.presencePenalty,
       frequencyPenalty: options.frequencyPenalty,
       instructions: options.instructions,
-      inputAudioTranscription: options.inputAudioTranscription,
-      outputAudioTranscription: options.outputAudioTranscription,
+      inputAudioTranscription: inputAudioTranscription || undefined,
+      outputAudioTranscription: outputAudioTranscription || undefined,
       imageEncodeOptions: options.imageEncodeOptions || DEFAULT_IMAGE_ENCODE_OPTIONS,
       connOptions: options.connOptions || DEFAULT_API_CONNECT_OPTIONS,
       httpOptions: options.httpOptions,
