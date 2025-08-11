@@ -241,7 +241,6 @@ export async function downloadFileToCacheDir(
       try {
         const { readFileSync } = await import('fs');
         const resolvedHash = readFileSync(refsPath, 'utf-8').trim();
-        logger.debug({ revision, resolvedHash }, 'Resolved revision to commit hash from refs');
         const resolvedPath = getFilePointer(storageFolder, resolvedHash, params.path);
         if (await exists(resolvedPath, true)) {
           logger.debug({ resolvedPath, resolvedHash }, 'File found in cache (via refs)');

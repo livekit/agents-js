@@ -573,7 +573,6 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onEndOfSpeech(ev: VADEvent): void {
-    this.logger.info('End of speech', ev);
     this.agentSession._updateUserState('listening');
   }
 
@@ -652,8 +651,6 @@ export class AgentActivity implements RecognitionHooks {
     name?: string;
   }): Promise<T> {
     const { promise, ownedSpeechHandle, name } = options;
-
-    this.logger.info({ name, speechTasksSize: this.speechTasks.size }, 'creating speech task');
 
     this.speechTasks.add(promise);
 
@@ -876,8 +873,6 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async userTurnCompleted(info: EndOfTurnInfo, oldTask?: Promise<void>): Promise<void> {
-    this.logger.info('userTurnCompleted', info);
-
     if (oldTask) {
       // We never cancel user code as this is very confusing.
       // So we wait for the old execution of onUserTurnCompleted to finish.
