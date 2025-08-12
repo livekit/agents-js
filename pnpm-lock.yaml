@@ -70,7 +70,7 @@ importers:
         version: 3.2.5
       tsup:
         specifier: ^8.4.0
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
       turbo:
         specifier: ^1.13.3
         version: 1.13.3
@@ -149,7 +149,7 @@ importers:
         version: 8.5.10
       tsup:
         specifier: ^8.4.0
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -177,6 +177,9 @@ importers:
       '@livekit/agents-plugin-silero':
         specifier: workspace:*
         version: link:../plugins/silero
+      '@livekit/noise-cancellation-node':
+        specifier: ^0.1.9
+        version: 0.1.9
       '@livekit/rtc-node':
         specifier: ^0.13.11
         version: 0.13.13
@@ -223,7 +226,7 @@ importers:
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -254,7 +257,7 @@ importers:
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -285,7 +288,7 @@ importers:
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -325,7 +328,7 @@ importers:
         version: 7.43.7(@types/node@22.15.30)
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -353,7 +356,7 @@ importers:
         version: 1.20.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -384,7 +387,7 @@ importers:
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -427,7 +430,7 @@ importers:
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -458,7 +461,7 @@ importers:
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -489,7 +492,7 @@ importers:
         version: 1.20.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -517,7 +520,7 @@ importers:
         version: 22.15.30
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
@@ -1318,6 +1321,34 @@ packages:
 
   '@livekit/mutex@1.1.1':
     resolution: {integrity: sha512-EsshAucklmpuUAfkABPxJNhzj9v2sG7JuzFDL4ML1oJQSV14sqrpTYnsaOudMAw9yOaW53NU3QQTlUQoRs4czw==}
+
+  '@livekit/noise-cancellation-darwin-arm64@0.1.9':
+    resolution: {integrity: sha512-IBUY2O2FG+zZESxtgghGBxoDsGqk6IYHQyQfkvDjdM41iv0+N9zA1YdMbAbV8W+ZGIxiQ3iS5W6ZCw9JeUf9cA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@livekit/noise-cancellation-darwin-x64@0.1.9':
+    resolution: {integrity: sha512-tpSWmwP1WuIqrwXcSKM+4uLRwfRJmXuOSo/jskxsRKraPZmNgvqxeZhKj9bhCWLTo/Y4PZolRayIeZAiMAltAw==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@livekit/noise-cancellation-linux-arm64@0.1.9':
+    resolution: {integrity: sha512-lCb56HMBqjCv02BPpJXwQ3srx2103f2HhFINblZozkVxvQmeyMECaK8neGgviGVSp2noXMKet/rDrB08aw3Bvw==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@livekit/noise-cancellation-linux-x64@0.1.9':
+    resolution: {integrity: sha512-Uzfujifj5P1rysndzsVpElCy57c81UA0ZCfUHh9Sl4cemJ/WVbwC8FsQVqs3QeDqDd8upZxVsJxLCIz3TFp4yQ==}
+    cpu: [x64]
+    os: [linux]
+
+  '@livekit/noise-cancellation-node@0.1.9':
+    resolution: {integrity: sha512-4dnyecpUggKi7LtwcW/oeiiNtkymk0MoXTR7WK5QoGhNZlok1ROz4vnsnh76xcEgYJt6eguMoY6DHHjG19qtgg==}
+
+  '@livekit/noise-cancellation-win32-x64@0.1.9':
+    resolution: {integrity: sha512-/CXJWZD9aRU77ggL5SyUYLKFWKIQ7g2SZYE/IPVa93G9nUQBAujX5FP0U2n9+nO9GNsfA0I0rfomEWaO20ZZ/g==}
+    cpu: [x64]
+    os: [win32]
 
   '@livekit/protocol@1.29.1':
     resolution: {integrity: sha512-OhxXTZlyM5f4ydnAq1p5azzzOtKWmIoCSVtyVj9rgE42zQI5JM1rR9pubVRZovouGSvEDSJx9yL4Js2IlIyM1Q==}
@@ -4199,6 +4230,11 @@ packages:
     engines: {node: '>=18.0.0'}
     hasBin: true
 
+  tsx@4.20.4:
+    resolution: {integrity: sha512-yyxBKfORQ7LuRt/BQKBXrpcq59ZvSW0XxwfjAt3w2/8PmdxaFzijtMhTawprSHhpzeM5BgU2hXHG3lklIERZXg==}
+    engines: {node: '>=18.0.0'}
+    hasBin: true
+
   tty-table@4.2.3:
     resolution: {integrity: sha512-Fs15mu0vGzCrj8fmJNP7Ynxt5J7praPXqFN0leZeZBXJwkMxv9cb2D454k1ltrtUSJbZ4yH4e0CynsHLxmUfFA==}
     engines: {node: '>=8.0.0'}
@@ -5263,6 +5299,32 @@ snapshots:
       - encoding
 
   '@livekit/mutex@1.1.1': {}
+
+  '@livekit/noise-cancellation-darwin-arm64@0.1.9':
+    optional: true
+
+  '@livekit/noise-cancellation-darwin-x64@0.1.9':
+    optional: true
+
+  '@livekit/noise-cancellation-linux-arm64@0.1.9':
+    optional: true
+
+  '@livekit/noise-cancellation-linux-x64@0.1.9':
+    optional: true
+
+  '@livekit/noise-cancellation-node@0.1.9':
+    dependencies:
+      '@livekit/rtc-node': 0.13.13
+      tsx: 4.20.4
+    optionalDependencies:
+      '@livekit/noise-cancellation-darwin-arm64': 0.1.9
+      '@livekit/noise-cancellation-darwin-x64': 0.1.9
+      '@livekit/noise-cancellation-linux-arm64': 0.1.9
+      '@livekit/noise-cancellation-linux-x64': 0.1.9
+      '@livekit/noise-cancellation-win32-x64': 0.1.9
+
+  '@livekit/noise-cancellation-win32-x64@0.1.9':
+    optional: true
 
   '@livekit/protocol@1.29.1':
     dependencies:
@@ -7819,12 +7881,12 @@ snapshots:
 
   possible-typed-array-names@1.0.0: {}
 
-  postcss-load-config@6.0.1(postcss@8.4.38)(tsx@4.19.2):
+  postcss-load-config@6.0.1(postcss@8.4.38)(tsx@4.20.4):
     dependencies:
       lilconfig: 3.1.2
     optionalDependencies:
       postcss: 8.4.38
-      tsx: 4.19.2
+      tsx: 4.20.4
 
   postcss@8.4.38:
     dependencies:
@@ -8430,7 +8492,7 @@ snapshots:
 
   tslib@2.6.2: {}
 
-  tsup@8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.19.2)(typescript@5.4.5):
+  tsup@8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.25.2)
       cac: 6.7.14
@@ -8440,7 +8502,7 @@ snapshots:
       esbuild: 0.25.2
       joycon: 3.1.1
       picocolors: 1.1.1
-      postcss-load-config: 6.0.1(postcss@8.4.38)(tsx@4.19.2)
+      postcss-load-config: 6.0.1(postcss@8.4.38)(tsx@4.20.4)
       resolve-from: 5.0.0
       rollup: 4.40.0
       source-map: 0.8.0-beta.0
@@ -8461,6 +8523,13 @@ snapshots:
   tsx@4.19.2:
     dependencies:
       esbuild: 0.23.1
+      get-tsconfig: 4.7.5
+    optionalDependencies:
+      fsevents: 2.3.3
+
+  tsx@4.20.4:
+    dependencies:
+      esbuild: 0.25.2
       get-tsconfig: 4.7.5
     optionalDependencies:
       fsevents: 2.3.3
