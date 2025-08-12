@@ -15,6 +15,7 @@ import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
+import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 
 export default defineAgent({
@@ -49,6 +50,9 @@ export default defineAgent({
     await session.start({
       agent,
       room: ctx.room,
+      inputOptions: {
+        noiseCancellation: BackgroundVoiceCancellation(),
+      },
     });
 
     // join the room when agent is ready
