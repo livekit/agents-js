@@ -193,6 +193,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         headers: { [AUTHORIZATION_HEADER]: this.#opts.apiKey },
       });
 
+      ws.on('error', (error) => {
+        this.abortController.abort();
+        this.#logger.error({ error }, 'Error connecting to ElevenLabs');
+      });
+
       try {
         await new Promise((resolve, reject) => {
           ws.on('open', resolve);
