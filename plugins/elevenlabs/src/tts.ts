@@ -14,6 +14,8 @@ import { URL } from 'node:url';
 import { type RawData, WebSocket } from 'ws';
 import type { TTSEncoding, TTSModels } from './models.js';
 
+const DEFAULT_INACTIVITY_TIMEOUT = 300;
+
 type Voice = {
   id: string;
   name: string;
@@ -54,18 +56,23 @@ export interface TTSOptions {
   wordTokenizer: tokenize.WordTokenizer;
   chunkLengthSchedule: number[];
   enableSsmlParsing: boolean;
+  inactivityTimeout: number;
+  syncAlignment: boolean;
+  autoMode?: boolean;
 }
 
 const defaultTTSOptions: TTSOptions = {
   apiKey: process.env.ELEVEN_API_KEY,
   voice: DEFAULT_VOICE,
-  modelID: 'eleven_flash_v2_5',
+  modelID: 'eleven_turbo_v2_5',
   baseURL: API_BASE_URL_V1,
   encoding: 'pcm_22050',
   streamingLatency: 3,
   wordTokenizer: new tokenize.basic.WordTokenizer(false),
   chunkLengthSchedule: [],
   enableSsmlParsing: false,
+  inactivityTimeout: DEFAULT_INACTIVITY_TIMEOUT,
+  syncAlignment: true,
 };
 
 export class TTS extends tts.TTS {
@@ -141,11 +148,15 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       output_format: opts.encoding,
       optimize_streaming_latency: `${opts.streamingLatency}`,
       enable_ssml_parsing: `${opts.enableSsmlParsing}`,
+      sync_alignment: `${opts.syncAlignment}`,
+      ...(opts.autoMode !== undefined && { auto_mode: `${opts.autoMode}` }),
       ...(opts.languageCode && { language_code: opts.languageCode }),
+      ...(opts.inactivityTimeout && { inactivity_timeout: `${opts.inactivityTimeout}` }),
     };
     Object.entries(params).forEach(([k, v]) => this.streamURL.searchParams.append(k, v));
     this.streamURL.protocol = this.streamURL.protocol.replace('http', 'ws');
 
+    this.#logger.info(`++++++ JavaScript WebSocket URL: ${this.streamURL.toString()}`);
     this.#run();
   }
 
@@ -285,13 +296,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             });
           }).then((msg) => {
             const json = JSON.parse(msg.toString());
+            // remove the "audio" field from the json object when printing
+            this.#logger.info({ isFinal: json.isFinal }, '++++++ received data');
             if ('audio' in json) {
               const data = new Int8Array(Buffer.from(json.audio, 'base64'));
               for (const frame of bstream.write(data)) {
                 sendLastFrame(segmentId, false);
                 lastFrame = frame;
               }
-            } else if ('isFinal' in json) {
+            } else if (json.isFinal) {
+              this.#logger.info({ json }, '++++++ isFinal entry');
               for (const frame of bstream.flush()) {
                 sendLastFrame(segmentId, false);
                 lastFrame = frame;
