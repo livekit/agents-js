@@ -8,6 +8,7 @@ import { INFERENCE_METHOD_MULTILINGUAL } from './multilingual.js';
 export { EOUModel } from './base.js';
 export { EnglishModel } from './english.js';
 export { MultilingualModel } from './multilingual.js';
+export { getUnicodeCategory, normalizeText } from './utils.js';
 
 InferenceRunner.registerRunner(
   INFERENCE_METHOD_EN,
