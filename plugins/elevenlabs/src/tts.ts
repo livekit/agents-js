@@ -262,13 +262,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }
         }
 
-        ws.send(JSON.stringify({ text: text + ' ' }));
+        ws.send(JSON.stringify({ text: text + ' ' })); //  must always end with a space
       }
 
       if (xmlContent.length) {
         this.#logger.warn('ElevenLabs stream ended with incomplete XML content');
       }
 
+      // no more tokens, mark eos
       ws.send(JSON.stringify({ text: '' }));
       eosSent = true;
     };
