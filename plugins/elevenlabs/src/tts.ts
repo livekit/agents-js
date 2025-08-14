@@ -31,7 +31,7 @@ type VoiceSettings = {
 };
 
 const DEFAULT_VOICE: Voice = {
-  id: 'EXAVITQu4vr4xnSDxMaL',
+  id: 'bIHbv24MWmeRgasZH58o',
   name: 'Bella',
   category: 'premade',
   settings: {
@@ -52,9 +52,9 @@ export interface TTSOptions {
   languageCode?: string;
   baseURL: string;
   encoding: TTSEncoding;
-  streamingLatency: number;
+  streamingLatency?: number;
   wordTokenizer: tokenize.WordTokenizer;
-  chunkLengthSchedule: number[];
+  chunkLengthSchedule?: number[];
   enableSsmlParsing: boolean;
   inactivityTimeout: number;
   syncAlignment: boolean;
@@ -67,9 +67,7 @@ const defaultTTSOptions: TTSOptions = {
   modelID: 'eleven_turbo_v2_5',
   baseURL: API_BASE_URL_V1,
   encoding: 'pcm_22050',
-  streamingLatency: 3,
   wordTokenizer: new tokenize.basic.WordTokenizer(false),
-  chunkLengthSchedule: [],
   enableSsmlParsing: false,
   inactivityTimeout: DEFAULT_INACTIVITY_TIMEOUT,
   syncAlignment: true,
@@ -146,12 +144,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const params = {
       model_id: opts.modelID,
       output_format: opts.encoding,
-      optimize_streaming_latency: `${opts.streamingLatency}`,
       enable_ssml_parsing: `${opts.enableSsmlParsing}`,
       sync_alignment: `${opts.syncAlignment}`,
       ...(opts.autoMode !== undefined && { auto_mode: `${opts.autoMode}` }),
       ...(opts.languageCode && { language_code: opts.languageCode }),
       ...(opts.inactivityTimeout && { inactivity_timeout: `${opts.inactivityTimeout}` }),
+      ...(opts.streamingLatency && { optimize_streaming_latency: `${opts.streamingLatency}` }),
     };
     Object.entries(params).forEach(([k, v]) => this.streamURL.searchParams.append(k, v));
     this.streamURL.protocol = this.streamURL.protocol.replace('http', 'ws');
@@ -238,8 +236,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       JSON.stringify({
         text: ' ',
         voice_settings: this.#opts.voice.settings,
-        try_trigger_generation: true,
-        chunk_length_schedule: this.#opts.chunkLengthSchedule,
+        ...(this.#opts.chunkLengthSchedule && {
+          generation_config: {
+            chunk_length_schedule: this.#opts.chunkLengthSchedule,
+          },
+        }),
       }),
     );
     let eosSent = false;
@@ -262,7 +263,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }
         }
 
-        ws.send(JSON.stringify({ text: text + ' ', try_trigger_generation: false }));
+        ws.send(JSON.stringify({ text: text + ' ' }));
       }
 
       if (xmlContent.length) {
@@ -289,6 +290,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             ws.removeAllListeners();
             ws.on('message', (data) => resolve(data));
             ws.on('close', (code, reason) => {
+              this.#logger.info({ code, reason, eosSent }, '++++++ WebSocket closed');
               if (!eosSent) {
                 this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
               }
@@ -298,7 +300,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             const json = JSON.parse(msg.toString());
             // remove the "audio" field from the json object when printing
             this.#logger.info({ isFinal: json.isFinal }, '++++++ received data');
-            if ('audio' in json) {
+            if ('audio' in json && json.audio !== null) {
               const data = new Int8Array(Buffer.from(json.audio, 'base64'));
               for (const frame of bstream.write(data)) {
                 sendLastFrame(segmentId, false);
@@ -319,13 +321,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               }
             }
           });
-        } catch {
+        } catch (err) {
+          this.#logger.info({ err }, '++++++ listenTask exception');
           break;
         }
       }
     };
 
     await Promise.all([sendTask(), listenTask()]);
+    this.#logger.info('++++++ Promise.all completed, about to close SynthesizeStream');
+    this.#logger.info('++++++ SynthesizeStream closed');
   }
 }
 
