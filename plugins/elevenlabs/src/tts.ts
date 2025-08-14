@@ -154,7 +154,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     Object.entries(params).forEach(([k, v]) => this.streamURL.searchParams.append(k, v));
     this.streamURL.protocol = this.streamURL.protocol.replace('http', 'ws');
 
-    this.#logger.info(`++++++ JavaScript WebSocket URL: ${this.streamURL.toString()}`);
     this.#run();
   }
 
@@ -283,6 +282,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     const listenTask = async () => {
+      let finalReceived = false;
       const bstream = new AudioByteStream(sampleRateFromFormat(this.#opts.encoding), 1);
       while (!this.closed && !this.abortController.signal.aborted) {
         try {
@@ -290,16 +290,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             ws.removeAllListeners();
             ws.on('message', (data) => resolve(data));
             ws.on('close', (code, reason) => {
-              this.#logger.info({ code, reason, eosSent }, '++++++ WebSocket closed');
               if (!eosSent) {
                 this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
               }
-              reject(new Error('WebSocket closed'));
+              if (!finalReceived) {
+                reject(new Error('WebSocket closed'));
+              }
             });
           }).then((msg) => {
             const json = JSON.parse(msg.toString());
             // remove the "audio" field from the json object when printing
-            this.#logger.info({ isFinal: json.isFinal }, '++++++ received data');
             if ('audio' in json && json.audio !== null) {
               const data = new Int8Array(Buffer.from(json.audio, 'base64'));
               for (const frame of bstream.write(data)) {
@@ -307,7 +307,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 lastFrame = frame;
               }
             } else if (json.isFinal) {
-              this.#logger.info({ json }, '++++++ isFinal entry');
+              finalReceived = true;
               for (const frame of bstream.flush()) {
                 sendLastFrame(segmentId, false);
                 lastFrame = frame;
@@ -322,15 +322,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             }
           });
         } catch (err) {
-          this.#logger.info({ err }, '++++++ listenTask exception');
+          this.#logger.error({ err }, 'Error in listenTask from ElevenLabs WebSocket');
           break;
         }
       }
     };
 
     await Promise.all([sendTask(), listenTask()]);
-    this.#logger.info('++++++ Promise.all completed, about to close SynthesizeStream');
-    this.#logger.info('++++++ SynthesizeStream closed');
   }
 }
 
