@@ -322,7 +322,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             }
           });
         } catch (err) {
-          this.#logger.error({ err }, 'Error in listenTask from ElevenLabs WebSocket');
+          this.#logger.warn({ err }, 'Error in listenTask from ElevenLabs WebSocket');
           break;
         }
       }
