@@ -14,6 +14,8 @@ import { URL } from 'node:url';
 import { type RawData, WebSocket } from 'ws';
 import type { TTSEncoding, TTSModels } from './models.js';
 
+const DEFAULT_INACTIVITY_TIMEOUT = 300;
+
 type Voice = {
   id: string;
   name: string;
@@ -29,7 +31,7 @@ type VoiceSettings = {
 };
 
 const DEFAULT_VOICE: Voice = {
-  id: 'EXAVITQu4vr4xnSDxMaL',
+  id: 'bIHbv24MWmeRgasZH58o',
   name: 'Bella',
   category: 'premade',
   settings: {
@@ -50,22 +52,25 @@ export interface TTSOptions {
   languageCode?: string;
   baseURL: string;
   encoding: TTSEncoding;
-  streamingLatency: number;
+  streamingLatency?: number;
   wordTokenizer: tokenize.WordTokenizer;
-  chunkLengthSchedule: number[];
+  chunkLengthSchedule?: number[];
   enableSsmlParsing: boolean;
+  inactivityTimeout: number;
+  syncAlignment: boolean;
+  autoMode?: boolean;
 }
 
 const defaultTTSOptions: TTSOptions = {
   apiKey: process.env.ELEVEN_API_KEY,
   voice: DEFAULT_VOICE,
-  modelID: 'eleven_flash_v2_5',
+  modelID: 'eleven_turbo_v2_5',
   baseURL: API_BASE_URL_V1,
   encoding: 'pcm_22050',
-  streamingLatency: 3,
   wordTokenizer: new tokenize.basic.WordTokenizer(false),
-  chunkLengthSchedule: [],
   enableSsmlParsing: false,
+  inactivityTimeout: DEFAULT_INACTIVITY_TIMEOUT,
+  syncAlignment: true,
 };
 
 export class TTS extends tts.TTS {
@@ -139,9 +144,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const params = {
       model_id: opts.modelID,
       output_format: opts.encoding,
-      optimize_streaming_latency: `${opts.streamingLatency}`,
       enable_ssml_parsing: `${opts.enableSsmlParsing}`,
+      sync_alignment: `${opts.syncAlignment}`,
+      ...(opts.autoMode !== undefined && { auto_mode: `${opts.autoMode}` }),
       ...(opts.languageCode && { language_code: opts.languageCode }),
+      ...(opts.inactivityTimeout && { inactivity_timeout: `${opts.inactivityTimeout}` }),
+      ...(opts.streamingLatency && { optimize_streaming_latency: `${opts.streamingLatency}` }),
     };
     Object.entries(params).forEach(([k, v]) => this.streamURL.searchParams.append(k, v));
     this.streamURL.protocol = this.streamURL.protocol.replace('http', 'ws');
@@ -227,8 +235,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       JSON.stringify({
         text: ' ',
         voice_settings: this.#opts.voice.settings,
-        try_trigger_generation: true,
-        chunk_length_schedule: this.#opts.chunkLengthSchedule,
+        ...(this.#opts.chunkLengthSchedule && {
+          generation_config: {
+            chunk_length_schedule: this.#opts.chunkLengthSchedule,
+          },
+        }),
       }),
     );
     let eosSent = false;
@@ -251,13 +262,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }
         }
 
-        ws.send(JSON.stringify({ text: text + ' ', try_trigger_generation: false }));
+        ws.send(JSON.stringify({ text: text + ' ' })); //  must always end with a space
       }
 
       if (xmlContent.length) {
         this.#logger.warn('ElevenLabs stream ended with incomplete XML content');
       }
 
+      // no more tokens, mark eos
       ws.send(JSON.stringify({ text: '' }));
       eosSent = true;
     };
@@ -271,6 +283,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     const listenTask = async () => {
+      let finalReceived = false;
       const bstream = new AudioByteStream(sampleRateFromFormat(this.#opts.encoding), 1);
       while (!this.closed && !this.abortController.signal.aborted) {
         try {
@@ -281,17 +294,21 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               if (!eosSent) {
                 this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
               }
-              reject(new Error('WebSocket closed'));
+              if (!finalReceived) {
+                reject(new Error('WebSocket closed'));
+              }
             });
           }).then((msg) => {
             const json = JSON.parse(msg.toString());
-            if ('audio' in json) {
+            // remove the "audio" field from the json object when printing
+            if ('audio' in json && json.audio !== null) {
               const data = new Int8Array(Buffer.from(json.audio, 'base64'));
               for (const frame of bstream.write(data)) {
                 sendLastFrame(segmentId, false);
                 lastFrame = frame;
               }
-            } else if ('isFinal' in json) {
+            } else if (json.isFinal) {
+              finalReceived = true;
               for (const frame of bstream.flush()) {
                 sendLastFrame(segmentId, false);
                 lastFrame = frame;
@@ -305,7 +322,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               }
             }
           });
-        } catch {
+        } catch (err) {
+          this.#logger.warn({ err }, 'Error in listenTask from ElevenLabs WebSocket');
           break;
         }
       }
