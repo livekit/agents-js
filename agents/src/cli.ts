@@ -210,10 +210,14 @@ export const runApp = (opts: WorkerOptions) => {
         }
       };
 
-      downloadFiles().catch((error) => {
-        logger.fatal(`Error during file downloads: ${error}`);
-        process.exit(1);
-      });
+      downloadFiles()
+        .catch((error) => {
+          logger.fatal(`Error during file downloads: ${error}`);
+          process.exit(1);
+        })
+        .finally(() => {
+          process.exit(0);
+        });
     });
 
   program.parse();
