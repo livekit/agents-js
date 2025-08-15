@@ -504,6 +504,7 @@ export class LLMStream extends llm.LLMStream {
   #client: OpenAI;
   #providerFmt: llm.ProviderFormat;
   #extraKwargs: Record<string, any>;
+  private model: string | ChatModels;
 
   constructor(
     llm: LLM,
@@ -529,10 +530,10 @@ export class LLMStream extends llm.LLMStream {
     this.#client = client;
     this.#providerFmt = providerFmt;
     this.#extraKwargs = extraKwargs;
-    this.#run(model);
+    this.model = model;
   }
 
-  async #run(model: string | ChatModels) {
+  protected async run(): Promise<void> {
     try {
       const messages = (await this.chatCtx.toProviderFormat(
         this.#providerFmt,
@@ -552,7 +553,7 @@ export class LLMStream extends llm.LLMStream {
         : undefined;
 
       const stream = await this.#client.chat.completions.create({
-        model,
+        model: this.model,
         messages,
         tools,
         stream: true,

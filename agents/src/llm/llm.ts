@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { delay } from '@std/async';
 import { EventEmitter } from 'node:events';
+import { assertError } from '../_exceptions.js';
+import { APIConnectionError, APIError } from '../errors.js';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import type { APIConnectOptions } from '../types.js';
@@ -29,8 +32,17 @@ export interface ChatChunk {
   usage?: CompletionUsage;
 }
 
+export interface LLMError {
+  type: 'llm_error';
+  timestamp: number;
+  label: string;
+  error: Error;
+  recoverable: boolean;
+}
+
 export type LLMCallbacks = {
   ['metrics_collected']: (metrics: LLMMetrics) => void;
+  ['error']: (error: LLMError) => void;
 };
 
 export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCallbacks>) {
@@ -117,6 +129,59 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       this.output.close();
       this.closed = true;
     });
+
+    // this is a hack to immitate asyncio.create_task so that mainTask
+    // is run **after** the constructor has finished. Otherwise we get
+    // runtime error when trying to access class variables in the
+    // `run` method.
+    Promise.resolve().then(() => this.mainTask());
+  }
+
+  private async mainTask() {
+    for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
+      try {
+        await this.run();
+      } catch (error) {
+        assertError(error);
+        if (error instanceof APIError) {
+          const retryInterval = this._connOptions._intervalForRetry(i);
+
+          if (this._connOptions.maxRetry === 0 || !error.retryable) {
+            this.emitError({ error, recoverable: false });
+            throw error;
+          } else if (i === this._connOptions.maxRetry) {
+            this.emitError({ error, recoverable: false });
+            throw new APIConnectionError(
+              `failed to generate LLM completion after ${this._connOptions.maxRetry + 1} attempts`,
+              { retryable: false },
+            );
+          } else {
+            this.emitError({ error, recoverable: true });
+            this.logger.warn(
+              { llm: this.#llm.label(), attempt: i + 1, error },
+              `failed to generate LLM completion, retrying in ${retryInterval}s`,
+            );
+          }
+
+          if (retryInterval > 0) {
+            await delay(retryInterval);
+          }
+        } else {
+          this.emitError({ error, recoverable: false });
+          throw error;
+        }
+      }
+    }
+  }
+
+  private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
+    this.#llm.emit('error', {
+      type: 'llm_error',
+      timestamp: Date.now(),
+      label: this.#llm.label(),
+      error,
+      recoverable,
+    });
   }
 
   protected async monitorMetrics() {
@@ -158,6 +223,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     };
     this.#llm.emit('metrics_collected', metrics);
   }
+
+  protected abstract run(): Promise<void>;
 
   /** The function context of this stream. */
   get toolCtx(): ToolContext | undefined {

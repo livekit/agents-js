@@ -305,10 +305,9 @@ export class LLMStream extends llm.LLMStream {
     this.#model = model;
     this.#geminiTools = geminiTools;
     this.#extraKwargs = extraKwargs;
-    this.#run();
   }
 
-  async #run(): Promise<void> {
+  protected async run(): Promise<void> {
     let retryable = true;
     const requestId = `google_${Date.now()}`;
 
