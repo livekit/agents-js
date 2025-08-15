@@ -23,6 +23,8 @@ export interface SerializedImage {
   externalUrl?: string;
 }
 
+const RGBA_NUM_CHANNELS = 4;
+
 function convertToRGBA(frame: VideoFrame): VideoFrame {
   try {
     return frame.convert(VideoBufferType.RGBA);
@@ -82,7 +84,7 @@ export async function serializeImage(image: ImageContent): Promise<SerializedIma
       raw: {
         width: image.image.width,
         height: image.image.height,
-        channels: 4,
+        channels: RGBA_NUM_CHANNELS,
       },
     });
 
