@@ -23,18 +23,16 @@ export interface SerializedImage {
   externalUrl?: string;
 }
 
-function getChannelsFromVideoBufferType(type: VideoBufferType): 3 | 4 {
-  switch (type) {
-    case VideoBufferType.RGBA:
-    case VideoBufferType.ABGR:
-    case VideoBufferType.ARGB:
-    case VideoBufferType.BGRA:
-      return 4;
-    case VideoBufferType.RGB24:
-      return 3;
-    default:
-      // YUV formats (I420, I420A, I422, I444, I010, NV12) need conversion
-      throw new Error(`Unsupported VideoBufferType: ${type}. Only RGB/RGBA formats are supported.`);
+const RGBA_NUM_CHANNELS = 4;
+
+function convertToRGBA(frame: VideoFrame): VideoFrame {
+  try {
+    return frame.convert(VideoBufferType.RGBA);
+  } catch (error) {
+    throw new Error(
+      `Failed to convert YUV format ${frame.type} to RGB: ${error}. ` +
+        `Consider using RGB/RGBA formats or converting on the client side.`,
+    );
   }
 }
 
@@ -79,12 +77,14 @@ export async function serializeImage(image: ImageContent): Promise<SerializedIma
       externalUrl: image.image,
     };
   } else if (image.image instanceof VideoFrame) {
+    const frame = convertToRGBA(image.image);
+
     // Sharp needs to know the format of raw pixel data
-    let encoded = sharp(Buffer.from(image.image.data), {
+    let encoded = sharp(frame.data, {
       raw: {
         width: image.image.width,
         height: image.image.height,
-        channels: getChannelsFromVideoBufferType(image.image.type),
+        channels: RGBA_NUM_CHANNELS,
       },
     });
 
