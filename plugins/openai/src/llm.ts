@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { APIConnectOptions } from '@livekit/agents';
-import { APITimeoutError, DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
+import { APIConnectionError, toError } from '@livekit/agents';
+import { APIStatusError, APITimeoutError, DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
 import { AzureOpenAI, OpenAI } from 'openai';
 import type {
   CerebrasChatModels,
@@ -591,6 +592,21 @@ export class LLMStream extends llm.LLMStream {
     } catch (error) {
       if (error instanceof OpenAI.APIConnectionTimeoutError) {
         throw new APITimeoutError({ options: { retryable } });
+      } else if (error instanceof OpenAI.APIError) {
+        throw new APIStatusError({
+          message: error.message,
+          options: {
+            statusCode: error.status,
+            body: error.error,
+            requestId: error.request_id,
+            retryable,
+          },
+        });
+      } else {
+        throw new APIConnectionError({
+          message: toError(error).message,
+          options: { retryable },
+        });
       }
     } finally {
       this.queue.close();
