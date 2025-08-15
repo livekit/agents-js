@@ -28,12 +28,54 @@ export interface ImageContent {
   _cache: Record<any, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
+export function createImageContent(params: {
+  image: string | VideoFrame;
+  id?: string;
+  inferenceDetail?: 'auto' | 'high' | 'low';
+  inferenceWidth?: number;
+  inferenceHeight?: number;
+  mimeType?: string;
+}): ImageContent {
+  const {
+    image,
+    id = shortuuid('img_'),
+    inferenceDetail = 'auto',
+    inferenceWidth,
+    inferenceHeight,
+    mimeType,
+  } = params;
+
+  return {
+    id,
+    type: 'image_content',
+    image,
+    inferenceDetail,
+    inferenceWidth,
+    inferenceHeight,
+    mimeType,
+    _cache: {},
+  };
+}
+
 export interface AudioContent {
   type: 'audio_content';
 
   frame: AudioFrame[];
 
   transcript?: string;
+}
+
+export function createAudioContent(params: {
+  frame: AudioFrame[];
+  transcript?: string;
+}): AudioContent {
+  const { frame, transcript } = params;
+
+  return {
+    type: 'audio_content',
+    frame,
+    transcript,
+  };
 }
 
 export type ChatContent = ImageContent | AudioContent | string;
