@@ -133,13 +133,13 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    Promise.resolve().then(() => this.mainTask());
+    Promise.resolve().then(() => this.mainTask().then(() => this.queue.close()));
   }
 
   private async mainTask() {
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
-        await this.run();
+        return await this.run();
       } catch (error) {
         if (error instanceof APIError) {
           const retryInterval = this._connOptions._intervalForRetry(i);
