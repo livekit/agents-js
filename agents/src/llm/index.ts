@@ -19,6 +19,8 @@ export {
 export {
   ChatContext,
   ChatMessage,
+  createAudioContent,
+  createImageContent,
   FunctionCall,
   FunctionCallOutput,
   type AudioContent,
