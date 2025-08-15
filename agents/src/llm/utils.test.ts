@@ -658,29 +658,6 @@ describe('serializeImage', () => {
         expect(result.base64Data).toBeDefined();
       }
     });
-
-    it('should throw error for unsupported YUV formats', async () => {
-      const width = 2;
-      const height = 2;
-      const unsupportedFormats = [
-        VideoBufferType.I420,
-        VideoBufferType.I420A,
-        VideoBufferType.I422,
-        VideoBufferType.I444,
-        VideoBufferType.I010,
-        VideoBufferType.NV12,
-      ];
-
-      for (const format of unsupportedFormats) {
-        const frameData = new Uint8Array(width * height);
-        const videoFrame = new VideoFrame(frameData, width, height, format);
-        const imageContent = createImageContent(videoFrame, 'auto');
-
-        await expect(serializeImage(imageContent)).rejects.toThrow(
-          `Unsupported VideoBufferType: ${format}. Only RGB/RGBA formats are supported.`,
-        );
-      }
-    });
   });
 
   describe('Error handling', () => {

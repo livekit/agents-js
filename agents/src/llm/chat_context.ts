@@ -38,6 +38,48 @@ export interface AudioContent {
 
 export type ChatContent = ImageContent | AudioContent | string;
 
+export function createImageContent(params: {
+  image: string | VideoFrame;
+  id?: string;
+  inferenceDetail?: 'auto' | 'high' | 'low';
+  inferenceWidth?: number;
+  inferenceHeight?: number;
+  mimeType?: string;
+}): ImageContent {
+  const {
+    image,
+    id = shortuuid('img_'),
+    inferenceDetail = 'auto',
+    inferenceWidth,
+    inferenceHeight,
+    mimeType,
+  } = params;
+
+  return {
+    id,
+    type: 'image_content',
+    image,
+    inferenceDetail,
+    inferenceWidth,
+    inferenceHeight,
+    mimeType,
+    _cache: {},
+  };
+}
+
+export function createAudioContent(params: {
+  frame: AudioFrame[];
+  transcript?: string;
+}): AudioContent {
+  const { frame, transcript } = params;
+
+  return {
+    type: 'audio_content',
+    frame,
+    transcript,
+  };
+}
+
 export class ChatMessage {
   readonly id: string;
 
