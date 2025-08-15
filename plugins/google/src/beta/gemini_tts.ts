@@ -99,18 +99,20 @@ export class TTS extends tts.TTS {
 
     if (useVertexai) {
       if (!finalProject) {
-        throw new APIConnectionError(
-          'Project ID is required for Vertex AI. Set via project option or GOOGLE_CLOUD_PROJECT environment variable',
-        );
+        throw new APIConnectionError({
+          message:
+            'Project ID is required for Vertex AI. Set via project option or GOOGLE_CLOUD_PROJECT environment variable',
+        });
       }
       finalApiKey = undefined;
     } else {
       finalProject = undefined;
       finalLocation = undefined;
       if (!finalApiKey) {
-        throw new APIConnectionError(
-          'API key is required for Google API either via apiKey or GOOGLE_API_KEY environment variable',
-        );
+        throw new APIConnectionError({
+          message:
+            'API key is required for Google API either via apiKey or GOOGLE_API_KEY environment variable',
+        });
       }
     }
 
@@ -223,38 +225,38 @@ export class ChunkedStream extends tts.ChunkedStream {
 
       if (err.code && err.code >= 400 && err.code < 500) {
         if (err.code === 429) {
-          throw new APIStatusError(
-            `Gemini TTS: Rate limit error - ${err.message || 'Unknown error'}`,
-            {
+          throw new APIStatusError({
+            message: `Gemini TTS: Rate limit error - ${err.message || 'Unknown error'}`,
+            options: {
               statusCode: 429,
               retryable: true,
             },
-          );
+          });
         } else {
-          throw new APIStatusError(
-            `Gemini TTS: Client error (${err.code}) - ${err.message || 'Unknown error'}`,
-            {
+          throw new APIStatusError({
+            message: `Gemini TTS: Client error (${err.code}) - ${err.message || 'Unknown error'}`,
+            options: {
               statusCode: err.code,
               retryable: false,
             },
-          );
+          });
         }
       }
 
       if (err.code && err.code >= 500) {
-        throw new APIStatusError(
-          `Gemini TTS: Server error (${err.code}) - ${err.message || 'Unknown error'}`,
-          {
+        throw new APIStatusError({
+          message: `Gemini TTS: Server error (${err.code}) - ${err.message || 'Unknown error'}`,
+          options: {
             statusCode: err.code,
             retryable: true,
           },
-        );
+        });
       }
 
-      throw new APIConnectionError(
-        `Gemini TTS: Connection error - ${err.message || 'Unknown error'}`,
-        { retryable: true },
-      );
+      throw new APIConnectionError({
+        message: `Gemini TTS: Connection error - ${err.message || 'Unknown error'}`,
+        options: { retryable: true },
+      });
     } finally {
       this.queue.close();
     }

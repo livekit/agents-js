@@ -636,3 +636,27 @@ export function resampleStream({
   });
   return stream.pipeThrough(transformStream);
 }
+
+export class InvalidErrorType extends Error {
+  readonly error: unknown;
+
+  constructor(error: unknown) {
+    super(`Expected error, got ${error} (${typeof error})`);
+    this.error = error;
+    Error.captureStackTrace(this, InvalidErrorType);
+  }
+}
+
+/**
+ * In JS an error can be any arbitrary value.
+ * This function converts an unknown error to an Error and stores the original value in the error object.
+ *
+ * @param error - The error to convert.
+ * @returns An Error.
+ */
+export function toError(error: unknown): Error {
+  if (error instanceof Error) {
+    return error;
+  }
+  throw new InvalidErrorType(error);
+}

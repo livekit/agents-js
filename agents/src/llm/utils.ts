@@ -208,13 +208,6 @@ export async function executeToolCall(
   }
 }
 
-export function toError(error: unknown): Error {
-  if (error instanceof Error) {
-    return error;
-  }
-  return new Error(String(error));
-}
-
 /**
  * Standard dynamic-programming LCS to get the common subsequence
  * of IDs (in order) that appear in both old_ids and new_ids.

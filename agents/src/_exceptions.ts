@@ -6,6 +6,7 @@ export class AssignmentTimeoutError extends Error {
   constructor(message = 'Assignment timeout occurred') {
     super(message);
     this.name = 'AssignmentTimeoutError';
+    Error.captureStackTrace(this, AssignmentTimeoutError);
   }
 }
 
@@ -16,6 +17,8 @@ interface APIErrorOptions {
   body?: object | null;
   retryable?: boolean;
 }
+
+const API_ERROR_SYMBOL = Symbol('APIError');
 
 /**
  * Raised when an API request failed.
@@ -31,6 +34,13 @@ export class APIError extends Error {
 
     this.body = body;
     this.retryable = retryable;
+    Error.captureStackTrace(this, APIError);
+    Object.defineProperty(this, API_ERROR_SYMBOL, {
+      value: true,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
   }
 
   toString(): string {
@@ -53,18 +63,23 @@ export class APIStatusError extends APIError {
   readonly statusCode: number;
   readonly requestId: string | null;
 
-  constructor(
-    message: string,
-    { statusCode = -1, requestId = null, body = null, retryable }: APIStatusErrorOptions = {},
-  ) {
+  constructor({
+    message = 'API error.',
+    options = {},
+  }: {
+    message?: string;
+    options?: APIStatusErrorOptions;
+  }) {
+    const statusCode = options.statusCode ?? -1;
     // 4xx errors are not retryable
-    const isRetryable = retryable ?? !(statusCode >= 400 && statusCode < 500);
+    const isRetryable = options.retryable ?? !(statusCode >= 400 && statusCode < 500);
 
-    super(message, { body, retryable: isRetryable });
+    super(message, { body: options.body, retryable: isRetryable });
     this.name = 'APIStatusError';
 
     this.statusCode = statusCode;
-    this.requestId = requestId;
+    this.requestId = options.requestId ?? null;
+    Error.captureStackTrace(this, APIStatusError);
   }
 
   toString(): string {
@@ -79,19 +94,19 @@ export class APIStatusError extends APIError {
 }
 
 /**
- * Interface for API connection error options
- */
-interface APIConnectionErrorOptions {
-  retryable?: boolean;
-}
-
-/**
  * Raised when an API request failed due to a connection error.
  */
 export class APIConnectionError extends APIError {
-  constructor(message = 'Connection error.', { retryable = true }: APIConnectionErrorOptions = {}) {
-    super(message, { body: null, retryable });
+  constructor({
+    message = 'Connection error.',
+    options = {},
+  }: {
+    message?: string;
+    options?: APIErrorOptions;
+  }) {
+    super(message, { body: null, retryable: options.retryable ?? true });
     this.name = 'APIConnectionError';
+    Error.captureStackTrace(this, APIConnectionError);
   }
 }
 
@@ -99,17 +114,21 @@ export class APIConnectionError extends APIError {
  * Raised when an API request timed out.
  */
 export class APITimeoutError extends APIConnectionError {
-  constructor(
+  constructor({
     message = 'Request timed out.',
-    { retryable = true }: APIConnectionErrorOptions = {},
-  ) {
-    super(message, { retryable });
+    options = {},
+  }: {
+    message?: string;
+    options?: APIErrorOptions;
+  }) {
+    const retryable = options?.retryable ?? true;
+
+    super({ message, options: { retryable } });
     this.name = 'APITimeoutError';
+    Error.captureStackTrace(this, APITimeoutError);
   }
 }
 
-export function assertError(error: unknown): asserts error is Error {
-  if (!(error instanceof Error)) {
-    throw new Error(`Expected error, got ${error}`);
-  }
+export function isAPIError(error: unknown): error is APIError {
+  return error !== null && typeof error === 'object' && API_ERROR_SYMBOL in error;
 }

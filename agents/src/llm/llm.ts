@@ -4,12 +4,11 @@
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { delay } from '@std/async';
 import { EventEmitter } from 'node:events';
-import { assertError } from '../_exceptions.js';
-import { APIConnectionError, APIError } from '../errors.js';
+import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import type { APIConnectOptions } from '../types.js';
-import { AsyncIterableQueue } from '../utils.js';
+import { AsyncIterableQueue, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
 import type { ToolChoice, ToolContext } from './tool_context.js';
 
@@ -142,7 +141,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       try {
         await this.run();
       } catch (error) {
-        assertError(error);
         if (error instanceof APIError) {
           const retryInterval = this._connOptions._intervalForRetry(i);
 
@@ -151,10 +149,10 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
             throw error;
           } else if (i === this._connOptions.maxRetry) {
             this.emitError({ error, recoverable: false });
-            throw new APIConnectionError(
-              `failed to generate LLM completion after ${this._connOptions.maxRetry + 1} attempts`,
-              { retryable: false },
-            );
+            throw new APIConnectionError({
+              message: `failed to generate LLM completion after ${this._connOptions.maxRetry + 1} attempts`,
+              options: { retryable: false },
+            });
           } else {
             this.emitError({ error, recoverable: true });
             this.logger.warn(
@@ -167,7 +165,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
             await delay(retryInterval);
           }
         } else {
-          this.emitError({ error, recoverable: false });
+          this.emitError({ error: toError(error), recoverable: false });
           throw error;
         }
       }

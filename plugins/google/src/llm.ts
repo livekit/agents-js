@@ -347,13 +347,13 @@ export class LLMStream extends llm.LLMStream {
 
       for await (const chunk of response) {
         if (chunk.promptFeedback) {
-          throw new APIStatusError(
-            `Prompt feedback error: ${JSON.stringify(chunk.promptFeedback)}`,
-            {
+          throw new APIStatusError({
+            message: `Prompt feedback error: ${JSON.stringify(chunk.promptFeedback)}`,
+            options: {
               retryable: false,
               requestId,
             },
-          );
+          });
         }
 
         if (!chunk.candidates || !chunk.candidates[0]?.content?.parts) {
@@ -398,36 +398,39 @@ export class LLMStream extends llm.LLMStream {
 
       if (err.code && err.code >= 400 && err.code < 500) {
         if (err.code === 429) {
-          throw new APIStatusError(
-            `Google LLM: Rate limit error - ${err.message || 'Unknown error'}`,
-            {
+          throw new APIStatusError({
+            message: `Google LLM: Rate limit error - ${err.message || 'Unknown error'}`,
+            options: {
               statusCode: 429,
               retryable: true,
             },
-          );
+          });
         } else {
-          throw new APIStatusError(
-            `Google LLM: Client error (${err.code}) - ${err.message || 'Unknown error'}`,
-            {
+          throw new APIStatusError({
+            message: `Google LLM: Client error (${err.code}) - ${err.message || 'Unknown error'}`,
+            options: {
               statusCode: err.code,
               retryable: false,
             },
-          );
+          });
         }
       }
 
       if (err.code && err.code >= 500) {
-        throw new APIStatusError(
-          `Google LLM: Server error (${err.code}) - ${err.message || 'Unknown error'}`,
-          {
+        throw new APIStatusError({
+          message: `Google LLM: Server error (${err.code}) - ${err.message || 'Unknown error'}`,
+          options: {
             statusCode: err.code,
             retryable,
           },
-        );
+        });
       }
 
-      throw new APIConnectionError(`Google LLM: API error - ${err.message || 'Unknown error'}`, {
-        retryable,
+      throw new APIConnectionError({
+        message: `Google LLM: API error - ${err.message || 'Unknown error'}`,
+        options: {
+          retryable,
+        },
       });
     } finally {
       this.queue.close();
