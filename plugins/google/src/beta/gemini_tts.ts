@@ -173,10 +173,9 @@ export class ChunkedStream extends tts.ChunkedStream {
   constructor(inputText: string, tts: TTS) {
     super(inputText, tts);
     this.#tts = tts;
-    this.#run();
   }
 
-  async #run() {
+  protected async run() {
     const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#tts.sampleRate, this.#tts.numChannels);
 

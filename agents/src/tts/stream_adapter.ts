@@ -42,11 +42,9 @@ export class StreamAdapterWrapper extends SynthesizeStream {
     this.#tts = tts;
     this.#sentenceStream = sentenceTokenizer.stream();
     this.label = `tts.StreamAdapterWrapper<${this.#tts.label}>`;
-
-    this.#run();
   }
 
-  async #run() {
+  protected async run() {
     const forwardInput = async () => {
       for await (const input of this.input) {
         if (this.abortController.signal.aborted) break;

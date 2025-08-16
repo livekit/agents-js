@@ -80,15 +80,16 @@ export class TTS extends tts.TTS {
 
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'openai.ChunkedStream';
+  private stream: Promise<any>;
 
   // set Promise<T> to any because OpenAI returns an annoying Response type
   constructor(tts: TTS, text: string, stream: Promise<any>) {
     super(text, tts);
-    this.#run(stream);
+    this.stream = stream;
   }
 
-  async #run(stream: Promise<Response>) {
-    const buffer = await stream.then((r) => r.arrayBuffer());
+  protected async run() {
+    const buffer = await this.stream.then((r) => r.arrayBuffer());
     const requestId = shortuuid();
     const audioByteStream = new AudioByteStream(OPENAI_TTS_SAMPLE_RATE, OPENAI_TTS_CHANNELS);
     const frames = audioByteStream.write(buffer);

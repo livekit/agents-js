@@ -68,10 +68,9 @@ export class ChunkedStream extends tts.ChunkedStream {
     super(text, tts);
     this.#text = text;
     this.#opts = opts;
-    this.#run();
   }
 
-  async #run() {
+  protected async run() {
     const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const json = toResembleOptions(this.#opts);
@@ -164,10 +163,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   constructor(tts: TTS, opts: TTSOptions) {
     super(tts);
     this.#opts = opts;
-    this.#run();
   }
 
-  async #run() {
+  protected async run() {
     const requestId = shortuuid();
     let closing = false;
     const activeRequests = new Set<number>();
