@@ -84,10 +84,9 @@ export class ChunkedStream extends tts.ChunkedStream {
     super(text, tts);
     this.#text = text;
     this.#opts = opts;
-    this.#run();
   }
 
-  async #run() {
+  protected async run() {
     const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const json = toCartesiaOptions(this.#opts);

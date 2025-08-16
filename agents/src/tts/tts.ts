@@ -362,13 +362,74 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   abstract label: string;
   #text: string;
   #tts: TTS;
+  private _connOptions: APIConnectOptions;
+  private logger = log();
 
-  constructor(text: string, tts: TTS) {
+  constructor(
+    text: string,
+    tts: TTS,
+    connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+  ) {
     this.#text = text;
     this.#tts = tts;
+    this._connOptions = connOptions;
 
     this.monitorMetrics();
+
+    // this is a hack to immitate asyncio.create_task so that mainTask
+    // is run **after** the constructor has finished. Otherwise we get
+    // runtime error when trying to access class variables in the
+    // `run` method.
+    Promise.resolve().then(() => this.mainTask().then(() => this.queue.close()));
   }
+
+  private async mainTask() {
+    for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
+      try {
+        return await this.run();
+      } catch (error) {
+        if (error instanceof APIStatusError) {
+          const retryInterval = this._connOptions._intervalForRetry(i);
+
+          if (this._connOptions.maxRetry === 0 || !error.retryable) {
+            this.emitError({ error, recoverable: false });
+            throw error;
+          } else if (i === this._connOptions.maxRetry) {
+            this.emitError({ error, recoverable: false });
+            throw new APIConnectionError({
+              message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
+              options: { retryable: false },
+            });
+          } else {
+            this.emitError({ error, recoverable: true });
+            this.logger.warn(
+              { tts: this.#tts.label, attempt: i + 1, error },
+              `failed to generate TTS completion, retrying in ${retryInterval}s`,
+            );
+          }
+
+          if (retryInterval > 0) {
+            await delay(retryInterval);
+          }
+        } else {
+          this.emitError({ error: toError(error), recoverable: false });
+          throw error;
+        }
+      }
+    }
+  }
+
+  private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
+    this.#tts.emit('error', {
+      type: 'tts_error',
+      timestamp: Date.now(),
+      label: this.#tts.label,
+      error,
+      recoverable,
+    });
+  }
+
+  protected abstract run(): Promise<void>;
 
   get inputText(): string {
     return this.#text;
