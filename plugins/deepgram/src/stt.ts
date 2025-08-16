@@ -134,11 +134,10 @@ export class SpeechStream extends stt.SpeechStream {
       (duration) => this.onAudioDurationReport(duration),
       { duration: 5.0 },
     );
-
-    this.#run();
   }
 
-  async #run(maxRetry = 32) {
+  protected async run() {
+    const maxRetry = 32;
     let retries = 0;
     let ws: WebSocket;
     while (!this.input.closed) {
