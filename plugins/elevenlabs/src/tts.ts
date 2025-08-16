@@ -153,11 +153,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
     Object.entries(params).forEach(([k, v]) => this.streamURL.searchParams.append(k, v));
     this.streamURL.protocol = this.streamURL.protocol.replace('http', 'ws');
-
-    this.#run();
   }
 
-  async #run() {
+  protected async run() {
     const segments = new AsyncIterableQueue<tokenize.WordStream>();
 
     const tokenizeInput = async () => {

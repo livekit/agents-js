@@ -164,10 +164,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   constructor(tts: TTS, opts: TTSOptions) {
     super(tts);
     this.#opts = opts;
-    this.#run();
   }
 
-  async #run() {
+  protected async run() {
     const requestId = shortuuid();
     let closing = false;
     const activeRequests = new Set<number>();

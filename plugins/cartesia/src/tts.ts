@@ -145,14 +145,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   constructor(tts: TTS, opts: TTSOptions) {
     super(tts);
     this.#opts = opts;
-    this.#run();
   }
 
   updateOptions(opts: Partial<TTSOptions>) {
     this.#opts = { ...this.#opts, ...opts };
   }
 
-  async #run() {
+  protected async run() {
     const requestId = shortuuid();
     let closing = false;
 
