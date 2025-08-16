@@ -21,7 +21,7 @@ import * as tts from './tts/index.js';
 import * as voice from './voice/index.js';
 
 export * from './audio.js';
-export * from './errors.js';
+export * from './_exceptions.js';
 export * from './generator.js';
 export * from './inference_runner.js';
 export * from './job.js';

@@ -815,14 +815,16 @@ export class RealtimeSession extends llm.RealtimeSession {
 
         if (maxRetries === 0) {
           this.emitError(error as Error, false);
-          throw new APIConnectionError('Failed to connect to Gemini Live');
+          throw new APIConnectionError({
+            message: 'Failed to connect to Gemini Live',
+          });
         }
 
         if (this.numRetries >= maxRetries) {
           this.emitError(error as Error, false);
-          throw new APIConnectionError(
-            `Failed to connect to Gemini Live after ${maxRetries} attempts`,
-          );
+          throw new APIConnectionError({
+            message: `Failed to connect to Gemini Live after ${maxRetries} attempts`,
+          });
         }
 
         const retryInterval =
