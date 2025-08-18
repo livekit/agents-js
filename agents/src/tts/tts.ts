@@ -3,12 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { delay } from '@std/async';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
+import { APIConnectionError, APIStatusError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
-import { AsyncIterableQueue, mergeFrames } from '../utils.js';
+import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import { AsyncIterableQueue, mergeFrames, toError } from '../utils.js';
 
 /** SynthesizedAudio is a packet of speech synthesis as returned by the TTS. */
 export interface SynthesizedAudio {
@@ -35,8 +38,17 @@ export interface TTSCapabilities {
   streaming: boolean;
 }
 
+export interface TTSError {
+  type: 'tts_error';
+  timestamp: number;
+  label: string;
+  error: Error;
+  recoverable: boolean;
+}
+
 export type TTSCallbacks = {
   ['metrics_collected']: (metrics: TTSMetrics) => void;
+  ['error']: (error: TTSError) => void;
 };
 
 /**
@@ -117,6 +129,7 @@ export abstract class SynthesizeStream
   #metricsPendingTexts: string[] = [];
   #metricsText = '';
   #monitorMetricsTask?: Promise<void>;
+  private _connOptions: APIConnectOptions;
   protected abortController = new AbortController();
 
   private deferredInputStream: DeferredReadableStream<
@@ -124,10 +137,11 @@ export abstract class SynthesizeStream
   >;
   private logger = log();
 
-  constructor(tts: TTS) {
+  constructor(tts: TTS, connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS) {
     this.#tts = tts;
+    this._connOptions = connOptions;
     this.deferredInputStream = new DeferredReadableStream();
-    this.mainTask();
+    this.pumpInput();
     this.abortController.signal.addEventListener('abort', () => {
       this.deferredInputStream.detachSource();
       // TODO (AJS-36) clean this up when we refactor with streams
@@ -135,10 +149,62 @@ export abstract class SynthesizeStream
       this.output.close();
       this.closed = true;
     });
+
+    // this is a hack to immitate asyncio.create_task so that mainTask
+    // is run **after** the constructor has finished. Otherwise we get
+    // runtime error when trying to access class variables in the
+    // `run` method.
+    Promise.resolve().then(() => this.mainTask().then(() => this.queue.close()));
+  }
+
+  private async mainTask() {
+    for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
+      try {
+        return await this.run();
+      } catch (error) {
+        if (error instanceof APIStatusError) {
+          const retryInterval = this._connOptions._intervalForRetry(i);
+
+          if (this._connOptions.maxRetry === 0 || !error.retryable) {
+            this.emitError({ error, recoverable: false });
+            throw error;
+          } else if (i === this._connOptions.maxRetry) {
+            this.emitError({ error, recoverable: false });
+            throw new APIConnectionError({
+              message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
+              options: { retryable: false },
+            });
+          } else {
+            this.emitError({ error, recoverable: true });
+            this.logger.warn(
+              { tts: this.#tts.label, attempt: i + 1, error },
+              `failed to synthesize speech, retrying in  ${retryInterval}s`,
+            );
+          }
+
+          if (retryInterval > 0) {
+            await delay(retryInterval);
+          }
+        } else {
+          this.emitError({ error: toError(error), recoverable: false });
+          throw error;
+        }
+      }
+    }
+  }
+
+  private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
+    this.#tts.emit('error', {
+      type: 'tts_error',
+      timestamp: Date.now(),
+      label: this.#tts.label,
+      error,
+      recoverable,
+    });
   }
 
   // TODO(AJS-37) Remove when refactoring TTS to use streams
-  protected async mainTask() {
+  protected async pumpInput() {
     const reader = this.deferredInputStream.stream.getReader();
     try {
       while (true) {
@@ -208,6 +274,8 @@ export abstract class SynthesizeStream
       emit();
     }
   }
+
+  protected abstract run(): Promise<void>;
 
   updateInputStream(text: ReadableStream<string>) {
     this.deferredInputStream.setSource(text);
@@ -294,13 +362,74 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   abstract label: string;
   #text: string;
   #tts: TTS;
+  private _connOptions: APIConnectOptions;
+  private logger = log();
 
-  constructor(text: string, tts: TTS) {
+  constructor(
+    text: string,
+    tts: TTS,
+    connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+  ) {
     this.#text = text;
     this.#tts = tts;
+    this._connOptions = connOptions;
 
     this.monitorMetrics();
+
+    // this is a hack to immitate asyncio.create_task so that mainTask
+    // is run **after** the constructor has finished. Otherwise we get
+    // runtime error when trying to access class variables in the
+    // `run` method.
+    Promise.resolve().then(() => this.mainTask().then(() => this.queue.close()));
   }
+
+  private async mainTask() {
+    for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
+      try {
+        return await this.run();
+      } catch (error) {
+        if (error instanceof APIStatusError) {
+          const retryInterval = this._connOptions._intervalForRetry(i);
+
+          if (this._connOptions.maxRetry === 0 || !error.retryable) {
+            this.emitError({ error, recoverable: false });
+            throw error;
+          } else if (i === this._connOptions.maxRetry) {
+            this.emitError({ error, recoverable: false });
+            throw new APIConnectionError({
+              message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
+              options: { retryable: false },
+            });
+          } else {
+            this.emitError({ error, recoverable: true });
+            this.logger.warn(
+              { tts: this.#tts.label, attempt: i + 1, error },
+              `failed to generate TTS completion, retrying in ${retryInterval}s`,
+            );
+          }
+
+          if (retryInterval > 0) {
+            await delay(retryInterval);
+          }
+        } else {
+          this.emitError({ error: toError(error), recoverable: false });
+          throw error;
+        }
+      }
+    }
+  }
+
+  private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
+    this.#tts.emit('error', {
+      type: 'tts_error',
+      timestamp: Date.now(),
+      label: this.#tts.label,
+      error,
+      recoverable,
+    });
+  }
+
+  protected abstract run(): Promise<void>;
 
   get inputText(): string {
     return this.#text;
