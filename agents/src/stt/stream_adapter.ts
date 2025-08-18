@@ -43,15 +43,13 @@ export class StreamAdapterWrapper extends SpeechStream {
     this.#stt = stt;
     this.#vadStream = vad.stream();
     this.label = `stt.StreamAdapterWrapper<${this.#stt.label}>`;
-
-    this.#run();
   }
 
   async monitorMetrics() {
     return; // do nothing
   }
 
-  async #run() {
+  protected async run() {
     const forwardInput = async () => {
       for await (const input of this.input) {
         if (input === SpeechStream.FLUSH_SENTINEL) {
