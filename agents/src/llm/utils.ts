@@ -23,14 +23,39 @@ export interface SerializedImage {
   externalUrl?: string;
 }
 
-const RGBA_NUM_CHANNELS = 4;
+function getChannelsFromVideoBufferType(type: VideoBufferType): 3 | 4 {
+  switch (type) {
+    case VideoBufferType.RGBA:
+    case VideoBufferType.ABGR:
+    case VideoBufferType.ARGB:
+    case VideoBufferType.BGRA:
+      return 4;
+    case VideoBufferType.RGB24:
+      return 3;
+    default:
+      // YUV formats (I420, I420A, I422, I444, I010, NV12) need conversion
+      throw new Error(`Unsupported VideoBufferType: ${type}. Only RGB/RGBA formats are supported.`);
+  }
+}
 
-function convertToRGBA(frame: VideoFrame): VideoFrame {
+function ensureRGBCompatible(frame: VideoFrame): VideoFrame {
+  // If the frame is already in an RGB/RGBA-compatible format, return it directly
+  if (
+    frame.type === VideoBufferType.RGBA ||
+    frame.type === VideoBufferType.BGRA ||
+    frame.type === VideoBufferType.ARGB ||
+    frame.type === VideoBufferType.ABGR ||
+    frame.type === VideoBufferType.RGB24
+  ) {
+    return frame;
+  }
+
+  // Otherwise, attempt conversion for other formats (like YUV)
   try {
     return frame.convert(VideoBufferType.RGBA);
   } catch (error) {
     throw new Error(
-      `Failed to convert YUV format ${frame.type} to RGB: ${error}. ` +
+      `Failed to convert format ${frame.type} to RGB: ${error}. ` +
         `Consider using RGB/RGBA formats or converting on the client side.`,
     );
   }
@@ -77,14 +102,15 @@ export async function serializeImage(image: ImageContent): Promise<SerializedIma
       externalUrl: image.image,
     };
   } else if (image.image instanceof VideoFrame) {
-    const frame = convertToRGBA(image.image);
+    const frame = ensureRGBCompatible(image.image);
+    const channels = getChannelsFromVideoBufferType(frame.type);
 
     // Sharp needs to know the format of raw pixel data
     let encoded = sharp(frame.data, {
       raw: {
-        width: image.image.width,
-        height: image.image.height,
-        channels: RGBA_NUM_CHANNELS,
+        width: frame.width,
+        height: frame.height,
+        channels,
       },
     });
 
