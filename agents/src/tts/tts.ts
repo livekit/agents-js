@@ -11,7 +11,7 @@ import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { AsyncIterableQueue, mergeFrames, toError } from '../utils.js';
+import { AsyncIterableQueue, mergeFrames, startSoon, toError } from '../utils.js';
 
 /** SynthesizedAudio is a packet of speech synthesis as returned by the TTS. */
 export interface SynthesizedAudio {
@@ -154,7 +154,7 @@ export abstract class SynthesizeStream
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    Promise.resolve().then(() => this.mainTask().then(() => this.queue.close()));
+    startSoon(() => this.mainTask().then(() => this.queue.close()));
   }
 
   private async mainTask() {

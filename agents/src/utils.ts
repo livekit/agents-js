@@ -660,3 +660,13 @@ export function toError(error: unknown): Error {
   }
   throw new InvalidErrorType(error);
 }
+
+/**
+ * This is a hack to immitate asyncio.create_task so that
+ * func will be run after the current event loop iteration.
+ *
+ * @param func - The function to run.
+ */
+export function startSoon(func: () => void) {
+  Promise.resolve().then(func);
+}
