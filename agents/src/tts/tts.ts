@@ -171,14 +171,14 @@ export abstract class SynthesizeStream
           } else if (i === this._connOptions.maxRetry) {
             this.emitError({ error, recoverable: false });
             throw new APIConnectionError({
-              message: `failed to generate LLM completion after ${this._connOptions.maxRetry + 1} attempts`,
+              message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
               options: { retryable: false },
             });
           } else {
             this.emitError({ error, recoverable: true });
             this.logger.warn(
               { tts: this.#tts.label, attempt: i + 1, error },
-              `failed to generate TTS completion, retrying in ${retryInterval}s`,
+              `failed to synthesize speech, retrying in  ${retryInterval}s`,
             );
           }
 
