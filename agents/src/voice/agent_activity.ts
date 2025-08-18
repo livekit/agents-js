@@ -78,7 +78,7 @@ export class AgentActivity implements RecognitionHooks {
   private turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
   private logger = log();
   private _draining = false;
-  private currentSpeech?: SpeechHandle;
+  private _currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private q_updated: Future;
   private speechTasks: Set<Promise<unknown>> = new Set();
@@ -271,6 +271,10 @@ export class AgentActivity implements RecognitionHooks {
     } finally {
       unlock();
     }
+  }
+
+  get currentSpeech(): SpeechHandle | undefined {
+    return this._currentSpeech;
   }
 
   get vad(): VAD | undefined {
@@ -603,13 +607,13 @@ export class AgentActivity implements RecognitionHooks {
     this.realtimeSession?.startUserActivity();
 
     if (
-      this.currentSpeech &&
-      !this.currentSpeech.interrupted &&
-      this.currentSpeech.allowInterruptions
+      this._currentSpeech &&
+      !this._currentSpeech.interrupted &&
+      this._currentSpeech.allowInterruptions
     ) {
-      this.logger.info({ 'speech id': this.currentSpeech.id }, 'speech interrupted by VAD');
+      this.logger.info({ 'speech id': this._currentSpeech.id }, 'speech interrupted by VAD');
       this.realtimeSession?.interrupt();
-      this.currentSpeech.interrupt();
+      this._currentSpeech.interrupt();
     }
   }
 
@@ -678,9 +682,9 @@ export class AgentActivity implements RecognitionHooks {
     if (
       this.stt &&
       this.turnDetection !== 'manual' &&
-      this.currentSpeech &&
-      this.currentSpeech.allowInterruptions &&
-      !this.currentSpeech.interrupted &&
+      this._currentSpeech &&
+      this._currentSpeech.allowInterruptions &&
+      !this._currentSpeech.interrupted &&
       this.agentSession.options.minInterruptionWords > 0 &&
       info.newTranscript.split(' ').length < this.agentSession.options.minInterruptionWords
     ) {
@@ -721,10 +725,10 @@ export class AgentActivity implements RecognitionHooks {
           throw new Error('Speech queue is empty');
         }
         const speechHandle = heapItem[2];
-        this.currentSpeech = speechHandle;
+        this._currentSpeech = speechHandle;
         speechHandle._authorizePlayout();
         await speechHandle.waitForPlayout();
-        this.currentSpeech = undefined;
+        this._currentSpeech = undefined;
       }
 
       // If we're draining and there are no more speech tasks, we can exit.
@@ -842,9 +846,9 @@ export class AgentActivity implements RecognitionHooks {
     return handle;
   }
 
-  interrupt() {
+  interrupt(): Future<void> {
     const future = new Future<void>();
-    const currentSpeech = this.currentSpeech;
+    const currentSpeech = this._currentSpeech;
 
     currentSpeech?.interrupt();
 
@@ -867,7 +871,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private onPipelineReplyDone(): void {
-    if (!this.speechQueue.peek() && (!this.currentSpeech || this.currentSpeech.done)) {
+    if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done)) {
       this.agentSession._updateAgentState('listening');
     }
   }
@@ -895,8 +899,8 @@ export class AgentActivity implements RecognitionHooks {
       this.realtimeSession?.commitAudio();
     }
 
-    if (this.currentSpeech) {
-      if (!this.currentSpeech.allowInterruptions) {
+    if (this._currentSpeech) {
+      if (!this._currentSpeech.allowInterruptions) {
         this.logger.warn(
           { user_input: info.newTranscript },
           'skipping user input, current speech generation cannot be interrupted',
@@ -905,11 +909,11 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       this.logger.info(
-        { 'speech id': this.currentSpeech.id },
+        { 'speech id': this._currentSpeech.id },
         'speech interrupted, new user turn detected',
       );
 
-      this.currentSpeech.interrupt();
+      this._currentSpeech.interrupt();
       this.realtimeSession?.interrupt();
     }
 

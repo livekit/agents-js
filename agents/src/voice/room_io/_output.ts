@@ -336,8 +336,8 @@ export class ParticipantAudioOutput extends AudioOutput {
     return this.startedFuture.done;
   }
 
-  async start(): Promise<void> {
-    await this.publishTrack();
+  async start(signal: AbortSignal): Promise<void> {
+    await this.publishTrack(signal);
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
@@ -411,16 +411,26 @@ export class ParticipantAudioOutput extends AudioOutput {
     this.interruptedFuture.resolve();
   }
 
-  private async publishTrack() {
+  private async publishTrack(signal: AbortSignal) {
     const track = LocalAudioTrack.createAudioTrack('roomio_audio', this.audioSource);
     this.publication = await this.room.localParticipant?.publishTrack(
       track,
       new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
     );
+
+    if (signal.aborted) {
+      return;
+    }
+
     await this.publication?.waitForSubscription();
 
     if (!this.startedFuture.done) {
       this.startedFuture.resolve();
     }
+  }
+
+  async close() {
+    // TODO(AJS-106): add republish track
+    await this.audioSource.close();
   }
 }
