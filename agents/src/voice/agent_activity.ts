@@ -342,12 +342,8 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  attachAudioInput(audioStream: ReadableStream<AudioFrame>): void {
-    if (this.audioStream.isSourceSet) {
-      this.logger.debug('detaching existing audio input in agent activity');
-      this.audioStream.detachSource();
-    }
-
+  updateAudioInput(audioStream: ReadableStream<AudioFrame>): void {
+    this.detachAudioInput();
     /**
      * We need to add a deferred ReadableStream layer on top of the audioStream from the agent session.
      * The tee() operation should be applied to the deferred stream, not the original audioStream.
@@ -367,7 +363,9 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   detachAudioInput(): void {
-    this.audioStream.detachSource();
+    if (this.audioStream.isSourceSet) {
+      this.audioStream.detachSource();
+    }
   }
 
   commitUserTurn() {
