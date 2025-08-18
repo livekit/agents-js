@@ -449,18 +449,18 @@ export class RoomIO {
     this.room.off(RoomEvent.ParticipantConnected, this.onParticipantConnected);
     this.room.off(RoomEvent.ConnectionStateChanged, this.onConnectionStateChanged);
     this.room.off(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
+    this.agentSession.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
+    this.agentSession.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
 
     await this.initTask?.cancelAndWait();
-    await this.forwardUserTranscriptTask?.cancelAndWait();
 
-    this.userTranscriptStream.writable.close();
-    this.userTranscriptStream.readable.cancel();
+    // Close stream FIRST so reader.read() in forwardUserTranscript can exit.
+    // This is a workaround for a race condition in the stream API.
+    this.userTranscriptWriter.close();
+    await this.forwardUserTranscriptTask?.cancelAndWait();
 
     await this.audioInput?.close();
     await this.participantAudioOutput?.close();
     await this.transcriptionSynchronizer?.close();
-
-    this.room.off(RoomEvent.ParticipantConnected, this.onParticipantConnected);
-    this.room.off(RoomEvent.ConnectionStateChanged, this.onConnectionStateChanged);
   }
 }

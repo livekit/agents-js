@@ -394,15 +394,17 @@ export class AgentSession<
     await this.activity?.drain();
     await this.activity?.currentSpeech?.waitForPlayout();
 
+    this.activity?.detachAudioInput();
+
     // detach the inputs and outputs
     this.input.audio = null;
     this.output.audio = null;
     this.output.transcription = null;
 
-    this.roomIO?.close();
+    await this.roomIO?.close();
     this.roomIO = undefined;
 
-    this.activity?.close();
+    await this.activity?.close();
     this.activity = undefined;
 
     this.started = false;
@@ -411,5 +413,7 @@ export class AgentSession<
 
     this.userState = 'listening';
     this._agentState = 'initializing';
+
+    this.logger.info({ reason, error }, 'AgentSession closed');
   }
 }
