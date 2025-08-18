@@ -18,6 +18,8 @@ import {
   AgentSessionEventTypes,
   type AgentState,
   type AgentStateChangedEvent,
+  type CloseEvent,
+  CloseReason,
   type ConversationItemAddedEvent,
   type ErrorEvent,
   type FunctionToolsExecutedEvent,
@@ -27,6 +29,7 @@ import {
   type UserState,
   type UserStateChangedEvent,
   createAgentStateChangedEvent,
+  createCloseEvent,
   createConversationItemAddedEvent,
   createUserStateChangedEvent,
 } from './events.js';
@@ -66,6 +69,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.MetricsCollected]: (ev: MetricsCollectedEvent) => void;
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
+  [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
@@ -320,6 +324,10 @@ export class AgentSession<
     return this.agent;
   }
 
+  async close(): Promise<void> {
+    await this.closeImpl(CloseReason.USER_INITIATED);
+  }
+
   /** @internal */
   _conversationItemAdded(item: ChatMessage): void {
     this._chatCtx.insert(item);
@@ -368,4 +376,44 @@ export class AgentSession<
   private onAudioOutputChanged(): void {}
 
   private onTextOutputChanged(): void {}
+
+  private async closeImpl(reason: CloseReason, error: Error | null = null): Promise<void> {
+    if (!this.started) {
+      return;
+    }
+
+    try {
+      await this.activity?.interrupt().await;
+    } catch (error) {
+      // uninterruptible speech
+      // TODO(shubhra): force interrupt or wait for it to finish?
+      // it might be an audio played from the error callback
+      this.logger.error(error, 'Failed to interrupt activity');
+    }
+
+    await this.activity?.drain();
+    await this.activity?.currentSpeech?.waitForPlayout();
+
+    this.activity?.detachAudioInput();
+
+    // detach the inputs and outputs
+    this.input.audio = null;
+    this.output.audio = null;
+    this.output.transcription = null;
+
+    await this.roomIO?.close();
+    this.roomIO = undefined;
+
+    await this.activity?.close();
+    this.activity = undefined;
+
+    this.started = false;
+
+    this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
+
+    this.userState = 'listening';
+    this._agentState = 'initializing';
+
+    this.logger.info({ reason, error }, 'AgentSession closed');
+  }
 }

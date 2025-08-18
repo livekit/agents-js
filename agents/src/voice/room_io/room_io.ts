@@ -18,7 +18,7 @@ import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ATTRIBUTE_PUBLISH_ON_BEHALF, TOPIC_CHAT } from '../../constants.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
-import { Future } from '../../utils.js';
+import { Future, Task } from '../../utils.js';
 import { type AgentSession } from '../agent_session.js';
 import {
   AgentSessionEventTypes,
@@ -111,7 +111,8 @@ export class RoomIO {
   // Use stream API for transcript queue
   private userTranscriptStream = new IdentityTransform<UserInputTranscribedEvent>();
   private userTranscriptWriter: WritableStreamDefaultWriter<UserInputTranscribedEvent>;
-  private forwardUserTranscriptPromise?: Promise<void>;
+  private forwardUserTranscriptTask?: Task<void>;
+  private initTask?: Task<void>;
 
   // TODO(brian): unregister the text stream handler when the room io is closed
   private textStreamHandlerRegistered = false; // eslint-disable-line @typescript-eslint/no-unused-vars
@@ -144,11 +145,14 @@ export class RoomIO {
         : participant.identity
       : this.inputOptions.participantIdentity ?? null;
   }
-  private async initTask() {
+  private async init(signal: AbortSignal): Promise<void> {
     await this.roomConnectedFuture.await;
 
     for (const participant of this.room.remoteParticipants.values()) {
       this.onParticipantConnected(participant);
+    }
+    if (signal.aborted) {
+      return;
     }
 
     const participant = await this.participantAvailableFuture.await;
@@ -160,7 +164,7 @@ export class RoomIO {
       participant: this.room.localParticipant?.identity ?? null,
     });
 
-    await this.participantAudioOutput?.start();
+    await this.participantAudioOutput?.start(signal);
   }
 
   private onConnectionStateChanged = (state: ConnectionState) => {
@@ -252,10 +256,10 @@ export class RoomIO {
     });
   };
 
-  private async forwardUserTranscript(): Promise<void> {
+  private async forwardUserTranscript(signal: AbortSignal): Promise<void> {
     const reader = this.userTranscriptStream.readable.getReader();
     try {
-      while (true) {
+      while (!signal.aborted) {
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -397,7 +401,9 @@ export class RoomIO {
         participant: this.participantIdentity,
       });
       // Start the transcript forwarding
-      this.forwardUserTranscriptPromise = this.forwardUserTranscript();
+      this.forwardUserTranscriptTask = Task.from((controller) =>
+        this.forwardUserTranscript(controller.signal),
+      );
       this.agentTranscriptOutput = this.createTranscriptionOutput({
         isDeltaStream: true,
         participant: null,
@@ -422,9 +428,7 @@ export class RoomIO {
       this.onConnectionStateChanged(ConnectionState.CONN_CONNECTED);
     }
 
-    this.initTask().catch((error) => {
-      this.logger.error({ error }, 'Failed to initialize RoomIO');
-    });
+    this.initTask = Task.from((controller) => this.init(controller.signal));
 
     // -- attatch the agent to the session --
     if (this.audioInput) {
@@ -439,5 +443,24 @@ export class RoomIO {
 
     this.agentSession.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
     this.agentSession.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
+  }
+
+  async close() {
+    this.room.off(RoomEvent.ParticipantConnected, this.onParticipantConnected);
+    this.room.off(RoomEvent.ConnectionStateChanged, this.onConnectionStateChanged);
+    this.room.off(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
+    this.agentSession.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
+    this.agentSession.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
+
+    await this.initTask?.cancelAndWait();
+
+    // Close stream FIRST so reader.read() in forwardUserTranscript can exit.
+    // This is a workaround for a race condition in the stream API.
+    this.userTranscriptWriter.close();
+    await this.forwardUserTranscriptTask?.cancelAndWait();
+
+    await this.audioInput?.close();
+    await this.participantAudioOutput?.close();
+    await this.transcriptionSynchronizer?.close();
   }
 }
