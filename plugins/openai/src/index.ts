@@ -1,8 +1,22 @@
-// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-export * as realtime from './realtime/index.js';
+import { Plugin } from '@livekit/agents';
+
+export { LLM, LLMStream, type LLMOptions } from './llm.js';
 export * from './models.js';
-export { type LLMOptions, LLM, LLMStream } from './llm.js';
-export { type STTOptions, STT } from './stt.js';
-export { type TTSOptions, TTS, ChunkedStream } from './tts.js';
+export * as realtime from './realtime/index.js';
+export { STT, type STTOptions } from './stt.js';
+export { ChunkedStream, TTS, type TTSOptions } from './tts.js';
+
+class OpenAIPlugin extends Plugin {
+  constructor() {
+    super({
+      title: 'openai',
+      version: '0.9.1',
+      package: '@livekit/agents-plugin-openai',
+    });
+  }
+}
+
+Plugin.registerPlugin(new OpenAIPlugin());

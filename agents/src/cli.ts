@@ -4,6 +4,7 @@
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'node:events';
 import { initializeLogger, log } from './log.js';
+import { Plugin } from './plugin.js';
 import { version } from './version.js';
 import { Worker, WorkerOptions } from './worker.js';
 
@@ -180,6 +181,38 @@ export const runApp = (opts: WorkerOptions) => {
         watch: false,
         room: options.room,
         participantIdentity: options.participantIdentity,
+      });
+    });
+
+  program
+    .command('download-files')
+    .description('Download plugin dependency files')
+    .addOption(
+      new Option('--log-level <level>', 'Set the logging level')
+        .choices(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
+        .default('debug')
+        .env('LOG_LEVEL'),
+    )
+    .action(() => {
+      const options = program.optsWithGlobals();
+      initializeLogger({ pretty: true, level: options.logLevel });
+      const logger = log();
+
+      const downloadFiles = async () => {
+        for (const plugin of Plugin.registeredPlugins) {
+          logger.info(`Downloading files for ${plugin.title}`);
+          try {
+            await plugin.downloadFiles();
+            logger.info(`Finished downloading files for ${plugin.title}`);
+          } catch (error) {
+            logger.error(`Failed to download files for ${plugin.title}: ${error}`);
+          }
+        }
+      };
+
+      downloadFiles().catch((error) => {
+        logger.fatal(`Error during file downloads: ${error}`);
+        process.exit(1);
       });
     });
 

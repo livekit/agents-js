@@ -28,6 +28,8 @@ export {
   type ImageContent,
 } from './chat_context.js';
 
+export type { ProviderFormat } from './provider_format/index.js';
+
 export {
   LLM,
   LLMStream,
@@ -46,6 +48,8 @@ export {
   type InputTranscriptionCompleted,
   type MessageGeneration,
   type RealtimeCapabilities,
+  type RealtimeModelError,
+  type RealtimeSessionReconnectedEvent,
 } from './realtime.js';
 
 export { RemoteChatContext } from './remote_chat_context.js';

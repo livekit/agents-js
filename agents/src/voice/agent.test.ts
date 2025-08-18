@@ -4,12 +4,12 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { tool } from '../llm/index.js';
-import { createAgent } from './agent.js';
+import { Agent } from './agent.js';
 
 describe('Agent', () => {
   it('should create agent with basic instructions', () => {
     const instructions = 'You are a helpful assistant';
-    const agent = createAgent({ instructions });
+    const agent = new Agent({ instructions });
 
     expect(agent).toBeDefined();
     expect(agent.instructions).toBe(instructions);
@@ -33,7 +33,7 @@ describe('Agent', () => {
       execute: async ({ input }) => `tool2: ${input}`,
     });
 
-    const agent = createAgent({
+    const agent = new Agent({
       instructions,
       tools: {
         getTool1: mockTool1,
@@ -64,7 +64,7 @@ describe('Agent', () => {
     });
 
     const tools = { testTool: mockTool };
-    const agent = createAgent({ instructions, tools });
+    const agent = new Agent({ instructions, tools });
 
     const tools1 = agent.toolCtx;
     const tools2 = agent.toolCtx;

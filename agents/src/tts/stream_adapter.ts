@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { SentenceStream, SentenceTokenizer } from '../tokenize/index.js';
+import { Task } from '../utils.js';
 import type { ChunkedStream } from './tts.js';
 import { SynthesizeStream, TTS } from './tts.js';
 
@@ -45,13 +46,11 @@ export class StreamAdapterWrapper extends SynthesizeStream {
     this.#run();
   }
 
-  async monitorMetrics() {
-    return; // do nothing
-  }
-
   async #run() {
     const forwardInput = async () => {
       for await (const input of this.input) {
+        if (this.abortController.signal.aborted) break;
+
         if (input === SynthesizeStream.FLUSH_SENTINEL) {
           this.#sentenceStream.flush();
         } else {
@@ -62,15 +61,44 @@ export class StreamAdapterWrapper extends SynthesizeStream {
       this.#sentenceStream.close();
     };
 
-    const synthesize = async () => {
+    const synthesizeSentenceStream = async () => {
+      let task: Task<void> | undefined;
+      const tokenCompletionTasks: Task<void>[] = [];
+
       for await (const ev of this.#sentenceStream) {
-        for await (const audio of this.#tts.synthesize(ev.token)) {
-          this.output.put(audio);
-        }
+        if (this.abortController.signal.aborted) break;
+
+        // this will enable non-blocking synthesis of the stream of tokens
+        task = Task.from(
+          (controller) => synthesize(ev.token, task, controller),
+          this.abortController,
+        );
+
+        tokenCompletionTasks.push(task);
       }
-      this.output.put(SynthesizeStream.END_OF_STREAM);
+
+      await Promise.all(tokenCompletionTasks.map((t) => t.result));
+      this.queue.put(SynthesizeStream.END_OF_STREAM);
     };
 
-    Promise.all([forwardInput(), synthesize()]);
+    const synthesize = async (
+      token: string,
+      prevTask: Task<void> | undefined,
+      controller: AbortController,
+    ) => {
+      const audioStream = this.#tts.synthesize(token);
+
+      // wait for previous audio transcription to complete before starting
+      // to queuing audio frames of the current token
+      await prevTask?.result;
+      if (controller.signal.aborted) return;
+
+      for await (const audio of audioStream) {
+        if (controller.signal.aborted) break;
+        this.queue.put(audio);
+      }
+    };
+
+    await Promise.all([forwardInput(), synthesizeSentenceStream()]);
   }
 }

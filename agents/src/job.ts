@@ -26,6 +26,19 @@ export class CurrentJobContext {
   }
 }
 
+/**
+ * Returns the current job context.
+ *
+ * @throws {Error} if no job context is found
+ */
+export function getJobContext(): JobContext {
+  const ctx = CurrentJobContext.getCurrent();
+  if (!ctx) {
+    throw new Error('no job context found, are you running this code inside a job entrypoint?');
+  }
+  return ctx;
+}
+
 /** Which tracks, if any, should the agent automatically subscribe to? */
 export enum AutoSubscribe {
   SUBSCRIBE_ALL,

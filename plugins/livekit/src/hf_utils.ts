@@ -67,7 +67,6 @@ async function getBranchHeadCommit(
       // The commit object structure varies, so we check multiple possible properties
       const commitHash = (commit as any).oid || (commit as any).id || (commit as any).commitId;
       if (commitHash) {
-        logger.debug({ revision, commitHash }, 'Resolved branch/tag to HEAD commit');
         return commitHash;
       }
       break; // Only need the first one
@@ -157,18 +156,15 @@ async function saveRevisionMapping({
   storageFolder,
   revision,
   commitHash,
-  logger,
 }: {
   storageFolder: string;
   revision: string;
   commitHash: string;
-  logger?: ReturnType<typeof log>;
 }): Promise<void> {
   if (!REGEX_COMMIT_HASH.test(revision) && revision !== commitHash) {
     const refsPath = join(storageFolder, 'refs');
     await mkdir(refsPath, { recursive: true });
     writeFileSync(join(refsPath, revision), commitHash);
-    logger?.debug({ revision, commitHash }, 'Saved revision to commit hash mapping');
   }
 }
 
@@ -211,11 +207,6 @@ export async function downloadFileToCacheDir(
   // get storage folder
   const storageFolder = join(cacheDir, getRepoFolderName(repoId));
 
-  logger.debug(
-    { repoId, path: params.path, revision, cacheDir },
-    'Starting file download/cache check',
-  );
-
   let branchHeadCommit: string | undefined;
 
   // if user provides a commitHash as revision, use it directly
@@ -248,7 +239,6 @@ export async function downloadFileToCacheDir(
       try {
         const { readFileSync } = await import('fs');
         const resolvedHash = readFileSync(refsPath, 'utf-8').trim();
-        logger.debug({ revision, resolvedHash }, 'Resolved revision to commit hash from refs');
         const resolvedPath = getFilePointer(storageFolder, resolvedHash, params.path);
         if (await exists(resolvedPath, true)) {
           logger.debug({ resolvedPath, resolvedHash }, 'File found in cache (via refs)');
@@ -259,7 +249,7 @@ export async function downloadFileToCacheDir(
       }
     }
 
-    const error = `File not found in cache: ${repoId}/${params.path} (revision: ${revision})`;
+    const error = `File not found in cache: ${repoId}/${params.path} (revision: ${revision}). Make sure to run the download-files command before running the agent worker.`;
     logger.error({ repoId, path: params.path, revision }, error);
     throw new Error(error);
   }
@@ -271,7 +261,6 @@ export async function downloadFileToCacheDir(
       throw new Error(`Failed to resolve revision ${revision} to commit hash`);
     }
     branchHeadCommit = headCommit;
-    logger.debug({ revision, branchHeadCommit }, 'Resolved revision to branch HEAD commit');
   }
 
   // Check if file exists with the branch HEAD commit
@@ -283,7 +272,6 @@ export async function downloadFileToCacheDir(
       storageFolder,
       revision,
       commitHash: branchHeadCommit,
-      logger,
     });
 
     return pointerPath;
@@ -370,7 +358,6 @@ export async function downloadFileToCacheDir(
     storageFolder,
     revision,
     commitHash: branchHeadCommit,
-    logger,
   });
 
   logger.debug({ pointerPath, size: blob.size }, 'File download completed successfully');

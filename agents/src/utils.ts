@@ -507,7 +507,8 @@ export async function waitFor(tasks: Task<void>[]): Promise<void> {
   await Promise.allSettled(tasks.map((task) => task.result));
 }
 
-export async function cancelAndWait(tasks: Task<void>[], timeout?: number): Promise<void> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function cancelAndWait(tasks: Task<any>[], timeout?: number): Promise<void> {
   await Promise.allSettled(tasks.map((task) => task.cancelAndWait(timeout)));
 }
 

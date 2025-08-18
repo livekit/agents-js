@@ -124,7 +124,6 @@ export class ParticipantAudioInputStream extends AudioInput {
         outputRate: this.sampleRate,
       }),
     );
-    this.logger.debug({ track, publication, participant }, 'track subscribed');
     return true;
   };
 

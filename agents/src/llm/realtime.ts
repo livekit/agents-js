@@ -27,6 +27,14 @@ export interface GenerationCreatedEvent {
   userInitiated: boolean;
 }
 
+export interface RealtimeModelError {
+  type: 'realtime_model_error';
+  timestamp: number;
+  label: string;
+  error: Error;
+  recoverable: boolean;
+}
+
 export interface RealtimeCapabilities {
   messageTruncation: boolean;
   turnDetection: boolean;
@@ -39,6 +47,8 @@ export interface InputTranscriptionCompleted {
   transcript: string;
   isFinal: boolean;
 }
+
+export interface RealtimeSessionReconnectedEvent {}
 
 export abstract class RealtimeModel {
   private _capabilities: RealtimeCapabilities;
@@ -57,7 +67,7 @@ export abstract class RealtimeModel {
 }
 
 export abstract class RealtimeSession extends EventEmitter {
-  private _realtimeModel: RealtimeModel;
+  protected _realtimeModel: RealtimeModel;
   private deferredInputStream = new DeferredReadableStream<AudioFrame>();
   private _mainTask: Task<void>;
 
@@ -84,7 +94,7 @@ export abstract class RealtimeSession extends EventEmitter {
 
   abstract updateTools(tools: ToolContext): Promise<void>;
 
-  abstract updateOptions(options: { toolChoice?: ToolChoice }): void;
+  abstract updateOptions(options: { toolChoice?: ToolChoice | null }): void;
 
   abstract pushAudio(frame: AudioFrame): void;
 

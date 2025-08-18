@@ -26,8 +26,10 @@ This is a Node.js distribution of the [LiveKit Agents framework](https://livekit
 originally written in Python.
 
 <!--END_DESCRIPTION-->
+
 ## ✨ 1.0 Internal Beta Release ✨
-This README reflects the 1.0 internal release. 
+
+This README reflects the 1.0 internal release.
 
 ## Installation
 
@@ -38,23 +40,23 @@ popular LLMs.
 To install the core Agents library as well as plugins in your workspace, run:
 
 - Clone the repository:
+
 ```bash
 git clone https://github.com/livekit/agents-js.git
+cd agents-js/
 git checkout dev-1.0
 ```
+
 **Note**: `main` branch only support `0.x`, `dev-1.0` is not backward-compatible with `main`.
 
 - Install `pnpm` if you haven't already:
+
 ```bash
 npm install -g pnpm
 ```
 
-- Install global dependencies:
-```bash
-pnpm add -g ts-node@10.9.2 turbo@2.5.4 typescript@5.8.3
-```
-
 - Prepare the environment variables:
+
 ```bash
 export LIVEKIT_URL=your-livekit-url
 export LIVEKIT_API_KEY=your-livekit-api-key
@@ -68,18 +70,21 @@ export ELEVEN_API_KEY=your-eleven-api-key
 or directly save it to your `~/.zshrc` file to make it permanent.
 
 - Install dependencies:
+
 ```bash
 pnpm install
 ```
 
 - Build the workspace:
+
 ```bash
 pnpm build
 ```
 
 - Check to see if agent is working:
+
 ```bash
-node ./examples/src/basic_agent.ts dev --log-level=info
+pnpm dlx tsx examples/src/basic_agent.ts dev
 ```
 
 - Open [Agent Playground](https://agents-playground.livekit.io), and connect to your LiveKit server having the same `LIVEKIT_URL` and `LIVEKIT_API_KEY` as you configured above.
@@ -88,13 +93,12 @@ node ./examples/src/basic_agent.ts dev --log-level=info
 
 Currently, only the following plugins are supported:
 
-| Plugin                                                                                               | Features                    |
-|------------------------------------------------------------------------------------------------------|-----------------------------|
-| [@livekit/agents-plugin-openai](https://www.npmjs.com/package/@livekit/agents-plugin-openai)         | LLM                         |
-| [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT                         |
-| [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS                         |
-| [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD                         |
-
+| Plugin                                                                                               | Features |
+| ---------------------------------------------------------------------------------------------------- | -------- |
+| [@livekit/agents-plugin-openai](https://www.npmjs.com/package/@livekit/agents-plugin-openai)         | LLM      |
+| [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT      |
+| [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS      |
+| [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD      |
 
 ## Usage
 
@@ -113,9 +117,9 @@ You'll need the following environment variables for this example:
 
 ### Current Dev 1.0 Status
 
-We use `llm.tool` to define tools instead of using `@function_tool` decorator in python. Also, to follow idiomatic JS/TS, we use config-based approach to define agents instead of using inheritance (except for the agent hook functions, which is still under discussion on the best way to support). 
+We use `llm.tool` to define tools instead of using `@function_tool` decorator in python. Also, to follow idiomatic JS/TS, we use config-based approach to define agents instead of using inheritance (except for the agent hook functions, which is still under discussion on the best way to support).
 
-> Note: Only do class inheritance if you need to override the agent hook functions. For tool definition, instructions, llm, stt, tts, vad, etc., simply pass the config to the agent constructor. 
+> Note: Only do class inheritance if you need to override the agent hook functions. For tool definition, instructions, llm, stt, tts, vad, etc., simply pass the config to the agent constructor.
 
 Here's an example of overriding the agent hook functions:
 
@@ -157,19 +161,19 @@ import {
   WorkerOptions,
   cli,
   defineAgent,
-  voice,
   llm,
+  voice,
 } from '@livekit/agents';
-import { z } from 'zod';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
 
 const lookupWeather = llm.tool({
   description: 'Used to look up weather information.',
-  parameters: z.object({ 
+  parameters: z.object({
     location: z.string().describe('The location to look up weather information for'),
   }),
   execute: async ({ location }, { ctx }) => {
@@ -187,8 +191,7 @@ export default defineAgent({
     console.log('participant joined: ', participant.identity);
 
     const agent = new voice.Agent({
-      instructions:
-        "You are a friendly voice assistant built by LiveKit.",
+      instructions: 'You are a friendly voice assistant built by LiveKit.',
       tools: { lookupWeather },
     });
 
@@ -354,8 +357,11 @@ signal is received. The worker will remain alive while it manages any agents con
 
 This project is licensed under `Apache-2.0`, and is [REUSE-3.2](https://reuse.software) compliant.
 Refer to [the license](LICENSES/Apache-2.0.txt) for details.
+
 <!--BEGIN_REPO_NAV-->
+
 <br/><table>
+
 <thead><tr><th colspan="2">LiveKit Ecosystem</th></tr></thead>
 <tbody>
 <tr><td>LiveKit SDKs</td><td><a href="https://github.com/livekit/client-sdk-js">Browser</a> · <a href="https://github.com/livekit/client-sdk-swift">iOS/macOS/visionOS</a> · <a href="https://github.com/livekit/client-sdk-android">Android</a> · <a href="https://github.com/livekit/client-sdk-flutter">Flutter</a> · <a href="https://github.com/livekit/client-sdk-react-native">React Native</a> · <a href="https://github.com/livekit/rust-sdks">Rust</a> · <a href="https://github.com/livekit/node-sdks">Node.js</a> · <a href="https://github.com/livekit/python-sdks">Python</a> · <a href="https://github.com/livekit/client-sdk-unity">Unity</a> · <a href="https://github.com/livekit/client-sdk-unity-web">Unity (WebGL)</a></td></tr><tr></tr>

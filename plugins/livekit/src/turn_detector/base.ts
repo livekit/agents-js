@@ -15,6 +15,7 @@ import {
   MODEL_REVISIONS,
   ONNX_FILEPATH,
 } from './constants.js';
+import { normalizeText } from './utils.js';
 
 type RawChatItem = { role: string; content: string };
 
@@ -42,6 +43,7 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
       repo: HG_MODEL_REPO,
       path: ONNX_FILEPATH,
       revision: this.modelRevision,
+      localFileOnly: true,
     });
 
     try {
@@ -56,7 +58,7 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
 
       this.tokenizer = await AutoTokenizer.from_pretrained('livekit/turn-detector', {
         revision: this.modelRevision,
-        //   local_files_only: true,  // TODO(brian): support local_files_only
+        local_files_only: true,
       });
     } catch (e) {
       throw new Error(
@@ -70,14 +72,17 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
 
     const text = this.formatChatCtx(data);
 
-    // TODO(brian): investigate max_length and truncation options
     const inputs = this.tokenizer!.encode(text, { add_special_tokens: false });
+    this.#logger.debug({ inputs: JSON.stringify(inputs), text }, 'EOU inputs');
+
     const outputs = await this.session!.run(
       { input_ids: new Tensor('int64', inputs, [1, inputs.length]) },
       ['prob'],
     );
 
-    const eouProbability = outputs.prob!.data[0] as number;
+    const probData = outputs.prob!.data;
+    // should be the logits of the last token
+    const eouProbability = probData[probData.length - 1] as number;
     const endTime = Date.now();
 
     const result = {
@@ -102,12 +107,14 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
       const content = msg.content;
       if (!content) continue;
 
+      const norm = normalizeText(content);
+
       // need to combine adjacent turns together to match training data
       if (lastMsg !== undefined && lastMsg.role === msg.role) {
-        lastMsg.content += content;
+        lastMsg.content += ` ${norm}`;
       } else {
-        newChatCtx.push(msg);
-        lastMsg = msg;
+        newChatCtx.push({ role: msg.role, content: norm });
+        lastMsg = newChatCtx[newChatCtx.length - 1]!;
       }
     }
 
@@ -161,6 +168,7 @@ export abstract class EOUModel {
         repo: HG_MODEL_REPO,
         path: 'languages.json',
         revision: MODEL_REVISIONS[modelType],
+        localFileOnly: true,
       }).then((path) => {
         this.languagesFuture.resolve(JSON.parse(readFileSync(path, 'utf8')));
       });

@@ -156,8 +156,8 @@ const requestFncCall = async (
       }),
     ]),
     toolCtx,
-    temperature,
     parallelToolCalls,
+    extraKwargs: { temperature },
   });
 
   const calls: llmlib.FunctionCall[] = [];

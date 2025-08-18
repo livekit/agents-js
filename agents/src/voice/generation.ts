@@ -706,7 +706,7 @@ export function performToolExecutions({
 
       const tool = toolCtx[toolCall.name];
       if (!tool) {
-        logger.error(
+        logger.warn(
           {
             function: toolCall.name,
             speech_id: speechHandle.id,
@@ -764,13 +764,13 @@ export function performToolExecutions({
 
       onToolExecutionStarted(toolCall);
 
-      logger.debug(
+      logger.info(
         {
           function: toolCall.name,
           arguments: parsedArgs,
           speech_id: speechHandle.id,
         },
-        'executing tool',
+        'Executing LLM tool call',
       );
 
       const toolExecution = asyncLocalStorage.run({ functionCall: toolCall }, async () => {

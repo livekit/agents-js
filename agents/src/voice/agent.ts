@@ -330,7 +330,3 @@ export class Agent<UserData = any> {
     },
   };
 }
-
-export function createAgent<UserData = any>(options: AgentOptions<UserData>): Agent<UserData> {
-  return new Agent(options);
-}

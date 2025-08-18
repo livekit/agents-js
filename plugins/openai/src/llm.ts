@@ -1,7 +1,8 @@
-// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { llm, log } from '@livekit/agents';
+import type { APIConnectOptions } from '@livekit/agents';
+import { DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
 import { AzureOpenAI, OpenAI } from 'openai';
 import type {
   CerebrasChatModels,
@@ -24,11 +25,17 @@ export interface LLMOptions {
   temperature?: number;
   client?: OpenAI;
   toolChoice?: llm.ToolChoice;
+  parallelToolCalls?: boolean;
+  metadata?: Record<string, string>;
+  maxCompletionTokens?: number;
+  serviceTier?: string;
+  store?: boolean;
 }
 
 const defaultLLMOptions: LLMOptions = {
   model: 'gpt-4o',
   apiKey: process.env.OPENAI_API_KEY,
+  parallelToolCalls: true,
 };
 
 const defaultAzureLLMOptions: LLMOptions = {
@@ -39,6 +46,7 @@ const defaultAzureLLMOptions: LLMOptions = {
 export class LLM extends llm.LLM {
   #opts: LLMOptions;
   #client: OpenAI;
+  #providerFmt: llm.ProviderFormat;
 
   /**
    * Create a new instance of OpenAI LLM.
@@ -47,10 +55,14 @@ export class LLM extends llm.LLM {
    * `apiKey` must be set to your OpenAI API key, either using the argument or by setting the
    * `OPENAI_API_KEY` environmental variable.
    */
-  constructor(opts: Partial<LLMOptions> = defaultLLMOptions) {
+  constructor(
+    opts: Partial<LLMOptions> = defaultLLMOptions,
+    providerFmt: llm.ProviderFormat = 'openai',
+  ) {
     super();
 
     this.#opts = { ...defaultLLMOptions, ...opts };
+    this.#providerFmt = providerFmt;
     if (this.#opts.apiKey === undefined) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
@@ -61,6 +73,14 @@ export class LLM extends llm.LLM {
         baseURL: opts.baseURL,
         apiKey: opts.apiKey,
       });
+  }
+
+  label(): string {
+    return 'openai.LLM';
+  }
+
+  get model(): string {
+    return this.#opts.model;
   }
 
   /**
@@ -415,96 +435,129 @@ export class LLM extends llm.LLM {
   chat({
     chatCtx,
     toolCtx,
-    toolChoice,
-    temperature,
-    n,
+    connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
+    toolChoice,
+    extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext | undefined;
+    toolCtx?: llm.ToolContext;
+    connOptions?: APIConnectOptions;
+    parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
-    temperature?: number | undefined;
-    n?: number | undefined;
-    parallelToolCalls?: boolean | undefined;
+    extraKwargs?: Record<string, any>;
   }): LLMStream {
-    temperature = temperature || this.#opts.temperature;
-    toolChoice = toolChoice || this.#opts.toolChoice;
+    const extras: Record<string, any> = { ...extraKwargs }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-    return new LLMStream(
-      this,
-      this.#client,
+    if (this.#opts.metadata) {
+      extras.metadata = this.#opts.metadata;
+    }
+
+    if (this.#opts.user) {
+      extras.user = this.#opts.user;
+    }
+
+    if (this.#opts.maxCompletionTokens) {
+      extras.max_completion_tokens = this.#opts.maxCompletionTokens;
+    }
+
+    if (this.#opts.temperature) {
+      extras.temperature = this.#opts.temperature;
+    }
+
+    if (this.#opts.serviceTier) {
+      extras.service_tier = this.#opts.serviceTier;
+    }
+
+    if (this.#opts.store !== undefined) {
+      extras.store = this.#opts.store;
+    }
+
+    parallelToolCalls =
+      parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
+    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+      extras.parallel_tool_calls = parallelToolCalls;
+    }
+
+    toolChoice = toolChoice !== undefined ? toolChoice : this.#opts.toolChoice;
+    if (toolChoice) {
+      extras.tool_choice = toolChoice;
+    }
+
+    return new LLMStream(this, {
+      model: this.#opts.model,
+      providerFmt: this.#providerFmt,
+      client: this.#client,
       chatCtx,
       toolCtx,
-      this.#opts,
-      parallelToolCalls,
-      temperature,
-      n,
-      toolChoice,
-    );
+      connOptions,
+      extraKwargs: extras,
+    });
   }
 }
 
 export class LLMStream extends llm.LLMStream {
-  // Current function call that we're waiting for full completion (args are streamed)
   #toolCallId?: string;
   #fncName?: string;
   #fncRawArguments?: string;
   #toolIndex?: number;
   #client: OpenAI;
-  #logger = log();
-  label = 'openai.LLMStream';
+  #providerFmt: llm.ProviderFormat;
+  #extraKwargs: Record<string, any>;
 
   constructor(
     llm: LLM,
-    client: OpenAI,
-    chatCtx: llm.ChatContext,
-    toolCtx: llm.ToolContext | undefined,
-    opts: LLMOptions,
-    parallelToolCalls?: boolean,
-    temperature?: number,
-    n?: number,
-    toolChoice?: llm.ToolChoice,
+    {
+      model,
+      providerFmt,
+      client,
+      chatCtx,
+      toolCtx,
+      connOptions,
+      extraKwargs,
+    }: {
+      model: string | ChatModels;
+      providerFmt: llm.ProviderFormat;
+      client: OpenAI;
+      chatCtx: llm.ChatContext;
+      toolCtx?: llm.ToolContext;
+      connOptions: APIConnectOptions;
+      extraKwargs: Record<string, any>;
+    },
   ) {
-    super(llm, chatCtx, toolCtx);
+    super(llm, { chatCtx, toolCtx, connOptions });
     this.#client = client;
-    this.#run(opts, n, parallelToolCalls, temperature, toolChoice);
+    this.#providerFmt = providerFmt;
+    this.#extraKwargs = extraKwargs;
+    this.#run(model);
   }
 
-  async #run(
-    opts: LLMOptions,
-    n?: number,
-    parallelToolCalls?: boolean,
-    temperature?: number,
-    toolChoice?: llm.ToolChoice,
-  ) {
-    const tools = this.toolCtx
-      ? Object.entries(this.toolCtx).map(([name, func]) => ({
-          type: 'function' as const,
-          function: {
-            name,
-            description: func.description,
-            parameters: llm.toJsonSchema(
-              func.parameters,
-            ) as unknown as OpenAI.Chat.Completions.ChatCompletionTool['function']['parameters'],
-          },
-        }))
-      : undefined;
-
+  async #run(model: string | ChatModels) {
     try {
       const messages = (await this.chatCtx.toProviderFormat(
-        'openai',
+        this.#providerFmt,
       )) as OpenAI.ChatCompletionMessageParam[];
+
+      const tools = this.toolCtx
+        ? Object.entries(this.toolCtx).map(([name, func]) => ({
+            type: 'function' as const,
+            function: {
+              name,
+              description: func.description,
+              parameters: llm.toJsonSchema(
+                func.parameters,
+              ) as unknown as OpenAI.Chat.Completions.ChatCompletionTool['function']['parameters'],
+            },
+          }))
+        : undefined;
+
       const stream = await this.#client.chat.completions.create({
-        model: opts.model,
-        user: opts.user,
-        n,
-        temperature: temperature || opts.temperature,
-        stream_options: { include_usage: true },
-        stream: true,
+        model,
         messages,
         tools,
-        parallel_tool_calls: this.toolCtx && parallelToolCalls,
-        tool_choice: toolChoice,
+        stream: true,
+        stream_options: { include_usage: true },
+        ...this.#extraKwargs,
       });
 
       for await (const chunk of stream) {

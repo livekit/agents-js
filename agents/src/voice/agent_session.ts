@@ -21,6 +21,7 @@ import {
   type CloseEvent,
   CloseReason,
   type ConversationItemAddedEvent,
+  type ErrorEvent,
   type FunctionToolsExecutedEvent,
   type MetricsCollectedEvent,
   type SpeechCreatedEvent,
@@ -67,6 +68,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.FunctionToolsExecuted]: (ev: FunctionToolsExecutedEvent) => void;
   [AgentSessionEventTypes.MetricsCollected]: (ev: MetricsCollectedEvent) => void;
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
+  [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
 };
 
@@ -174,6 +176,23 @@ export class AgentSession<
     this.agent = agent;
     this._updateAgentState('initializing');
 
+    // Check for existing input/output configuration and warn if needed
+    if (this.input.audio && inputOptions?.audioEnabled !== false) {
+      this.logger.warn('RoomIO audio input is enabled but input.audio is already set, ignoring..');
+    }
+
+    if (this.output.audio && outputOptions?.audioEnabled !== false) {
+      this.logger.warn(
+        'RoomIO audio output is enabled but output.audio is already set, ignoring..',
+      );
+    }
+
+    if (this.output.transcription && outputOptions?.transcriptionEnabled !== false) {
+      this.logger.warn(
+        'RoomIO transcription output is enabled but output.transcription is already set, ignoring..',
+      );
+    }
+
     this.roomIO = new RoomIO({
       agentSession: this,
       room,
@@ -183,6 +202,15 @@ export class AgentSession<
     this.roomIO.start();
 
     this.updateActivity(this.agent);
+
+    // Log used IO configuration
+    this.logger.debug(
+      `using audio io: ${this.input.audio ? '`' + this.input.audio.constructor.name + '`' : '(none)'} -> \`AgentSession\` -> ${this.output.audio ? '`' + this.output.audio.constructor.name + '`' : '(none)'}`,
+    );
+
+    this.logger.debug(
+      `using transcript io: \`AgentSession\` -> ${this.output.transcription ? '`' + this.output.transcription.constructor.name + '`' : '(none)'}`,
+    );
 
     this.logger.debug('AgentSession started');
     this.started = true;

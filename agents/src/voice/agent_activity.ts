@@ -16,6 +16,7 @@ import {
   type InputTranscriptionCompleted,
   LLM,
   RealtimeModel,
+  type RealtimeModelError,
   type RealtimeSession,
   type ToolChoice,
   type ToolContext,
@@ -46,6 +47,7 @@ import {
 } from './audio_recognition.js';
 import {
   AgentSessionEventTypes,
+  createErrorEvent,
   createFunctionToolsExecutedEvent,
   createMetricsCollectedEvent,
   createSpeechCreatedEvent,
@@ -82,6 +84,8 @@ export class AgentActivity implements RecognitionHooks {
   private speechTasks: Set<Promise<unknown>> = new Set();
   private lock = new Mutex();
   private audioStream = new DeferredReadableStream<AudioFrame>();
+  // default to null as None, which maps to the default provider tool choice value
+  private toolChoice: ToolChoice | null = null;
 
   agent: Agent;
   agentSession: AgentSession;
@@ -197,7 +201,7 @@ export class AgentActivity implements RecognitionHooks {
           this.onInputAudioTranscriptionCompleted(ev),
         );
         this.realtimeSession.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
-        // TODO(shubhra): add error handlers
+        this.realtimeSession.on('error', (ev) => this.onError(ev));
 
         removeInstructions(this.agent._chatCtx);
         try {
@@ -248,7 +252,8 @@ export class AgentActivity implements RecognitionHooks {
 
       this.audioRecognition = new AudioRecognition({
         recognitionHooks: this,
-        stt: (...args) => this.agent.sttNode(...args),
+        // Disable stt node if stt is not provided
+        stt: this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
         vad: this.vad,
         turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
         turnDetectionMode: this.turnDetectionMode,
@@ -331,9 +336,13 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  updateOptions({ toolChoice }: { toolChoice?: ToolChoice }): void {
+  updateOptions({ toolChoice }: { toolChoice?: ToolChoice | null }): void {
+    if (toolChoice !== undefined) {
+      this.toolChoice = toolChoice;
+    }
+
     if (this.realtimeSession) {
-      this.realtimeSession.updateOptions({ toolChoice });
+      this.realtimeSession.updateOptions({ toolChoice: this.toolChoice });
     }
   }
 
@@ -455,6 +464,17 @@ export class AgentActivity implements RecognitionHooks {
     );
   };
 
+  private onError(ev: RealtimeModelError): void {
+    // TODO(brian): handle other error types
+
+    if (ev.type === 'realtime_model_error') {
+      const errorEvent = createErrorEvent(ev.error, this.llm);
+      this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+    }
+
+    // TODO(brian): AgentSession on error
+  }
+
   // -- Realtime Session events --
 
   onInputSpeechStarted(_ev: InputSpeechStartedEvent): void {
@@ -464,6 +484,8 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateUserState('speaking');
     }
 
+    // this.interrupt() is going to raise when allow_interruptions is False,
+    // llm.InputSpeechStartedEvent is only fired by the server when the turn_detection is enabled.
     try {
       this.interrupt();
     } catch (error) {
@@ -554,8 +576,8 @@ export class AgentActivity implements RecognitionHooks {
     this.agentSession._updateUserState('speaking');
   }
 
-  onEndOfSpeech(ev: VADEvent): void {
-    this.logger.info('End of speech', ev);
+  onEndOfSpeech(_ev: VADEvent): void {
+    this.agentSession._updateUserState('listening');
   }
 
   onVADInferenceDone(ev: VADEvent): void {
@@ -596,6 +618,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onInterimTranscript(ev: SpeechEvent): void {
+    if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
+      // skip stt transcription if userTranscription is enabled on the realtime model
+      return;
+    }
+
     this.agentSession.emit(
       AgentSessionEventTypes.UserInputTranscribed,
       createUserInputTranscribedEvent({
@@ -607,6 +634,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onFinalTranscript(ev: SpeechEvent): void {
+    if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
+      // skip stt transcription if userTranscription is enabled on the realtime model
+      return;
+    }
+
     this.agentSession.emit(
       AgentSessionEventTypes.UserInputTranscribed,
       createUserInputTranscribedEvent({
@@ -622,9 +654,7 @@ export class AgentActivity implements RecognitionHooks {
     ownedSpeechHandle?: SpeechHandle;
     name?: string;
   }): Promise<T> {
-    const { promise, ownedSpeechHandle, name } = options;
-
-    this.logger.info({ name, speechTasksSize: this.speechTasks.size }, 'creating speech task');
+    const { promise, ownedSpeechHandle } = options;
 
     this.speechTasks.add(promise);
 
@@ -722,7 +752,7 @@ export class AgentActivity implements RecognitionHooks {
     userMessage?: ChatMessage;
     chatCtx?: ChatContext;
     instructions?: string;
-    toolChoice?: ToolChoice;
+    toolChoice?: ToolChoice | null;
     allowInterruptions?: boolean;
   }): SpeechHandle {
     const {
@@ -780,7 +810,10 @@ export class AgentActivity implements RecognitionHooks {
           // TODO(brian): support llm.ChatMessage for the realtime model
           userInput: userMessage?.textContent,
           instructions,
-          modelSettings: { toolChoice },
+          modelSettings: {
+            // isGiven(toolChoice) = toolChoice !== undefined
+            toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice),
+          },
         }),
         ownedSpeechHandle: handle,
         name: 'AgentActivity.realtimeReply',
@@ -798,7 +831,7 @@ export class AgentActivity implements RecognitionHooks {
           handle,
           chatCtx ?? this.agent.chatCtx,
           this.agent.toolCtx,
-          { toolChoice },
+          { toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice) },
           instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
           userMessage,
         ),
@@ -844,8 +877,6 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async userTurnCompleted(info: EndOfTurnInfo, oldTask?: Promise<void>): Promise<void> {
-    this.logger.info('userTurnCompleted', info);
-
     if (oldTask) {
       // We never cancel user code as this is very confusing.
       // So we wait for the old execution of onUserTurnCompleted to finish.
@@ -1468,6 +1499,10 @@ export class AgentActivity implements RecognitionHooks {
               forwardTasks.push(forwardTask);
               audioOut = _audioOut;
               audioOut.firstFrameFut.await.finally(onFirstFrame);
+            } else {
+              this.logger.warn(
+                'audio output is enabled but neither tts nor realtime audio is available',
+              );
             }
           } else if (textOut) {
             textOut.firstTextFut.await.finally(onFirstFrame);
@@ -1773,12 +1808,20 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._conversationItemAdded(message);
     }
 
-    if (toolChoice) {
+    const originalToolChoice = this.toolChoice;
+    if (toolChoice !== undefined) {
       this.realtimeSession.updateOptions({ toolChoice });
     }
 
-    const generationEvent = await this.realtimeSession.generateReply(instructions);
-    await this.realtimeGenerationTask(speechHandle, generationEvent, { toolChoice });
+    try {
+      const generationEvent = await this.realtimeSession.generateReply(instructions);
+      await this.realtimeGenerationTask(speechHandle, generationEvent, { toolChoice });
+    } finally {
+      // reset toolChoice value
+      if (toolChoice !== undefined && toolChoice !== originalToolChoice) {
+        this.realtimeSession.updateOptions({ toolChoice: originalToolChoice });
+      }
+    }
   }
 
   private scheduleSpeech(
@@ -1852,4 +1895,9 @@ export class AgentActivity implements RecognitionHooks {
       unlock();
     }
   }
+}
+
+function toOaiToolChoice(toolChoice: ToolChoice | null): ToolChoice | undefined {
+  // we convert null to undefined, which maps to the default provider tool choice value
+  return toolChoice !== null ? toolChoice : undefined;
 }

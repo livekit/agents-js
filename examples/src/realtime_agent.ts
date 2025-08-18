@@ -10,7 +10,7 @@ import {
   llm,
   voice,
 } from '@livekit/agents';
-import * as openai from '@livekit/agents-plugin-openai';
+import * as google from '@livekit/agents-plugin-google';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -53,7 +53,8 @@ export default defineAgent({
     });
 
     const session = new voice.AgentSession({
-      llm: new openai.realtime.RealtimeModel(),
+      // llm: new openai.realtime.RealtimeModel(),
+      llm: new google.beta.realtime.RealtimeModel(),
       // enable to allow chaining of tool calls
       voiceOptions: {
         maxToolSteps: 5,
@@ -63,6 +64,10 @@ export default defineAgent({
     await session.start({
       agent,
       room: ctx.room,
+    });
+
+    session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
+      console.log('metrics_collected', ev);
     });
 
     // join the room when agent is ready

@@ -12,8 +12,8 @@ import {
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
+import * as google from '@livekit/agents-plugin-google';
 import * as livekit from '@livekit/agents-plugin-livekit';
-import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -77,7 +77,7 @@ export default defineAgent({
         value: z.number().nullable().describe('The number value'),
       }),
       execute: async ({ value }) => {
-        if (value === undefined) {
+        if (value === null) {
           value = Math.floor(Math.random() * 100);
         }
         return `The number value is ${value}.`;
@@ -135,11 +135,9 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT({
-        sampleRate: 24000,
-      }),
+      stt: new deepgram.STT(),
       tts: new elevenlabs.TTS(),
-      llm: new openai.LLM(),
+      llm: new google.LLM(),
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
       userData: { number: 0 },
