@@ -256,7 +256,7 @@ export class RoomIO {
     });
   };
 
-  private async forwardUserTranscript(): Promise<void> {
+  private async forwardUserTranscript(signal: AbortSignal): Promise<void> {
     const reader = this.userTranscriptStream.readable.getReader();
     try {
       while (!signal.aborted) {
