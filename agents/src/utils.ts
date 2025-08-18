@@ -668,5 +668,5 @@ export function toError(error: unknown): Error {
  * @param func - The function to run.
  */
 export function startSoon(func: () => void) {
-  Promise.resolve().then(func);
+  setTimeout(func, 0);
 }
