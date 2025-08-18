@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Raised when accepting a job but not receiving an assignment within the specified timeout.
  * The server may have chosen another worker to handle this job.
