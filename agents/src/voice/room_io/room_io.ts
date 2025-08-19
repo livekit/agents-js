@@ -124,8 +124,7 @@ export class RoomIO {
   private forwardUserTranscriptTask?: Task<void>;
   private initTask?: Task<void>;
 
-  // TODO(brian): unregister the text stream handler when the room io is closed
-  private textStreamHandlerRegistered = false; // eslint-disable-line @typescript-eslint/no-unused-vars
+  private textStreamHandlerRegistered = false;
 
   private logger = log();
 
@@ -476,6 +475,11 @@ export class RoomIO {
     this.room.off(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
     this.agentSession.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
     this.agentSession.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
+
+    if (this.textStreamHandlerRegistered) {
+      this.room.unregisterTextStreamHandler(TOPIC_CHAT);
+      this.textStreamHandlerRegistered = false;
+    }
 
     await this.initTask?.cancelAndWait();
 
