@@ -1,11 +1,19 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { ChatMessage, FunctionCall, FunctionCallOutput } from '../llm/index.js';
+import type {
+  ChatMessage,
+  FunctionCall,
+  FunctionCallOutput,
+  RealtimeModelError,
+} from '../llm/index.js';
 import type { LLM, RealtimeModel } from '../llm/index.js';
+import type { LLMError } from '../llm/llm.js';
 import type { AgentMetrics } from '../metrics/base.js';
 import type { STT } from '../stt/index.js';
+import type { STTError } from '../stt/stt.js';
 import type { TTS } from '../tts/index.js';
+import type { TTSError } from '../tts/tts.js';
 import type { SpeechHandle } from './speech_handle.js';
 
 export enum AgentSessionEventTypes {
@@ -198,13 +206,13 @@ export const createSpeechCreatedEvent = ({
 
 export type ErrorEvent = {
   type: 'error';
-  error: Error; // TODO(shubhra): Will be refined to specific error types when they're implemented
+  error: RealtimeModelError | STTError | TTSError | LLMError | unknown;
   source: LLM | STT | TTS | RealtimeModel | unknown;
   createdAt: number;
 };
 
 export const createErrorEvent = (
-  error: Error,
+  error: RealtimeModelError | STTError | TTSError | LLMError | unknown,
   source: LLM | STT | TTS | RealtimeModel | unknown,
   createdAt: number = Date.now(),
 ): ErrorEvent => ({
@@ -216,14 +224,14 @@ export const createErrorEvent = (
 
 export type CloseEvent = {
   type: 'close';
-  error: Error | null;
+  error: RealtimeModelError | STTError | TTSError | LLMError | null;
   reason: CloseReason;
   createdAt: number;
 };
 
 export const createCloseEvent = (
   reason: CloseReason,
-  error: Error | null = null,
+  error: RealtimeModelError | STTError | TTSError | LLMError | null = null,
   createdAt: number = Date.now(),
 ): CloseEvent => ({
   type: 'close',

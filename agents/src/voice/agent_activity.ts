@@ -21,6 +21,7 @@ import {
   type ToolChoice,
   type ToolContext,
 } from '../llm/index.js';
+import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import type {
   EOUMetrics,
@@ -31,9 +32,9 @@ import type {
   VADMetrics,
 } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
-import { STT, type SpeechEvent } from '../stt/stt.js';
+import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { splitWords } from '../tokenize/basic/word.js';
-import { TTS } from '../tts/tts.js';
+import { TTS, type TTSError } from '../tts/tts.js';
 import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
@@ -236,14 +237,17 @@ export class AgentActivity implements RecognitionHooks {
       // metrics and error handling
       if (this.llm instanceof LLM) {
         this.llm.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
+        this.llm.on('error', (ev) => this.onError(ev));
       }
 
       if (this.stt instanceof STT) {
         this.stt.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
+        this.stt.on('error', (ev) => this.onError(ev));
       }
 
       if (this.tts instanceof TTS) {
         this.tts.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
+        this.tts.on('error', (ev) => this.onError(ev));
       }
 
       if (this.vad instanceof VAD) {
@@ -464,15 +468,22 @@ export class AgentActivity implements RecognitionHooks {
     );
   };
 
-  private onError(ev: RealtimeModelError): void {
-    // TODO(brian): handle other error types
-
+  private onError(ev: RealtimeModelError | STTError | TTSError | LLMError): void {
     if (ev.type === 'realtime_model_error') {
+      const errorEvent = createErrorEvent(ev.error, this.llm);
+      this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+    } else if (ev.type === 'stt_error') {
+      const errorEvent = createErrorEvent(ev.error, this.stt);
+      this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+    } else if (ev.type === 'tts_error') {
+      const errorEvent = createErrorEvent(ev.error, this.tts);
+      this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+    } else if (ev.type === 'llm_error') {
       const errorEvent = createErrorEvent(ev.error, this.llm);
       this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
     }
 
-    // TODO(brian): AgentSession on error
+    this.agentSession._onError(ev);
   }
 
   // -- Realtime Session events --
