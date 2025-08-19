@@ -6,10 +6,12 @@ import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { ChatContext, ChatMessage } from '../llm/chat_context.js';
-import type { LLM, RealtimeModel, ToolChoice } from '../llm/index.js';
+import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
+import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
-import type { TTS } from '../tts/tts.js';
+import type { STTError } from '../stt/stt.js';
+import type { TTS, TTSError } from '../tts/tts.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
@@ -108,6 +110,8 @@ export class AgentSession<
 
   private _input: AgentInput;
   private _output: AgentOutput;
+
+  private closingTask: Promise<void> | null = null;
 
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
@@ -329,6 +333,21 @@ export class AgentSession<
   }
 
   /** @internal */
+  _onError(error: RealtimeModelError | STTError | TTSError | LLMError): void {
+    if (this.closingTask || error.recoverable) {
+      return;
+    }
+
+    this.logger.error(error, 'AgentSession is closing due to unrecoverable error');
+
+    this.closingTask = (async () => {
+      await this.closeImpl(CloseReason.ERROR, error);
+    })().then(() => {
+      this.closingTask = null;
+    });
+  }
+
+  /** @internal */
   _conversationItemAdded(item: ChatMessage): void {
     this._chatCtx.insert(item);
     this.emit(AgentSessionEventTypes.ConversationItemAdded, createConversationItemAddedEvent(item));
@@ -377,7 +396,10 @@ export class AgentSession<
 
   private onTextOutputChanged(): void {}
 
-  private async closeImpl(reason: CloseReason, error: Error | null = null): Promise<void> {
+  private async closeImpl(
+    reason: CloseReason,
+    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
+  ): Promise<void> {
     if (!this.started) {
       return;
     }
