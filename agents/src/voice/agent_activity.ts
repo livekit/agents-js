@@ -416,7 +416,7 @@ export class AgentActivity implements RecognitionHooks {
     if (
       this.llm instanceof RealtimeModel &&
       this.llm.capabilities.turnDetection &&
-      !allowInterruptions
+      allowInterruptions === false
     ) {
       this.logger.warn(
         'the RealtimeModel uses a server-side turn detection, allowInterruptions cannot be false when using VoiceAgent.say(), ' +
@@ -515,7 +515,6 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onInputAudioTranscriptionCompleted(ev: InputTranscriptionCompleted): void {
-    this.logger.info('onInputAudioTranscriptionCompleted');
     this.agentSession.emit(
       AgentSessionEventTypes.UserInputTranscribed,
       createUserInputTranscribedEvent({
@@ -770,7 +769,7 @@ export class AgentActivity implements RecognitionHooks {
     if (
       this.llm instanceof RealtimeModel &&
       this.llm.capabilities.turnDetection &&
-      !allowInterruptions
+      allowInterruptions === false
     ) {
       this.logger.warn(
         'the RealtimeModel uses a server-side turn detection, allowInterruptions cannot be false when using VoiceAgent.generateReply(), ' +
