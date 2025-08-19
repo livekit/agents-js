@@ -8,7 +8,7 @@ import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import type { APIConnectOptions } from '../types.js';
-import { AsyncIterableQueue, toError } from '../utils.js';
+import { AsyncIterableQueue, startSoon, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
 import type { ToolChoice, ToolContext } from './tool_context.js';
 
@@ -133,7 +133,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    Promise.resolve().then(() => this.mainTask().then(() => this.queue.close()));
+    startSoon(() => this.mainTask().then(() => this.queue.close()));
   }
 
   private async mainTask() {
