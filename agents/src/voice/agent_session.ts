@@ -333,6 +333,22 @@ export class AgentSession<
   }
 
   /** @internal */
+  _closeSoon({
+    reason,
+    drain = false,
+    error = null,
+  }: {
+    reason: CloseReason;
+    drain?: boolean;
+    error?: RealtimeModelError | STTError | TTSError | LLMError | null;
+  }): void {
+    if (this.closingTask) {
+      return;
+    }
+    this.closeImpl(reason, error, drain);
+  }
+
+  /** @internal */
   _onError(error: RealtimeModelError | STTError | TTSError | LLMError): void {
     if (this.closingTask || error.recoverable) {
       return;
@@ -399,24 +415,27 @@ export class AgentSession<
   private async closeImpl(
     reason: CloseReason,
     error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
+    drain: boolean = false,
   ): Promise<void> {
     if (!this.started) {
       return;
     }
 
-    try {
-      await this.activity?.interrupt().await;
-    } catch (error) {
-      // uninterruptible speech
-      // TODO(shubhra): force interrupt or wait for it to finish?
-      // it might be an audio played from the error callback
-      this.logger.error(error, 'Failed to interrupt activity');
+    if (this.activity) {
+      if (!drain) {
+        try {
+          this.activity.interrupt();
+        } catch (error) {
+          // uninterruptible speech [copied from python]
+          // TODO(shubhra): force interrupt or wait for it to finish?
+          // it might be an audio played from the error callback
+        }
+      }
+      await this.activity.drain();
+      // wait any uninterruptible speech to finish
+      await this.activity.currentSpeech?.waitForPlayout();
+      this.activity.detachAudioInput();
     }
-
-    await this.activity?.drain();
-    await this.activity?.currentSpeech?.waitForPlayout();
-
-    this.activity?.detachAudioInput();
 
     // detach the inputs and outputs
     this.input.audio = null;

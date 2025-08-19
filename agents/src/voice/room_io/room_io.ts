@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   ConnectionState,
+  DisconnectReason,
   type NoiseCancellationOptions,
   type Participant,
   ParticipantKind,
@@ -23,6 +24,7 @@ import { type AgentSession } from '../agent_session.js';
 import {
   AgentSessionEventTypes,
   type AgentStateChangedEvent,
+  CloseReason,
   type UserInputTranscribedEvent,
 } from '../events.js';
 import type { AudioOutput, TextOutput } from '../io.js';
@@ -53,6 +55,12 @@ const DEFAULT_PARTICIPANT_KINDS: ParticipantKind[] = [
   ParticipantKind.STANDARD,
 ];
 
+const CLOSE_ON_DISCONNECT_REASONS: DisconnectReason[] = [
+  DisconnectReason.CLIENT_INITIATED,
+  DisconnectReason.ROOM_DELETED,
+  DisconnectReason.USER_REJECTED,
+];
+
 export interface RoomInputOptions {
   audioSampleRate: number;
   audioNumChannels: number;
@@ -63,6 +71,7 @@ export interface RoomInputOptions {
   noiseCancellation?: NoiseCancellationOptions;
   textInputCallback?: TextInputCallback;
   participantKinds?: ParticipantKind[];
+  closeOnDisconnect: boolean;
 }
 
 export interface RoomOutputOptions {
@@ -81,6 +90,7 @@ const DEFAULT_ROOM_INPUT_OPTIONS: RoomInputOptions = {
   audioEnabled: true,
   videoEnabled: false,
   textInputCallback: DEFAULT_TEXT_INPUT_CALLBACK,
+  closeOnDisconnect: true,
 };
 
 const DEFAULT_ROOM_OUTPUT_OPTIONS: RoomOutputOptions = {
@@ -206,9 +216,24 @@ export class RoomIO {
     if (participant.identity !== this.participantIdentity) {
       return;
     }
-
-    // TODO(AJS-177): close the session if the participant disconnects unless opted out
-    this.unsetParticipant();
+    this.participantAvailableFuture = new Future<RemoteParticipant>();
+    if (
+      this.inputOptions.closeOnDisconnect &&
+      participant.disconnectReason &&
+      CLOSE_ON_DISCONNECT_REASONS.includes(participant.disconnectReason)
+    ) {
+      this.logger.info(
+        {
+          participant: participant.identity,
+          reason: DisconnectReason[participant.disconnectReason],
+        },
+        'closing agent session due to participant disconnect ' +
+          '(disable via `RoomInputOptions.closeOnDisconnect=False`)',
+      );
+      this.agentSession._closeSoon({
+        reason: CloseReason.PARTICIPANT_DISCONNECTED,
+      });
+    }
   };
 
   private onUserInputTranscribed = (ev: UserInputTranscribedEvent) => {
