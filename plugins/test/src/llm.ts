@@ -129,8 +129,8 @@ export const llm = async (llm: llmlib.LLM) => {
 
         expect(calls.length).toStrictEqual(1);
         expect(JSON.parse(calls[0]!.args).name).toStrictEqual('Theo');
-        expect(JSON.parse(calls[0]!.args).email).toBeUndefined();
-        expect(JSON.parse(calls[0]!.args).address).toBeUndefined();
+        expect(JSON.parse(calls[0]!.args).email).toBeNull();
+        expect(JSON.parse(calls[0]!.args).address).toBeNull();
       });
     });
   });
