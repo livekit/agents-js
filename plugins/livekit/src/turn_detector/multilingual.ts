@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { llm } from '@livekit/agents';
-import { log } from '@livekit/agents';
+import { getJobContext, log } from '@livekit/agents';
 import { EOUModel, EOURunnerBase } from './base.js';
+import { MAX_HISTORY_TURNS } from './constants.js';
 
 const REMOTE_INFERENCE_TIMEOUT = 2000;
 
@@ -71,11 +72,37 @@ export class MultilingualModel extends EOUModel {
       return await super.predictEndOfTurn(chatCtx, timeout);
     }
 
+    // Copy and process chat context similar to Python implementation
+    const messages = chatCtx
+      .copy({
+        excludeFunctionCall: true,
+        excludeInstructions: true,
+        excludeEmptyMessage: true,
+      })
+      .truncate(MAX_HISTORY_TURNS);
+
+    // Get job context and build request
+    const ctx = getJobContext();
+    const request: any = {
+      ...messages.toJSON({
+        excludeImage: true,
+        excludeAudio: true,
+        excludeTimestamp: true,
+      }),
+      jobId: ctx.job.id,
+      workerId: ctx.workerId,
+    };
+
+    // Add agentId from environment variable if available
+    const agentId = process.env.LIVEKIT_AGENT_ID;
+    if (agentId) {
+      request.agentId = agentId;
+    }
+
     const startedAt = performance.now();
     const resp = await fetch(url, {
       method: 'POST',
-      // TODO(brian): exclude function call messages
-      body: JSON.stringify(chatCtx),
+      body: JSON.stringify(request),
       headers: {
         'Content-Type': 'application/json',
       },

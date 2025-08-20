@@ -433,7 +433,8 @@ export class ChatContext {
       }
     }
 
-    this._items = newItems;
+    // replace the items in place to keep the reference
+    this._items.splice(0, this._items.length, ...newItems);
     return this;
   }
 
