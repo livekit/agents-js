@@ -16,7 +16,9 @@ export type STTModels =
   | 'nova-2-medical'
   | 'nova-2-drivethru'
   | 'nova-2-automotive'
+  | 'nova-3'
   | 'nova-3-general'
+  | 'nova-3-medical'
   | 'enhanced-general'
   | 'enhanced-meeting'
   | 'enhanced-phonecall'
@@ -68,4 +70,5 @@ export type STTLanguages =
   | 'uk'
   | 'zh'
   | 'zh-CN'
-  | 'zh-TW';
+  | 'zh-TW'
+  | 'multi';

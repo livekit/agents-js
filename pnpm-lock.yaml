@@ -159,6 +159,9 @@ importers:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../agents
+      '@livekit/agents-plugin-cartesia':
+        specifier: workspace:*
+        version: link:../plugins/cartesia
       '@livekit/agents-plugin-deepgram':
         specifier: workspace:*
         version: link:../plugins/deepgram
