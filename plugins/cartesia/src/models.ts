@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export type TTSModels = 'sonic-english' | 'sonic-multilingual';
+export type TTSModels = 'sonic' | 'sonic-2' | 'sonic-lite' | 'sonic-preview' | 'sonic-turbo';
 
 export type TTSLanguages = 'en' | 'es' | 'fr' | 'de' | 'pt' | 'zh' | 'ja';
 
-export const TTSDefaultVoiceId = 'c2ac25f9-ecc4-4f56-9095-651354df60c0';
+export const TTSDefaultVoiceId = '794f9389-aac1-45b6-b726-9d9369183238';
 
 export type TTSVoiceSpeed = 'fastest' | 'fast' | 'normal' | 'slow' | 'slowest';
 

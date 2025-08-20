@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, log, tokenize, tts } from '@livekit/agents';
-import { shortuuid } from '@livekit/agents';
+import { AudioByteStream, log, shortuuid, tokenize, tts } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
 import { WebSocket } from 'ws';
@@ -32,7 +31,7 @@ export interface TTSOptions {
 }
 
 const defaultTTSOptions: TTSOptions = {
-  model: 'sonic-english',
+  model: 'sonic-2',
   encoding: 'pcm_s16le',
   sampleRate: 24000,
   voice: TTSDefaultVoiceId,
