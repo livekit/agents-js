@@ -5,7 +5,7 @@ import { AudioByteStream, log, tokenize, tts } from '@livekit/agents';
 import { shortuuid } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
-import { WebSocket } from 'ws';
+import { type RawData, WebSocket } from 'ws';
 import {
   TTSDefaultVoiceId,
   type TTSEncoding,
@@ -204,9 +204,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       while (!this.closed && !this.abortController.signal.aborted && !shouldExit) {
         try {
-          await new Promise<string>((resolve, reject) => {
+          await new Promise<RawData | null>((resolve, reject) => {
             ws.removeAllListeners();
-            ws.on('message', (data) => resolve(data.toString()));
+            ws.on('message', (data) => resolve(data));
             ws.on('close', (code, reason) => {
               if (!closing) {
                 this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
@@ -215,13 +215,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 reject(new Error('WebSocket closed'));
               } else {
                 // If we've received the final message, resolve with empty to exit gracefully
-                resolve('');
+                resolve(null);
               }
             });
           }).then((msg) => {
-            if (!msg) return; // Empty message from close handler
+            if (!msg) return;
 
-            const json = JSON.parse(msg);
+            const json = JSON.parse(msg.toString());
             const segmentId = json.context_id;
             if ('data' in json) {
               const data = new Int8Array(Buffer.from(json.data, 'base64'));
