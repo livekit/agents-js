@@ -190,46 +190,74 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     const recvTask = async (ws: WebSocket) => {
+      let finalReceived = false;
+      let shouldExit = false;
       const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
 
       let lastFrame: AudioFrame | undefined;
       const sendLastFrame = (segmentId: string, final: boolean) => {
-        if (lastFrame) {
+        if (lastFrame && !this.queue.closed) {
           this.queue.put({ requestId, segmentId, frame: lastFrame, final });
           lastFrame = undefined;
         }
       };
 
-      ws.on('message', (data) => {
-        const json = JSON.parse(data.toString());
-        const segmentId = json.context_id;
-        if ('data' in json) {
-          const data = new Int8Array(Buffer.from(json.data, 'base64'));
-          for (const frame of bstream.write(data)) {
-            sendLastFrame(segmentId, false);
-            lastFrame = frame;
-          }
-        } else if ('done' in json) {
-          for (const frame of bstream.flush()) {
-            sendLastFrame(segmentId, false);
-            lastFrame = frame;
-          }
-          sendLastFrame(segmentId, true);
-          this.queue.put(SynthesizeStream.END_OF_STREAM);
+      while (!this.closed && !this.abortController.signal.aborted && !shouldExit) {
+        try {
+          await new Promise<string>((resolve, reject) => {
+            ws.removeAllListeners();
+            ws.on('message', (data) => resolve(data.toString()));
+            ws.on('close', (code, reason) => {
+              if (!closing) {
+                this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+              }
+              if (!finalReceived) {
+                reject(new Error('WebSocket closed'));
+              } else {
+                // If we've received the final message, resolve with empty to exit gracefully
+                resolve('');
+              }
+            });
+          }).then((msg) => {
+            if (!msg) return; // Empty message from close handler
 
-          if (segmentId === requestId) {
-            closing = true;
-            ws.close();
-            return;
+            const json = JSON.parse(msg);
+            const segmentId = json.context_id;
+            if ('data' in json) {
+              const data = new Int8Array(Buffer.from(json.data, 'base64'));
+              for (const frame of bstream.write(data)) {
+                sendLastFrame(segmentId, false);
+                lastFrame = frame;
+              }
+            } else if ('done' in json) {
+              finalReceived = true;
+              for (const frame of bstream.flush()) {
+                sendLastFrame(segmentId, false);
+                lastFrame = frame;
+              }
+              sendLastFrame(segmentId, true);
+              if (!this.queue.closed) {
+                this.queue.put(SynthesizeStream.END_OF_STREAM);
+              }
+
+              if (segmentId === requestId) {
+                closing = true;
+                shouldExit = true;
+                this.#logger.info('Cartesia WebSocket close event sent');
+                ws.close();
+              }
+            }
+          });
+        } catch (err) {
+          // skip log error for normal websocket close
+          if (err instanceof Error && !err.message.includes('WebSocket closed')) {
+            this.#logger.error({ err }, 'Error in recvTask from Cartesia WebSocket');
           }
+          break;
         }
-      });
-      ws.on('close', (code, reason) => {
-        if (!closing) {
-          this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-        }
-        ws.removeAllListeners();
-      });
+      }
+
+      this.#logger.info('Cartesia WebSocket closed');
     };
 
     const url = `wss://api.cartesia.ai/tts/websocket?api_key=${this.#opts.apiKey}&cartesia_version=${VERSION}`;
@@ -243,6 +271,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
 
       await Promise.all([inputTask(), sentenceStreamTask(ws), recvTask(ws)]);
+      this.#logger.info('Cartesia run completed');
     } catch (e) {
       throw new Error(`failed to connect to Cartesia: ${e}`);
     }
