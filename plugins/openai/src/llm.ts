@@ -2,8 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { APIConnectOptions } from '@livekit/agents';
-import { APIConnectionError, toError } from '@livekit/agents';
-import { APIStatusError, APITimeoutError, DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
+import {
+  APIConnectionError,
+  APIStatusError,
+  APITimeoutError,
+  DEFAULT_API_CONNECT_OPTIONS,
+  llm,
+  toError,
+} from '@livekit/agents';
 import { AzureOpenAI, OpenAI } from 'openai';
 import type {
   CerebrasChatModels,
@@ -34,13 +40,13 @@ export interface LLMOptions {
 }
 
 const defaultLLMOptions: LLMOptions = {
-  model: 'gpt-4o',
+  model: 'gpt-4.1',
   apiKey: process.env.OPENAI_API_KEY,
   parallelToolCalls: true,
 };
 
 const defaultAzureLLMOptions: LLMOptions = {
-  model: 'gpt-4o',
+  model: 'gpt-4.1',
   apiKey: process.env.AZURE_API_KEY,
 };
 

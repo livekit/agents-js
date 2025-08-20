@@ -9,7 +9,8 @@ export type TTSModels =
   | 'eleven_flash_v2'
   | 'eleven_flash_v2_5'
   | 'eleven_turbo_v2'
-  | 'eleven_turbo_v2_5';
+  | 'eleven_turbo_v2_5'
+  | 'eleven_v3';
 
 export type TTSEncoding =
   // XXX(nbsp): MP3 is not yet supported
