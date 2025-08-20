@@ -284,6 +284,10 @@ export class AudioRecognition {
         this.logger.debug('EOU detection task completed');
       })
       .catch((err: unknown) => {
+        if (err instanceof Error && err.message.includes('This operation was aborted')) {
+          // ignore aborted errors
+          return;
+        }
         this.logger.error(err, 'Error in EOU detection task:');
       });
   }

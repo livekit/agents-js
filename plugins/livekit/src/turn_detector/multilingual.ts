@@ -100,6 +100,9 @@ export class MultilingualModel extends EOUModel {
     }
 
     const startedAt = performance.now();
+
+    this.#logger.debug({ url, request }, '=== remote EOU inference');
+
     const resp = await fetch(url, {
       method: 'POST',
       body: JSON.stringify(request),
