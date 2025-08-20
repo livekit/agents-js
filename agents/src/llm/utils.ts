@@ -38,6 +38,29 @@ function getChannelsFromVideoBufferType(type: VideoBufferType): 3 | 4 {
   }
 }
 
+function ensureRGBCompatible(frame: VideoFrame): VideoFrame {
+  // If the frame is already in an RGB/RGBA-compatible format, return it directly
+  if (
+    frame.type === VideoBufferType.RGBA ||
+    frame.type === VideoBufferType.BGRA ||
+    frame.type === VideoBufferType.ARGB ||
+    frame.type === VideoBufferType.ABGR ||
+    frame.type === VideoBufferType.RGB24
+  ) {
+    return frame;
+  }
+
+  // Otherwise, attempt conversion for other formats (like YUV)
+  try {
+    return frame.convert(VideoBufferType.RGBA);
+  } catch (error) {
+    throw new Error(
+      `Failed to convert format ${frame.type} to RGB: ${error}. ` +
+        `Consider using RGB/RGBA formats or converting on the client side.`,
+    );
+  }
+}
+
 export async function serializeImage(image: ImageContent): Promise<SerializedImage> {
   if (typeof image.image === 'string') {
     if (image.image.startsWith('data:')) {
@@ -79,12 +102,15 @@ export async function serializeImage(image: ImageContent): Promise<SerializedIma
       externalUrl: image.image,
     };
   } else if (image.image instanceof VideoFrame) {
+    const frame = ensureRGBCompatible(image.image);
+    const channels = getChannelsFromVideoBufferType(frame.type);
+
     // Sharp needs to know the format of raw pixel data
-    let encoded = sharp(Buffer.from(image.image.data), {
+    let encoded = sharp(frame.data, {
       raw: {
-        width: image.image.width,
-        height: image.image.height,
-        channels: getChannelsFromVideoBufferType(image.image.type),
+        width: frame.width,
+        height: frame.height,
+        channels,
       },
     });
 
