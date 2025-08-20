@@ -29,15 +29,17 @@ export interface TTSOptions {
   emotion?: (TTSVoiceEmotion | string)[];
   apiKey?: string;
   language: string;
+  baseUrl: string;
 }
 
 const defaultTTSOptions: TTSOptions = {
-  model: 'sonic-english',
+  model: 'sonic-2',
   encoding: 'pcm_s16le',
   sampleRate: 24000,
   voice: TTSDefaultVoiceId,
   apiKey: process.env.CARTESIA_API_KEY,
   language: 'en',
+  baseUrl: 'https://api.cartesia.ai',
 };
 
 export class TTS extends tts.TTS {
@@ -59,10 +61,26 @@ export class TTS extends tts.TTS {
         'Cartesia API key is required, whether as an argument or as $CARTESIA_API_KEY',
       );
     }
+
+    if ((this.#opts.speed || this.#opts.emotion) && this.#opts.model !== 'sonic-2-2025-03-07') {
+      const logger = log();
+      logger.warn(
+        { model: this.#opts.model, speed: this.#opts.speed, emotion: this.#opts.emotion },
+        "speed and emotion controls are only supported for model 'sonic-2-2025-03-07', see https://docs.cartesia.ai/developer-tools/changelog for details",
+      );
+    }
   }
 
   updateOptions(opts: Partial<TTSOptions>) {
     this.#opts = { ...this.#opts, ...opts };
+
+    if ((this.#opts.speed || this.#opts.emotion) && this.#opts.model !== 'sonic-2-2025-03-07') {
+      const logger = log();
+      logger.warn(
+        { model: this.#opts.model, speed: this.#opts.speed, emotion: this.#opts.emotion },
+        "speed and emotion controls are only supported for model 'sonic-2-2025-03-07', see https://docs.cartesia.ai/developer-tools/changelog for details",
+      );
+    }
   }
 
   synthesize(text: string): tts.ChunkedStream {
@@ -92,10 +110,11 @@ export class ChunkedStream extends tts.ChunkedStream {
     const json = toCartesiaOptions(this.#opts);
     json.transcript = this.#text;
 
+    const baseUrl = new URL(this.#opts.baseUrl);
     const req = request(
       {
-        hostname: 'api.cartesia.ai',
-        port: 443,
+        hostname: baseUrl.hostname,
+        port: parseInt(baseUrl.port) || (baseUrl.protocol === 'https:' ? 443 : 80),
         path: '/tts/bytes',
         method: 'POST',
         headers: {
@@ -148,6 +167,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
   updateOptions(opts: Partial<TTSOptions>) {
     this.#opts = { ...this.#opts, ...opts };
+
+    if ((this.#opts.speed || this.#opts.emotion) && this.#opts.model !== 'sonic-2-2025-03-07') {
+      this.#logger.warn(
+        { model: this.#opts.model, speed: this.#opts.speed, emotion: this.#opts.emotion },
+        "speed and emotion controls are only supported for model 'sonic-2-2025-03-07', see https://docs.cartesia.ai/developer-tools/changelog for details",
+      );
+    }
   }
 
   protected async run() {
@@ -260,7 +286,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       this.#logger.info('Cartesia WebSocket closed');
     };
 
-    const url = `wss://api.cartesia.ai/tts/websocket?api_key=${this.#opts.apiKey}&cartesia_version=${VERSION}`;
+    const wsUrl = this.#opts.baseUrl.replace(/^http/, 'ws');
+    const url = `${wsUrl}/tts/websocket?api_key=${this.#opts.apiKey}&cartesia_version=${VERSION}`;
     const ws = new WebSocket(url);
 
     try {
@@ -296,7 +323,7 @@ const toCartesiaOptions = (opts: TTSOptions): { [id: string]: unknown } => {
     voiceControls.emotion = opts.emotion;
   }
 
-  if (Object.keys({}).length) {
+  if (Object.keys(voiceControls).length) {
     voice.__experimental_controls = voiceControls;
   }
 
