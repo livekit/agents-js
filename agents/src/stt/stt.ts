@@ -3,14 +3,17 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { delay } from '@std/async/delay';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
+import { APIConnectionError, APIError } from '../_exceptions.js';
 import { calculateAudioDuration } from '../audio.js';
 import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
+import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import type { AudioBuffer } from '../utils.js';
-import { AsyncIterableQueue } from '../utils.js';
+import { AsyncIterableQueue, startSoon, toError } from '../utils.js';
 
 /** Indicates start/middle/end of speech */
 export enum SpeechEventType {
@@ -70,8 +73,17 @@ export interface STTCapabilities {
   interimResults: boolean;
 }
 
+export interface STTError {
+  type: 'stt_error';
+  timestamp: number;
+  label: string;
+  error: Error;
+  recoverable: boolean;
+}
+
 export type STTCallbacks = {
   ['metrics_collected']: (metrics: STTMetrics) => void;
+  ['error']: (error: STTError) => void;
 };
 
 /**
@@ -148,15 +160,74 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   #stt: STT;
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
-  constructor(stt: STT, sampleRate?: number) {
+  private _connOptions: APIConnectOptions;
+
+  constructor(
+    stt: STT,
+    sampleRate?: number,
+    connectionOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+  ) {
     this.#stt = stt;
+    this._connOptions = connectionOptions;
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.neededSampleRate = sampleRate;
     this.monitorMetrics();
-    this.mainTask();
+    this.pumpInput();
+
+    // this is a hack to immitate asyncio.create_task so that mainTask
+    // is run **after** the constructor has finished. Otherwise we get
+    // runtime error when trying to access class variables in the
+    // `run` method.
+    startSoon(() => this.mainTask().then(() => this.queue.close()));
   }
 
-  protected async mainTask() {
+  private async mainTask() {
+    for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
+      try {
+        return await this.run();
+      } catch (error) {
+        if (error instanceof APIError) {
+          const retryInterval = this._connOptions._intervalForRetry(i);
+
+          if (this._connOptions.maxRetry === 0 || !error.retryable) {
+            this.emitError({ error, recoverable: false });
+            throw error;
+          } else if (i === this._connOptions.maxRetry) {
+            this.emitError({ error, recoverable: false });
+            throw new APIConnectionError({
+              message: `failed to recognize speech after ${this._connOptions.maxRetry + 1} attempts`,
+              options: { retryable: false },
+            });
+          } else {
+            this.emitError({ error, recoverable: true });
+            this.logger.warn(
+              { tts: this.#stt.label, attempt: i + 1, error },
+              `failed to recognize speech, retrying in ${retryInterval}s`,
+            );
+          }
+
+          if (retryInterval > 0) {
+            await delay(retryInterval);
+          }
+        } else {
+          this.emitError({ error: toError(error), recoverable: false });
+          throw error;
+        }
+      }
+    }
+  }
+
+  private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
+    this.#stt.emit('error', {
+      type: 'stt_error',
+      timestamp: Date.now(),
+      label: this.#stt.label,
+      error,
+      recoverable,
+    });
+  }
+
+  protected async pumpInput() {
     // TODO(AJS-35): Implement STT with webstreams API
     const inputStream = this.deferredInputStream.stream;
     const reader = inputStream.getReader();
@@ -191,6 +262,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     }
     this.output.close();
   }
+
+  protected abstract run(): Promise<void>;
 
   updateInputStream(audioStream: ReadableStream<AudioFrame>) {
     this.deferredInputStream.setSource(audioStream);

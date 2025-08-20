@@ -134,4 +134,11 @@ export class ParticipantAudioInputStream extends AudioInput {
       noiseCancellation: this.noiseCancellation,
     });
   }
+
+  async close() {
+    this.room.off(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
+    this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
+    this.closeStream();
+    this.deferredStream.stream.cancel();
+  }
 }

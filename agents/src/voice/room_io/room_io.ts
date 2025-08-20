@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   ConnectionState,
+  DisconnectReason,
   type NoiseCancellationOptions,
   type Participant,
   ParticipantKind,
@@ -18,11 +19,12 @@ import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ATTRIBUTE_PUBLISH_ON_BEHALF, TOPIC_CHAT } from '../../constants.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
-import { Future } from '../../utils.js';
+import { Future, Task } from '../../utils.js';
 import { type AgentSession } from '../agent_session.js';
 import {
   AgentSessionEventTypes,
   type AgentStateChangedEvent,
+  CloseReason,
   type UserInputTranscribedEvent,
 } from '../events.js';
 import type { AudioOutput, TextOutput } from '../io.js';
@@ -53,6 +55,12 @@ const DEFAULT_PARTICIPANT_KINDS: ParticipantKind[] = [
   ParticipantKind.STANDARD,
 ];
 
+const CLOSE_ON_DISCONNECT_REASONS: DisconnectReason[] = [
+  DisconnectReason.CLIENT_INITIATED,
+  DisconnectReason.ROOM_DELETED,
+  DisconnectReason.USER_REJECTED,
+];
+
 export interface RoomInputOptions {
   audioSampleRate: number;
   audioNumChannels: number;
@@ -63,6 +71,7 @@ export interface RoomInputOptions {
   noiseCancellation?: NoiseCancellationOptions;
   textInputCallback?: TextInputCallback;
   participantKinds?: ParticipantKind[];
+  closeOnDisconnect: boolean;
 }
 
 export interface RoomOutputOptions {
@@ -81,6 +90,7 @@ const DEFAULT_ROOM_INPUT_OPTIONS: RoomInputOptions = {
   audioEnabled: true,
   videoEnabled: false,
   textInputCallback: DEFAULT_TEXT_INPUT_CALLBACK,
+  closeOnDisconnect: true,
 };
 
 const DEFAULT_ROOM_OUTPUT_OPTIONS: RoomOutputOptions = {
@@ -111,10 +121,10 @@ export class RoomIO {
   // Use stream API for transcript queue
   private userTranscriptStream = new IdentityTransform<UserInputTranscribedEvent>();
   private userTranscriptWriter: WritableStreamDefaultWriter<UserInputTranscribedEvent>;
-  private forwardUserTranscriptPromise?: Promise<void>;
+  private forwardUserTranscriptTask?: Task<void>;
+  private initTask?: Task<void>;
 
-  // TODO(brian): unregister the text stream handler when the room io is closed
-  private textStreamHandlerRegistered = false; // eslint-disable-line @typescript-eslint/no-unused-vars
+  private textStreamHandlerRegistered = false;
 
   private logger = log();
 
@@ -144,11 +154,14 @@ export class RoomIO {
         : participant.identity
       : this.inputOptions.participantIdentity ?? null;
   }
-  private async initTask() {
+  private async init(signal: AbortSignal): Promise<void> {
     await this.roomConnectedFuture.await;
 
     for (const participant of this.room.remoteParticipants.values()) {
       this.onParticipantConnected(participant);
+    }
+    if (signal.aborted) {
+      return;
     }
 
     const participant = await this.participantAvailableFuture.await;
@@ -160,7 +173,7 @@ export class RoomIO {
       participant: this.room.localParticipant?.identity ?? null,
     });
 
-    await this.participantAudioOutput?.start();
+    await this.participantAudioOutput?.start(signal);
   }
 
   private onConnectionStateChanged = (state: ConnectionState) => {
@@ -202,9 +215,24 @@ export class RoomIO {
     if (participant.identity !== this.participantIdentity) {
       return;
     }
-
-    // TODO(AJS-177): close the session if the participant disconnects unless opted out
-    this.unsetParticipant();
+    this.participantAvailableFuture = new Future<RemoteParticipant>();
+    if (
+      this.inputOptions.closeOnDisconnect &&
+      participant.disconnectReason &&
+      CLOSE_ON_DISCONNECT_REASONS.includes(participant.disconnectReason)
+    ) {
+      this.logger.info(
+        {
+          participant: participant.identity,
+          reason: DisconnectReason[participant.disconnectReason],
+        },
+        'closing agent session due to participant disconnect ' +
+          '(disable via `RoomInputOptions.closeOnDisconnect=False`)',
+      );
+      this.agentSession._closeSoon({
+        reason: CloseReason.PARTICIPANT_DISCONNECTED,
+      });
+    }
   };
 
   private onUserInputTranscribed = (ev: UserInputTranscribedEvent) => {
@@ -252,10 +280,10 @@ export class RoomIO {
     });
   };
 
-  private async forwardUserTranscript(): Promise<void> {
+  private async forwardUserTranscript(signal: AbortSignal): Promise<void> {
     const reader = this.userTranscriptStream.readable.getReader();
     try {
-      while (true) {
+      while (!signal.aborted) {
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -397,7 +425,9 @@ export class RoomIO {
         participant: this.participantIdentity,
       });
       // Start the transcript forwarding
-      this.forwardUserTranscriptPromise = this.forwardUserTranscript();
+      this.forwardUserTranscriptTask = Task.from((controller) =>
+        this.forwardUserTranscript(controller.signal),
+      );
       this.agentTranscriptOutput = this.createTranscriptionOutput({
         isDeltaStream: true,
         participant: null,
@@ -422,9 +452,7 @@ export class RoomIO {
       this.onConnectionStateChanged(ConnectionState.CONN_CONNECTED);
     }
 
-    this.initTask().catch((error) => {
-      this.logger.error({ error }, 'Failed to initialize RoomIO');
-    });
+    this.initTask = Task.from((controller) => this.init(controller.signal));
 
     // -- attatch the agent to the session --
     if (this.audioInput) {
@@ -439,5 +467,29 @@ export class RoomIO {
 
     this.agentSession.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
     this.agentSession.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
+  }
+
+  async close() {
+    this.room.off(RoomEvent.ParticipantConnected, this.onParticipantConnected);
+    this.room.off(RoomEvent.ConnectionStateChanged, this.onConnectionStateChanged);
+    this.room.off(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
+    this.agentSession.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
+    this.agentSession.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
+
+    if (this.textStreamHandlerRegistered) {
+      this.room.unregisterTextStreamHandler(TOPIC_CHAT);
+      this.textStreamHandlerRegistered = false;
+    }
+
+    await this.initTask?.cancelAndWait();
+
+    // Close stream FIRST so reader.read() in forwardUserTranscript can exit.
+    // This is a workaround for a race condition in the stream API.
+    this.userTranscriptWriter.close();
+    await this.forwardUserTranscriptTask?.cancelAndWait();
+
+    await this.audioInput?.close();
+    await this.participantAudioOutput?.close();
+    await this.transcriptionSynchronizer?.close();
   }
 }

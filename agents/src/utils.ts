@@ -636,3 +636,37 @@ export function resampleStream({
   });
   return stream.pipeThrough(transformStream);
 }
+
+export class InvalidErrorType extends Error {
+  readonly error: unknown;
+
+  constructor(error: unknown) {
+    super(`Expected error, got ${error} (${typeof error})`);
+    this.error = error;
+    Error.captureStackTrace(this, InvalidErrorType);
+  }
+}
+
+/**
+ * In JS an error can be any arbitrary value.
+ * This function converts an unknown error to an Error and stores the original value in the error object.
+ *
+ * @param error - The error to convert.
+ * @returns An Error.
+ */
+export function toError(error: unknown): Error {
+  if (error instanceof Error) {
+    return error;
+  }
+  throw new InvalidErrorType(error);
+}
+
+/**
+ * This is a hack to immitate asyncio.create_task so that
+ * func will be run after the current event loop iteration.
+ *
+ * @param func - The function to run.
+ */
+export function startSoon(func: () => void) {
+  setTimeout(func, 0);
+}

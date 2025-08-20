@@ -769,9 +769,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
       } catch (error) {
         this.remoteChatCtx = oldChatCtx;
-        throw new APIConnectionError(
-          'Failed to send message to OpenAI Realtime API during session re-connection',
-        );
+        throw new APIConnectionError({
+          message: 'Failed to send message to OpenAI Realtime API during session re-connection',
+        });
       }
 
       this.#logger.debug('Reconnected to OpenAI Realtime API');
@@ -803,13 +803,13 @@ export class RealtimeSession extends llm.RealtimeSession {
 
         if (numRetries === maxRetries) {
           this.emitError({ error: error as Error, recoverable: false });
-          throw new APIConnectionError(
-            `OpenAI Realtime API connection failed after ${numRetries} attempts`,
-            {
+          throw new APIConnectionError({
+            message: `OpenAI Realtime API connection failed after ${numRetries} attempts`,
+            options: {
               body: error,
               retryable: false,
             },
-          );
+          });
         }
 
         this.emitError({ error: error as Error, recoverable: true });
@@ -860,7 +860,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     const wsCloseFuture = new Future<void | Error>();
 
     wsConn.onerror = (error) => {
-      wsCloseFuture.resolve(new APIConnectionError(error.message));
+      wsCloseFuture.resolve(new APIConnectionError({ message: error.message }));
     };
     wsConn.onclose = () => {
       wsCloseFuture.resolve();
@@ -944,7 +944,9 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const waitReconnectTask = Task.from(async ({ signal }) => {
       await delay(this.oaiRealtimeModel._options.maxSessionDuration, { signal });
-      return new APIConnectionError('OpenAI Realtime API connection timeout');
+      return new APIConnectionError({
+        message: 'OpenAI Realtime API connection timeout',
+      });
     });
 
     try {

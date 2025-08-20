@@ -6,10 +6,12 @@ import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { ChatContext, ChatMessage } from '../llm/chat_context.js';
-import type { LLM, RealtimeModel, ToolChoice } from '../llm/index.js';
+import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
+import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
-import type { TTS } from '../tts/tts.js';
+import type { STTError } from '../stt/stt.js';
+import type { TTS, TTSError } from '../tts/tts.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
@@ -18,6 +20,8 @@ import {
   AgentSessionEventTypes,
   type AgentState,
   type AgentStateChangedEvent,
+  type CloseEvent,
+  CloseReason,
   type ConversationItemAddedEvent,
   type ErrorEvent,
   type FunctionToolsExecutedEvent,
@@ -27,6 +31,7 @@ import {
   type UserState,
   type UserStateChangedEvent,
   createAgentStateChangedEvent,
+  createCloseEvent,
   createConversationItemAddedEvent,
   createUserStateChangedEvent,
 } from './events.js';
@@ -66,6 +71,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.MetricsCollected]: (ev: MetricsCollectedEvent) => void;
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
+  [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
@@ -104,6 +110,8 @@ export class AgentSession<
 
   private _input: AgentInput;
   private _output: AgentOutput;
+
+  private closingTask: Promise<void> | null = null;
 
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
@@ -320,6 +328,41 @@ export class AgentSession<
     return this.agent;
   }
 
+  async close(): Promise<void> {
+    await this.closeImpl(CloseReason.USER_INITIATED);
+  }
+
+  /** @internal */
+  _closeSoon({
+    reason,
+    drain = false,
+    error = null,
+  }: {
+    reason: CloseReason;
+    drain?: boolean;
+    error?: RealtimeModelError | STTError | TTSError | LLMError | null;
+  }): void {
+    if (this.closingTask) {
+      return;
+    }
+    this.closeImpl(reason, error, drain);
+  }
+
+  /** @internal */
+  _onError(error: RealtimeModelError | STTError | TTSError | LLMError): void {
+    if (this.closingTask || error.recoverable) {
+      return;
+    }
+
+    this.logger.error(error, 'AgentSession is closing due to unrecoverable error');
+
+    this.closingTask = (async () => {
+      await this.closeImpl(CloseReason.ERROR, error);
+    })().then(() => {
+      this.closingTask = null;
+    });
+  }
+
   /** @internal */
   _conversationItemAdded(item: ChatMessage): void {
     this._chatCtx.insert(item);
@@ -368,4 +411,50 @@ export class AgentSession<
   private onAudioOutputChanged(): void {}
 
   private onTextOutputChanged(): void {}
+
+  private async closeImpl(
+    reason: CloseReason,
+    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
+    drain: boolean = false,
+  ): Promise<void> {
+    if (!this.started) {
+      return;
+    }
+
+    if (this.activity) {
+      if (!drain) {
+        try {
+          this.activity.interrupt();
+        } catch (error) {
+          // uninterruptible speech [copied from python]
+          // TODO(shubhra): force interrupt or wait for it to finish?
+          // it might be an audio played from the error callback
+        }
+      }
+      await this.activity.drain();
+      // wait any uninterruptible speech to finish
+      await this.activity.currentSpeech?.waitForPlayout();
+      this.activity.detachAudioInput();
+    }
+
+    // detach the inputs and outputs
+    this.input.audio = null;
+    this.output.audio = null;
+    this.output.transcription = null;
+
+    await this.roomIO?.close();
+    this.roomIO = undefined;
+
+    await this.activity?.close();
+    this.activity = undefined;
+
+    this.started = false;
+
+    this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
+
+    this.userState = 'listening';
+    this._agentState = 'initializing';
+
+    this.logger.info({ reason, error }, 'AgentSession closed');
+  }
 }
