@@ -21,10 +21,10 @@ const validate = async (frames: AudioBuffer, stt: stt.STT, text: string, thresho
 export const tts = async (
   tts: ttslib.TTS,
   stt: stt.STT,
-  supports: Partial<{ streaming: boolean; nonStreaming: boolean }> = {},
+  supports: Partial<{ streaming: boolean }> = {},
 ) => {
   initializeLogger({ pretty: false });
-  supports = { streaming: true, nonStreaming: true, ...supports };
+  supports = { streaming: true, ...supports };
   describe('TTS', () => {
     it('should properly stream synthesize text', async () => {
       let stream: ttslib.SynthesizeStream;

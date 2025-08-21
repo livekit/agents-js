@@ -7,5 +7,5 @@ import { describe } from 'vitest';
 import { TTS } from './gemini_tts.js';
 
 describe('Google Gemini TTS', async () => {
-  await tts(new TTS(), new STT(), { nonStreaming: true, streaming: false });
+  await tts(new TTS(), new STT());
 });
