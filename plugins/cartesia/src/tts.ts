@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, log, tokenize, tts } from '@livekit/agents';
-import { shortuuid } from '@livekit/agents';
+import { AudioByteStream, log, shortuuid, tokenize, tts } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
-import { WebSocket } from 'ws';
+import { type RawData, WebSocket } from 'ws';
 import {
   TTSDefaultVoiceId,
   type TTSEncoding,
@@ -29,15 +28,17 @@ export interface TTSOptions {
   emotion?: (TTSVoiceEmotion | string)[];
   apiKey?: string;
   language: string;
+  baseUrl: string;
 }
 
 const defaultTTSOptions: TTSOptions = {
-  model: 'sonic-english',
+  model: 'sonic-2',
   encoding: 'pcm_s16le',
   sampleRate: 24000,
   voice: TTSDefaultVoiceId,
   apiKey: process.env.CARTESIA_API_KEY,
   language: 'en',
+  baseUrl: 'https://api.cartesia.ai',
 };
 
 export class TTS extends tts.TTS {
@@ -59,10 +60,26 @@ export class TTS extends tts.TTS {
         'Cartesia API key is required, whether as an argument or as $CARTESIA_API_KEY',
       );
     }
+
+    if ((this.#opts.speed || this.#opts.emotion) && this.#opts.model !== 'sonic-2-2025-03-07') {
+      const logger = log();
+      logger.warn(
+        { model: this.#opts.model, speed: this.#opts.speed, emotion: this.#opts.emotion },
+        "speed and emotion controls are only supported for model 'sonic-2-2025-03-07', see https://docs.cartesia.ai/developer-tools/changelog for details",
+      );
+    }
   }
 
   updateOptions(opts: Partial<TTSOptions>) {
     this.#opts = { ...this.#opts, ...opts };
+
+    if ((this.#opts.speed || this.#opts.emotion) && this.#opts.model !== 'sonic-2-2025-03-07') {
+      const logger = log();
+      logger.warn(
+        { model: this.#opts.model, speed: this.#opts.speed, emotion: this.#opts.emotion },
+        "speed and emotion controls are only supported for model 'sonic-2-2025-03-07', see https://docs.cartesia.ai/developer-tools/changelog for details",
+      );
+    }
   }
 
   synthesize(text: string): tts.ChunkedStream {
@@ -92,10 +109,11 @@ export class ChunkedStream extends tts.ChunkedStream {
     const json = toCartesiaOptions(this.#opts);
     json.transcript = this.#text;
 
+    const baseUrl = new URL(this.#opts.baseUrl);
     const req = request(
       {
-        hostname: 'api.cartesia.ai',
-        port: 443,
+        hostname: baseUrl.hostname,
+        port: parseInt(baseUrl.port) || (baseUrl.protocol === 'https:' ? 443 : 80),
         path: '/tts/bytes',
         method: 'POST',
         headers: {
@@ -148,6 +166,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
   updateOptions(opts: Partial<TTSOptions>) {
     this.#opts = { ...this.#opts, ...opts };
+
+    if ((this.#opts.speed || this.#opts.emotion) && this.#opts.model !== 'sonic-2-2025-03-07') {
+      this.#logger.warn(
+        { model: this.#opts.model, speed: this.#opts.speed, emotion: this.#opts.emotion },
+        "speed and emotion controls are only supported for model 'sonic-2-2025-03-07', see https://docs.cartesia.ai/developer-tools/changelog for details",
+      );
+    }
   }
 
   protected async run() {
@@ -190,49 +215,78 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     const recvTask = async (ws: WebSocket) => {
+      let finalReceived = false;
+      let shouldExit = false;
       const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
 
       let lastFrame: AudioFrame | undefined;
       const sendLastFrame = (segmentId: string, final: boolean) => {
-        if (lastFrame) {
+        if (lastFrame && !this.queue.closed) {
           this.queue.put({ requestId, segmentId, frame: lastFrame, final });
           lastFrame = undefined;
         }
       };
 
-      ws.on('message', (data) => {
-        const json = JSON.parse(data.toString());
-        const segmentId = json.context_id;
-        if ('data' in json) {
-          const data = new Int8Array(Buffer.from(json.data, 'base64'));
-          for (const frame of bstream.write(data)) {
-            sendLastFrame(segmentId, false);
-            lastFrame = frame;
-          }
-        } else if ('done' in json) {
-          for (const frame of bstream.flush()) {
-            sendLastFrame(segmentId, false);
-            lastFrame = frame;
-          }
-          sendLastFrame(segmentId, true);
-          this.queue.put(SynthesizeStream.END_OF_STREAM);
+      while (!this.closed && !this.abortController.signal.aborted && !shouldExit) {
+        try {
+          await new Promise<RawData | null>((resolve, reject) => {
+            ws.removeAllListeners();
+            ws.on('message', (data) => resolve(data));
+            ws.on('close', (code, reason) => {
+              if (!closing) {
+                this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+              }
+              if (!finalReceived) {
+                reject(new Error('WebSocket closed'));
+              } else {
+                // If we've received the final message, resolve with empty to exit gracefully
+                resolve(null);
+              }
+            });
+          }).then((msg) => {
+            if (!msg) return;
 
-          if (segmentId === requestId) {
-            closing = true;
-            ws.close();
-            return;
+            const json = JSON.parse(msg.toString());
+            const segmentId = json.context_id;
+            if ('data' in json) {
+              const data = new Int8Array(Buffer.from(json.data, 'base64'));
+              for (const frame of bstream.write(data)) {
+                sendLastFrame(segmentId, false);
+                lastFrame = frame;
+              }
+            } else if ('done' in json) {
+              finalReceived = true;
+              for (const frame of bstream.flush()) {
+                sendLastFrame(segmentId, false);
+                lastFrame = frame;
+              }
+              sendLastFrame(segmentId, true);
+              if (!this.queue.closed) {
+                this.queue.put(SynthesizeStream.END_OF_STREAM);
+              }
+
+              if (segmentId === requestId) {
+                closing = true;
+                shouldExit = true;
+                this.#logger.info('Cartesia WebSocket close event sent');
+                ws.close();
+              }
+            }
+          });
+        } catch (err) {
+          // skip log error for normal websocket close
+          if (err instanceof Error && !err.message.includes('WebSocket closed')) {
+            this.#logger.error({ err }, 'Error in recvTask from Cartesia WebSocket');
           }
+          break;
         }
-      });
-      ws.on('close', (code, reason) => {
-        if (!closing) {
-          this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-        }
-        ws.removeAllListeners();
-      });
+      }
+
+      this.#logger.info('Cartesia WebSocket closed');
     };
 
-    const url = `wss://api.cartesia.ai/tts/websocket?api_key=${this.#opts.apiKey}&cartesia_version=${VERSION}`;
+    const wsUrl = this.#opts.baseUrl.replace(/^http/, 'ws');
+    const url = `${wsUrl}/tts/websocket?api_key=${this.#opts.apiKey}&cartesia_version=${VERSION}`;
     const ws = new WebSocket(url);
 
     try {
@@ -243,6 +297,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
 
       await Promise.all([inputTask(), sentenceStreamTask(ws), recvTask(ws)]);
+      this.#logger.info('Cartesia run completed');
     } catch (e) {
       throw new Error(`failed to connect to Cartesia: ${e}`);
     }
@@ -267,7 +322,7 @@ const toCartesiaOptions = (opts: TTSOptions): { [id: string]: unknown } => {
     voiceControls.emotion = opts.emotion;
   }
 
-  if (Object.keys({}).length) {
+  if (Object.keys(voiceControls).length) {
     voice.__experimental_controls = voiceControls;
   }
 

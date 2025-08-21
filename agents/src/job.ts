@@ -59,6 +59,7 @@ export type RunningJobInfo = {
   job: proto.Job;
   url: string;
   token: string;
+  workerId: string;
 };
 
 /** Attempted to add a function callback, but the function already exists. */
@@ -113,6 +114,10 @@ export class JobContext {
 
   get job(): proto.Job {
     return this.#info.job;
+  }
+
+  get workerId(): string {
+    return this.#info.workerId;
   }
 
   /** @returns The room the agent was called into */
