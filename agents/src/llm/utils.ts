@@ -155,7 +155,7 @@ export const oaiParams = (
   p: ZodObject<any>,
   isOpenai: boolean = true,
 ): OpenAIFunctionParameters => {
-  // Adapted fromhttps://github.com/vercel/ai/blob/56eb0ee9/packages/provider-utils/src/zod-schema.ts
+  // Adapted from https://github.com/vercel/ai/blob/56eb0ee9/packages/provider-utils/src/zod-schema.ts
   const { properties, required, additionalProperties } = zodToJsonSchema(p, {
     // note: openai mode breaks various gemini conversions
     target: isOpenai ? 'openAi' : 'jsonSchema7',
