@@ -123,7 +123,7 @@ export const llm = async (llm: llmlib.LLM) => {
       it('should handle optional arguments', async () => {
         const calls = await requestFncCall(
           llm,
-          'Use a tool call to update the user info to name Theo. Leave the email and address as null.',
+          'Use a tool call to update the user info to name Theo. Leave email and address blank.',
           toolCtx,
         );
 
