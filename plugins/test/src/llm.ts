@@ -163,7 +163,6 @@ const requestFncCall = async (
   const calls: llmlib.FunctionCall[] = [];
 
   for await (const chunk of stream) {
-    console.log('chunk', chunk);
     if (chunk.delta?.toolCalls) {
       calls.push(...chunk.delta.toolCalls);
     }

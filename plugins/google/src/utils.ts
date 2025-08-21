@@ -153,6 +153,5 @@ export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclar
     });
   }
 
-  console.log('functionDeclarations', JSON.stringify(functionDeclarations, null, 2));
   return functionDeclarations;
 }
