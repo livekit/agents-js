@@ -123,8 +123,6 @@ export default defineAgent({
   },
   entry: async (ctx: JobContext) => {
     await ctx.connect();
-    const participant = await ctx.waitForParticipant();
-    console.log('participant joined: ', participant.identity);
 
     const agent = new voice.Agent({
       instructions: 'You are a friendly voice assistant built by LiveKit.',
