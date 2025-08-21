@@ -268,7 +268,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               if (segmentId === requestId) {
                 closing = true;
                 shouldExit = true;
-                this.#logger.info('Cartesia WebSocket close event sent');
                 ws.close();
               }
             }
@@ -281,8 +280,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           break;
         }
       }
-
-      this.#logger.info('Cartesia WebSocket closed');
     };
 
     const wsUrl = this.#opts.baseUrl.replace(/^http/, 'ws');
@@ -297,7 +294,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
 
       await Promise.all([inputTask(), sentenceStreamTask(ws), recvTask(ws)]);
-      this.#logger.info('Cartesia run completed');
     } catch (e) {
       throw new Error(`failed to connect to Cartesia: ${e}`);
     }
