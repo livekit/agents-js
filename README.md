@@ -167,16 +167,9 @@ type StoryData = {
   location?: string;
 };
 
-// Use inheritance to create agent with custom hooks
 class IntroAgent extends voice.Agent<StoryData> {
-  async onEnter() {
-    this.session.generateReply({
-      instructions: '"greet the user and gather information"',
-    });
-  }
-
-  static create() {
-    return new IntroAgent({
+  constructor() {
+    super({
       instructions: `You are a story teller. Your goal is to gather a few pieces of information from the user to make the story personalized and engaging. Ask the user for their name and where they are from.`,
       tools: {
         informationGathered: llm.tool({
@@ -190,25 +183,34 @@ class IntroAgent extends voice.Agent<StoryData> {
             ctx.userData.name = name;
             ctx.userData.location = location;
 
-            const storyAgent = StoryAgent.create(name, location);
-            return llm.handoff({ agent: storyAgent, returns: "Let's start the story!" });
+            return llm.handoff({
+              agent: new StoryAgent(name, location),
+              returns: "Let's start the story!",
+            });
           },
         }),
       },
+    })
+  }
+
+  // Use inheritance to create agent with custom hooks
+  async onEnter() {
+    this.session.generateReply({
+      instructions: '"greet the user and gather information"',
     });
   }
 }
 
 class StoryAgent extends voice.Agent<StoryData> {
-  async onEnter() {
-    this.session.generateReply();
-  }
-
-  static create(name: string, location: string) {
-    return new StoryAgent({
+  constructor(name: string, location: string) {
+    super({
       instructions: `You are a storyteller. Use the user's information in order to make the story personalized.
         The user's name is ${name}, from ${location}`,
     });
+  }
+
+  async onEnter() {
+    this.session.generateReply();
   }
 }
 
@@ -232,7 +234,7 @@ export default defineAgent({
     });
 
     await session.start({
-      agent: IntroAgent.create(),
+      agent: new IntroAgent(),
       room: ctx.room,
     });
   },
