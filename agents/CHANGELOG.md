@@ -1,5 +1,17 @@
 # @livekit/agents
 
+## 1.0.0-next.0
+
+### Major Changes
+
+- Release @livekit/agents and all plugins to version 1.0.0 - [#626](https://github.com/livekit/agents-js/pull/626) ([@toubatbrian](https://github.com/toubatbrian))
+
+### Patch Changes
+
+- fix: set correct attribute name for transcription_final - [#589](https://github.com/livekit/agents-js/pull/589) ([@lukasIO](https://github.com/lukasIO))
+
+- fix: avoid masquerading types as mjs - [#434](https://github.com/livekit/agents-js/pull/434) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
 ## 0.7.6
 
 ### Patch Changes
