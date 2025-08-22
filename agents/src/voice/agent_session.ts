@@ -158,6 +158,10 @@ export class AgentSession<
     return this._userData;
   }
 
+  get history(): ChatContext {
+    return this._chatCtx;
+  }
+
   set userData(value: UserData) {
     this._userData = value;
   }
