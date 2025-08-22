@@ -187,6 +187,7 @@ class StdoutTextOutput extends TextOutput {
   flush(): void {
     if (this.capturing) {
       process.stdout.write(esc(0));
+      process.stdout.write('\n');
       this.capturing = false;
     }
   }
@@ -194,6 +195,10 @@ class StdoutTextOutput extends TextOutput {
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
     if (!enabled) this.capturing = false;
+  }
+
+  get isCapturing(): boolean {
+    return this.capturing;
   }
 }
 
@@ -314,6 +319,9 @@ export class ChatCLI extends EventEmitter {
   private micName: string = 'Microphone';
   private logger = log();
   private micCheckTimer: NodeJS.Timeout | null = null;
+  private currentAudioLine: string = '';
+  private isLogging: boolean = false;
+
 
   constructor(agentSession: AgentSession, { syncTranscription = true }: { syncTranscription?: boolean } = {}) {
     super();
@@ -325,6 +333,9 @@ export class ChatCLI extends EventEmitter {
     if (syncTranscription) {
       this.transcriptSyncer = new TranscriptionSynchronizer(this.audioSink, this.textSink);
     }
+
+    // Set logger to only show warnings and errors in console mode
+    this.logger.level = 'warn';
   }
 
   async start(): Promise<void> {
@@ -348,9 +359,9 @@ export class ChatCLI extends EventEmitter {
   private renderLoopStart() {
     const interval = 1000 / FPS;
     this.loop = setIntervalSafe(() => {
-      if (this.mode === 'audio') {
+      if (this.mode === 'audio' && !this.textSink.isCapturing) {
         this.printAudioMode();
-      } else if (this.mode === 'text' && !(this.textSink as any).capturing) {
+      } else if (this.mode === 'text' && !this.textSink.isCapturing) {
         this.printTextMode();
       }
     }, interval);
@@ -466,8 +477,8 @@ export class ChatCLI extends EventEmitter {
     const nbBar = Math.round(amplitude * MAX_AUDIO_BAR);
     const colorCode = amplitude > 0.75 ? 31 : amplitude > 0.5 ? 33 : 32;
     const bar = '#'.repeat(nbBar) + '-'.repeat(MAX_AUDIO_BAR - nbBar);
-    // Clear the line and write the audio status
-    process.stdout.write(`\r\x1b[K[Audio] ${this.micName.slice(-20)} [${this.inputAudio.microDb.toFixed(2)} dBFS] ${esc(colorCode)}[${bar}]${esc(0)}`);
+    this.currentAudioLine = `[Audio] ${this.micName.slice(-20)} [${this.inputAudio.microDb.toFixed(2)} dBFS] ${esc(colorCode)}[${bar}]${esc(0)}`;
+    process.stdout.write(`\r${this.currentAudioLine}`);
   }
 
   private printTextMode() {
