@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-silero
 
+## 1.0.0-next.2
+
+### Patch Changes
+
+- sync lockfile - [`50c3ec4bad54320a7a8b3184b554fbb276eb36c4`](https://github.com/livekit/agents-js/commit/50c3ec4bad54320a7a8b3184b554fbb276eb36c4) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`50c3ec4bad54320a7a8b3184b554fbb276eb36c4`](https://github.com/livekit/agents-js/commit/50c3ec4bad54320a7a8b3184b554fbb276eb36c4)]:
+  - @livekit/agents@1.0.0-next.2
+
 ## 1.0.0-next.1
 
 ### Patch Changes
