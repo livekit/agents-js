@@ -25,11 +25,22 @@ understand.
 This is a Node.js distribution of the [LiveKit Agents framework](https://livekit.io/agents),
 originally written in Python.
 
+Looking for the Python library? Check out [Agents](https://github.com/livekit/agents).
+
 <!--END_DESCRIPTION-->
 
-## ✨ 1.0 Internal Beta Release ✨
+## ✨ 1.0 Beta Release ✨
 
-This README reflects the 1.0 internal release.
+This README reflects the 1.0 beta release.
+
+## Features
+
+- **Flexible integrations**: A comprehensive ecosystem to mix and match the right STT, LLM, TTS, and Realtime API to suit your use case.
+- **Extensive WebRTC clients**: Build client applications using LiveKit's open-source SDK ecosystem, supporting all major platforms.
+- **Exchange data with clients**: Use [RPCs](https://docs.livekit.io/home/client/data/rpc/) and other [Data APIs](https://docs.livekit.io/home/client/data/) to seamlessly exchange data with clients.
+- **Semantic turn detection**: Uses a transformer model to detect when a user is done with their turn, helps to reduce interruptions.
+- **Open-source**: Fully open-source, allowing you to run the entire stack on your own servers, including [LiveKit server](https://github.com/livekit/livekit), one of the most widely used WebRTC media servers.
+
 
 ## Installation
 
@@ -37,118 +48,45 @@ The framework includes a variety of plugins that make it easy to process streami
 output. For example, there are plugins for converting text-to-speech or running inference with
 popular LLMs.
 
-To install the core Agents library as well as plugins in your workspace, run:
-
-- Clone the repository:
-
-```bash
-git clone https://github.com/livekit/agents-js.git
-cd agents-js/
-git checkout dev-1.0
-```
-
-**Note**: `main` branch only support `0.x`, `dev-1.0` is not backward-compatible with `main`.
-
 - Install `pnpm` if you haven't already:
 
 ```bash
 npm install -g pnpm
 ```
 
-- Prepare the environment variables:
+To install the core Agents library as well as plugins, run:
 
 ```bash
-export LIVEKIT_URL=your-livekit-url
-export LIVEKIT_API_KEY=your-livekit-api-key
-export LIVEKIT_API_SECRET=your-livekit-api-secret
-
-export DEEPGRAM_API_KEY=your-deepgram-api-key
-export OPENAI_API_KEY=your-openai-api-key
-export ELEVEN_API_KEY=your-eleven-api-key
+pnpm install @livekit/agents@1.0.0-next.1
 ```
-
-or directly save it to your `~/.zshrc` file to make it permanent.
-
-- Install dependencies:
-
-```bash
-pnpm install
-```
-
-- Build the workspace:
-
-```bash
-pnpm build
-```
-
-- Check to see if agent is working:
-
-```bash
-pnpm dlx tsx examples/src/basic_agent.ts dev
-```
-
-- Open [Agent Playground](https://agents-playground.livekit.io), and connect to your LiveKit server having the same `LIVEKIT_URL` and `LIVEKIT_API_KEY` as you configured above.
-
-- Click on "Connect" button, and you should expect to see agent been connected to the room.
 
 Currently, only the following plugins are supported:
 
 | Plugin                                                                                               | Features |
 | ---------------------------------------------------------------------------------------------------- | -------- |
-| [@livekit/agents-plugin-openai](https://www.npmjs.com/package/@livekit/agents-plugin-openai)         | LLM      |
+| [@livekit/agents-plugin-openai](https://www.npmjs.com/package/@livekit/agents-plugin-openai)         | LLM, TTS, STT |
+| [@livekit/agents-plugin-google](https://www.npmjs.com/package/@livekit/agents-plugin-google)         | LLM, TTS |
 | [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT      |
+| [@livekit/agents-plugin-assemblyai](https://www.npmjs.com/package/@livekit/agents-plugin-assemblyai) | STT      |
 | [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS      |
+| [@livekit/agents-plugin-cartesia](https://www.npmjs.com/package/@livekit/agents-plugin-cartesia)     | TTS      |
+| [@livekit/agents-plugin-neuphonic](https://www.npmjs.com/package/@livekit/agents-plugin-neuphonic)   | TTS      |
+| [@livekit/agents-plugin-resemble](https://www.npmjs.com/package/@livekit/agents-plugin-resemble)     | TTS      |
 | [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD      |
+| [@livekit/agents-plugin-livekit](https://www.npmjs.com/package/@livekit/agents-plugin-livekit)       | EOU |
 
-## Usage
+## Docs and guides
 
-### Core concepts
+Documentation on the framework and how to use it can be found [here](https://docs.livekit.io/agents/)
+
+## Core concepts
 
 - Agent: An LLM-based application with defined instructions.
 - AgentSession: A container for agents that manages interactions with end users.
 - entrypoint: The starting point for an interactive session, similar to a request handler in a web server.
 - Worker: The main process that coordinates job scheduling and launches agents for user sessions.
 
-You'll need the following environment variables for this example:
-
-- DEEPGRAM_API_KEY
-- OPENAI_API_KEY
-- ELEVEN_API_KEY
-
-### Current Dev 1.0 Status
-
-We use `llm.tool` to define tools instead of using `@function_tool` decorator in python. Also, to follow idiomatic JS/TS, we use config-based approach to define agents instead of using inheritance (except for the agent hook functions, which is still under discussion on the best way to support).
-
-> Note: Only do class inheritance if you need to override the agent hook functions. For tool definition, instructions, llm, stt, tts, vad, etc., simply pass the config to the agent constructor.
-
-Here's an example of overriding the agent hook functions:
-
-```ts
-class MyAgent extends voice.Agent<UserData> {
-  async onEnter() {
-    // ...
-  }
-
-  async onExit() {
-    // ...
-  }
-
-  async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage) {
-    // ...
-  }
-}
-```
-
-and to fill out the instructions / tools, pass the config to the agent constructor:
-
-```ts
-const agent = new MyAgent({
-  instructions: 'You are a helpful assistant.',
-  tools: { ... },
-});
-```
-
-Below are some simple examples to help you get started. For more complete examples, check out the code in the [examples](examples/src/) directory.
+## Usage
 
 ### Simple voice agent
 
@@ -187,8 +125,6 @@ export default defineAgent({
   },
   entry: async (ctx: JobContext) => {
     await ctx.connect();
-    const participant = await ctx.waitForParticipant();
-    console.log('participant joined: ', participant.identity);
 
     const agent = new voice.Agent({
       instructions: 'You are a friendly voice assistant built by LiveKit.',
@@ -216,9 +152,17 @@ export default defineAgent({
 cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
 ```
 
+You'll need the following environment variables for this example:
+
+- DEEPGRAM_API_KEY
+- OPENAI_API_KEY
+- ELEVEN_API_KEY
+
 ### Multi-agent handoff
 
 ---
+
+This code snippet is abbreviated. For the full example, see [multi_agent.ts](examples/src/multi_agent.ts)
 
 ```ts
 type StoryData = {
@@ -226,16 +170,9 @@ type StoryData = {
   location?: string;
 };
 
-// Use inheritance to create agent with custom hooks
 class IntroAgent extends voice.Agent<StoryData> {
-  async onEnter() {
-    this.session.generateReply({
-      instructions: '"greet the user and gather information"',
-    });
-  }
-
-  static create() {
-    return new IntroAgent({
+  constructor() {
+    super({
       instructions: `You are a story teller. Your goal is to gather a few pieces of information from the user to make the story personalized and engaging. Ask the user for their name and where they are from.`,
       tools: {
         informationGathered: llm.tool({
@@ -249,25 +186,34 @@ class IntroAgent extends voice.Agent<StoryData> {
             ctx.userData.name = name;
             ctx.userData.location = location;
 
-            const storyAgent = StoryAgent.create(name, location);
-            return llm.handoff({ agent: storyAgent, returns: "Let's start the story!" });
+            return llm.handoff({
+              agent: new StoryAgent(name, location),
+              returns: "Let's start the story!",
+            });
           },
         }),
       },
+    })
+  }
+
+  // Use inheritance to create agent with custom hooks
+  async onEnter() {
+    this.session.generateReply({
+      instructions: '"greet the user and gather information"',
     });
   }
 }
 
 class StoryAgent extends voice.Agent<StoryData> {
-  async onEnter() {
-    this.session.generateReply();
-  }
-
-  static create(name: string, location: string) {
-    return new StoryAgent({
+  constructor(name: string, location: string) {
+    super({
       instructions: `You are a storyteller. Use the user's information in order to make the story personalized.
         The user's name is ${name}, from ${location}`,
     });
+  }
+
+  async onEnter() {
+    this.session.generateReply();
   }
 }
 
@@ -291,14 +237,14 @@ export default defineAgent({
     });
 
     await session.start({
-      agent: IntroAgent.create(),
+      agent: new IntroAgent(),
       room: ctx.room,
     });
   },
 });
 ```
 
-### Running
+### Running your agent
 
 The framework exposes a CLI interface to run your agent. To get started, you'll need the following
 environment variables set:
@@ -311,7 +257,7 @@ environment variables set:
 The following command will start the worker and wait for users to connect to your LiveKit server:
 
 ```bash
-pnpm run build && node ./examples/src/restaurant_agent.ts dev --log-level=debug
+pnpm run build && node ./examples/src/restaurant_agent.ts dev
 ```
 
 ### Using playground for your agent UI
@@ -323,6 +269,14 @@ serve as a starting point for a completely custom agent application.
 - [Hosted playground](https://agents-playground.livekit.io)
 - [Source code](https://github.com/livekit/agents-playground)
 - [Playground docs](https://docs.livekit.io/agents/playground)
+
+### Running for production
+
+```shell
+pnpm run build && node ./examples/src/restaurant_agent.ts start
+```
+
+Runs the agent with production-ready optimizations.
 
 ### FAQ
 
