@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugins-test",
-  "version": "1.0.0-next.0",
+  "version": "1.0.0-next.1",
   "description": "Testing suite for LiveKit Agents plugins",
   "author": "LiveKit",
   "type": "module",
@@ -31,7 +31,7 @@
     "lint": "eslint -f unix \"src/**/*.{ts,js}\""
   },
   "devDependencies": {
-    "@livekit/agents": "workspace:^1.0.0-next.0",
+    "@livekit/agents": "workspace:^1.0.0-next.1",
     "@livekit/rtc-node": "^0.13.12",
     "@types/node": "^22.5.5",
     "tsup": "^8.3.5",
@@ -43,7 +43,7 @@
     "zod": "^3.23.8"
   },
   "peerDependencies": {
-    "@livekit/agents": "workspace:^1.0.0-next.0",
+    "@livekit/agents": "workspace:^1.0.0-next.1",
     "@livekit/rtc-node": "^0.13.12"
   }
 }

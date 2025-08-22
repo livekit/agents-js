@@ -2,6 +2,10 @@
   "private": true,
   "name": "livekit-agents-examples",
   "type": "module",
+  "version": "0.0.0",
+  "author": "LiveKit",
+  "license": "Apache-2.0",
+  "repository": "git@github.com:livekit/agents-js.git",
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
@@ -26,6 +30,5 @@
     "@livekit/rtc-node": "^0.13.11",
     "livekit-server-sdk": "^2.9.2",
     "zod": "^3.23.8"
-  },
-  "version": null
+  }
 }

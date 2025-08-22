@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-neuphonic
 
+## 1.0.0-next.1
+
+### Patch Changes
+
+- Remove @jsr dependencies - [`9876876fa53c818fc3bef5e707baf5ff3c74262a`](https://github.com/livekit/agents-js/commit/9876876fa53c818fc3bef5e707baf5ff3c74262a) ([@lukasIO](https://github.com/lukasIO))
+
+- Updated dependencies [[`9876876fa53c818fc3bef5e707baf5ff3c74262a`](https://github.com/livekit/agents-js/commit/9876876fa53c818fc3bef5e707baf5ff3c74262a)]:
+  - @livekit/agents@1.0.0-next.1
+
 ## 1.0.0-next.0
 
 ### Major Changes
