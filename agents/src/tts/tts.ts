@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
-import { delay } from '@std/async';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { APIConnectionError, APIStatusError } from '../_exceptions.js';
@@ -11,7 +10,7 @@ import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { AsyncIterableQueue, mergeFrames, startSoon, toError } from '../utils.js';
+import { AsyncIterableQueue, delay, mergeFrames, startSoon, toError } from '../utils.js';
 
 /** SynthesizedAudio is a packet of speech synthesis as returned by the TTS. */
 export interface SynthesizedAudio {

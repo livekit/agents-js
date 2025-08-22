@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
-import { delay } from '@std/async/delay';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { APIConnectionError, APIError } from '../_exceptions.js';
@@ -13,7 +12,7 @@ import type { STTMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import type { AudioBuffer } from '../utils.js';
-import { AsyncIterableQueue, startSoon, toError } from '../utils.js';
+import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
 
 /** Indicates start/middle/end of speech */
 export enum SpeechEventType {

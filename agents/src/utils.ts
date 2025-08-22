@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
-import { delay } from '@std/async';
 import { EventEmitter, once } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { TransformStream, type TransformStreamDefaultController } from 'node:stream/web';
@@ -669,4 +668,32 @@ export function toError(error: unknown): Error {
  */
 export function startSoon(func: () => void) {
   setTimeout(func, 0);
+}
+
+export type DelayOptions = {
+  signal?: AbortSignal;
+};
+
+/**
+ * Delay for a given number of milliseconds.
+ *
+ * @param ms - The number of milliseconds to delay.
+ * @param options - The options for the delay.
+ * @returns A promise that resolves after the delay.
+ */
+export function delay(ms: number, options: DelayOptions = {}): Promise<void> {
+  const { signal } = options;
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(i);
+      reject(signal?.reason);
+    };
+    const done = () => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    };
+    const i = setTimeout(done, ms);
+    signal?.addEventListener('abort', abort, { once: true });
+  });
 }

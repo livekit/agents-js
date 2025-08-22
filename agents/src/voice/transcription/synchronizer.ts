@@ -2,13 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
-import { delay } from '@std/async';
 import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import type { SentenceStream, SentenceTokenizer } from '../../tokenize/index.js';
 import { basic } from '../../tokenize/index.js';
-import { Future, Task } from '../../utils.js';
+import { Future, Task, delay } from '../../utils.js';
 import { AudioOutput, type PlaybackFinishedEvent, TextOutput } from '../io.js';
 
 const STANDARD_SPEECH_RATE = 3.83; // hyphens (syllables) per second

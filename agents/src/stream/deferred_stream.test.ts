@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { delay } from '@std/async/delay';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
+import { delay } from '../utils.js';
 import { DeferredReadableStream } from './deferred_stream.js';
 
 describe('DeferredReadableStream', () => {

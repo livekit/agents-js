@@ -95,9 +95,6 @@ importers:
       '@livekit/typed-emitter':
         specifier: ^3.0.0
         version: 3.0.0
-      '@std/async':
-        specifier: npm:@jsr/std__async@^1.0.13
-        version: '@jsr/std__async@1.0.13'
       commander:
         specifier: ^12.0.0
         version: 12.0.0
@@ -304,9 +301,6 @@ importers:
       '@livekit/mutex':
         specifier: ^1.1.1
         version: 1.1.1
-      '@std/async':
-        specifier: npm:@jsr/std__async@^1.0.14
-        version: '@jsr/std__async@1.0.14'
       '@types/json-schema':
         specifier: ^7.0.15
         version: 7.0.15
@@ -400,9 +394,6 @@ importers:
       '@livekit/mutex':
         specifier: ^1.1.1
         version: 1.1.1
-      '@std/async':
-        specifier: npm:@jsr/std__async@^1.0.13
-        version: '@jsr/std__async@1.0.13'
       openai:
         specifier: ^4.91.1
         version: 4.91.1(ws@8.17.0)(zod@3.23.8)
@@ -1324,12 +1315,6 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.25':
     resolution: {integrity: sha512-vNk6aEwybGtawWmy/PzwnGDOjCkLWSD2wqvjGGAgOAwCGWySYXfYoxt00IJkTF+8Lb57DwOb3Aa0o9CApepiYQ==}
-
-  '@jsr/std__async@1.0.13':
-    resolution: {integrity: sha512-GEApyNtzauJ0kEZ/GxebSkdEN0t29qJtkw+WEvzYTwkL6fHX8cq3YWzRjCqHu+4jMl+rpHiwyr/lfitNInntzA==, tarball: https://npm.jsr.io/~/11/@jsr/std__async/1.0.13.tgz}
-
-  '@jsr/std__async@1.0.14':
-    resolution: {integrity: sha512-aIG8W3TOmW+lKdAJA5w56qASu9EiUmBXbhW6eAlSEUBid+KVESGqQygFFg+awt/c8K+qobVM6M/u3SbIy0NyUQ==, tarball: https://npm.jsr.io/~/11/@jsr/std__async/1.0.14.tgz}
 
   '@livekit/changesets-changelog-github@0.0.4':
     resolution: {integrity: sha512-MXaiLYwgkYciZb8G2wkVtZ1pJJzZmVx5cM30Q+ClslrIYyAqQhRbPmZDM79/5CGxb1MTemR/tfOM25tgJgAK0g==}
@@ -5031,10 +5016,6 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.4.15
-
-  '@jsr/std__async@1.0.13': {}
-
-  '@jsr/std__async@1.0.14': {}
 
   '@livekit/changesets-changelog-github@0.0.4':
     dependencies:

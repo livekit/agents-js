@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
-import { delay } from '@std/async';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
 import { type ChatContext } from '../llm/chat_context.js';
@@ -11,7 +10,7 @@ import { DeferredReadableStream, isStreamReaderReleaseError } from '../stream/de
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import { Task } from '../utils.js';
+import { Task, delay } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
