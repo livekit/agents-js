@@ -207,13 +207,13 @@ importers:
         version: 8.17.0
     devDependencies:
       '@livekit/agents':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../../agents
       '@livekit/agents-plugin-openai':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../openai
       '@livekit/agents-plugins-test':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../test
       '@livekit/rtc-node':
         specifier: ^0.13.12
@@ -238,13 +238,13 @@ importers:
         version: 8.17.0
     devDependencies:
       '@livekit/agents':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../../agents
       '@livekit/agents-plugin-silero':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../silero
       '@livekit/agents-plugins-test':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../test
       '@livekit/rtc-node':
         specifier: ^0.13.12
@@ -269,13 +269,13 @@ importers:
         version: 8.17.0
     devDependencies:
       '@livekit/agents':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../../agents
       '@livekit/agents-plugin-openai':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../openai
       '@livekit/agents-plugins-test':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../test
       '@livekit/rtc-node':
         specifier: ^0.13.12
@@ -309,13 +309,13 @@ importers:
         version: 0.4.0
     devDependencies:
       '@livekit/agents':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../../agents
       '@livekit/agents-plugin-openai':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../openai
       '@livekit/agents-plugins-test':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../test
       '@livekit/rtc-node':
         specifier: ^0.13.12
@@ -343,7 +343,7 @@ importers:
         version: 1.20.1
     devDependencies:
       '@livekit/agents':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../../agents
       '@microsoft/api-extractor':
         specifier: ^7.35.0
@@ -365,13 +365,13 @@ importers:
         version: 8.17.0
     devDependencies:
       '@livekit/agents':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../../agents
       '@livekit/agents-plugin-openai':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../openai
       '@livekit/agents-plugins-test':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../test
       '@livekit/rtc-node':
         specifier: ^0.13.12
@@ -405,13 +405,13 @@ importers:
         version: 8.17.0
     devDependencies:
       '@livekit/agents':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../../agents
       '@livekit/agents-plugin-silero':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../silero
       '@livekit/agents-plugins-test':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../test
       '@livekit/rtc-node':
         specifier: ^0.13.12
@@ -470,7 +470,7 @@ importers:
         version: 8.17.0
     devDependencies:
       '@livekit/agents':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: ^0.13.12
@@ -504,7 +504,7 @@ importers:
         version: 3.23.8
     devDependencies:
       '@livekit/agents':
-        specifier: workspace:^1.0.0-next.0
+        specifier: workspace:^1.0.0-next.1
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: ^0.13.12
