@@ -151,10 +151,14 @@ export const createToolOptions = <UserData extends UnknownUserData>(
 
 /** @internal */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const oaiParams = (p: ZodObject<any>): OpenAIFunctionParameters => {
-  // TODO(AJS-162): make zod to JSON parsing able to handle z.optional(v.field())
+export const oaiParams = (
+  p: ZodObject<any>,
+  isOpenai: boolean = true,
+): OpenAIFunctionParameters => {
+  // Adapted from https://github.com/vercel/ai/blob/56eb0ee9/packages/provider-utils/src/zod-schema.ts
   const { properties, required, additionalProperties } = zodToJsonSchema(p, {
-    target: 'openAi',
+    // note: openai mode breaks various gemini conversions
+    target: isOpenai ? 'openAi' : 'jsonSchema7',
   }) as OpenAIFunctionParameters;
 
   return {
@@ -316,9 +320,9 @@ export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): Di
   };
 }
 
-export function toJsonSchema(schema: ToolInputSchema<any>): JSONSchema7 {
+export function toJsonSchema(schema: ToolInputSchema<any>, isOpenai: boolean = true): JSONSchema7 {
   if (schema instanceof ZodObject) {
-    return oaiParams(schema);
+    return oaiParams(schema, isOpenai);
   }
   return schema;
 }

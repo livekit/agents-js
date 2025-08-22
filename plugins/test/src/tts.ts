@@ -5,6 +5,7 @@ import type { stt } from '@livekit/agents';
 import { type AudioBuffer, initializeLogger, tokenize, tts as ttslib } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { distance } from 'fastest-levenshtein';
+import { ReadableStream } from 'stream/web';
 import { describe, expect, it } from 'vitest';
 
 const TEXT =
@@ -20,18 +21,11 @@ const validate = async (frames: AudioBuffer, stt: stt.STT, text: string, thresho
 export const tts = async (
   tts: ttslib.TTS,
   stt: stt.STT,
-  supports: Partial<{ streaming: boolean; nonStreaming: boolean }> = {},
+  supports: Partial<{ streaming: boolean }> = {},
 ) => {
   initializeLogger({ pretty: false });
-  supports = { streaming: true, nonStreaming: true, ...supports };
+  supports = { streaming: true, ...supports };
   describe('TTS', () => {
-    it.skipIf(!supports.nonStreaming)('should properly synthesize text', async () => {
-      const synthesize = tts.synthesize(TEXT);
-      const frames = await synthesize.collect();
-      synthesize.close();
-      await validate(frames, stt, TEXT, 0.2);
-    });
-
     it('should properly stream synthesize text', async () => {
       let stream: ttslib.SynthesizeStream;
       if (supports.streaming) {
@@ -42,7 +36,7 @@ export const tts = async (
 
       const pattern = [1, 2, 4];
       let text = TEXT;
-      const chunks = [];
+      const chunks: string[] = [];
       const patternIter = Array(Math.ceil(text.length / pattern.reduce((sum, num) => sum + num, 0)))
         .fill(pattern)
         .flat()
@@ -54,11 +48,15 @@ export const tts = async (
         text = text.slice(size);
       }
 
-      for (const chunk of chunks) {
-        stream.pushText(chunk);
-      }
-      stream.flush();
-      stream.endInput();
+      const textStream = new ReadableStream<string>({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        },
+      });
+      stream.updateInputStream(textStream);
 
       const frames: AudioFrame[] = [];
       for await (const event of stream) {

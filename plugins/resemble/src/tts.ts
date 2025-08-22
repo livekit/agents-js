@@ -208,65 +208,94 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       };
 
-      ws.on('message', (data) => {
+      // Use promise-based message handling similar to ElevenLabs
+      while ((!closing && activeRequests.size > 0) || !this.#tokenizer.closed) {
         try {
-          const json = JSON.parse(data.toString());
-          const segmentId = json.request_id;
+          await new Promise<void>((resolve, reject) => {
+            ws.removeAllListeners();
+            ws.on('message', (data) => {
+              try {
+                const json = JSON.parse(data.toString());
+                const segmentId = json.request_id;
 
-          if ('audio_content' in json) {
-            try {
-              const audioData = Buffer.from(json.audio_content, 'base64');
-              for (const frame of bstream.write(audioData)) {
-                sendLastFrame(segmentId, false);
-                lastFrame = frame;
+                if ('audio_content' in json) {
+                  try {
+                    const audioData = Buffer.from(json.audio_content, 'base64');
+                    for (const frame of bstream.write(audioData)) {
+                      sendLastFrame(segmentId, false);
+                      lastFrame = frame;
+                    }
+                  } catch (audioError) {
+                    this.#logger.error(`Error processing audio content: ${audioError}`);
+                  }
+                } else if ('type' in json && json.type === 'audio_end') {
+                  for (const frame of bstream.flush()) {
+                    sendLastFrame(segmentId, false);
+                    lastFrame = frame;
+                  }
+                  sendLastFrame(segmentId, true);
+
+                  activeRequests.delete(Number(segmentId));
+
+                  // Only end the stream when all requests are complete and tokenizer is closed
+                  if (activeRequests.size === 0 && this.#tokenizer.closed) {
+                    this.queue.put(SynthesizeStream.END_OF_STREAM);
+                    closing = true;
+                    ws.close();
+                    resolve();
+                    return;
+                  }
+                } else if ('success' in json && json.success === false) {
+                  const errorName = json.error_name || 'Unknown';
+                  const explanation = json.error_params?.explanation || 'No details provided';
+                  this.#logger
+                    .child({ error: errorName })
+                    .error(`Resemble API error: ${explanation}`);
+
+                  closing = true;
+                  this.queue.put(SynthesizeStream.END_OF_STREAM);
+                  ws.close();
+                  reject(new Error(`Resemble API error: ${errorName}`));
+                  return;
+                }
+                resolve();
+              } catch (error) {
+                this.#logger.error(`Error parsing WebSocket message: ${error}`);
+                reject(error);
               }
-            } catch (audioError) {
-              this.#logger.error(`Error processing audio content: ${audioError}`);
-            }
-          } else if ('type' in json && json.type === 'audio_end') {
-            for (const frame of bstream.flush()) {
-              sendLastFrame(segmentId, false);
-              lastFrame = frame;
-            }
-            sendLastFrame(segmentId, true);
+            });
 
-            activeRequests.delete(Number(segmentId));
+            ws.on('error', (error) => {
+              this.#logger.error(`WebSocket error: ${error}`);
+              if (!closing) {
+                closing = true;
+                this.queue.put(SynthesizeStream.END_OF_STREAM);
+                ws.close();
+              }
+              reject(error);
+            });
 
-            if (activeRequests.size === 0 && this.#tokenizer.closed) {
-              this.queue.put(SynthesizeStream.END_OF_STREAM);
-              closing = true;
-              ws.close();
-            }
-          } else if ('success' in json && json.success === false) {
-            const errorName = json.error_name || 'Unknown';
-            const explanation = json.error_params?.explanation || 'No details provided';
-            this.#logger.child({ error: errorName }).error(`Resemble API error: ${explanation}`);
-
-            closing = true;
-            ws.close();
-            this.queue.put(SynthesizeStream.END_OF_STREAM);
+            ws.on('close', (code, reason) => {
+              if (!closing) {
+                this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+                this.queue.put(SynthesizeStream.END_OF_STREAM);
+              }
+              // Only reject if we haven't received all expected frames
+              if (activeRequests.size > 0 || !this.#tokenizer.closed) {
+                reject(new Error(`WebSocket closed prematurely with code ${code}: ${reason}`));
+              } else {
+                resolve();
+              }
+            });
+          });
+        } catch (err) {
+          // Skip log error for normal websocket close
+          if (err instanceof Error && !err.message.includes('WebSocket closed prematurely')) {
+            this.#logger.error({ err }, 'Error in recvTask from Resemble WebSocket');
           }
-        } catch (error) {
-          this.#logger.error(`Error parsing WebSocket message: ${error}`);
+          break;
         }
-      });
-
-      ws.on('error', (error) => {
-        this.#logger.error(`WebSocket error: ${error}`);
-        if (!closing) {
-          closing = true;
-          this.queue.put(SynthesizeStream.END_OF_STREAM);
-          ws.close();
-        }
-      });
-
-      ws.on('close', (code, reason) => {
-        if (!closing) {
-          this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-          this.queue.put(SynthesizeStream.END_OF_STREAM);
-        }
-        ws.removeAllListeners();
-      });
+      }
     };
 
     const ws = new WebSocket(RESEMBLE_WEBSOCKET_URL, {

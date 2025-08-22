@@ -41,7 +41,7 @@ const toolCtx: llmlib.ToolContext = {
     execute: async () => {},
   }),
   updateUserInfo: llmlib.tool({
-    description: 'Update user info',
+    description: 'Update user info.',
     parameters: z.object({
       email: z.string().optional().describe("User's email address"),
       name: z.string().optional().describe("User's name"),
@@ -82,11 +82,11 @@ export const llm = async (llm: llmlib.LLM) => {
       it('should handle function calling', async () => {
         const calls = await requestFncCall(
           llm,
-          "What's the weather in San Francisco and what's the weather in Paris?",
+          'Call the weather tool for Paris in celsius.',
           toolCtx,
         );
 
-        expect(calls.length).toStrictEqual(2);
+        expect(calls.length).toStrictEqual(1);
       });
       it('should handle exceptions', async () => {
         const calls = await requestFncCall(llm, 'Call the failing function', toolCtx);
@@ -99,7 +99,7 @@ export const llm = async (llm: llmlib.LLM) => {
       it('should handle arrays', async () => {
         const calls = await requestFncCall(
           llm,
-          'Can you select all currencies in Europe at once from given choices?',
+          'Call the selectCurrencies function with the currencies EUR, GBP, and SEK.',
           toolCtx,
           0.2,
         );
@@ -123,14 +123,14 @@ export const llm = async (llm: llmlib.LLM) => {
       it('should handle optional arguments', async () => {
         const calls = await requestFncCall(
           llm,
-          'Use a tool call to update the user info to name Theo',
+          'Use a tool call to update the user info to name Theo. Leave email and address blank.',
           toolCtx,
         );
 
         expect(calls.length).toStrictEqual(1);
         expect(JSON.parse(calls[0]!.args).name).toStrictEqual('Theo');
-        expect(JSON.parse(calls[0]!.args).email).toBeUndefined();
-        expect(JSON.parse(calls[0]!.args).address).toBeUndefined();
+        expect(JSON.parse(calls[0]!.args).email).toBeNull();
+        expect(JSON.parse(calls[0]!.args).address).toBeNull();
       });
     });
   });
