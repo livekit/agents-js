@@ -12,6 +12,7 @@ import {
   Queue,
   Task,
   cancelAndWait,
+  delay,
   isAPIError,
   llm,
   log,
@@ -21,7 +22,6 @@ import {
 import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
-import { delay } from '@std/async';
 import type { GenerationCreatedEvent } from 'agents/dist/llm/realtime.js';
 import { type MessageEvent, WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';

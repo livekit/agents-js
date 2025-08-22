@@ -22,6 +22,7 @@ import {
   Queue,
   Task,
   cancelAndWait,
+  delay,
   llm,
   log,
   shortuuid,
@@ -29,7 +30,6 @@ import {
 } from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
 import { AudioFrame, AudioResampler, type VideoFrame } from '@livekit/rtc-node';
-import { delay } from '@std/async';
 import { type LLMTools } from '../../tools.js';
 import { toFunctionDeclarations } from '../../utils.js';
 import type * as api_proto from './api_proto.js';
