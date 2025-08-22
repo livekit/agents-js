@@ -5,12 +5,12 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../src/log.js';
-import { delay } from '../src/utils.js';
 import {
   Event,
   TASK_TIMEOUT_ERROR,
   Task,
   TaskResult,
+  delay,
   isPending,
   resampleStream,
 } from '../src/utils.js';

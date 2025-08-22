@@ -11,9 +11,8 @@ import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { delay } from '../utils.js';
 import type { AudioBuffer } from '../utils.js';
-import { AsyncIterableQueue, startSoon, toError } from '../utils.js';
+import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
 
 /** Indicates start/middle/end of speech */
 export enum SpeechEventType {

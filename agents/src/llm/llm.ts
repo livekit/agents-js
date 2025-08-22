@@ -7,8 +7,7 @@ import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import type { APIConnectOptions } from '../types.js';
-import { delay } from '../utils.js';
-import { AsyncIterableQueue, startSoon, toError } from '../utils.js';
+import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
 import type { ToolChoice, ToolContext } from './tool_context.js';
 
