@@ -57,7 +57,7 @@ npm install -g pnpm
 To install the core Agents library as well as plugins, run:
 
 ```bash
-pnpm install @livekit/agents@1.0-beta
+pnpm install @livekit/agents@1.0.0-next.1
 ```
 
 Currently, only the following plugins are supported:
