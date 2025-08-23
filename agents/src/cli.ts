@@ -225,47 +225,29 @@ export const runApp = (opts: WorkerOptions) => {
     .description('Start a new conversation inside the console')
     .action(async () => {
       const options = program.optsWithGlobals();
-      
-      opts.wsURL = opts.wsURL || 'ws://localhost:7881/fake_console_url';
-      opts.apiKey = opts.apiKey || 'fake_console_key';
-      opts.apiSecret = opts.apiSecret || 'fake_console_secret';
-      
       initializeLogger({ pretty: true, level: options.logLevel });
       const logger = log();
 
       try {
-        const mod = await import(new URL(opts.agent, import.meta.url).href).catch(async () => {
-          const { pathToFileURL } = await import('node:url');
-          const url = pathToFileURL(opts.agent);
-          return import(url.href);
-        });
-
-        const agentDef = (mod && mod.default) as { 
-          entry: (ctx: unknown) => Promise<void>;
-          prewarm?: (proc: unknown) => Promise<void> | void;
-        };
-        if (!agentDef || typeof agentDef.entry !== 'function') {
-          logger.fatal('default export is not an agent with an entry() function');
+        const mod = await import(new URL(opts.agent, import.meta.url).href);
+        const agentDef = mod?.default;
+        
+        if (!agentDef?.entry) {
+          logger.fatal('default export must have an entry() function');
           process.exit(1);
         }
 
-        process.once('SIGINT', () => process.exit(130));
-        process.once('SIGTERM', () => process.exit(143));
-
         const mockCtx = {
           room: undefined,
-          connect: async () => {},
-          proc: {
-            userData: {},
-            inferenceExecutor: null, // Add missing inference executor
-          },
+          proc: { userData: {} },
+          connect: async () => {}
         };
-
+        
         if (agentDef.prewarm) {
-          await agentDef.prewarm(mockCtx.proc as any);
+          await agentDef.prewarm(mockCtx.proc);
         }
-
-        await agentDef.entry(mockCtx as any);
+        
+        await agentDef.entry(mockCtx);
       } catch (error) {
         logger.fatal(error);
         process.exit(1);
