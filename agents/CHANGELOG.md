@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.0-next.2
+
+### Patch Changes
+
+- Fix monorepo dependencies - [#634](https://github.com/livekit/agents-js/pull/634) ([@lukasIO](https://github.com/lukasIO))
+
 ## 1.0.0-next.1
 
 ### Patch Changes

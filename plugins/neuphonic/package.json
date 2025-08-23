@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-neuphonic",
-  "version": "1.0.0-next.1",
+  "version": "1.0.0-next.2",
   "description": "Neuphonic plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -34,9 +34,9 @@
     "api:update": "api-extractor run --local --typescript-compiler-folder ../../node_modules/typescript --verbose"
   },
   "devDependencies": {
-    "@livekit/agents": "workspace:^1.0.0-next.1",
-    "@livekit/agents-plugin-openai": "workspace:^1.0.0-next.1",
-    "@livekit/agents-plugins-test": "workspace:^1.0.0-next.1",
+    "@livekit/agents": "workspace:^1.0.0-next.2",
+    "@livekit/agents-plugin-openai": "workspace:^1.0.0-next.2",
+    "@livekit/agents-plugins-test": "workspace:^1.0.0-next.2",
     "@livekit/rtc-node": "^0.13.12",
     "@microsoft/api-extractor": "^7.35.0",
     "@types/ws": "^8.5.10",
@@ -47,7 +47,7 @@
     "ws": "^8.16.0"
   },
   "peerDependencies": {
-    "@livekit/agents": "workspace:^1.0.0-next.1",
+    "@livekit/agents": "workspace:^1.0.0-next.2",
     "@livekit/rtc-node": "^0.13.12"
   }
 }
