@@ -180,14 +180,28 @@ export class AgentSession<
     this.agent = agent;
     this._updateAgentState('initializing');
 
-    // Check if this is console mode (no room provided)
     if (!room) {
-      // Auto-create ChatCLI for console mode
-      const { ChatCLI } = await import('./chat_cli.js');
-      const chatCli = new ChatCLI(this);
-      await chatCli.start();
+        const { ChatCLI } = await import('./chat_cli.js');
+        const chatCli = new ChatCLI(this);
+        await chatCli.start();
     } else {
       // Room mode
+      if (this.input.audio && inputOptions?.audioEnabled !== false) {
+        this.logger.warn('RoomIO audio input is enabled but input.audio is already set, ignoring..');
+      }
+
+      if (this.output.audio && outputOptions?.audioEnabled !== false) {
+        this.logger.warn(
+          'RoomIO audio output is enabled but output.audio is already set, ignoring..',
+        );
+      }
+
+      if (this.output.transcription && outputOptions?.transcriptionEnabled !== false) {
+        this.logger.warn(
+          'RoomIO transcription output is enabled but output.transcription is already set, ignoring..',
+        );
+      }
+
       this.roomIO = new RoomIO({
         agentSession: this,
         room,
