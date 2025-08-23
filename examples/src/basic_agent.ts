@@ -29,9 +29,6 @@ export default defineAgent({
     });
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
-
-    // Check if we're in console mode (no room provided)
-    const isConsoleMode = !ctx.room;
     
     const session = new voice.AgentSession({
       vad,
@@ -40,8 +37,7 @@ export default defineAgent({
       llm: new openai.LLM(),
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
-      // Only use turn detection in room mode, not in console mode
-      ...(isConsoleMode ? {} : { turnDetection: new livekit.turnDetector.MultilingualModel() }),
+      turnDetection: new livekit.turnDetector.MultilingualModel(),
     });
 
     const usageCollector = new metrics.UsageCollector();

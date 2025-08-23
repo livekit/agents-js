@@ -227,6 +227,11 @@ export const runApp = (opts: WorkerOptions) => {
       const options = program.optsWithGlobals();
       initializeLogger({ pretty: true, level: options.logLevel });
       const logger = log();
+      
+      if (!process.env.LIVEKIT_ENABLE_CONSOLE_MODE) {
+        logger.fatal('Console mode is disabled. Set LIVEKIT_ENABLE_CONSOLE_MODE=true to enable.');
+        process.exit(1);
+      }
 
       try {
         const mod = await import(new URL(opts.agent, import.meta.url).href);
@@ -237,17 +242,45 @@ export const runApp = (opts: WorkerOptions) => {
           process.exit(1);
         }
 
+        const { CurrentJobContext } = await import('./job.js');
+        const { InferenceRunner } = await import('./inference_runner.js');
+        
+        let inferenceExecutor: any = undefined;
+        if (Object.entries(InferenceRunner.registeredRunners).length) {
+          const runners: { [id: string]: any } = {};
+          for (const [method, importPath] of Object.entries(InferenceRunner.registeredRunners)) {
+            logger.debug(`Loading inference runner for ${method}`);
+            const mod = await import(importPath);
+            runners[method] = new mod.default();
+            await runners[method].initialize();
+          }
+          
+          inferenceExecutor = {
+            doInference: async (method: string, data: unknown) => {
+              const runner = runners[method];
+              if (!runner) {
+                logger.warn(`No runner found for method ${method}`);
+                return {};
+              }
+              return runner.run(data);
+            }
+          };
+        }
+        
         const mockCtx = {
           room: undefined,
           proc: { userData: {} },
-          connect: async () => {}
+          connect: async () => {},
+          inferenceExecutor: inferenceExecutor || { doInference: async () => ({}) }
         };
         
+        new CurrentJobContext(mockCtx as any);
+        
         if (agentDef.prewarm) {
-          await agentDef.prewarm(mockCtx.proc);
+          await agentDef.prewarm(mockCtx.proc as any);
         }
         
-        await agentDef.entry(mockCtx);
+        await agentDef.entry(mockCtx as any);
       } catch (error) {
         logger.fatal(error);
         process.exit(1);
