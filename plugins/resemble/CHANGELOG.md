@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-resemble
 
+## 1.0.0-next.2
+
+### Patch Changes
+
+- Fix monorepo dependencies - [#634](https://github.com/livekit/agents-js/pull/634) ([@lukasIO](https://github.com/lukasIO))
+
+- Updated dependencies [[`1483b1cafa91300e3871a63cc01814ba9f462a85`](https://github.com/livekit/agents-js/commit/1483b1cafa91300e3871a63cc01814ba9f462a85)]:
+  - @livekit/agents@1.0.0-next.2
+
 ## 1.0.0-next.1
 
 ### Patch Changes
