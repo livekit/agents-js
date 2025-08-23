@@ -182,40 +182,12 @@ export class AgentSession<
 
     // Check if this is console mode (no room provided)
     if (!room) {
-      // Console mode - check if IO is already configured
-      if (
-        this.input.audio !== null ||
-        this.output.audio !== null ||
-        this.output.transcription !== null
-      ) {
-        this.logger.warn(
-          'Console mode detected but input.audio or output.audio or output.transcription is already set'
-        );
-      } else {
-        // Auto-create ChatCLI for console mode
-        const { ChatCLI } = await import('./chat_cli.js');
-        const chatCli = new ChatCLI(this);
-        await chatCli.start();
-      }
+      // Auto-create ChatCLI for console mode
+      const { ChatCLI } = await import('./chat_cli.js');
+      const chatCli = new ChatCLI(this);
+      await chatCli.start();
     } else {
       // Room mode
-      // Check for existing input/output configuration and warn if needed
-      if (this.input.audio && inputOptions?.audioEnabled !== false) {
-        this.logger.warn('RoomIO audio input is enabled but input.audio is already set, ignoring..');
-      }
-
-      if (this.output.audio && outputOptions?.audioEnabled !== false) {
-        this.logger.warn(
-          'RoomIO audio output is enabled but output.audio is already set, ignoring..',
-        );
-      }
-
-      if (this.output.transcription && outputOptions?.transcriptionEnabled !== false) {
-        this.logger.warn(
-          'RoomIO transcription output is enabled but output.transcription is already set, ignoring..',
-        );
-      }
-
       this.roomIO = new RoomIO({
         agentSession: this,
         room,
