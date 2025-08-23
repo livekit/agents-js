@@ -181,13 +181,15 @@ export class AgentSession<
     this._updateAgentState('initializing');
 
     if (!room) {
-        const { ChatCLI } = await import('./chat_cli.js');
-        const chatCli = new ChatCLI(this);
-        await chatCli.start();
+      const { ChatCLI } = await import('./chat_cli.js');
+      const chatCli = new ChatCLI(this);
+      await chatCli.start();
     } else {
       // Room mode
       if (this.input.audio && inputOptions?.audioEnabled !== false) {
-        this.logger.warn('RoomIO audio input is enabled but input.audio is already set, ignoring..');
+        this.logger.warn(
+          'RoomIO audio input is enabled but input.audio is already set, ignoring..',
+        );
       }
 
       if (this.output.audio && outputOptions?.audioEnabled !== false) {
@@ -226,8 +228,6 @@ export class AgentSession<
     this.started = true;
     this._updateAgentState('listening');
   }
-
-
 
   updateAgent(agent: Agent): void {
     this.agent = agent;

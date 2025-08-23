@@ -1,18 +1,20 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import process from 'node:process';
 import readline from 'node:readline';
-import { setInterval as setIntervalSafe, clearInterval as clearIntervalSafe } from 'node:timers';
+import { ReadableStream } from 'node:stream/web';
+import { clearInterval as clearIntervalSafe, setInterval as setIntervalSafe } from 'node:timers';
 import { log } from '../log.js';
 import { AsyncIterableQueue } from '../utils.js';
-import type { Agent } from './agent.js';
 import type { AgentSession } from './agent_session.js';
-import { AudioInput, AudioOutput, TextOutput, type PlaybackFinishedEvent } from './io.js';
+import { AudioInput, AudioOutput, type PlaybackFinishedEvent, TextOutput } from './io.js';
 import { TranscriptionSynchronizer } from './transcription/synchronizer.js';
-import { ReadableStream } from 'node:stream/web';
 
-const require = createRequire(import.meta.url);
+const _require = createRequire(import.meta.url);
 
 const MAX_AUDIO_BAR = 30;
 const INPUT_DB_MIN = -70.0;
@@ -44,7 +46,17 @@ class ConsoleAudioInput extends AudioInput {
   microDb: number = INPUT_DB_MIN;
   receivedAudio: boolean = false;
 
-  constructor({ sampleRate = 24000, numChannels = 1, framesPerBuffer = 240, deviceId }: { sampleRate?: number; numChannels?: number; framesPerBuffer?: number; deviceId?: number } = {}) {
+  constructor({
+    sampleRate = 24000,
+    numChannels = 1,
+    framesPerBuffer = 240,
+    deviceId,
+  }: {
+    sampleRate?: number;
+    numChannels?: number;
+    framesPerBuffer?: number;
+    deviceId?: number;
+  } = {}) {
     super();
     this.sampleRate = sampleRate;
     this.numChannels = numChannels;
@@ -53,7 +65,6 @@ class ConsoleAudioInput extends AudioInput {
   }
 
   async onAttached(): Promise<void> {
-
     if (!this.sourceSet) {
       const stream = new ReadableStream<AudioFrame>({
         start: async (controller) => {
@@ -91,7 +102,7 @@ class ConsoleAudioInput extends AudioInput {
     try {
       // Try to use our native audio implementation
       const { AudioIO, SampleFormat16Bit } = await import('./native_audio.js');
-      
+
       this.ai = new AudioIO({
         inOptions: {
           channelCount: this.numChannels,
@@ -134,19 +145,19 @@ class ConsoleAudioInput extends AudioInput {
     } catch (error) {
       // Fallback to mock audio
       this.logger.warn('Native audio failed, using mock audio input');
-      
+
       const frameSize = this.framesPerBuffer;
       const intervalMs = (frameSize / this.sampleRate) * 1000;
-      
+
       this.mockInterval = setInterval(() => {
         const silentData = new Int16Array(frameSize * this.numChannels);
         const frame = new AudioFrame(silentData, this.sampleRate, this.numChannels, frameSize);
-        
+
         this.microDb = INPUT_DB_MIN + Math.random() * 10;
         this.receivedAudio = true;
         this.queue.put(frame);
       }, intervalMs);
-      
+
       this.started = true;
     }
   }
@@ -212,7 +223,10 @@ class ConsoleAudioOutput extends AudioOutput {
   private dispatchTimer: NodeJS.Timeout | null = null;
   private _logger = log();
 
-  constructor({ sampleRate = 24000, numChannels = 1 }: { sampleRate?: number; numChannels?: number } = {}) {
+  constructor({
+    sampleRate = 24000,
+    numChannels = 1,
+  }: { sampleRate?: number; numChannels?: number } = {}) {
     super(sampleRate);
     this.outputSampleRate = sampleRate;
     this.numChannels = numChannels;
@@ -220,11 +234,11 @@ class ConsoleAudioOutput extends AudioOutput {
 
   async onAttached(): Promise<void> {
     if (this.started) return;
-    
+
     try {
       // Try to use our native audio implementation
       const { AudioIO } = await import('./native_audio.js');
-      
+
       this.ao = new AudioIO({
         inOptions: undefined, // output only
         outOptions: {
@@ -232,26 +246,26 @@ class ConsoleAudioOutput extends AudioOutput {
           sampleRate: this.outputSampleRate,
         },
       });
-      
+
       this.ao.start();
       this.started = true;
       this._logger.info('Using native audio output via command-line tools');
     } catch (error) {
       // Fallback to mock audio output
       this._logger.warn('Native audio failed, using mock audio output', error);
-      
+
       this.ao = {
         write: (data: Buffer) => {
           const frameCount = data.length / (2 * this.numChannels);
           const durationMs = (frameCount / this.outputSampleRate) * 1000;
-          
+
           setTimeout(() => {
             this.emit('playbackFinished');
           }, durationMs);
         },
         end: () => {},
       };
-      
+
       this.started = true;
     }
   }
@@ -294,7 +308,10 @@ class ConsoleAudioOutput extends AudioOutput {
       this.dispatchTimer = null;
     }
     const played = Math.min((Date.now() - this.captureStart) / 1000, this.pushedDuration);
-    this.onPlaybackFinished({ playbackPosition: played, interrupted: played + 1.0 < this.pushedDuration });
+    this.onPlaybackFinished({
+      playbackPosition: played,
+      interrupted: played + 1.0 < this.pushedDuration,
+    });
     this.pushedDuration = 0;
     this.captureStart = 0;
   }
@@ -322,14 +339,16 @@ export class ChatCLI extends EventEmitter {
   private currentAudioLine: string = '';
   private isLogging: boolean = false;
 
-
-  constructor(agentSession: AgentSession, { syncTranscription = true }: { syncTranscription?: boolean } = {}) {
+  constructor(
+    agentSession: AgentSession,
+    { syncTranscription = true }: { syncTranscription?: boolean } = {},
+  ) {
     super();
     this.session = agentSession;
     this.textSink = new StdoutTextOutput();
     this.audioSink = new ConsoleAudioOutput();
     this.inputAudio = new ConsoleAudioInput();
-    
+
     if (syncTranscription) {
       this.transcriptSyncer = new TranscriptionSynchronizer(this.audioSink, this.textSink);
     }
@@ -450,7 +469,9 @@ export class ChatCLI extends EventEmitter {
 
   private updateSpeaker(enable: boolean) {
     if (enable) {
-      this.session.output.audio = this.transcriptSyncer ? this.transcriptSyncer.audioOutput : this.audioSink;
+      this.session.output.audio = this.transcriptSyncer
+        ? this.transcriptSyncer.audioOutput
+        : this.audioSink;
     } else {
       this.session.output.audio = null;
     }
@@ -458,7 +479,9 @@ export class ChatCLI extends EventEmitter {
 
   private updateTextOutput({ enable, stdoutEnable }: { enable: boolean; stdoutEnable: boolean }) {
     if (enable) {
-      this.session.output.transcription = this.transcriptSyncer ? this.transcriptSyncer.textOutput : this.textSink;
+      this.session.output.transcription = this.transcriptSyncer
+        ? this.transcriptSyncer.textOutput
+        : this.textSink;
       this.textSink.setEnabled(stdoutEnable);
     } else {
       this.session.output.transcription = null;

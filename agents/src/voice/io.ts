@@ -204,10 +204,10 @@ export class AgentInput {
     if (this._audioStream && this._audioEnabled) {
       this._audioStream.onDetached();
     }
-    
+
     this._audioStream = stream;
     this.audioChanged();
-    
+
     // Attach new stream if enabled
     if (this._audioStream && this._audioEnabled) {
       this._audioStream.onAttached();

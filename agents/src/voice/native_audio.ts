@@ -1,7 +1,10 @@
-import { Readable, Writable, Duplex, Transform } from 'stream';
-import { spawn, ChildProcess } from 'child_process';
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import { type ChildProcess, spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import * as os from 'os';
+import { Duplex, Readable, Writable } from 'stream';
 
 export const SampleFormat8Bit = 8;
 export const SampleFormat16Bit = 16;
@@ -50,9 +53,9 @@ class AudioInputStream extends Readable {
   private startTime: number = 0;
 
   constructor(options: AudioOptions) {
-    super({ 
+    super({
       highWaterMark: options.highwaterMark || 16384,
-      objectMode: false 
+      objectMode: false,
     });
     this.options = {
       sampleRate: 44100,
@@ -60,7 +63,7 @@ class AudioInputStream extends Readable {
       sampleFormat: SampleFormat16Bit,
       deviceId: -1,
       closeOnError: true,
-      ...options
+      ...options,
     };
   }
 
@@ -78,46 +81,81 @@ class AudioInputStream extends Readable {
 
     try {
       if (platform === 'darwin') {
-        this.process = spawn('sox', [
-          '-d',
-          '-r', String(sampleRate),
-          '-c', String(channelCount),
-          '-b', bitDepth,
-          '-e', encoding,
-          '-t', 'raw',
-          '-'
-        ], {
-          stdio: ['ignore', 'pipe', 'ignore']
-        });
+        this.process = spawn(
+          'sox',
+          [
+            '-d',
+            '-r',
+            String(sampleRate),
+            '-c',
+            String(channelCount),
+            '-b',
+            bitDepth,
+            '-e',
+            encoding,
+            '-t',
+            'raw',
+            '-',
+          ],
+          {
+            stdio: ['ignore', 'pipe', 'ignore'],
+          },
+        );
       } else if (platform === 'linux') {
-        const format = sampleFormat === SampleFormat16Bit ? 'S16_LE' : 
-                       sampleFormat === SampleFormat32Bit ? 'S32_LE' : 'S16_LE';
-        
-        this.process = spawn('arecord', [
-          '-f', format,
-          '-r', String(sampleRate),
-          '-c', String(channelCount),
-          '-t', 'raw',
-          '-q',
-          '-'
-        ], {
-          stdio: ['ignore', 'pipe', 'ignore']
-        });
+        const format =
+          sampleFormat === SampleFormat16Bit
+            ? 'S16_LE'
+            : sampleFormat === SampleFormat32Bit
+              ? 'S32_LE'
+              : 'S16_LE';
+
+        this.process = spawn(
+          'arecord',
+          [
+            '-f',
+            format,
+            '-r',
+            String(sampleRate),
+            '-c',
+            String(channelCount),
+            '-t',
+            'raw',
+            '-q',
+            '-',
+          ],
+          {
+            stdio: ['ignore', 'pipe', 'ignore'],
+          },
+        );
       } else if (platform === 'win32') {
-        const format = sampleFormat === SampleFormat16Bit ? 's16le' :
-                       sampleFormat === SampleFormat32Bit ? 's32le' : 
-                       sampleFormat === SampleFormatFloat32 ? 'f32le' : 's16le';
-        
-        this.process = spawn('ffmpeg', [
-          '-f', 'dshow',
-          '-i', 'audio="Microphone (Realtek Audio)"',
-          '-ar', String(sampleRate),
-          '-ac', String(channelCount),
-          '-f', format,
-          '-'
-        ], {
-          stdio: ['ignore', 'pipe', 'ignore']
-        });
+        const format =
+          sampleFormat === SampleFormat16Bit
+            ? 's16le'
+            : sampleFormat === SampleFormat32Bit
+              ? 's32le'
+              : sampleFormat === SampleFormatFloat32
+                ? 'f32le'
+                : 's16le';
+
+        this.process = spawn(
+          'ffmpeg',
+          [
+            '-f',
+            'dshow',
+            '-i',
+            'audio="Microphone (Realtek Audio)"',
+            '-ar',
+            String(sampleRate),
+            '-ac',
+            String(channelCount),
+            '-f',
+            format,
+            '-',
+          ],
+          {
+            stdio: ['ignore', 'pipe', 'ignore'],
+          },
+        );
       }
 
       if (this.process && this.process.stdout) {
@@ -125,15 +163,13 @@ class AudioInputStream extends Readable {
           const timestamp = (Date.now() - this.startTime) / 1000;
           (chunk as any).timestamp = timestamp;
           this.totalBytesRead += chunk.length;
-          
 
-          
           if (!this.push(chunk)) {
             this.process?.stdout?.pause();
           }
         });
 
-        this.process.stderr?.on('data', (data) => {
+        this.process.stderr?.on('data', (_data) => {
           // Ignore stderr output
         });
 
@@ -145,7 +181,7 @@ class AudioInputStream extends Readable {
           }
         });
 
-        this.process.on('exit', (code, signal) => {
+        this.process.on('exit', (code, _signal) => {
           if (code !== 0 && code !== null) {
             const err = new Error(`Audio input process exited with code ${code}`);
             if (this.options.closeOnError) {
@@ -201,10 +237,10 @@ class AudioOutputStream extends Writable {
   private totalBytesWritten = 0;
 
   constructor(options: AudioOptions) {
-    super({ 
+    super({
       highWaterMark: options.highwaterMark || 16384,
       objectMode: false,
-      decodeStrings: false
+      decodeStrings: false,
     });
     this.options = {
       sampleRate: 44100,
@@ -212,7 +248,7 @@ class AudioOutputStream extends Writable {
       sampleFormat: SampleFormat16Bit,
       deviceId: -1,
       closeOnError: true,
-      ...options
+      ...options,
     };
   }
 
@@ -229,45 +265,70 @@ class AudioOutputStream extends Writable {
 
     try {
       if (platform === 'darwin') {
-        this.process = spawn('sox', [
-          '-r', String(sampleRate),
-          '-c', String(channelCount),
-          '-b', bitDepth,
-          '-e', encoding,
-          '-t', 'raw',
-          '-',
-          '-d'
-        ], {
-          stdio: ['pipe', 'ignore', 'ignore']
-        });
+        this.process = spawn(
+          'sox',
+          [
+            '-r',
+            String(sampleRate),
+            '-c',
+            String(channelCount),
+            '-b',
+            bitDepth,
+            '-e',
+            encoding,
+            '-t',
+            'raw',
+            '-',
+            '-d',
+          ],
+          {
+            stdio: ['pipe', 'ignore', 'ignore'],
+          },
+        );
       } else if (platform === 'linux') {
-        const format = sampleFormat === SampleFormat16Bit ? 'S16_LE' : 
-                       sampleFormat === SampleFormat32Bit ? 'S32_LE' : 'S16_LE';
-        
-        this.process = spawn('aplay', [
-          '-f', format,
-          '-r', String(sampleRate),
-          '-c', String(channelCount),
-          '-t', 'raw',
-          '-q'
-        ], {
-          stdio: ['pipe', 'ignore', 'ignore']
-        });
+        const format =
+          sampleFormat === SampleFormat16Bit
+            ? 'S16_LE'
+            : sampleFormat === SampleFormat32Bit
+              ? 'S32_LE'
+              : 'S16_LE';
+
+        this.process = spawn(
+          'aplay',
+          ['-f', format, '-r', String(sampleRate), '-c', String(channelCount), '-t', 'raw', '-q'],
+          {
+            stdio: ['pipe', 'ignore', 'ignore'],
+          },
+        );
       } else if (platform === 'win32') {
-        const format = sampleFormat === SampleFormat16Bit ? 's16le' :
-                       sampleFormat === SampleFormat32Bit ? 's32le' : 
-                       sampleFormat === SampleFormatFloat32 ? 'f32le' : 's16le';
-        
-        this.process = spawn('ffmpeg', [
-          '-f', format,
-          '-ar', String(sampleRate),
-          '-ac', String(channelCount),
-          '-i', '-',
-          '-f', 'dsound',
-          'default'
-        ], {
-          stdio: ['pipe', 'ignore', 'ignore']
-        });
+        const format =
+          sampleFormat === SampleFormat16Bit
+            ? 's16le'
+            : sampleFormat === SampleFormat32Bit
+              ? 's32le'
+              : sampleFormat === SampleFormatFloat32
+                ? 'f32le'
+                : 's16le';
+
+        this.process = spawn(
+          'ffmpeg',
+          [
+            '-f',
+            format,
+            '-ar',
+            String(sampleRate),
+            '-ac',
+            String(channelCount),
+            '-i',
+            '-',
+            '-f',
+            'dsound',
+            'default',
+          ],
+          {
+            stdio: ['pipe', 'ignore', 'ignore'],
+          },
+        );
       }
 
       if (this.process) {
@@ -348,13 +409,13 @@ class AudioDuplexStream extends Duplex {
   constructor(options: AudioIOOptions) {
     const inOpts = options.inOptions || {};
     const outOpts = options.outOptions || {};
-    
+
     super({
       allowHalfOpen: false,
       readableHighWaterMark: inOpts.highwaterMark || 16384,
       writableHighWaterMark: outOpts.highwaterMark || 16384,
       objectMode: false,
-      decodeStrings: false
+      decodeStrings: false,
     });
 
     this.inputStream = new AudioInputStream(inOpts);
@@ -479,7 +540,11 @@ export class AudioIO extends EventEmitter {
     return this;
   }
 
-  write(chunk: any, encoding?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void): boolean {
+  write(
+    chunk: any,
+    encoding?: BufferEncoding | ((error?: Error | null) => void),
+    callback?: (error?: Error | null) => void,
+  ): boolean {
     if (this.stream instanceof Writable || this.stream instanceof Duplex) {
       if (typeof encoding === 'function') {
         return this.stream.write(chunk, encoding);
@@ -531,7 +596,7 @@ export function getDevices(): Array<any> {
 
   if (platform === 'darwin') {
     try {
-      const result = spawn('system_profiler', ['SPAudioDataType']);
+      const _result = spawn('system_profiler', ['SPAudioDataType']);
       devices.push({
         id: 0,
         name: 'Built-in Microphone',
@@ -542,7 +607,7 @@ export function getDevices(): Array<any> {
         defaultLowOutputLatency: 0.01,
         defaultHighInputLatency: 0.012,
         defaultHighOutputLatency: 0.1,
-        hostAPIName: 'Core Audio'
+        hostAPIName: 'Core Audio',
       });
       devices.push({
         id: 1,
@@ -554,7 +619,7 @@ export function getDevices(): Array<any> {
         defaultLowOutputLatency: 0.002,
         defaultHighInputLatency: 0.1,
         defaultHighOutputLatency: 0.012,
-        hostAPIName: 'Core Audio'
+        hostAPIName: 'Core Audio',
       });
     } catch (e) {
       // Fall through to defaults
@@ -572,7 +637,7 @@ export function getDevices(): Array<any> {
       defaultLowOutputLatency: 0.01,
       defaultHighInputLatency: 0.1,
       defaultHighOutputLatency: 0.1,
-      hostAPIName: 'Default'
+      hostAPIName: 'Default',
     });
     devices.push({
       id: -1,
@@ -584,7 +649,7 @@ export function getDevices(): Array<any> {
       defaultLowOutputLatency: 0.01,
       defaultHighInputLatency: 0.1,
       defaultHighOutputLatency: 0.1,
-      hostAPIName: 'Default'
+      hostAPIName: 'Default',
     });
   }
 
@@ -612,8 +677,8 @@ export function getHostAPIs(): any {
         type: hostAPIName,
         deviceCount: 2,
         defaultInput: 0,
-        defaultOutput: 1
-      }
-    ]
+        defaultOutput: 1,
+      },
+    ],
   };
 }
