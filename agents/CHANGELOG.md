@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.0-next.4
+
+### Patch Changes
+
+- pin onnxruntime to 1.21.1 - [#639](https://github.com/livekit/agents-js/pull/639) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.0-next.3
 
 ### Patch Changes
