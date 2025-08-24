@@ -1,5 +1,11 @@
 # @livekit/agents-plugin-livekit
 
+## 1.0.0-next.5
+
+### Patch Changes
+
+- Pin onnx dependencies on package level - [#641](https://github.com/livekit/agents-js/pull/641) ([@lukasIO](https://github.com/lukasIO))
+
 ## 1.0.0-next.4
 
 ### Patch Changes
