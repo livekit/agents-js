@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.0-next.3
+
+### Patch Changes
+
+- pin onnxruntime to be 1.21.0 aligned with deps in huggingface transformers.js
+
 ## 1.0.0-next.2
 
 ### Patch Changes
