@@ -2,12 +2,6 @@
   "name": "@livekit/agents-monorepo",
   "private": true,
   "type": "module",
-  "pnpm": {
-    "overrides": {
-      "onnxruntime-node": "1.21.1",
-      "onnxruntime-common": "1.21.1"
-    }
-  },
   "scripts": {
     "build": "turbo run build",
     "clean": "turbo run clean",
