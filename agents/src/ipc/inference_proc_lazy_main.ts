@@ -16,13 +16,13 @@ const ORPHANED_TIMEOUT = 15 * 1000;
     // don't do anything on C-c
     // this is handled in cli, triggering a termination of all child processes at once.
     process.on('SIGINT', () => {
-      logger.info('SIGINT received in inference proc');
+      logger.debug('SIGINT received in inference proc');
     });
 
     // don't do anything on SIGTERM
     // Render uses SIGTERM in autoscale, this ensures the processes are properly drained if needed
     process.on('SIGTERM', () => {
-      logger.info('SIGTERM received in inference proc');
+      logger.debug('SIGTERM received in inference proc');
     });
 
     await once(process, 'message').then(([msg]: IPCMessage[]) => {
@@ -85,13 +85,13 @@ const ORPHANED_TIMEOUT = 15 * 1000;
           });
           break;
         case 'shutdownRequest':
-          logger.info('inference process received shutdown request');
+          logger.debug('inference process received shutdown request');
           clearTimeout(orphanedTimeout);
           // Remove our message handler to stop processing new messages
           process.off('message', messageHandler);
           Promise.all(Object.values(runners).map((r) => r.close()))
             .then(() => {
-              logger.info('Inference runners closed');
+              logger.debug('Inference runners closed');
               process.send!({ case: 'done' });
               join.resolve();
             })
@@ -108,7 +108,7 @@ const ORPHANED_TIMEOUT = 15 * 1000;
 
     await join.await;
 
-    logger.info('Inference process shutdown');
+    logger.debug('Inference process shutdown');
 
     return process.exitCode;
   }
