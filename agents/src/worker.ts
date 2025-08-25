@@ -437,7 +437,7 @@ export class Worker {
       return;
     }
 
-    this.#logger.info('draining worker');
+    this.#logger.debug('draining worker');
     this.#draining = true;
 
     this.event.emit(
@@ -753,7 +753,7 @@ export class Worker {
       return;
     }
 
-    this.#logger.info('shutting down worker');
+    this.#logger.debug('shutting down worker');
 
     this.#closed = true;
 
