@@ -36,6 +36,15 @@ const llm = new LLM({
 });
 ```
 
+To use the Gemini realtime model or TTS (Beta)
+
+```typescript
+import * as google from '@livekit/agents-plugin-google';
+
+const realtimeModel = new google.beta.realtime.RealtimeModel()
+const geminiTTS = new google.beta.TTS(),
+```
+
 ### Environment Variables
 
 - `GOOGLE_API_KEY` or `GOOGLE_GENAI_API_KEY`: Your Google AI Studio API key
@@ -67,13 +76,17 @@ const llm = new LLM({
 ## Authentication
 
 ### Google AI Studio
+
 Set your API key via environment variable or constructor option:
+
 ```bash
 export GOOGLE_API_KEY=your-api-key
 ```
 
 ### Vertex AI
+
 For Vertex AI, ensure you have:
+
 1. Google Cloud CLI installed and authenticated
 2. Vertex AI API enabled in your project
 3. Proper authentication configured (Application Default Credentials)
@@ -86,4 +99,4 @@ export GOOGLE_GENAI_USE_VERTEXAI=true
 
 ## License
 
-Apache 2.0 
+Apache 2.0
