@@ -174,38 +174,74 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       };
 
-      ws.on('message', (data) => {
-        const json = JSON.parse(data.toString());
+      while (!closing) {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            ws.removeAllListeners();
 
-        if (json?.data?.audio) {
-          const audio = new Int8Array(Buffer.from(json.data.audio, 'base64'));
-          for (const frame of bstream.write(audio)) {
-            sendLastFrame(requestId, false);
-            lastFrame = frame;
-            // this.queue.put({frame, requestId, segmentId: requestId, final: false})
+            ws.on('message', (data) => {
+              try {
+                const json = JSON.parse(data.toString());
+
+                if (json?.data?.audio) {
+                  const audio = new Int8Array(Buffer.from(json.data.audio, 'base64'));
+                  for (const frame of bstream.write(audio)) {
+                    sendLastFrame(requestId, false);
+                    lastFrame = frame;
+                  }
+
+                  if (json?.data?.stop) {
+                    // This is a bool flag, it is True when audio reaches "<STOP>"
+                    for (const frame of bstream.flush()) {
+                      sendLastFrame(requestId, false);
+                      lastFrame = frame;
+                    }
+                    sendLastFrame(requestId, true);
+                    this.queue.put(SynthesizeStream.END_OF_STREAM);
+
+                    closing = true;
+                    ws.close();
+                    resolve();
+                    return;
+                  }
+                }
+                resolve();
+              } catch (error) {
+                this.#logger.error(`Error parsing WebSocket message: ${error}`);
+                reject(error);
+              }
+            });
+
+            ws.on('error', (error) => {
+              this.#logger.error(`WebSocket error: ${error}`);
+              if (!closing) {
+                closing = true;
+                this.queue.put(SynthesizeStream.END_OF_STREAM);
+                ws.close();
+              }
+              reject(error);
+            });
+
+            ws.on('close', (code, reason) => {
+              if (!closing) {
+                this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+                this.queue.put(SynthesizeStream.END_OF_STREAM);
+              }
+              // Only reject if we haven't processed all expected frames
+              if (!closing) {
+                reject(new Error(`WebSocket closed prematurely with code ${code}: ${reason}`));
+              } else {
+                resolve();
+              }
+            });
+          });
+        } catch (err) {
+          if (err instanceof Error && !err.message.includes('WebSocket closed prematurely')) {
+            this.#logger.error({ err }, 'Error in recvTask from Neuphonic WebSocket');
           }
-
-          if (json?.data?.stop) {
-            // This is a bool flag, it is True when audio reaches "<STOP>"
-            for (const frame of bstream.flush()) {
-              sendLastFrame(requestId, false);
-              lastFrame = frame;
-            }
-            sendLastFrame(requestId, true);
-            this.queue.put(SynthesizeStream.END_OF_STREAM);
-
-            closing = true;
-            ws.close();
-            return;
-          }
+          break;
         }
-      });
-      ws.on('close', (code, reason) => {
-        if (!closing) {
-          this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-        }
-        ws.removeAllListeners();
-      });
+      }
     };
 
     const url = `wss://${API_BASE_URL}/speak/en?${getQueryParamString(this.#opts)}&api_key=${this.#opts.apiKey}`;
