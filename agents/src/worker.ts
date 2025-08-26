@@ -82,6 +82,8 @@ export const defaultInitializeProcessFunc = (_: JobProcess) => _;
 const defaultRequestFunc = async (ctx: JobRequest) => {
   await ctx.accept();
 };
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const defaultCpuLoad = async (worker: Worker): Promise<number> => {
   return new Promise((resolve) => {
     const cpus1 = os.cpus();
