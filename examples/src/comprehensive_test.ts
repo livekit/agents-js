@@ -52,6 +52,12 @@ const realtimeLlmOptions = {
   gemini: () => new google.beta.realtime.RealtimeModel(),
 };
 
+const sttChoices = Object.keys(sttOptions);
+const ttsChoices = Object.keys(ttsOptions) as (keyof typeof ttsOptions)[];
+const eouChoices = Object.keys(eouOptions) as (keyof typeof eouOptions)[];
+const llmChoices = Object.keys(llmOptions) as (keyof typeof llmOptions)[];
+const realtimeLlmChoices = Object.keys(realtimeLlmOptions) as (keyof typeof realtimeLlmOptions)[];
+
 type UserData = {
   testedSttChoices: Set<string>;
   testedTtsChoices: Set<string>;
@@ -59,6 +65,57 @@ type UserData = {
   testedLlmChoices: Set<string>;
   testedRealtimeLlmChoices: Set<string>;
 };
+
+class MainAgent extends voice.Agent<UserData> {
+  constructor() {
+    super({
+      instructions: `You are a main route agent, you can test the agent's ability to switch between different agents`,
+      stt: sttOptions['deepgram'](),
+      tts: ttsOptions['elevenlabs'](),
+      llm: llmOptions['openai'](),
+      turnDetection: eouOptions['multilingual'](),
+      tools: {
+        testAgent: llm.tool({
+          description:
+            'Called when user want to test an agent with STT, TTS, EOU, LLM, and optionally realtime LLM configuration',
+          parameters: z.object({
+            sttChoice: z.enum(sttChoices as [string, ...string[]]),
+            ttsChoice: z.enum(ttsChoices as [string, ...string[]]),
+            eouChoice: z.enum(eouChoices as [string, ...string[]]),
+            llmChoice: z.enum(llmChoices as [string, ...string[]]),
+            realtimeLlmChoice: z.enum(realtimeLlmChoices as [string, ...string[]]).nullable(),
+          }),
+          execute: async (params) => {
+            const { sttChoice, ttsChoice, eouChoice, llmChoice, realtimeLlmChoice } = params;
+
+            return llm.handoff({
+              agent: new TestAgent({
+                sttChoice: sttChoice as keyof typeof sttOptions,
+                ttsChoice: ttsChoice as keyof typeof ttsOptions,
+                eouChoice: eouChoice as keyof typeof eouOptions,
+                llmChoice: llmChoice as keyof typeof llmOptions,
+                realtimeLlmChoice: realtimeLlmChoice as keyof typeof realtimeLlmOptions | undefined,
+              }),
+              returns: 'Transfer to next agent',
+            });
+          },
+        }),
+      },
+    });
+  }
+
+  async onEnter(): Promise<void> {
+    if (this.llm instanceof llm.RealtimeModel) {
+      this.session.generateReply({
+        userInput: `Tell user that you are main route agent, you can test the agent's ability to switch between different agents`,
+      });
+    } else {
+      this.session.say(
+        `Hi, I'm a main route agent, you can test the agent's ability to switch between different agents`,
+      );
+    }
+  }
+}
 
 class TestAgent extends voice.Agent<UserData> {
   private readonly sttChoice: keyof typeof sttOptions;
@@ -115,14 +172,29 @@ class TestAgent extends voice.Agent<UserData> {
         nextAgent: llm.tool({
           description:
             'Called when user confirm current agent is working and want to proceed to next agent',
-          execute: async () => {
+          parameters: z.object({
+            sttChoice: z.enum(sttChoices as [string, ...string[]]).optional(),
+            ttsChoice: z.enum(ttsChoices as [string, ...string[]]).optional(),
+            eouChoice: z.enum(eouChoices as [string, ...string[]]).optional(),
+            llmChoice: z.enum(llmChoices as [string, ...string[]]).optional(),
+            realtimeLlmChoice: z.enum(realtimeLlmChoices as [string, ...string[]]).optional(),
+          }),
+          execute: async (params) => {
+            const {
+              sttChoice = this.sttChoice,
+              ttsChoice = this.ttsChoice,
+              eouChoice = this.eouChoice,
+              llmChoice = this.llmChoice,
+              realtimeLlmChoice = this.realtimeLlmChoice,
+            } = params;
+
             return llm.handoff({
               agent: new TestAgent({
-                sttChoice: sttChoice,
-                ttsChoice: ttsChoice,
-                eouChoice: eouChoice,
-                llmChoice: llmChoice,
-                realtimeLlmChoice: realtimeLlmChoice,
+                sttChoice: sttChoice as keyof typeof sttOptions,
+                ttsChoice: ttsChoice as keyof typeof ttsOptions,
+                eouChoice: eouChoice as keyof typeof eouOptions,
+                llmChoice: llmChoice as keyof typeof llmOptions,
+                realtimeLlmChoice: realtimeLlmChoice as keyof typeof realtimeLlmOptions,
               }),
               returns: 'Transfer to next agent',
             });
@@ -148,6 +220,16 @@ class TestAgent extends voice.Agent<UserData> {
         `Hi, I'm a voice agent with ${this.sttChoice} STT, ${this.ttsChoice} TTS, ${this.eouChoice} EOU, ${this.llmChoice} LLM. I'm ready to test your hearing & speaking abilities.`,
       );
     }
+
+    setTimeout(() => {
+      if (this.session.currentAgent !== this) return;
+
+      this.session.interrupt();
+      this.session.generateReply({
+        userInput: 'Tell user that this test is over, going back to main agent',
+      });
+      this.session.updateAgent(new MainAgent());
+    }, 45 * 1000);
   }
 }
 
@@ -177,12 +259,7 @@ export default defineAgent({
     });
 
     await session.start({
-      agent: new TestAgent({
-        sttChoice: 'deepgram',
-        ttsChoice: 'cartesia',
-        eouChoice: 'multilingual',
-        llmChoice: 'gemini',
-      }),
+      agent: new MainAgent(),
 
       room: ctx.room,
       inputOptions: {
