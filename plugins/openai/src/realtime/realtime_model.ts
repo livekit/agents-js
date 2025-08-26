@@ -166,7 +166,7 @@ export class RealtimeModel extends llm.RealtimeModel {
 
     if (options.apiKey === '' && !isAzure) {
       throw new Error(
-        'OpenAI API key is required, either using the argument or by setting the OPENAI_API_KEY environmental variable',
+        'OpenAI API key is required, either using the argument or by setting the OPENAI_API_KEY environment variable',
       );
     }
 
@@ -174,7 +174,7 @@ export class RealtimeModel extends llm.RealtimeModel {
 
     if (!apiKey && !isAzure) {
       throw new Error(
-        'OpenAI API key is required, either using the argument or by setting the OPENAI_API_KEY environmental variable',
+        'OpenAI API key is required, either using the argument or by setting the OPENAI_API_KEY environment variable',
       );
     }
 
