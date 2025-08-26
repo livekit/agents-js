@@ -171,9 +171,15 @@ importers:
       '@livekit/agents-plugin-livekit':
         specifier: workspace:*
         version: link:../plugins/livekit
+      '@livekit/agents-plugin-neuphonic':
+        specifier: workspace:*
+        version: link:../plugins/neuphonic
       '@livekit/agents-plugin-openai':
         specifier: workspace:*
         version: link:../plugins/openai
+      '@livekit/agents-plugin-resemble':
+        specifier: workspace:*
+        version: link:../plugins/resemble
       '@livekit/agents-plugin-silero':
         specifier: workspace:*
         version: link:../plugins/silero

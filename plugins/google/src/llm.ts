@@ -323,7 +323,10 @@ export class LLMStream extends llm.LLMStream {
       }));
 
       const functionDeclarations = this.toolCtx ? toFunctionDeclarations(this.toolCtx) : undefined;
-      const tools = functionDeclarations ? [{ functionDeclarations }] : undefined;
+      const tools =
+        functionDeclarations && functionDeclarations.length > 0
+          ? [{ functionDeclarations }]
+          : undefined;
 
       let systemInstruction: types.Content | undefined = undefined;
       if (extraData.systemMessages && extraData.systemMessages.length > 0) {

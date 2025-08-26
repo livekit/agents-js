@@ -371,7 +371,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pushedDurationMs: number = 0;
 
   #logger = log();
-  #task: Promise<void>;
+  #task: Task<void>;
   #closed = false;
 
   constructor(realtimeModel: RealtimeModel) {
@@ -379,7 +379,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     this.oaiRealtimeModel = realtimeModel;
 
-    this.#task = this.#mainTask();
+    this.#task = Task.from(({ signal }) => this.#mainTask(signal));
 
     this.sendEvent(this.createSessionUpdateEvent());
   }
@@ -727,7 +727,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
   }
 
-  async #mainTask(): Promise<void> {
+  async #mainTask(signal: AbortSignal): Promise<void> {
     let reconnecting = false;
     let numRetries = 0;
     let wsConn: WebSocket | null = null;
@@ -780,16 +780,20 @@ export class RealtimeSession extends llm.RealtimeSession {
     };
 
     reconnecting = false;
-    while (!this.#closed) {
+    while (!this.#closed && !signal.aborted) {
       this.#logger.debug('Creating WebSocket connection to OpenAI Realtime API');
       wsConn = await this.createWsConn();
+      if (signal.aborted) break;
 
       try {
         if (reconnecting) {
           await reconnect();
+          if (signal.aborted) break;
           numRetries = 0;
         }
+
         await this.runWs(wsConn);
+        if (signal.aborted) break;
       } catch (error) {
         if (!isAPIError(error)) {
           this.emitError({ error: error as Error, recoverable: false });
@@ -836,10 +840,13 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private async runWs(wsConn: WebSocket): Promise<void> {
     const forwardEvents = async (signal: AbortSignal): Promise<void> => {
+      const abortFuture = new Future<void>();
+      signal.addEventListener('abort', () => abortFuture.resolve());
+
       while (!this.#closed && wsConn.readyState === WebSocket.OPEN && !signal.aborted) {
         try {
-          const event = await this.messageChannel.get();
-          if (signal.aborted) {
+          const event = await Promise.race([this.messageChannel.get(), abortFuture.await]);
+          if (signal.aborted || abortFuture.done || event === undefined) {
             break;
           }
 
