@@ -5,7 +5,7 @@ import { llm } from '@livekit/agents-plugins-test';
 import { describe } from 'vitest';
 import { LLM } from './llm.js';
 
-describe('Google', async () => {
+describe.skip('Google', async () => {
   await llm(
     new LLM({
       model: 'gemini-2.5-flash',

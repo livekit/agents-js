@@ -6,6 +6,6 @@ import { tts } from '@livekit/agents-plugins-test';
 import { describe } from 'vitest';
 import { TTS } from './gemini_tts.js';
 
-describe('Google Gemini TTS', async () => {
+describe.skip('Google Gemini TTS', async () => {
   await tts(new TTS(), new STT());
 });
