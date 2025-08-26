@@ -8,7 +8,7 @@ on:
   push:
     branches:
       - main
-      - dev-1.0
+      - 0.x
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
