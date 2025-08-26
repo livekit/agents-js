@@ -29,9 +29,9 @@ Looking for the Python library? Check out [Agents](https://github.com/livekit/ag
 
 <!--END_DESCRIPTION-->
 
-## ✨ 1.0 Beta Release ✨
+## ✨ 1.0 Release ✨
 
-This README reflects the 1.0 beta release.
+This README reflects the 1.0 release.
 
 ## Features
 
