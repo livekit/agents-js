@@ -26,7 +26,6 @@ import { z } from 'zod';
 
 const sttOptions = {
   deepgram: () => new deepgram.STT(),
-  //   openai: () => new openai.STT(),
 };
 
 const ttsOptions = {
@@ -45,7 +44,7 @@ const eouOptions = {
 
 const llmOptions = {
   openai: () => new openai.LLM(),
-  //   gemini: () => new google.LLM(),
+  gemini: () => new google.LLM(),
 };
 
 const realtimeLlmOptions = {
@@ -134,80 +133,17 @@ class TestAgent extends voice.Agent<UserData> {
         nextAgent: llm.tool({
           description:
             'Called when user confirm current agent is working and want to proceed to next agent',
-          execute: async (_, { ctx }) => {
-            try {
-              ctx.userData.testedSttChoices.add(sttChoice);
-              ctx.userData.testedTtsChoices.add(ttsChoice);
-              ctx.userData.testedEouChoices.add(eouChoice);
-              ctx.userData.testedLlmChoices.add(llmChoice);
-
-              if (
-                isAllChoicesUsed(sttChoices, ctx.userData.testedSttChoices) &&
-                isAllChoicesUsed(ttsChoices, ctx.userData.testedTtsChoices) &&
-                isAllChoicesUsed(eouChoices, ctx.userData.testedEouChoices) &&
-                isAllChoicesUsed(llmChoices, ctx.userData.testedLlmChoices)
-              ) {
-                if (isAllChoicesUsed(realtimeLlmChoices, ctx.userData.testedRealtimeLlmChoices)) {
-                  return {
-                    result: 'All choices have been tested, you can stop now',
-                  };
-                }
-
-                const nextRealtimeLlmChoice = getNextUnusedChoice(
-                  realtimeLlmChoices,
-                  ctx.userData.testedRealtimeLlmChoices,
-                ) as keyof typeof realtimeLlmOptions;
-
-                console.log(
-                  `=== Transferring to next realtime agent: ${nextRealtimeLlmChoice} realtime`,
-                );
-
-                return llm.handoff({
-                  agent: new TestAgent({
-                    sttChoice: sttChoice,
-                    ttsChoice: ttsChoice,
-                    eouChoice: eouChoice,
-                    llmChoice: llmChoice,
-                    realtimeLlmChoice: nextRealtimeLlmChoice,
-                  }),
-                });
-              }
-
-              const nextSttChoice = getNextUnusedChoice(
-                sttChoices,
-                ctx.userData.testedSttChoices,
-              ) as keyof typeof sttOptions;
-              const nextTtsChoice = getNextUnusedChoice(
-                ttsChoices,
-                ctx.userData.testedTtsChoices,
-              ) as keyof typeof ttsOptions;
-              const nextEouChoice = getNextUnusedChoice(
-                eouChoices,
-                ctx.userData.testedEouChoices,
-              ) as keyof typeof eouOptions;
-              const nextLlmChoice = getNextUnusedChoice(
-                llmChoices,
-                ctx.userData.testedLlmChoices,
-              ) as keyof typeof llmOptions;
-
-              console.log(
-                `=== Transferring to next text agent: ${nextSttChoice} STT, ${nextTtsChoice} TTS, ${nextEouChoice} EOU, ${nextLlmChoice} LLM`,
-              );
-
-              return llm.handoff({
-                agent: new TestAgent({
-                  sttChoice: nextSttChoice,
-                  ttsChoice: nextTtsChoice,
-                  eouChoice: nextEouChoice,
-                  llmChoice: nextLlmChoice,
-                }),
-                returns: `Transferring to next test agent`,
-              });
-            } catch (error) {
-              return {
-                result: 'Error transferring to next text agent: ' + error,
-              };
-            }
+          execute: async () => {
+            return llm.handoff({
+              agent: new TestAgent({
+                sttChoice: sttChoice,
+                ttsChoice: ttsChoice,
+                eouChoice: eouChoice,
+                llmChoice: llmChoice,
+                realtimeLlmChoice: realtimeLlmChoice,
+              }),
+              returns: 'Transfer to next agent',
+            });
           },
         }),
       },
@@ -217,6 +153,7 @@ class TestAgent extends voice.Agent<UserData> {
     this.ttsChoice = ttsChoice;
     this.eouChoice = eouChoice;
     this.llmChoice = llmChoice;
+    this.realtimeLlmChoice = realtimeLlmChoice;
   }
 
   async onEnter(): Promise<void> {
@@ -260,9 +197,9 @@ export default defineAgent({
     await session.start({
       agent: new TestAgent({
         sttChoice: 'deepgram',
-        ttsChoice: 'elevenlabs',
-        eouChoice: 'english',
-        llmChoice: 'openai',
+        ttsChoice: 'cartesia',
+        eouChoice: 'multilingual',
+        llmChoice: 'gemini',
       }),
 
       room: ctx.room,
