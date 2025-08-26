@@ -1,5 +1,30 @@
 # @livekit/agents-plugin-deepgram
 
+## 1.0.0
+
+### Major Changes
+
+- Release @livekit/agents and all plugins to version 1.0.0 - [#626](https://github.com/livekit/agents-js/pull/626) ([@toubatbrian](https://github.com/toubatbrian))
+
+### Patch Changes
+
+- Fix monorepo dependencies - [#634](https://github.com/livekit/agents-js/pull/634) ([@lukasIO](https://github.com/lukasIO))
+
+- pin onnxruntime to 1.21.1 - [#639](https://github.com/livekit/agents-js/pull/639) ([@toubatbrian](https://github.com/toubatbrian))
+
+- update logs - [#643](https://github.com/livekit/agents-js/pull/643) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- Remove @jsr dependencies - [#630](https://github.com/livekit/agents-js/pull/630) ([@lukasIO](https://github.com/lukasIO))
+
+- fix: avoid masquerading types as mjs - [#434](https://github.com/livekit/agents-js/pull/434) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- pin onnxruntime to be 1.21.0 aligned with deps in huggingface transformers.js - [#638](https://github.com/livekit/agents-js/pull/638) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix nuphonic plugin - [#645](https://github.com/livekit/agents-js/pull/645) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- Updated dependencies [[`d2680831e197f9dd4a11e7b14fe98fc9aa1b549c`](https://github.com/livekit/agents-js/commit/d2680831e197f9dd4a11e7b14fe98fc9aa1b549c), [`1483b1cafa91300e3871a63cc01814ba9f462a85`](https://github.com/livekit/agents-js/commit/1483b1cafa91300e3871a63cc01814ba9f462a85), [`223a73c4dfea2275923024279729f3d13770d1d6`](https://github.com/livekit/agents-js/commit/223a73c4dfea2275923024279729f3d13770d1d6), [`9f481ac163445bcaf3609fdf9abc132af27f43e4`](https://github.com/livekit/agents-js/commit/9f481ac163445bcaf3609fdf9abc132af27f43e4), [`f7b2d32966129eaac266f180b860406c07118c8a`](https://github.com/livekit/agents-js/commit/f7b2d32966129eaac266f180b860406c07118c8a), [`57cf6eefb5fe6ff65c4af88a719282d60382e94a`](https://github.com/livekit/agents-js/commit/57cf6eefb5fe6ff65c4af88a719282d60382e94a), [`d67ef6daad137599c565cf1aa924954167d83ebf`](https://github.com/livekit/agents-js/commit/d67ef6daad137599c565cf1aa924954167d83ebf), [`f4afeb40bb005c103b3c33c6aa011cde2e29f729`](https://github.com/livekit/agents-js/commit/f4afeb40bb005c103b3c33c6aa011cde2e29f729), [`21e81a01e66c0f12d4ab6e1324c7be118ff013ae`](https://github.com/livekit/agents-js/commit/21e81a01e66c0f12d4ab6e1324c7be118ff013ae)]:
+  - @livekit/agents@1.0.0
+
 ## 1.0.0-next.5
 
 ### Patch Changes
