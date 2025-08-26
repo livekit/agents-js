@@ -31,7 +31,7 @@ export class HTTPServer {
       if (req.url === '/') {
         healthCheck(res);
       } else if (req.url === '/worker') {
-        res.writeHead(200, { 'Contet-Type': 'application/json' });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(workerListener()));
       } else {
         res.writeHead(404);

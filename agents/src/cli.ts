@@ -21,7 +21,7 @@ const runWorker = async (args: CliArgs) => {
   initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
   const logger = log();
 
-  // though `production` is defined in WorkerOptions, it will always be overriddden by CLI.
+  // though `production` is defined in WorkerOptions, it will always be overridden by CLI.
   const { production: _, ...opts } = args.opts; // eslint-disable-line @typescript-eslint/no-unused-vars
   const worker = new Worker(new WorkerOptions({ production: args.production, ...opts }));
 
