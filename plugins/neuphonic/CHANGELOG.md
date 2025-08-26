@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-neuphonic
 
+## 1.0.0-next.6
+
+### Patch Changes
+
+- fix google LLM and gemini realtime - [#646](https://github.com/livekit/agents-js/pull/646) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`20facf48a5c8d1bb5eb812bbb67b8840480158fc`](https://github.com/livekit/agents-js/commit/20facf48a5c8d1bb5eb812bbb67b8840480158fc)]:
+  - @livekit/agents@1.0.0-next.6
+
 ## 1.0.0-next.5
 
 ### Patch Changes

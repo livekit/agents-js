@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.0-next.6
+
+### Patch Changes
+
+- fix google LLM and gemini realtime - [#646](https://github.com/livekit/agents-js/pull/646) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.0-next.5
 
 ### Patch Changes
