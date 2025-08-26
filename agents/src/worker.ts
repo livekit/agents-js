@@ -82,7 +82,9 @@ export const defaultInitializeProcessFunc = (_: JobProcess) => _;
 const defaultRequestFunc = async (ctx: JobRequest) => {
   await ctx.accept();
 };
-const defaultCpuLoad = async (): Promise<number> => {
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const defaultCpuLoad = async (worker: Worker): Promise<number> => {
   return new Promise((resolve) => {
     const cpus1 = os.cpus();
 
@@ -147,7 +149,7 @@ export class WorkerPermissions {
 export class WorkerOptions {
   agent: string;
   requestFunc: (job: JobRequest) => Promise<void>;
-  loadFunc: () => Promise<number>;
+  loadFunc: (worker: Worker) => Promise<number>;
   loadThreshold: number;
   numIdleProcesses: number;
   shutdownProcessTimeout: number;
@@ -198,7 +200,7 @@ export class WorkerOptions {
     agent: string;
     requestFunc?: (job: JobRequest) => Promise<void>;
     /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
-    loadFunc?: () => Promise<number>;
+    loadFunc?: (worker: Worker) => Promise<number>;
     /** When the load exceeds this threshold, the worker will be marked as unavailable. */
     loadThreshold?: number;
     numIdleProcesses?: number;
@@ -616,7 +618,7 @@ export class Worker {
       if (closingWS) clearInterval(loadMonitor);
 
       const oldStatus = currentStatus;
-      this.#opts.loadFunc().then((currentLoad: number) => {
+      this.#opts.loadFunc(this).then((currentLoad: number) => {
         const isFull = currentLoad >= this.#opts.loadThreshold;
         const currentlyAvailable = !isFull;
         currentStatus = currentlyAvailable ? WorkerStatus.WS_AVAILABLE : WorkerStatus.WS_FULL;
