@@ -30,10 +30,10 @@ const sttOptions = {
 };
 
 const ttsOptions = {
+  cartesia: () => new cartesia.TTS(),
   elevenlabs: () => new elevenlabs.TTS(),
   openai: () => new openai.TTS(),
   gemini: () => new google.beta.TTS(),
-  cartesia: () => new cartesia.TTS(),
   neuphonic: () => new neuphonic.TTS(),
   resemble: () => new resemble.TTS(),
 };
@@ -45,21 +45,26 @@ const eouOptions = {
 
 const llmOptions = {
   openai: () => new openai.LLM(),
-  gemini: () => new google.LLM(),
-  'openai realtime': () => new openai.realtime.RealtimeModel(),
-  'gemini realtime': () => new google.beta.realtime.RealtimeModel(),
+  //   gemini: () => new google.LLM(),
+};
+
+const realtimeLlmOptions = {
+  openai: () => new openai.realtime.RealtimeModel(),
+  gemini: () => new google.beta.realtime.RealtimeModel(),
 };
 
 const sttChoices = Object.keys(sttOptions) as (keyof typeof sttOptions)[];
 const ttsChoices = Object.keys(ttsOptions) as (keyof typeof ttsOptions)[];
 const eouChoices = Object.keys(eouOptions) as (keyof typeof eouOptions)[];
 const llmChoices = Object.keys(llmOptions) as (keyof typeof llmOptions)[];
+const realtimeLlmChoices = Object.keys(realtimeLlmOptions) as (keyof typeof realtimeLlmOptions)[];
 
 type UserData = {
   testedSttChoices: Set<string>;
   testedTtsChoices: Set<string>;
   testedEouChoices: Set<string>;
   testedLlmChoices: Set<string>;
+  testedRealtimeLlmChoices: Set<string>;
 };
 
 function getNextUnusedChoice<T>(choices: T[], used: Set<T>): T {
@@ -79,32 +84,38 @@ class TestAgent extends voice.Agent<UserData> {
   private readonly ttsChoice: keyof typeof ttsOptions;
   private readonly eouChoice: keyof typeof eouOptions;
   private readonly llmChoice: keyof typeof llmOptions;
+  private readonly realtimeLlmChoice?: keyof typeof realtimeLlmOptions;
 
   constructor({
     sttChoice,
     ttsChoice,
     eouChoice,
     llmChoice,
+    realtimeLlmChoice,
   }: {
     sttChoice: keyof typeof sttOptions;
     ttsChoice: keyof typeof ttsOptions;
     eouChoice: keyof typeof eouOptions;
     llmChoice: keyof typeof llmOptions;
+    realtimeLlmChoice?: keyof typeof realtimeLlmOptions;
   }) {
     const stt = sttOptions[sttChoice]();
     const tts = ttsOptions[ttsChoice]();
     const eou = eouOptions[eouChoice]();
     const model = llmOptions[llmChoice]();
+    const realtimeModel = realtimeLlmChoice ? realtimeLlmOptions[realtimeLlmChoice]() : undefined;
+
+    const modelName = realtimeModel ? `${realtimeLlmChoice} realtime` : llmChoice;
 
     super({
       instructions: `You are a test voice-based agent, you can hear the user's message and respond to it. User is testing your hearing & speaking abilities.
-        You are using ${sttChoice} STT, ${ttsChoice} TTS, ${eouChoice} EOU, ${llmChoice} LLM.
+        You are using ${sttChoice} STT, ${ttsChoice} TTS, ${eouChoice} EOU, ${modelName} LLM.
         You can use the following tools to test your abilities:
         - testTool: Testing agent's tool calling ability
         - nextAgent: Called when user confirm current agent is working and want to proceed to next agent`,
       stt: stt,
       tts: tts,
-      llm: model,
+      llm: realtimeModel ?? model,
       turnDetection: eou,
       tools: {
         testTool: llm.tool({
@@ -136,9 +147,30 @@ class TestAgent extends voice.Agent<UserData> {
                 isAllChoicesUsed(eouChoices, ctx.userData.testedEouChoices) &&
                 isAllChoicesUsed(llmChoices, ctx.userData.testedLlmChoices)
               ) {
-                return {
-                  result: 'All choices have been tested, you can stop now',
-                };
+                if (isAllChoicesUsed(realtimeLlmChoices, ctx.userData.testedRealtimeLlmChoices)) {
+                  return {
+                    result: 'All choices have been tested, you can stop now',
+                  };
+                }
+
+                const nextRealtimeLlmChoice = getNextUnusedChoice(
+                  realtimeLlmChoices,
+                  ctx.userData.testedRealtimeLlmChoices,
+                ) as keyof typeof realtimeLlmOptions;
+
+                console.log(
+                  `=== Transferring to next realtime agent: ${nextRealtimeLlmChoice} realtime`,
+                );
+
+                return llm.handoff({
+                  agent: new TestAgent({
+                    sttChoice: sttChoice,
+                    ttsChoice: ttsChoice,
+                    eouChoice: eouChoice,
+                    llmChoice: llmChoice,
+                    realtimeLlmChoice: nextRealtimeLlmChoice,
+                  }),
+                });
               }
 
               const nextSttChoice = getNextUnusedChoice(
@@ -158,6 +190,10 @@ class TestAgent extends voice.Agent<UserData> {
                 ctx.userData.testedLlmChoices,
               ) as keyof typeof llmOptions;
 
+              console.log(
+                `=== Transferring to next text agent: ${nextSttChoice} STT, ${nextTtsChoice} TTS, ${nextEouChoice} EOU, ${nextLlmChoice} LLM`,
+              );
+
               return llm.handoff({
                 agent: new TestAgent({
                   sttChoice: nextSttChoice,
@@ -165,7 +201,7 @@ class TestAgent extends voice.Agent<UserData> {
                   eouChoice: nextEouChoice,
                   llmChoice: nextLlmChoice,
                 }),
-                returns: 'Transferring to next text agent',
+                returns: `Transferring to next test agent`,
               });
             } catch (error) {
               return {
@@ -211,6 +247,7 @@ export default defineAgent({
         testedTtsChoices: new Set(),
         testedEouChoices: new Set(),
         testedLlmChoices: new Set(),
+        testedRealtimeLlmChoices: new Set(),
       },
     });
     const usageCollector = new metrics.UsageCollector();
