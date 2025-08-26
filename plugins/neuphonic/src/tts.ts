@@ -96,7 +96,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       (res) => {
         res.on('data', (chunk) => {
           buffer += chunk.toString();
-          const messages = buffer.split('\n'); // wait until a full message has been recv
+          const messages = buffer.split('\n'); // wait until a full message has been received
 
           if (messages.length > 1) {
             buffer = messages.pop() || '';
@@ -262,7 +262,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 }
 
 /**
- * Returns all model paramters as a query parameter string ready to be sent to the Neuphonic API.
+ * Returns all model parameters as a query parameter string ready to be sent to the Neuphonic API.
  * @param opts - The TTSOptions object.
  */
 const getQueryParamString = (opts: TTSOptions): string => {
@@ -274,7 +274,7 @@ const getQueryParamString = (opts: TTSOptions): string => {
 };
 
 /**
- * Returns all model paramters as an object in snake_case.
+ * Returns all model parameters as an object in snake_case.
  * @param opts - The TTSOptions object.
  */
 const getModelParams = (opts: TTSOptions): Partial<TTSOptions> => {

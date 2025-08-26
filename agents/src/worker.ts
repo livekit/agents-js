@@ -61,7 +61,7 @@ class Default {
   }
 }
 
-/** Necessary credentials not provided and not found in an appropriate environmental variable. */
+/** Necessary credentials not provided and not found in an appropriate environment variable. */
 export class MissingCredentialsError extends Error {
   constructor(msg?: string) {
     super(msg);

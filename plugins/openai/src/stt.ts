@@ -33,7 +33,7 @@ export class STT extends stt.STT {
    *
    * @remarks
    * `apiKey` must be set to your OpenAI API key, either using the argument or by setting the
-   * `OPENAI_API_KEY` environmental variable.
+   * `OPENAI_API_KEY` environment variable.
    */
   constructor(opts: Partial<STTOptions> = defaultSTTOptions) {
     super({ streaming: false, interimResults: false });
@@ -56,7 +56,7 @@ export class STT extends stt.STT {
    *
    * @remarks
    * `apiKey` must be set to your Groq API key, either using the argument or by setting the
-   * `GROQ_API_KEY` environmental variable.
+   * `GROQ_API_KEY` environment variable.
    */
   static withGroq(
     opts: Partial<{

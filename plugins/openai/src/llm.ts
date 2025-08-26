@@ -60,7 +60,7 @@ export class LLM extends llm.LLM {
    *
    * @remarks
    * `apiKey` must be set to your OpenAI API key, either using the argument or by setting the
-   * `OPENAI_API_KEY` environmental variable.
+   * `OPENAI_API_KEY` environment variable.
    */
   constructor(
     opts: Partial<LLMOptions> = defaultLLMOptions,
@@ -135,7 +135,7 @@ export class LLM extends llm.LLM {
    *
    * @remarks
    * `apiKey` must be set to your Cerebras API key, either using the argument or by setting the
-   * `CEREBRAS_API_KEY` environmental variable.
+   * `CEREBRAS_API_KEY` environment variable.
    */
   static withCerebras(
     opts: Partial<{
@@ -166,7 +166,7 @@ export class LLM extends llm.LLM {
    *
    * @remarks
    * `apiKey` must be set to your Fireworks API key, either using the argument or by setting the
-   * `FIREWORKS_API_KEY` environmental variable.
+   * `FIREWORKS_API_KEY` environment variable.
    */
   static withFireworks(opts: Partial<LLMOptions> = {}): LLM {
     opts.apiKey = opts.apiKey || process.env.FIREWORKS_API_KEY;
@@ -188,7 +188,7 @@ export class LLM extends llm.LLM {
    *
    * @remarks
    * `apiKey` must be set to your xAI API key, either using the argument or by setting the
-   * `XAI_API_KEY` environmental variable.
+   * `XAI_API_KEY` environment variable.
    */
   static withXAI(
     opts: Partial<{
@@ -217,7 +217,7 @@ export class LLM extends llm.LLM {
    *
    * @remarks
    * `apiKey` must be set to your Groq API key, either using the argument or by setting the
-   * `GROQ_API_KEY` environmental variable.
+   * `GROQ_API_KEY` environment variable.
    */
   static withGroq(
     opts: Partial<{
@@ -246,7 +246,7 @@ export class LLM extends llm.LLM {
    *
    * @remarks
    * `apiKey` must be set to your DeepSeek API key, either using the argument or by setting the
-   * `DEEPSEEK_API_KEY` environmental variable.
+   * `DEEPSEEK_API_KEY` environment variable.
    */
   static withDeepSeek(
     opts: Partial<{
@@ -277,7 +277,7 @@ export class LLM extends llm.LLM {
    *
    * @remarks
    * `apiKey` must be set to your OctoAI API key, either using the argument or by setting the
-   * `OCTOAI_TOKEN` environmental variable.
+   * `OCTOAI_TOKEN` environment variable.
    */
   static withOcto(
     opts: Partial<{
@@ -323,7 +323,7 @@ export class LLM extends llm.LLM {
    *
    * @remarks
    * `apiKey` must be set to your PerplexityAI API key, either using the argument or by setting the
-   * `PERPLEXITY_API_KEY` environmental variable.
+   * `PERPLEXITY_API_KEY` environment variable.
    */
   static withPerplexity(
     opts: Partial<{
@@ -354,7 +354,7 @@ export class LLM extends llm.LLM {
    *
    * @remarks
    * `apiKey` must be set to your TogetherAI API key, either using the argument or by setting the
-   * `TOGETHER_API_KEY` environmental variable.
+   * `TOGETHER_API_KEY` environment variable.
    */
   static withTogether(
     opts: Partial<{
@@ -385,7 +385,7 @@ export class LLM extends llm.LLM {
    *
    * @remarks
    * `apiKey` must be set to your Telnyx API key, either using the argument or by setting the
-   * `TELNYX_API_KEY` environmental variable.
+   * `TELNYX_API_KEY` environment variable.
    */
   static withTelnyx(
     opts: Partial<{
@@ -414,7 +414,7 @@ export class LLM extends llm.LLM {
    *
    * @remarks
    * `apiKey` must be set to your Meta Llama API key, either using the argument or by setting the
-   * `LLAMA_API_KEY` environmental variable.
+   * `LLAMA_API_KEY` environment variable.
    */
   static withMeta(
     opts: Partial<{
@@ -432,7 +432,7 @@ export class LLM extends llm.LLM {
 
     if (opts.apiKey === undefined) {
       throw new Error(
-        'Meta Llama API key is required, either as argument or set LLAMA_API_KEY environmental variable',
+        'Meta Llama API key is required, either as argument or set LLAMA_API_KEY environment variable',
       );
     }
 
