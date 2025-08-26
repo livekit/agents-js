@@ -29,9 +29,9 @@ Looking for the Python library? Check out [Agents](https://github.com/livekit/ag
 
 <!--END_DESCRIPTION-->
 
-## ✨ 1.0 Beta Release ✨
+## ✨ 1.0 Release ✨
 
-This README reflects the 1.0 beta release.
+This README reflects the 1.0 release.
 
 ## Features
 
@@ -57,7 +57,7 @@ npm install -g pnpm
 To install the core Agents library as well as plugins, run:
 
 ```bash
-pnpm install @livekit/agents@1.0.0-next.1
+pnpm install @livekit/agents
 ```
 
 Currently, only the following plugins are supported:
