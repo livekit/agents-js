@@ -221,7 +221,7 @@ class TestAgent extends voice.Agent<UserData> {
       );
     }
 
-    const timeout = setTimeout(() => {
+    setTimeout(() => {
       if (this.session.currentAgent !== this) return;
 
       this.session.interrupt();
