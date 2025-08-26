@@ -52,12 +52,6 @@ const realtimeLlmOptions = {
   gemini: () => new google.beta.realtime.RealtimeModel(),
 };
 
-const sttChoices = Object.keys(sttOptions) as (keyof typeof sttOptions)[];
-const ttsChoices = Object.keys(ttsOptions) as (keyof typeof ttsOptions)[];
-const eouChoices = Object.keys(eouOptions) as (keyof typeof eouOptions)[];
-const llmChoices = Object.keys(llmOptions) as (keyof typeof llmOptions)[];
-const realtimeLlmChoices = Object.keys(realtimeLlmOptions) as (keyof typeof realtimeLlmOptions)[];
-
 type UserData = {
   testedSttChoices: Set<string>;
   testedTtsChoices: Set<string>;
@@ -65,18 +59,6 @@ type UserData = {
   testedLlmChoices: Set<string>;
   testedRealtimeLlmChoices: Set<string>;
 };
-
-function getNextUnusedChoice<T>(choices: T[], used: Set<T>): T {
-  const unused = choices.filter((choice) => !used.has(choice));
-  if (unused.length === 0) {
-    return choices[0]!;
-  }
-  return unused[0]!;
-}
-
-function isAllChoicesUsed(choices: string[], used: Set<string>): boolean {
-  return choices.every((choice) => used.has(choice));
-}
 
 class TestAgent extends voice.Agent<UserData> {
   private readonly sttChoice: keyof typeof sttOptions;
