@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.0-next.5
+
+### Patch Changes
+
+- update logs - [#643](https://github.com/livekit/agents-js/pull/643) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- fix nuphonic plugin - [#645](https://github.com/livekit/agents-js/pull/645) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
 ## 1.0.0-next.4
 
 ### Patch Changes
