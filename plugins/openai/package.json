@@ -46,7 +46,6 @@
   "dependencies": {
     "@livekit/mutex": "^1.1.1",
     "openai": "^4.91.1",
-    "sharp": "^0.33.5",
     "ws": "^8.16.0"
   },
   "peerDependencies": {
