@@ -91,6 +91,9 @@ export abstract class SupervisedProc {
     }, this.#opts.pingTimeout);
 
     this.#memoryWatch = setInterval(() => {
+      // NOTE: This currently measures the parent process memory, not the child process memory.
+      // For accurate child process memory monitoring, consider requesting memory stats from
+      // the child process via IPC or using OS APIs to sample the child PID.
       const memoryMB = process.memoryUsage().heapUsed / (1024 * 1024);
       if (this.#opts.memoryLimitMB > 0 && memoryMB > this.#opts.memoryLimitMB) {
         this.#logger
@@ -106,7 +109,7 @@ export abstract class SupervisedProc {
           })
           .error('process memory usage is high');
       }
-    });
+    }, this.#opts.pingInterval);
 
     const listener = (msg: IPCMessage) => {
       switch (msg.case) {

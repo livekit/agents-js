@@ -50,7 +50,7 @@ class InfClient implements InferenceExecutor {
   }
 
   async doInference(method: string, data: unknown): Promise<unknown> {
-    const requestId = 'inference_job_' + randomUUID;
+    const requestId = 'inference_job_' + randomUUID();
     process.send!({ case: 'inferenceRequest', value: { requestId, method, data } });
     this.#requests[requestId] = new PendingInference();
     const resp = await this.#requests[requestId]!.promise;

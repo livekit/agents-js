@@ -115,7 +115,10 @@ export class ProcPool {
       unlock();
       await proc.join();
     } finally {
-      this.executors.splice(this.executors.indexOf(proc));
+      const procIndex = this.executors.indexOf(proc);
+      if (procIndex !== -1) {
+        this.executors.splice(procIndex, 1);
+      }
     }
   }
 

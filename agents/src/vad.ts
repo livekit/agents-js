@@ -167,6 +167,9 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
           }
           break;
         case VADEventType.INFERENCE_DONE:
+          inferenceDurationTotal += value.inferenceDuration;
+          this.#lastActivityTime = process.hrtime.bigint();
+          break;
         case VADEventType.END_OF_SPEECH:
           this.#lastActivityTime = process.hrtime.bigint();
           break;
