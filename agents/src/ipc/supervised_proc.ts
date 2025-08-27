@@ -106,7 +106,7 @@ export abstract class SupervisedProc {
           })
           .error('process memory usage is high');
       }
-    });
+    }, 5000);
 
     const listener = (msg: IPCMessage) => {
       switch (msg.case) {
