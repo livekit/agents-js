@@ -119,7 +119,6 @@ const startJob = (
     );
 
     process.send!({ case: 'done' });
-    logger.info('job completed.');
     joinFuture.resolve();
   });
 

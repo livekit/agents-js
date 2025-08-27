@@ -157,7 +157,7 @@ export class VADStream extends baseStream {
       // used to avoid drift when the sampleRate ratio is not an integer
       let inputCopyRemainingFrac = 0.0;
 
-      while (true) {
+      while (!this.closed) {
         const { done, value: frame } = await this.inputReader.read();
         if (done) {
           break;
@@ -199,7 +199,7 @@ export class VADStream extends baseStream {
           inferenceFrames.push(frame);
         }
 
-        while (true) {
+        while (!this.closed) {
           const startTime = process.hrtime.bigint();
           const availableInferenceSamples = inferenceFrames
             .map((x) => x.samplesPerChannel)
