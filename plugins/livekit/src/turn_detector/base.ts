@@ -39,14 +39,14 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
   async initialize() {
     const { AutoTokenizer } = await import('@huggingface/transformers');
 
-    const onnxModelPath = await downloadFileToCacheDir({
-      repo: HG_MODEL_REPO,
-      path: ONNX_FILEPATH,
-      revision: this.modelRevision,
-      localFileOnly: true,
-    });
-
     try {
+      const onnxModelPath = await downloadFileToCacheDir({
+        repo: HG_MODEL_REPO,
+        path: ONNX_FILEPATH,
+        revision: this.modelRevision,
+        localFileOnly: true,
+      });
+
       // TODO(brian): support session config once onnxruntime-node supports it
       const sessOptions: InferenceSession.SessionOptions = {
         intraOpNumThreads: Math.max(1, Math.floor(os.cpus().length / 2)),
@@ -61,6 +61,26 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
         local_files_only: true,
       });
     } catch (e) {
+      const errorMessage = String(e);
+
+      // Check if the error is related to missing local files
+      if (
+        errorMessage.includes('local_files_only=true') ||
+        errorMessage.includes('file was not found locally') ||
+        errorMessage.includes('File not found in cache')
+      ) {
+        throw new Error(
+          `agents-plugins-livekit failed to initialize ${this.modelType} EOU turn detector: Required model files not found locally.\n\n` +
+            `This usually means you need to download the model files first. Please run one of these commands:\n\n` +
+            `  If using Node.js starter template:\n` +
+            `    pnpm download-files\n\n` +
+            `  If using the agent directly:\n` +
+            `    node ./your_agent.ts download-files\n\n` +
+            `Then try running your application again.\n\n` +
+            `Original error: ${e}`,
+        );
+      }
+
       throw new Error(
         `agents-plugins-livekit failed to initialize ${this.modelType} EOU turn detector: ${e}`,
       );
