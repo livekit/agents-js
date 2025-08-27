@@ -1,4 +1,4 @@
-<!--
+i<!--
 SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 
 SPDX-License-Identifier: Apache-2.0
@@ -86,7 +86,7 @@ Documentation on the framework and how to use it can be found [here](https://doc
 
 ## Usage
 
-Checkout the [Quick start guide](https://docs.livekit.io/agents/start/voice-ai/)
+Checkout the [quickstart guide](https://docs.livekit.io/agents/start/voice-ai/)
 
 ### Simple voice agent
 
