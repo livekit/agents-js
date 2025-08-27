@@ -31,7 +31,7 @@ Looking for the Python library? Check out [Agents](https://github.com/livekit/ag
 
 ## ✨ 1.0 Release ✨
 
-This README reflects the 1.0 release. See the [migration guide](https://docs.livekit.io/agents/start/v0-migration/) if you're trying to upgrade from `0.x`.
+This README reflects the 1.0 release. See the [migration guide](https://docs.livekit.io/agents/start/v0-migration/nodejs/) if you're trying to upgrade from `0.x`.
 
 ## Features
 
@@ -85,6 +85,8 @@ Documentation on the framework and how to use it can be found [here](https://doc
 - Worker: The main process that coordinates job scheduling and launches agents for user sessions.
 
 ## Usage
+
+Checkout the [Quick start guide](https://docs.livekit.io/agents/start/voice-ai/)
 
 ### Simple voice agent
 
