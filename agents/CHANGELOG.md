@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.1
+
+### Patch Changes
+
+- fix sharpe package version - [#661](https://github.com/livekit/agents-js/pull/661) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
 ## 1.0.0
 
 ### Major Changes
