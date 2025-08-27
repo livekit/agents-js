@@ -38,6 +38,7 @@
     "@microsoft/api-extractor": "^7.35.0",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^22.5.5",
+    "@types/pidusage": "^2.0.5",
     "@types/ws": "^8.5.10",
     "tsup": "^8.4.0",
     "typescript": "^5.0.0"
@@ -50,6 +51,7 @@
     "heap-js": "^2.6.0",
     "json-schema": "^0.4.0",
     "livekit-server-sdk": "^2.9.2",
+    "pidusage": "^3.0.2",
     "pino": "^8.19.0",
     "pino-pretty": "^11.0.0",
     "sharp": "0.34.3",
