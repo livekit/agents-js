@@ -31,7 +31,7 @@ Looking for the Python library? Check out [Agents](https://github.com/livekit/ag
 
 ## ✨ 1.0 Release ✨
 
-This README reflects the 1.0 release.
+This README reflects the 1.0 release. See the [migration guide](https://docs.livekit.io/agents/start/v0-migration/) if you're trying to upgrade from `0.x`.
 
 ## Features
 
@@ -40,7 +40,6 @@ This README reflects the 1.0 release.
 - **Exchange data with clients**: Use [RPCs](https://docs.livekit.io/home/client/data/rpc/) and other [Data APIs](https://docs.livekit.io/home/client/data/) to seamlessly exchange data with clients.
 - **Semantic turn detection**: Uses a transformer model to detect when a user is done with their turn, helps to reduce interruptions.
 - **Open-source**: Fully open-source, allowing you to run the entire stack on your own servers, including [LiveKit server](https://github.com/livekit/livekit), one of the most widely used WebRTC media servers.
-
 
 ## Installation
 
@@ -62,17 +61,17 @@ pnpm install @livekit/agents
 
 Currently, only the following plugins are supported:
 
-| Plugin                                                                                               | Features |
-| ---------------------------------------------------------------------------------------------------- | -------- |
+| Plugin                                                                                               | Features      |
+| ---------------------------------------------------------------------------------------------------- | ------------- |
 | [@livekit/agents-plugin-openai](https://www.npmjs.com/package/@livekit/agents-plugin-openai)         | LLM, TTS, STT |
-| [@livekit/agents-plugin-google](https://www.npmjs.com/package/@livekit/agents-plugin-google)         | LLM, TTS |
-| [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT      |
-| [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS      |
-| [@livekit/agents-plugin-cartesia](https://www.npmjs.com/package/@livekit/agents-plugin-cartesia)     | TTS      |
-| [@livekit/agents-plugin-neuphonic](https://www.npmjs.com/package/@livekit/agents-plugin-neuphonic)   | TTS      |
-| [@livekit/agents-plugin-resemble](https://www.npmjs.com/package/@livekit/agents-plugin-resemble)     | TTS      |
-| [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD      |
-| [@livekit/agents-plugin-livekit](https://www.npmjs.com/package/@livekit/agents-plugin-livekit)       | EOU |
+| [@livekit/agents-plugin-google](https://www.npmjs.com/package/@livekit/agents-plugin-google)         | LLM, TTS      |
+| [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT           |
+| [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS           |
+| [@livekit/agents-plugin-cartesia](https://www.npmjs.com/package/@livekit/agents-plugin-cartesia)     | TTS           |
+| [@livekit/agents-plugin-neuphonic](https://www.npmjs.com/package/@livekit/agents-plugin-neuphonic)   | TTS           |
+| [@livekit/agents-plugin-resemble](https://www.npmjs.com/package/@livekit/agents-plugin-resemble)     | TTS           |
+| [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD           |
+| [@livekit/agents-plugin-livekit](https://www.npmjs.com/package/@livekit/agents-plugin-livekit)       | EOU           |
 
 ## Docs and guides
 
@@ -192,7 +191,7 @@ class IntroAgent extends voice.Agent<StoryData> {
           },
         }),
       },
-    })
+    });
   }
 
   // Use inheritance to create agent with custom hooks
