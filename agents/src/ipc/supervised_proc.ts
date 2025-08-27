@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import pidusage from 'pidusage';
 import type { RunningJobInfo } from '../job.js';
 import { log, loggerOptions } from '../log.js';
-import { Future } from '../utils.js';
+import { Future, toError } from '../utils.js';
 import type { IPCMessage } from './message.js';
 
 export interface ProcOpts {
@@ -236,7 +236,7 @@ export abstract class SupervisedProc {
       this.#logger.error(
         {
           pid,
-          error: error instanceof Error ? error.message : String(error),
+          error: toError(error).message,
         },
         'Failed to get process memory stats',
       );
