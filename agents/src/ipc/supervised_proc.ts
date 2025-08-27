@@ -30,6 +30,7 @@ export abstract class SupervisedProc {
   protected init = new Future();
   #join = new Future();
   #logger = log().child({ runningJob: this.#runningJob });
+  pid?: number;
 
   constructor(
     initializeTimeout: number,
@@ -70,6 +71,7 @@ export abstract class SupervisedProc {
     }
 
     this.proc = this.createProcess();
+    this.pid = this.proc.pid;
 
     this.#started = true;
     this.run();
@@ -91,7 +93,7 @@ export abstract class SupervisedProc {
     }, this.#opts.pingTimeout);
 
     this.#memoryWatch = setInterval(() => {
-      const memoryMB = process.memoryUsage().heapUsed / (1024 * 1024);
+      const stats = await pidusage(this.proc.pid);
       if (this.#opts.memoryLimitMB > 0 && memoryMB > this.#opts.memoryLimitMB) {
         this.#logger
           .child({ memoryUsageMB: memoryMB, memoryLimitMB: this.#opts.memoryLimitMB })
