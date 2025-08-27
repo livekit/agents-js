@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-openai",
-  "version": "1.0.0-next.6",
+  "version": "1.0.1",
   "description": "OpenAI plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -46,7 +46,6 @@
   "dependencies": {
     "@livekit/mutex": "^1.1.1",
     "openai": "^4.91.1",
-    "sharp": "^0.33.5",
     "ws": "^8.16.0"
   },
   "peerDependencies": {
