@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.0-next.7
+
+### Patch Changes
+
+- fix ctrl c logs - [#656](https://github.com/livekit/agents-js/pull/656) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
 ## 1.0.0-next.6
 
 ### Patch Changes
