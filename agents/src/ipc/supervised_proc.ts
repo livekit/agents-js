@@ -92,7 +92,7 @@ export abstract class SupervisedProc {
     }, this.#opts.pingTimeout);
 
     this.#memoryMonitorInterval = setInterval(async () => {
-      const memoryMB = await this.#getChildProcessMemoryMB();
+      const memoryMB = await this.#getProcessMemoryMB();
       const pid = this.proc?.pid;
 
       if (memoryMB === null) {
@@ -107,7 +107,7 @@ export abstract class SupervisedProc {
             memoryLimitMB: this.#opts.memoryLimitMB,
             pid,
           })
-          .error('child process exceeded memory limit, killing process');
+          .error('process exceeded memory limit, killing process');
         this.close();
       } else if (this.#opts.memoryWarnMB > 0 && memoryMB > this.#opts.memoryWarnMB) {
         this.#logger
@@ -117,7 +117,7 @@ export abstract class SupervisedProc {
             memoryLimitMB: this.#opts.memoryLimitMB,
             pid,
           })
-          .warn('child process memory usage is high');
+          .warn('process memory usage is high');
       }
     }, 5000);
 
@@ -223,10 +223,7 @@ export abstract class SupervisedProc {
     this.proc!.send({ case: 'startJobRequest', value: { runningJob: info } });
   }
 
-  /**
-   * Get child process memory usage in MB using pidusage (cross-platform, like Python's psutil)
-   */
-  async #getChildProcessMemoryMB(): Promise<number | null> {
+  async #getProcessMemoryMB(): Promise<number | null> {
     const pid = this.proc?.pid;
     if (!pid) {
       return null;
