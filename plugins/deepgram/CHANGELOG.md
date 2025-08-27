@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-deepgram
 
+## 1.0.0-next.7
+
+### Patch Changes
+
+- fix ctrl c logs - [#656](https://github.com/livekit/agents-js/pull/656) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- Updated dependencies [[`136b243b1bc6303509b8684352a04bf63a7ed598`](https://github.com/livekit/agents-js/commit/136b243b1bc6303509b8684352a04bf63a7ed598)]:
+  - @livekit/agents@1.0.0-next.7
+
 ## 1.0.0-next.6
 
 ### Patch Changes
