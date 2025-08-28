@@ -220,5 +220,51 @@ export const runApp = (opts: WorkerOptions) => {
         });
     });
 
+  program
+    .command('console')
+    .description('Start a new conversation inside the console')
+    .action(async () => {
+      const options = program.optsWithGlobals();
+      initializeLogger({ pretty: true, level: options.logLevel });
+      const logger = log();
+
+      if (!process.env.LIVEKIT_ENABLE_CONSOLE_MODE) {
+        logger.fatal('Console mode is disabled. Set LIVEKIT_ENABLE_CONSOLE_MODE=true to enable.');
+        process.exit(1);
+      }
+
+      try {
+        const mod = await import(new URL(opts.agent, import.meta.url).href);
+        const agentDef = mod?.default;
+
+        if (!agentDef?.entry) {
+          logger.fatal('default export must have an entry() function');
+          process.exit(1);
+        }
+
+        const { CurrentJobContext } = await import('./job.js');
+
+        const mockCtx = {
+          room: undefined,
+          proc: { userData: {} },
+          connect: async () => {},
+          inferenceExecutor: {
+            doInference: async () => ({}), // Mock inference executor for now to keep things simple
+          },
+        };
+
+        new CurrentJobContext(mockCtx as any);
+
+        if (agentDef.prewarm) {
+          await agentDef.prewarm(mockCtx.proc as any);
+        }
+
+        await agentDef.entry(mockCtx as any);
+      } catch (error) {
+        logger.fatal(error);
+        process.exit(1);
+      }
+    });
+
   program.parse();
 };
