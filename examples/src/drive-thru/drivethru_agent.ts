@@ -10,8 +10,8 @@ import {
   llm,
   voice,
 } from '@livekit/agents';
-import * as cartesia from '@livekit/agents-plugin-cartesia';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
+import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
@@ -387,24 +387,9 @@ export default defineAgent({
     const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT({
-        model: 'nova-3',
-        keywords: [
-          ['Big Mac', 1.0],
-          ['McFlurry', 1.0],
-          ['McCrispy', 1.0],
-          ['McNuggets', 1.0],
-          ['Meal', 1.0],
-          ['Sundae', 1.0],
-          ['Oreo', 1.0],
-          ['Jalapeno Ranch', 1.0],
-        ],
-      }),
+      stt: new deepgram.STT(),
       llm: new openai.LLM({ model: 'gpt-4.1', temperature: 0.45 }),
-      tts: new cartesia.TTS({
-        voice: 'f786b574-daa5-4673-aa0c-cbe3e8534c02',
-        speed: 'fast',
-      }),
+      tts: new elevenlabs.TTS(),
       turnDetection: new livekit.turnDetector.MultilingualModel(),
       userData: userdata,
       voiceOptions: {
