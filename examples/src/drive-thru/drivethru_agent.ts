@@ -129,7 +129,7 @@ Examples:
   ) {
     const availableComboIds = [...new Set(comboItems.map((item) => item.id))];
     const availableDrinkIds = [...new Set(drinkItems.map((item) => item.id))];
-    const availableSauceIds = [...new Set(sauceItems.map((item) => item.id)), 'null'];
+    const availableSauceIds = [...new Set(sauceItems.map((item) => item.id))];
 
     return llm.tool({
       description: `Call this when the user orders a **Combo Meal**, like: "Number 4b with a large Sprite" or "I'll do a medium meal."
@@ -150,11 +150,11 @@ If the user says just "a large meal," assume both drink and fries are that size.
         drinkId: z
           .enum(availableDrinkIds as [string, ...string[]])
           .describe('The ID of the drink the user requested.'),
-        drinkSize: z.enum(['M', 'L', 'null']).optional().describe('The size of the drink'),
+        drinkSize: z.enum(['M', 'L']).nullable().describe('The size of the drink'),
         friesSize: z.enum(['M', 'L']).describe('The size of the fries'),
         sauceId: z
           .enum(availableSauceIds as [string, ...string[]])
-          .optional()
+          .nullable()
           .describe('The ID of the sauce the user requested.'),
       }),
       execute: async (
@@ -170,40 +170,35 @@ If the user says just "a large meal," assume both drink and fries are that size.
           throw new Error(`The drink ${drinkId} was not found`);
         }
 
-        if (drinkSize === 'null') {
-          drinkSize = undefined;
-        }
-
-        if (sauceId === 'null') {
-          sauceId = undefined;
-        }
+        let actualDrinkSize = drinkSize || undefined;
+        let actualSauceId = sauceId || undefined;
 
         const availableSizes = [...new Set(drinkSizes.map((item) => item.size).filter(Boolean))];
-        if (drinkSize === undefined && availableSizes.length > 1) {
+        if (actualDrinkSize === undefined && availableSizes.length > 1) {
           throw new Error(
             `${drinkId} comes with multiple sizes: ${availableSizes.join(', ')}. Please clarify which size should be selected.`,
           );
         }
 
-        if (drinkSize !== undefined && !availableSizes.length) {
+        if (actualDrinkSize !== undefined && !availableSizes.length) {
           throw new Error(
             `Size should not be specified for item ${drinkId} as it does not support sizing options.`,
           );
         }
 
-        if (drinkSize && !availableSizes.includes(drinkSize)) {
-          drinkSize = undefined;
+        if (actualDrinkSize && !availableSizes.includes(actualDrinkSize)) {
+          actualDrinkSize = undefined;
         }
 
-        if (sauceId && !findItemsById(sauceItems, sauceId).length) {
-          throw new Error(`The sauce ${sauceId} was not found`);
+        if (actualSauceId && !findItemsById(sauceItems, actualSauceId).length) {
+          throw new Error(`The sauce ${actualSauceId} was not found`);
         }
 
         const item = createOrderedCombo({
           mealId,
           drinkId,
-          drinkSize,
-          sauceId,
+          drinkSize: actualDrinkSize,
+          sauceId: actualSauceId,
           friesSize,
         });
 
@@ -220,7 +215,7 @@ If the user says just "a large meal," assume both drink and fries are that size.
   ) {
     const availableHappyIds = [...new Set(happyItems.map((item) => item.id))];
     const availableDrinkIds = [...new Set(drinkItems.map((item) => item.id))];
-    const availableSauceIds = [...new Set(sauceItems.map((item) => item.id)), 'null'];
+    const availableSauceIds = [...new Set(sauceItems.map((item) => item.id))];
 
     return llm.tool({
       description: `Call this when the user orders a **Happy Meal**, typically for children. These meals come with a main item, a drink, and a sauce.
@@ -239,10 +234,10 @@ Assume Small as default only if the user says "Happy Meal" and gives no size pre
         drinkId: z
           .enum(availableDrinkIds as [string, ...string[]])
           .describe('The ID of the drink the user requested.'),
-        drinkSize: z.enum(['S', 'M', 'L', 'null']).optional().describe('The size of the drink'),
+        drinkSize: z.enum(['S', 'M', 'L']).nullable().describe('The size of the drink'),
         sauceId: z
           .enum(availableSauceIds as [string, ...string[]])
-          .optional()
+          .nullable()
           .describe('The ID of the sauce the user requested.'),
       }),
       execute: async (
@@ -258,34 +253,29 @@ Assume Small as default only if the user says "Happy Meal" and gives no size pre
           throw new Error(`The drink ${drinkId} was not found`);
         }
 
-        if (drinkSize === 'null') {
-          drinkSize = undefined;
-        }
-
-        if (sauceId === 'null') {
-          sauceId = undefined;
-        }
+        let actualDrinkSize = drinkSize || undefined;
+        let actualSauceId = sauceId || undefined;
 
         const availableSizes = [...new Set(drinkSizes.map((item) => item.size).filter(Boolean))];
-        if (drinkSize === undefined && availableSizes.length > 1) {
+        if (actualDrinkSize === undefined && availableSizes.length > 1) {
           throw new Error(
             `${drinkId} comes with multiple sizes: ${availableSizes.join(', ')}. Please clarify which size should be selected.`,
           );
         }
 
-        if (drinkSize !== undefined && !availableSizes.length) {
-          drinkSize = undefined;
+        if (actualDrinkSize !== undefined && !availableSizes.length) {
+          actualDrinkSize = undefined;
         }
 
-        if (sauceId && !findItemsById(sauceItems, sauceId).length) {
-          throw new Error(`The sauce ${sauceId} was not found`);
+        if (actualSauceId && !findItemsById(sauceItems, actualSauceId).length) {
+          throw new Error(`The sauce ${actualSauceId} was not found`);
         }
 
         const item = createOrderedHappy({
           mealId,
           drinkId,
-          drinkSize: drinkSize as 'S' | 'M' | 'L' | undefined,
-          sauceId,
+          drinkSize: actualDrinkSize,
+          sauceId: actualSauceId,
         });
 
         await ctx.userData.order.add(item);
@@ -317,20 +307,17 @@ The user might say—for example:
           .enum(availableIds as [string, ...string[]])
           .describe('The ID of the item the user requested.'),
         size: z
-          .enum(['S', 'M', 'L', 'null'])
-          .optional()
-          .describe('Size of the item, if applicable (e.g., "S", "M", "L"), otherwise "null".'),
+          .enum(['S', 'M', 'L'])
+          .nullable()
+          .describe('Size of the item, if applicable (e.g., "S", "M", "L").'),
       }),
-      execute: async ({ itemId, size = 'null' }, { ctx }: llm.ToolOptions<UserData>) => {
+      execute: async ({ itemId, size }, { ctx }: llm.ToolOptions<UserData>) => {
         const itemSizes = findItemsById(allItems, itemId);
         if (!itemSizes.length) {
           throw new Error(`${itemId} was not found.`);
         }
 
-        let actualSize: 'S' | 'M' | 'L' | undefined = undefined;
-        if (size !== 'null') {
-          actualSize = size as 'S' | 'M' | 'L';
-        }
+        let actualSize = size || undefined;
 
         const availableSizes = [...new Set(itemSizes.map((item) => item.size).filter(Boolean))];
         if (actualSize === undefined && availableSizes.length > 1) {
