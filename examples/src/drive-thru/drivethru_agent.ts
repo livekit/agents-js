@@ -260,7 +260,9 @@ Assume Small as default only if the user says "Happy Meal" and gives no size pre
         let actualDrinkSize = drinkSize || undefined;
         let actualSauceId = sauceId || undefined;
 
-        const availableSizes = [...new Set(drinkSizes.map((item) => item.size).filter(Boolean))];
+        const availableSizes = [
+          ...new Set(drinkSizes.map((item) => item.size).filter((size) => size !== undefined)),
+        ];
         if (actualDrinkSize === undefined && availableSizes.length > 1) {
           throw new llm.ToolError(
             `error: ${drinkId} comes with multiple sizes: ${availableSizes.join(', ')}. Please clarify which size should be selected.`,
@@ -323,9 +325,11 @@ The user might say—for example:
 
         let actualSize = size || undefined;
 
-        const availableSizes = [...new Set(itemSizes.map((item) => item.size).filter(Boolean))];
+        const availableSizes = [
+          ...new Set(itemSizes.map((item) => item.size).filter((size) => size !== undefined)),
+        ];
         if (actualSize === undefined && availableSizes.length > 1) {
-          throw new Error(
+          throw new llm.ToolError(
             `${itemId} comes with multiple sizes: ${availableSizes.join(', ')}. Please clarify which size should be selected.`,
           );
         }
@@ -376,13 +380,15 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
+    await ctx.connect();
+
     const userdata = await newUserData();
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
       vad,
       stt: new deepgram.STT({
-        model: 'nova-2-general',
+        model: 'nova-3',
         keywords: [
           ['Big Mac', 1.0],
           ['McFlurry', 1.0],
@@ -394,7 +400,7 @@ export default defineAgent({
           ['Jalapeno Ranch', 1.0],
         ],
       }),
-      llm: new openai.LLM({ model: 'gpt-4o', temperature: 0.45 }),
+      llm: new openai.LLM({ model: 'gpt-4.1', temperature: 0.45 }),
       tts: new cartesia.TTS({
         voice: 'f786b574-daa5-4673-aa0c-cbe3e8534c02',
         speed: 'fast',
@@ -410,8 +416,6 @@ export default defineAgent({
       agent: new DriveThruAgent(userdata),
       room: ctx.room,
     });
-
-    await ctx.connect();
   },
 });
 
