@@ -89,7 +89,9 @@ If the \`orderId\`s are unknown, call \`listOrderItems\` first to retrieve them.
           execute: async ({ orderIds }, { ctx }: llm.ToolOptions<UserData>) => {
             const notFound = orderIds.filter((oid) => !ctx.userData.order.items[oid]);
             if (notFound.length > 0) {
-              throw new Error(`No item(s) found with orderId(s): ${notFound.join(', ')}`);
+              throw new llm.ToolError(
+                `error: no item(s) found with order_id(s): ${notFound.join(', ')}`,
+              );
             }
 
             const removedItems = await Promise.all(
@@ -162,27 +164,29 @@ If the user says just "a large meal," assume both drink and fries are that size.
         { ctx }: llm.ToolOptions<UserData>,
       ) => {
         if (!findItemsById(comboItems, mealId).length) {
-          throw new Error(`The meal ${mealId} was not found`);
+          throw new llm.ToolError(`error: the meal ${mealId} was not found`);
         }
 
         const drinkSizes = findItemsById(drinkItems, drinkId);
         if (!drinkSizes.length) {
-          throw new Error(`The drink ${drinkId} was not found`);
+          throw new llm.ToolError(`error: the drink ${drinkId} was not found`);
         }
 
         let actualDrinkSize = drinkSize || undefined;
         let actualSauceId = sauceId || undefined;
 
-        const availableSizes = [...new Set(drinkSizes.map((item) => item.size).filter(Boolean))];
+        const availableSizes = [
+          ...new Set(drinkSizes.map((item) => item.size).filter((size) => size !== undefined)),
+        ];
         if (actualDrinkSize === undefined && availableSizes.length > 1) {
-          throw new Error(
-            `${drinkId} comes with multiple sizes: ${availableSizes.join(', ')}. Please clarify which size should be selected.`,
+          throw new llm.ToolError(
+            `error: ${drinkId} comes with multiple sizes: ${availableSizes.join(', ')}. Please clarify which size should be selected.`,
           );
         }
 
         if (actualDrinkSize !== undefined && !availableSizes.length) {
-          throw new Error(
-            `Size should not be specified for item ${drinkId} as it does not support sizing options.`,
+          throw new llm.ToolError(
+            `error: size should not be specified for item ${drinkId} as it does not support sizing options.`,
           );
         }
 
@@ -191,7 +195,7 @@ If the user says just "a large meal," assume both drink and fries are that size.
         }
 
         if (actualSauceId && !findItemsById(sauceItems, actualSauceId).length) {
-          throw new Error(`The sauce ${actualSauceId} was not found`);
+          throw new llm.ToolError(`error: the sauce ${actualSauceId} was not found`);
         }
 
         const item = createOrderedCombo({
@@ -245,12 +249,12 @@ Assume Small as default only if the user says "Happy Meal" and gives no size pre
         { ctx }: llm.ToolOptions<UserData>,
       ) => {
         if (!findItemsById(happyItems, mealId).length) {
-          throw new Error(`The meal ${mealId} was not found`);
+          throw new llm.ToolError(`error: the meal ${mealId} was not found`);
         }
 
         const drinkSizes = findItemsById(drinkItems, drinkId);
         if (!drinkSizes.length) {
-          throw new Error(`The drink ${drinkId} was not found`);
+          throw new llm.ToolError(`error: the drink ${drinkId} was not found`);
         }
 
         let actualDrinkSize = drinkSize || undefined;
@@ -258,8 +262,8 @@ Assume Small as default only if the user says "Happy Meal" and gives no size pre
 
         const availableSizes = [...new Set(drinkSizes.map((item) => item.size).filter(Boolean))];
         if (actualDrinkSize === undefined && availableSizes.length > 1) {
-          throw new Error(
-            `${drinkId} comes with multiple sizes: ${availableSizes.join(', ')}. Please clarify which size should be selected.`,
+          throw new llm.ToolError(
+            `error: ${drinkId} comes with multiple sizes: ${availableSizes.join(', ')}. Please clarify which size should be selected.`,
           );
         }
 
@@ -268,7 +272,7 @@ Assume Small as default only if the user says "Happy Meal" and gives no size pre
         }
 
         if (actualSauceId && !findItemsById(sauceItems, actualSauceId).length) {
-          throw new Error(`The sauce ${actualSauceId} was not found`);
+          throw new llm.ToolError(`error: the sauce ${actualSauceId} was not found`);
         }
 
         const item = createOrderedHappy({
@@ -314,7 +318,7 @@ The user might say—for example:
       execute: async ({ itemId, size }, { ctx }: llm.ToolOptions<UserData>) => {
         const itemSizes = findItemsById(allItems, itemId);
         if (!itemSizes.length) {
-          throw new Error(`${itemId} was not found.`);
+          throw new llm.ToolError(`error: ${itemId} was not found.`);
         }
 
         let actualSize = size || undefined;
@@ -331,8 +335,8 @@ The user might say—for example:
         }
 
         if (actualSize && availableSizes.length && !availableSizes.includes(actualSize)) {
-          throw new Error(
-            `Unknown size ${actualSize} for ${itemId}. Available sizes: ${availableSizes.join(', ')}.`,
+          throw new llm.ToolError(
+            `error: unknown size ${actualSize} for ${itemId}. Available sizes: ${availableSizes.join(', ')}.`,
           );
         }
 
