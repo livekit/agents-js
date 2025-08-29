@@ -106,7 +106,7 @@ const defaultCpuLoad = async (worker: Worker): Promise<number> => {
         total += total2 - total1;
       }
 
-      resolve(+(1 - idle / total).toFixed(2));
+      resolve(total > 0 ? +(1 - idle / total).toFixed(2) : 0);
     }, UPDATE_LOAD_INTERVAL);
   });
 };

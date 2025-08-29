@@ -239,12 +239,12 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
         const targetHyphens = Math.round(speed * elapsed);
         const dt = targetHyphens - textData.forwardedHyphens - hyphPauses;
         const toWaitHyphens = Math.max(0, wordHyphens - dt);
-        delay = toWaitHyphens / speed;
+        delay = speed > 0 ? toWaitHyphens / speed : 0;
       } else {
-        delay = wordHyphens / speed;
+        delay = speed > 0 ? wordHyphens / speed : 0;
       }
 
-      const firstDelay = Math.min(delay / 2, 2 / speed);
+      const firstDelay = speed > 0 ? Math.min(delay / 2, 2 / speed) : 0;
       await this.#sleepIfNotClosed(firstDelay * 1000000);
 
       this.emit(

@@ -150,7 +150,10 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
       switch (value.type) {
         case VADEventType.START_OF_SPEECH:
           inferenceCount++;
-          if (inferenceCount >= 1 / this.#vad.capabilities.updateInterval) {
+          if (
+            this.#vad.capabilities.updateInterval > 0 &&
+            inferenceCount >= 1 / this.#vad.capabilities.updateInterval
+          ) {
             this.#vad.emit('metrics_collected', {
               type: 'vad_metrics',
               timestamp: Date.now(),
