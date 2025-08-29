@@ -8,10 +8,8 @@ import type { AudioBuffer } from './utils.js';
 export function calculateAudioDuration(frame: AudioBuffer) {
   // TODO(AJS-102): use frame.durationMs once available in rtc-node
   return Array.isArray(frame)
-    ? frame.reduce((sum, a) => sum + (a.sampleRate > 0 ? a.samplesPerChannel / a.sampleRate : 0), 0)
-    : frame.sampleRate > 0
-      ? frame.samplesPerChannel / frame.sampleRate
-      : 0;
+    ? frame.reduce((sum, a) => sum + a.samplesPerChannel / a.sampleRate, 0)
+    : frame.samplesPerChannel / frame.sampleRate;
 }
 
 /** AudioByteStream translates between LiveKit AudioFrame packets and raw byte data. */

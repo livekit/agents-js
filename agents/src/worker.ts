@@ -106,7 +106,7 @@ const defaultCpuLoad = async (worker: Worker): Promise<number> => {
         total += total2 - total1;
       }
 
-      resolve(total > 0 ? +(1 - idle / total).toFixed(2) : 0);
+      resolve(+(1 - idle / total).toFixed(2));
     }, UPDATE_LOAD_INTERVAL);
   });
 };
@@ -567,7 +567,14 @@ export class Worker {
           if (!msg.message.value.job) return;
           const task = this.#availability(msg.message.value);
           this.#tasks.push(task);
-          task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
+          task.finally(() => {
+            const taskIndex = this.#tasks.indexOf(task);
+            if (taskIndex !== -1) {
+              this.#tasks.splice(taskIndex, 1);
+            } else {
+              throw new Error(`task ${task} not found in tasks`);
+            }
+          });
           break;
         }
         case 'assignment': {
@@ -585,7 +592,14 @@ export class Worker {
         case 'termination': {
           const task = this.#termination(msg.message.value);
           this.#tasks.push(task);
-          task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
+          task.finally(() => {
+            const taskIndex = this.#tasks.indexOf(task);
+            if (taskIndex !== -1) {
+              this.#tasks.splice(taskIndex, 1);
+            } else {
+              throw new Error(`task ${task} not found in tasks`);
+            }
+          });
           break;
         }
       }
@@ -737,7 +751,14 @@ export class Worker {
 
     const task = jobRequestTask();
     this.#tasks.push(task);
-    task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
+    task.finally(() => {
+      const taskIndex = this.#tasks.indexOf(task);
+      if (taskIndex !== -1) {
+        this.#tasks.splice(taskIndex, 1);
+      } else {
+        throw new Error(`task ${task} not found in tasks`);
+      }
+    });
   }
 
   async #termination(msg: JobTermination) {

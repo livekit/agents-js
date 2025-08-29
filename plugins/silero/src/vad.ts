@@ -222,14 +222,10 @@ export class VADStream extends baseStream {
             .run(inferenceData)
             .then((data) => this.#expFilter.apply(1, data));
 
-          const windowDuration =
-            this.#opts.sampleRate > 0
-              ? (this.#model.windowSizeSamples / this.#opts.sampleRate) * 1000
-              : 0;
+          const windowDuration = (this.#model.windowSizeSamples / this.#opts.sampleRate) * 1000;
           pubCurrentSample += this.#model.windowSizeSamples;
           pubTimestamp += windowDuration;
-          const resamplingRatio =
-            this.#model.sampleRate > 0 ? this.#inputSampleRate / this.#model.sampleRate : 1;
+          const resamplingRatio = this.#inputSampleRate / this.#model.sampleRate;
           const toCopy = this.#model.windowSizeSamples * resamplingRatio + inputCopyRemainingFrac;
           const toCopyInt = Math.trunc(toCopy);
           inputCopyRemainingFrac = toCopy - toCopyInt;

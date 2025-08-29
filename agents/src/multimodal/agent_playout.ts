@@ -203,16 +203,14 @@ export class AgentPlayout extends EventEmitter {
                     handle.synchronizer.pushAudio(frame);
 
                     for (const f of bstream.write(frame.data.buffer)) {
-                      handle.pushedDuration +=
-                        f.sampleRate > 0 ? (f.samplesPerChannel / f.sampleRate) * 1000 : 0;
+                      handle.pushedDuration += (f.samplesPerChannel / f.sampleRate) * 1000;
                       await this.#audioSource.captureFrame(f);
                     }
                   }
 
                   if (!cancelledCapture && !cancelled) {
                     for (const f of bstream.flush()) {
-                      handle.pushedDuration +=
-                        f.sampleRate > 0 ? (f.samplesPerChannel / f.sampleRate) * 1000 : 0;
+                      handle.pushedDuration += (f.samplesPerChannel / f.sampleRate) * 1000;
                       await this.#audioSource.captureFrame(f);
                     }
 

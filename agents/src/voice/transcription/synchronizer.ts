@@ -213,7 +213,7 @@ class SegmentSynchronizerImpl {
         const elapsedSeconds = (Date.now() - this.startWallTime) / 1000;
         const targetHyphens = elapsedSeconds * this.options.speed;
         const hyphensBehind = Math.max(0, targetHyphens - this.textData.forwardedHyphens);
-        let delay = this.speed > 0 ? Math.max(0, wordHphens - hyphensBehind) / this.speed : 0;
+        let delay = Math.max(0, wordHphens - hyphensBehind) / this.speed;
 
         if (this.playbackCompleted) {
           delay = 0;

@@ -351,7 +351,7 @@ export class AudioEnergyFilter {
       return true;
     }
 
-    const durationSeconds = frame.sampleRate > 0 ? frame.samplesPerChannel / frame.sampleRate : 0;
+    const durationSeconds = frame.samplesPerChannel / frame.sampleRate;
     this.#cooldown -= durationSeconds;
     if (this.#cooldown > 0) {
       return true;
