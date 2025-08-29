@@ -190,7 +190,7 @@ export class WorkerOptions {
     port = undefined,
     logLevel = 'info',
     production = false,
-    jobMemoryWarnMB = 300,
+    jobMemoryWarnMB = 500,
     jobMemoryLimitMB = 0,
   }: {
     /**

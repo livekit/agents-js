@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
+import pidusage from 'pidusage';
 import type { RunningJobInfo } from '../job.js';
 import { log, loggerOptions } from '../log.js';
 import { Future } from '../utils.js';
@@ -90,8 +91,8 @@ export abstract class SupervisedProc {
       this.#join.resolve();
     }, this.#opts.pingTimeout);
 
-    this.#memoryMonitorInterval = setInterval(() => {
-      const memoryMB = process.memoryUsage().heapUsed / (1024 * 1024);
+    this.#memoryMonitorInterval = setInterval(async () => {
+      const memoryMB = await this.getChildMemoryUsageMB();
       if (this.#opts.memoryLimitMB > 0 && memoryMB > this.#opts.memoryLimitMB) {
         this.#logger
           .child({ memoryUsageMB: memoryMB, memoryLimitMB: this.#opts.memoryLimitMB })
@@ -204,6 +205,15 @@ export abstract class SupervisedProc {
     }
     this.#runningJob = info;
     this.proc!.send({ case: 'startJobRequest', value: { runningJob: info } });
+  }
+
+  private async getChildMemoryUsageMB(): Promise<number> {
+    const pid = this.proc?.pid;
+    if (!pid) {
+      return 0;
+    }
+    const stats = await pidusage(pid);
+    return stats.memory / (1024 * 1024); // Convert bytes to MB
   }
 
   private clearTimers() {
