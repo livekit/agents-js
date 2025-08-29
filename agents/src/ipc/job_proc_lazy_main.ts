@@ -2,14 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Room, RoomEvent } from '@livekit/rtc-node';
-import { randomUUID } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
 import { type Agent, isAgent } from '../generator.js';
 import { CurrentJobContext, JobContext, JobProcess, type RunningJobInfo } from '../job.js';
 import { initializeLogger, log } from '../log.js';
-import { Future } from '../utils.js';
+import { Future, shortuuid } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
@@ -50,7 +49,7 @@ class InfClient implements InferenceExecutor {
   }
 
   async doInference(method: string, data: unknown): Promise<unknown> {
-    const requestId = 'inference_job_' + randomUUID;
+    const requestId = shortuuid('inference_job_');
     process.send!({ case: 'inferenceRequest', value: { requestId, method, data } });
     this.#requests[requestId] = new PendingInference();
     const resp = await this.#requests[requestId]!.promise;
