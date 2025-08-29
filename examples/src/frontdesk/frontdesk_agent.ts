@@ -230,6 +230,4 @@ export default defineAgent({
   },
 });
 
-if (fileURLToPath(import.meta.url) === process.argv[1]) {
-  cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
-}
+cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
