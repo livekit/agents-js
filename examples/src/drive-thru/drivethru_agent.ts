@@ -173,7 +173,7 @@ If the user says just "a large meal," assume both drink and fries are that size.
         }
 
         let actualDrinkSize = drinkSize || undefined;
-        let actualSauceId = sauceId || undefined;
+        const actualSauceId = sauceId || undefined;
 
         const availableSizes = [
           ...new Set(drinkSizes.map((item) => item.size).filter((size) => size !== undefined)),
@@ -258,7 +258,7 @@ Assume Small as default only if the user says "Happy Meal" and gives no size pre
         }
 
         let actualDrinkSize = drinkSize || undefined;
-        let actualSauceId = sauceId || undefined;
+        const actualSauceId = sauceId || undefined;
 
         const availableSizes = [
           ...new Set(drinkSizes.map((item) => item.size).filter((size) => size !== undefined)),

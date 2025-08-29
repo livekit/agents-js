@@ -602,7 +602,7 @@ function drinkMenuInstructions(items: MenuItem[]): string {
   const { sized, leftovers } = mapBySizes(items);
   const menuLines: string[] = [];
 
-  for (const [itemId, sizeMap] of Object.entries(sized)) {
+  for (const [_itemId, sizeMap] of Object.entries(sized)) {
     const firstItem = Object.values(sizeMap)[0];
     if (!firstItem) continue;
     menuLines.push(`  - ${firstItem.name} (id:${firstItem.id}):`);
@@ -680,7 +680,7 @@ function regularMenuInstructions(items: MenuItem[]): string {
   const { sized, leftovers } = mapBySizes(items);
   const menuLines: string[] = [];
 
-  for (const [itemId, sizeMap] of Object.entries(sized)) {
+  for (const [_itemId, sizeMap] of Object.entries(sized)) {
     const firstItem = Object.values(sizeMap)[0];
     if (!firstItem) continue;
     menuLines.push(`  - ${firstItem.name} (id:${firstItem.id}):`);
