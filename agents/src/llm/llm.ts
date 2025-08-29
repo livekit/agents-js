@@ -215,8 +215,10 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       promptTokens: usage?.promptTokens || 0,
       promptCachedTokens: usage?.promptCachedTokens || 0,
       totalTokens: usage?.totalTokens || 0,
-      tokensPerSecond:
-        (usage?.completionTokens || 0) / Math.trunc(Number(duration / BigInt(1000000000))),
+      tokensPerSecond: (() => {
+        const durationSeconds = Math.trunc(Number(duration / BigInt(1000000000)));
+        return durationSeconds > 0 ? (usage?.completionTokens || 0) / durationSeconds : 0;
+      })(),
     };
     this.#llm.emit('metrics_collected', metrics);
   }
