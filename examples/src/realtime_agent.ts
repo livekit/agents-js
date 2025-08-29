@@ -10,7 +10,7 @@ import {
   llm,
   voice,
 } from '@livekit/agents';
-import * as google from '@livekit/agents-plugin-google';
+import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -54,7 +54,7 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       // llm: new openai.realtime.RealtimeModel(),
-      llm: new google.beta.realtime.RealtimeModel(),
+      llm: new openai.realtime.RealtimeModel(),
       // enable to allow chaining of tool calls
       voiceOptions: {
         maxToolSteps: 5,

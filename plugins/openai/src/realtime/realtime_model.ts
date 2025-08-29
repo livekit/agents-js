@@ -116,8 +116,8 @@ const AZURE_DEFAULT_TURN_DETECTION: api_proto.TurnDetectionType = {
 const DEFAULT_MAX_SESSION_DURATION = 20 * 60 * 1000; // 20 minutes
 
 const DEFAULT_REALTIME_MODEL_OPTIONS = {
-  model: 'gpt-4o-realtime-preview',
-  voice: 'alloy',
+  model: 'gpt-realtime',
+  voice: 'marin',
   temperature: DEFAULT_TEMPERATURE,
   inputAudioTranscription: DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
   turnDetection: DEFAULT_TURN_DETECTION,
