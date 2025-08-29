@@ -115,7 +115,12 @@ export class ProcPool {
       unlock();
       await proc.join();
     } finally {
-      this.executors.splice(this.executors.indexOf(proc));
+      const procIndex = this.executors.indexOf(proc);
+      if (procIndex !== -1) {
+        this.executors.splice(procIndex, 1);
+      } else {
+        throw new Error(`proc ${proc} not found in executors`);
+      }
     }
   }
 
@@ -134,7 +139,14 @@ export class ProcPool {
         this.procUnlock = await this.procMutex.lock();
         const task = this.procWatchTask();
         this.tasks.push(task);
-        task.finally(() => this.tasks.splice(this.tasks.indexOf(task)));
+        task.finally(() => {
+          const taskIndex = this.tasks.indexOf(task);
+          if (taskIndex !== -1) {
+            this.tasks.splice(taskIndex, 1);
+          } else {
+            throw new Error(`task ${task} not found in tasks`);
+          }
+        });
       }
     }
   }
