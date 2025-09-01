@@ -339,15 +339,24 @@ export class SpeechStream extends stt.SpeechStream {
 
 const liveTranscriptionToSpeechData = (
   language: STTLanguages | string,
-  data: { [id: string]: any },
+  data: { [id: string]: unknown },
 ): stt.SpeechData[] => {
-  const alts: any[] = data['channel']['alternatives'];
+  const alts: unknown[] = data['channel']['alternatives'];
 
-  return alts.map((alt) => ({
-    language,
-    startTime: alt['words'].length ? alt['words'][0]['start'] : 0,
-    endTime: alt['words'].length ? alt['words'][alt['words'].length - 1]['end'] : 0,
-    confidence: alt['confidence'],
-    text: alt['transcript'],
-  }));
+  return alts.map((alt) => {
+    // Check if words array exists and has speaker information
+    const hasSpeaker = alt['words']?.length > 0 && 'speaker' in alt['words'][0];
+
+    // Get the speaker if available (all words in the same alternative have the same speaker)
+    const speaker = hasSpeaker ? alt['words'][0].speaker : undefined;
+
+    return {
+      language,
+      startTime: alt['words']?.length ? alt['words'][0]['start'] : 0,
+      endTime: alt['words']?.length ? alt['words'][alt['words'].length - 1]['end'] : 0,
+      confidence: alt['confidence'],
+      text: alt['transcript'],
+      ...(speaker !== undefined && { speaker }),
+    };
+  });
 };
