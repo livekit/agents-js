@@ -205,6 +205,9 @@ importers:
       typescript:
         specifier: ^5.0.0
         version: 5.4.5
+      vitest:
+        specifier: ^3.2.2
+        version: 3.2.2(@types/node@22.15.30)
 
   plugins/cartesia:
     dependencies:

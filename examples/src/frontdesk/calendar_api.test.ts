@@ -202,8 +202,8 @@ describe('Calendar API', () => {
         await calendar.initialize();
 
         expect(mockFetch).toHaveBeenCalledTimes(2);
-        expect(consoleSpy).toHaveBeenCalledWith('using cal.com username: testuser');
-        expect(consoleSpy).toHaveBeenCalledWith('event type id: 123');
+        expect(consoleSpy).toHaveBeenCalledWith('[cal.com] using cal.com username: testuser');
+        expect(consoleSpy).toHaveBeenCalledWith('[cal.com] event type id: 123');
 
         consoleSpy.mockRestore();
       });
@@ -237,8 +237,11 @@ describe('Calendar API', () => {
         await calendar.initialize();
 
         expect(mockFetch).toHaveBeenCalledTimes(3);
-        expect(consoleSpy).toHaveBeenCalledWith('successfully added livekit-front-desk event type');
-        expect(consoleSpy).toHaveBeenCalledWith('event type id: 456');
+        expect(consoleSpy).toHaveBeenCalledWith('[cal.com] using cal.com username: testuser');
+        expect(consoleSpy).toHaveBeenCalledWith(
+          '[cal.com] successfully added livekit-front-desk event type',
+        );
+        expect(consoleSpy).toHaveBeenCalledWith('[cal.com] event type id: 456');
 
         consoleSpy.mockRestore();
       });

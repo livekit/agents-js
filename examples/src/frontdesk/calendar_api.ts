@@ -134,16 +134,17 @@ export class CalComCalendar implements Calendar {
   private tz: string;
   private _apiKey: string;
   private _lkEventId?: number;
-  private _logger: Console;
+  private _logger: { info: (message: string) => void };
 
   constructor(options: { apiKey: string; timezone: string }) {
     this.tz = options.timezone;
     this._apiKey = options.apiKey;
-    this._logger = console;
+    this._logger = {
+      info: (message: string) => console.info(`[cal.com] ${message}`),
+    };
   }
 
   async initialize(): Promise<void> {
-    // Get username
     const meResponse = await fetch(`${_BASE_URL}me/`, {
       headers: this._buildHeaders({ apiVersion: '2024-06-14' }),
     });
@@ -156,9 +157,8 @@ export class CalComCalendar implements Calendar {
     const username = meData.data.username;
     this._logger.info(`using cal.com username: ${username}`);
 
-    // Check if event type exists
-    const eventTypesUrl = `${_BASE_URL}event-types/?username=${encodeURIComponent(username)}`;
-    const eventTypesResponse = await fetch(eventTypesUrl, {
+    const params = new URLSearchParams({ username });
+    const eventTypesResponse = await fetch(`${_BASE_URL}event-types/?${params}`, {
       headers: this._buildHeaders({ apiVersion: '2024-06-14' }),
     });
 
@@ -169,17 +169,18 @@ export class CalComCalendar implements Calendar {
     }
 
     const eventTypesData = await eventTypesResponse.json();
-    const lkEventType = eventTypesData.data.find(
-      (event: any) => event.slug === _CAL_COM_EVENT_TYPE,
-    );
+    const data = eventTypesData.data;
+    const lkEventType = data.find((event: any) => event.slug === _CAL_COM_EVENT_TYPE) || null;
 
     if (lkEventType) {
       this._lkEventId = lkEventType.id;
     } else {
-      // Create new event type
       const createResponse = await fetch(`${_BASE_URL}event-types`, {
         method: 'POST',
-        headers: this._buildHeaders({ apiVersion: '2024-06-14' }),
+        headers: {
+          ...this._buildHeaders({ apiVersion: '2024-06-14' }),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           lengthInMinutes: _EVENT_DURATION_MIN,
           title: 'LiveKit Front-Desk',
@@ -206,11 +207,14 @@ export class CalComCalendar implements Calendar {
 
     const response = await fetch(`${_BASE_URL}bookings`, {
       method: 'POST',
-      headers: this._buildHeaders({ apiVersion: '2024-08-13' }),
+      headers: {
+        ...this._buildHeaders({ apiVersion: '2024-08-13' }),
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({
         start: startTimeUtc.toISOString(),
         attendee: {
-          name: options.attendeeEmail, // TODO: add name prompt
+          name: options.attendeeEmail,
           email: options.attendeeEmail,
           timeZone: this.tz,
         },
@@ -265,11 +269,12 @@ export class CalComCalendar implements Calendar {
   private _buildHeaders(options: { apiVersion?: string }): Record<string, string> {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this._apiKey}`,
-      'Content-Type': 'application/json',
     };
+
     if (options.apiVersion) {
       headers['cal-api-version'] = options.apiVersion;
     }
+
     return headers;
   }
 }
