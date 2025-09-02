@@ -304,6 +304,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           if (err instanceof Error && !err.message.includes('WebSocket closed')) {
             this.#logger.error({ err }, 'Error in recvTask from Cartesia WebSocket');
           }
+          clearTTSChunkTimeout();
           break;
         }
       }
