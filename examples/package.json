@@ -10,12 +10,15 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
-    "lint": "eslint -f unix \"src/**/*.ts\""
+    "lint": "eslint -f unix \"src/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@types/node": "^22.5.5",
     "tsx": "^4.19.2",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^3.2.2"
   },
   "dependencies": {
     "@livekit/agents": "workspace:*",
