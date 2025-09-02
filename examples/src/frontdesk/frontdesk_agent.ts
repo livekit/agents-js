@@ -1,7 +1,15 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, WorkerOptions, cli, defineAgent, llm, voice } from '@livekit/agents';
+import {
+  type JobContext,
+  type JobProcess,
+  WorkerOptions,
+  cli,
+  defineAgent,
+  llm,
+  voice,
+} from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
@@ -104,7 +112,7 @@ export class FrontDeskAgent extends voice.Agent {
         listAvailableSlots: llm.tool({
           description: `Return a plain-text list of available slots, one per line.
 
-<slot_id> – <Weekday>, <Month> <Day>, <Year> at <HH:MM> <TZ> (<relative time>)
+<slot_id> - <Weekday>, <Month> <Day>, <Year> at <HH:MM> <TZ> (<relative time>)
 
 You must infer the appropriate range implicitly from the conversational context and must not prompt the user to pick a value explicitly.`,
           parameters: z.object({
@@ -172,7 +180,7 @@ You must infer the appropriate range implicitly from the conversational context 
                 timeZone: this.tz,
               });
 
-              lines.push(`${uniqueHash} – ${formatted} (${rel})`);
+              lines.push(`${uniqueHash} - ${formatted} (${rel})`);
               this._slotsMap.set(uniqueHash, slot);
             }
 
@@ -187,6 +195,9 @@ You must infer the appropriate range implicitly from the conversational context 
 }
 
 export default defineAgent({
+  prewarm: async (proc: JobProcess) => {
+    proc.userData.vad = await silero.VAD.load();
+  },
   entry: async (ctx: JobContext) => {
     await ctx.connect();
 
@@ -210,7 +221,7 @@ export default defineAgent({
     const userdata: Userdata = { cal };
 
     const session = new voice.AgentSession({
-      vad: await silero.VAD.load(),
+      vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new deepgram.STT(),
       llm: new openai.LLM({
         model: 'gpt-4.1',
