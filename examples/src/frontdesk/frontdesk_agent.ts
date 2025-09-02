@@ -133,7 +133,7 @@ You must infer the appropriate range implicitly from the conversational context 
             } else if (range === '+3month') {
               rangeDays = 90;
             } else {
-              rangeDays = 14; // fallback
+              rangeDays = 14;
             }
 
             const endTime = new Date(now.getTime() + rangeDays * 24 * 60 * 60 * 1000);
