@@ -215,9 +215,7 @@ export default defineAgent({
       cal = new FakeCalendar({ timezone });
     }
 
-    console.log('cal', cal);
     await cal.initialize();
-    console.log('cal initialized');
 
     const userdata: Userdata = { cal };
 
