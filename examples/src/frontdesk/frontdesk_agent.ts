@@ -15,6 +15,7 @@ import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
+import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
@@ -199,8 +200,6 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    await ctx.connect();
-
     const timezone = 'UTC';
 
     let cal: Calendar;
@@ -216,7 +215,9 @@ export default defineAgent({
       cal = new FakeCalendar({ timezone });
     }
 
+    console.log('cal', cal);
     await cal.initialize();
+    console.log('cal initialized');
 
     const userdata: Userdata = { cal };
 
@@ -237,6 +238,14 @@ export default defineAgent({
     await session.start({
       agent: new FrontDeskAgent({ timezone }),
       room: ctx.room,
+      inputOptions: {
+        noiseCancellation: BackgroundVoiceCancellation(),
+      },
+    });
+
+    await ctx.connect();
+    session.generateReply({
+      userInput: 'Greet to the user',
     });
   },
 });
