@@ -170,7 +170,8 @@ export class CalComCalendar implements Calendar {
 
     const eventTypesData = await eventTypesResponse.json();
     const data = eventTypesData.data;
-    const lkEventType = data.find((event: any) => event.slug === _CAL_COM_EVENT_TYPE) || null;
+    const lkEventType =
+      data.find((event: { slug: string }) => event.slug === _CAL_COM_EVENT_TYPE) || null;
 
     if (lkEventType) {
       this._lkEventId = lkEventType.id;
@@ -257,7 +258,7 @@ export class CalComCalendar implements Calendar {
     const availableSlots: AvailableSlot[] = [];
 
     for (const [, slots] of Object.entries(rawData.data)) {
-      for (const slot of slots as any[]) {
+      for (const slot of slots as { start: string }[]) {
         const startDt = new Date(slot.start.replace('Z', '+00:00'));
         availableSlots.push(createAvailableSlot(startDt, _EVENT_DURATION_MIN));
       }
