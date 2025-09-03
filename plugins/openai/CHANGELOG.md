@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-openai
 
+## 1.0.2
+
+### Patch Changes
+
+- Make gpt-realtime and marin default model and voice - [#677](https://github.com/livekit/agents-js/pull/677) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`323a08c1dd8fb1fdc7aec11f7351d86bc6975815`](https://github.com/livekit/agents-js/commit/323a08c1dd8fb1fdc7aec11f7351d86bc6975815), [`52caa7bdc399524e5e44d1a9711c830e2061852f`](https://github.com/livekit/agents-js/commit/52caa7bdc399524e5e44d1a9711c830e2061852f), [`806d4bc8a5ee2c33ea4c71e46865fcf90b77d445`](https://github.com/livekit/agents-js/commit/806d4bc8a5ee2c33ea4c71e46865fcf90b77d445), [`45424482137a7cb60ab8ec79e40a83da4e0d8856`](https://github.com/livekit/agents-js/commit/45424482137a7cb60ab8ec79e40a83da4e0d8856), [`79089e4515a2082799335bbefb6897d201876986`](https://github.com/livekit/agents-js/commit/79089e4515a2082799335bbefb6897d201876986), [`b70c72bd2657556db8c1cb7518b3085401f04376`](https://github.com/livekit/agents-js/commit/b70c72bd2657556db8c1cb7518b3085401f04376)]:
+  - @livekit/agents@1.0.2
+
 ## 1.0.1
 
 ### Patch Changes
