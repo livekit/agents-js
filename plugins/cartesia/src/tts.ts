@@ -252,7 +252,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
               }
 
-              clearTTSChunkTimeout();
               if (!finalReceived) {
                 reject(new Error('WebSocket closed'));
               } else {
