@@ -1005,25 +1005,27 @@ export class RealtimeSession extends llm.RealtimeSession {
       _createdTimestamp: Date.now(),
     };
 
-    if (!event.response.metadata || !event.response.metadata.client_event_id) return;
-
-    const handle = this.responseCreatedFutures[event.response.metadata.client_event_id];
-    if (handle) {
-      delete this.responseCreatedFutures[event.response.metadata.client_event_id];
-
-      // set key to the response id
-      this.responseCreatedFutures[event.response.id] = handle;
-    }
-
-    // the generation_created event is emitted when
-    // 1. the response is not a message on response.output_item.added event
-    // 2. the content is audio on response.content_part.added event
-    // will try to recover from text response on response.content_part.done event
-    this.emit('generation_created', {
+    // Build generation event and resolve client future (if any) before emitting,
+    // matching Python behavior.
+    const generationEv = {
       messageStream: this.currentGeneration.messageChannel.stream(),
       functionStream: this.currentGeneration.functionChannel.stream(),
       userInitiated: false,
-    } as GenerationCreatedEvent);
+    } as GenerationCreatedEvent;
+
+    const clientEventId = event.response.metadata?.client_event_id;
+    if (clientEventId) {
+      const handle = this.responseCreatedFutures[clientEventId];
+      if (handle) {
+        delete this.responseCreatedFutures[clientEventId];
+        generationEv.userInitiated = true;
+        if (!handle.doneFut.done) {
+          handle.doneFut.resolve(generationEv);
+        }
+      }
+    }
+
+    this.emit('generation_created', generationEv);
   }
 
   private handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
@@ -1408,11 +1410,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('currentGeneration is not set');
     }
 
-    const generation_ev: llm.GenerationCreatedEvent = {
+    const generation_ev = {
       messageStream: this.currentGeneration.messageChannel.stream(),
       functionStream: this.currentGeneration.functionChannel.stream(),
       userInitiated: false,
-    };
+    } as GenerationCreatedEvent;
 
     const handle = this.responseCreatedFutures[responseId];
     if (handle) {
@@ -1425,8 +1427,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }
 
-    this.#logger.debug({ responseId }, 'Emitting generation_created event');
-    this.emit('generation_created', generation_ev);
+    // Do not emit here to avoid duplicate emissions. We already emitted once in
+    // handleResponseCreated. For user-initiated replies, we resolve the waiting
+    // future above so the caller receives the event directly.
   }
 }
 
