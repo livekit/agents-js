@@ -1046,7 +1046,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     if (itemType !== 'message') {
       // emit immediately if it's not a message, otherwise wait response.content_part.added
-      this.emitGenerationEvent(responseId);
+      this.resolveGeneration(responseId);
       this.textModeRecoveryRetries = 0;
       return;
     }
@@ -1129,7 +1129,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     const responseId = event.response_id;
 
     if (itemType === 'audio') {
-      this.emitGenerationEvent(responseId);
+      this.resolveGeneration(responseId);
       if (this.textModeRecoveryRetries > 0) {
         this.#logger.info(
           { retries: this.textModeRecoveryRetries },
@@ -1405,7 +1405,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     return handle;
   }
 
-  private emitGenerationEvent(responseId: string): void {
+  private resolveGeneration(responseId: string): void {
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
