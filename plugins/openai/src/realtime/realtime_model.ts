@@ -1426,10 +1426,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         handle.doneFut.resolve(generation_ev);
       }
     }
-
-    // Do not emit here to avoid duplicate emissions. We already emitted once in
-    // handleResponseCreated. For user-initiated replies, we resolve the waiting
-    // future above so the caller receives the event directly.
   }
 }
 
