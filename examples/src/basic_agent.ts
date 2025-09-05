@@ -29,7 +29,6 @@ export default defineAgent({
     });
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
-
     const session = new voice.AgentSession({
       vad,
       stt: new deepgram.STT(),
