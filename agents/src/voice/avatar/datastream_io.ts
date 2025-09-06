@@ -68,7 +68,7 @@ export class DataStreamAudioOutput extends AudioOutput {
       await this.roomConnectedFuture.await;
 
       // register the rpc method right after the room is connected
-      this.registerPlaybackFinishedRpc({
+      DataStreamAudioOutput.registerPlaybackFinishedRpc({
         room,
         callerIdentity: this.destinationIdentity,
         handler: (data) => this.handlePlaybackFinished(data),
@@ -213,7 +213,7 @@ export class DataStreamAudioOutput extends AudioOutput {
     return 'ok';
   }
 
-  registerPlaybackFinishedRpc({
+  static registerPlaybackFinishedRpc({
     room,
     callerIdentity,
     handler,
@@ -231,13 +231,14 @@ export class DataStreamAudioOutput extends AudioOutput {
     const rpcHandler = async (data: RpcInvocationData): Promise<string> => {
       const handler = DataStreamAudioOutput._playbackFinishedHandlers[data.callerIdentity];
       if (!handler) {
-        this.#logger.warn(
+        log().warn(
           {
             callerIdentity: data.callerIdentity,
             expectedIdentities: Object.keys(DataStreamAudioOutput._playbackFinishedHandlers),
           },
           'playback finished event received from unexpected participant',
         );
+
         return 'reject';
       }
       return handler(data);
