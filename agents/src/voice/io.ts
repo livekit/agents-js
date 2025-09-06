@@ -55,7 +55,7 @@ export abstract class AudioOutput extends EventEmitter {
   protected logger = log();
 
   constructor(
-    readonly sampleRate?: number,
+    public sampleRate?: number,
     protected readonly nextInChain?: AudioOutput,
   ) {
     super();

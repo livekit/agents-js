@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import {
-  AudioFrame,
-  ByteStreamWriter,
-  Room,
+  type AudioFrame,
+  type ByteStreamWriter,
+  type Room,
   RoomEvent,
   type RpcInvocationData,
-  TrackKind,
+  type TrackKind,
 } from '@livekit/rtc-node';
 import { log } from 'agents/src/log.js';
 import {
@@ -38,15 +38,12 @@ export class DataStreamAudioOutput extends AudioOutput {
   static _playbackFinishedRpcRegistered: boolean = false;
   static _playbackFinishedHandlers: Record<string, (data: RpcInvocationData) => string> = {};
 
-  readonly sampleRate?: number;
-
   private room: Room;
   private destinationIdentity: string;
   private roomConnectedFuture: Future<void>;
   private waitRemoteTrack?: TrackKind;
   private streamWriter?: ByteStreamWriter;
   private pushedDuration: number = 0;
-  private tasks: Set<Task<void>> = new Set();
   private started: boolean = false;
   private lock = new Mutex();
   private startTask?: Task<void>;
@@ -92,7 +89,7 @@ export class DataStreamAudioOutput extends AudioOutput {
     onRoomConnected();
   }
 
-  private async _start(abortSignal: AbortSignal) {
+  private async _start(_abortSignal: AbortSignal) {
     const unlock = await this.lock.lock();
 
     try {
@@ -155,7 +152,7 @@ export class DataStreamAudioOutput extends AudioOutput {
         topic: AUDIO_STREAM_TOPIC,
         destinationIdentities: [this.destinationIdentity],
         attributes: {
-          sample_rate: this.sampleRate?.toString() ?? '',
+          sample_rate: frame.sampleRate.toString(),
           num_channels: frame.channels.toString(),
         },
       });

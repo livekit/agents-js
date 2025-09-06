@@ -1,16 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  AudioFrame,
-  AudioResampler,
+import type {
   ParticipantKind,
   RemoteParticipant,
   RemoteTrackPublication,
   Room,
-  RoomEvent,
   TrackKind,
 } from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler, RoomEvent } from '@livekit/rtc-node';
 import { EventEmitter, once } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { TransformStream, type TransformStreamDefaultController } from 'node:stream/web';
