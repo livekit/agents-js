@@ -209,7 +209,7 @@ export class AgentSession<
     });
     this.roomIO.start();
 
-    this.updateActivity(this.agent);
+    await this.updateActivity(this.agent);
 
     // Log used IO configuration
     this.logger.debug(
