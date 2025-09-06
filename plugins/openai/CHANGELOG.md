@@ -1,5 +1,11 @@
 # @livekit/agents-plugin-openai
 
+## 1.0.3
+
+### Patch Changes
+
+- fix(openai/realtime): emit generation_created once to prevent stream lock - [#682](https://github.com/livekit/agents-js/pull/682) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.2
 
 ### Patch Changes

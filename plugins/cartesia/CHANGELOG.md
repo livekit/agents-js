@@ -1,5 +1,11 @@
 # @livekit/agents-plugin-cartesia
 
+## 1.0.3
+
+### Patch Changes
+
+- Fix cartesia TTS plugin been stuck by adding a TTS segment timeout to unblock any stuck TTS calls. - [#685](https://github.com/livekit/agents-js/pull/685) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.2
 
 ### Patch Changes
