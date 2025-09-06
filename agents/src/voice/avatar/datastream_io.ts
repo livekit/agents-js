@@ -11,8 +11,14 @@ import {
   TrackKind,
 } from '@livekit/rtc-node';
 import { log } from 'agents/src/log.js';
-import { Future, Task, waitForParticipant, waitForTrackPublication } from 'agents/src/utils.js';
-import { AudioOutput } from '../io.js';
+import {
+  Future,
+  Task,
+  shortuuid,
+  waitForParticipant,
+  waitForTrackPublication,
+} from 'agents/src/utils.js';
+import { AudioOutput, type PlaybackFinishedEvent } from '../io.js';
 
 const RPC_CLEAR_BUFFER = 'lk.clear_buffer';
 const RPC_PLAYBACK_FINISHED = 'lk.playback_finished';
@@ -62,7 +68,7 @@ export class DataStreamAudioOutput extends AudioOutput {
       await this.roomConnectedFuture.await;
 
       // register the rpc method right after the room is connected
-      DataStreamAudioOutput.registerPlaybackFinishedRpc({
+      this.registerPlaybackFinishedRpc({
         room,
         callerIdentity: this.destinationIdentity,
         handler: (data) => this.handlePlaybackFinished(data),
@@ -135,23 +141,79 @@ export class DataStreamAudioOutput extends AudioOutput {
     }
   }
 
-  captureFrame(_frame: AudioFrame): Promise<void> {
-    return Promise.resolve();
+  async captureFrame(frame: AudioFrame): Promise<void> {
+    if (!this.startTask) {
+      this.startTask = Task.from(({ signal }) => this._start(signal));
+    }
+
+    await this.startTask.result;
+    await super.captureFrame(frame);
+
+    if (!this.streamWriter) {
+      this.streamWriter = await this.room.localParticipant!.streamBytes({
+        name: shortuuid('AUDIO_'),
+        topic: AUDIO_STREAM_TOPIC,
+        destinationIdentities: [this.destinationIdentity],
+        attributes: {
+          sample_rate: this.sampleRate?.toString() ?? '',
+          num_channels: frame.channels.toString(),
+        },
+      });
+      this.pushedDuration = 0;
+    }
+
+    // frame.data is a Int16Array, write accepts a Uint8Array
+    await this.streamWriter.write(new Uint8Array(frame.data.buffer));
+    this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
   }
 
   flush(): void {
-    return;
+    super.flush();
+
+    if (this.streamWriter === undefined || !this.started) {
+      return;
+    }
+
+    this.streamWriter.close().finally(() => {
+      this.streamWriter = undefined;
+    });
   }
 
   clearBuffer(): void {
-    return;
+    if (!this.started) return;
+
+    this.room.localParticipant!.performRpc({
+      destinationIdentity: this.destinationIdentity,
+      method: RPC_CLEAR_BUFFER,
+      payload: '',
+    });
   }
 
   private handlePlaybackFinished(data: RpcInvocationData): string {
-    return '';
+    if (data.callerIdentity !== this.destinationIdentity) {
+      this.#logger.warn(
+        {
+          callerIdentity: data.callerIdentity,
+          destinationIdentity: this.destinationIdentity,
+        },
+        'playback finished event received from unexpected participant',
+      );
+      return 'reject';
+    }
+
+    this.#logger.info(
+      {
+        callerIdentity: data.callerIdentity,
+      },
+      'playback finished event received',
+    );
+
+    const playbackFinishedEvent = JSON.parse(data.payload) as PlaybackFinishedEvent;
+    this.onPlaybackFinished(playbackFinishedEvent);
+    return 'ok';
   }
 
-  static registerPlaybackFinishedRpc({
+  registerPlaybackFinishedRpc({
     room,
     callerIdentity,
     handler,
@@ -159,5 +221,29 @@ export class DataStreamAudioOutput extends AudioOutput {
     room: Room;
     callerIdentity: string;
     handler: (data: RpcInvocationData) => string;
-  }) {}
+  }) {
+    DataStreamAudioOutput._playbackFinishedHandlers[callerIdentity] = handler;
+
+    if (DataStreamAudioOutput._playbackFinishedRpcRegistered) {
+      return;
+    }
+
+    const rpcHandler = async (data: RpcInvocationData): Promise<string> => {
+      const handler = DataStreamAudioOutput._playbackFinishedHandlers[data.callerIdentity];
+      if (!handler) {
+        this.#logger.warn(
+          {
+            callerIdentity: data.callerIdentity,
+            expectedIdentities: Object.keys(DataStreamAudioOutput._playbackFinishedHandlers),
+          },
+          'playback finished event received from unexpected participant',
+        );
+        return 'reject';
+      }
+      return handler(data);
+    };
+
+    room.localParticipant?.registerRpcMethod(RPC_PLAYBACK_FINISHED, rpcHandler);
+    DataStreamAudioOutput._playbackFinishedRpcRegistered = true;
+  }
 }
