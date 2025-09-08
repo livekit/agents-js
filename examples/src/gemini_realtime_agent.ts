@@ -110,9 +110,6 @@ export default defineAgent({
       room: ctx.room,
     });
 
-    // Room connection is now handled automatically by AgentSession.start()
-    // when a job context is available - no need for manual ctx.connect()!
-
     const participant = await ctx.waitForParticipant();
     console.log('participant joined: ', participant.identity);
   },

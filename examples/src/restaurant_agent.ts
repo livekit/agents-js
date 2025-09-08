@@ -399,9 +399,6 @@ export default defineAgent({
       agent: userData.agents.greeter!,
       room: ctx.room,
     });
-
-    // Room connection is now handled automatically by AgentSession.start()
-    // when a job context is available - no need for manual ctx.connect()!
   },
 });
 

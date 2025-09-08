@@ -55,9 +55,6 @@ export default defineAgent({
       },
     });
 
-    // Room connection is now handled automatically by AgentSession.start()
-    // when a job context is available - no need for manual ctx.connect()!
-
     session.say('Hello, how can I help you today?');
   },
 });
