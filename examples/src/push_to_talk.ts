@@ -30,8 +30,6 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    await ctx.connect();
-
     const session = new voice.AgentSession({
       vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new deepgram.STT(),
