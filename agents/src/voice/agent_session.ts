@@ -5,6 +5,7 @@ import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
+import { getJobContext } from '../job.js';
 import { ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
@@ -184,6 +185,20 @@ export class AgentSession<
     this.agent = agent;
     this._updateAgentState('initializing');
 
+    // Auto-connect job context if available and room matches
+    let autoConnected = false;
+    try {
+      const ctx = getJobContext();
+      if (ctx && ctx.room === room && !room.isConnected) {
+        this.logger.debug('Auto-connecting to room via job context');
+        await ctx.connect();
+        autoConnected = true;
+      }
+    } catch (error) {
+      // No job context available (e.g., in testing), continue without auto-connect
+      this.logger.debug('No job context available for auto-connect, manual connection required');
+    }
+
     // Check for existing input/output configuration and warn if needed
     if (this.input.audio && inputOptions?.audioEnabled !== false) {
       this.logger.warn('RoomIO audio input is enabled but input.audio is already set, ignoring..');
@@ -220,7 +235,11 @@ export class AgentSession<
       `using transcript io: \`AgentSession\` -> ${this.output.transcription ? '`' + this.output.transcription.constructor.name + '`' : '(none)'}`,
     );
 
-    this.logger.debug('AgentSession started');
+    if (autoConnected) {
+      this.logger.debug('AgentSession started with auto-connected room');
+    } else {
+      this.logger.debug('AgentSession started - room connection may be required');
+    }
     this.started = true;
     this._updateAgentState('listening');
   }

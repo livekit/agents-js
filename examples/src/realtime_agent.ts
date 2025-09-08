@@ -70,8 +70,8 @@ export default defineAgent({
       console.log('metrics_collected', ev);
     });
 
-    // join the room when agent is ready
-    await ctx.connect();
+    // Room connection is now handled automatically by AgentSession.start()
+    // when a job context is available - no need for manual ctx.connect()!
   },
 });
 
