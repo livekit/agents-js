@@ -173,7 +173,7 @@ export class AgentSession<
     outputOptions,
   }: {
     agent: Agent;
-    room: Room;
+    room?: Room;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
   }): Promise<void> {
@@ -184,30 +184,38 @@ export class AgentSession<
     this.agent = agent;
     this._updateAgentState('initializing');
 
-    // Check for existing input/output configuration and warn if needed
-    if (this.input.audio && inputOptions?.audioEnabled !== false) {
-      this.logger.warn('RoomIO audio input is enabled but input.audio is already set, ignoring..');
-    }
+    if (!room) {
+      const { ChatCLI } = await import('./chat_cli.js');
+      const chatCli = new ChatCLI(this);
+      await chatCli.start();
+    } else {
+      // Room mode
+      if (this.input.audio && inputOptions?.audioEnabled !== false) {
+        this.logger.warn(
+          'RoomIO audio input is enabled but input.audio is already set, ignoring..',
+        );
+      }
 
-    if (this.output.audio && outputOptions?.audioEnabled !== false) {
-      this.logger.warn(
-        'RoomIO audio output is enabled but output.audio is already set, ignoring..',
-      );
-    }
+      if (this.output.audio && outputOptions?.audioEnabled !== false) {
+        this.logger.warn(
+          'RoomIO audio output is enabled but output.audio is already set, ignoring..',
+        );
+      }
 
-    if (this.output.transcription && outputOptions?.transcriptionEnabled !== false) {
-      this.logger.warn(
-        'RoomIO transcription output is enabled but output.transcription is already set, ignoring..',
-      );
-    }
+      if (this.output.transcription && outputOptions?.transcriptionEnabled !== false) {
+        this.logger.warn(
+          'RoomIO transcription output is enabled but output.transcription is already set, ignoring..',
+        );
+      }
 
-    this.roomIO = new RoomIO({
-      agentSession: this,
-      room,
-      inputOptions,
-      outputOptions,
-    });
-    this.roomIO.start();
+      this.roomIO = new RoomIO({
+        agentSession: this,
+        room,
+        inputOptions,
+        outputOptions,
+      });
+      this.roomIO.start();
+    }
 
     this.updateActivity(this.agent);
 
