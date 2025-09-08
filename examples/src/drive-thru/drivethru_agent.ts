@@ -380,6 +380,8 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
+    await ctx.connect();
+
     const userdata = await newUserData();
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
@@ -399,9 +401,6 @@ export default defineAgent({
       agent: new DriveThruAgent(userdata),
       room: ctx.room,
     });
-
-    // Room connection is now handled automatically by AgentSession.start()
-    // when a job context is available - no need for manual ctx.connect()!
   },
 });
 
