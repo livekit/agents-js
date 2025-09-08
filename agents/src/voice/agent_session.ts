@@ -185,20 +185,7 @@ export class AgentSession<
     this.agent = agent;
     this._updateAgentState('initializing');
 
-    // Auto-connect job context if available and room matches
-    let autoConnected = false;
-    try {
-      const ctx = getJobContext();
-      if (ctx && ctx.room === room && !room.isConnected) {
-        this.logger.debug('Auto-connecting to room via job context');
-        await ctx.connect();
-        autoConnected = true;
-      }
-    } catch (error) {
-      // No job context available (e.g., in testing), continue without auto-connect
-      this.logger.debug('No job context available for auto-connect, manual connection required');
-    }
-
+    const tasks: Promise<void>[] = [];
     // Check for existing input/output configuration and warn if needed
     if (this.input.audio && inputOptions?.audioEnabled !== false) {
       this.logger.warn('RoomIO audio input is enabled but input.audio is already set, ignoring..');
@@ -224,7 +211,15 @@ export class AgentSession<
     });
     this.roomIO.start();
 
-    await this.updateActivity(this.agent);
+    const ctx = getJobContext();
+    if (ctx && ctx.room === room && !room.isConnected) {
+      this.logger.debug('Auto-connecting to room via job context');
+      tasks.push(ctx.connect());
+    }
+    // TODO(AJS-265): add shutdown callback to job context
+    tasks.push(this.updateActivity(this.agent));
+
+    await Promise.allSettled(tasks);
 
     // Log used IO configuration
     this.logger.debug(
@@ -235,11 +230,6 @@ export class AgentSession<
       `using transcript io: \`AgentSession\` -> ${this.output.transcription ? '`' + this.output.transcription.constructor.name + '`' : '(none)'}`,
     );
 
-    if (autoConnected) {
-      this.logger.debug('AgentSession started with auto-connected room');
-    } else {
-      this.logger.debug('AgentSession started - room connection may be required');
-    }
     this.started = true;
     this._updateAgentState('listening');
   }
