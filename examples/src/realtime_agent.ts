@@ -69,9 +69,6 @@ export default defineAgent({
     session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
       console.log('metrics_collected', ev);
     });
-
-    // Room connection is now handled automatically by AgentSession.start()
-    // when a job context is available - no need for manual ctx.connect()!
   },
 });
 
