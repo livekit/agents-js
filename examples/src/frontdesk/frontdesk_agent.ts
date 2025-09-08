@@ -241,7 +241,9 @@ export default defineAgent({
       },
     });
 
-    await ctx.connect();
+    // Room connection is now handled automatically by AgentSession.start()
+    // when a job context is available - no need for manual ctx.connect()!
+
     session.generateReply({
       userInput: 'Greet to the user',
     });

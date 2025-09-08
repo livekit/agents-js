@@ -75,10 +75,6 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    await ctx.connect();
-    const participant = await ctx.waitForParticipant();
-    console.log('participant joined: ', participant.identity);
-
     const userdata: StoryData = {};
 
     const session = new voice.AgentSession({
@@ -96,6 +92,12 @@ export default defineAgent({
       agent: IntroAgent.create(),
       room: ctx.room,
     });
+
+    // Room connection is now handled automatically by AgentSession.start()
+    // when a job context is available - no need for manual ctx.connect()!
+
+    const participant = await ctx.waitForParticipant();
+    console.log('participant joined: ', participant.identity);
   },
 });
 

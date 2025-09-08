@@ -30,8 +30,6 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    await ctx.connect();
-
     const session = new voice.AgentSession({
       vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new deepgram.STT(),
@@ -49,6 +47,9 @@ export default defineAgent({
       agent,
       room: ctx.room,
     });
+
+    // Room connection is now handled automatically by AgentSession.start()
+    // when a job context is available - no need for manual ctx.connect()!
 
     ctx.room.localParticipant?.registerRpcMethod('start_turn', async () => {
       session.interrupt();
