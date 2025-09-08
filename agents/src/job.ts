@@ -97,6 +97,8 @@ export class JobContext {
   #logger: Logger;
   #inferenceExecutor: InferenceExecutor;
 
+  private connected: boolean = false;
+
   constructor(
     proc: JobProcess,
     info: RunningJobInfo,
@@ -199,6 +201,10 @@ export class JobContext {
     autoSubscribe: AutoSubscribe = AutoSubscribe.SUBSCRIBE_ALL,
     rtcConfig?: RtcConfiguration,
   ) {
+    if (this.connected) {
+      return;
+    }
+
     const opts = {
       e2ee,
       autoSubscribe: autoSubscribe == AutoSubscribe.SUBSCRIBE_ALL,
@@ -223,6 +229,7 @@ export class JobContext {
         });
       });
     }
+    this.connected = true;
   }
 
   /**
