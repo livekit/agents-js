@@ -30,15 +30,6 @@ export function getJobContext(): JobContext {
   }
   return ctx;
 }
-
-/**
- * Runs a function within a job context, similar to Python's contextvars.
- * @internal
- */
-export function runWithJobContext<T>(context: JobContext, fn: () => T): T {
-  return jobContextStorage.run(context, fn);
-}
-
 /**
  * Runs an async function within a job context, similar to Python's contextvars.
  * @internal
