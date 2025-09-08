@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type PreTrainedTokenizer } from '@huggingface/transformers';
 import type { ipc, llm } from '@livekit/agents';
-import { CurrentJobContext, Future, InferenceRunner, log } from '@livekit/agents';
+import { Future, InferenceRunner, getJobContext, log } from '@livekit/agents';
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import { InferenceSession, Tensor } from 'onnxruntime-node';
@@ -173,7 +173,7 @@ export abstract class EOUModel {
   constructor(opts: EOUModelOptions) {
     const {
       modelType = 'en',
-      executor = CurrentJobContext.getCurrent().inferenceExecutor,
+      executor = getJobContext().inferenceExecutor,
       unlikelyThreshold,
       loadLanguages = true,
     } = opts;

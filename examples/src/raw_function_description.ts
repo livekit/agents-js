@@ -73,8 +73,6 @@ export default defineAgent({
       agent: createRawFunctionAgent(),
       room: ctx.room,
     });
-
-    await ctx.connect();
   },
 });
 

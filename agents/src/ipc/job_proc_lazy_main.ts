@@ -6,7 +6,7 @@ import { EventEmitter, once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
 import { type Agent, isAgent } from '../generator.js';
-import { CurrentJobContext, JobContext, JobProcess, type RunningJobInfo } from '../job.js';
+import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from '../job.js';
 import { initializeLogger, log } from '../log.js';
 import { Future, shortuuid } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
@@ -87,7 +87,6 @@ const startJob = (
   };
 
   const ctx = new JobContext(proc, info, room, onConnect, onShutdown, new InfClient());
-  new CurrentJobContext(ctx);
 
   const task = new Promise<void>(async () => {
     const unconnectedTimeout = setTimeout(() => {
@@ -98,7 +97,11 @@ const startJob = (
         );
       }
     }, 10000);
-    func(ctx).finally(() => clearTimeout(unconnectedTimeout));
+
+    // Run the job function within the AsyncLocalStorage context
+    await runWithJobContextAsync(ctx, () => func(ctx)).finally(() => {
+      clearTimeout(unconnectedTimeout);
+    });
 
     await once(closeEvent, 'close').then((close) => {
       logger.debug('shutting down');

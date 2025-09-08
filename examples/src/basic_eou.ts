@@ -9,6 +9,7 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     const logger = log();
 
+    // Manual connection required since this example doesn't use AgentSession
     await ctx.connect();
 
     // const eouModel = new turnDetector.EnglishModel();

@@ -148,8 +148,6 @@ export default defineAgent({
       agent: routerAgent,
       room: ctx.room,
     });
-
-    await ctx.connect();
   },
 });
 
