@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-livekit
 
+## 1.0.3
+
+### Patch Changes
+
+- Remove requirement to call ctx.connect in entrypoint function - [#689](https://github.com/livekit/agents-js/pull/689) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- Updated dependencies [[`790e82f20e9b55c92c4b692018619d1d52cfbb6f`](https://github.com/livekit/agents-js/commit/790e82f20e9b55c92c4b692018619d1d52cfbb6f), [`d650e3058f446d8e883db20aaa5f85c4a99a7f04`](https://github.com/livekit/agents-js/commit/d650e3058f446d8e883db20aaa5f85c4a99a7f04)]:
+  - @livekit/agents@1.0.3
+
 ## 1.0.2
 
 ### Patch Changes
