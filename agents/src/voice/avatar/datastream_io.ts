@@ -10,14 +10,14 @@ import {
   type RpcInvocationData,
   type TrackKind,
 } from '@livekit/rtc-node';
-import { log } from 'agents/src/log.js';
+import { log } from '../../log.js';
 import {
   Future,
   Task,
   shortuuid,
   waitForParticipant,
   waitForTrackPublication,
-} from 'agents/src/utils.js';
+} from '../../utils.js';
 import { AudioOutput, type PlaybackFinishedEvent } from '../io.js';
 
 const RPC_CLEAR_BUFFER = 'lk.clear_buffer';
