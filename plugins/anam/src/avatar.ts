@@ -1,38 +1,37 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Room, TrackKind } from '@livekit/rtc-node';
-import { voice, log } from '@livekit/agents';
-import { AnamAPI, } from './api.js';
-import { AnamException, type PersonaConfig, type APIConnectOptions } from './types.js';
+import type { Room } from '@livekit/rtc-node';
+import { TrackKind } from '@livekit/rtc-node';
 import { AccessToken, type VideoGrant } from 'livekit-server-sdk';
+import { AnamAPI } from './api.js';
+import { type APIConnectOptions, AnamException, type PersonaConfig } from './types.js';
 
 export async function mintAvatarJoinToken({
-    roomName,
-    avatarIdentity,                 // e.g. `anam:${roomName}`
-    publishOnBehalf,                // your agent's identity
-    apiKey = process.env.LIVEKIT_API_KEY!,
-    apiSecret = process.env.LIVEKIT_API_SECRET!,
-    ttl = '60s',
-  }: {
-    roomName: string;
-    avatarIdentity: string;
-    publishOnBehalf: string;
-    apiKey?: string;
-    apiSecret?: string;
-    ttl?: string | number;
-  }): Promise<string> {
-    const at = new AccessToken(apiKey, apiSecret);
-    at.identity = avatarIdentity;
-    at.name = 'Anam Avatar';
-    at.kind = 'agent';                                   // avatar joins as Agent
-    at.ttl = ttl;
-    at.attributes = { 'lk.publish_on_behalf': publishOnBehalf };
-  
-    at.addGrant({ roomJoin: true, room: roomName } as VideoGrant);
-    return at.toJwt();
-  }
+  roomName,
+  avatarIdentity, // e.g. `anam:${roomName}`
+  publishOnBehalf, // your agent's identity
+  apiKey = process.env.LIVEKIT_API_KEY!,
+  apiSecret = process.env.LIVEKIT_API_SECRET!,
+  ttl = '60s',
+}: {
+  roomName: string;
+  avatarIdentity: string;
+  publishOnBehalf: string;
+  apiKey?: string;
+  apiSecret?: string;
+  ttl?: string | number;
+}): Promise<string> {
+  const at = new AccessToken(apiKey, apiSecret);
+  at.identity = avatarIdentity;
+  at.name = 'Anam Avatar';
+  at.kind = 'agent'; // avatar joins as Agent
+  at.ttl = ttl;
+  at.attributes = { 'lk.publish_on_behalf': publishOnBehalf };
 
+  at.addGrant({ roomJoin: true, room: roomName } as VideoGrant);
+  return at.toJwt();
+}
 
 const AVATAR_IDENTITY = 'anam-avatar-agent';
 const AVATAR_NAME = 'anam-avatar-agent';
@@ -48,7 +47,7 @@ export class AvatarSession {
       avatarParticipantIdentity?: string;
       avatarParticipantName?: string;
       connOptions?: APIConnectOptions;
-    }
+    },
   ) {}
 
   async start(
@@ -58,7 +57,7 @@ export class AvatarSession {
       livekitUrl?: string;
       livekitApiKey?: string;
       livekitApiSecret?: string;
-    }
+    },
   ) {
     const logger = log().child({ module: 'AnamAvatar' });
     const apiKey = this.opts.apiKey ?? process.env.ANAM_API_KEY;
@@ -68,7 +67,8 @@ export class AvatarSession {
     const livekitUrl = params?.livekitUrl ?? process.env.LIVEKIT_URL;
     const lkKey = params?.livekitApiKey ?? process.env.LIVEKIT_API_KEY;
     const lkSecret = params?.livekitApiSecret ?? process.env.LIVEKIT_API_SECRET;
-    const devMode = Boolean(apiUrl && apiUrl.includes('anam.dev')) || process.env.ANAM_DEV_MODE === '1';
+    const devMode =
+      Boolean(apiUrl && apiUrl.includes('anam.dev')) || process.env.ANAM_DEV_MODE === '1';
 
     if (!devMode) {
       if (!livekitUrl || !lkKey || !lkSecret) {
@@ -77,17 +77,19 @@ export class AvatarSession {
     }
 
     // who are we publishing on behalf of?
-    const localIdentity =
-      (room.localParticipant && room.localParticipant.identity) || 'agent';
+    const localIdentity = (room.localParticipant && room.localParticipant.identity) || 'agent';
 
-    logger.debug({
-      personaName: this.opts.personaConfig?.name,
-      avatarId: this.opts.personaConfig?.avatarId,
-      apiUrl: apiUrl ?? '(default https://api.anam.ai)',
-      livekitUrl,
-      avatarParticipantIdentity: this.opts.avatarParticipantIdentity ?? 'anam-avatar-agent',
-      publishOnBehalf: localIdentity,
-    }, 'starting Anam avatar session');
+    logger.debug(
+      {
+        personaName: this.opts.personaConfig?.name,
+        avatarId: this.opts.personaConfig?.avatarId,
+        apiUrl: apiUrl ?? '(default https://api.anam.ai)',
+        livekitUrl,
+        avatarParticipantIdentity: this.opts.avatarParticipantIdentity ?? 'anam-avatar-agent',
+        publishOnBehalf: localIdentity,
+      },
+      'starting Anam avatar session',
+    );
 
     // build a LiveKit token for the avatar worker (mirrors Python)
     let jwt: string | undefined = undefined;

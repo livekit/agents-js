@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AnamException, type APIConnectOptions } from './types.js';
 import { log } from '@livekit/agents';
+import { type APIConnectOptions, AnamException } from './types.js';
 
 const DEFAULT_API_URL = 'https://api.anam.ai';
 
@@ -26,11 +26,7 @@ export class AnamAPI {
   }
 
   private get startPath(): string {
-    return (
-      this.paths.startPath ||
-      process.env.ANAM_SESSION_START_PATH ||
-      '/v1/engine/session'
-    );
+    return this.paths.startPath || process.env.ANAM_SESSION_START_PATH || '/v1/engine/session';
   }
 
   private async postWithHeaders<T>(
@@ -69,7 +65,16 @@ export class AnamAPI {
           return body;
         })();
 
-        logger.debug({ url, method: 'POST', headers: redactedHeaders, body: redactedBody, attempt: attempt + 1 }, 'calling Anam API');
+        logger.debug(
+          {
+            url,
+            method: 'POST',
+            headers: redactedHeaders,
+            body: redactedBody,
+            attempt: attempt + 1,
+          },
+          'calling Anam API',
+        );
 
         const res = await fetch(url, {
           method: 'POST',
@@ -79,7 +84,17 @@ export class AnamAPI {
         });
         if (!res.ok) {
           const text = await res.text();
-          logger.error({ url, method: 'POST', headers: redactedHeaders, body: redactedBody, status: res.status, response: text }, 'Anam API request failed');
+          logger.error(
+            {
+              url,
+              method: 'POST',
+              headers: redactedHeaders,
+              body: redactedBody,
+              status: res.status,
+              response: text,
+            },
+            'Anam API request failed',
+          );
           throw new AnamException(`Anam ${path} failed: ${res.status} ${text}`);
         }
         const json = (await res.json()) as T;
@@ -88,8 +103,20 @@ export class AnamAPI {
       } catch (e) {
         lastErr = e;
         if (attempt === maxRetry - 1) break;
-        logger.warn({ url, method: 'POST', body: (body && typeof body === 'object') ? { ...(body as Record<string, unknown>), livekitToken: '****' } : body, error: (e as Error)?.message, nextRetrySec: retryInterval }, 'Anam API error, retrying');
-        await new Promise(r => setTimeout(r, retryInterval * 1000));
+        logger.warn(
+          {
+            url,
+            method: 'POST',
+            body:
+              body && typeof body === 'object'
+                ? { ...(body as Record<string, unknown>), livekitToken: '****' }
+                : body,
+            error: (e as Error)?.message,
+            nextRetrySec: retryInterval,
+          },
+          'Anam API error, retrying',
+        );
+        await new Promise((r) => setTimeout(r, retryInterval * 1000));
       }
     }
     throw lastErr instanceof Error ? lastErr : new AnamException('Anam API error');
@@ -108,11 +135,11 @@ export class AnamAPI {
     // Build payload per API spec
     const pc = params.personaConfig;
     const personaPayload = {
-          type: 'ephemeral',
-          name: pc.name,
-          avatarId: pc.avatarId,
-          llmId: 'CUSTOMER_CLIENT_V1',
-        };
+      type: 'ephemeral',
+      name: pc.name,
+      avatarId: pc.avatarId,
+      llmId: 'CUSTOMER_CLIENT_V1',
+    };
 
     const payload: Record<string, unknown> = {
       personaConfig: personaPayload,

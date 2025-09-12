@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Plugin } from '@livekit/agents';
+
 export * from './types.js';
 export * from './api.js';
 export * from './avatar.js';
