@@ -15,7 +15,6 @@ SPDX-License-Identifier: Apache-2.0
 
 # LiveKit Agents for Node.js
 <!--BEGIN_DESCRIPTION-->
-
 The Agent Framework is designed for building realtime, programmable participants that run on
 servers. Use it to create conversational, multi-modal voice agents that can see, hear, and
 understand.
