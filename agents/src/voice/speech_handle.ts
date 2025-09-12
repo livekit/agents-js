@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+<<<<<<< HEAD
 import type { ChatItem } from '../llm/index.js';
 import { Event, Future, shortuuid } from '../utils.js';
 import type { Task } from '../utils.js';
+=======
+import type { ChatMessage } from '../llm/index.js';
+import { Future, shortuuid } from '../utils.js';
+>>>>>>> fbbdda90f2b203c0da4068c34ad26a421c499183
 import { asyncLocalStorage } from './agent.js';
 
 export class SpeechHandle {
@@ -134,7 +139,23 @@ export class SpeechHandle {
       );
     }
 
+<<<<<<< HEAD
     return this.doneFut.await;
+=======
+  async waitForPlayout() {
+    // Prevent circular dependency: tool calling generateReply() and waiting for its own speech
+    const store = asyncLocalStorage.getStore();
+    if (store?.functionCall) {
+      throw new Error(
+        `Cannot call 'SpeechHandle.waitForPlayout()' from inside the function tool '${store.functionCall.name}'. ` +
+          'This creates a circular wait: the speech handle is waiting for the function tool to complete, ' +
+          'while the function tool is simultaneously waiting for the speech handle.\n' +
+          "To wait for the assistant's spoken response prior to running this tool, use RunContext.wait_for_playout() instead.",
+      );
+    }
+
+    return this.playoutDoneFut.await;
+>>>>>>> fbbdda90f2b203c0da4068c34ad26a421c499183
   }
 
   async waitIfNotInterrupted(aw: Promise<unknown>[]): Promise<void> {
