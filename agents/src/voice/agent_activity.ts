@@ -725,6 +725,7 @@ export class AgentActivity implements RecognitionHooks {
 
     while (true) {
       await Promise.race([this.q_updated.await, abortFuture.await]);
+      this.logger.info(this.speechQueue, 'mainTask: speechQueue');
       if (signal.aborted) break;
 
       while (this.speechQueue.size() > 0) {
@@ -755,6 +756,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private wakeupMainTask(): void {
+    this.logger.info('AgentActivity wakeupMainTask: waking up main task');
     this.q_updated.resolve();
   }
 
@@ -1837,9 +1839,11 @@ export class AgentActivity implements RecognitionHooks {
   private scheduleSpeech(
     speechHandle: SpeechHandle,
     priority: number,
-    bypassDraining: boolean = false,
+    force: boolean = false,
   ): void {
-    if (this.draining && !bypassDraining) {
+    // when force=true, we allow tool responses to bypass draining
+    // This allows for tool responses to be generated before the AgentActivity is finalized
+    if (this.draining && !force) {
       throw new Error('cannot schedule new speech, the agent is draining');
     }
 

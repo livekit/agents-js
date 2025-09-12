@@ -17,4 +17,16 @@ export class RunContext<UserData = UnknownUserData> {
   get userData(): UserData {
     return this.session.userData;
   }
+
+  /**
+   * Waits for the speech playout corresponding to this function call step.
+   *
+   * Unlike {@link SpeechHandle.waitForPlayout}, which waits for the full
+   * assistant turn to complete (including all function tools),
+   * this method only waits for the assistant's spoken response prior to running
+   * this tool to finish playing.
+   */
+  async waitForPlayout() {
+    return this.speechHandle.waitForPlayout();
+  }
 }
