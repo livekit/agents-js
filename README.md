@@ -20,7 +20,6 @@ understand.
 
 This is a Node.js distribution of the [LiveKit Agents framework](https://livekit.io/agents),
 originally written in Python.
-
 Looking for the Python library? Check out [Agents](https://github.com/livekit/agents).
 
 <!--END_DESCRIPTION-->
