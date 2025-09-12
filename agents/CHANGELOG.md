@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.4
+
+### Patch Changes
+
+- Add avatar datastream io component - [#687](https://github.com/livekit/agents-js/pull/687) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.3
 
 ### Patch Changes
