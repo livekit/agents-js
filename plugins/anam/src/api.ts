@@ -1,4 +1,6 @@
-// src/api.ts
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import { AnamException, type APIConnectOptions } from './types.js';
 import { log } from '@livekit/agents';
 
@@ -115,12 +117,10 @@ export class AnamAPI {
     const payload: Record<string, unknown> = {
       personaConfig: personaPayload,
     };
-    if (params.livekitUrl && params.livekitToken) {
-      payload.environment = {
-        livekitUrl: params.livekitUrl,
-        livekitToken: params.livekitToken,
-      };
-    }
+    payload.environment = {
+      livekitUrl: params.livekitUrl,
+      livekitToken: params.livekitToken,
+    };
 
     return this.post<{ sessionToken: string }>(this.tokenPath, payload);
   }

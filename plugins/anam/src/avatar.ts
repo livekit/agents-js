@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import { Room, TrackKind } from '@livekit/rtc-node';
 import { voice, log } from '@livekit/agents';
 import { AnamAPI, } from './api.js';
