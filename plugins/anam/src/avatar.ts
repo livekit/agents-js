@@ -68,13 +68,9 @@ export class AvatarSession {
     const livekitUrl = params?.livekitUrl ?? process.env.LIVEKIT_URL;
     const lkKey = params?.livekitApiKey ?? process.env.LIVEKIT_API_KEY;
     const lkSecret = params?.livekitApiSecret ?? process.env.LIVEKIT_API_SECRET;
-    const devMode =
-      Boolean(apiUrl && apiUrl.includes('anam.dev')) || process.env.ANAM_DEV_MODE === '1';
 
-    if (!devMode) {
-      if (!livekitUrl || !lkKey || !lkSecret) {
-        throw new AnamException('LIVEKIT_URL/API_KEY/API_SECRET must be set');
-      }
+    if (!livekitUrl || !lkKey || !lkSecret) {
+      throw new AnamException('LIVEKIT_URL/API_KEY/API_SECRET must be set');
     }
 
     // who are we publishing on behalf of?
@@ -93,19 +89,16 @@ export class AvatarSession {
     );
 
     // build a LiveKit token for the avatar worker (mirrors Python)
-    let jwt: string | undefined = undefined;
-    if (!devMode) {
-      jwt = await mintAvatarJoinToken({
-        roomName: room.name!,
-        avatarIdentity: this.opts.avatarParticipantIdentity ?? AVATAR_IDENTITY,
-        publishOnBehalf: localIdentity,
-        apiKey: lkKey,
-        apiSecret: lkSecret,
-      });
-    }
+    const jwt = await mintAvatarJoinToken({
+      roomName: room.name!,
+      avatarIdentity: this.opts.avatarParticipantIdentity ?? AVATAR_IDENTITY,
+      publishOnBehalf: localIdentity,
+      apiKey: lkKey,
+      apiSecret: lkSecret,
+    });
 
     const anam = new AnamAPI(apiKey, apiUrl, this.opts.connOptions);
-    logger.debug({ livekitUrl, devMode }, 'requesting Anam session token');
+    logger.debug({ livekitUrl }, 'requesting Anam session token');
 
     const { sessionToken } = await anam.createSessionToken({
       personaConfig: {
