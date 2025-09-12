@@ -59,8 +59,8 @@ const runWorker = async (args: CliArgs) => {
 
   try {
     await worker.run();
-  } catch {
-    logger.fatal('closing worker due to error.');
+  } catch (err) {
+    logger.fatal({ err }, 'closing worker due to error');
     process.exit(1);
   }
 };
@@ -145,6 +145,7 @@ export const runApp = (opts: WorkerOptions) => {
     )
     .action(() => {
       const options = program.optsWithGlobals();
+      // Prefer explicit CLI flag, then env var, then existing/default
       opts.wsURL = options.url || opts.wsURL;
       opts.apiKey = options.apiKey || opts.apiKey;
       opts.apiSecret = options.apiSecret || opts.apiSecret;
@@ -170,6 +171,7 @@ export const runApp = (opts: WorkerOptions) => {
     )
     .action((...[, command]) => {
       const options = command.optsWithGlobals();
+      // Prefer explicit CLI flag, then env var, then existing/default
       opts.wsURL = options.url || opts.wsURL;
       opts.apiKey = options.apiKey || opts.apiKey;
       opts.apiSecret = options.apiSecret || opts.apiSecret;

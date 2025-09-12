@@ -162,6 +162,9 @@ importers:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../agents
+      '@livekit/agents-plugin-anam':
+        specifier: workspace:*
+        version: link:../plugins/anam
       '@livekit/agents-plugin-cartesia':
         specifier: workspace:*
         version: link:../plugins/cartesia
@@ -195,6 +198,9 @@ importers:
       '@livekit/rtc-node':
         specifier: ^0.13.11
         version: 0.13.13
+      dotenv:
+        specifier: ^16.6.1
+        version: 16.6.1
       livekit-server-sdk:
         specifier: ^2.9.2
         version: 2.9.2
@@ -214,6 +220,40 @@ importers:
       vitest:
         specifier: ^3.2.2
         version: 3.2.2(@types/node@22.15.30)
+
+  plugins/anam:
+    dependencies:
+      livekit-server-sdk:
+        specifier: ^2.9.2
+        version: 2.9.2
+      ws:
+        specifier: ^8.16.0
+        version: 8.18.3
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../openai
+      '@livekit/agents-plugins-test':
+        specifier: workspace:*
+        version: link:../test
+      '@livekit/rtc-node':
+        specifier: ^0.13.12
+        version: 0.13.13
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@22.15.30)
+      '@types/ws':
+        specifier: ^8.5.10
+        version: 8.5.10
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.4.5
 
   plugins/cartesia:
     dependencies:
@@ -2302,6 +2342,10 @@ packages:
 
   dotenv@16.0.3:
     resolution: {integrity: sha512-7GO6HghkA5fYG9TYnNxi14/7K9f5occMlp3zXAuSxn7CKCxt9xbNWG7yF8hTCSUchlfWSe3uLmlPfigevRItzQ==}
+    engines: {node: '>=12'}
+
+  dotenv@16.6.1:
+    resolution: {integrity: sha512-uBq4egWHTcTt33a72vpSG0z3HnPuIl6NqYcTrKEg2azoEyl2hpW0zqlxysq2pK9HlDIHyHyakeYaYnSAwd8bow==}
     engines: {node: '>=12'}
 
   dotenv@8.6.0:
@@ -6090,6 +6134,8 @@ snapshots:
       esutils: 2.0.3
 
   dotenv@16.0.3: {}
+
+  dotenv@16.6.1: {}
 
   dotenv@8.6.0: {}
 

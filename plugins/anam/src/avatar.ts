@@ -1,0 +1,123 @@
+import { Room, TrackKind } from '@livekit/rtc-node';
+import { voice, log } from '@livekit/agents';
+import { AnamAPI, } from './api.js';
+import { AnamException, type PersonaConfig, type APIConnectOptions } from './types.js';
+import { AccessToken, type VideoGrant } from 'livekit-server-sdk';
+
+export async function mintAvatarJoinToken({
+    roomName,
+    avatarIdentity,                 // e.g. `anam:${roomName}`
+    publishOnBehalf,                // your agent's identity
+    apiKey = process.env.LIVEKIT_API_KEY!,
+    apiSecret = process.env.LIVEKIT_API_SECRET!,
+    ttl = '60s',
+  }: {
+    roomName: string;
+    avatarIdentity: string;
+    publishOnBehalf: string;
+    apiKey?: string;
+    apiSecret?: string;
+    ttl?: string | number;
+  }): Promise<string> {
+    const at = new AccessToken(apiKey, apiSecret);
+    at.identity = avatarIdentity;
+    at.name = 'Anam Avatar';
+    at.kind = 'agent';                                   // avatar joins as Agent
+    at.ttl = ttl;
+    at.attributes = { 'lk.publish_on_behalf': publishOnBehalf };
+  
+    at.addGrant({ roomJoin: true, room: roomName } as VideoGrant);
+    return at.toJwt();
+  }
+
+
+const AVATAR_IDENTITY = 'anam-avatar-agent';
+const AVATAR_NAME = 'anam-avatar-agent';
+
+export class AvatarSession {
+  private sessionId?: string;
+
+  constructor(
+    private opts: {
+      personaConfig: PersonaConfig;
+      apiUrl?: string;
+      apiKey?: string;
+      avatarParticipantIdentity?: string;
+      avatarParticipantName?: string;
+      connOptions?: APIConnectOptions;
+    }
+  ) {}
+
+  async start(
+    agentSession: voice.AgentSession,
+    room: Room,
+    params?: {
+      livekitUrl?: string;
+      livekitApiKey?: string;
+      livekitApiSecret?: string;
+    }
+  ) {
+    const logger = log().child({ module: 'AnamAvatar' });
+    const apiKey = this.opts.apiKey ?? process.env.ANAM_API_KEY;
+    if (!apiKey) throw new AnamException('ANAM_API_KEY is required');
+
+    const apiUrl = this.opts.apiUrl ?? process.env.ANAM_API_URL;
+    const livekitUrl = params?.livekitUrl ?? process.env.LIVEKIT_URL;
+    const lkKey = params?.livekitApiKey ?? process.env.LIVEKIT_API_KEY;
+    const lkSecret = params?.livekitApiSecret ?? process.env.LIVEKIT_API_SECRET;
+    const devMode = Boolean(apiUrl && apiUrl.includes('anam.dev')) || process.env.ANAM_DEV_MODE === '1';
+
+    if (!devMode) {
+      if (!livekitUrl || !lkKey || !lkSecret) {
+        throw new AnamException('LIVEKIT_URL/API_KEY/API_SECRET must be set');
+      }
+    }
+
+    // who are we publishing on behalf of?
+    const localIdentity =
+      (room.localParticipant && room.localParticipant.identity) || 'agent';
+
+    logger.debug({
+      personaName: this.opts.personaConfig?.name,
+      avatarId: this.opts.personaConfig?.avatarId,
+      apiUrl: apiUrl ?? '(default https://api.anam.ai)',
+      livekitUrl,
+      avatarParticipantIdentity: this.opts.avatarParticipantIdentity ?? 'anam-avatar-agent',
+      publishOnBehalf: localIdentity,
+    }, 'starting Anam avatar session');
+
+    // build a LiveKit token for the avatar worker (mirrors Python)
+    let jwt: string | undefined = undefined;
+    if (!devMode) {
+      jwt = await mintAvatarJoinToken({
+        roomName: room.name!,
+        avatarIdentity: this.opts.avatarParticipantIdentity ?? AVATAR_IDENTITY,
+        publishOnBehalf: localIdentity,
+        apiKey: lkKey,
+        apiSecret: lkSecret,
+      });
+    }
+
+    const anam = new AnamAPI(apiKey, apiUrl, this.opts.connOptions);
+    logger.debug({ livekitUrl, devMode }, 'requesting Anam session token');
+
+    const { sessionToken } = await anam.createSessionToken({
+      personaConfig: {
+        name: this.opts.personaConfig?.name,
+        avatarId: this.opts.personaConfig?.avatarId,
+      },
+      livekitUrl,
+      livekitToken: jwt,
+    });
+    logger.debug('starting Anam engine session');
+    const started = await anam.startEngineSession({ sessionToken });
+    this.sessionId = started.sessionId;
+
+    // route the agent audio to the avatar via data channel & wait for video
+    agentSession.output.audio = new voice.DataStreamAudioOutput({
+      room,
+      destinationIdentity: this.opts.avatarParticipantIdentity ?? AVATAR_IDENTITY,
+      waitRemoteTrack: TrackKind.KIND_VIDEO,
+    });
+  }
+}

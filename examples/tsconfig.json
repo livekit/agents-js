@@ -4,7 +4,6 @@
   "compilerOptions": {
     // match output dir to input dir. e.g. dist/index instead of dist/src/index
     "rootDir": "./src",
-    "declarationDir": "./dist",
-    "outDir": "./dist"
+    "declarationDir": "./dist"
   }
 }
