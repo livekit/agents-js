@@ -34,7 +34,6 @@
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/noise-cancellation-node": "^0.1.9",
     "@livekit/rtc-node": "^0.13.11",
-    "dotenv": "^16.6.1",
     "livekit-server-sdk": "^2.9.2",
     "zod": "^3.23.8"
   }

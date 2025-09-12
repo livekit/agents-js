@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import dotenv from 'dotenv';
-dotenv.config({ path: new URL('../../.env', import.meta.url).pathname });
-
 import {
   type JobContext,
   WorkerOptions,
