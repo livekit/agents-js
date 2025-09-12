@@ -14,7 +14,6 @@ SPDX-License-Identifier: Apache-2.0
 <!--END_BANNER_IMAGE-->
 
 # LiveKit Agents for Node.js
-
 <!--BEGIN_DESCRIPTION-->
 
 The Agent Framework is designed for building realtime, programmable participants that run on
