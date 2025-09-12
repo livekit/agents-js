@@ -238,8 +238,6 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    await ctx.connect();
-
     const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
       vad,

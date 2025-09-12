@@ -241,7 +241,6 @@ export default defineAgent({
       },
     });
 
-    await ctx.connect();
     session.generateReply({
       userInput: 'Greet to the user',
     });

@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.3
+
+### Patch Changes
+
+- Remove requirement to call ctx.connect in entrypoint function - [#689](https://github.com/livekit/agents-js/pull/689) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- Fix agent session race condition by always waiting for activity to start - [#688](https://github.com/livekit/agents-js/pull/688) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.2
 
 ### Patch Changes

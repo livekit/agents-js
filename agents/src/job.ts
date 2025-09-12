@@ -10,21 +10,13 @@ import type {
   RtcConfiguration,
 } from '@livekit/rtc-node';
 import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Logger } from 'pino';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
 
-export class CurrentJobContext {
-  static #current: JobContext;
-
-  constructor(proc: JobContext) {
-    CurrentJobContext.#current = proc;
-  }
-
-  static getCurrent(): JobContext {
-    return CurrentJobContext.#current;
-  }
-}
+// AsyncLocalStorage for job context, similar to Python's contextvars
+const jobContextStorage = new AsyncLocalStorage<JobContext>();
 
 /**
  * Returns the current job context.
@@ -32,11 +24,27 @@ export class CurrentJobContext {
  * @throws {Error} if no job context is found
  */
 export function getJobContext(): JobContext {
-  const ctx = CurrentJobContext.getCurrent();
+  const ctx = jobContextStorage.getStore();
   if (!ctx) {
     throw new Error('no job context found, are you running this code inside a job entrypoint?');
   }
   return ctx;
+}
+
+/**
+ * Runs a function within a job context, similar to Python's contextvars.
+ * @internal
+ */
+export function runWithJobContext<T>(context: JobContext, fn: () => T): T {
+  return jobContextStorage.run(context, fn);
+}
+
+/**
+ * Runs an async function within a job context, similar to Python's contextvars.
+ * @internal
+ */
+export function runWithJobContextAsync<T>(context: JobContext, fn: () => Promise<T>): Promise<T> {
+  return jobContextStorage.run(context, fn);
 }
 
 /** Which tracks, if any, should the agent automatically subscribe to? */
@@ -88,6 +96,8 @@ export class JobContext {
   } = {};
   #logger: Logger;
   #inferenceExecutor: InferenceExecutor;
+
+  private connected: boolean = false;
 
   constructor(
     proc: JobProcess,
@@ -191,6 +201,10 @@ export class JobContext {
     autoSubscribe: AutoSubscribe = AutoSubscribe.SUBSCRIBE_ALL,
     rtcConfig?: RtcConfiguration,
   ) {
+    if (this.connected) {
+      return;
+    }
+
     const opts = {
       e2ee,
       autoSubscribe: autoSubscribe == AutoSubscribe.SUBSCRIBE_ALL,
@@ -215,6 +229,7 @@ export class JobContext {
         });
       });
     }
+    this.connected = true;
   }
 
   /**

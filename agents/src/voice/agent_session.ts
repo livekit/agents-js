@@ -5,6 +5,7 @@ import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
+import { getJobContext } from '../job.js';
 import { ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
@@ -184,6 +185,7 @@ export class AgentSession<
     this.agent = agent;
     this._updateAgentState('initializing');
 
+    const tasks: Promise<void>[] = [];
     // Check for existing input/output configuration and warn if needed
     if (this.input.audio && inputOptions?.audioEnabled !== false) {
       this.logger.warn('RoomIO audio input is enabled but input.audio is already set, ignoring..');
@@ -209,7 +211,15 @@ export class AgentSession<
     });
     this.roomIO.start();
 
-    this.updateActivity(this.agent);
+    const ctx = getJobContext();
+    if (ctx && ctx.room === room && !room.isConnected) {
+      this.logger.debug('Auto-connecting to room via job context');
+      tasks.push(ctx.connect());
+    }
+    // TODO(AJS-265): add shutdown callback to job context
+    tasks.push(this.updateActivity(this.agent));
+
+    await Promise.allSettled(tasks);
 
     // Log used IO configuration
     this.logger.debug(
@@ -220,7 +230,6 @@ export class AgentSession<
       `using transcript io: \`AgentSession\` -> ${this.output.transcription ? '`' + this.output.transcription.constructor.name + '`' : '(none)'}`,
     );
 
-    this.logger.debug('AgentSession started');
     this.started = true;
     this._updateAgentState('listening');
   }
