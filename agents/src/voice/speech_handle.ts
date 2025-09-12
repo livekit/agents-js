@@ -1,14 +1,9 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-<<<<<<< HEAD
 import type { ChatItem } from '../llm/index.js';
 import { Event, Future, shortuuid } from '../utils.js';
 import type { Task } from '../utils.js';
-=======
-import type { ChatMessage } from '../llm/index.js';
-import { Future, shortuuid } from '../utils.js';
->>>>>>> fbbdda90f2b203c0da4068c34ad26a421c499183
 import { asyncLocalStorage } from './agent.js';
 
 export class SpeechHandle {
