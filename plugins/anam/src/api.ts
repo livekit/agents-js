@@ -2,31 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { log } from '@livekit/agents';
-import { type APIConnectOptions, AnamException } from './types.js';
+import { type APIConnectOptions, AnamException, type PersonaConfig } from './types.js';
 
 const DEFAULT_API_URL = 'https://api.anam.ai';
-
-type APIPaths = { tokenPath?: string; startPath?: string };
 
 export class AnamAPI {
   constructor(
     private apiKey: string,
     private apiUrl: string = DEFAULT_API_URL,
     private conn: APIConnectOptions = { maxRetry: 3, retryInterval: 2, timeout: 10 },
-    private paths: APIPaths = {},
   ) {}
 
   private get tokenPath(): string {
-    return (
-      this.paths.tokenPath ||
-      process.env.ANAM_SESSION_TOKEN_PATH ||
-      // Default to the v1 auth endpoint; older '/sessions/token' is deprecated
-      '/v1/auth/session-token'
-    );
+    return '/v1/auth/session-token';
   }
 
   private get startPath(): string {
-    return this.paths.startPath || process.env.ANAM_SESSION_START_PATH || '/v1/engine/session';
+    return '/v1/engine/session';
   }
 
   private async postWithHeaders<T>(
@@ -35,7 +27,7 @@ export class AnamAPI {
     headersIn: Record<string, string>,
   ): Promise<T> {
     const url = `${this.apiUrl}${path}`;
-    const { maxRetry = 3, retryInterval = 2, timeout = 10 } = this.conn;
+    const { maxRetry = 3, retryInterval = 2 } = this.conn;
     let lastErr: unknown;
     const logger = log().child({ module: 'AnamAPI' });
 
@@ -128,7 +120,7 @@ export class AnamAPI {
   }
 
   createSessionToken(params: {
-    personaConfig: import('./types.js').PersonaConfig;
+    personaConfig: PersonaConfig;
     livekitUrl?: string;
     livekitToken?: string;
   }) {

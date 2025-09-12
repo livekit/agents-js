@@ -1,13 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  type JobContext,
-  WorkerOptions,
-  cli,
-  defineAgent,
-  voice,
-} from '@livekit/agents';
+import { type JobContext, WorkerOptions, cli, defineAgent, voice } from '@livekit/agents';
 import * as anam from '@livekit/agents-plugin-anam';
 import * as openai from '@livekit/agents-plugin-openai';
 import { fileURLToPath } from 'node:url';
@@ -17,8 +11,7 @@ import { fileURLToPath } from 'node:url';
 export default defineAgent({
   entry: async (ctx: JobContext) => {
     const agent = new voice.Agent({
-      instructions:
-        "You are a helpful assistant. Speak clearly and concisely.",
+      instructions: 'You are a helpful assistant. Speak clearly and concisely.',
     });
 
     const session = new voice.AgentSession({

@@ -34,7 +34,7 @@ export async function mintAvatarJoinToken({
 }
 
 const AVATAR_IDENTITY = 'anam-avatar-agent';
-const AVATAR_NAME = 'anam-avatar-agent';
+const _AVATAR_NAME = 'anam-avatar-agent';
 
 export class AvatarSession {
   private sessionId?: string;
