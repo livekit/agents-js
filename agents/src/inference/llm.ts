@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import OpenAI from 'openai';
-import type { Stream } from 'openai/streaming.mjs';
 import {
   APIConnectionError,
   APIStatusError,
@@ -12,8 +11,8 @@ import {
   toError,
 } from '../index.js';
 import type { APIConnectOptions } from '../types.js';
-import { createAccessToken } from './_utils.js';
 import type { LLMModels } from './models.js';
+import { createAccessToken } from './utils.js';
 
 type Verbosity = 'low' | 'medium' | 'high';
 const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
@@ -30,6 +29,11 @@ export interface InferenceLLMOptions {
   apiSecret: string;
   verbosity?: Verbosity;
   extraKwargs: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+}
+
+export interface GatewayOptions {
+  apiKey: string;
+  apiSecret: string;
 }
 
 export class LLM extends llm.LLM {
@@ -66,6 +70,7 @@ export class LLM extends llm.LLM {
       apiSecret,
       maxRetries,
       timeout,
+      verbosity,
       extraKwargs,
     } = opts;
 
@@ -84,9 +89,10 @@ export class LLM extends llm.LLM {
     this.opts = {
       model,
       temperature,
-      topP: topP,
-      parallelToolCalls: parallelToolCalls,
-      toolChoice: toolChoice,
+      topP,
+      parallelToolCalls,
+      toolChoice,
+      verbosity,
       maxCompletionTokens,
       baseURL: lkBaseURL,
       apiKey: lkApiKey,
@@ -95,7 +101,6 @@ export class LLM extends llm.LLM {
     };
 
     this.client = new OpenAI({
-      apiKey: createAccessToken(this.opts.apiKey, this.opts.apiSecret),
       baseURL: this.opts.baseURL,
       maxRetries: maxRetries || 0,
       timeout: timeout || 15000,
@@ -154,8 +159,6 @@ export class LLM extends llm.LLM {
 
     extras = { ...extras, ...this.opts.extraKwargs };
 
-    // reset the access token to avoid expiration
-    this.client.apiKey = createAccessToken(this.opts.apiKey, this.opts.apiSecret);
     return new LLMStream(this, {
       model: this.opts.model,
       providerFmt: 'openai',
@@ -164,13 +167,13 @@ export class LLM extends llm.LLM {
       toolCtx,
       connOptions,
       extraKwargs: extras,
+      gatewayOptions: {
+        apiKey: this.opts.apiKey,
+        apiSecret: this.opts.apiSecret,
+      },
     });
   }
 }
-
-type OAIStream = Stream<OpenAI.Chat.Completions.ChatCompletionChunk> & {
-  _request_id?: string | null;
-};
 
 export class LLMStream extends llm.LLMStream {
   private model: string | LLMModels;
@@ -178,11 +181,11 @@ export class LLMStream extends llm.LLMStream {
   private client: OpenAI;
   private extraKwargs: Record<string, any>;
 
+  private gatewayOptions?: GatewayOptions;
   private toolCallId?: string;
   private toolIndex?: number;
   private fncName?: string;
   private fncRawArguments?: string;
-  private oaiStream?: OAIStream;
 
   constructor(
     llm: LLM,
@@ -192,6 +195,7 @@ export class LLMStream extends llm.LLMStream {
       client,
       chatCtx,
       toolCtx,
+      gatewayOptions,
       connOptions,
       extraKwargs,
     }: {
@@ -200,12 +204,14 @@ export class LLMStream extends llm.LLMStream {
       client: OpenAI;
       chatCtx: llm.ChatContext;
       toolCtx?: llm.ToolContext;
+      gatewayOptions?: GatewayOptions;
       connOptions: APIConnectOptions;
       extraKwargs: Record<string, any>;
     },
   ) {
     super(llm, { chatCtx, toolCtx, connOptions });
     this.client = client;
+    this.gatewayOptions = gatewayOptions;
     this.providerFmt = providerFmt;
     this.extraKwargs = extraKwargs;
     this.model = model;
@@ -215,12 +221,7 @@ export class LLMStream extends llm.LLMStream {
     // current function call that we're waiting for full completion (args are streamed)
     // (defined inside the run method to make sure the state is reset for each run/attempt)
     let retryable = true;
-    this.oaiStream =
-      this.toolCallId =
-      this.fncName =
-      this.fncRawArguments =
-      this.toolIndex =
-        undefined;
+    this.toolCallId = this.fncName = this.fncRawArguments = this.toolIndex = undefined;
 
     try {
       const messages = (await this.chatCtx.toProviderFormat(
@@ -245,7 +246,14 @@ export class LLMStream extends llm.LLMStream {
         delete requestExtras.tool_choice;
       }
 
-      // Mint short-lived JWT for Agent Gateway and send via header override
+      // Dynamically set the access token for the LiveKit Agent Gateway API
+      if (this.gatewayOptions) {
+        this.client.apiKey = await createAccessToken(
+          this.gatewayOptions.apiKey,
+          this.gatewayOptions.apiSecret,
+        );
+      }
+
       const stream = await this.client.chat.completions.create(
         {
           model: this.model,
@@ -259,7 +267,6 @@ export class LLMStream extends llm.LLMStream {
           timeout: this.connOptions.timeoutMs,
         },
       );
-      this.oaiStream = stream;
 
       for await (const chunk of stream) {
         for (const choice of chunk.choices) {
