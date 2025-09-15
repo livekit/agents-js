@@ -441,9 +441,10 @@ export class AgentActivity implements RecognitionHooks {
         speechHandle: handle,
       }),
     );
-
     const task = this.createSpeechTask({
-      task: Task.from(() => this.ttsTask(handle, text, addToChatCtx, {}, audio)),
+      task: Task.from((abortController: AbortController) =>
+        this.ttsTask(handle, text, addToChatCtx, {}, abortController, audio),
+      ),
       ownedSpeechHandle: handle,
       name: 'AgentActivity.say_tts',
     });
@@ -572,7 +573,9 @@ export class AgentActivity implements RecognitionHooks {
     this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
 
     this.createSpeechTask({
-      task: Task.from(() => this.realtimeGenerationTask(handle, ev, {})),
+      task: Task.from((abortController: AbortController) =>
+        this.realtimeGenerationTask(handle, ev, {}, abortController),
+      ),
       ownedSpeechHandle: handle,
       name: 'AgentActivity.realtimeGeneration',
     });
@@ -827,7 +830,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.llm instanceof RealtimeModel) {
       this.createSpeechTask({
-        task: Task.from(() =>
+        task: Task.from((abortController: AbortController) =>
           this.realtimeReplyTask({
             speechHandle: handle,
             // TODO(brian): support llm.ChatMessage for the realtime model
@@ -837,6 +840,7 @@ export class AgentActivity implements RecognitionHooks {
               // isGiven(toolChoice) = toolChoice !== undefined
               toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice),
             },
+            abortController,
           }),
         ),
         ownedSpeechHandle: handle,
@@ -851,7 +855,7 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       const task = this.createSpeechTask({
-        task: Task.from(() =>
+        task: Task.from((abortController: AbortController) =>
           this.pipelineReplyTask(
             handle,
             chatCtx ?? this.agent.chatCtx,
@@ -859,6 +863,7 @@ export class AgentActivity implements RecognitionHooks {
             {
               toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice),
             },
+            abortController,
             instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
             userMessage,
           ),
@@ -1000,6 +1005,7 @@ export class AgentActivity implements RecognitionHooks {
     text: string | ReadableStream<string>,
     addToChatCtx: boolean,
     modelSettings: ModelSettings,
+    replyAbortController: AbortController,
     audio?: ReadableStream<AudioFrame> | null,
   ): Promise<void> {
     speechHandleStorage.enterWith(speechHandle);
@@ -1012,7 +1018,6 @@ export class AgentActivity implements RecognitionHooks {
       ? this.agentSession.output.audio
       : null;
 
-    const replyAbortController = new AbortController();
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
 
     if (speechHandle.interrupted) {
@@ -1122,13 +1127,12 @@ export class AgentActivity implements RecognitionHooks {
     chatCtx: ChatContext,
     toolCtx: ToolContext,
     modelSettings: ModelSettings,
+    replyAbortController: AbortController,
     instructions?: string,
     newMessage?: ChatMessage,
     toolsMessages?: ChatItem[],
   ): Promise<void> {
     speechHandleStorage.enterWith(speechHandle);
-
-    const replyAbortController = new AbortController();
 
     const audioOutput = this.agentSession.output.audioEnabled
       ? this.agentSession.output.audio
@@ -1448,6 +1452,7 @@ export class AgentActivity implements RecognitionHooks {
             chatCtx,
             toolCtx,
             { toolChoice: respondToolChoice },
+            replyAbortController,
             instructions,
             undefined,
             toolMessages,
@@ -1472,6 +1477,7 @@ export class AgentActivity implements RecognitionHooks {
     speechHandle: SpeechHandle,
     ev: GenerationCreatedEvent,
     modelSettings: ModelSettings,
+    replyAbortController: AbortController,
   ): Promise<void> {
     speechHandleStorage.enterWith(speechHandle);
 
@@ -1504,8 +1510,6 @@ export class AgentActivity implements RecognitionHooks {
     const onFirstFrame = () => {
       this.agentSession._updateAgentState('speaking');
     };
-
-    const replyAbortController = new AbortController();
 
     const readMessages = async (
       abortController: AbortController,
@@ -1813,10 +1817,11 @@ export class AgentActivity implements RecognitionHooks {
 
     const toolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
     this.createSpeechTask({
-      task: Task.from(() =>
+      task: Task.from((abortController: AbortController) =>
         this.realtimeReplyTask({
           speechHandle: replySpeechHandle,
           modelSettings: { toolChoice },
+          abortController,
         }),
       ),
       ownedSpeechHandle: replySpeechHandle,
@@ -1831,9 +1836,11 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: { toolChoice },
     userInput,
     instructions,
+    abortController,
   }: {
     speechHandle: SpeechHandle;
     modelSettings: ModelSettings;
+    abortController: AbortController;
     userInput?: string;
     instructions?: string;
   }): Promise<void> {
@@ -1863,7 +1870,12 @@ export class AgentActivity implements RecognitionHooks {
 
     try {
       const generationEvent = await this.realtimeSession.generateReply(instructions);
-      await this.realtimeGenerationTask(speechHandle, generationEvent, { toolChoice });
+      await this.realtimeGenerationTask(
+        speechHandle,
+        generationEvent,
+        { toolChoice },
+        abortController,
+      );
     } finally {
       // reset toolChoice value
       if (toolChoice !== undefined && toolChoice !== originalToolChoice) {
