@@ -12,7 +12,11 @@ import {
   toError,
 } from '../index.js';
 import type { APIConnectOptions } from '../types.js';
+import { createAccessToken } from './_utils.js';
 import type { LLMModels } from './models.js';
+
+type Verbosity = 'low' | 'medium' | 'high';
+const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 
 export interface InferenceLLMOptions {
   model: string | LLMModels;
@@ -21,52 +25,81 @@ export interface InferenceLLMOptions {
   parallelToolCalls?: boolean;
   toolChoice?: llm.ToolChoice;
   maxCompletionTokens?: number;
-  baseURL?: string;
-  apiKey?: string;
-  apiSecret?: string;
-  extraKwargs?: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  baseURL: string;
+  apiKey: string;
+  apiSecret: string;
+  verbosity?: Verbosity;
+  extraKwargs: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
-const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
-
 export class LLM extends llm.LLM {
-  #opts: InferenceLLMOptions;
   private client: OpenAI;
+  private opts: InferenceLLMOptions;
 
-  constructor(opts: Partial<InferenceLLMOptions>) {
+  constructor(
+    model: LLMModels | string,
+    opts: {
+      temperature?: number;
+      topP?: number;
+      parallelToolCalls?: boolean;
+      toolChoice?: llm.ToolChoice;
+      maxCompletionTokens?: number;
+      baseURL?: string;
+      apiKey?: string;
+      apiSecret?: string;
+      maxRetries?: number;
+      timeout?: number;
+      verbosity?: Verbosity;
+      extraKwargs?: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    },
+  ) {
     super();
-    const baseURL = opts.baseURL || process.env.LIVEKIT_GATEWAY_URL || DEFAULT_BASE_URL;
-    const apiKey =
-      opts.apiKey || process.env.LIVEKIT_GATEWAY_API_KEY || process.env.LIVEKIT_API_KEY;
-    const apiSecret =
-      opts.apiSecret || process.env.LIVEKIT_GATEWAY_API_SECRET || process.env.LIVEKIT_API_SECRET;
 
-    if (!apiKey) {
-      throw new Error(
-        'apiKey is required: pass apiKey or set LIVEKIT_API_KEY/LIVEKIT_GATEWAY_API_KEY',
-      );
-    }
-    if (!apiSecret) {
-      throw new Error(
-        'apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET/LIVEKIT_GATEWAY_API_SECRET',
-      );
-    }
-
-    this.#opts = {
-      model: opts.model || 'openai/gpt-4o-mini',
-      temperature: opts.temperature,
-      topP: opts.topP,
-      parallelToolCalls: opts.parallelToolCalls,
-      toolChoice: opts.toolChoice,
-      maxCompletionTokens: opts.maxCompletionTokens,
+    const {
+      temperature,
+      topP,
+      parallelToolCalls,
+      toolChoice,
+      maxCompletionTokens,
       baseURL,
       apiKey,
       apiSecret,
-      extraKwargs: opts.extraKwargs || {},
+      maxRetries,
+      timeout,
+      extraKwargs,
+    } = opts;
+
+    const lkBaseURL = baseURL || process.env.LIVEKIT_GATEWAY_URL || DEFAULT_BASE_URL;
+    const lkApiKey = apiKey || process.env.LIVEKIT_GATEWAY_API_KEY || process.env.LIVEKIT_API_KEY;
+    if (!lkApiKey) {
+      throw new Error('apiKey is required: pass apiKey or set LIVEKIT_API_KEY');
+    }
+
+    const lkApiSecret =
+      apiSecret || process.env.LIVEKIT_GATEWAY_API_SECRET || process.env.LIVEKIT_API_SECRET;
+    if (!lkApiSecret) {
+      throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
+    }
+
+    this.opts = {
+      model,
+      temperature,
+      topP: topP,
+      parallelToolCalls: parallelToolCalls,
+      toolChoice: toolChoice,
+      maxCompletionTokens,
+      baseURL: lkBaseURL,
+      apiKey: lkApiKey,
+      apiSecret: lkApiSecret,
+      extraKwargs: extraKwargs || {},
     };
 
-    // Base OpenAI client pointed at Agent Gateway; per-request auth via header override
-    this.client = new OpenAI({ baseURL, apiKey: 'placeholder' });
+    this.client = new OpenAI({
+      apiKey: createAccessToken(this.opts.apiKey, this.opts.apiSecret),
+      baseURL: this.opts.baseURL,
+      maxRetries: maxRetries || 0,
+      timeout: timeout || 15000,
+    });
   }
 
   label(): string {
@@ -74,7 +107,7 @@ export class LLM extends llm.LLM {
   }
 
   get model(): string {
-    return this.#opts.model;
+    return this.opts.model;
   }
 
   chat({
@@ -92,31 +125,39 @@ export class LLM extends llm.LLM {
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, any>;
   }): LLMStream {
-    const extras: Record<string, any> = { ...(extraKwargs || {}) }; // eslint-disable-line @typescript-eslint/no-explicit-any
+    let extras: Record<string, any> = { ...(extraKwargs || {}) }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-    if (this.#opts.maxCompletionTokens !== undefined) {
-      extras.max_completion_tokens = this.#opts.maxCompletionTokens;
+    if (this.opts.maxCompletionTokens !== undefined) {
+      extras.max_completion_tokens = this.opts.maxCompletionTokens;
     }
-    if (this.#opts.temperature !== undefined) {
-      extras.temperature = this.#opts.temperature;
+    if (this.opts.temperature !== undefined) {
+      extras.temperature = this.opts.temperature;
     }
-    if (this.#opts.topP !== undefined) {
-      extras.top_p = this.#opts.topP;
+    if (this.opts.topP !== undefined) {
+      extras.top_p = this.opts.topP;
+    }
+
+    if (this.opts.verbosity !== undefined) {
+      extras.verbosity = this.opts.verbosity;
     }
 
     parallelToolCalls =
-      parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
+      parallelToolCalls !== undefined ? parallelToolCalls : this.opts.parallelToolCalls;
     if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
       extras.parallel_tool_calls = parallelToolCalls;
     }
 
-    toolChoice = toolChoice !== undefined ? toolChoice : this.#opts.toolChoice;
+    toolChoice = toolChoice !== undefined ? toolChoice : this.opts.toolChoice;
     if (toolChoice) {
       extras.tool_choice = toolChoice;
     }
 
+    extras = { ...extras, ...this.opts.extraKwargs };
+
+    // reset the access token to avoid expiration
+    this.client.apiKey = createAccessToken(this.opts.apiKey, this.opts.apiSecret);
     return new LLMStream(this, {
-      model: this.#opts.model,
+      model: this.opts.model,
       providerFmt: 'openai',
       client: this.client,
       chatCtx,
