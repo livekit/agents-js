@@ -1,6 +1,6 @@
-// String literal unions for supported Inference models and languages
-// Ported from Python definitions in livekit-agents `inference/models.py`
-
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 export type TTSModels =
   | 'cartesia'
   | 'cartesia/sonic'
