@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import type { APIConnectOptions } from '../types.js';
+import OpenAI from 'openai';
+import type { Stream } from 'openai/streaming.mjs';
 import {
   APIConnectionError,
   APIStatusError,
@@ -11,9 +11,8 @@ import {
   llm,
   toError,
 } from '../index.js';
+import type { APIConnectOptions } from '../types.js';
 import type { LLMModels } from './models.js';
-import { createAccessToken } from './_utils.js';
-import OpenAI from 'openai';
 
 export interface InferenceLLMOptions {
   model: string | LLMModels;
@@ -32,17 +31,15 @@ const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 
 export class LLM extends llm.LLM {
   #opts: InferenceLLMOptions;
+  private client: OpenAI;
 
   constructor(opts: Partial<InferenceLLMOptions>) {
     super();
-    const baseURL =
-      opts.baseURL || process.env.LIVEKIT_GATEWAY_URL || DEFAULT_BASE_URL;
+    const baseURL = opts.baseURL || process.env.LIVEKIT_GATEWAY_URL || DEFAULT_BASE_URL;
     const apiKey =
       opts.apiKey || process.env.LIVEKIT_GATEWAY_API_KEY || process.env.LIVEKIT_API_KEY;
     const apiSecret =
-      opts.apiSecret ||
-      process.env.LIVEKIT_GATEWAY_API_SECRET ||
-      process.env.LIVEKIT_API_SECRET;
+      opts.apiSecret || process.env.LIVEKIT_GATEWAY_API_SECRET || process.env.LIVEKIT_API_SECRET;
 
     if (!apiKey) {
       throw new Error(
@@ -67,6 +64,9 @@ export class LLM extends llm.LLM {
       apiSecret,
       extraKwargs: opts.extraKwargs || {},
     };
+
+    // Base OpenAI client pointed at Agent Gateway; per-request auth via header override
+    this.client = new OpenAI({ baseURL, apiKey: 'placeholder' });
   }
 
   label(): string {
@@ -117,9 +117,8 @@ export class LLM extends llm.LLM {
 
     return new LLMStream(this, {
       model: this.#opts.model,
-      baseURL: this.#opts.baseURL!,
-      apiKey: this.#opts.apiKey!,
-      apiSecret: this.#opts.apiSecret!,
+      providerFmt: 'openai',
+      client: this.client,
       chatCtx,
       toolCtx,
       connOptions,
@@ -128,33 +127,36 @@ export class LLM extends llm.LLM {
   }
 }
 
+type OAIStream = Stream<OpenAI.Chat.Completions.ChatCompletionChunk> & {
+  _request_id?: string | null;
+};
+
 export class LLMStream extends llm.LLMStream {
-  #toolCallId?: string;
-  #fncName?: string;
-  #fncRawArguments?: string;
-  #toolIndex?: number;
-  #extraKwargs: Record<string, any>;
-  #baseURL: string;
-  #apiKey: string;
-  #apiSecret: string;
-  #model: string | LLMModels;
+  private model: string | LLMModels;
+  private providerFmt: llm.ProviderFormat;
+  private client: OpenAI;
+  private extraKwargs: Record<string, any>;
+
+  private toolCallId?: string;
+  private toolIndex?: number;
+  private fncName?: string;
+  private fncRawArguments?: string;
+  private oaiStream?: OAIStream;
 
   constructor(
     llm: LLM,
     {
       model,
-      baseURL,
-      apiKey,
-      apiSecret,
+      providerFmt,
+      client,
       chatCtx,
       toolCtx,
       connOptions,
       extraKwargs,
     }: {
-      model: string | LLMModels;
-      baseURL: string;
-      apiKey: string;
-      apiSecret: string;
+      model: LLMModels | string;
+      providerFmt: llm.ProviderFormat;
+      client: OpenAI;
       chatCtx: llm.ChatContext;
       toolCtx?: llm.ToolContext;
       connOptions: APIConnectOptions;
@@ -162,18 +164,26 @@ export class LLMStream extends llm.LLMStream {
     },
   ) {
     super(llm, { chatCtx, toolCtx, connOptions });
-    this.#extraKwargs = extraKwargs;
-    this.#baseURL = baseURL;
-    this.#apiKey = apiKey;
-    this.#apiSecret = apiSecret;
-    this.#model = model;
+    this.client = client;
+    this.providerFmt = providerFmt;
+    this.extraKwargs = extraKwargs;
+    this.model = model;
   }
 
   protected async run(): Promise<void> {
+    // current function call that we're waiting for full completion (args are streamed)
+    // (defined inside the run method to make sure the state is reset for each run/attempt)
     let retryable = true;
+    this.oaiStream =
+      this.toolCallId =
+      this.fncName =
+      this.fncRawArguments =
+      this.toolIndex =
+        undefined;
+
     try {
       const messages = (await this.chatCtx.toProviderFormat(
-        'openai',
+        this.providerFmt,
       )) as OpenAI.ChatCompletionMessageParam[];
 
       const tools = this.toolCtx
@@ -189,28 +199,33 @@ export class LLMStream extends llm.LLMStream {
           }))
         : undefined;
 
-      // create a short-lived JWT on each request to avoid expiration issues
-      const jwt = await createAccessToken(this.#apiKey, this.#apiSecret, 600);
-      const client = new OpenAI({
-        baseURL: this.#baseURL,
-        apiKey: jwt,
-      });
+      const requestExtras: Record<string, any> = { ...this.extraKwargs }; // eslint-disable-line @typescript-eslint/no-explicit-any
+      if (!tools) {
+        delete requestExtras.tool_choice;
+      }
 
-      const stream = await client.chat.completions.create({
-        model: this.#model as string,
-        messages,
-        tools,
-        stream: true,
-        stream_options: { include_usage: true },
-        ...this.#extraKwargs,
-      });
+      // Mint short-lived JWT for Agent Gateway and send via header override
+      const stream = await this.client.chat.completions.create(
+        {
+          model: this.model,
+          messages,
+          tools,
+          stream: true,
+          stream_options: { include_usage: true },
+          ...requestExtras,
+        },
+        {
+          timeout: this.connOptions.timeoutMs,
+        },
+      );
+      this.oaiStream = stream;
 
       for await (const chunk of stream) {
         for (const choice of chunk.choices) {
           if (this.abortController.signal.aborted) {
             break;
           }
-          const chatChunk = this.#parseChoice(chunk.id, choice);
+          const chatChunk = this.parseChoice(chunk.id, choice);
           if (chatChunk) {
             retryable = false;
             this.queue.put(chatChunk);
@@ -240,7 +255,7 @@ export class LLMStream extends llm.LLMStream {
           options: {
             statusCode: error.status,
             body: error.error,
-            requestId: (error as any).request_id, // eslint-disable-line @typescript-eslint/no-explicit-any
+            requestId: error.request_id,
             retryable,
           },
         });
@@ -255,54 +270,89 @@ export class LLMStream extends llm.LLMStream {
     }
   }
 
-  #parseChoice(id: string, choice: OpenAI.ChatCompletionChunk.Choice): llm.ChatChunk | undefined {
+  private parseChoice(
+    id: string,
+    choice: OpenAI.ChatCompletionChunk.Choice,
+  ): llm.ChatChunk | undefined {
     const delta = choice.delta;
 
-    // Azure OpenAI may produce undefined delta when content filtered
+    // https://github.com/livekit/agents/issues/688
+    // the delta can be None when using Azure OpenAI (content filtering)
     if (delta === undefined) return undefined;
 
     if (delta.tool_calls) {
+      // check if we have functions to calls
       for (const tool of delta.tool_calls) {
-        if (!tool.function) continue;
+        if (!tool.function) {
+          continue; // oai may add other tools in the future
+        }
 
+        /**
+         * The way OpenAI streams tool calls is a bit tricky.
+         *
+         * For any new tool call, it first emits a delta tool call with id, and function name,
+         * the rest of the delta chunks will only stream the remaining arguments string,
+         * until a new tool call is started or the tool call is finished.
+         * See below for an example.
+         *
+         * Choice(delta=ChoiceDelta(content=None, function_call=None, refusal=None, role='assistant', tool_calls=None), finish_reason=None, index=0, logprobs=None)
+         * [ChoiceDeltaToolCall(index=0, id='call_LaVeHWUHpef9K1sd5UO8TtLg', function=ChoiceDeltaToolCallFunction(arguments='', name='get_weather'), type='function')]
+         * [ChoiceDeltaToolCall(index=0, id=None, function=ChoiceDeltaToolCallFunction(arguments='{"location": "P', name=None), type=None)]
+         * [ChoiceDeltaToolCall(index=0, id=None, function=ChoiceDeltaToolCallFunction(arguments='aris}', name=None), type=None)]
+         * [ChoiceDeltaToolCall(index=1, id='call_ThU4OmMdQXnnVmpXGOCknXIB', function=ChoiceDeltaToolCallFunction(arguments='', name='get_weather'), type='function')]
+         * [ChoiceDeltaToolCall(index=1, id=None, function=ChoiceDeltaToolCallFunction(arguments='{"location": "T', name=None), type=None)]
+         * [ChoiceDeltaToolCall(index=1, id=None, function=ChoiceDeltaToolCallFunction(arguments='okyo', name=None), type=None)]
+         * Choice(delta=ChoiceDelta(content=None, function_call=None, refusal=None, role=None, tool_calls=None), finish_reason='tool_calls', index=0, logprobs=None)
+         */
         let callChunk: llm.ChatChunk | undefined;
-        if (this.#toolCallId && tool.id && tool.index !== this.#toolIndex) {
-          callChunk = this.#createRunningToolCallChunk(id, delta);
-          this.#toolCallId = this.#fncName = this.#fncRawArguments = undefined;
+        // If we have a previous tool call and this is a new one, emit the previous
+        if (this.toolCallId && tool.id && tool.index !== this.toolIndex) {
+          callChunk = this.createRunningToolCallChunk(id, delta);
+          this.toolCallId = this.fncName = this.fncRawArguments = undefined;
         }
 
+        // Start or continue building the current tool call
         if (tool.function.name) {
-          this.#toolIndex = tool.index;
-          this.#toolCallId = tool.id;
-          this.#fncName = tool.function.name;
-          this.#fncRawArguments = tool.function.arguments || '';
+          this.toolIndex = tool.index;
+          this.toolCallId = tool.id;
+          this.fncName = tool.function.name;
+          this.fncRawArguments = tool.function.arguments || '';
         } else if (tool.function.arguments) {
-          this.#fncRawArguments = (this.#fncRawArguments || '') + tool.function.arguments;
+          this.fncRawArguments = (this.fncRawArguments || '') + tool.function.arguments;
         }
 
-        if (callChunk) return callChunk;
+        if (callChunk) {
+          return callChunk;
+        }
       }
     }
 
+    // If we're done with tool calls, emit the final one
     if (
       choice.finish_reason &&
       ['tool_calls', 'stop'].includes(choice.finish_reason) &&
-      this.#toolCallId !== undefined
+      this.toolCallId !== undefined
     ) {
-      const callChunk = this.#createRunningToolCallChunk(id, delta);
-      this.#toolCallId = this.#fncName = this.#fncRawArguments = undefined;
+      const callChunk = this.createRunningToolCallChunk(id, delta);
+      this.toolCallId = this.fncName = this.fncRawArguments = undefined;
       return callChunk;
     }
 
-    if (!delta.content) return undefined;
+    // Regular content message
+    if (!delta.content) {
+      return undefined;
+    }
 
     return {
       id,
-      delta: { role: 'assistant', content: delta.content },
+      delta: {
+        role: 'assistant',
+        content: delta.content,
+      },
     };
   }
 
-  #createRunningToolCallChunk(
+  private createRunningToolCallChunk(
     id: string,
     delta: OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta,
   ): llm.ChatChunk {
@@ -313,14 +363,12 @@ export class LLMStream extends llm.LLMStream {
         content: delta.content || undefined,
         toolCalls: [
           llm.FunctionCall.create({
-            callId: this.#toolCallId!,
-            name: this.#fncName || '',
-            args: this.#fncRawArguments || '',
+            callId: this.toolCallId || '',
+            name: this.fncName || '',
+            args: this.fncRawArguments || '',
           }),
         ],
       },
     };
   }
 }
-
-
