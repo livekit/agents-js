@@ -4,6 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
+import type { LLMModels, STTModels, TTSModels } from '../inference/index.js';
 import { ReadonlyChatContext } from '../llm/chat_context.js';
 import type { ChatMessage, FunctionCall, RealtimeModel } from '../llm/index.js';
 import {
@@ -55,10 +56,10 @@ export interface AgentOptions<UserData> {
   chatCtx?: ChatContext;
   tools?: ToolContext<UserData>;
   turnDetection?: TurnDetectionMode;
-  stt?: STT;
+  stt?: STT | STTModels | string;
   vad?: VAD;
-  llm?: LLM | RealtimeModel;
-  tts?: TTS;
+  llm?: LLM | RealtimeModel | LLMModels | string;
+  tts?: TTS | TTSModels | string;
   allowInterruptions?: boolean;
   minConsecutiveSpeechDelay?: number;
 }
@@ -101,10 +102,31 @@ export class Agent<UserData = any> {
       : ChatContext.empty();
 
     this.turnDetection = turnDetection;
-    this._stt = stt;
     this._vad = vad;
-    this._llm = llm;
-    this._tts = tts;
+
+    if (typeof stt === 'string') {
+      // TODO(brian): support inference.STT
+      throw new Error('string STT model ids are not supported yet; pass an STT instance');
+    } else {
+      this._stt = stt;
+    }
+
+    if (typeof llm === 'string') {
+      // TODO(brian): support inference.LLM
+      throw new Error(
+        'string LLM model ids are not supported yet; pass an LLM or RealtimeModel instance',
+      );
+    } else {
+      this._llm = llm;
+    }
+
+    if (typeof tts === 'string') {
+      // TODO(brian): support inference.TTS
+      throw new Error('string TTS model ids are not supported yet; pass a TTS instance');
+    } else {
+      this._tts = tts;
+    }
+
     this._agentActivity = undefined;
   }
 
