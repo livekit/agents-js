@@ -12,6 +12,7 @@
 import * as cli from './cli.js';
 import * as ipc from './ipc/index.js';
 import * as llm from './llm/index.js';
+import * as inference from './inference/index.js';
 import * as metrics from './metrics/index.js';
 import * as multimodal from './multimodal/index.js';
 import * as stream from './stream/index.js';
@@ -34,4 +35,4 @@ export * from './vad.js';
 export * from './version.js';
 export * from './worker.js';
 
-export { cli, ipc, llm, metrics, multimodal, stream, stt, tokenize, tts, voice };
+export { cli, ipc, inference, llm, metrics, multimodal, stream, stt, tokenize, tts, voice };
