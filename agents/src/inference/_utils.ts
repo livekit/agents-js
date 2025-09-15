@@ -10,6 +10,6 @@ export async function createAccessToken(
 ): Promise<string> {
   const token = new AccessToken(apiKey, apiSecret, { ttl: ttlSeconds });
   // Grant permission to perform inference via the Agent Gateway
-  token.addGrant({ inference: { perform: true } });
+  // token.addGrant({ inference: { perform: true } });
   return await token.toJwt();
 }
