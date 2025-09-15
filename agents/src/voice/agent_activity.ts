@@ -82,7 +82,7 @@ export class AgentActivity implements RecognitionHooks {
   private _currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private q_updated: Future;
-  private speechTasks: Set<Promise<unknown>> = new Set();
+  private speechTasks: Set<Task<unknown>> = new Set();
   private lock = new Mutex();
   private audioStream = new DeferredReadableStream<AudioFrame>();
   // default to null as None, which maps to the default provider tool choice value
@@ -269,7 +269,7 @@ export class AgentActivity implements RecognitionHooks {
 
       this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
       this.createSpeechTask({
-        promise: this.agent.onEnter(),
+        task: Task.from(() => this.agent.onEnter()),
         name: 'AgentActivity_onEnter',
       });
     } finally {
@@ -443,7 +443,7 @@ export class AgentActivity implements RecognitionHooks {
     );
 
     const task = this.createSpeechTask({
-      promise: this.ttsTask(handle, text, addToChatCtx, {}, audio),
+      task: Task.from(() => this.ttsTask(handle, text, addToChatCtx, {}, audio)),
       ownedSpeechHandle: handle,
       name: 'AgentActivity.say_tts',
     });
@@ -572,7 +572,7 @@ export class AgentActivity implements RecognitionHooks {
     this.logger.info({ speech_id: handle.id }, 'Creating speech handle');
 
     this.createSpeechTask({
-      promise: this.realtimeGenerationTask(handle, ev, {}),
+      task: Task.from(() => this.realtimeGenerationTask(handle, ev, {})),
       ownedSpeechHandle: handle,
       name: 'AgentActivity.realtimeGeneration',
     });
@@ -660,25 +660,31 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private createSpeechTask<T>(options: {
-    promise: Promise<T>;
+    task: Task<T>;
     ownedSpeechHandle?: SpeechHandle;
     name?: string;
   }): Promise<T> {
-    const { promise, ownedSpeechHandle } = options;
+    const { task, ownedSpeechHandle } = options;
 
-    this.speechTasks.add(promise);
+    this.speechTasks.add(task as Task<unknown>);
+    task.addDoneCallback(() => {
+      this.speechTasks.delete(task as Task<unknown>);
+    });
 
-    promise.finally(() => {
-      this.speechTasks.delete(promise);
+    if (ownedSpeechHandle) {
+      ownedSpeechHandle._tasks.push(task as Task<unknown>);
+      task.addDoneCallback(() => {
+        if (ownedSpeechHandle._tasks.every((t) => t.done)) {
+          ownedSpeechHandle._markDone();
+        }
+      });
+    }
 
-      if (ownedSpeechHandle) {
-        ownedSpeechHandle._markPlayoutDone();
-      }
-
+    task.addDoneCallback(() => {
       this.wakeupMainTask();
     });
 
-    return promise;
+    return task.result;
   }
 
   async onEndOfTurn(info: EndOfTurnInfo): Promise<boolean> {
@@ -705,7 +711,7 @@ export class AgentActivity implements RecognitionHooks {
 
     const oldTask = this._userTurnCompletedTask;
     this._userTurnCompletedTask = this.createSpeechTask({
-      promise: this.userTurnCompleted(info, oldTask),
+      task: Task.from(() => this.userTurnCompleted(info, oldTask)),
       name: 'AgentActivity.userTurnCompleted',
     });
     return true;
@@ -725,7 +731,11 @@ export class AgentActivity implements RecognitionHooks {
 
     while (true) {
       await Promise.race([this.q_updated.await, abortFuture.await]);
-      this.logger.info(this.speechQueue, 'mainTask: speechQueue');
+      // Fix: Heap does not have .map; use .toArray() to get array, then map
+      this.logger.info(
+        { speechQueue: this.speechQueue.toArray().map(([, , speechHandle]) => speechHandle.id) },
+        'mainTask: speechQueue',
+      );
       if (signal.aborted) break;
 
       while (this.speechQueue.size() > 0) {
@@ -737,8 +747,8 @@ export class AgentActivity implements RecognitionHooks {
         }
         const speechHandle = heapItem[2];
         this._currentSpeech = speechHandle;
-        speechHandle._authorizePlayout();
-        await speechHandle.waitForPlayout();
+        speechHandle._authorizeGeneration();
+        await speechHandle._waitForGeneration();
         this._currentSpeech = undefined;
       }
 
@@ -817,16 +827,18 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.llm instanceof RealtimeModel) {
       this.createSpeechTask({
-        promise: this.realtimeReplyTask({
-          speechHandle: handle,
-          // TODO(brian): support llm.ChatMessage for the realtime model
-          userInput: userMessage?.textContent,
-          instructions,
-          modelSettings: {
-            // isGiven(toolChoice) = toolChoice !== undefined
-            toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice),
-          },
-        }),
+        task: Task.from(() =>
+          this.realtimeReplyTask({
+            speechHandle: handle,
+            // TODO(brian): support llm.ChatMessage for the realtime model
+            userInput: userMessage?.textContent,
+            instructions,
+            modelSettings: {
+              // isGiven(toolChoice) = toolChoice !== undefined
+              toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice),
+            },
+          }),
+        ),
         ownedSpeechHandle: handle,
         name: 'AgentActivity.realtimeReply',
       });
@@ -839,13 +851,17 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       const task = this.createSpeechTask({
-        promise: this.pipelineReplyTask(
-          handle,
-          chatCtx ?? this.agent.chatCtx,
-          this.agent.toolCtx,
-          { toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice) },
-          instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
-          userMessage,
+        task: Task.from(() =>
+          this.pipelineReplyTask(
+            handle,
+            chatCtx ?? this.agent.chatCtx,
+            this.agent.toolCtx,
+            {
+              toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice),
+            },
+            instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
+            userMessage,
+          ),
         ),
         ownedSpeechHandle: handle,
         name: 'AgentActivity.pipelineReply',
@@ -862,6 +878,8 @@ export class AgentActivity implements RecognitionHooks {
     const future = new Future<void>();
     const currentSpeech = this._currentSpeech;
 
+    //TODO(shubhra): add interrupt for background speeches
+
     currentSpeech?.interrupt();
 
     for (const [_, __, speech] of this.speechQueue) {
@@ -873,7 +891,7 @@ export class AgentActivity implements RecognitionHooks {
     if (currentSpeech === undefined) {
       future.resolve();
     } else {
-      currentSpeech.then(() => {
+      currentSpeech.addDoneCallback(() => {
         if (future.done) return;
         future.resolve();
       });
@@ -883,7 +901,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private onPipelineReplyDone(): void {
-    if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done)) {
+    if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done())) {
       this.agentSession._updateAgentState('listening');
     }
   }
@@ -1165,12 +1183,24 @@ export class AgentActivity implements RecognitionHooks {
       tasks.push(ttsTask);
     }
 
-    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
+    await speechHandle.waitIfNotInterrupted([speechHandle._waitForScheduled()]);
+
+    if (newMessage && speechHandle.scheduled) {
+      chatCtx.insert(newMessage);
+      this.agent._chatCtx.insert(newMessage);
+      this.agentSession._conversationItemAdded(newMessage);
+    }
+
     if (speechHandle.interrupted) {
       replyAbortController.abort();
       await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       return;
     }
+
+    this.agentSession._updateAgentState('thinking');
+
+    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
+    speechHandle._clearAuthorization();
 
     const replyStartedAt = Date.now();
     const trNodeResult = await this.agent.transcriptionNode(llmOutput, modelSettings);
@@ -1207,6 +1237,9 @@ export class AgentActivity implements RecognitionHooks {
       textOut?.firstTextFut.await.finally(onFirstFrame);
     }
 
+    //TODO(shubhra): before executing tools, make sure we generated all the text
+    // (this ensure everything is kept ordered)
+
     const onToolExecutionStarted = (_: FunctionCall) => {
       // TODO(brian): handle speech_handle item_added
     };
@@ -1225,7 +1258,6 @@ export class AgentActivity implements RecognitionHooks {
       onToolExecutionStarted,
       onToolExecutionCompleted,
     });
-    tasks.push(executeToolsTask);
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
@@ -1292,7 +1324,7 @@ export class AgentActivity implements RecognitionHooks {
         'playout completed with interrupt',
       );
       // TODO(shubhra) add chat message to speech handle
-      speechHandle._markPlayoutDone();
+      speechHandle._markGenerationDone();
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       return;
     }
@@ -1320,14 +1352,15 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('listening');
     }
 
-    speechHandle._markPlayoutDone();
+    // mark the playout done before waiting for the tool execution
+    speechHandle._markGenerationDone();
     await executeToolsTask.result;
 
     if (toolOutput.output.length === 0) return;
 
     // important: no agent output should be used after this point
     const { maxToolSteps } = this.agentSession.options;
-    if (speechHandle.stepIndex >= maxToolSteps) {
+    if (speechHandle.numSteps >= maxToolSteps) {
       this.logger.warn(
         { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
         'maximum number of function calls steps reached',
@@ -1392,7 +1425,7 @@ export class AgentActivity implements RecognitionHooks {
 
       const handle = SpeechHandle.create({
         allowInterruptions: speechHandle.allowInterruptions,
-        stepIndex: speechHandle.stepIndex + 1,
+        stepIndex: speechHandle._stepIndex + 1,
         parent: speechHandle,
       });
       this.agentSession.emit(
@@ -1409,14 +1442,16 @@ export class AgentActivity implements RecognitionHooks {
       const respondToolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
 
       const toolResponseTask = this.createSpeechTask({
-        promise: this.pipelineReplyTask(
-          handle,
-          chatCtx,
-          toolCtx,
-          { toolChoice: respondToolChoice },
-          instructions,
-          undefined,
-          toolMessages,
+        task: Task.from(() =>
+          this.pipelineReplyTask(
+            handle,
+            chatCtx,
+            toolCtx,
+            { toolChoice: respondToolChoice },
+            instructions,
+            undefined,
+            toolMessages,
+          ),
         ),
         ownedSpeechHandle: handle,
         name: 'AgentActivity.pipelineReply',
@@ -1448,7 +1483,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     this.logger.debug(
-      { speech_id: speechHandle.id, stepIndex: speechHandle.stepIndex },
+      { speech_id: speechHandle.id, stepIndex: speechHandle.numSteps },
       'realtime generation started',
     );
 
@@ -1642,7 +1677,7 @@ export class AgentActivity implements RecognitionHooks {
             interrupted: true,
           });
           this.agent._chatCtx.insert(message);
-          speechHandle._setChatMessage(message);
+          speechHandle._itemAdded([message]);
           this.agentSession._conversationItemAdded(message);
 
           // TODO(brian): add tracing span
@@ -1652,8 +1687,7 @@ export class AgentActivity implements RecognitionHooks {
           'playout completed with interrupt',
         );
       }
-      // TODO(shubhra) add chat message to speech handle
-      speechHandle._markPlayoutDone();
+      speechHandle._markGenerationDone();
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
 
       // TODO(brian): close tees
@@ -1670,13 +1704,13 @@ export class AgentActivity implements RecognitionHooks {
         interrupted: false,
       });
       this.agent._chatCtx.insert(message);
-      speechHandle._setChatMessage(message);
+      speechHandle._itemAdded([message]);
       this.agentSession._conversationItemAdded(message); // mark the playout done before waiting for the tool execution\
       // TODO(brian): add tracing span
     }
 
     // mark the playout done before waiting for the tool execution
-    speechHandle._markPlayoutDone();
+    speechHandle._markGenerationDone();
     // TODO(brian): close tees
 
     toolOutput.firstToolStartedFuture.await.finally(() => {
@@ -1689,7 +1723,7 @@ export class AgentActivity implements RecognitionHooks {
 
     // important: no agent ouput should be used after this point
     const { maxToolSteps } = this.agentSession.options;
-    if (speechHandle.stepIndex >= maxToolSteps) {
+    if (speechHandle.numSteps >= maxToolSteps) {
       this.logger.warn(
         { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
         'maximum number of function calls steps reached',
@@ -1765,7 +1799,7 @@ export class AgentActivity implements RecognitionHooks {
 
     const replySpeechHandle = SpeechHandle.create({
       allowInterruptions: speechHandle.allowInterruptions,
-      stepIndex: speechHandle.stepIndex + 1,
+      stepIndex: speechHandle.numSteps + 1,
       parent: speechHandle,
     });
     this.agentSession.emit(
@@ -1779,10 +1813,12 @@ export class AgentActivity implements RecognitionHooks {
 
     const toolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
     this.createSpeechTask({
-      promise: this.realtimeReplyTask({
-        speechHandle: replySpeechHandle,
-        modelSettings: { toolChoice },
-      }),
+      task: Task.from(() =>
+        this.realtimeReplyTask({
+          speechHandle: replySpeechHandle,
+          modelSettings: { toolChoice },
+        }),
+      ),
       ownedSpeechHandle: replySpeechHandle,
       name: 'AgentActivity.realtime_reply',
     });
@@ -1849,6 +1885,7 @@ export class AgentActivity implements RecognitionHooks {
 
     // Monotonic time to avoid near 0 collisions
     this.speechQueue.push([priority, Number(process.hrtime.bigint()), speechHandle]);
+    speechHandle._markScheduled();
     this.wakeupMainTask();
   }
 
@@ -1858,7 +1895,7 @@ export class AgentActivity implements RecognitionHooks {
       if (this._draining) return;
 
       this.createSpeechTask({
-        promise: this.agent.onExit(),
+        task: Task.from(() => this.agent.onExit()),
         name: 'AgentActivity_onExit',
       });
 

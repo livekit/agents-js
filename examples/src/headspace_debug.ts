@@ -24,10 +24,10 @@ class VoiceAgent extends voice.Agent {
     super(options);
   }
 
-  async onEnter() {
-    const handle = this.session.generateReply({ allowInterruptions: true });
-    await handle.waitForPlayout();
-  }
+  // async onEnter() {
+  //   const handle = this.session.generateReply({ allowInterruptions: true });
+  //   await handle.waitForPlayout();
+  // }
 }
 
 export default defineAgent({
@@ -45,8 +45,7 @@ export default defineAgent({
         location: z.string().describe('The location to get the weather for'),
       }),
       execute: async ({ location }, { ctx }) => {
-        const handle = ctx.session.say('tell me a story');
-        console.log('handle+++++', handle);
+        ctx.session.say('tell me a story');
         await ctx.waitForPlayout();
 
         return `The weather in ${location} is sunny today.`;

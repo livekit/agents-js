@@ -772,21 +772,50 @@ export function performToolExecutions({
         'Executing LLM tool call',
       );
 
+      logger.debug(
+        { function: toolCall.name, speech_id: speechHandle.id },
+        '++++ About to start tool execution',
+      );
       const toolExecution = asyncLocalStorage.run({ functionCall: toolCall }, async () => {
-        return await tool.execute(parsedArgs, {
+        logger.debug(
+          { function: toolCall.name, speech_id: speechHandle.id },
+          '++++ Inside asyncLocalStorage.run, about to call tool.execute',
+        );
+        const result = await tool.execute(parsedArgs, {
           ctx: new RunContext(session, speechHandle, toolCall),
           toolCallId: toolCall.callId,
           abortSignal: signal,
         });
+        logger.debug(
+          { function: toolCall.name, speech_id: speechHandle.id },
+          '++++ tool.execute completed',
+        );
+        return result;
       });
+      logger.debug(
+        { function: toolCall.name, speech_id: speechHandle.id },
+        '++++ toolExecution promise created',
+      );
 
       const tracableToolExecution = async (toolExecTask: Promise<unknown>) => {
         // TODO(brian): add tracing
+        logger.debug(
+          { function: toolCall.name, speech_id: speechHandle.id },
+          '++++ tracableToolExecution started',
+        );
 
         // await for task to complete, if task is aborted, set exception
         let toolOutput: ToolExecutionOutput | undefined;
         try {
+          logger.debug(
+            { function: toolCall.name, speech_id: speechHandle.id },
+            '++++ About to call waitUntilAborted',
+          );
           const { result, isAborted } = await waitUntilAborted(toolExecTask, signal);
+          logger.debug(
+            { function: toolCall.name, speech_id: speechHandle.id, isAborted },
+            '++++ waitUntilAborted completed',
+          );
           toolOutput = createToolOutput({
             toolCall,
             exception: isAborted ? new Error('tool call was aborted') : undefined,
@@ -807,15 +836,35 @@ export function performToolExecutions({
           });
         } finally {
           if (!toolOutput) throw new Error('toolOutput is undefined');
+          logger.debug(
+            { function: toolCall.name, speech_id: speechHandle.id },
+            '++++ About to call toolCompleted',
+          );
           toolCompleted(toolOutput);
+          logger.debug(
+            { function: toolCall.name, speech_id: speechHandle.id },
+            '++++ toolCompleted called',
+          );
         }
       };
 
       // wait, not cancelling all tool calling tasks
+      logger.debug(
+        { function: toolCall.name, speech_id: speechHandle.id },
+        '++++ Adding tracableToolExecution to tasks',
+      );
       tasks.push(tracableToolExecution(toolExecution));
     }
 
+    logger.debug(
+      { speech_id: speechHandle.id, taskCount: tasks.length },
+      '++++ About to await Promise.allSettled',
+    );
     await Promise.allSettled(tasks);
+    logger.debug(
+      { speech_id: speechHandle.id, outputCount: toolOutput.output.length },
+      '++++ Promise.allSettled completed',
+    );
     if (toolOutput.output.length > 0) {
       logger.debug(
         {
@@ -840,9 +889,13 @@ type Aborted<T> =
     };
 
 async function waitUntilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<Aborted<T>> {
+  const logger = log();
+  logger.debug('++++ waitUntilAborted started');
+
   const abortFut = new Future<Aborted<T>>();
 
   const resolveAbort = () => {
+    logger.debug('++++ waitUntilAborted abort signal received');
     if (!abortFut.done) {
       abortFut.resolve({ result: undefined, isAborted: true });
     }
@@ -852,19 +905,23 @@ async function waitUntilAborted<T>(promise: Promise<T>, signal: AbortSignal): Pr
 
   promise
     .then((r) => {
+      logger.debug('++++ waitUntilAborted promise resolved');
       if (!abortFut.done) {
         abortFut.resolve({ result: r, isAborted: false });
       }
     })
     .catch((e) => {
+      logger.debug('++++ waitUntilAborted promise rejected');
       if (!abortFut.done) {
         abortFut.reject(e);
       }
     })
     .finally(() => {
+      logger.debug('++++ waitUntilAborted promise finally');
       signal.removeEventListener('abort', resolveAbort);
     });
 
+  logger.debug('++++ waitUntilAborted about to await abortFut');
   return await abortFut.await;
 }
 

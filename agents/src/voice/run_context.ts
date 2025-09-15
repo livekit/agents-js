@@ -2,18 +2,26 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { FunctionCall } from '../llm/chat_context.js';
+import { log } from '../log.js';
 import type { AgentSession } from './agent_session.js';
 import type { SpeechHandle } from './speech_handle.js';
 
 export type UnknownUserData = unknown;
 
 export class RunContext<UserData = UnknownUserData> {
+  private readonly initialStepIdx: number;
+  private logger = log();
   constructor(
     public readonly session: AgentSession<UserData>,
     public readonly speechHandle: SpeechHandle,
     public readonly functionCall: FunctionCall,
-  ) {}
-
+  ) {
+    this.initialStepIdx = speechHandle.numSteps - 1;
+    this.logger.debug(
+      { speech_id: speechHandle.id, initial_step_idx: this.initialStepIdx },
+      '++++ RunContext initialized',
+    );
+  }
   get userData(): UserData {
     return this.session.userData;
   }
@@ -27,6 +35,10 @@ export class RunContext<UserData = UnknownUserData> {
    * this tool to finish playing.
    */
   async waitForPlayout() {
-    return this.speechHandle.waitForPlayout();
+    this.logger.debug(
+      { speech_id: this.speechHandle.id, initial_step_idx: this.initialStepIdx },
+      '++++ Waiting for playout in run context',
+    );
+    return this.speechHandle._waitForGeneration(this.initialStepIdx);
   }
 }
