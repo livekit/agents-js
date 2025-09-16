@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 ---
 description: Guidline on how to write code for @livekit/agents JS package
 globs: *.ts,package.json
@@ -492,7 +496,7 @@ For more information, read the example agent file under the `examples` directory
 # Project Guidlines
 
 > [!NOTE]
-> Whenever you have solved a complex task, which can be a tricky debugging process or a complex code implementation, document the core process under this section to illustrates any obstables you have faced during the dev, DO and DON'TS, and relevant files that are relevant to the task. You should add a new ## header section for each of such task.
+> Whenever you have solved a complex task, which can be a tricky debugging process or a complex code implementation, document the core process under this section to illustrates any obstables you have faced during the dev, DO and DON'TS, and relevant files (specifide by relative path to code file) that are relevant to the task. You should add a new ## header section for each of such task. When user do /agent-guidline <description>, you should add guidline for the task based on user description.
 
 ## Important Commands
 
