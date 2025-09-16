@@ -107,6 +107,8 @@ export type TurnDetectionType = {
 
 export type InputAudioTranscription = {
   model: InputTranscriptionModel;
+  language?: string;
+  prompt?: string;
 };
 
 export interface InputTextContent {
