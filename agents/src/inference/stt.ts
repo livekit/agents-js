@@ -3,15 +3,17 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
+import { APIConnectionError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
-import {
-  type APIConnectOptions,
-  APIConnectionError,
-  APIStatusError,
-  DEFAULT_API_CONNECT_OPTIONS,
-  stt,
-} from '../index.js';
 import { log } from '../log.js';
+import {
+  STT as BaseSTT,
+  SpeechStream as BaseSpeechStream,
+  type SpeechData,
+  type SpeechEvent,
+  SpeechEventType,
+} from '../stt/index.js';
+import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { shortuuid } from '../utils.js';
 import type { STTLanguages, STTModels } from './models.js';
 import { createAccessToken } from './utils.js';
@@ -33,7 +35,7 @@ export interface InferenceSTTOptions {
   extraKwargs: Record<string, unknown>;
 }
 
-export class STT extends stt.STT {
+export class STT extends BaseSTT {
   #opts: InferenceSTTOptions;
   #logger = log();
 
@@ -79,7 +81,7 @@ export class STT extends stt.STT {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  protected async _recognize(_: AudioFrame | AudioFrame[]): Promise<stt.SpeechEvent> {
+  protected async _recognize(_: AudioFrame | AudioFrame[]): Promise<SpeechEvent> {
     throw new Error('LiveKit STT does not support batch recognition, use stream() instead');
   }
 
@@ -98,7 +100,7 @@ export class STT extends stt.STT {
   }
 }
 
-export class SpeechStream extends stt.SpeechStream {
+export class SpeechStream extends BaseSpeechStream {
   #opts: InferenceSTTOptions;
   #logger = log();
   #requestId = shortuuid('stt_request_');
@@ -268,10 +270,10 @@ export class SpeechStream extends stt.SpeechStream {
 
     if (!this.#speaking) {
       this.#speaking = true;
-      this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
+      this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
     }
 
-    const speechData: stt.SpeechData = {
+    const speechData: SpeechData = {
       language,
       startTime: data.start ?? 0,
       endTime: data.duration ?? 0,
@@ -282,7 +284,7 @@ export class SpeechStream extends stt.SpeechStream {
     if (isFinal) {
       if (this.#speechDuration > 0) {
         this.queue.put({
-          type: stt.SpeechEventType.RECOGNITION_USAGE,
+          type: SpeechEventType.RECOGNITION_USAGE,
           requestId,
           recognitionUsage: { audioDuration: this.#speechDuration },
         });
@@ -290,18 +292,18 @@ export class SpeechStream extends stt.SpeechStream {
       }
 
       this.queue.put({
-        type: stt.SpeechEventType.FINAL_TRANSCRIPT,
+        type: SpeechEventType.FINAL_TRANSCRIPT,
         requestId,
         alternatives: [speechData],
       });
 
       if (this.#speaking) {
         this.#speaking = false;
-        this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+        this.queue.put({ type: SpeechEventType.END_OF_SPEECH });
       }
     } else {
       this.queue.put({
-        type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
+        type: SpeechEventType.INTERIM_TRANSCRIPT,
         requestId,
         alternatives: [speechData],
       });
