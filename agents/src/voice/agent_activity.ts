@@ -877,7 +877,7 @@ export class AgentActivity implements RecognitionHooks {
     const future = new Future<void>();
     const currentSpeech = this._currentSpeech;
 
-    //TODO(shubhra): add interrupt for background speeches
+    //TODO(AJS-273): add interrupt for background speeches
 
     currentSpeech?.interrupt();
 
@@ -1235,7 +1235,7 @@ export class AgentActivity implements RecognitionHooks {
       textOut?.firstTextFut.await.finally(onFirstFrame);
     }
 
-    //TODO(shubhra): before executing tools, make sure we generated all the text
+    //TODO(AJS-272): before executing tools, make sure we generated all the text
     // (this ensure everything is kept ordered)
 
     const onToolExecutionStarted = (_: FunctionCall) => {
