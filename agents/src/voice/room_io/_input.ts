@@ -134,7 +134,7 @@ export class ParticipantAudioInputStream extends AudioInput {
       sampleRate: this.sampleRate,
       numChannels: this.numChannels,
       noiseCancellation: this.noiseCancellation,
-      // TODO(brian): resolve compatibility issue with node-sdk to remove the forced type casting
+      // TODO(AJS-269): resolve compatibility issue with node-sdk to remove the forced type casting
     }) as unknown as ReadableStream<AudioFrame>;
   }
 
