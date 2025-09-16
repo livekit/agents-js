@@ -121,6 +121,7 @@ export class LLM extends llm.LLM {
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
+    // TODO(AJS-270): Add response_format parameter support
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
@@ -128,6 +129,7 @@ export class LLM extends llm.LLM {
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
+    // TODO(AJS-270): Add responseFormat parameter
     extraKwargs?: Record<string, any>;
   }): LLMStream {
     let extras: Record<string, any> = { ...(extraKwargs || {}) }; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -156,6 +158,8 @@ export class LLM extends llm.LLM {
     if (toolChoice) {
       extras.tool_choice = toolChoice;
     }
+
+    // TODO(AJS-270): Add response_format support here
 
     extras = { ...extras, ...this.opts.extraKwargs };
 
