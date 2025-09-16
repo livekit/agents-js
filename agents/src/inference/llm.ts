@@ -7,9 +7,9 @@ import {
   APIStatusError,
   APITimeoutError,
   DEFAULT_API_CONNECT_OPTIONS,
-  llm,
   toError,
 } from '../index.js';
+import * as llm from '../llm/index.js';
 import type { APIConnectOptions } from '../types.js';
 import type { LLMModels } from './models.js';
 import { createAccessToken } from './utils.js';
