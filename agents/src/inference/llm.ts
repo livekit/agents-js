@@ -42,7 +42,7 @@ export class LLM extends llm.LLM {
 
   constructor(
     model: LLMModels | string,
-    opts: {
+    opts?: {
       temperature?: number;
       topP?: number;
       parallelToolCalls?: boolean;
@@ -72,7 +72,7 @@ export class LLM extends llm.LLM {
       timeout,
       verbosity,
       extraKwargs,
-    } = opts;
+    } = opts || {};
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_GATEWAY_URL || DEFAULT_BASE_URL;
     const lkApiKey = apiKey || process.env.LIVEKIT_GATEWAY_API_KEY || process.env.LIVEKIT_API_KEY;
