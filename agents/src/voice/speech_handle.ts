@@ -131,9 +131,8 @@ export class SpeechHandle {
    * has entirely played out, including any tool calls and response follow-ups.
    */
   async waitForPlayout(): Promise<void> {
-    this.logger.debug({ id: this._id }, '++++ Wait for playout called');
     const store = asyncLocalStorage.getStore();
-    if (store?.functionCall) {
+    if (store && store?.functionCall) {
       throw new Error(
         `Cannot call 'SpeechHandle.waitForPlayout()' from inside the function tool '${store.functionCall.name}'. ` +
           'This creates a circular wait: the speech handle is waiting for the function tool to complete, ' +
@@ -151,12 +150,10 @@ export class SpeechHandle {
   }
 
   addDoneCallback(callback: (sh: SpeechHandle) => void) {
-    this.logger.debug({ id: this._id }, '++++ Add done callback called');
     this.doneCallbacks.add(callback);
   }
 
   removeDoneCallback(callback: (sh: SpeechHandle) => void) {
-    this.logger.debug({ id: this._id }, '++++ Remove done callback called');
     this.doneCallbacks.delete(callback);
   }
 
@@ -175,7 +172,6 @@ export class SpeechHandle {
 
   /** @internal */
   _authorizeGeneration(): void {
-    this.logger.debug({ id: this._id }, '++++ Authorize generation called');
     const fut = new Future<void>();
     this.generations.push(fut);
     this.authorizedEvent.set();
@@ -183,19 +179,16 @@ export class SpeechHandle {
 
   /** @internal */
   _clearAuthorization(): void {
-    this.logger.debug({ id: this._id }, '++++ Clear authorization called');
     this.authorizedEvent.clear();
   }
 
   /** @internal */
   async _waitForAuthorization(): Promise<void> {
-    this.logger.debug({ id: this._id }, '++++ Wait for authorization called');
     await this.authorizedEvent.wait();
   }
 
   /** @internal */
   async _waitForGeneration(stepIdx: number = -1): Promise<void> {
-    this.logger.debug({ id: this._id, stepIdx }, '++++ Wait for generation called');
     if (this.generations.length === 0) {
       throw new Error('cannot use wait_for_generation: no active generation is running.');
     }
@@ -210,13 +203,11 @@ export class SpeechHandle {
 
   /** @internal */
   async _waitForScheduled(): Promise<void> {
-    this.logger.debug({ id: this._id }, '++++ Wait for scheduled called');
     return this.scheduledFut.await;
   }
 
   /** @internal */
   _markGenerationDone(): void {
-    this.logger.debug({ id: this._id }, '++++ Mark generation done called');
     if (this.generations.length === 0) {
       throw new Error('cannot use mark_generation_done: no active generation is running.');
     }
@@ -229,7 +220,6 @@ export class SpeechHandle {
 
   /** @internal */
   _markDone(): void {
-    this.logger.debug({ id: this._id }, '++++ Mark done called');
     if (!this.doneFut.done) {
       this.doneFut.resolve();
       if (this.generations.length > 0) {
@@ -240,7 +230,6 @@ export class SpeechHandle {
 
   /** @internal */
   _markScheduled(): void {
-    this.logger.debug({ id: this._id }, '++++ Mark scheduled called');
     if (!this.scheduledFut.done) {
       this.scheduledFut.resolve();
     }
@@ -258,7 +247,6 @@ export class SpeechHandle {
 
   /** @internal */
   _itemAdded(items: ChatItem[]): void {
-    this.logger.debug({ id: this._id, items }, '++++ Item added called');
     for (const item of items) {
       for (const cb of this.itemAddedCallbacks) {
         cb(item);

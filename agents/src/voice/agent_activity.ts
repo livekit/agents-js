@@ -734,11 +734,6 @@ export class AgentActivity implements RecognitionHooks {
 
     while (true) {
       await Promise.race([this.q_updated.await, abortFuture.await]);
-      // Fix: Heap does not have .map; use .toArray() to get array, then map
-      this.logger.info(
-        { speechQueue: this.speechQueue.toArray().map(([, , speechHandle]) => speechHandle.id) },
-        'mainTask: speechQueue',
-      );
       if (signal.aborted) break;
 
       while (this.speechQueue.size() > 0) {
@@ -769,7 +764,6 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private wakeupMainTask(): void {
-    this.logger.info('AgentActivity wakeupMainTask: waking up main task');
     this.q_updated.resolve();
   }
 
@@ -1502,6 +1496,7 @@ export class AgentActivity implements RecognitionHooks {
     const toolCtx = this.realtimeSession.tools;
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
+    speechHandle._clearAuthorization();
 
     if (speechHandle.interrupted) {
       return;
@@ -1607,12 +1602,14 @@ export class AgentActivity implements RecognitionHooks {
       ),
     );
 
-    const onToolExecutionStarted = (_: FunctionCall) => {
-      // TODO(brian): handle speech_handle item_added
+    const onToolExecutionStarted = (f: FunctionCall) => {
+      speechHandle._itemAdded([f]);
     };
 
-    const onToolExecutionCompleted = (_: ToolExecutionOutput) => {
-      // TODO(brian): handle speech_handle item_added
+    const onToolExecutionCompleted = (out: ToolExecutionOutput) => {
+      if (out.toolCallOutput) {
+        speechHandle._itemAdded([out.toolCallOutput]);
+      }
     };
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
