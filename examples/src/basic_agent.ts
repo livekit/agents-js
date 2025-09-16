@@ -10,7 +10,6 @@ import {
   metrics,
   voice,
 } from '@livekit/agents';
-import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
@@ -31,7 +30,7 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT(),
+      stt: 'deepgram/nova-3',
       tts: new elevenlabs.TTS(),
       llm: 'openai/gpt-4.1',
       // to use realtime model, replace the stt, llm, tts and vad with the following
