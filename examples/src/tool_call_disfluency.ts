@@ -23,11 +23,6 @@ class VoiceAgent extends voice.Agent {
   constructor(options: voice.AgentOptions<unknown>) {
     super(options);
   }
-
-  // async onEnter() {
-  //   const handle = this.session.generateReply({ allowInterruptions: true });
-  //   await handle.waitForPlayout();
-  // }
 }
 
 export default defineAgent({
