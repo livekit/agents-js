@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  AudioFrame,
   AudioStream,
   type NoiseCancellationOptions,
   RemoteParticipant,
@@ -11,6 +12,7 @@ import {
   RoomEvent,
   TrackSource,
 } from '@livekit/rtc-node';
+import type { ReadableStream } from 'node:stream/web';
 import { log } from '../../log.js';
 import { resampleStream } from '../../utils.js';
 import { AudioInput } from '../io.js';
@@ -127,12 +129,13 @@ export class ParticipantAudioInputStream extends AudioInput {
     return true;
   };
 
-  private createStream(track: RemoteTrack) {
+  private createStream(track: RemoteTrack): ReadableStream<AudioFrame> {
     return new AudioStream(track, {
       sampleRate: this.sampleRate,
       numChannels: this.numChannels,
       noiseCancellation: this.noiseCancellation,
-    });
+      // TODO(AJS-269): resolve compatibility issue with node-sdk to remove the forced type casting
+    }) as unknown as ReadableStream<AudioFrame>;
   }
 
   async close() {
