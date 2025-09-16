@@ -77,7 +77,7 @@ class Hyphenator {
 
     const pieces = [''];
     for (let i = 0; i < word.length; i++) {
-      pieces[pieces.length - 1] += word[i];
+      pieces[pieces.length - 1]! += word[i];
       if (points[i + 2]! % 2) {
         pieces.push('');
       }
