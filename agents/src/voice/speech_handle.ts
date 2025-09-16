@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatItem } from '../llm/index.js';
-import { log } from '../log.js';
 import { Event, Future, shortuuid } from '../utils.js';
 import type { Task } from '../utils.js';
 import { asyncLocalStorage } from './agent.js';
@@ -29,10 +28,6 @@ export class SpeechHandle {
   private itemAddedCallbacks: Set<(item: ChatItem) => void> = new Set();
   private doneCallbacks: Set<(sh: SpeechHandle) => void> = new Set();
 
-  private maybeRunFinalOutput: unknown = null; // kept private
-
-  private logger = log().child({ component: 'SpeechHandle' });
-
   constructor(
     private _id: string,
     private _allowInterruptions: boolean,
@@ -40,7 +35,6 @@ export class SpeechHandle {
     public _stepIndex: number,
     readonly parent?: SpeechHandle,
   ) {
-    this.logger.debug({ id: this._id, parentId: parent?.id }, '++++ SpeechHandle created');
     this.doneFut.await.finally(() => {
       for (const callback of this.doneCallbacks) {
         callback(this);
@@ -113,7 +107,6 @@ export class SpeechHandle {
    * @returns The same speech handle that was interrupted.
    */
   interrupt(force: boolean = false): SpeechHandle {
-    this.logger.debug({ id: this._id, force }, '++++ Interrupt called');
     if (!force && !this.allowInterruptions) {
       throw new Error('This generation handle does not allow interruptions');
     }
@@ -143,7 +136,6 @@ export class SpeechHandle {
   }
 
   async waitIfNotInterrupted(aw: Promise<unknown>[]): Promise<void> {
-    this.logger.debug({ id: this._id }, '++++ Wait if not interrupted called');
     const allTasksPromise = Promise.all(aw);
     const fs: Promise<unknown>[] = [allTasksPromise, this.interruptFut.await];
     await Promise.race(fs);
