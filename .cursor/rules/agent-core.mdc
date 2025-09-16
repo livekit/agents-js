@@ -1,0 +1,334 @@
+---
+description: Guidline on how to write code for @livekit/agents JS package
+globs: *.ts,package.json
+alwaysApply: false
+---
+
+# LiveKit Agents
+
+Realtime framework for production-grade multimodal and voice AI agents.
+
+## Project structure
+
+```
+.
+|-- KMS
+|   `-- logs
+|-- LICENSES
+|   |-- Apache-2.0.txt
+|   `-- CC-BY-NC-SA-4.0.txt
+|-- agents
+|   |-- src
+|   |   |-- ipc
+|   |   |   |-- index.ts
+|   |   |   |-- inference_executor.ts
+|   |   |   |-- inference_proc_executor.ts
+|   |   |   |-- inference_proc_lazy_main.ts
+|   |   |   |-- job_executor.ts
+|   |   |   |-- job_proc_executor.ts
+|   |   |   |-- job_proc_lazy_main.ts
+|   |   |   |-- message.ts
+|   |   |   |-- proc_pool.ts
+|   |   |   `-- supervised_proc.ts
+|   |   |-- llm
+|   |   |   |-- __snapshots__
+|   |   |   |   |-- chat_context.test.ts.snap
+|   |   |   |   |-- tool_context.test.ts.snap
+|   |   |   |   `-- utils.test.ts.snap
+|   |   |   |-- provider_format
+|   |   |   |   |-- google.test.ts
+|   |   |   |   |-- google.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   |-- openai.test.ts
+|   |   |   |   |-- openai.ts
+|   |   |   |   `-- utils.ts
+|   |   |   |-- chat_context.test.ts
+|   |   |   |-- chat_context.ts
+|   |   |   |-- index.ts
+|   |   |   |-- llm.ts
+|   |   |   |-- realtime.ts
+|   |   |   |-- remote_chat_context.test.ts
+|   |   |   |-- remote_chat_context.ts
+|   |   |   |-- tool_context.test.ts
+|   |   |   |-- tool_context.ts
+|   |   |   |-- tool_context.type.test.ts
+|   |   |   |-- utils.test.ts
+|   |   |   `-- utils.ts
+|   |   |-- metrics
+|   |   |   |-- base.ts
+|   |   |   |-- index.ts
+|   |   |   |-- usage_collector.ts
+|   |   |   `-- utils.ts
+|   |   |-- multimodal
+|   |   |   |-- agent_playout.ts
+|   |   |   `-- index.ts
+|   |   |-- stream
+|   |   |   |-- deferred_stream.test.ts
+|   |   |   |-- deferred_stream.ts
+|   |   |   |-- identity_transform.test.ts
+|   |   |   |-- identity_transform.ts
+|   |   |   |-- index.ts
+|   |   |   |-- merge_readable_streams.ts
+|   |   |   |-- stream_channel.test.ts
+|   |   |   `-- stream_channel.ts
+|   |   |-- stt
+|   |   |   |-- index.ts
+|   |   |   |-- stream_adapter.ts
+|   |   |   `-- stt.ts
+|   |   |-- tokenize
+|   |   |   |-- basic
+|   |   |   |   |-- basic.ts
+|   |   |   |   |-- hyphenator.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   |-- paragraph.ts
+|   |   |   |   |-- sentence.ts
+|   |   |   |   `-- word.ts
+|   |   |   |-- index.ts
+|   |   |   |-- token_stream.ts
+|   |   |   |-- tokenizer.test.ts
+|   |   |   `-- tokenizer.ts
+|   |   |-- tts
+|   |   |   |-- index.ts
+|   |   |   |-- stream_adapter.ts
+|   |   |   `-- tts.ts
+|   |   |-- voice   # voice agent core components
+|   |   |   |-- avatar
+|   |   |   |   |-- datastream_io.ts
+|   |   |   |   `-- index.ts
+|   |   |   |-- room_io
+|   |   |   |   |-- _input.ts
+|   |   |   |   |-- _output.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   `-- room_io.ts
+|   |   |   |-- transcription
+|   |   |   |   |-- _utils.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   `-- synchronizer.ts
+|   |   |   |-- agent.test.ts
+|   |   |   |-- agent.ts
+|   |   |   |-- agent_activity.ts
+|   |   |   |-- agent_session.ts
+|   |   |   |-- audio_recognition.ts
+|   |   |   |-- events.ts
+|   |   |   |-- generation.ts
+|   |   |   |-- index.ts
+|   |   |   |-- io.ts
+|   |   |   |-- run_context.ts
+|   |   |   `-- speech_handle.ts
+|   |   |-- _exceptions.ts
+|   |   |-- audio.ts
+|   |   |-- cli.ts
+|   |   |-- constants.ts
+|   |   |-- generator.ts
+|   |   |-- http_server.ts
+|   |   |-- index.ts
+|   |   |-- inference_runner.ts
+|   |   |-- job.ts
+|   |   |-- log.ts
+|   |   |-- plugin.ts
+|   |   |-- transcription.ts
+|   |   |-- types.ts
+|   |   |-- utils.test.ts
+|   |   |-- utils.ts
+|   |   |-- vad.ts
+|   |   |-- version.ts
+|   |   `-- worker.ts
+|   |-- CHANGELOG.md
+|   |-- README.md
+|   |-- api-extractor.json
+|   |-- package.json
+|   |-- tsconfig.json
+|   `-- tsup.config.ts
+|-- examples
+|   |-- src
+|   |   |-- drive-thru
+|   |   |   |-- database.ts
+|   |   |   |-- drivethru_agent.ts
+|   |   |   `-- order.ts
+|   |   |-- frontdesk
+|   |   |   |-- calendar_api.test.ts
+|   |   |   |-- calendar_api.ts
+|   |   |   |-- calendar_integration.test.ts
+|   |   |   `-- frontdesk_agent.ts
+|   |   |-- Dockerfile-example
+|   |   |-- basic_agent.ts
+|   |   |-- basic_eou.ts
+|   |   |-- basic_tool_call_agent.ts
+|   |   |-- cartersia_tts.ts
+|   |   |-- comprehensive_test.ts
+|   |   |-- gemini_realtime_agent.ts
+|   |   |-- multi_agent.ts
+|   |   |-- push_to_talk.ts
+|   |   |-- raw_function_description.ts
+|   |   |-- realtime_agent.ts
+|   |   |-- realtime_turn_detector.ts
+|   |   `-- restaurant_agent.ts
+|   |-- CHANGELOG.md
+|   |-- package.json
+|   `-- tsconfig.json
+|-- plugins     # plugins for the livekit agents framework
+|   |-- cartesia
+|   |   |-- src
+|   |   |   |-- index.ts
+|   |   |   |-- models.ts
+|   |   |   |-- tts.test.ts
+|   |   |   `-- tts.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- deepgram
+|   |   |-- src
+|   |   |   |-- _utils.ts
+|   |   |   |-- index.ts
+|   |   |   |-- models.ts
+|   |   |   |-- stt.test.ts
+|   |   |   `-- stt.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- elevenlabs
+|   |   |-- src
+|   |   |   |-- index.ts
+|   |   |   |-- models.ts
+|   |   |   |-- tts.test.ts
+|   |   |   `-- tts.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- google
+|   |   |-- src
+|   |   |   |-- beta
+|   |   |   |   |-- realtime
+|   |   |   |   |   |-- api_proto.ts
+|   |   |   |   |   |-- index.ts
+|   |   |   |   |   `-- realtime_api.ts
+|   |   |   |   |-- gemini_tts.test.ts
+|   |   |   |   |-- gemini_tts.ts
+|   |   |   |   `-- index.ts
+|   |   |   |-- index.ts
+|   |   |   |-- llm.test.ts
+|   |   |   |-- llm.ts
+|   |   |   |-- models.ts
+|   |   |   |-- tools.ts
+|   |   |   `-- utils.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- livekit
+|   |   |-- src
+|   |   |   |-- turn_detector
+|   |   |   |   |-- base.ts
+|   |   |   |   |-- constants.ts
+|   |   |   |   |-- english.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   |-- multilingual.ts
+|   |   |   |   |-- utils.test.ts
+|   |   |   |   `-- utils.ts
+|   |   |   |-- hf_utils.test.ts
+|   |   |   |-- hf_utils.ts
+|   |   |   |-- index.ts
+|   |   |   `-- onnxruntime.d.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- neuphonic
+|   |   |-- src
+|   |   |   |-- index.ts
+|   |   |   |-- models.ts
+|   |   |   |-- tts.test.ts
+|   |   |   `-- tts.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- openai
+|   |   |-- src
+|   |   |   |-- realtime
+|   |   |   |   |-- api_proto.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   `-- realtime_model.ts
+|   |   |   |-- index.ts
+|   |   |   |-- llm.test.ts
+|   |   |   |-- llm.ts
+|   |   |   |-- models.ts
+|   |   |   |-- stt.test.ts
+|   |   |   |-- stt.ts
+|   |   |   |-- tts.test.ts
+|   |   |   `-- tts.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- resemble
+|   |   |-- src
+|   |   |   |-- index.ts
+|   |   |   |-- models.ts
+|   |   |   |-- tts.test.ts
+|   |   |   `-- tts.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- silero
+|   |   |-- src
+|   |   |   |-- index.ts
+|   |   |   |-- onnx_model.ts
+|   |   |   |-- onnxruntime.d.ts
+|   |   |   |-- silero_vad.onnx
+|   |   |   `-- vad.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   `-- test
+|       |-- src
+|       |   |-- index.ts
+|       |   |-- llm.ts
+|       |   |-- long.wav
+|       |   |-- stt.ts
+|       |   `-- tts.ts
+|       |-- CHANGELOG.md
+|       |-- README.md
+|       |-- package.json
+|       |-- tsconfig.json
+|       `-- tsup.config.ts
+|-- scripts
+|   `-- copyDeclarationOutput.js
+|-- CODE_OF_CONDUCT.md
+|-- CONTRIBUTING.md
+|-- LICENSE
+|-- NOTICE
+|-- README.md
+|-- REUSE.toml
+|-- api-extractor-shared.json
+|-- package.json
+|-- pnpm-lock.yaml
+|-- pnpm-workspace.yaml
+|-- tsconfig.json
+|-- tsup.config.ts
+|-- turbo.json
+`-- vitest.config.ts
+```
