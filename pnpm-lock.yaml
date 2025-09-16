@@ -90,8 +90,8 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1
       '@livekit/protocol':
-        specifier: ^1.29.1
-        version: 1.29.1
+        specifier: ^1.41.0
+        version: 1.41.0
       '@livekit/typed-emitter':
         specifier: ^3.0.0
         version: 3.0.0
@@ -108,8 +108,8 @@ importers:
         specifier: ^0.4.0
         version: 0.4.0
       livekit-server-sdk:
-        specifier: ^2.9.2
-        version: 2.9.2
+        specifier: ^2.13.3
+        version: 2.13.3
       openai:
         specifier: ^4.91.1
         version: 4.91.1(ws@8.17.0)(zod@3.23.8)
@@ -199,8 +199,8 @@ importers:
         specifier: ^0.13.11
         version: 0.13.13
       livekit-server-sdk:
-        specifier: ^2.9.2
-        version: 2.9.2
+        specifier: ^2.13.3
+        version: 2.13.3
       zod:
         specifier: ^3.23.8
         version: 3.23.8
@@ -628,6 +628,9 @@ packages:
 
   '@bufbuild/protobuf@1.10.0':
     resolution: {integrity: sha512-QDdVFLoN93Zjg36NoQPZfsVH9tZew7wKDKyV5qRdj8ntT4wQCOradQjRaTdwMhWUYsgKsvCINKKm87FdEk96Ag==}
+
+  '@bufbuild/protobuf@1.10.1':
+    resolution: {integrity: sha512-wJ8ReQbHxsAfXhrf9ixl0aYbZorRuOWpBNzm8pL8ftmSxQx/wnJD5Eg861NwJU/czy2VXFIebCeZnZrI9rktIQ==}
 
   '@changesets/apply-release-plan@7.0.12':
     resolution: {integrity: sha512-EaET7As5CeuhTzvXTQCRZeBUcisoYPDDcXvgTE/2jmmypKp0RC7LxKj/yzqeh/1qFTZI7oDGFcL1PHRuQuketQ==}
@@ -1396,8 +1399,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@livekit/protocol@1.29.1':
-    resolution: {integrity: sha512-OhxXTZlyM5f4ydnAq1p5azzzOtKWmIoCSVtyVj9rgE42zQI5JM1rR9pubVRZovouGSvEDSJx9yL4Js2IlIyM1Q==}
+  '@livekit/protocol@1.41.0':
+    resolution: {integrity: sha512-bozBB39VSbd0IjRBwShMlLskqkd9weWJNskaB1CVpcEO9UUI1gMwAtBJOKYblzZJT9kE1SJa3L4oWWwsZMzSXw==}
 
   '@livekit/rtc-node-darwin-arm64@0.13.13':
     resolution: {integrity: sha512-iyjWwgr7JKTHa+YX1aCiKPT91Zk/snnBWOrWIJz9qq9X3cDvKVFjxOpJF1wVKPHBWE1dwDmNpSry/tltiUilZQ==}
@@ -3205,9 +3208,9 @@ packages:
   lines-and-columns@1.2.4:
     resolution: {integrity: sha512-7ylylesZQ/PV29jhEDl3Ufjo6ZX7gCqJr5F7PKrqc93v7fzSymt1BpwEU8nAUXs8qzzvqhbjhK5QZg6Mt/HkBg==}
 
-  livekit-server-sdk@2.9.2:
-    resolution: {integrity: sha512-0ptNwSnuBDy1cPMEs2ylOlLcRYwoQ/7Ph2Ibq83jl9Pgr7Aa+30Lc6WkM0dYFsfrF607lyIxg0rU+CEz79q4gw==}
-    engines: {node: '>=19'}
+  livekit-server-sdk@2.13.3:
+    resolution: {integrity: sha512-ItSQ2gE1oz/Ev9mfBRdAw+P05rt/BaYRkldggKz0+3rh/Yt0ag0BLID3VrgCVFVRAQ2YEJKcJJyj5p4epIJ8QA==}
+    engines: {node: '>=18'}
 
   load-tsconfig@0.2.5:
     resolution: {integrity: sha512-IXO6OCs9yg8tMKzfPZ1YmheJbZCiEsnBdcB03l0OcfK9prKnJb96siuHCr5Fl37/yo9DnKU+TLpxzTUspw9shg==}
@@ -4582,6 +4585,8 @@ snapshots:
 
   '@bufbuild/protobuf@1.10.0': {}
 
+  '@bufbuild/protobuf@1.10.1': {}
+
   '@changesets/apply-release-plan@7.0.12':
     dependencies:
       '@changesets/config': 3.1.1
@@ -5183,9 +5188,9 @@ snapshots:
   '@livekit/noise-cancellation-win32-x64@0.1.9':
     optional: true
 
-  '@livekit/protocol@1.29.1':
+  '@livekit/protocol@1.41.0':
     dependencies:
-      '@bufbuild/protobuf': 1.10.0
+      '@bufbuild/protobuf': 1.10.1
 
   '@livekit/rtc-node-darwin-arm64@0.13.13':
     optional: true
@@ -7207,9 +7212,10 @@ snapshots:
 
   lines-and-columns@1.2.4: {}
 
-  livekit-server-sdk@2.9.2:
+  livekit-server-sdk@2.13.3:
     dependencies:
-      '@livekit/protocol': 1.29.1
+      '@bufbuild/protobuf': 1.10.1
+      '@livekit/protocol': 1.41.0
       camelcase-keys: 9.1.3
       jose: 5.2.4
 

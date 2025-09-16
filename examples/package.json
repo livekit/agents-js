@@ -33,7 +33,7 @@
     "@livekit/agents-plugin-neuphonic": "workspace:*",
     "@livekit/noise-cancellation-node": "^0.1.9",
     "@livekit/rtc-node": "^0.13.11",
-    "livekit-server-sdk": "^2.9.2",
+    "livekit-server-sdk": "^2.13.3",
     "zod": "^3.23.8"
   }
 }
