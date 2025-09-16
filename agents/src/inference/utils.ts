@@ -3,7 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AccessToken } from 'livekit-server-sdk';
 
-export async function createAccessToken(apiKey: string, apiSecret: string): Promise<string> {
-  const token = new AccessToken(apiKey, apiSecret, { ttl: 600 });
+export async function createAccessToken(
+  apiKey: string,
+  apiSecret: string,
+  ttl: number = 600,
+): Promise<string> {
+  const token = new AccessToken(apiKey, apiSecret, { identity: 'agent', ttl });
+  token.addInferenceGrant({ perform: true });
+
   return await token.toJwt();
 }
