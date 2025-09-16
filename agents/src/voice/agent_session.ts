@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import {
   LLM as InferenceLLM,
+  STT as InferenceSTT,
   type LLMModels,
   type STTModels,
   type TTSModels,
@@ -136,8 +137,7 @@ export class AgentSession<
     this.vad = vad;
 
     if (typeof stt === 'string') {
-      // TODO(brian): support inference.STT
-      throw new Error('string STT model ids are not supported yet; pass an STT instance');
+      this.stt = new InferenceSTT({ model: stt });
     } else {
       this.stt = stt;
     }
