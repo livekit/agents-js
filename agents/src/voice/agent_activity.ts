@@ -190,6 +190,7 @@ export class AgentActivity implements RecognitionHooks {
 
   async start(): Promise<void> {
     const unlock = await this.lock.lock();
+    this.logger.info('starting agent activity');
     try {
       this.agent._agentActivity = this;
 
@@ -667,11 +668,14 @@ export class AgentActivity implements RecognitionHooks {
     ownedSpeechHandle?: SpeechHandle;
     name?: string;
   }): Promise<void> {
-    const { task, ownedSpeechHandle } = options;
+    const { task, ownedSpeechHandle, name } = options;
+
+    this.logger.info({ name, speech_id: ownedSpeechHandle?.id }, 'Creating speech task');
 
     this.speechTasks.add(task);
     task.addDoneCallback(() => {
       this.speechTasks.delete(task);
+      this.logger.info({ name, speech_id: ownedSpeechHandle?.id }, 'Speech task done');
     });
 
     if (ownedSpeechHandle) {

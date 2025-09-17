@@ -30,7 +30,7 @@ export type TTSNode = (
 ) => Promise<ReadableStream<AudioFrame> | null>;
 export abstract class AudioInput {
   protected deferredStream: DeferredReadableStream<AudioFrame> =
-    new DeferredReadableStream<AudioFrame>();
+    new DeferredReadableStream<AudioFrame>('AudioInput');
 
   get stream(): ReadableStream<AudioFrame> {
     return this.deferredStream.stream;

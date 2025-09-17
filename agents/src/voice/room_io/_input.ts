@@ -44,6 +44,10 @@ export class ParticipantAudioInputStream extends AudioInput {
 
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
     this.room.on(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
+    this.logger.debug(
+      { stream_name: 'ParticipantAudioInputStream' },
+      'ParticipantAudioInputStream created',
+    );
   }
 
   setParticipant(participant: RemoteParticipant | string | null) {
@@ -52,12 +56,18 @@ export class ParticipantAudioInputStream extends AudioInput {
       participant instanceof RemoteParticipant ? participant.identity : participant;
 
     if (this.participantIdentity === participantIdentity) {
+      this.logger.debug(
+        { participant_identity: participantIdentity },
+        'participant is equal to current participant',
+      );
       return;
     }
     this.participantIdentity = participantIdentity;
     this.closeStream();
 
     if (!participantIdentity) {
+      this.logger.debug({ participant_identity: participantIdentity }, 'participant is null');
+
       return;
     }
 
@@ -66,9 +76,14 @@ export class ParticipantAudioInputStream extends AudioInput {
         ? participant
         : this.room.remoteParticipants.get(participantIdentity);
 
+    this.logger.debug({ remoteParticipants: this.room.remoteParticipants }, 'remote participants');
+    this.logger.debug({ participantValue }, 'participantValue');
+
     if (participantValue) {
       for (const publication of Object.values(participantValue.trackPublications)) {
+        this.logger.debug({ publication }, 'examining publication');
         if (publication.track && publication.source === TrackSource.SOURCE_MICROPHONE) {
+          this.logger.debug({ publication }, 'publication');
           this.onTrackSubscribed(publication.track, publication, participantValue);
           break;
         }
@@ -111,6 +126,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ): boolean => {
+    this.logger.debug({ participant_identity: participant.identity }, 'onTrackSubscribed');
     if (
       this.participantIdentity !== participant.identity ||
       publication.source !== TrackSource.SOURCE_MICROPHONE ||
