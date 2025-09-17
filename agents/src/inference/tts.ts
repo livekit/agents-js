@@ -214,6 +214,7 @@ export class SynthesizeStream extends BaseSynthesizeStream {
         sendTokenizerStream.pushText(data);
       }
       sendTokenizerStream.endInput();
+      sendTokenizerStream.close();
     };
 
     const createSentenceStreamTask = async (ws: WebSocket) => {
@@ -224,9 +225,14 @@ export class SynthesizeStream extends BaseSynthesizeStream {
         const tokenPacket = { ...basePacket, transcript: ev.token + ' ' };
         // TODO(brian): mark started
         ws.send(JSON.stringify(tokenPacket));
+        this.#logger.debug(
+          { tokenPacket },
+          'Sending input_transcript message to LiveKit TTS WebSocket',
+        );
       }
 
       const endPacket = { type: 'session.flush' };
+      this.#logger.debug({ endPacket }, 'Sending session.flush message to LiveKit TTS WebSocket');
       ws.send(JSON.stringify(endPacket));
     };
 
@@ -284,6 +290,11 @@ export class SynthesizeStream extends BaseSynthesizeStream {
             case 'session.created':
               break;
             case 'output_audio':
+              const { audio: a, ...rest } = json;
+              this.#logger.debug(
+                { rest },
+                'Received output_audio message from LiveKit TTS WebSocket',
+              );
               const audio = json.audio as string;
               const base64Data = new Int8Array(Buffer.from(audio, 'base64'));
               for (const frame of bstream.write(base64Data)) {
@@ -291,6 +302,8 @@ export class SynthesizeStream extends BaseSynthesizeStream {
                 lastFrame = frame;
               }
             case 'done':
+              const { audio: aasd, ...restasd } = json;
+              this.#logger.debug({ restasd }, 'Received done message from LiveKit TTS WebSocket');
               finalReceived = true;
               for (const frame of bstream.flush()) {
                 sendLastFrame(currentSessionId!, false);
@@ -303,6 +316,7 @@ export class SynthesizeStream extends BaseSynthesizeStream {
               ws.close();
               break;
             case 'error':
+              this.#logger.debug({ json }, 'Received error message from LiveKit TTS WebSocket');
               throw new APIError(`LiveKit TTS returned error: ${json.error}`);
             default:
               this.#logger.warn('Unexpected message %s', json);
