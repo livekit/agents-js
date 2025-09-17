@@ -23,6 +23,11 @@ class VoiceAgent extends voice.Agent {
   constructor(options: voice.AgentOptions<unknown>) {
     super(options);
   }
+
+  async onEnter(): Promise<void> {
+    const handle = this.session.say('I can look up the weather for you.');
+    await handle.waitForPlayout();
+  }
 }
 
 export default defineAgent({
