@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AccessToken } from 'livekit-server-sdk';
+import { WebSocket } from 'ws';
+import { APIConnectionError, APIStatusError } from '../index.js';
 
 export async function createAccessToken(
   apiKey: string,
@@ -12,4 +14,59 @@ export async function createAccessToken(
   token.addInferenceGrant({ perform: true });
 
   return await token.toJwt();
+}
+
+export async function connectWs(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs: number,
+): Promise<WebSocket> {
+  return new Promise<WebSocket>((resolve, reject) => {
+    const socket = new WebSocket(url, { headers: headers });
+
+    const timeout = setTimeout(() => {
+      reject(
+        new APIConnectionError({
+          message: 'Timeout connecting to LiveKit STT',
+        }),
+      );
+    }, timeoutMs);
+
+    const onOpen = () => {
+      clearTimeout(timeout);
+      resolve(socket);
+    };
+
+    const onError = (err: unknown) => {
+      clearTimeout(timeout);
+      if (err && typeof err === 'object' && 'code' in err && (err as any).code === 429) {
+        reject(
+          new APIStatusError({
+            message: 'LiveKit STT quota exceeded',
+            options: { statusCode: 429 },
+          }),
+        );
+      } else {
+        reject(
+          new APIConnectionError({
+            message: 'Error connecting to LiveKit STT',
+          }),
+        );
+      }
+    };
+
+    const onClose = (code: number) => {
+      clearTimeout(timeout);
+      if (code !== 1000) {
+        reject(
+          new APIConnectionError({
+            message: 'Connection closed unexpectedly',
+          }),
+        );
+      }
+    };
+    socket.once('open', onOpen);
+    socket.once('error', onError);
+    socket.once('close', onClose);
+  });
 }

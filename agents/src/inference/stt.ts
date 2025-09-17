@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import { APIConnectionError, APIError, APIStatusError } from '../_exceptions.js';
+import { APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { log } from '../log.js';
 import {
@@ -16,7 +16,7 @@ import {
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
 import type { STTLanguages, STTModels } from './models.js';
-import { createAccessToken } from './utils.js';
+import { connectWs, createAccessToken } from './utils.js';
 
 type STTEncoding = 'pcm_s16le';
 
@@ -173,56 +173,11 @@ export class SpeechStream extends BaseSpeechStream {
       const url = `${baseURL}/stt`;
       const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
 
-      return new Promise<WebSocket>((resolve, reject) => {
-        const socket = new WebSocket(url, { headers });
+      const socket = await connectWs(url, headers, 10000);
+      const msg = { ...params, type: 'session.create' };
+      socket.send(JSON.stringify(msg));
 
-        const timeout = setTimeout(() => {
-          reject(
-            new APIConnectionError({
-              message: 'Timeout connecting to LiveKit STT',
-            }),
-          );
-        }, 10000);
-
-        const onOpen = () => {
-          clearTimeout(timeout);
-          resolve(socket);
-        };
-        const onError = (err: unknown) => {
-          clearTimeout(timeout);
-          if (err && typeof err === 'object' && 'code' in err && (err as any).code === 429) {
-            reject(
-              new APIStatusError({
-                message: 'LiveKit STT quota exceeded',
-                options: { statusCode: 429 },
-              }),
-            );
-          } else {
-            reject(
-              new APIConnectionError({
-                message: 'Error connecting to LiveKit STT',
-              }),
-            );
-          }
-        };
-        const onClose = (code: number) => {
-          clearTimeout(timeout);
-          if (code !== 1000) {
-            reject(
-              new APIConnectionError({
-                message: 'Connection closed unexpectedly',
-              }),
-            );
-          }
-        };
-        socket.once('open', onOpen);
-        socket.once('error', onError);
-        socket.once('close', onClose);
-      }).then(async (socket) => {
-        const msg = { ...params, type: 'session.create' };
-        socket.send(JSON.stringify(msg));
-        return socket;
-      });
+      return socket;
     };
 
     const send = async (socket: WebSocket, signal: AbortSignal) => {

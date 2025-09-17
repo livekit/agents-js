@@ -1,27 +1,28 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type AudioFrame } from '@livekit/rtc-node';
+import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import { APIConnectionError, APIError, APIStatusError } from '../_exceptions.js';
+import { APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { log } from '../log.js';
 import { basic as tokenizeBasic } from '../tokenize/index.js';
 import {
   SynthesizeStream as BaseSynthesizeStream,
   TTS as BaseTTS,
-  type SynthesizedAudio,
+  ChunkedStream,
 } from '../tts/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { Task, cancelAndWait, shortuuid } from '../utils.js';
+import { shortuuid, waitForAbort } from '../utils.js';
 import type { TTSModels } from './models.js';
-import { createAccessToken } from './utils.js';
+import { connectWs, createAccessToken } from './utils.js';
 
 type TTSEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: TTSEncoding = 'pcm_s16le';
 const DEFAULT_SAMPLE_RATE = 16000;
-const DEFAULT_BASE_URL = 'wss://agent-gateway.livekit.cloud/v1';
+const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
+const NUM_CHANNELS = 1;
 
 export interface InferenceTTSOptions {
   model?: TTSModels | string;
@@ -39,7 +40,7 @@ export class TTS extends BaseTTS {
   private opts: InferenceTTSOptions;
   private streams: Set<SynthesizeStream> = new Set();
 
-  label = 'inference.TTS';
+  #logger = log();
 
   constructor(opts?: {
     model?: TTSModels | string;
@@ -78,9 +79,28 @@ export class TTS extends BaseTTS {
       throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
     }
 
+    // read voice id from the model if provided: "provider/model:voice_id"
+    let nextModel = model;
+    let nextVoice = voice;
+    if (typeof nextModel === 'string') {
+      const idx = nextModel.lastIndexOf(':');
+      if (idx !== -1) {
+        const voiceFromModel = nextModel.slice(idx + 1);
+        if (nextVoice && nextVoice !== voiceFromModel) {
+          this.#logger.warn(
+            '`voice` is provided via both argument and model, using the one from the argument',
+            { voice: nextVoice, model: nextModel },
+          );
+        } else {
+          nextVoice = voiceFromModel;
+        }
+        nextModel = nextModel.slice(0, idx);
+      }
+    }
+
     this.opts = {
-      model,
-      voice,
+      model: nextModel,
+      voice: nextVoice,
       language,
       encoding,
       sampleRate,
@@ -91,6 +111,10 @@ export class TTS extends BaseTTS {
     };
   }
 
+  get label() {
+    return 'inference.TTS';
+  }
+
   updateOptions(opts: Partial<Pick<InferenceTTSOptions, 'model' | 'voice' | 'language'>>) {
     this.opts = { ...this.opts, ...opts };
     for (const stream of this.streams) {
@@ -98,7 +122,7 @@ export class TTS extends BaseTTS {
     }
   }
 
-  synthesize(): never {
+  synthesize(_: string): ChunkedStream {
     throw new Error('ChunkedStream is not implemented');
   }
 
@@ -108,263 +132,195 @@ export class TTS extends BaseTTS {
     this.streams.add(stream);
     return stream;
   }
+
+  async connectWs(timeout: number): Promise<WebSocket> {
+    let baseURL = this.opts.baseURL;
+    if (baseURL.startsWith('http://') || baseURL.startsWith('https://')) {
+      baseURL = baseURL.replace('http', 'ws');
+    }
+
+    const token = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
+    const url = `${baseURL}/tts`;
+    const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
+
+    const params = {
+      type: 'session.create',
+      sample_rate: String(this.opts.sampleRate),
+      encoding: this.opts.encoding,
+      extra: this.opts.extraKwargs,
+    } as Record<string, unknown>;
+
+    if (this.opts.voice) params.voice = this.opts.voice;
+    if (this.opts.model) params.model = this.opts.model;
+    if (this.opts.language) params.language = this.opts.language;
+
+    const socket = await connectWs(url, headers, timeout);
+    socket.send(JSON.stringify(params));
+    return socket;
+  }
+
+  async closeWs(ws: WebSocket) {
+    await ws.close();
+  }
+
+  async close() {
+    for (const stream of this.streams) {
+      await stream.close();
+    }
+    this.streams.clear();
+  }
 }
 
 export class SynthesizeStream extends BaseSynthesizeStream {
-  #opts: InferenceTTSOptions;
-  #logger = log();
-  label = 'inference.SynthesizeStream';
+  private opts: InferenceTTSOptions;
+  private tts: TTS;
   private connOptions: APIConnectOptions;
+
+  #logger = log();
 
   constructor(tts: TTS, opts: InferenceTTSOptions, connOptions: APIConnectOptions) {
     super(tts, connOptions);
-    this.#opts = opts;
+    this.opts = opts;
+    this.tts = tts;
     this.connOptions = connOptions;
   }
 
+  get label() {
+    return 'inference.SynthesizeStream';
+  }
+
   updateOptions(opts: Partial<Pick<InferenceTTSOptions, 'model' | 'voice' | 'language'>>) {
-    this.#opts = { ...this.#opts, ...opts };
+    this.opts = { ...this.opts, ...opts };
   }
 
   protected async run(): Promise<void> {
     let ws: WebSocket | null = null;
     let closing = false;
 
-    const connect = async () => {
-      const params: Record<string, unknown> = {
-        type: 'session.create',
-        sample_rate: String(this.#opts.sampleRate),
-        encoding: this.#opts.encoding,
-        extra: this.#opts.extraKwargs,
-      };
-      if (this.#opts.voice) params['voice'] = this.#opts.voice;
-      if (this.#opts.model) params['model'] = this.#opts.model;
-      if (this.#opts.language) params['language'] = this.#opts.language;
-
-      let baseURL = this.#opts.baseURL;
-      if (baseURL.startsWith('http://') || baseURL.startsWith('https://')) {
-        baseURL = baseURL.replace('http', 'ws');
-      }
-
-      const token = await createAccessToken(this.#opts.apiKey, this.#opts.apiSecret);
-      const url = `${baseURL}/tts`;
-      const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
-
-      return new Promise<WebSocket>((resolve, reject) => {
-        const socket = new WebSocket(url, { headers });
-        const timeout = setTimeout(() => {
-          try {
-            socket.close();
-          } catch {}
-          reject(new APIConnectionError({ message: 'Timeout connecting to LiveKit TTS' }));
-        }, 10000);
-
-        const onOpen = () => {
-          clearTimeout(timeout);
-          try {
-            socket.send(JSON.stringify(params));
-          } catch (e) {
-            try {
-              socket.close();
-            } catch {}
-            return reject(
-              new APIConnectionError({
-                message: 'failed to send session.create message to LiveKit TTS',
-              }),
-            );
-          }
-          resolve(socket);
-        };
-        const onError = (err: unknown) => {
-          clearTimeout(timeout);
-          if (err && typeof err === 'object' && 'code' in err && (err as any).code === 429) {
-            reject(
-              new APIStatusError({
-                message: 'LiveKit TTS quota exceeded',
-                options: { statusCode: 429 },
-              }),
-            );
-          } else {
-            reject(new APIConnectionError({ message: 'failed to connect to LiveKit TTS' }));
-          }
-        };
-        const onClose = (code: number) => {
-          clearTimeout(timeout);
-          if (code !== 1000) {
-            reject(new APIConnectionError({ message: 'failed to connect to LiveKit TTS' }));
-          }
-        };
-        socket.once('open', onOpen);
-        socket.once('error', onError);
-        socket.once('close', onClose);
-      });
-    };
-
-    const tokenizer = new tokenizeBasic.SentenceTokenizer().stream();
+    const sendTokenizerStream = new tokenizeBasic.SentenceTokenizer().stream();
     const requestId = shortuuid('tts_request_');
 
-    const createRecvTask = (wsConn: WebSocket) =>
-      Task.from(async ({ signal }) => {
-        let finalReceived = false;
-        const bstream = new AudioByteStream(this.#opts.sampleRate, 1);
-        let lastFrame: AudioFrame | undefined;
-        const sendLast = (segmentId: string, final: boolean) => {
-          if (lastFrame && !this.queue.closed) {
-            this.queue.put({ requestId, segmentId, frame: lastFrame, final });
-            lastFrame = undefined;
-          }
-        };
+    const createInputTask = async (signal: AbortSignal) => {
+      for await (const data of this.input) {
+        if (signal.aborted) break;
+        if (data === SynthesizeStream.FLUSH_SENTINEL) {
+          sendTokenizerStream.flush();
+          continue;
+        }
+        sendTokenizerStream.pushText(data);
+      }
+      sendTokenizerStream.endInput();
+    };
 
-        const readOnce = () =>
-          new Promise<string | null>((resolve, reject) => {
-            wsConn.once('message', (d) => resolve(d.toString()));
-            wsConn.once('error', (e) => reject(e));
-            wsConn.once('close', (code, reason) => {
-              if (!closing && !finalReceived) {
+    const createSentenceStreamTask = async (ws: WebSocket) => {
+      const basePacket = { type: 'input_transcript' };
+      for await (const ev of sendTokenizerStream) {
+        if (this.abortController.signal.aborted) break;
+
+        const tokenPacket = { ...basePacket, transcript: ev.token + ' ' };
+        // TODO(brian): mark started
+        ws.send(JSON.stringify(tokenPacket));
+      }
+
+      const endPacket = { type: 'session.flush' };
+      ws.send(JSON.stringify(endPacket));
+    };
+
+    let lastFrame: AudioFrame | undefined;
+    const sendLastFrame = (segmentId: string, final: boolean) => {
+      if (lastFrame) {
+        this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+        lastFrame = undefined;
+      }
+    };
+
+    const createRecvTask = async (ws: WebSocket) => {
+      let currentSessionId: string | null = null;
+      let finalReceived = false;
+      const bstream = new AudioByteStream(this.opts.sampleRate, NUM_CHANNELS);
+
+      while (!this.closed && !this.abortController.signal.aborted) {
+        try {
+          const dataPromise = new Promise<string | void>((resolve, reject) => {
+            ws.once('message', (d) => resolve(d.toString()));
+            ws.once('error', (e) => reject(e));
+            ws.once('close', () => {
+              if (!closing) {
+                this.#logger.error('WebSocket closed unexpectedly');
+              }
+
+              if (!finalReceived) {
                 reject(
                   new APIStatusError({
-                    message: `Gateway connection closed unexpectedly: ${reason}`,
-                    options: { statusCode: code },
+                    message: 'Gateway connection closed unexpectedly',
+                    options: { requestId },
                   }),
                 );
               } else {
-                resolve(null);
+                resolve();
               }
             });
-            const timer = setTimeout(() => {
-              try {
-                closing = true;
-                wsConn.close();
-              } catch {}
-              resolve(null);
-            }, this.connOptions.timeoutMs);
-            // Clear timer on any completion
-            const clearAll = () => clearTimeout(timer);
-            wsConn.once('message', clearAll);
-            wsConn.once('error', clearAll);
-            wsConn.once('close', clearAll);
           });
 
-        while (!this.closed && !signal.aborted) {
-          const data = await Promise.race([
-            readOnce(),
-            new Promise<null>((resolve) =>
-              signal.addEventListener('abort', () => resolve(null), { once: true }),
-            ),
-          ]);
-          if (!data) break;
+          const data = await Promise.race([dataPromise, waitForAbort(this.abortController.signal)]);
+          if (!data || this.abortController.signal.aborted) return;
 
           const json = JSON.parse(data) as Record<string, unknown>;
-          const type = json['type'];
-          if (type === 'session.created') {
-            this.#logger.debug('received session created from LiveKit TTS');
-            continue;
-          } else if (type === 'output_audio') {
-            this.#logger.debug('received output audio from LiveKit TTS');
-            const segmentId = (json['session_id'] as string | undefined) ?? requestId;
-            const audioB64 = json['audio'] as string | undefined;
-            if (!audioB64) continue;
-            const bytes = new Int8Array(Buffer.from(audioB64, 'base64'));
-            for (const frame of bstream.write(bytes.buffer)) {
-              sendLast(segmentId, false);
-              lastFrame = frame;
-            }
-          } else if (type === 'done') {
-            this.#logger.debug('received done from LiveKit TTS');
-            const segmentId = (json['session_id'] as string | undefined) ?? requestId;
-            finalReceived = true;
-            for (const frame of bstream.flush()) {
-              sendLast(segmentId, false);
-              lastFrame = frame;
-            }
-            sendLast(segmentId, true);
-            if (!this.queue.closed) {
-              this.queue.put(BaseSynthesizeStream.END_OF_STREAM as unknown as SynthesizedAudio);
-            }
-            closing = true;
-            try {
-              wsConn.close();
-            } catch {}
-            break;
-          } else if (type === 'error') {
-            this.#logger.error('received error from LiveKit TTS: %o', json);
-            throw new APIError(`LiveKit TTS returned error: ${data}`);
-          } else {
-            this.#logger.warn('unexpected message from LiveKit TTS: %o', json);
+          const sessionId = json.session_id as string | undefined;
+          const type = json.type as string | undefined;
+
+          if (currentSessionId === null && sessionId) {
+            currentSessionId = sessionId;
           }
+
+          switch (type) {
+            case 'session.created':
+              break;
+            case 'output_audio':
+              const audio = json.audio as string;
+              const base64Data = new Int8Array(Buffer.from(audio, 'base64'));
+              for (const frame of bstream.write(base64Data)) {
+                sendLastFrame(currentSessionId!, false);
+                lastFrame = frame;
+              }
+            case 'done':
+              finalReceived = true;
+              for (const frame of bstream.flush()) {
+                sendLastFrame(currentSessionId!, false);
+                lastFrame = frame;
+              }
+              sendLastFrame(currentSessionId!, true);
+              this.queue.put(SynthesizeStream.END_OF_STREAM);
+
+              closing = true;
+              ws.close();
+              break;
+            case 'error':
+              throw new APIError(`LiveKit TTS returned error: ${json.error}`);
+            default:
+              this.#logger.warn('Unexpected message %s', json);
+              break;
+          }
+        } catch (err) {
+          // skip log error for normal websocket close
+          if (err instanceof Error && !err.message.includes('WebSocket closed')) {
+            this.#logger.error({ err }, 'Error in recvTask from LiveKit TTS WebSocket');
+          }
+          break;
         }
-      });
+      }
+    };
+
+    ws = await this.tts.connectWs(this.connOptions.timeoutMs);
 
     try {
-      ws = await connect();
-      const inputTask = Task.from(async () => {
-        try {
-          for await (const data of this.input) {
-            if (this.abortController.signal.aborted) break;
-            if (data === BaseSynthesizeStream.FLUSH_SENTINEL) {
-              tokenizer.flush();
-              continue;
-            }
-            tokenizer.pushText(data);
-          }
-          tokenizer.endInput();
-        } finally {
-          tokenizer.close();
-        }
-      });
-
-      const sentenceTask = Task.from(async ({ signal }) => {
-        while (!signal.aborted) {
-          const ev = await Promise.race([
-            tokenizer.next(),
-            new Promise<IteratorResult<unknown>>((resolve) => {
-              signal.addEventListener(
-                'abort',
-                () => resolve({ done: true, value: undefined } as IteratorResult<unknown>),
-                { once: true },
-              );
-            }),
-          ]);
-          if (!ev || ev.done) break;
-          const token = (ev.value as { token: string }).token;
-          try {
-            ws!.send(
-              JSON.stringify({
-                type: 'input_transcript',
-                transcript: token + ' ',
-              }),
-            );
-          } catch (e) {
-            if (!closing) throw e;
-            break;
-          }
-        }
-        try {
-          ws!.send(JSON.stringify({ type: 'session.flush' }));
-        } catch {}
-      });
-
-      const recvTask = createRecvTask(ws);
-
-      // Wait for all tasks to complete to ensure we don't exit early while
-      // the receiver is still streaming audio. This mirrors the Python
-      // implementation which gathers all tasks.
-      await Promise.all([recvTask.result, sentenceTask.result, inputTask.result]);
+      await Promise.all([
+        createInputTask(this.abortController.signal),
+        createSentenceStreamTask(ws),
+        createRecvTask(ws),
+      ]);
     } finally {
-      closing = true;
-      // tasks may not be defined if connect failed; cancel any that exist
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tasks: any[] = [];
-      // @ts-expect-error dynamic scope
-      if (typeof recvTask !== 'undefined') tasks.push(recvTask);
-      // @ts-expect-error dynamic scope
-      if (typeof sentenceTask !== 'undefined') tasks.push(sentenceTask);
-      // @ts-expect-error dynamic scope
-      if (typeof inputTask !== 'undefined') tasks.push(inputTask);
-      await cancelAndWait(tasks, 2000);
-      try {
-        if (ws) ws.close();
-      } catch {}
+      await sendTokenizerStream.close();
     }
   }
 }
