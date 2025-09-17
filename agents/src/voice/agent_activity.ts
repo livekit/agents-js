@@ -82,7 +82,7 @@ export class AgentActivity implements RecognitionHooks {
   private _currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private q_updated: Future;
-  private speechTasks: Set<Task<unknown>> = new Set();
+  private speechTasks: Set<Task<void>> = new Set();
   private lock = new Mutex();
   private audioStream = new DeferredReadableStream<AudioFrame>();
   // default to null as None, which maps to the default provider tool choice value
@@ -662,20 +662,20 @@ export class AgentActivity implements RecognitionHooks {
     );
   }
 
-  private createSpeechTask<T>(options: {
-    task: Task<T>;
+  private createSpeechTask(options: {
+    task: Task<void>;
     ownedSpeechHandle?: SpeechHandle;
     name?: string;
-  }): Promise<T> {
+  }): Promise<void> {
     const { task, ownedSpeechHandle } = options;
 
-    this.speechTasks.add(task as Task<unknown>);
+    this.speechTasks.add(task);
     task.addDoneCallback(() => {
-      this.speechTasks.delete(task as Task<unknown>);
+      this.speechTasks.delete(task);
     });
 
     if (ownedSpeechHandle) {
-      ownedSpeechHandle._tasks.push(task as Task<unknown>);
+      ownedSpeechHandle._tasks.push(task);
       task.addDoneCallback(() => {
         if (ownedSpeechHandle._tasks.every((t) => t.done)) {
           ownedSpeechHandle._markDone();

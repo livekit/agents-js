@@ -21,7 +21,7 @@ export class SpeechHandle {
 
   private generations: Future<void>[] = [];
   /** @internal */
-  _tasks: Task<unknown>[] = [];
+  _tasks: Task<void>[] = [];
   private _chatItems: ChatItem[] = [];
   private _numSteps = 1;
 
