@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import { APIConnectionError, APIStatusError } from '../_exceptions.js';
+import { APIConnectionError, APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { log } from '../log.js';
 import {
@@ -14,7 +14,7 @@ import {
   SpeechEventType,
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { shortuuid } from '../utils.js';
+import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
 import type { STTLanguages, STTModels } from './models.js';
 import { createAccessToken } from './utils.js';
 
@@ -23,7 +23,7 @@ type STTEncoding = 'pcm_s16le';
 const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
 const DEFAULT_SAMPLE_RATE = 16000;
 const DEFAULT_BASE_URL = 'wss://agent-gateway.livekit.cloud/v1';
-
+const DEFAULT_CANCEL_TIMEOUT = 5000;
 export interface InferenceSTTOptions {
   model?: STTModels | string;
   language?: STTLanguages | string;
@@ -36,8 +36,8 @@ export interface InferenceSTTOptions {
 }
 
 export class STT extends BaseSTT {
-  #opts: InferenceSTTOptions;
-  #logger = log();
+  private opts: InferenceSTTOptions;
+  private streams: Set<SpeechStream> = new Set();
 
   constructor(opts?: {
     model?: STTModels | string;
@@ -51,28 +51,38 @@ export class STT extends BaseSTT {
   }) {
     super({ streaming: true, interimResults: true });
 
-    const lkBaseURL = opts?.baseURL || process.env.LIVEKIT_GATEWAY_URL || DEFAULT_BASE_URL;
-    const lkApiKey =
-      opts?.apiKey || process.env.LIVEKIT_GATEWAY_API_KEY || process.env.LIVEKIT_API_KEY;
+    const {
+      model,
+      language,
+      baseURL,
+      encoding = DEFAULT_ENCODING,
+      sampleRate = DEFAULT_SAMPLE_RATE,
+      apiKey,
+      apiSecret,
+      extraKwargs = {},
+    } = opts || {};
+
+    const lkBaseURL = baseURL || process.env.LIVEKIT_GATEWAY_URL || DEFAULT_BASE_URL;
+    const lkApiKey = apiKey || process.env.LIVEKIT_GATEWAY_API_KEY || process.env.LIVEKIT_API_KEY;
     if (!lkApiKey) {
       throw new Error('apiKey is required: pass apiKey or set LIVEKIT_API_KEY');
     }
 
     const lkApiSecret =
-      opts?.apiSecret || process.env.LIVEKIT_GATEWAY_API_SECRET || process.env.LIVEKIT_API_SECRET;
+      apiSecret || process.env.LIVEKIT_GATEWAY_API_SECRET || process.env.LIVEKIT_API_SECRET;
     if (!lkApiSecret) {
       throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
     }
 
-    this.#opts = {
-      model: opts?.model,
-      language: opts?.language,
-      encoding: opts?.encoding ?? DEFAULT_ENCODING,
-      sampleRate: opts?.sampleRate ?? DEFAULT_SAMPLE_RATE,
+    this.opts = {
+      model,
+      language,
+      encoding,
+      sampleRate,
       baseURL: lkBaseURL,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
-      extraKwargs: opts?.extraKwargs ?? {},
+      extraKwargs,
     };
   }
 
@@ -80,13 +90,16 @@ export class STT extends BaseSTT {
     return 'inference.STT';
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  protected async _recognize(_: AudioFrame | AudioFrame[]): Promise<SpeechEvent> {
+  protected async _recognize(_: AudioBuffer): Promise<SpeechEvent> {
     throw new Error('LiveKit STT does not support batch recognition, use stream() instead');
   }
 
   updateOptions(opts: Partial<Pick<InferenceSTTOptions, 'model' | 'language'>>): void {
-    this.#opts = { ...this.#opts, ...opts };
+    this.opts = { ...this.opts, ...opts };
+
+    for (const stream of this.streams) {
+      stream.updateOptions(opts);
+    }
   }
 
   stream(options?: {
@@ -94,22 +107,30 @@ export class STT extends BaseSTT {
     connOptions?: APIConnectOptions;
   }): SpeechStream {
     const { language, connOptions = DEFAULT_API_CONNECT_OPTIONS } = options || {};
-    const streamOpts: InferenceSTTOptions = { ...this.#opts };
-    if (language) streamOpts.language = language;
-    return new SpeechStream(this, streamOpts, connOptions);
+    const streamOpts = {
+      ...this.opts,
+      language: language ?? this.opts.language,
+    } as InferenceSTTOptions;
+
+    const stream = new SpeechStream(this, streamOpts, connOptions);
+    this.streams.add(stream);
+
+    return stream;
   }
 }
 
 export class SpeechStream extends BaseSpeechStream {
-  #opts: InferenceSTTOptions;
+  private opts: InferenceSTTOptions;
+  private requestId = shortuuid('stt_request_');
+  private speaking = false;
+  private speechDuration = 0;
+  private reconnectEvent = new Event();
+
   #logger = log();
-  #requestId = shortuuid('stt_request_');
-  #speaking = false;
-  #speechDuration = 0;
 
   constructor(sttImpl: STT, opts: InferenceSTTOptions, connOptions: APIConnectOptions) {
     super(sttImpl, opts.sampleRate, connOptions);
-    this.#opts = opts;
+    this.opts = opts;
   }
 
   get label(): string {
@@ -117,60 +138,79 @@ export class SpeechStream extends BaseSpeechStream {
   }
 
   updateOptions(opts: Partial<Pick<InferenceSTTOptions, 'model' | 'language'>>): void {
-    this.#opts = { ...this.#opts, ...opts };
+    this.opts = { ...this.opts, ...opts };
   }
 
   protected async run(): Promise<void> {
     let ws: WebSocket | null = null;
-    let closing = false;
+    let closingWs = false;
+
+    this.reconnectEvent.set();
 
     const connect = async () => {
-      const params: Record<string, unknown> = {
+      const params = {
         settings: {
-          sample_rate: String(this.#opts.sampleRate),
-          encoding: this.#opts.encoding,
-          extra: this.#opts.extraKwargs,
+          sample_rate: String(this.opts.sampleRate),
+          encoding: this.opts.encoding,
+          extra: this.opts.extraKwargs,
         },
-      };
+      } as Record<string, unknown>;
 
-      if (this.#opts.model) params['model'] = this.#opts.model;
-      if (this.#opts.language) (params.settings as any).language = this.#opts.language;
+      if (this.opts.model) {
+        params.model = this.opts.model;
+      }
 
-      let baseURL = this.#opts.baseURL;
+      if (this.opts.language) {
+        (params.settings as Record<string, unknown>).language = this.opts.language;
+      }
+
+      let baseURL = this.opts.baseURL;
       if (baseURL.startsWith('http://') || baseURL.startsWith('https://')) {
         baseURL = baseURL.replace('http', 'ws');
       }
 
-      const token = await createAccessToken(this.#opts.apiKey, this.#opts.apiSecret);
+      const token = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
       const url = `${baseURL}/stt`;
       const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
 
       return new Promise<WebSocket>((resolve, reject) => {
         const socket = new WebSocket(url, { headers });
-        const onOpen = () => resolve(socket);
+
+        const timeout = setTimeout(() => {
+          reject(
+            new APIConnectionError({
+              message: 'Timeout connecting to LiveKit STT',
+            }),
+          );
+        }, 10000);
+
+        const onOpen = () => {
+          clearTimeout(timeout);
+          resolve(socket);
+        };
         const onError = (err: unknown) => {
+          clearTimeout(timeout);
           if (err && typeof err === 'object' && 'code' in err && (err as any).code === 429) {
             reject(
               new APIStatusError({
                 message: 'LiveKit STT quota exceeded',
-                options: { retryable: false, statusCode: 429 },
+                options: { statusCode: 429 },
               }),
             );
           } else {
             reject(
               new APIConnectionError({
-                message: 'failed to connect to LiveKit STT',
-                options: { retryable: true },
+                message: 'Error connecting to LiveKit STT',
               }),
             );
           }
         };
         const onClose = (code: number) => {
+          clearTimeout(timeout);
           if (code !== 1000) {
             reject(
               new APIConnectionError({
-                message: 'failed to connect to LiveKit STT',
-                options: { retryable: true },
+                message: 'Connection closed unexpectedly',
               }),
             );
           }
@@ -185,65 +225,71 @@ export class SpeechStream extends BaseSpeechStream {
       });
     };
 
-    const sendTask = async (socket: WebSocket) => {
+    const send = async (socket: WebSocket, signal: AbortSignal) => {
       const audioStream = new AudioByteStream(
-        this.#opts.sampleRate,
+        this.opts.sampleRate,
         1,
-        Math.floor(this.#opts.sampleRate / 20),
+        Math.floor(this.opts.sampleRate / 20), // 50ms
       );
+
       for await (const ev of this.input) {
-        let frames: AudioFrame[] = [];
+        if (signal.aborted) break;
+        let frames: AudioFrame[];
+
         if (ev === SpeechStream.FLUSH_SENTINEL) {
           frames = audioStream.flush();
         } else {
           const frame = ev as AudioFrame;
           frames = audioStream.write(new Int16Array(frame.data).buffer);
         }
+
         for (const frame of frames) {
-          this.#speechDuration += frame.samplesPerChannel / frame.sampleRate;
+          this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
           const base64 = Buffer.from(frame.data.buffer).toString('base64');
           const msg = { type: 'input_audio', audio: base64 };
           socket.send(JSON.stringify(msg));
         }
       }
-      closing = true;
+
+      closingWs = true;
       socket.send(JSON.stringify({ type: 'session.finalize' }));
     };
 
-    const recvTask = async (socket: WebSocket) => {
-      while (!this.closed) {
-        const data = await new Promise<string>((resolve, reject) => {
+    const recv = async (socket: WebSocket, signal: AbortSignal) => {
+      while (!this.closed && !signal.aborted) {
+        const dataPromise = new Promise<string>((resolve, reject) => {
           socket.once('message', (d) => resolve(d.toString()));
           socket.once('error', (e) => reject(e));
           socket.once('close', (code) => {
-            if (closing) return resolve('');
+            if (closingWs) return resolve('');
             reject(
               new APIStatusError({
                 message: 'LiveKit STT connection closed unexpectedly',
-                options: { retryable: true, statusCode: code },
+                options: { statusCode: code },
               }),
             );
           });
         });
-        if (!data) return;
+
+        const data = await Promise.race([dataPromise, waitForAbort(signal)]);
+        if (!data || signal.aborted) return;
+
         const json = JSON.parse(data);
         const type = json.type as string | undefined;
+
         switch (type) {
           case 'session.created':
           case 'session.finalized':
           case 'session.closed':
             break;
           case 'interim_transcript':
-            this.#processTranscript(json, false);
+            this.processTranscript(json, false);
             break;
           case 'final_transcript':
-            this.#processTranscript(json, true);
+            this.processTranscript(json, true);
             break;
           case 'error':
-            throw new APIStatusError({
-              message: `LiveKit STT returned error: ${JSON.stringify(json)}`,
-              options: { retryable: false },
-            });
+            throw new APIError(`LiveKit STT returned error: ${JSON.stringify(json)}`);
           default:
             this.#logger.warn('received unexpected message from LiveKit STT: %o', json);
             break;
@@ -251,25 +297,52 @@ export class SpeechStream extends BaseSpeechStream {
       }
     };
 
-    try {
-      ws = await connect();
-      await Promise.race([sendTask(ws), recvTask(ws)]);
-    } finally {
+    while (true) {
       try {
-        if (ws) ws.close();
-      } catch {}
+        ws = await connect();
+
+        const sendTask = Task.from(async ({ signal }) => {
+          await send(ws!, signal);
+        });
+
+        const recvTask = Task.from(async ({ signal }) => {
+          await recv(ws!, signal);
+        });
+
+        const tasks = [sendTask, recvTask];
+        const waitReconnectTask = Task.from(async ({ signal }) => {
+          await Promise.race([this.reconnectEvent.wait(), waitForAbort(signal)]);
+        });
+
+        try {
+          await Promise.race([
+            Promise.all(tasks.map((task) => task.result)),
+            waitReconnectTask.result,
+          ]);
+
+          if (!waitReconnectTask.done) break;
+          this.reconnectEvent.clear();
+        } finally {
+          await cancelAndWait([sendTask, recvTask, waitReconnectTask], DEFAULT_CANCEL_TIMEOUT);
+        }
+      } finally {
+        try {
+          if (ws) ws.close();
+        } catch {}
+      }
     }
   }
 
-  #processTranscript(data: Record<string, any>, isFinal: boolean) {
-    const requestId = data.request_id ?? this.#requestId;
+  private processTranscript(data: Record<string, any>, isFinal: boolean) {
+    const requestId = data.request_id ?? this.requestId;
     const text = data.transcript ?? '';
-    const language = data.language ?? this.#opts.language ?? 'en';
+    const language = data.language ?? this.opts.language ?? 'en';
 
     if (!text && !isFinal) return;
 
-    if (!this.#speaking) {
-      this.#speaking = true;
+    // We'll have a more accurate way of detecting when speech started when we have VAD
+    if (!this.speaking) {
+      this.speaking = true;
       this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
     }
 
@@ -282,13 +355,13 @@ export class SpeechStream extends BaseSpeechStream {
     };
 
     if (isFinal) {
-      if (this.#speechDuration > 0) {
+      if (this.speechDuration > 0) {
         this.queue.put({
           type: SpeechEventType.RECOGNITION_USAGE,
           requestId,
-          recognitionUsage: { audioDuration: this.#speechDuration },
+          recognitionUsage: { audioDuration: this.speechDuration },
         });
-        this.#speechDuration = 0;
+        this.speechDuration = 0;
       }
 
       this.queue.put({
@@ -297,8 +370,8 @@ export class SpeechStream extends BaseSpeechStream {
         alternatives: [speechData],
       });
 
-      if (this.#speaking) {
-        this.#speaking = false;
+      if (this.speaking) {
+        this.speaking = false;
         this.queue.put({ type: SpeechEventType.END_OF_SPEECH });
       }
     } else {
