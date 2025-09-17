@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-export type TTSModels =
+export type _TTSModels =
   | 'cartesia'
   | 'cartesia/sonic'
   | 'cartesia/sonic-2'
@@ -19,6 +19,9 @@ export type TTSModels =
   | 'rime/arcana'
   | 'inworld'
   | 'inworld/inworld-tts-1';
+
+// Also allow an arbitrary ID suffix (e.g., "elevenlabs:abc123" or "elevenlabs/eleven_multilingual_v3:bIHbv24MWmeRgasZH58o")
+export type TTSModels = _TTSModels | `${_TTSModels}:${string}`;
 
 export type STTModels =
   | 'deepgram'

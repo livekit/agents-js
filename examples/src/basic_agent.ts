@@ -30,7 +30,7 @@ export default defineAgent({
     const session = new voice.AgentSession({
       vad,
       stt: 'deepgram/nova-3',
-      tts: 'cartesia',
+      tts: 'elevenlabs/eleven_multilingual_v3:bIHbv24MWmeRgasZH58o',
       llm: 'openai/gpt-4.1',
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),

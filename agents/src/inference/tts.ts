@@ -23,6 +23,7 @@ const DEFAULT_ENCODING: TTSEncoding = 'pcm_s16le';
 const DEFAULT_SAMPLE_RATE = 16000;
 const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 const NUM_CHANNELS = 1;
+const DEFAULT_LANGUAGE = 'en';
 
 export interface InferenceTTSOptions {
   model?: TTSModels | string;
@@ -59,7 +60,7 @@ export class TTS extends BaseTTS {
     const {
       model,
       voice,
-      language,
+      language = DEFAULT_LANGUAGE,
       baseURL,
       encoding = DEFAULT_ENCODING,
       apiKey,
@@ -150,11 +151,12 @@ export class TTS extends BaseTTS {
       encoding: this.opts.encoding,
       extra: this.opts.extraKwargs,
     } as Record<string, unknown>;
-    this.#logger.info({ params }, 'Sending session.create message to LiveKit TTS WebSocket');
 
     if (this.opts.voice) params.voice = this.opts.voice;
     if (this.opts.model) params.model = this.opts.model;
     if (this.opts.language) params.language = this.opts.language;
+
+    this.#logger.info({ params }, 'Sending session.create message to LiveKit TTS WebSocket');
 
     const socket = await connectWs(url, headers, timeout);
     socket.send(JSON.stringify(params));
