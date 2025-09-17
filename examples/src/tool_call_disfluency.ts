@@ -60,7 +60,6 @@ export default defineAgent({
       stt: new deepgram.STT(),
       llm: new openai.LLM(),
       tts: new elevenlabs.TTS(),
-      // llm: new openai.realtime.RealtimeModel(),
       turnDetection: new livekit.turnDetector.MultilingualModel(),
     });
 
