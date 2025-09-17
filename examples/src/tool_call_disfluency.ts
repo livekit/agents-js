@@ -40,7 +40,7 @@ export default defineAgent({
         location: z.string().describe('The location to get the weather for'),
       }),
       execute: async ({ location }, { ctx }) => {
-        ctx.session.say('tell me a story');
+        ctx.session.say('Let me look up the weather for you.');
         await ctx.waitForPlayout();
 
         return `The weather in ${location} is sunny today.`;
