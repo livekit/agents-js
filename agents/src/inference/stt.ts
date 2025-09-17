@@ -283,12 +283,15 @@ export class SpeechStream extends BaseSpeechStream {
           case 'session.closed':
             break;
           case 'interim_transcript':
+            this.#logger.debug('received interim transcript from LiveKit STT: %o', json);
             this.processTranscript(json, false);
             break;
           case 'final_transcript':
+            this.#logger.debug('received final transcript from LiveKit STT: %o', json);
             this.processTranscript(json, true);
             break;
           case 'error':
+            this.#logger.error('received error from LiveKit STT: %o', json);
             throw new APIError(`LiveKit STT returned error: ${JSON.stringify(json)}`);
           default:
             this.#logger.warn('received unexpected message from LiveKit STT: %o', json);
