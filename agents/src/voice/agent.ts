@@ -7,6 +7,7 @@ import { ReadableStream } from 'node:stream/web';
 import {
   LLM as InferenceLLM,
   STT as InferenceSTT,
+  TTS as InferenceTTS,
   type LLMModels,
   type STTModels,
   type TTSModels,
@@ -123,8 +124,7 @@ export class Agent<UserData = any> {
     }
 
     if (typeof tts === 'string') {
-      // TODO(brian): support inference.TTS
-      throw new Error('string TTS model ids are not supported yet; pass a TTS instance');
+      this._tts = new InferenceTTS({ model: tts });
     } else {
       this._tts = tts;
     }
