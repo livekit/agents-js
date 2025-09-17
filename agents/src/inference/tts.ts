@@ -143,6 +143,7 @@ export class TTS extends BaseTTS {
     const url = `${baseURL}/tts`;
     const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
 
+    this.#logger.info('Connecting to LiveKit TTS WebSocket', { url, headers });
     const params = {
       type: 'session.create',
       sample_rate: String(this.opts.sampleRate),
@@ -243,7 +244,10 @@ export class SynthesizeStream extends BaseSynthesizeStream {
         try {
           const dataPromise = new Promise<string | void>((resolve, reject) => {
             ws.once('message', (d) => resolve(d.toString()));
-            ws.once('error', (e) => reject(e));
+            ws.once('error', (e) => {
+              this.#logger.error('WebSocket error', { error: e });
+              reject(e);
+            });
             ws.once('close', () => {
               if (!closing) {
                 this.#logger.error('WebSocket closed unexpectedly');
