@@ -143,13 +143,14 @@ export class TTS extends BaseTTS {
     const url = `${baseURL}/tts`;
     const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
 
-    this.#logger.info('Connecting to LiveKit TTS WebSocket', { url, headers });
+    this.#logger.info({ url, headers }, 'Connecting to LiveKit TTS WebSocket');
     const params = {
       type: 'session.create',
       sample_rate: String(this.opts.sampleRate),
       encoding: this.opts.encoding,
       extra: this.opts.extraKwargs,
     } as Record<string, unknown>;
+    this.#logger.info({ params }, 'Sending session.create message to LiveKit TTS WebSocket');
 
     if (this.opts.voice) params.voice = this.opts.voice;
     if (this.opts.model) params.model = this.opts.model;

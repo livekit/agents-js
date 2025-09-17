@@ -201,6 +201,9 @@ importers:
       livekit-server-sdk:
         specifier: ^2.13.3
         version: 2.13.3
+      ws:
+        specifier: ^8.16.0
+        version: 8.18.3
       zod:
         specifier: ^3.23.8
         version: 3.23.8
