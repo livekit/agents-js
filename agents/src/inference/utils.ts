@@ -25,11 +25,7 @@ export async function connectWs(
     const socket = new WebSocket(url, { headers: headers });
 
     const timeout = setTimeout(() => {
-      reject(
-        new APIConnectionError({
-          message: 'Timeout connecting to LiveKit STT',
-        }),
-      );
+      reject(new APIConnectionError({ message: 'Timeout connecting to LiveKit WebSocket' }));
     }, timeoutMs);
 
     const onOpen = () => {
@@ -42,16 +38,12 @@ export async function connectWs(
       if (err && typeof err === 'object' && 'code' in err && (err as any).code === 429) {
         reject(
           new APIStatusError({
-            message: 'LiveKit STT quota exceeded',
+            message: 'LiveKit gateway quota exceeded',
             options: { statusCode: 429 },
           }),
         );
       } else {
-        reject(
-          new APIConnectionError({
-            message: 'Error connecting to LiveKit STT',
-          }),
-        );
+        reject(new APIConnectionError({ message: 'Error connecting to LiveKit WebSocket' }));
       }
     };
 
