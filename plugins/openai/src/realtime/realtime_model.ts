@@ -22,7 +22,6 @@ import {
 import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
-import type { GenerationCreatedEvent } from 'agents/dist/llm/realtime.js';
 import { type MessageEvent, WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
@@ -1011,7 +1010,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       messageStream: this.currentGeneration.messageChannel.stream(),
       functionStream: this.currentGeneration.functionChannel.stream(),
       userInitiated: false,
-    } as GenerationCreatedEvent;
+    } as llm.GenerationCreatedEvent;
 
     const clientEventId = event.response.metadata?.client_event_id;
     if (clientEventId) {
@@ -1414,7 +1413,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       messageStream: this.currentGeneration.messageChannel.stream(),
       functionStream: this.currentGeneration.functionChannel.stream(),
       userInitiated: false,
-    } as GenerationCreatedEvent;
+    } as llm.GenerationCreatedEvent;
 
     const handle = this.responseCreatedFutures[responseId];
     if (handle) {
