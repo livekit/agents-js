@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { AudioFrame } from '@livekit/rtc-node';
 import {
   AudioFrame,
   AudioStream,
@@ -66,8 +67,10 @@ export class ParticipantAudioInputStream extends AudioInput {
         ? participant
         : this.room.remoteParticipants.get(participantIdentity);
 
+    // We need to check if the participant has a microphone track and subscribe to it
+    // in case we miss the tracksubscribed event
     if (participantValue) {
-      for (const publication of Object.values(participantValue.trackPublications)) {
+      for (const publication of participantValue.trackPublications.values()) {
         if (publication.track && publication.source === TrackSource.SOURCE_MICROPHONE) {
           this.onTrackSubscribed(publication.track, publication, participantValue);
           break;

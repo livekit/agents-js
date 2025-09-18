@@ -507,6 +507,10 @@ export class Task<T> {
   get done(): boolean {
     return this.resultFuture.done;
   }
+
+  addDoneCallback(callback: () => void) {
+    this.resultFuture.await.finally(callback);
+  }
 }
 
 export async function waitFor(tasks: Task<void>[]): Promise<void> {
