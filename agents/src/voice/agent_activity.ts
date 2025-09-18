@@ -1183,12 +1183,6 @@ export class AgentActivity implements RecognitionHooks {
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForScheduled()]);
 
-    if (newMessage && speechHandle.scheduled) {
-      chatCtx.insert(newMessage);
-      this.agent._chatCtx.insert(newMessage);
-      this.agentSession._conversationItemAdded(newMessage);
-    }
-
     if (speechHandle.interrupted) {
       replyAbortController.abort();
       await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
