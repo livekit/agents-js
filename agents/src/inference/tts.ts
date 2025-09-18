@@ -227,7 +227,6 @@ export class SynthesizeStream extends BaseSynthesizeStream {
         return;
       }
       ws.send(JSON.stringify(validatedEvent));
-      this.#logger.debug({ validatedEvent }, '-> (client) LiveKit TTS WebSocket');
     };
 
     const sendLastFrame = (segmentId: string, final: boolean) => {
@@ -273,16 +272,10 @@ export class SynthesizeStream extends BaseSynthesizeStream {
           const eventJson = JSON.parse(data.toString()) as Record<string, unknown>;
           const validatedEvent = ttsServerEventSchema.parse(eventJson);
           eventChannel.write(validatedEvent);
-
-          const loggedEvent = { ...validatedEvent };
-          if ('audio' in loggedEvent) {
-            loggedEvent.audio = 'base64:<audio>';
-          }
-          this.#logger.debug({ loggedEvent }, '<- (server) LiveKit TTS WebSocket');
         });
 
         ws.on('error', (e) => {
-          this.#logger.error('WebSocket error', { error: e });
+          this.#logger.error({ error: e }, 'WebSocket error');
           resourceCleanup();
           reject(e);
         });
@@ -323,7 +316,7 @@ export class SynthesizeStream extends BaseSynthesizeStream {
               break;
             case 'output_audio':
               const base64Data = new Int8Array(Buffer.from(serverEvent.audio, 'base64'));
-              for (const frame of bstream.write(base64Data as unknown as ArrayBuffer)) {
+              for (const frame of bstream.write(base64Data.buffer)) {
                 sendLastFrame(currentSessionId!, false);
                 lastFrame = frame;
               }

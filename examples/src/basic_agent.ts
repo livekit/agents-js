@@ -39,10 +39,10 @@ export default defineAgent({
 
     const usageCollector = new metrics.UsageCollector();
 
-    // session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
-    //   metrics.logMetrics(ev.metrics);
-    //   usageCollector.collect(ev.metrics);
-    // });
+    session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
+      metrics.logMetrics(ev.metrics);
+      usageCollector.collect(ev.metrics);
+    });
 
     await session.start({
       agent,
