@@ -6,7 +6,6 @@ import type {
   ReadableStreamDefaultReader,
   WritableStreamDefaultWriter,
 } from 'node:stream/web';
-import { log } from '../log.js';
 import { IdentityTransform } from './identity_transform.js';
 
 /**
@@ -31,13 +30,10 @@ export class DeferredReadableStream<T> {
   private transform: IdentityTransform<T>;
   private writer: WritableStreamDefaultWriter<T>;
   private sourceReader?: ReadableStreamDefaultReader<T>;
-  private name?: string;
-  private logger = log();
-  constructor(name?: string) {
+
+  constructor() {
     this.transform = new IdentityTransform<T>();
     this.writer = this.transform.writable.getWriter();
-    this.name = name;
-    this.logger.debug({ stream_name: name }, 'DeferredReadableStream created');
   }
 
   get stream() {
@@ -52,9 +48,6 @@ export class DeferredReadableStream<T> {
    * Call once the actual source is ready.
    */
   setSource(source: ReadableStream<T>) {
-    if (this.name) {
-      this.logger.debug({ stream_name: this.name }, 'Setting deferred stream source');
-    }
     if (this.isSourceSet) {
       throw new Error('Stream source already set');
     }
@@ -104,9 +97,6 @@ export class DeferredReadableStream<T> {
    * Detach the source stream and clean up resources.
    */
   async detachSource() {
-    if (this.name) {
-      this.logger.debug({ stream_name: this.name }, 'Detaching deferred stream');
-    }
     if (!this.isSourceSet) {
       throw new Error('Source not set');
     }
