@@ -130,9 +130,9 @@ export class LLM extends llm.LLM {
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     // TODO(AJS-270): Add responseFormat parameter
-    extraKwargs?: Record<string, any>;
+    extraKwargs?: Record<string, unknown>;
   }): LLMStream {
-    let extras: Record<string, any> = { ...(extraKwargs || {}) }; // eslint-disable-line @typescript-eslint/no-explicit-any
+    let extras: Record<string, unknown> = { ...(extraKwargs || {}) };
 
     if (this.opts.maxCompletionTokens !== undefined) {
       extras.max_completion_tokens = this.opts.maxCompletionTokens;
