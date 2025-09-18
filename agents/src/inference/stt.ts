@@ -238,11 +238,9 @@ export class SpeechStream extends BaseSpeechStream {
           case 'session.closed':
             break;
           case 'interim_transcript':
-            this.#logger.debug('received interim transcript from LiveKit STT: %o', json);
             this.processTranscript(json, false);
             break;
           case 'final_transcript':
-            this.#logger.debug('received final transcript from LiveKit STT: %o', json);
             this.processTranscript(json, true);
             break;
           case 'error':

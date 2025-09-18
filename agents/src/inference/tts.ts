@@ -225,14 +225,11 @@ export class SynthesizeStream extends BaseSynthesizeStream {
         const tokenPacket = { ...basePacket, transcript: ev.token + ' ' };
         // TODO(brian): mark started
         ws.send(JSON.stringify(tokenPacket));
-        this.#logger.debug(
-          { tokenPacket },
-          'Sending input_transcript message to LiveKit TTS WebSocket',
-        );
+        this.#logger.debug({ tokenPacket }, '(client)-> LiveKit TTS WebSocket');
       }
 
       const endPacket = { type: 'session.flush' };
-      this.#logger.debug({ endPacket }, 'Sending session.flush message to LiveKit TTS WebSocket');
+      this.#logger.debug({ endPacket }, '(client) -> LiveKit TTS WebSocket');
       ws.send(JSON.stringify(endPacket));
     };
 
@@ -286,24 +283,26 @@ export class SynthesizeStream extends BaseSynthesizeStream {
             currentSessionId = sessionId;
           }
 
+          const { audio, ...rest } = json;
+          if (audio) {
+            // take first 16 base 64 encoded frames
+            rest.audio = '<audio_data>';
+          }
+          this.#logger.debug({ rest }, '(server) <- LiveKit TTS WebSocket');
+
           switch (type) {
             case 'session.created':
               break;
             case 'output_audio':
               const { audio: a, ...rest } = json;
-              this.#logger.debug(
-                { rest },
-                'Received output_audio message from LiveKit TTS WebSocket',
-              );
               const audio = json.audio as string;
               const base64Data = new Int8Array(Buffer.from(audio, 'base64'));
               for (const frame of bstream.write(base64Data)) {
                 sendLastFrame(currentSessionId!, false);
                 lastFrame = frame;
               }
+              break;
             case 'done':
-              const { audio: aasd, ...restasd } = json;
-              this.#logger.debug({ restasd }, 'Received done message from LiveKit TTS WebSocket');
               finalReceived = true;
               for (const frame of bstream.flush()) {
                 sendLastFrame(currentSessionId!, false);
@@ -312,11 +311,12 @@ export class SynthesizeStream extends BaseSynthesizeStream {
               sendLastFrame(currentSessionId!, true);
               this.queue.put(SynthesizeStream.END_OF_STREAM);
 
+              this.#logger.info('=== TTS Websocket Closed ===');
               closing = true;
               ws.close();
               break;
             case 'error':
-              this.#logger.debug({ json }, 'Received error message from LiveKit TTS WebSocket');
+              this.#logger.error({ json }, 'Received error message from LiveKit TTS WebSocket');
               throw new APIError(`LiveKit TTS returned error: ${json.error}`);
             default:
               this.#logger.warn('Unexpected message %s', json);
@@ -340,6 +340,7 @@ export class SynthesizeStream extends BaseSynthesizeStream {
         createSentenceStreamTask(ws),
         createRecvTask(ws),
       ]);
+      this.#logger.info('=== TTS Completed ===');
     } finally {
       await sendTokenizerStream.close();
     }
