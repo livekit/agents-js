@@ -47,6 +47,7 @@ export class ParticipantAudioInputStream extends AudioInput {
   }
 
   setParticipant(participant: RemoteParticipant | string | null) {
+    this.logger.debug({ participant }, 'setting participant audio input');
     const participantIdentity =
       participant instanceof RemoteParticipant ? participant.identity : participant;
 
@@ -57,8 +58,6 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.closeStream();
 
     if (!participantIdentity) {
-      this.logger.debug({ participant_identity: participantIdentity }, 'participant is null');
-
       return;
     }
 
