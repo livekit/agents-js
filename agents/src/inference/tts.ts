@@ -213,6 +213,7 @@ export class SynthesizeStream extends BaseSynthesizeStream {
         }
         sendTokenizerStream.pushText(data);
       }
+      this.#logger.debug('=== End of Input here ===');
       sendTokenizerStream.endInput();
       sendTokenizerStream.close();
     };
@@ -228,6 +229,7 @@ export class SynthesizeStream extends BaseSynthesizeStream {
         this.#logger.debug({ tokenPacket }, '(client)-> LiveKit TTS WebSocket');
       }
 
+      this.#logger.debug('=== Flush here ===');
       const endPacket = { type: 'session.flush' };
       this.#logger.debug({ endPacket }, '(client) -> LiveKit TTS WebSocket');
       ws.send(JSON.stringify(endPacket));
