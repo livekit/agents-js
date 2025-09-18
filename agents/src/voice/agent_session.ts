@@ -5,7 +5,12 @@ import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
-import type { LLMModels, STTModels, TTSModels } from '../inference/index.js';
+import {
+  LLM as InferenceLLM,
+  type LLMModels,
+  type STTModels,
+  type TTSModels,
+} from '../inference/index.js';
 import { getJobContext } from '../job.js';
 import { ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
@@ -78,10 +83,10 @@ export type AgentSessionCallbacks = {
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
   turnDetection?: TurnDetectionMode;
-  stt?: STT | STTModels | string;
+  stt?: STT | STTModels;
   vad?: VAD;
-  llm?: LLM | RealtimeModel | LLMModels | string;
-  tts?: TTS | TTSModels | string;
+  llm?: LLM | RealtimeModel | LLMModels;
+  tts?: TTS | TTSModels;
   userData?: UserData;
   voiceOptions?: Partial<VoiceOptions>;
 };
@@ -138,10 +143,7 @@ export class AgentSession<
     }
 
     if (typeof llm === 'string') {
-      // TODO(brian): support inference.LLM
-      throw new Error(
-        'string LLM model ids are not supported yet; pass an LLM or RealtimeModel instance',
-      );
+      this.llm = new InferenceLLM(llm);
     } else {
       this.llm = llm;
     }

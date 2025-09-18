@@ -4,7 +4,12 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
-import type { LLMModels, STTModels, TTSModels } from '../inference/index.js';
+import {
+  LLM as InferenceLLM,
+  type LLMModels,
+  type STTModels,
+  type TTSModels,
+} from '../inference/index.js';
 import { ReadonlyChatContext } from '../llm/chat_context.js';
 import type { ChatMessage, FunctionCall, RealtimeModel } from '../llm/index.js';
 import {
@@ -56,10 +61,10 @@ export interface AgentOptions<UserData> {
   chatCtx?: ChatContext;
   tools?: ToolContext<UserData>;
   turnDetection?: TurnDetectionMode;
-  stt?: STT | STTModels | string;
+  stt?: STT | STTModels;
   vad?: VAD;
-  llm?: LLM | RealtimeModel | LLMModels | string;
-  tts?: TTS | TTSModels | string;
+  llm?: LLM | RealtimeModel | LLMModels;
+  tts?: TTS | TTSModels;
   allowInterruptions?: boolean;
   minConsecutiveSpeechDelay?: number;
 }
@@ -112,10 +117,7 @@ export class Agent<UserData = any> {
     }
 
     if (typeof llm === 'string') {
-      // TODO(brian): support inference.LLM
-      throw new Error(
-        'string LLM model ids are not supported yet; pass an LLM or RealtimeModel instance',
-      );
+      this._llm = new InferenceLLM(llm);
     } else {
       this._llm = llm;
     }

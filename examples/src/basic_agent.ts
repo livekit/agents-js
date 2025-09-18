@@ -13,7 +13,6 @@ import {
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
-import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
@@ -34,7 +33,7 @@ export default defineAgent({
       vad,
       stt: new deepgram.STT(),
       tts: new elevenlabs.TTS(),
-      llm: new openai.LLM(),
+      llm: 'openai/gpt-4.1',
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
       turnDetection: new livekit.turnDetector.MultilingualModel(),
