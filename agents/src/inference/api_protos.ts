@@ -5,13 +5,13 @@ import { z } from 'zod';
 
 export const ttsSessionCreateEventSchema = z.object({
   type: z.literal('session.create'),
-  model: z.string(),
-  voice: z.string(),
-  language: z.string(),
-  sample_rate: z.number(),
+  sample_rate: z.string(),
   encoding: z.string(),
+  model: z.string().optional(),
+  voice: z.string().optional(),
+  language: z.string().optional(),
   extra: z.record(z.string(), z.unknown()),
-  transcript: z.string(),
+  transcript: z.string().optional(),
 });
 
 export const ttsInputTranscriptEventSchema = z.object({

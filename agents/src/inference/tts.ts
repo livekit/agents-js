@@ -18,6 +18,7 @@ import { shortuuid } from '../utils.js';
 import {
   type TtsClientEvent,
   type TtsServerEvent,
+  type TtsSessionCreateEvent,
   ttsClientEventSchema,
   ttsServerEventSchema,
 } from './api_protos.js';
@@ -156,7 +157,7 @@ export class TTS extends BaseTTS {
       sample_rate: String(this.opts.sampleRate),
       encoding: this.opts.encoding,
       extra: this.opts.extraKwargs,
-    } as Record<string, unknown>;
+    } as TtsSessionCreateEvent;
 
     if (this.opts.voice) params.voice = this.opts.voice;
     if (this.opts.model) params.model = this.opts.model;
