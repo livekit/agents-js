@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.5
+
+### Patch Changes
+
+- add some logging to debug track not being subscribed - [#708](https://github.com/livekit/agents-js/pull/708) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
 ## 1.0.4
 
 ### Patch Changes
