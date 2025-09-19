@@ -10,7 +10,6 @@ import {
   metrics,
   voice,
 } from '@livekit/agents';
-import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
@@ -31,7 +30,7 @@ export default defineAgent({
     const session = new voice.AgentSession({
       vad,
       stt: 'deepgram/nova-3',
-      tts: new elevenlabs.TTS(),
+      tts: 'elevenlabs:cgSgspJ2msm6clMCkdW9',
       llm: 'openai/gpt-4.1',
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
