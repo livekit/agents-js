@@ -113,6 +113,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ): boolean => {
+    this.logger.debug({ participant: participant.identity }, 'onTrackSubscribed in _input');
     if (
       this.participantIdentity !== participant.identity ||
       publication.source !== TrackSource.SOURCE_MICROPHONE ||
