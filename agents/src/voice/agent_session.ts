@@ -5,6 +5,14 @@ import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
+import {
+  LLM as InferenceLLM,
+  STT as InferenceSTT,
+  TTS as InferenceTTS,
+  type LLMModels,
+  type STTModels,
+  type TTSModels,
+} from '../inference/index.js';
 import { getJobContext } from '../job.js';
 import { ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
@@ -77,10 +85,10 @@ export type AgentSessionCallbacks = {
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
   turnDetection?: TurnDetectionMode;
-  stt?: STT;
+  stt?: STT | STTModels;
   vad?: VAD;
-  llm?: LLM | RealtimeModel;
-  tts?: TTS;
+  llm?: LLM | RealtimeModel | LLMModels;
+  tts?: TTS | TTSModels;
   userData?: UserData;
   voiceOptions?: Partial<VoiceOptions>;
 };
@@ -128,9 +136,24 @@ export class AgentSession<
     } = opts;
 
     this.vad = vad;
-    this.stt = stt;
-    this.llm = llm;
-    this.tts = tts;
+
+    if (typeof stt === 'string') {
+      this.stt = new InferenceSTT({ model: stt });
+    } else {
+      this.stt = stt;
+    }
+
+    if (typeof llm === 'string') {
+      this.llm = new InferenceLLM({ model: llm });
+    } else {
+      this.llm = llm;
+    }
+
+    if (typeof tts === 'string') {
+      this.tts = new InferenceTTS({ model: tts });
+    } else {
+      this.tts = tts;
+    }
     this.turnDetection = turnDetection;
     this._userData = userData;
 

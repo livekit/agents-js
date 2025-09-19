@@ -817,3 +817,14 @@ export async function waitForTrackPublication({
     room.off(RoomEvent.TrackPublished, onTrackPublished);
   }
 }
+
+export async function waitForAbort(signal: AbortSignal) {
+  const abortFuture = new Future<void>();
+  const handler = () => {
+    abortFuture.resolve();
+    signal.removeEventListener('abort', handler);
+  };
+
+  signal.addEventListener('abort', handler, { once: true });
+  return await abortFuture.await;
+}

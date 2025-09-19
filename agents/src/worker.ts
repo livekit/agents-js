@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type {
-  JobAssignment,
-  JobTermination,
-  ParticipantInfo,
-  TrackSource,
-} from '@livekit/protocol';
+import type { JobAssignment, JobTermination, TrackSource } from '@livekit/protocol';
 import {
   type AvailabilityRequest,
   JobType,
@@ -15,7 +10,7 @@ import {
   WorkerMessage,
   WorkerStatus,
 } from '@livekit/protocol';
-import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
+import { AccessToken, ParticipantInfo, RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import { WebSocket } from 'ws';
