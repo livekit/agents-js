@@ -11,16 +11,83 @@ import {
 } from '../index.js';
 import * as llm from '../llm/index.js';
 import type { APIConnectOptions } from '../types.js';
-import type { LLMModels } from './models.js';
 import { createAccessToken } from './utils.js';
+
+type OpenAIModels =
+  // | "azure/gpt-5"
+  // | "azure/gpt-5-mini"
+  // | "azure/gpt-5-nano"
+  'azure/gpt-4.1' | 'azure/gpt-4.1-mini' | 'azure/gpt-4.1-nano';
+// | "azure/gpt-4o"
+// | "azure/gpt-4o-mini"
+
+// https://inference-docs.cerebras.ai/models/overview
+type CerebrasModels =
+  // production models
+  | 'cerebras/llama3.1-8b'
+  | 'cerebras/llama-3.3-70b'
+  | 'cerebras/llama-4-scout-17b-16e-instruct'
+  | 'cerebras/gpt-oss-120b'
+  | 'cerebras/qwen-3-32b'
+  // preview models
+  | 'cerebras/llama-4-maverick-17b-128e-instruct'
+  | 'cerebras/qwen-3-235b-a22b-instruct-2507';
+
+// https://console.groq.com/docs/models
+type GroqModels =
+  // production models
+  | 'groq/llama-3.1-8b-instant'
+  | 'groq/llama-3.3-70b-versatile'
+  | 'groq/openai/gpt-oss-120b'
+  | 'groq/openai/gpt-oss-20b'
+  // preview models
+  | 'groq/meta-llama/llama-4-maverick-17b-128e-instruct'
+  | 'groq/meta-llama/llama-4-scout-17b-16e-instruct'
+  | 'groq/qwen/qwen3-32b';
+
+// https://www.baseten.co/library/tag/llms
+type BasetenModels =
+  | 'baseten/deepseek-ai/DeepSeek-V3-0324'
+  | 'baseten/meta-llama/Llama-4-Scout-17B-16E-Instruct'
+  | 'baseten/meta-llama/Llama-4-Maverick-17B-128E-Instruct'
+  | 'baseten/moonshotai/Kimi-K2-Instruct'
+  | 'baseten/openai/gpt-oss-120b'
+  | 'baseten/Qwen/Qwen3-235B-A22B-Instruct-2507';
+
+export interface OpenAIOptions {
+  top_p?: number;
+}
+
+export interface CerebrasOptions {
+  top_p?: number;
+}
+
+export interface GroqOptions {
+  top_p?: number;
+}
+
+export interface BasetenOptions {
+  top_p?: number;
+}
+
+type LLMModels = OpenAIModels | CerebrasModels | GroqModels | BasetenModels | string;
+
+type LLMOptions<T extends LLMModels> = T extends OpenAIModels
+  ? OpenAIOptions
+  : T extends CerebrasModels
+    ? CerebrasOptions
+    : T extends GroqOptions
+      ? GroqOptions
+      : T extends BasetenOptions
+        ? BasetenOptions
+        : Record<string, unknown>;
 
 type Verbosity = 'low' | 'medium' | 'high';
 const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 
-export interface InferenceLLMOptions {
-  model: string | LLMModels;
+export interface InferenceLLMOptions<TModel extends LLMModels> {
+  model: TModel;
   temperature?: number;
-  topP?: number;
   parallelToolCalls?: boolean;
   toolChoice?: llm.ToolChoice;
   maxCompletionTokens?: number;
@@ -36,15 +103,14 @@ export interface GatewayOptions {
   apiSecret: string;
 }
 
-export class LLM extends llm.LLM {
+export class LLM<TModel extends LLMModels = string> extends llm.LLM {
   private client: OpenAI;
-  private opts: InferenceLLMOptions;
+  private opts: InferenceLLMOptions<TModel>;
 
   constructor(
-    model: LLMModels | string,
+    model: TModel,
     opts?: {
       temperature?: number;
-      topP?: number;
       parallelToolCalls?: boolean;
       toolChoice?: llm.ToolChoice;
       maxCompletionTokens?: number;
@@ -54,14 +120,13 @@ export class LLM extends llm.LLM {
       maxRetries?: number;
       timeout?: number;
       verbosity?: Verbosity;
-      extraKwargs?: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+      extraKwargs?: LLMOptions<TModel>;
     },
   ) {
     super();
 
     const {
       temperature,
-      topP,
       parallelToolCalls,
       toolChoice,
       maxCompletionTokens,
@@ -89,7 +154,6 @@ export class LLM extends llm.LLM {
     this.opts = {
       model,
       temperature,
-      topP,
       parallelToolCalls,
       toolChoice,
       verbosity,
@@ -140,10 +204,6 @@ export class LLM extends llm.LLM {
     if (this.opts.temperature !== undefined) {
       extras.temperature = this.opts.temperature;
     }
-    if (this.opts.topP !== undefined) {
-      extras.top_p = this.opts.topP;
-    }
-
     if (this.opts.verbosity !== undefined) {
       extras.verbosity = this.opts.verbosity;
     }
@@ -180,10 +240,10 @@ export class LLM extends llm.LLM {
 }
 
 export class LLMStream extends llm.LLMStream {
-  private model: string | LLMModels;
+  private model: LLMModels;
   private providerFmt: llm.ProviderFormat;
   private client: OpenAI;
-  private extraKwargs: Record<string, any>;
+  private extraKwargs: Record<string, unknown>;
 
   private gatewayOptions?: GatewayOptions;
   private toolCallId?: string;
@@ -245,7 +305,7 @@ export class LLMStream extends llm.LLMStream {
           }))
         : undefined;
 
-      const requestExtras: Record<string, any> = { ...this.extraKwargs }; // eslint-disable-line @typescript-eslint/no-explicit-any
+      const requestExtras: Record<string, unknown> = { ...this.extraKwargs };
       if (!tools) {
         delete requestExtras.tool_choice;
       }
