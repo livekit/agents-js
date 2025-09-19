@@ -112,14 +112,14 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       extraKwargs = {} as STTOptions<TModel>,
     } = opts || {};
 
-    const lkBaseURL = baseURL || process.env.LIVEKIT_GATEWAY_URL || DEFAULT_BASE_URL;
-    const lkApiKey = apiKey || process.env.LIVEKIT_GATEWAY_API_KEY || process.env.LIVEKIT_API_KEY;
+    const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
+    const lkApiKey = apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
     if (!lkApiKey) {
       throw new Error('apiKey is required: pass apiKey or set LIVEKIT_API_KEY');
     }
 
     const lkApiSecret =
-      apiSecret || process.env.LIVEKIT_GATEWAY_API_SECRET || process.env.LIVEKIT_API_SECRET;
+      apiSecret || process.env.LIVEKIT_INFERENCE_API_SECRET || process.env.LIVEKIT_API_SECRET;
     if (!lkApiSecret) {
       throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
     }
