@@ -13,7 +13,7 @@ import * as llm from '../llm/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { createAccessToken } from './utils.js';
 
-type OpenAIModels =
+export type OpenAIModels =
   // | "azure/gpt-5"
   // | "azure/gpt-5-mini"
   // | "azure/gpt-5-nano"
@@ -22,7 +22,7 @@ type OpenAIModels =
 // | "azure/gpt-4o-mini"
 
 // https://inference-docs.cerebras.ai/models/overview
-type CerebrasModels =
+export type CerebrasModels =
   // production models
   | 'cerebras/llama3.1-8b'
   | 'cerebras/llama-3.3-70b'
@@ -34,7 +34,7 @@ type CerebrasModels =
   | 'cerebras/qwen-3-235b-a22b-instruct-2507';
 
 // https://console.groq.com/docs/models
-type GroqModels =
+export type GroqModels =
   // production models
   | 'groq/llama-3.1-8b-instant'
   | 'groq/llama-3.3-70b-versatile'
@@ -46,7 +46,7 @@ type GroqModels =
   | 'groq/qwen/qwen3-32b';
 
 // https://www.baseten.co/library/tag/llms
-type BasetenModels =
+export type BasetenModels =
   | 'baseten/deepseek-ai/DeepSeek-V3-0324'
   | 'baseten/meta-llama/Llama-4-Scout-17B-16E-Instruct'
   | 'baseten/meta-llama/Llama-4-Maverick-17B-128E-Instruct'
@@ -70,9 +70,9 @@ export interface BasetenOptions {
   top_p?: number;
 }
 
-type LLMModels = OpenAIModels | CerebrasModels | GroqModels | BasetenModels | string;
+export type LLMModels = OpenAIModels | CerebrasModels | GroqModels | BasetenModels | string;
 
-type LLMOptions<T extends LLMModels> = T extends OpenAIModels
+export type LLMOptions<T extends LLMModels> = T extends OpenAIModels
   ? OpenAIOptions
   : T extends CerebrasModels
     ? CerebrasOptions
@@ -82,7 +82,7 @@ type LLMOptions<T extends LLMModels> = T extends OpenAIModels
         ? BasetenOptions
         : Record<string, unknown>;
 
-type Verbosity = 'low' | 'medium' | 'high';
+export type Verbosity = 'low' | 'medium' | 'high';
 const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 
 export interface InferenceLLMOptions<TModel extends LLMModels> {

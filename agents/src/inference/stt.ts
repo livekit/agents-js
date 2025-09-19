@@ -17,7 +17,7 @@ import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js
 import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
 import { connectWs, createAccessToken } from './utils.js';
 
-type DeepgramModels =
+export type DeepgramModels =
   | 'deepgram'
   | 'deepgram/nova-3'
   | 'deepgram/nova-3-general'
@@ -27,16 +27,16 @@ type DeepgramModels =
   | 'deepgram/nova-2-medical'
   | 'deepgram/nova-2-phonecall';
 
-type CartesiaModels = 'cartesia' | 'cartesia/ink-whisper';
+export type CartesiaModels = 'cartesia' | 'cartesia/ink-whisper';
 
-type AssemblyaiModels = 'assemblyai';
+export type AssemblyaiModels = 'assemblyai';
 
-interface CartesiaOptions {
+export interface CartesiaOptions {
   min_volume?: number; // default: not specified
   max_silence_duration_secs?: number; // default: not specified
 }
 
-interface DeepgramOptions {
+export interface DeepgramOptions {
   filler_words?: boolean; // default: true
   interim_results?: boolean; // default: true
   endpointing?: number; // default: 25 (ms)
@@ -49,7 +49,7 @@ interface DeepgramOptions {
   mip_opt_out?: boolean;
 }
 
-interface AssemblyaiOptions {
+export interface AssemblyaiOptions {
   format_turns?: boolean; // default: false
   end_of_turn_confidence_threshold?: number; // default: 0.01
   min_end_of_turn_silence_when_confident?: number; // default: 0
@@ -57,8 +57,8 @@ interface AssemblyaiOptions {
   keyterms_prompt?: string[]; // default: not specified
 }
 
-type STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels | string;
-type STTOptions<TModel extends STTModels = string> = TModel extends DeepgramModels
+export type STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels | string;
+export type STTOptions<TModel extends STTModels = string> = TModel extends DeepgramModels
   ? DeepgramOptions
   : TModel extends CartesiaModels
     ? CartesiaOptions
@@ -66,8 +66,8 @@ type STTOptions<TModel extends STTModels = string> = TModel extends DeepgramMode
       ? AssemblyaiOptions
       : Record<string, unknown>;
 
-type STTLanguages = 'en' | 'de' | 'es' | 'fr' | 'ja' | 'pt' | 'zh';
-type STTEncoding = 'pcm_s16le';
+export type STTLanguages = 'en' | 'de' | 'es' | 'fr' | 'ja' | 'pt' | 'zh';
+export type STTEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
 const DEFAULT_SAMPLE_RATE = 16000;

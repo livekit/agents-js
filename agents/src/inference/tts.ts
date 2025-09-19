@@ -22,8 +22,55 @@ import {
   ttsClientEventSchema,
   ttsServerEventSchema,
 } from './api_protos.js';
-import type { TTSModels } from './models.js';
 import { connectWs, createAccessToken } from './utils.js';
+
+type _CartesiaModels = 'cartesia' | 'cartesia/sonic' | 'cartesia/sonic-2' | 'cartesia/sonic-turbo';
+
+export type CartesiaModels = _CartesiaModels | `${_CartesiaModels}:${string}`;
+
+type _ElevenlabsModels =
+  | 'elevenlabs'
+  | 'elevenlabs/eleven_flash_v2'
+  | 'elevenlabs/eleven_flash_v2_5'
+  | 'elevenlabs/eleven_turbo_v2'
+  | 'elevenlabs/eleven_turbo_v2_5'
+  | 'elevenlabs/eleven_multilingual_v2';
+
+export type ElevenlabsModels = _ElevenlabsModels | `${_ElevenlabsModels}:${string}`;
+
+export type _RimeModels = 'rime' | 'rime/mist' | 'rime/mistv2' | 'rime/arcana';
+
+export type RimeModels = _RimeModels | `${_RimeModels}:${string}`;
+
+export type _InworldModels = 'inworld' | 'inworld/inworld-tts-1';
+
+export type InworldModels = _InworldModels | `${_InworldModels}:${string}`;
+
+export interface CartesiaOptions {
+  duration?: number; // max duration of audio in seconds
+  speed?: 'slow' | 'normal' | 'fast'; // default: not specified
+}
+
+export interface ElevenlabsOptions {
+  inactivity_timeout?: number; // default: 60
+  apply_text_normalization?: 'auto' | 'off' | 'on'; // default: "auto"
+}
+
+export interface RimeOptions {}
+
+export interface InworldOptions {}
+
+export type TTSModels = CartesiaModels | ElevenlabsModels | RimeModels | InworldModels | string;
+
+export type TTSOptions<TModel extends TTSModels = string> = TModel extends CartesiaModels
+  ? CartesiaOptions
+  : TModel extends ElevenlabsModels
+    ? ElevenlabsOptions
+    : TModel extends RimeOptions
+      ? RimeOptions
+      : TModel extends InworldOptions
+        ? InworldOptions
+        : Record<string, unknown>;
 
 type TTSEncoding = 'pcm_s16le';
 
@@ -33,8 +80,8 @@ const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 const NUM_CHANNELS = 1;
 const DEFAULT_LANGUAGE = 'en';
 
-export interface InferenceTTSOptions {
-  model?: TTSModels | string;
+export interface InferenceTTSOptions<TModel extends TTSModels = string> {
+  model?: TModel;
   voice?: string;
   language?: string;
   encoding: TTSEncoding;
@@ -42,17 +89,17 @@ export interface InferenceTTSOptions {
   baseURL: string;
   apiKey: string;
   apiSecret: string;
-  extraKwargs: Record<string, unknown>;
+  extraKwargs: TTSOptions<TModel>;
 }
 
-export class TTS extends BaseTTS {
-  private opts: InferenceTTSOptions;
+export class TTS<TModel extends TTSModels = string> extends BaseTTS {
+  private opts: InferenceTTSOptions<TModel>;
   private streams: Set<SynthesizeStream> = new Set();
 
   #logger = log();
 
   constructor(opts?: {
-    model?: TTSModels | string;
+    model?: TModel;
     voice?: string;
     language?: string;
     baseURL?: string;
@@ -60,7 +107,7 @@ export class TTS extends BaseTTS {
     sampleRate?: number;
     apiKey?: string;
     apiSecret?: string;
-    extraKwargs?: Record<string, unknown>;
+    extraKwargs?: TTSOptions<TModel>;
   }) {
     const sampleRate = opts?.sampleRate ?? DEFAULT_SAMPLE_RATE;
     super(sampleRate, 1, { streaming: true });
@@ -73,7 +120,7 @@ export class TTS extends BaseTTS {
       encoding = DEFAULT_ENCODING,
       apiKey,
       apiSecret,
-      extraKwargs = {},
+      extraKwargs = {} as TTSOptions<TModel>,
     } = opts || {};
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_GATEWAY_URL || DEFAULT_BASE_URL;
@@ -103,7 +150,7 @@ export class TTS extends BaseTTS {
         } else {
           nextVoice = voiceFromModel;
         }
-        nextModel = nextModel.slice(0, idx);
+        nextModel = nextModel.slice(0, idx) as TModel;
       }
     }
 
@@ -124,7 +171,7 @@ export class TTS extends BaseTTS {
     return 'inference.TTS';
   }
 
-  updateOptions(opts: Partial<Pick<InferenceTTSOptions, 'model' | 'voice' | 'language'>>) {
+  updateOptions(opts: Partial<Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language'>>) {
     this.opts = { ...this.opts, ...opts };
     for (const stream of this.streams) {
       stream.updateOptions(opts);
