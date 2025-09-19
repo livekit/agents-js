@@ -190,3 +190,5 @@ docs
 agents-js.code-workspace
 
 examples/src/test_*.ts
+
+.claude
