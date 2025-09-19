@@ -156,7 +156,7 @@ export class WorkerOptions {
   initializeProcessTimeout: number;
   permissions: WorkerPermissions;
   agentName: string;
-  workerType: ServerType;
+  serverType: ServerType;
   maxRetry: number;
   wsURL: string;
   apiKey?: string;
@@ -180,7 +180,7 @@ export class WorkerOptions {
     initializeProcessTimeout = 10 * 1000,
     permissions = new WorkerPermissions(),
     agentName = '',
-    workerType = ServerType.JT_ROOM,
+    serverType = ServerType.JT_ROOM,
     maxRetry = MAX_RECONNECT_ATTEMPTS,
     wsURL = 'ws://localhost:7880',
     apiKey = undefined,
@@ -208,7 +208,7 @@ export class WorkerOptions {
     initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;
     agentName?: string;
-    workerType?: ServerType;
+    serverType?: ServerType;
     maxRetry?: number;
     wsURL?: string;
     apiKey?: string;
@@ -233,7 +233,7 @@ export class WorkerOptions {
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
     this.agentName = agentName;
-    this.workerType = workerType;
+    this.serverType = serverType;
     this.maxRetry = maxRetry;
     this.wsURL = wsURL;
     this.apiKey = apiKey;
@@ -345,7 +345,7 @@ export class AgentServer {
     this.#opts = opts;
     this.#httpServer = new HTTPServer(opts.host, opts.port, () => ({
       agent_name: opts.agentName,
-      worker_type: ServerType[opts.workerType],
+      worker_type: ServerType[opts.serverType],
       active_jobs: this.activeJobs.length,
       sdk_version: version,
       project_type: PROJECT_TYPE,
@@ -615,7 +615,7 @@ export class AgentServer {
         message: {
           case: 'register',
           value: {
-            type: this.#opts.workerType,
+            type: this.#opts.serverType,
             agentName: this.#opts.agentName,
             allowedPermissions: new ParticipantPermission({
               canPublish: this.#opts.permissions.canPublish,
