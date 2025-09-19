@@ -484,9 +484,8 @@ export class LLM extends llm.LLM {
       extras.tool_choice = toolChoice;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return new LLMStream(this as any, {
-      model: this.#opts.model,
+    return new LLMStream(this as unknown as inference.LLM<inference.OpenAIModels>, {
+      model: this.#opts.model as inference.OpenAIModels,
       providerFmt: this.#providerFmt,
       client: this.#client,
       chatCtx,
@@ -498,4 +497,4 @@ export class LLM extends llm.LLM {
   }
 }
 
-export class LLMStream extends inference.LLMStream {}
+export class LLMStream extends inference.LLMStream<inference.OpenAIModels> {}

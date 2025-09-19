@@ -144,7 +144,7 @@ export class AgentSession<
     }
 
     if (typeof llm === 'string') {
-      this.llm = new InferenceLLM(llm);
+      this.llm = new InferenceLLM({ model: llm });
     } else {
       this.llm = llm;
     }

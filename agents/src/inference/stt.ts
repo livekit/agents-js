@@ -15,39 +15,89 @@ import {
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
-import type { STTLanguages, STTModels } from './models.js';
 import { connectWs, createAccessToken } from './utils.js';
 
-type STTEncoding = 'pcm_s16le';
+export type DeepgramModels =
+  | 'deepgram'
+  | 'deepgram/nova-3'
+  | 'deepgram/nova-3-general'
+  | 'deepgram/nova-3-medical'
+  | 'deepgram/nova-2'
+  | 'deepgram/nova-2-general'
+  | 'deepgram/nova-2-medical'
+  | 'deepgram/nova-2-phonecall';
+
+export type CartesiaModels = 'cartesia' | 'cartesia/ink-whisper';
+
+export type AssemblyaiModels = 'assemblyai';
+
+export interface CartesiaOptions {
+  min_volume?: number; // default: not specified
+  max_silence_duration_secs?: number; // default: not specified
+}
+
+export interface DeepgramOptions {
+  filler_words?: boolean; // default: true
+  interim_results?: boolean; // default: true
+  endpointing?: number; // default: 25 (ms)
+  punctuate?: boolean; // default: false
+  smart_format?: boolean;
+  keywords?: Array<[string, number]>;
+  keyterms?: string[];
+  profanity_filter?: boolean;
+  numerals?: boolean;
+  mip_opt_out?: boolean;
+}
+
+export interface AssemblyaiOptions {
+  format_turns?: boolean; // default: false
+  end_of_turn_confidence_threshold?: number; // default: 0.01
+  min_end_of_turn_silence_when_confident?: number; // default: 0
+  max_turn_silence?: number; // default: not specified
+  keyterms_prompt?: string[]; // default: not specified
+}
+
+export type STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels;
+export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
+  ? DeepgramOptions
+  : TModel extends CartesiaModels
+    ? CartesiaOptions
+    : TModel extends AssemblyaiModels
+      ? AssemblyaiOptions
+      : Record<string, unknown>;
+
+export type STTLanguages = 'en' | 'de' | 'es' | 'fr' | 'ja' | 'pt' | 'zh';
+export type STTEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
 const DEFAULT_SAMPLE_RATE = 16000;
 const DEFAULT_BASE_URL = 'wss://agent-gateway.livekit.cloud/v1';
 const DEFAULT_CANCEL_TIMEOUT = 5000;
-export interface InferenceSTTOptions {
-  model?: STTModels | string;
+
+export interface InferenceSTTOptions<TModel extends STTModels> {
+  model?: TModel;
   language?: STTLanguages | string;
   encoding: STTEncoding;
   sampleRate: number;
   baseURL: string;
   apiKey: string;
   apiSecret: string;
-  extraKwargs: Record<string, unknown>;
+  extraKwargs: STTOptions<TModel>;
 }
 
-export class STT extends BaseSTT {
-  private opts: InferenceSTTOptions;
-  private streams: Set<SpeechStream> = new Set();
+export class STT<TModel extends STTModels> extends BaseSTT {
+  private opts: InferenceSTTOptions<TModel>;
+  private streams: Set<SpeechStream<TModel>> = new Set();
 
   constructor(opts?: {
-    model?: STTModels | string;
+    model?: TModel;
     language?: STTLanguages | string;
     baseURL?: string;
     encoding?: STTEncoding;
     sampleRate?: number;
     apiKey?: string;
     apiSecret?: string;
-    extraKwargs?: Record<string, unknown>;
+    extraKwargs?: STTOptions<TModel>;
   }) {
     super({ streaming: true, interimResults: true });
 
@@ -59,7 +109,7 @@ export class STT extends BaseSTT {
       sampleRate = DEFAULT_SAMPLE_RATE,
       apiKey,
       apiSecret,
-      extraKwargs = {},
+      extraKwargs = {} as STTOptions<TModel>,
     } = opts || {};
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_GATEWAY_URL || DEFAULT_BASE_URL;
@@ -94,7 +144,7 @@ export class STT extends BaseSTT {
     throw new Error('LiveKit STT does not support batch recognition, use stream() instead');
   }
 
-  updateOptions(opts: Partial<Pick<InferenceSTTOptions, 'model' | 'language'>>): void {
+  updateOptions(opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language'>>): void {
     this.opts = { ...this.opts, ...opts };
 
     for (const stream of this.streams) {
@@ -105,12 +155,12 @@ export class STT extends BaseSTT {
   stream(options?: {
     language?: STTLanguages | string;
     connOptions?: APIConnectOptions;
-  }): SpeechStream {
+  }): SpeechStream<TModel> {
     const { language, connOptions = DEFAULT_API_CONNECT_OPTIONS } = options || {};
     const streamOpts = {
       ...this.opts,
       language: language ?? this.opts.language,
-    } as InferenceSTTOptions;
+    } as InferenceSTTOptions<TModel>;
 
     const stream = new SpeechStream(this, streamOpts, connOptions);
     this.streams.add(stream);
@@ -119,8 +169,8 @@ export class STT extends BaseSTT {
   }
 }
 
-export class SpeechStream extends BaseSpeechStream {
-  private opts: InferenceSTTOptions;
+export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
+  private opts: InferenceSTTOptions<TModel>;
   private requestId = shortuuid('stt_request_');
   private speaking = false;
   private speechDuration = 0;
@@ -128,7 +178,11 @@ export class SpeechStream extends BaseSpeechStream {
 
   #logger = log();
 
-  constructor(sttImpl: STT, opts: InferenceSTTOptions, connOptions: APIConnectOptions) {
+  constructor(
+    sttImpl: STT<TModel>,
+    opts: InferenceSTTOptions<TModel>,
+    connOptions: APIConnectOptions,
+  ) {
     super(sttImpl, opts.sampleRate, connOptions);
     this.opts = opts;
   }
@@ -137,7 +191,7 @@ export class SpeechStream extends BaseSpeechStream {
     return 'inference.SpeechStream';
   }
 
-  updateOptions(opts: Partial<Pick<InferenceSTTOptions, 'model' | 'language'>>): void {
+  updateOptions(opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language'>>): void {
     this.opts = { ...this.opts, ...opts };
   }
 

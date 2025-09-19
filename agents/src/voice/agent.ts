@@ -118,7 +118,7 @@ export class Agent<UserData = any> {
     }
 
     if (typeof llm === 'string') {
-      this._llm = new InferenceLLM(llm);
+      this._llm = new InferenceLLM({ model: llm });
     } else {
       this._llm = llm;
     }
