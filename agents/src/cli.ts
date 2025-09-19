@@ -6,7 +6,7 @@ import type { EventEmitter } from 'node:events';
 import { initializeLogger, log } from './log.js';
 import { Plugin } from './plugin.js';
 import { version } from './version.js';
-import { Worker, WorkerOptions } from './worker.js';
+import { AgentServer, WorkerOptions } from './worker.js';
 
 type CliArgs = {
   opts: WorkerOptions;
@@ -23,7 +23,7 @@ const runWorker = async (args: CliArgs) => {
 
   // though `production` is defined in WorkerOptions, it will always be overridden by CLI.
   const { production: _, ...opts } = args.opts; // eslint-disable-line @typescript-eslint/no-unused-vars
-  const worker = new Worker(new WorkerOptions({ production: args.production, ...opts }));
+  const worker = new AgentServer(new WorkerOptions({ production: args.production, ...opts }));
 
   if (args.room) {
     worker.event.once('worker_registered', () => {
