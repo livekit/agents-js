@@ -60,9 +60,9 @@ export interface RimeOptions {}
 
 export interface InworldOptions {}
 
-export type TTSModels = CartesiaModels | ElevenlabsModels | RimeModels | InworldModels | string;
+export type TTSModels = CartesiaModels | ElevenlabsModels | RimeModels | InworldModels;
 
-export type TTSOptions<TModel extends TTSModels = string> = TModel extends CartesiaModels
+export type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels
   ? CartesiaOptions
   : TModel extends ElevenlabsModels
     ? ElevenlabsOptions
@@ -80,7 +80,7 @@ const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 const NUM_CHANNELS = 1;
 const DEFAULT_LANGUAGE = 'en';
 
-export interface InferenceTTSOptions<TModel extends TTSModels = string> {
+export interface InferenceTTSOptions<TModel extends TTSModels> {
   model?: TModel;
   voice?: string;
   language?: string;
@@ -92,9 +92,9 @@ export interface InferenceTTSOptions<TModel extends TTSModels = string> {
   extraKwargs: TTSOptions<TModel>;
 }
 
-export class TTS<TModel extends TTSModels = string> extends BaseTTS {
+export class TTS<TModel extends TTSModels> extends BaseTTS {
   private opts: InferenceTTSOptions<TModel>;
-  private streams: Set<SynthesizeStream> = new Set();
+  private streams: Set<SynthesizeStream<TModel>> = new Set();
 
   #logger = log();
 
@@ -182,7 +182,7 @@ export class TTS<TModel extends TTSModels = string> extends BaseTTS {
     throw new Error('ChunkedStream is not implemented');
   }
 
-  stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
+  stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream<TModel> {
     const { connOptions = DEFAULT_API_CONNECT_OPTIONS } = options || {};
     const stream = new SynthesizeStream(this, { ...this.opts }, connOptions);
     this.streams.add(stream);
@@ -227,14 +227,14 @@ export class TTS<TModel extends TTSModels = string> extends BaseTTS {
   }
 }
 
-export class SynthesizeStream extends BaseSynthesizeStream {
-  private opts: InferenceTTSOptions;
-  private tts: TTS;
+export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeStream {
+  private opts: InferenceTTSOptions<TModel>;
+  private tts: TTS<TModel>;
   private connOptions: APIConnectOptions;
 
   #logger = log();
 
-  constructor(tts: TTS, opts: InferenceTTSOptions, connOptions: APIConnectOptions) {
+  constructor(tts: TTS<TModel>, opts: InferenceTTSOptions<TModel>, connOptions: APIConnectOptions) {
     super(tts, connOptions);
     this.opts = opts;
     this.tts = tts;
@@ -245,7 +245,7 @@ export class SynthesizeStream extends BaseSynthesizeStream {
     return 'inference.SynthesizeStream';
   }
 
-  updateOptions(opts: Partial<Pick<InferenceTTSOptions, 'model' | 'voice' | 'language'>>) {
+  updateOptions(opts: Partial<Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language'>>) {
     this.opts = { ...this.opts, ...opts };
   }
 

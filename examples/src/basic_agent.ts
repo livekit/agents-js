@@ -7,6 +7,7 @@ import {
   WorkerOptions,
   cli,
   defineAgent,
+  inference,
   metrics,
   voice,
 } from '@livekit/agents';
@@ -29,9 +30,27 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad,
-      stt: 'deepgram/nova-3',
-      tts: 'elevenlabs:cgSgspJ2msm6clMCkdW9',
-      llm: 'openai/gpt-4.1',
+      // stt: 'deepgram/nova-3',
+      stt: new inference.STT({
+        model: 'deepgram/nova-3',
+        extraKwargs: {
+          filler_words: false,
+        },
+      }),
+      // llm: 'azure/gpt-4.1',
+      llm: new inference.LLM({
+        model: 'azure/gpt-4.1',
+        extraKwargs: {
+          top_p: 0.9,
+        },
+      }),
+      // tts: 'elevenlabs:cgSgspJ2msm6clMCkdW9',
+      tts: new inference.TTS({
+        model: 'elevenlabs:cgSgspJ2msm6clMCkdW9',
+        extraKwargs: {
+          apply_text_normalization: 'on',
+        },
+      }),
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
       turnDetection: new livekit.turnDetector.MultilingualModel(),

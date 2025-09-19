@@ -70,7 +70,7 @@ export interface BasetenOptions {
   top_p?: number;
 }
 
-export type LLMModels = OpenAIModels | CerebrasModels | GroqModels | BasetenModels | string;
+export type LLMModels = OpenAIModels | CerebrasModels | GroqModels | BasetenModels;
 
 export type LLMOptions<T extends LLMModels> = T extends OpenAIModels
   ? OpenAIOptions
@@ -103,29 +103,28 @@ export interface GatewayOptions {
   apiSecret: string;
 }
 
-export class LLM<TModel extends LLMModels = string> extends llm.LLM {
+export class LLM<TModel extends LLMModels> extends llm.LLM {
   private client: OpenAI;
   private opts: InferenceLLMOptions<TModel>;
 
-  constructor(
-    model: TModel,
-    opts?: {
-      temperature?: number;
-      parallelToolCalls?: boolean;
-      toolChoice?: llm.ToolChoice;
-      maxCompletionTokens?: number;
-      baseURL?: string;
-      apiKey?: string;
-      apiSecret?: string;
-      maxRetries?: number;
-      timeout?: number;
-      verbosity?: Verbosity;
-      extraKwargs?: LLMOptions<TModel>;
-    },
-  ) {
+  constructor(opts: {
+    model: TModel;
+    temperature?: number;
+    parallelToolCalls?: boolean;
+    toolChoice?: llm.ToolChoice;
+    maxCompletionTokens?: number;
+    baseURL?: string;
+    apiKey?: string;
+    apiSecret?: string;
+    maxRetries?: number;
+    timeout?: number;
+    verbosity?: Verbosity;
+    extraKwargs?: LLMOptions<TModel>;
+  }) {
     super();
 
     const {
+      model,
       temperature,
       parallelToolCalls,
       toolChoice,
@@ -137,7 +136,7 @@ export class LLM<TModel extends LLMModels = string> extends llm.LLM {
       timeout,
       verbosity,
       extraKwargs,
-    } = opts || {};
+    } = opts;
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_GATEWAY_URL || DEFAULT_BASE_URL;
     const lkApiKey = apiKey || process.env.LIVEKIT_GATEWAY_API_KEY || process.env.LIVEKIT_API_KEY;
@@ -195,7 +194,7 @@ export class LLM<TModel extends LLMModels = string> extends llm.LLM {
     toolChoice?: llm.ToolChoice;
     // TODO(AJS-270): Add responseFormat parameter
     extraKwargs?: Record<string, unknown>;
-  }): LLMStream {
+  }): LLMStream<TModel> {
     let extras: Record<string, unknown> = { ...(extraKwargs || {}) };
 
     if (this.opts.maxCompletionTokens !== undefined) {
@@ -239,8 +238,8 @@ export class LLM<TModel extends LLMModels = string> extends llm.LLM {
   }
 }
 
-export class LLMStream extends llm.LLMStream {
-  private model: LLMModels;
+export class LLMStream<TModel extends LLMModels> extends llm.LLMStream {
+  private model: TModel;
   private providerFmt: llm.ProviderFormat;
   private client: OpenAI;
   private extraKwargs: Record<string, unknown>;
@@ -252,7 +251,7 @@ export class LLMStream extends llm.LLMStream {
   private fncRawArguments?: string;
 
   constructor(
-    llm: LLM,
+    llm: LLM<TModel>,
     {
       model,
       providerFmt,
@@ -263,7 +262,7 @@ export class LLMStream extends llm.LLMStream {
       connOptions,
       extraKwargs,
     }: {
-      model: LLMModels | string;
+      model: TModel;
       providerFmt: llm.ProviderFormat;
       client: OpenAI;
       chatCtx: llm.ChatContext;

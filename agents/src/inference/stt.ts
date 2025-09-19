@@ -57,8 +57,8 @@ export interface AssemblyaiOptions {
   keyterms_prompt?: string[]; // default: not specified
 }
 
-export type STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels | string;
-export type STTOptions<TModel extends STTModels = string> = TModel extends DeepgramModels
+export type STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels;
+export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
   ? DeepgramOptions
   : TModel extends CartesiaModels
     ? CartesiaOptions
@@ -74,7 +74,7 @@ const DEFAULT_SAMPLE_RATE = 16000;
 const DEFAULT_BASE_URL = 'wss://agent-gateway.livekit.cloud/v1';
 const DEFAULT_CANCEL_TIMEOUT = 5000;
 
-export interface InferenceSTTOptions<TModel extends STTModels = string> {
+export interface InferenceSTTOptions<TModel extends STTModels> {
   model?: TModel;
   language?: STTLanguages | string;
   encoding: STTEncoding;
@@ -85,9 +85,9 @@ export interface InferenceSTTOptions<TModel extends STTModels = string> {
   extraKwargs: STTOptions<TModel>;
 }
 
-export class STT<TModel extends STTModels = string> extends BaseSTT {
+export class STT<TModel extends STTModels> extends BaseSTT {
   private opts: InferenceSTTOptions<TModel>;
-  private streams: Set<SpeechStream> = new Set();
+  private streams: Set<SpeechStream<TModel>> = new Set();
 
   constructor(opts?: {
     model?: TModel;
@@ -155,7 +155,7 @@ export class STT<TModel extends STTModels = string> extends BaseSTT {
   stream(options?: {
     language?: STTLanguages | string;
     connOptions?: APIConnectOptions;
-  }): SpeechStream {
+  }): SpeechStream<TModel> {
     const { language, connOptions = DEFAULT_API_CONNECT_OPTIONS } = options || {};
     const streamOpts = {
       ...this.opts,
@@ -169,8 +169,8 @@ export class STT<TModel extends STTModels = string> extends BaseSTT {
   }
 }
 
-export class SpeechStream extends BaseSpeechStream {
-  private opts: InferenceSTTOptions;
+export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
+  private opts: InferenceSTTOptions<TModel>;
   private requestId = shortuuid('stt_request_');
   private speaking = false;
   private speechDuration = 0;
@@ -178,7 +178,11 @@ export class SpeechStream extends BaseSpeechStream {
 
   #logger = log();
 
-  constructor(sttImpl: STT, opts: InferenceSTTOptions, connOptions: APIConnectOptions) {
+  constructor(
+    sttImpl: STT<TModel>,
+    opts: InferenceSTTOptions<TModel>,
+    connOptions: APIConnectOptions,
+  ) {
     super(sttImpl, opts.sampleRate, connOptions);
     this.opts = opts;
   }
@@ -187,7 +191,7 @@ export class SpeechStream extends BaseSpeechStream {
     return 'inference.SpeechStream';
   }
 
-  updateOptions(opts: Partial<Pick<InferenceSTTOptions, 'model' | 'language'>>): void {
+  updateOptions(opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language'>>): void {
     this.opts = { ...this.opts, ...opts };
   }
 
