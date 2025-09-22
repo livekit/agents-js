@@ -12,8 +12,8 @@ import {
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
-import * as google from '@livekit/agents-plugin-google';
 import * as livekit from '@livekit/agents-plugin-livekit';
+import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -50,7 +50,20 @@ export default defineAgent({
         location: z.string().describe('The location to get the weather for'),
       }),
       execute: async ({ location }, { ctx }) => {
-        ctx.session.say('Checking the weather, please wait a moment haha...');
+        ctx.session.generateReply({
+          userInput: 'Tell user you are queuing the request. Counting down from 3 to 1.',
+        });
+        await ctx.waitForPlayout();
+
+        // Mock API call to fetch some data
+        try {
+          const response = await fetch('https://jsonplaceholder.typicode.com/posts/1');
+          const data = await response.json();
+          console.log('Fetched mock data', { data });
+        } catch (error) {
+          console.error('Failed to fetch mock data', error);
+        }
+
         return `The weather in ${location} is sunny today.`;
       },
     });
@@ -63,7 +76,7 @@ export default defineAgent({
       }),
       execute: async ({ room, switchTo }, { ctx }) => {
         ctx.session.generateReply({
-          userInput: 'Tell user wait a moment for about 10 seconds',
+          userInput: 'Tell user you are working on it. please wait a moment.',
         });
 
         return `The light in the ${room} is now ${switchTo}.`;
@@ -137,7 +150,7 @@ export default defineAgent({
       vad,
       stt: new deepgram.STT(),
       tts: new elevenlabs.TTS(),
-      llm: new google.LLM(),
+      llm: new openai.realtime.RealtimeModel(),
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
       userData: { number: 0 },

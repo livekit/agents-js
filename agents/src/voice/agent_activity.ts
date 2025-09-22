@@ -1232,12 +1232,14 @@ export class AgentActivity implements RecognitionHooks {
     //TODO(AJS-272): before executing tools, make sure we generated all the text
     // (this ensure everything is kept ordered)
 
-    const onToolExecutionStarted = (_: FunctionCall) => {
-      // TODO(brian): handle speech_handle item_added
+    const onToolExecutionStarted = (f: FunctionCall) => {
+      speechHandle._itemAdded([f]);
     };
 
-    const onToolExecutionCompleted = (_: ToolExecutionOutput) => {
-      // TODO(brian): handle speech_handle item_added
+    const onToolExecutionCompleted = (out: ToolExecutionOutput) => {
+      if (out.toolCallOutput) {
+        speechHandle._itemAdded([out.toolCallOutput]);
+      }
     };
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
@@ -1598,6 +1600,8 @@ export class AgentActivity implements RecognitionHooks {
 
     const onToolExecutionStarted = (f: FunctionCall) => {
       speechHandle._itemAdded([f]);
+      this.agent._chatCtx.insert(f);
+      this.agentSession.chatCtx.insert(f);
     };
 
     const onToolExecutionCompleted = (out: ToolExecutionOutput) => {
@@ -1735,6 +1739,8 @@ export class AgentActivity implements RecognitionHooks {
     let ignoreTaskSwitch: boolean = false;
 
     for (const sanitizedOut of toolOutput.output) {
+      functionToolsExecutedEvent.functionCalls.push(sanitizedOut.toolCall);
+
       if (sanitizedOut.toolCallOutput !== undefined) {
         functionToolsExecutedEvent.functionCallOutputs.push(sanitizedOut.toolCallOutput);
         if (sanitizedOut.replyRequired) {
@@ -1786,6 +1792,13 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     // skip realtime reply if not required or auto-generated
+    this.logger.info(
+      {
+        shouldGenerateToolReply,
+        autoToolReplyGeneration: this.llm.capabilities.autoToolReplyGeneration,
+      },
+      'skipping realtime reply',
+    );
     if (!shouldGenerateToolReply || this.llm.capabilities.autoToolReplyGeneration) {
       return;
     }
