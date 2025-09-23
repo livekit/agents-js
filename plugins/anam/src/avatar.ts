@@ -10,8 +10,8 @@ import { type APIConnectOptions, AnamException, type PersonaConfig } from './typ
 
 export async function mintAvatarJoinToken({
   roomName,
-  avatarIdentity, 
-  publishOnBehalf, 
+  avatarIdentity,
+  publishOnBehalf,
   apiKey = process.env.LIVEKIT_API_KEY!,
   apiSecret = process.env.LIVEKIT_API_SECRET!,
   ttl = '60s',
@@ -26,7 +26,7 @@ export async function mintAvatarJoinToken({
   const at = new AccessToken(apiKey, apiSecret);
   at.identity = avatarIdentity;
   at.name = 'Anam Avatar';
-  at.kind = 'agent'; 
+  at.kind = 'agent';
   at.ttl = ttl;
   at.attributes = { 'lk.publish_on_behalf': publishOnBehalf };
 
