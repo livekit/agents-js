@@ -14,7 +14,7 @@ const RIME_TTS_CHANNELS = 1;
 export interface TTSOptions {
   speaker: string;
   modelId: TTSModels | string;
-  baseURL: string;
+  baseURL?: string;
   apiKey?: string;
   lang?: DefaultLanguages | string;
   repetition_penalty?: number;
