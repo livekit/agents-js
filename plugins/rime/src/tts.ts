@@ -93,12 +93,9 @@ export class ChunkedStream extends tts.ChunkedStream {
       throw new Error(`Rime AI TTS request failed: ${response.status} ${response.statusText}`);
     }
 
-    // Get PCM buffer directly
     const buffer = await response.arrayBuffer();
-
     const audioByteStream = new AudioByteStream(RIME_TTS_SAMPLE_RATE, RIME_TTS_CHANNELS);
     const frames = audioByteStream.write(buffer);
-
     let lastFrame: AudioFrame | undefined;
     const sendLastFrame = (segmentId: string, final: boolean) => {
       if (lastFrame) {
