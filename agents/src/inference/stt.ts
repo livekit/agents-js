@@ -15,7 +15,7 @@ import {
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
-import { connectWs, createAccessToken } from './utils.js';
+import { type CustomModelType, connectWs, createAccessToken, getModelName } from './utils.js';
 
 export type DeepgramModels =
   | 'deepgram'
@@ -57,7 +57,7 @@ export interface AssemblyaiOptions {
   keyterms_prompt?: string[]; // default: not specified
 }
 
-export type STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels;
+export type STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels | CustomModelType;
 export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
   ? DeepgramOptions
   : TModel extends CartesiaModels
@@ -75,7 +75,7 @@ const DEFAULT_BASE_URL = 'wss://agent-gateway.livekit.cloud/v1';
 const DEFAULT_CANCEL_TIMEOUT = 5000;
 
 export interface InferenceSTTOptions<TModel extends STTModels> {
-  model?: TModel;
+  model: TModel;
   language?: STTLanguages | string;
   encoding: STTEncoding;
   sampleRate: number;
@@ -89,8 +89,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   private opts: InferenceSTTOptions<TModel>;
   private streams: Set<SpeechStream<TModel>> = new Set();
 
-  constructor(opts?: {
-    model?: TModel;
+  constructor(opts: {
+    model: TModel;
     language?: STTLanguages | string;
     baseURL?: string;
     encoding?: STTEncoding;
@@ -125,7 +125,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     }
 
     this.opts = {
-      model,
+      model: getModelName(model) as TModel,
       language,
       encoding,
       sampleRate,

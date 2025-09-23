@@ -22,7 +22,7 @@ import {
   ttsClientEventSchema,
   ttsServerEventSchema,
 } from './api_protos.js';
-import { connectWs, createAccessToken } from './utils.js';
+import { type CustomModelType, connectWs, createAccessToken, getModelName } from './utils.js';
 
 type _CartesiaModels = 'cartesia' | 'cartesia/sonic' | 'cartesia/sonic-2' | 'cartesia/sonic-turbo';
 
@@ -60,7 +60,12 @@ export interface RimeOptions {}
 
 export interface InworldOptions {}
 
-export type TTSModels = CartesiaModels | ElevenlabsModels | RimeModels | InworldModels;
+export type TTSModels =
+  | CartesiaModels
+  | ElevenlabsModels
+  | RimeModels
+  | InworldModels
+  | CustomModelType;
 
 export type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels
   ? CartesiaOptions
@@ -98,8 +103,8 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
 
   #logger = log();
 
-  constructor(opts?: {
-    model?: TModel;
+  constructor(opts: {
+    model: TModel;
     voice?: string;
     language?: string;
     baseURL?: string;
@@ -113,7 +118,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     super(sampleRate, 1, { streaming: true });
 
     const {
-      model,
+      model: rawModelName,
       voice,
       language = DEFAULT_LANGUAGE,
       baseURL,
@@ -122,6 +127,8 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       apiSecret,
       extraKwargs = {} as TTSOptions<TModel>,
     } = opts || {};
+
+    const model = getModelName(rawModelName) as TModel;
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
     const lkApiKey = apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;

@@ -11,7 +11,7 @@ import {
 } from '../index.js';
 import * as llm from '../llm/index.js';
 import type { APIConnectOptions } from '../types.js';
-import { createAccessToken } from './utils.js';
+import { type CustomModelType, createAccessToken } from './utils.js';
 
 export type OpenAIModels =
   // | "azure/gpt-5"
@@ -70,7 +70,12 @@ export interface BasetenOptions {
   top_p?: number;
 }
 
-export type LLMModels = OpenAIModels | CerebrasModels | GroqModels | BasetenModels;
+export type LLMModels =
+  | OpenAIModels
+  | CerebrasModels
+  | GroqModels
+  | BasetenModels
+  | CustomModelType;
 
 export type LLMOptions<T extends LLMModels> = T extends OpenAIModels
   ? OpenAIOptions

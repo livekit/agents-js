@@ -51,9 +51,11 @@ export default defineAgent({
           apply_text_normalization: 'on',
         },
       }),
+      // for custom model enum unsupported yet, you can use the following format
+      // tts/llm/stt: "custom/your-custom-model-name"
+      turnDetection: new livekit.turnDetector.MultilingualModel(),
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
     });
 
     const usageCollector = new metrics.UsageCollector();
