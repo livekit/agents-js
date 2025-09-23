@@ -69,7 +69,7 @@ export class TTS extends tts.TTS {
    *
    * @param opts - Partial options to update
    */
-  updateOptions(opts: Partial<Omit<TTSOptions, 'apiKey' | 'baseURL'>>) {
+  updateOptions(opts: Partial<TTSOptions>) {
     this.#opts = { ...this.#opts, ...opts };
   }
 
