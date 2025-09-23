@@ -118,7 +118,7 @@ export class LLM extends llm.LLM {
       temperature?: number;
     } = defaultAzureLLMOptions,
   ): LLM {
-    opts = { ...defaultLLMOptions, ...opts };
+    opts = { ...defaultAzureLLMOptions, ...opts };
     if (opts.apiKey === undefined) {
       throw new Error('Azure API key is required, whether as an argument or as $AZURE_API_KEY');
     }
