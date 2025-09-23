@@ -10,6 +10,7 @@ const RIME_BASE_URL = 'https://users.rime.ai/v1/rime-tts';
 const RIME_TTS_SAMPLE_RATE = 22050;
 const RIME_TTS_CHANNELS = 1;
 
+/** Configuration options for Rime AI TTS */
 export interface TTSOptions {
   speaker: string;
   modelId: TTSModels | string;
@@ -41,6 +42,16 @@ export class TTS extends tts.TTS {
   #opts: TTSOptions;
   label = 'rime.TTS';
 
+  /**
+   * Create a new instance of Rime TTS.
+   *
+   * @remarks
+   * `apiKey` must be set to your Rime AI API key, either using the argument or by setting the
+   * `RIME_API_KEY` environmental variable.
+   *
+   * @param opts - Configuration options for the TTS instance
+   */
+
   constructor(opts: Partial<TTSOptions> = defaultTTSOptions) {
     super(RIME_TTS_SAMPLE_RATE, RIME_TTS_CHANNELS, {
       streaming: false,
@@ -52,6 +63,12 @@ export class TTS extends tts.TTS {
     }
   }
 
+  /**
+   * Synthesize text to audio using Rime AI TTS.
+   *
+   * @param text - Text to synthesize
+   * @returns A chunked stream of synthesized audio
+   */
   synthesize(text: string): ChunkedStream {
     return new ChunkedStream(this, text, this.#opts);
   }
@@ -65,6 +82,13 @@ export class ChunkedStream extends tts.ChunkedStream {
   label = 'rime-tts.ChunkedStream';
   #opts: TTSOptions;
 
+  /**
+   * Create a new ChunkedStream instance.
+   *
+   * @param tts - The parent TTS instance
+   * @param text - Text to synthesize
+   * @param opts - TTS configuration options
+   */
   constructor(tts: TTS, text: string, opts: TTSOptions) {
     super(text, tts);
     this.#opts = opts;
