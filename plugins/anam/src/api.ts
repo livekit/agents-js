@@ -38,7 +38,6 @@ export class AnamAPI {
           ...headersIn,
         };
 
-        // redact token for logs
         const redactedHeaders: Record<string, string> = { ...headers };
         if (redactedHeaders.Authorization) {
           redactedHeaders.Authorization = 'Bearer ****';
@@ -115,7 +114,6 @@ export class AnamAPI {
   }
 
   private async post<T>(path: string, body: unknown): Promise<T> {
-    // Default auth with API key
     return this.postWithHeaders<T>(path, body, { Authorization: `Bearer ${this.apiKey}` });
   }
 
@@ -124,7 +122,6 @@ export class AnamAPI {
     livekitUrl?: string;
     livekitToken?: string;
   }) {
-    // Build payload per API spec
     const pc = params.personaConfig;
     const personaPayload = {
       type: 'ephemeral',
@@ -145,8 +142,6 @@ export class AnamAPI {
   }
 
   startEngineSession(params: { sessionToken: string }) {
-    // Per API, startEngineSession must authorize with the Session Token,
-    // not the API key.
     return this.postWithHeaders<{ sessionId: string }>(
       this.startPath,
       {},

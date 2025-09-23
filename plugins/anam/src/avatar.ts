@@ -10,8 +10,8 @@ import { type APIConnectOptions, AnamException, type PersonaConfig } from './typ
 
 export async function mintAvatarJoinToken({
   roomName,
-  avatarIdentity, // e.g. `anam:${roomName}`
-  publishOnBehalf, // your agent's identity
+  avatarIdentity, 
+  publishOnBehalf, 
   apiKey = process.env.LIVEKIT_API_KEY!,
   apiSecret = process.env.LIVEKIT_API_SECRET!,
   ttl = '60s',
@@ -26,7 +26,7 @@ export async function mintAvatarJoinToken({
   const at = new AccessToken(apiKey, apiSecret);
   at.identity = avatarIdentity;
   at.name = 'Anam Avatar';
-  at.kind = 'agent'; // avatar joins as Agent
+  at.kind = 'agent'; 
   at.ttl = ttl;
   at.attributes = { 'lk.publish_on_behalf': publishOnBehalf };
 
@@ -73,7 +73,6 @@ export class AvatarSession {
       throw new AnamException('LIVEKIT_URL/API_KEY/API_SECRET must be set');
     }
 
-    // who are we publishing on behalf of?
     const localIdentity = (room.localParticipant && room.localParticipant.identity) || 'agent';
 
     logger.debug(
@@ -88,7 +87,6 @@ export class AvatarSession {
       'starting Anam avatar session',
     );
 
-    // build a LiveKit token for the avatar worker (mirrors Python)
     const jwt = await mintAvatarJoinToken({
       roomName: room.name!,
       avatarIdentity: this.opts.avatarParticipantIdentity ?? AVATAR_IDENTITY,
@@ -112,7 +110,6 @@ export class AvatarSession {
     const started = await anam.startEngineSession({ sessionToken });
     this.sessionId = started.sessionId;
 
-    // route the agent audio to the avatar via data channel & wait for video
     agentSession.output.audio = new voice.DataStreamAudioOutput({
       room,
       destinationIdentity: this.opts.avatarParticipantIdentity ?? AVATAR_IDENTITY,
