@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-elevenlabs
 
+## 1.0.6
+
+### Patch Changes
+
+- Updated dependencies [[`9dd8641a13cc971866c4683a9122b426927af7c1`](https://github.com/livekit/agents-js/commit/9dd8641a13cc971866c4683a9122b426927af7c1)]:
+  - @livekit/agents@1.0.6
+
 ## 1.0.5
 
 ### Patch Changes
