@@ -29,7 +29,7 @@ export type DeepgramModels =
 
 export type CartesiaModels = 'cartesia' | 'cartesia/ink-whisper';
 
-export type AssemblyaiModels = 'assemblyai';
+export type AssemblyaiModels = 'assemblyai' | 'assemblyai/universal-streaming';
 
 export interface CartesiaOptions {
   min_volume?: number; // default: not specified
