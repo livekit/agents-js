@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { AudioFrame } from '@livekit/rtc-node';
 import {
   AudioStream,
   type NoiseCancellationOptions,
@@ -11,6 +12,7 @@ import {
   RoomEvent,
   TrackSource,
 } from '@livekit/rtc-node';
+import type { ReadableStream } from 'node:stream/web';
 import { log } from '../../log.js';
 import { resampleStream } from '../../utils.js';
 import { AudioInput } from '../io.js';
@@ -64,8 +66,10 @@ export class ParticipantAudioInputStream extends AudioInput {
         ? participant
         : this.room.remoteParticipants.get(participantIdentity);
 
+    // We need to check if the participant has a microphone track and subscribe to it
+    // in case we miss the tracksubscribed event
     if (participantValue) {
-      for (const publication of Object.values(participantValue.trackPublications)) {
+      for (const publication of participantValue.trackPublications.values()) {
         if (publication.track && publication.source === TrackSource.SOURCE_MICROPHONE) {
           this.onTrackSubscribed(publication.track, publication, participantValue);
           break;
@@ -109,6 +113,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ): boolean => {
+    this.logger.debug({ participant: participant.identity }, 'onTrackSubscribed in _input');
     if (
       this.participantIdentity !== participant.identity ||
       publication.source !== TrackSource.SOURCE_MICROPHONE ||
@@ -127,12 +132,13 @@ export class ParticipantAudioInputStream extends AudioInput {
     return true;
   };
 
-  private createStream(track: RemoteTrack) {
+  private createStream(track: RemoteTrack): ReadableStream<AudioFrame> {
     return new AudioStream(track, {
       sampleRate: this.sampleRate,
       numChannels: this.numChannels,
       noiseCancellation: this.noiseCancellation,
-    });
+      // TODO(AJS-269): resolve compatibility issue with node-sdk to remove the forced type casting
+    }) as unknown as ReadableStream<AudioFrame>;
   }
 
   async close() {

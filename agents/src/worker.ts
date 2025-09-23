@@ -484,7 +484,11 @@ export class Worker {
     let participant: ParticipantInfo | undefined = undefined;
     if (participantIdentity) {
       try {
-        participant = await client.getParticipant(roomName, participantIdentity);
+        // TODO(AJS-269): resolve compatibility issue with node-sdk to remove the forced type casting
+        participant = (await client.getParticipant(
+          roomName,
+          participantIdentity,
+        )) as unknown as ParticipantInfo;
       } catch (e) {
         this.#logger.fatal(
           `participant with identity ${participantIdentity} not found in room ${roomName}`,
