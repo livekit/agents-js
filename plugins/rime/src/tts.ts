@@ -28,7 +28,8 @@ export interface TTSOptions {
   inlineSpeedAlpha?: string;
   noTextNormalization?: boolean;
   saveOovs?: boolean;
-  [key: string]: any;
+  /** Additional Rime API parameters */
+  [key: string]: string | number | boolean | undefined;
 }
 
 const defaultTTSOptions: TTSOptions = {
