@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { type AudioFrame } from '@livekit/rtc-node';
-import { WebSocket } from 'ws';
+import { type RawData, WebSocket } from 'ws';
 import { APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { log } from '../log.js';
@@ -267,20 +267,39 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     const recv = async (socket: WebSocket, signal: AbortSignal) => {
       while (!this.closed && !signal.aborted) {
         const dataPromise = new Promise<string>((resolve, reject) => {
-          socket.once('message', (d) => resolve(d.toString()));
-          socket.once('error', (e) => reject(e));
-          socket.once('close', (code) => {
-            if (closingWs) return resolve('');
-            reject(
-              new APIStatusError({
-                message: 'LiveKit STT connection closed unexpectedly',
-                options: { statusCode: code },
-              }),
-            );
-          });
+          const messageHandler = (d: RawData) => {
+            resolve(d.toString());
+            removeListeners();
+          };
+          const errorHandler = (e: Error) => {
+            reject(e);
+            removeListeners();
+          };
+          const closeHandler = (code: number) => {
+            if (closingWs) {
+              resolve('');
+            } else {
+              reject(
+                new APIStatusError({
+                  message: 'LiveKit STT connection closed unexpectedly',
+                  options: { statusCode: code },
+                }),
+              );
+            }
+            removeListeners();
+          };
+          const removeListeners = () => {
+            socket.removeListener('message', messageHandler);
+            socket.removeListener('error', errorHandler);
+            socket.removeListener('close', closeHandler);
+          };
+          socket.once('message', messageHandler);
+          socket.once('error', errorHandler);
+          socket.once('close', closeHandler);
         });
 
         const data = await Promise.race([dataPromise, waitForAbort(signal)]);
+
         if (!data || signal.aborted) return;
 
         const json = JSON.parse(data);
