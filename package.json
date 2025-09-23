@@ -46,9 +46,5 @@
     "typescript": "^5.4.5",
     "vitest": "^3.2.2"
   },
-  "packageManager": "pnpm@9.7.0",
-  "dependencies": {
-    "@speechmatics/auth": "^0.1.0",
-    "@speechmatics/real-time-client": "^7.0.2"
-  }
+  "packageManager": "pnpm@9.7.0"
 }

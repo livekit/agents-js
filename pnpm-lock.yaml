@@ -7,13 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      '@speechmatics/auth':
-        specifier: ^0.1.0
-        version: 0.1.0
-      '@speechmatics/real-time-client':
-        specifier: ^7.0.2
-        version: 7.0.2
     devDependencies:
       '@changesets/cli':
         specifier: ^2.29.6
@@ -171,7 +164,7 @@ importers:
         version: link:../agents
       '@livekit/agents-plugin-cartesia':
         specifier: workspace:*
-        version: link:../plugins/speechmatics
+        version: link:../plugins/cartesia
       '@livekit/agents-plugin-deepgram':
         specifier: workspace:*
         version: link:../plugins/deepgram
@@ -512,6 +505,12 @@ importers:
 
   plugins/speechmatics:
     dependencies:
+      '@speechmatics/auth':
+        specifier: ^0.1.0
+        version: 0.1.0
+      '@speechmatics/real-time-client':
+        specifier: ^7.0.2
+        version: 7.0.2
       ws:
         specifier: ^8.16.0
         version: 8.18.3
