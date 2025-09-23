@@ -11,7 +11,7 @@ import {
 } from '../index.js';
 import * as llm from '../llm/index.js';
 import type { APIConnectOptions } from '../types.js';
-import { type CustomModelType, createAccessToken } from './utils.js';
+import { type CustomModelType, createAccessToken, getModelName } from './utils.js';
 
 export type OpenAIModels =
   // | "azure/gpt-5"
@@ -156,7 +156,7 @@ export class LLM<TModel extends LLMModels> extends llm.LLM {
     }
 
     this.opts = {
-      model,
+      model: getModelName(model) as TModel,
       temperature,
       parallelToolCalls,
       toolChoice,
