@@ -65,6 +65,15 @@ export class TTS extends tts.TTS {
   }
 
   /**
+   * Update TTS options after initialization
+   *
+   * @param opts - Partial options to update
+   */
+  updateOptions(opts: Partial<Omit<TTSOptions, 'apiKey' | 'baseURL'>>) {
+    this.#opts = { ...this.#opts, ...opts };
+  }
+
+  /**
    * Synthesize text to audio using Rime AI TTS.
    *
    * @param text - Text to synthesize
