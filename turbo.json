@@ -34,7 +34,11 @@
     "GOOGLE_GENAI_API_KEY",
     "GOOGLE_GENAI_USE_VERTEXAI",
     "GOOGLE_CLOUD_PROJECT",
-    "GOOGLE_CLOUD_LOCATION"
+    "GOOGLE_CLOUD_LOCATION",
+    "ANAM_API_KEY",
+    "ANAM_API_URL",
+    "ANAM_PERSONA_NAME",
+    "ANAM_AVATAR_ID"
   ],
   "pipeline": {
     "build": {
