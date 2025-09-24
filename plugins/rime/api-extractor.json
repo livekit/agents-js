@@ -17,5 +17,5 @@
      */
     "extends": "../../api-extractor-shared.json",
     "mainEntryPointFilePath": "./dist/index.d.ts"
-  }
+}
   
