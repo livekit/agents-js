@@ -54,7 +54,7 @@ export type BasetenModels =
   | 'baseten/openai/gpt-oss-120b'
   | 'baseten/Qwen/Qwen3-235B-A22B-Instruct-2507';
 
-export interface OpenAIOptions {
+export interface AzureOptions {
   top_p?: number;
 }
 
@@ -73,7 +73,7 @@ export interface BasetenOptions {
 export type LLMModels = AzureModels | CerebrasModels | GroqModels | BasetenModels | AnyModels;
 
 export type LLMOptions<T extends LLMModels> = T extends AzureModels
-  ? OpenAIOptions
+  ? AzureOptions
   : T extends CerebrasModels
     ? CerebrasOptions
     : T extends GroqOptions
