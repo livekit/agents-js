@@ -8,7 +8,7 @@
     "outDir": "./dist"
   },
   "typedocOptions": {
-    "name": "plugins/agents-plugin-openai",
+    "name": "plugins/agents-plugin-rime",
     "entryPointStrategy": "resolve",
     "entryPoints": ["src/index.ts"]
   },
