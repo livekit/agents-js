@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, tts, shortuuid } from '@livekit/agents';
+import { AudioByteStream, shortuuid, tts } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { DefaultLanguages, TTSModels } from './models.js';
 
