@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.6
+
+### Patch Changes
+
+- add logs for tracks on participant - [#721](https://github.com/livekit/agents-js/pull/721) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
 ## 1.0.5
 
 ### Patch Changes
