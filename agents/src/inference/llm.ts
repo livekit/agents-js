@@ -70,9 +70,9 @@ export interface BasetenOptions {
   top_p?: number;
 }
 
-export type LLMModels = OpenAIModels | CerebrasModels | GroqModels | BasetenModels | AnyModels;
+export type LLMModels = AzureModels | CerebrasModels | GroqModels | BasetenModels | AnyModels;
 
-export type LLMOptions<T extends LLMModels> = T extends OpenAIModels
+export type LLMOptions<T extends LLMModels> = T extends AzureModels
   ? OpenAIOptions
   : T extends CerebrasModels
     ? CerebrasOptions
