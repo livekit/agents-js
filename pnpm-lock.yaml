@@ -481,6 +481,9 @@ importers:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../openai
       '@livekit/agents-plugin-silero':
         specifier: workspace:*
         version: link:../silero
