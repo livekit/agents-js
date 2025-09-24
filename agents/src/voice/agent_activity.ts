@@ -38,7 +38,7 @@ import { TTS, type TTSError } from '../tts/tts.js';
 import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
-import { StopResponse, asyncLocalStorage } from './agent.js';
+import { StopResponse, toolCallContext } from './agent.js';
 import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
 import {
   AudioRecognition,
@@ -802,15 +802,17 @@ export class AgentActivity implements RecognitionHooks {
       throw new Error('trying to generate reply without an LLM model');
     }
 
-    const functionCall = asyncLocalStorage.getStore()?.functionCall;
-    if (toolChoice === undefined && functionCall !== undefined) {
-      // when generateReply is called inside a tool, set toolChoice to 'none' by default
-      toolChoice = 'none';
-    }
-
     const handle = SpeechHandle.create({
       allowInterruptions: allowInterruptions ?? this.allowInterruptions,
     });
+
+    const activeToolCall = toolCallContext.getStore();
+    if (toolChoice === undefined && activeToolCall !== undefined) {
+      // when generateReply is called inside a tool, set toolChoice to 'none' by default
+      toolChoice = 'none';
+      // add the speech handle to the active tool call
+      activeToolCall.speechHandles.push(handle);
+    }
 
     this.agentSession.emit(
       AgentSessionEventTypes.SpeechCreated,

@@ -21,8 +21,21 @@ import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/inde
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+import type { SpeechHandle } from './speech_handle.js';
 
-export const asyncLocalStorage = new AsyncLocalStorage<{ functionCall?: FunctionCall }>();
+export type ActiveToolCall = {
+  functionCall: FunctionCall;
+  speechHandles: SpeechHandle[];
+};
+
+export function createActiveToolCall(functionCall: FunctionCall): ActiveToolCall {
+  return {
+    functionCall,
+    speechHandles: [],
+  };
+}
+
+export const toolCallContext = new AsyncLocalStorage<ActiveToolCall | undefined>();
 export const STOP_RESPONSE_SYMBOL = Symbol('StopResponse');
 
 export class StopResponse extends Error {

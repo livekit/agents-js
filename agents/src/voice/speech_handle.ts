@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatItem } from '../llm/index.js';
-import { Event, Future, shortuuid } from '../utils.js';
 import type { Task } from '../utils.js';
-import { asyncLocalStorage } from './agent.js';
+import { Event, Future, shortuuid } from '../utils.js';
+import { toolCallContext } from './agent.js';
 
 export class SpeechHandle {
   /** Priority for messages that should be played after all other messages in the queue */
@@ -124,7 +124,7 @@ export class SpeechHandle {
    * has entirely played out, including any tool calls and response follow-ups.
    */
   async waitForPlayout(): Promise<void> {
-    const store = asyncLocalStorage.getStore();
+    const store = toolCallContext.getStore();
     if (store && store?.functionCall) {
       throw new Error(
         `Cannot call 'SpeechHandle.waitForPlayout()' from inside the function tool '${store.functionCall.name}'. ` +
