@@ -484,8 +484,8 @@ export class LLM extends llm.LLM {
       extras.tool_choice = toolChoice;
     }
 
-    return new LLMStream(this as unknown as inference.LLM<inference.OpenAIModels>, {
-      model: this.#opts.model as inference.OpenAIModels,
+    return new LLMStream(this as unknown as inference.LLM<inference.AzureModels>, {
+      model: this.#opts.model as inference.AzureModels,
       providerFmt: this.#providerFmt,
       client: this.#client,
       chatCtx,
@@ -497,4 +497,4 @@ export class LLM extends llm.LLM {
   }
 }
 
-export class LLMStream extends inference.LLMStream<inference.OpenAIModels> {}
+export class LLMStream extends inference.LLMStream<inference.AzureModels> {}
