@@ -90,6 +90,7 @@ export class TTS extends tts.TTS {
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'rime-tts.ChunkedStream';
   #opts: TTSOptions;
+  #text: string;
 
   /**
    * Create a new ChunkedStream instance.
@@ -100,13 +101,12 @@ export class ChunkedStream extends tts.ChunkedStream {
    */
   constructor(tts: TTS, text: string, opts: TTSOptions) {
     super(text, tts);
+    this.#text = text;
     this.#opts = opts;
-    this.#run(text);
   }
 
-  async #run(text: string) {
+  protected async run() {
     const requestId = shortuuid();
-
     const response = await fetch(`${this.#opts.baseURL}`, {
       method: 'POST',
       headers: {
@@ -118,7 +118,7 @@ export class ChunkedStream extends tts.ChunkedStream {
         ...Object.fromEntries(
           Object.entries(this.#opts).filter(([k]) => !['apiKey', 'baseURL'].includes(k)),
         ),
-        text: text,
+        text: this.#text,
       }),
     });
 
