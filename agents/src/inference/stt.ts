@@ -15,7 +15,7 @@ import {
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
-import { type CustomModelType, connectWs, createAccessToken, getModelName } from './utils.js';
+import { type AnyModels, connectWs, createAccessToken } from './utils.js';
 
 export type DeepgramModels =
   | 'deepgram'
@@ -57,7 +57,7 @@ export interface AssemblyaiOptions {
   keyterms_prompt?: string[]; // default: not specified
 }
 
-export type STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels | CustomModelType;
+export type STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels | AnyModels;
 export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
   ? DeepgramOptions
   : TModel extends CartesiaModels
@@ -125,7 +125,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     }
 
     this.opts = {
-      model: getModelName(model) as TModel,
+      model,
       language,
       encoding,
       sampleRate,

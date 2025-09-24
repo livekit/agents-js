@@ -5,30 +5,7 @@ import { AccessToken } from 'livekit-server-sdk';
 import { WebSocket } from 'ws';
 import { APIConnectionError, APIStatusError } from '../index.js';
 
-export type CustomModelType = `custom/${string}`;
-
-/**
- * Get the model name from a model string with type inference.
- *
- * Example:
- * ```ts
- * // inferred as 'llama-3.1-8b-instruct'
- * const model = getModelName('custom/llama-3.1-8b-instruct');
- *
- * // inferred as 'azure/gpt-4.1'
- * const model2 = getModelName('azure/gpt-4.1');
- * ```
- * @param model - The model string.
- * @returns The model name.
- */
-export function getModelName<TModel extends string>(
-  model: TModel,
-): TModel extends `custom/${infer TModelName}` ? TModelName : TModel {
-  if (model.startsWith('custom/')) {
-    return model.split('/')[1] as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-  }
-  return model as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-}
+export type AnyModels = string & NonNullable<unknown>;
 
 export async function createAccessToken(
   apiKey: string,
