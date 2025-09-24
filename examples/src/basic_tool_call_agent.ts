@@ -53,16 +53,6 @@ export default defineAgent({
         ctx.session.generateReply({
           userInput: 'Tell user you are queuing the request. Counting down from 3 to 1.',
         });
-        await ctx.waitForPlayout();
-
-        // Mock API call to fetch some data
-        try {
-          const response = await fetch('https://jsonplaceholder.typicode.com/posts/1');
-          const data = await response.json();
-          console.log('Fetched mock data', { data });
-        } catch (error) {
-          console.error('Failed to fetch mock data', error);
-        }
 
         return `The weather in ${location} is sunny today.`;
       },
