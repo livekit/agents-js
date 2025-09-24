@@ -333,6 +333,15 @@ To test any changes or plugins:
    node ./examples/src/basic_agent.ts dev --log-level=debug
    ```
 
+### Testing agent connectivity
+
+To connect and talk to your agent:
+
+1. Go to the [LiveKit dashboard sandbox section](https://cloud.livekit.io/projects/<your-project-id>/sandbox)
+2. Launch a sandbox app called "Web Voice Agent"
+3. Run your agent and make sure all LiveKit API keys are configured correctly
+4. Click the "START CALL" blue button on the sandbox UI to test the connection and talk to your agent
+
 ## License
 
 This project is licensed under `Apache-2.0`, and is [REUSE-3.2](https://reuse.software) compliant.
