@@ -1794,13 +1794,6 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     // skip realtime reply if not required or auto-generated
-    this.logger.info(
-      {
-        shouldGenerateToolReply,
-        autoToolReplyGeneration: this.llm.capabilities.autoToolReplyGeneration,
-      },
-      'skipping realtime reply',
-    );
     if (!shouldGenerateToolReply || this.llm.capabilities.autoToolReplyGeneration) {
       return;
     }
