@@ -13,7 +13,7 @@ import * as llm from '../llm/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { type AnyModels, createAccessToken } from './utils.js';
 
-export type OpenAIModels =
+export type AzureModels =
   // | "azure/gpt-5"
   // | "azure/gpt-5-mini"
   // | "azure/gpt-5-nano"
