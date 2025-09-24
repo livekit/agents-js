@@ -189,6 +189,9 @@ importers:
       '@livekit/agents-plugin-silero':
         specifier: workspace:*
         version: link:../plugins/silero
+      '@livekit/agents-plugin-speechmatics':
+        specifier: workspace:*
+        version: link:../plugins/speechmatics
       '@livekit/noise-cancellation-node':
         specifier: ^0.1.9
         version: 0.1.9

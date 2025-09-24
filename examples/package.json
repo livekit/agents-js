@@ -27,6 +27,7 @@
     "@livekit/agents-plugin-elevenlabs": "workspace:*",
     "@livekit/agents-plugin-google": "workspace:*",
     "@livekit/agents-plugin-livekit": "workspace:*",
+    "@livekit/agents-plugin-speechmatics": "workspace:*",
     "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugin-cartesia": "workspace:*",

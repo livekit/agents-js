@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { DEFAULT_API_CONNECT_OPTIONS, type APIConnectOptions } from '@livekit/agents';
 // import { STT as BaseSTT, SpeechStream as BaseSpeechStream, SpeechEvent, SpeechEventType } from '@livekit/agents/src/stt/stt.js';
-import { AudioByteStream, log, shortuuid, tokenize, tts, stt } from '@livekit/agents';
+import { AudioByteStream, log, stt } from '@livekit/agents';
 import { RealtimeClient, type RealtimeTranscriptionConfig } from '@speechmatics/real-time-client';
 import { createSpeechmaticsJWT } from '@speechmatics/auth';
 import type { SpeechmaticsSTTOptions } from './types.js';
@@ -16,7 +16,6 @@ export class STT extends stt.STT {
       streaming: true,
       interimResults: opts.enablePartials ?? true,
     });
-    // sensible defaults
     this.#opts = {
       apiKey: opts.apiKey ?? process.env.SPEECHMATICS_API_KEY ?? '',
       baseUrl: opts.baseUrl ?? 'wss://eu2.rt.speechmatics.com/v2',
