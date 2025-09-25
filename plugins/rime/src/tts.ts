@@ -9,6 +9,20 @@ const RIME_BASE_URL = 'https://users.rime.ai/v1/rime-tts';
 const RIME_TTS_SAMPLE_RATE = 22050;
 const RIME_TTS_CHANNELS = 1;
 
+function getSampleRate(opts?: Partial<TTSOptions>): number {
+  if (opts?.samplingRate && typeof opts.samplingRate === 'number') {
+    return opts.samplingRate;
+  }
+  switch (opts?.modelId) {
+    case 'arcana':
+      return 24000;
+    case 'mistv2':
+      return 16000;
+    default:
+      return RIME_TTS_SAMPLE_RATE;
+  }
+}
+
 /** Configuration options for Rime AI TTS */
 export interface TTSOptions {
   speaker: string;
@@ -53,7 +67,8 @@ export class TTS extends tts.TTS {
    */
 
   constructor(opts: Partial<TTSOptions> = defaultTTSOptions) {
-    super(RIME_TTS_SAMPLE_RATE, RIME_TTS_CHANNELS, {
+    const sampleRate = getSampleRate(opts);
+    super(sampleRate, RIME_TTS_CHANNELS, {
       streaming: false,
     });
 
@@ -127,7 +142,8 @@ export class ChunkedStream extends tts.ChunkedStream {
     }
 
     const buffer = await response.arrayBuffer();
-    const audioByteStream = new AudioByteStream(RIME_TTS_SAMPLE_RATE, RIME_TTS_CHANNELS);
+    const sampleRate = getSampleRate(this.#opts);
+    const audioByteStream = new AudioByteStream(sampleRate, RIME_TTS_CHANNELS);
     const frames = audioByteStream.write(buffer);
     let lastFrame: AudioFrame | undefined;
     const sendLastFrame = (segmentId: string, final: boolean) => {
