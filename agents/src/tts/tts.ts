@@ -443,7 +443,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     for await (const audio of this.queue) {
       this.output.put(audio);
       requestId = audio.requestId;
-      if (!ttfb) {
+      if (ttfb === BigInt(-1)) {
         ttfb = process.hrtime.bigint() - startTime;
       }
       audioDuration += audio.frame.samplesPerChannel / audio.frame.sampleRate;
