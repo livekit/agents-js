@@ -61,7 +61,7 @@ const defaultTTSOptions: TTSOptions = {
 };
 
 export class TTS extends tts.TTS {
-  #opts: TTSOptions;
+  private opts: TTSOptions;
   label = 'rime.TTS';
 
   /**
@@ -80,8 +80,8 @@ export class TTS extends tts.TTS {
       streaming: false,
     });
 
-    this.#opts = { ...defaultTTSOptions, ...opts };
-    if (this.#opts.apiKey === undefined) {
+    this.opts = { ...defaultTTSOptions, ...opts };
+    if (this.opts.apiKey === undefined) {
       throw new Error('RIME API key is required, whether as an argument or as $RIME_API_KEY');
     }
   }
@@ -92,7 +92,7 @@ export class TTS extends tts.TTS {
    * @param opts - Partial options to update
    */
   updateOptions(opts: Partial<TTSOptions>) {
-    this.#opts = { ...this.#opts, ...opts };
+    this.opts = { ...this.opts, ...opts };
   }
 
   /**
@@ -102,7 +102,7 @@ export class TTS extends tts.TTS {
    * @returns A chunked stream of synthesized audio
    */
   synthesize(text: string): ChunkedStream {
-    return new ChunkedStream(this, text, this.#opts);
+    return new ChunkedStream(this, text, this.opts);
   }
 
   stream(): tts.SynthesizeStream {
@@ -112,8 +112,8 @@ export class TTS extends tts.TTS {
 
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'rime-tts.ChunkedStream';
-  #opts: TTSOptions;
-  #text: string;
+  private opts: TTSOptions;
+  private text: string;
 
   /**
    * Create a new ChunkedStream instance.
@@ -124,24 +124,24 @@ export class ChunkedStream extends tts.ChunkedStream {
    */
   constructor(tts: TTS, text: string, opts: TTSOptions) {
     super(text, tts);
-    this.#text = text;
-    this.#opts = opts;
+    this.text = text;
+    this.opts = opts;
   }
 
   protected async run() {
     const requestId = shortuuid();
-    const response = await fetch(`${this.#opts.baseURL}`, {
+    const response = await fetch(`${this.opts.baseURL}`, {
       method: 'POST',
       headers: {
         Accept: 'audio/pcm',
-        Authorization: `Bearer ${this.#opts.apiKey}`,
+        Authorization: `Bearer ${this.opts.apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         ...Object.fromEntries(
-          Object.entries(this.#opts).filter(([k]) => !['apiKey', 'baseURL'].includes(k)),
+          Object.entries(this.opts).filter(([k]) => !['apiKey', 'baseURL'].includes(k)),
         ),
-        text: this.#text,
+        text: this.text,
       }),
     });
 
@@ -150,7 +150,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     }
 
     const buffer = await response.arrayBuffer();
-    const sampleRate = getSampleRate(this.#opts);
+    const sampleRate = getSampleRate(this.opts);
     const audioByteStream = new AudioByteStream(sampleRate, RIME_TTS_CHANNELS);
     const frames = audioByteStream.write(buffer);
     let lastFrame: AudioFrame | undefined;
