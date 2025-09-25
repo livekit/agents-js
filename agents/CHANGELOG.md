@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.1.0
+
+### Minor Changes
+
+- Add LiveKit gateway model integrations - [#694](https://github.com/livekit/agents-js/pull/694) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.6
 
 ### Patch Changes
