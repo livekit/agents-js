@@ -25,6 +25,9 @@ import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { type MessageEvent, WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
+// if LK_OPENAI_DEBUG convert it to a number, otherwise set it to 0
+const lkOaiDebug = process.env.LK_OPENAI_DEBUG ? Number(process.env.LK_OPENAI_DEBUG) : 0;
+
 const SAMPLE_RATE = 24000;
 const NUM_CHANNELS = 1;
 const BASE_URL = 'https://api.openai.com/v1';
@@ -640,11 +643,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     } as api_proto.ConversationItemTruncateEvent);
   }
 
-  /// Truncates the data field of the event to the specified maxLength to avoid overwhelming logs
-  /// with large amounts of base64 audio data.
-  #loggableEvent(
+  private loggableEvent(
     event: api_proto.ClientEvent | api_proto.ServerEvent,
-    maxLength: number = 30,
   ): Record<string, unknown> {
     const untypedEvent: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(event)) {
@@ -654,18 +654,14 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (untypedEvent.audio && typeof untypedEvent.audio === 'string') {
-      const truncatedData =
-        untypedEvent.audio.slice(0, maxLength) + (untypedEvent.audio.length > maxLength ? '…' : '');
-      return { ...untypedEvent, audio: truncatedData };
+      return { ...untypedEvent, audio: '...' };
     }
     if (
       untypedEvent.delta &&
       typeof untypedEvent.delta === 'string' &&
       event.type === 'response.audio.delta'
     ) {
-      const truncatedDelta =
-        untypedEvent.delta.slice(0, maxLength) + (untypedEvent.delta.length > maxLength ? '…' : '');
-      return { ...untypedEvent, delta: truncatedDelta };
+      return { ...untypedEvent, delta: '...' };
     }
     return untypedEvent;
   }
@@ -699,7 +695,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       azureDeployment: this.oaiRealtimeModel._options.azureDeployment,
     });
 
-    this.#logger.debug(`Connecting to OpenAI Realtime API at ${url}`);
+    if (lkOaiDebug) {
+      this.#logger.debug(`Connecting to OpenAI Realtime API at ${url}`);
+    }
 
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url, { headers });
@@ -849,8 +847,8 @@ export class RealtimeSession extends llm.RealtimeSession {
             break;
           }
 
-          if (event.type !== 'input_audio_buffer.append') {
-            this.#logger.debug(`(client) -> ${JSON.stringify(this.#loggableEvent(event))}`);
+          if (lkOaiDebug) {
+            this.#logger.debug(this.loggableEvent(event), `(client) -> ${event.type}`);
           }
 
           this.emit('openai_client_event_queued', event);
@@ -876,7 +874,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       const event: api_proto.ServerEvent = JSON.parse(message.data as string);
 
       this.emit('openai_server_event_received', event);
-      this.#logger.debug(`(server) <- ${JSON.stringify(this.#loggableEvent(event))}`);
+      if (lkOaiDebug) {
+        this.#logger.debug(this.loggableEvent(event), `(server) <- ${event.type}`);
+      }
 
       switch (event.type) {
         case 'input_audio_buffer.speech_started':
@@ -931,7 +931,9 @@ export class RealtimeSession extends llm.RealtimeSession {
           this.handleError(event);
           break;
         default:
-          this.#logger.debug(`unhandled event: ${event.type}`);
+          if (lkOaiDebug) {
+            this.#logger.debug(`unhandled event: ${event.type}`);
+          }
           break;
       }
     };
