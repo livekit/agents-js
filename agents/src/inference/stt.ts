@@ -15,13 +15,14 @@ import {
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
-import { type AnyModels, connectWs, createAccessToken } from './utils.js';
+import { type AnyString, connectWs, createAccessToken } from './utils.js';
 
 export type DeepgramModels =
   | 'deepgram'
   | 'deepgram/nova-3'
   | 'deepgram/nova-3-general'
   | 'deepgram/nova-3-medical'
+  | 'deepgram/nova-2-conversationalai'
   | 'deepgram/nova-2'
   | 'deepgram/nova-2-general'
   | 'deepgram/nova-2-medical'
@@ -57,7 +58,37 @@ export interface AssemblyaiOptions {
   keyterms_prompt?: string[]; // default: not specified
 }
 
-export type STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels | AnyModels;
+export type STTLanguages =
+  | 'multi'
+  | 'en'
+  | 'de'
+  | 'es'
+  | 'fr'
+  | 'ja'
+  | 'pt'
+  | 'zh'
+  | 'hi'
+  | AnyString;
+
+export type _LanguageAsModels =
+  | 'lang/multi'
+  | 'lang/en'
+  | 'lang/de'
+  | 'lang/es'
+  | 'lang/fr'
+  | 'lang/ja'
+  | 'lang/pt'
+  | 'lang/zh'
+  | 'lang/hi';
+// other languages not listed here are also supported
+
+export type STTModels =
+  | DeepgramModels
+  | CartesiaModels
+  | AssemblyaiModels
+  | _LanguageAsModels
+  | AnyString;
+
 export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
   ? DeepgramOptions
   : TModel extends CartesiaModels
@@ -66,7 +97,6 @@ export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
       ? AssemblyaiOptions
       : Record<string, unknown>;
 
-export type STTLanguages = 'en' | 'de' | 'es' | 'fr' | 'ja' | 'pt' | 'zh';
 export type STTEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
@@ -75,8 +105,8 @@ const DEFAULT_BASE_URL = 'wss://agent-gateway.livekit.cloud/v1';
 const DEFAULT_CANCEL_TIMEOUT = 5000;
 
 export interface InferenceSTTOptions<TModel extends STTModels> {
-  model: TModel;
-  language?: STTLanguages | string;
+  model?: TModel;
+  language?: STTLanguages;
   encoding: STTEncoding;
   sampleRate: number;
   baseURL: string;
@@ -89,9 +119,11 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   private opts: InferenceSTTOptions<TModel>;
   private streams: Set<SpeechStream<TModel>> = new Set();
 
-  constructor(opts: {
-    model: TModel;
-    language?: STTLanguages | string;
+  #logger = log();
+
+  constructor(opts?: {
+    model?: TModel;
+    language?: STTLanguages;
     baseURL?: string;
     encoding?: STTEncoding;
     sampleRate?: number;
@@ -102,8 +134,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     super({ streaming: true, interimResults: true });
 
     const {
-      model,
-      language,
+      model: rawModel,
+      language: rawLanguage,
       baseURL,
       encoding = DEFAULT_ENCODING,
       sampleRate = DEFAULT_SAMPLE_RATE,
@@ -122,6 +154,23 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       apiSecret || process.env.LIVEKIT_INFERENCE_API_SECRET || process.env.LIVEKIT_API_SECRET;
     if (!lkApiSecret) {
       throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
+    }
+
+    let language = rawLanguage;
+    let model = rawModel;
+    if (model && model.startsWith('lang/')) {
+      if (language !== undefined) {
+        this.#logger.warn(
+          {
+            language,
+            model,
+          },
+          'language is provided via both argument and model, using the one from the argument',
+        );
+      } else {
+        language = model.slice(5).trim();
+      }
+      model = undefined;
     }
 
     this.opts = {
