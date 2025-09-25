@@ -7,13 +7,11 @@ import {
   WorkerOptions,
   cli,
   defineAgent,
+  inference,
   metrics,
   voice,
 } from '@livekit/agents';
-import * as deepgram from '@livekit/agents-plugin-deepgram';
-import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
-import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
@@ -32,9 +30,27 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT(),
-      tts: new elevenlabs.TTS(),
-      llm: new openai.LLM(),
+      // stt: 'deepgram/nova-3',
+      stt: new inference.STT({
+        model: 'deepgram/nova-3',
+        extraKwargs: {
+          filler_words: false,
+        },
+      }),
+      // llm: 'azure/gpt-4.1',
+      llm: new inference.LLM({
+        model: 'azure/gpt-4.1',
+        extraKwargs: {
+          top_p: 0.9,
+        },
+      }),
+      // tts: 'elevenlabs:cgSgspJ2msm6clMCkdW9',
+      tts: new inference.TTS({
+        model: 'elevenlabs:cgSgspJ2msm6clMCkdW9',
+        extraKwargs: {
+          apply_text_normalization: 'on',
+        },
+      }),
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
       turnDetection: new livekit.turnDetector.MultilingualModel(),
