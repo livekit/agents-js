@@ -4,9 +4,9 @@
 import type { JobAssignment, JobTermination, TrackSource } from '@livekit/protocol';
 import {
   type AvailabilityRequest,
-  JobType,
   ParticipantPermission,
   ServerMessage,
+  ServerType,
   WorkerMessage,
   WorkerStatus,
 } from '@livekit/protocol';
@@ -79,7 +79,7 @@ const defaultRequestFunc = async (ctx: JobRequest) => {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const defaultCpuLoad = async (worker: Worker): Promise<number> => {
+const defaultCpuLoad = async (worker: AgentServer): Promise<number> => {
   return new Promise((resolve) => {
     const cpus1 = os.cpus();
 
@@ -144,14 +144,14 @@ export class WorkerPermissions {
 export class WorkerOptions {
   agent: string;
   requestFunc: (job: JobRequest) => Promise<void>;
-  loadFunc: (worker: Worker) => Promise<number>;
+  loadFunc: (worker: AgentServer) => Promise<number>;
   loadThreshold: number;
   numIdleProcesses: number;
   shutdownProcessTimeout: number;
   initializeProcessTimeout: number;
   permissions: WorkerPermissions;
   agentName: string;
-  workerType: JobType;
+  serverType: ServerType;
   maxRetry: number;
   wsURL: string;
   apiKey?: string;
@@ -175,7 +175,7 @@ export class WorkerOptions {
     initializeProcessTimeout = 10 * 1000,
     permissions = new WorkerPermissions(),
     agentName = '',
-    workerType = JobType.JT_ROOM,
+    serverType = ServerType.JT_ROOM,
     maxRetry = MAX_RECONNECT_ATTEMPTS,
     wsURL = 'ws://localhost:7880',
     apiKey = undefined,
@@ -195,7 +195,7 @@ export class WorkerOptions {
     agent: string;
     requestFunc?: (job: JobRequest) => Promise<void>;
     /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
-    loadFunc?: (worker: Worker) => Promise<number>;
+    loadFunc?: (worker: AgentServer) => Promise<number>;
     /** When the load exceeds this threshold, the worker will be marked as unavailable. */
     loadThreshold?: number;
     numIdleProcesses?: number;
@@ -203,7 +203,7 @@ export class WorkerOptions {
     initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;
     agentName?: string;
-    workerType?: JobType;
+    serverType?: ServerType;
     maxRetry?: number;
     wsURL?: string;
     apiKey?: string;
@@ -228,7 +228,7 @@ export class WorkerOptions {
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
     this.agentName = agentName;
-    this.workerType = workerType;
+    this.serverType = serverType;
     this.maxRetry = maxRetry;
     this.wsURL = wsURL;
     this.apiKey = apiKey;
@@ -261,7 +261,7 @@ class PendingAssignment {
  * you don't have access to a command line, such as a headless program, or one that uses Agents
  * behind a wrapper.
  */
-export class Worker {
+export class AgentServer {
   #opts: WorkerOptions;
   #procPool: ProcPool;
 
@@ -340,7 +340,7 @@ export class Worker {
     this.#opts = opts;
     this.#httpServer = new HTTPServer(opts.host, opts.port, () => ({
       agent_name: opts.agentName,
-      worker_type: JobType[opts.workerType],
+      worker_type: ServerType[opts.serverType],
       active_jobs: this.activeJobs.length,
       sdk_version: version,
       project_type: PROJECT_TYPE,
@@ -498,7 +498,7 @@ export class Worker {
         message: {
           case: 'simulateJob',
           value: {
-            type: JobType.JT_PUBLISHER,
+            type: ServerType.JT_PUBLISHER,
             room,
             participant,
           },
@@ -610,7 +610,7 @@ export class Worker {
         message: {
           case: 'register',
           value: {
-            type: this.#opts.workerType,
+            type: this.#opts.serverType,
             agentName: this.#opts.agentName,
             allowedPermissions: new ParticipantPermission({
               canPublish: this.#opts.permissions.canPublish,
