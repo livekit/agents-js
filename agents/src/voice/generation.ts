@@ -22,7 +22,13 @@ import {
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task, shortuuid, toError } from '../utils.js';
-import { type Agent, type ModelSettings, asyncLocalStorage, isStopResponse } from './agent.js';
+import {
+  type Agent,
+  type ModelSettings,
+  createActiveToolCall,
+  isStopResponse,
+  toolCallContext,
+} from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
 import { RunContext } from './run_context.js';
@@ -772,12 +778,22 @@ export function performToolExecutions({
         'Executing LLM tool call',
       );
 
-      const toolExecution = asyncLocalStorage.run({ functionCall: toolCall }, async () => {
-        return await tool.execute(parsedArgs, {
+      const toolExecution = toolCallContext.run(createActiveToolCall(toolCall), async () => {
+        const result = await tool.execute(parsedArgs, {
           ctx: new RunContext(session, speechHandle, toolCall),
           toolCallId: toolCall.callId,
           abortSignal: signal,
         });
+
+        // [IMPORTANT] wait for all speech handles created inside tool call to be scheduled first
+        const activeToolCall = toolCallContext.getStore()!;
+        if (activeToolCall.speechHandles.length > 0) {
+          await Promise.all(
+            activeToolCall.speechHandles.map((handle) => handle._waitForScheduled()),
+          );
+        }
+
+        return result;
       });
 
       const tracableToolExecution = async (toolExecTask: Promise<unknown>) => {
