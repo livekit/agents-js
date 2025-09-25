@@ -6,9 +6,17 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import type { DefaultLanguages, TTSModels } from './models.js';
 
 const RIME_BASE_URL = 'https://users.rime.ai/v1/rime-tts';
-const RIME_TTS_SAMPLE_RATE = 22050;
+const RIME_TTS_SAMPLE_RATE = 24000;
 const RIME_TTS_CHANNELS = 1;
 
+/**
+ * Get the appropriate sample rate based on TTS options.
+ *
+ * @param opts - Optional TTS configuration options
+ * @returns The sample rate in Hz. Returns the explicit samplingRate if provided,
+ *          otherwise returns model-specific defaults (24000 for arcana, 16000 for mistv2,
+ *          or the default RIME_TTS_SAMPLE_RATE for other models)
+ */
 function getSampleRate(opts?: Partial<TTSOptions>): number {
   if (opts?.samplingRate && typeof opts.samplingRate === 'number') {
     return opts.samplingRate;
