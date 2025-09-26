@@ -22,7 +22,7 @@ import {
   ttsClientEventSchema,
   ttsServerEventSchema,
 } from './api_protos.js';
-import { type AnyModels, connectWs, createAccessToken } from './utils.js';
+import { type AnyString, connectWs, createAccessToken } from './utils.js';
 
 type _CartesiaModels = 'cartesia' | 'cartesia/sonic' | 'cartesia/sonic-2' | 'cartesia/sonic-turbo';
 
@@ -60,7 +60,7 @@ export interface RimeOptions {}
 
 export interface InworldOptions {}
 
-export type TTSModels = CartesiaModels | ElevenlabsModels | RimeModels | InworldModels | AnyModels;
+export type TTSModels = CartesiaModels | ElevenlabsModels | RimeModels | InworldModels | AnyString;
 
 export type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels
   ? CartesiaOptions

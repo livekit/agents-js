@@ -11,51 +11,45 @@ import {
 } from '../index.js';
 import * as llm from '../llm/index.js';
 import type { APIConnectOptions } from '../types.js';
-import { type AnyModels, createAccessToken } from './utils.js';
+import { type AnyString, createAccessToken } from './utils.js';
 
 export type AzureModels =
-  // | "azure/gpt-5"
-  // | "azure/gpt-5-mini"
-  // | "azure/gpt-5-nano"
-  'azure/gpt-4.1' | 'azure/gpt-4.1-mini' | 'azure/gpt-4.1-nano';
-// | "azure/gpt-4o"
-// | "azure/gpt-4o-mini"
+  | 'azure/gpt-5'
+  | 'azure/gpt-5-mini'
+  | 'azure/gpt-5-nano'
+  | 'azure/gpt-4.1'
+  | 'azure/gpt-4.1-mini'
+  | 'azure/gpt-4.1-nano'
+  | 'azure/gpt-4o'
+  | 'azure/gpt-4o-mini';
 
 // https://inference-docs.cerebras.ai/models/overview
 export type CerebrasModels =
-  // production models
   | 'cerebras/llama3.1-8b'
   | 'cerebras/llama-3.3-70b'
-  | 'cerebras/llama-4-scout-17b-16e-instruct'
-  | 'cerebras/gpt-oss-120b'
+  | 'cerebras/llama-4-scout'
   | 'cerebras/qwen-3-32b'
-  // preview models
-  | 'cerebras/llama-4-maverick-17b-128e-instruct'
   | 'cerebras/qwen-3-235b-a22b-instruct-2507';
 
 // https://console.groq.com/docs/models
 export type GroqModels =
-  // production models
-  | 'groq/llama-3.1-8b-instant'
-  | 'groq/llama-3.3-70b-versatile'
-  | 'groq/openai/gpt-oss-120b'
-  | 'groq/openai/gpt-oss-20b'
-  // preview models
-  | 'groq/meta-llama/llama-4-maverick-17b-128e-instruct'
-  | 'groq/meta-llama/llama-4-scout-17b-16e-instruct'
-  | 'groq/qwen/qwen3-32b';
+  | 'groq/llama-3.3-70b'
+  | 'groq/llama-4-scout'
+  | 'groq/llama-4-maverick'
+  | 'groq/gpt-oss-120b'
+  | 'groq/kimi-k2'
+  | 'groq/qwen-3-32b';
 
 // https://www.baseten.co/library/tag/llms
 export type BasetenModels =
-  | 'baseten/deepseek-ai/DeepSeek-V3-0324'
-  | 'baseten/meta-llama/Llama-4-Scout-17B-16E-Instruct'
-  | 'baseten/meta-llama/Llama-4-Maverick-17B-128E-Instruct'
-  | 'baseten/moonshotai/Kimi-K2-Instruct'
-  | 'baseten/openai/gpt-oss-120b'
-  | 'baseten/Qwen/Qwen3-235B-A22B-Instruct-2507';
+  | 'baseten/qwen-3-235b'
+  | 'baseten/deepseek-v3'
+  | 'baseten/kimi-k2'
+  | 'baseten/gpt-oss-120b';
 
 export interface AzureOptions {
   top_p?: number;
+  reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high';
 }
 
 export interface CerebrasOptions {
@@ -70,7 +64,7 @@ export interface BasetenOptions {
   top_p?: number;
 }
 
-export type LLMModels = AzureModels | CerebrasModels | GroqModels | BasetenModels | AnyModels;
+export type LLMModels = AzureModels | CerebrasModels | GroqModels | BasetenModels | AnyString;
 
 export type LLMOptions<T extends LLMModels> = T extends AzureModels
   ? AzureOptions
