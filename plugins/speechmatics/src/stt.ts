@@ -7,6 +7,8 @@ import { AudioByteStream, log, stt } from '@livekit/agents';
 import { RealtimeClient, type RealtimeTranscriptionConfig } from '@speechmatics/real-time-client';
 import { createSpeechmaticsJWT } from '@speechmatics/auth';
 import type { SpeechmaticsSTTOptions } from './types.js';
+import type { AddPartialTranscript, AddTranscript } from '@speechmatics/real-time-client';
+
 
 export class STT extends stt.STT {
   label = 'speechmatics.STT';
@@ -25,8 +27,8 @@ export class STT extends stt.STT {
       outputLocale: opts.outputLocale ?? undefined,
       enablePartials: opts.enablePartials ?? true,
       enableDiarization: opts.enableDiarization ?? false,
-      maxDelay: opts.maxDelay ?? 0.7,
-      endOfUtteranceSilence: opts.endOfUtteranceSilence ?? 0.3,
+      maxDelay: opts.maxDelay ?? 1.2,
+      endOfUtteranceSilence: opts.endOfUtteranceSilence ?? 0.6,
       endOfUtteranceMode: opts.endOfUtteranceMode ?? 'fixed',
       additionalVocab: opts.additionalVocab ?? [],
       punctuationOverrides: opts.punctuationOverrides ?? {},
@@ -74,17 +76,37 @@ class SpeechStream extends stt.SpeechStream {
     this.#client = client;
 
     // Wire Speechmatics -> LiveKit SpeechEvent
+    const getPreview = (msg: { results?: Array<{ alternatives?: Array<{ content?: string }> }> }) => {
+      return msg.results?.[0]?.alternatives?.[0]?.content ?? '';
+    };
+
     client.addEventListener('receiveMessage', ({ data }) => {
+      const message = (data as { message?: string }).message ?? 'unknown';
+      const resultCount = Array.isArray((data as { results?: unknown[] }).results)
+        ? (data as { results: unknown[] }).results.length
+        : 0;
+      if (data.message != 'AudioAdded' && resultCount > 0) {
+        this.#logger.info({ message, results: resultCount, data: data }, 'speechmatics receive data');
+      }
       // Handle partials
       if (data.message === 'AddPartialTranscript' && this.#opts.enablePartials) {
-        this.#handleTranscript(data, false);
+        const partial = data as AddPartialTranscript;
+        if (getPreview(partial) !== '') {
+          this.#logger.info({ preview: getPreview(partial) }, 'forwarding partial transcript');
+        }
+        this.#handleTranscript(partial, false);
       }
       // Handle finals
       if (data.message === 'AddTranscript') {
-        this.#handleTranscript(data, true);
+        const finalMsg = data as AddTranscript;
+        if (getPreview(finalMsg) !== '') {
+          this.#logger.info({ preview: getPreview(finalMsg) }, 'forwarding final transcript');
+        }
+        this.#handleTranscript(finalMsg, true);
       }
       // Handle EOU (when using fixed EOU from Speechmatics)
       if (data.message === 'EndOfUtterance') {
+        this.#logger.info('received end of utterance signal');
         this.#flushEOU();
       }
     });
@@ -94,10 +116,11 @@ class SpeechStream extends stt.SpeechStream {
 
     // Pump audio in
     for await (const inFrame of this.input) {
-       // flush branch
+      // flush branch
       if (typeof inFrame === 'symbol') {
-        const frames = this.#bstream.flush();
-        for (const f of frames) this.#client!.sendAudio(f.data);
+        for (const f of this.#bstream.flush()) {
+          this.#client!.sendAudio(f.data);
+        }
         continue;
       }
 
@@ -118,8 +141,8 @@ class SpeechStream extends stt.SpeechStream {
     }
   }
 
-  #handleTranscript(msg: any, isFinal: boolean) {
-    const alternatives = (msg.results ?? []).flatMap((result: any) => {
+  #handleTranscript(msg: AddPartialTranscript | AddTranscript, isFinal: boolean) {
+    const alternatives = (msg.results ?? []).flatMap((result) => {
       const startTime = result.start_time ?? msg.metadata?.start_time ?? 0;
       const endTime = result.end_time ?? msg.metadata?.end_time ?? 0;
       return (result.alternatives ?? []).map((alt: any): stt.SpeechData => ({
@@ -150,15 +173,7 @@ class SpeechStream extends stt.SpeechStream {
       type: isFinal ? stt.SpeechEventType.FINAL_TRANSCRIPT : stt.SpeechEventType.INTERIM_TRANSCRIPT,
       alternatives: [primary, ...rest] as [stt.SpeechData, ...stt.SpeechData[]],
     });
-
-    if (isFinal) {
-      // send END_OF_SPEECH + usage, then clear
-      this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH } as  stt.SpeechEvent);
-      clearTimeout(this.#fallbackEouTimer);
-      this.#fallbackEouTimer = undefined;
-    } else {
-      this.#armFallbackEOU();
-    }
+    if (!isFinal) this.#armFallbackEOU();
   }
 
   #armFallbackEOU() {
