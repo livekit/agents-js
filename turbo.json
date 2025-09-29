@@ -16,6 +16,9 @@
     "GROQ_API_KEY",
     "LIVEKIT_API_KEY",
     "LIVEKIT_API_SECRET",
+    "LIVEKIT_INFERENCE_API_KEY",
+    "LIVEKIT_INFERENCE_API_SECRET",
+    "LIVEKIT_INFERENCE_URL",
     "LIVEKIT_URL",
     "LLAMA_API_KEY",
     "LIVEKIT_AGENT_ID",
@@ -38,7 +41,9 @@
     "ANAM_API_KEY",
     "ANAM_API_URL",
     "ANAM_PERSONA_NAME",
-    "ANAM_AVATAR_ID"
+    "ANAM_AVATAR_ID",
+    "RIME_API_KEY",
+    "LK_OPENAI_DEBUG"
   ],
   "pipeline": {
     "build": {

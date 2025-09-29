@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame } from '@livekit/rtc-node';
 import {
+  AudioFrame,
   AudioStream,
   type NoiseCancellationOptions,
   RemoteParticipant,
@@ -66,6 +66,17 @@ export class ParticipantAudioInputStream extends AudioInput {
         ? participant
         : this.room.remoteParticipants.get(participantIdentity);
 
+    // Convert Map iterator to array for Pino serialization
+    const trackPublicationsArray = Array.from(participantValue?.trackPublications.values() ?? []);
+
+    this.logger.info(
+      {
+        participantValue: participantValue?.identity,
+        trackPublications: trackPublicationsArray,
+        lengthOfTrackPublications: trackPublicationsArray.length,
+      },
+      'participantValue.trackPublications',
+    );
     // We need to check if the participant has a microphone track and subscribe to it
     // in case we miss the tracksubscribed event
     if (participantValue) {

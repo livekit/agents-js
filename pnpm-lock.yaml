@@ -90,8 +90,8 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1
       '@livekit/protocol':
-        specifier: ^1.29.1
-        version: 1.29.1
+        specifier: ^1.41.0
+        version: 1.41.0
       '@livekit/typed-emitter':
         specifier: ^3.0.0
         version: 3.0.0
@@ -110,6 +110,9 @@ importers:
       livekit-server-sdk:
         specifier: ^2.13.3
         version: 2.13.3
+      openai:
+        specifier: ^4.91.1
+        version: 4.91.1(ws@8.17.0)(zod@3.23.8)
       pidusage:
         specifier: ^4.0.1
         version: 4.0.1
@@ -201,6 +204,9 @@ importers:
       livekit-server-sdk:
         specifier: ^2.13.3
         version: 2.13.3
+      ws:
+        specifier: ^8.16.0
+        version: 8.18.3
       zod:
         specifier: ^3.23.8
         version: 3.23.8
@@ -492,6 +498,40 @@ importers:
         version: link:../openai
       '@livekit/agents-plugins-test':
         specifier: workspace:^
+        version: link:../test
+      '@livekit/rtc-node':
+        specifier: ^0.13.12
+        version: 0.13.13
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@22.15.30)
+      '@types/ws':
+        specifier: ^8.5.10
+        version: 8.5.10
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.4.5
+
+  plugins/rime:
+    dependencies:
+      ws:
+        specifier: ^8.16.0
+        version: 8.18.3
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../openai
+      '@livekit/agents-plugin-silero':
+        specifier: workspace:*
+        version: link:../silero
+      '@livekit/agents-plugins-test':
+        specifier: workspace:*
         version: link:../test
       '@livekit/rtc-node':
         specifier: ^0.13.12
@@ -1418,9 +1458,6 @@ packages:
     resolution: {integrity: sha512-/CXJWZD9aRU77ggL5SyUYLKFWKIQ7g2SZYE/IPVa93G9nUQBAujX5FP0U2n9+nO9GNsfA0I0rfomEWaO20ZZ/g==}
     cpu: [x64]
     os: [win32]
-
-  '@livekit/protocol@1.29.1':
-    resolution: {integrity: sha512-OhxXTZlyM5f4ydnAq1p5azzzOtKWmIoCSVtyVj9rgE42zQI5JM1rR9pubVRZovouGSvEDSJx9yL4Js2IlIyM1Q==}
 
   '@livekit/protocol@1.41.0':
     resolution: {integrity: sha512-bozBB39VSbd0IjRBwShMlLskqkd9weWJNskaB1CVpcEO9UUI1gMwAtBJOKYblzZJT9kE1SJa3L4oWWwsZMzSXw==}
@@ -5188,10 +5225,6 @@ snapshots:
 
   '@livekit/noise-cancellation-win32-x64@0.1.9':
     optional: true
-
-  '@livekit/protocol@1.29.1':
-    dependencies:
-      '@bufbuild/protobuf': 1.10.0
 
   '@livekit/protocol@1.41.0':
     dependencies:
