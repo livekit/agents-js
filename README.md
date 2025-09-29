@@ -307,6 +307,41 @@ When calling SIGTERM on a worker, the worker will signal to LiveKit server that 
 additional jobs. It will also auto-reject any new job requests that get through before the server
 signal is received. The worker will remain alive while it manages any agents connected to rooms.
 
+## Contributing
+
+To contribute to this project:
+
+1. Fork the [agents-js repository](https://github.com/livekit/agents-js)
+2. Create a new branch based on the `main` branch
+3. Make your changes
+4. Submit a pull request
+5. Make sure to complete the pre-review checklist before tagging reviewers
+
+### Testing changes and plugins
+
+To test any changes or plugins:
+
+1. Build the project:
+   ```bash
+   pnpm build
+   ```
+
+2. Edit `./examples/src/basic_agent.ts` as necessary for any plugin changes
+
+3. Run the basic agent with debug logging:
+   ```bash
+   node ./examples/src/basic_agent.ts dev --log-level=debug
+   ```
+
+### Testing agent connectivity
+
+To connect and talk to your agent:
+
+1. Go to the [LiveKit dashboard sandbox section](https://cloud.livekit.io/projects/<your-project-id>/sandbox)
+2. Launch a sandbox app called "Web Voice Agent"
+3. Run your agent and make sure all LiveKit API keys are configured correctly
+4. Click the "START CALL" blue button on the sandbox UI to test the connection and talk to your agent
+
 ## License
 
 This project is licensed under `Apache-2.0`, and is [REUSE-3.2](https://reuse.software) compliant.

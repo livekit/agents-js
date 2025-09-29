@@ -1,7 +1,7 @@
 {
-  "name": "@livekit/agents-plugin-silero",
-  "version": "1.0.6",
-  "description": "Silero voice activity detection LiveKit Node Agents",
+  "name": "@livekit/agents-plugin-rime",
+  "version": "0.1.0",
+  "description": "Rime plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",
@@ -25,7 +25,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup --onSuccess \"pnpm build:types\" && cp src/silero_vad.onnx dist/",
+    "build": "tsup --onSuccess \"pnpm build:types\"",
     "build:types": "tsc --declaration --emitDeclarationOnly && node ../../scripts/copyDeclarationOutput.js",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
@@ -35,15 +35,16 @@
   },
   "devDependencies": {
     "@livekit/agents": "workspace:*",
+    "@livekit/agents-plugin-openai": "workspace:*",
+    "@livekit/agents-plugin-silero": "workspace:*",
+    "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "^0.13.12",
     "@microsoft/api-extractor": "^7.35.0",
     "@types/ws": "^8.5.10",
-    "onnxruntime-common": "1.21.0",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "onnxruntime-node": "1.21.0",
     "ws": "^8.16.0"
   },
   "peerDependencies": {
