@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugins-test",
-  "version": "1.0.0-next.7",
+  "version": "1.0.6",
   "description": "Testing suite for LiveKit Agents plugins",
   "author": "LiveKit",
   "type": "module",

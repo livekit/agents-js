@@ -367,6 +367,11 @@ export class AudioRecognition {
             this.hooks.onStartOfSpeech(ev);
             this.speaking = true;
 
+            // Capture sample rate from the first VAD event if not already set
+            if (ev.frames.length > 0 && ev.frames[0]) {
+              this.sampleRate = ev.frames[0].sampleRate;
+            }
+
             this.bounceEOUTask?.cancel();
             break;
           case VADEventType.INFERENCE_DONE:

@@ -5,6 +5,15 @@ import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
+import {
+  LLM as InferenceLLM,
+  STT as InferenceSTT,
+  TTS as InferenceTTS,
+  type LLMModels,
+  type STTModels,
+  type TTSModels,
+} from '../inference/index.js';
+import { getJobContext } from '../job.js';
 import { ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
@@ -76,10 +85,10 @@ export type AgentSessionCallbacks = {
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
   turnDetection?: TurnDetectionMode;
-  stt?: STT;
+  stt?: STT | STTModels;
   vad?: VAD;
-  llm?: LLM | RealtimeModel;
-  tts?: TTS;
+  llm?: LLM | RealtimeModel | LLMModels;
+  tts?: TTS | TTSModels;
   userData?: UserData;
   voiceOptions?: Partial<VoiceOptions>;
 };
@@ -127,9 +136,24 @@ export class AgentSession<
     } = opts;
 
     this.vad = vad;
-    this.stt = stt;
-    this.llm = llm;
-    this.tts = tts;
+
+    if (typeof stt === 'string') {
+      this.stt = new InferenceSTT({ model: stt });
+    } else {
+      this.stt = stt;
+    }
+
+    if (typeof llm === 'string') {
+      this.llm = new InferenceLLM({ model: llm });
+    } else {
+      this.llm = llm;
+    }
+
+    if (typeof tts === 'string') {
+      this.tts = new InferenceTTS({ model: tts });
+    } else {
+      this.tts = tts;
+    }
     this.turnDetection = turnDetection;
     this._userData = userData;
 
@@ -184,6 +208,7 @@ export class AgentSession<
     this.agent = agent;
     this._updateAgentState('initializing');
 
+    const tasks: Promise<void>[] = [];
     // Check for existing input/output configuration and warn if needed
     if (this.input.audio && inputOptions?.audioEnabled !== false) {
       this.logger.warn('RoomIO audio input is enabled but input.audio is already set, ignoring..');
@@ -209,7 +234,15 @@ export class AgentSession<
     });
     this.roomIO.start();
 
-    this.updateActivity(this.agent);
+    const ctx = getJobContext();
+    if (ctx && ctx.room === room && !room.isConnected) {
+      this.logger.debug('Auto-connecting to room via job context');
+      tasks.push(ctx.connect());
+    }
+    // TODO(AJS-265): add shutdown callback to job context
+    tasks.push(this.updateActivity(this.agent));
+
+    await Promise.allSettled(tasks);
 
     // Log used IO configuration
     this.logger.debug(
@@ -220,7 +253,6 @@ export class AgentSession<
       `using transcript io: \`AgentSession\` -> ${this.output.transcription ? '`' + this.output.transcription.constructor.name + '`' : '(none)'}`,
     );
 
-    this.logger.debug('AgentSession started');
     this.started = true;
     this._updateAgentState('listening');
   }

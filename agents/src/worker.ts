@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type {
-  JobAssignment,
-  JobTermination,
-  ParticipantInfo,
-  TrackSource,
-} from '@livekit/protocol';
+import type { JobAssignment, JobTermination, TrackSource } from '@livekit/protocol';
 import {
   type AvailabilityRequest,
   JobType,
@@ -15,7 +10,7 @@ import {
   WorkerMessage,
   WorkerStatus,
 } from '@livekit/protocol';
-import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
+import { AccessToken, ParticipantInfo, RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import { WebSocket } from 'ws';
@@ -190,7 +185,7 @@ export class WorkerOptions {
     port = undefined,
     logLevel = 'info',
     production = false,
-    jobMemoryWarnMB = 300,
+    jobMemoryWarnMB = 500,
     jobMemoryLimitMB = 0,
   }: {
     /**
@@ -484,7 +479,11 @@ export class Worker {
     let participant: ParticipantInfo | undefined = undefined;
     if (participantIdentity) {
       try {
-        participant = await client.getParticipant(roomName, participantIdentity);
+        // TODO(AJS-269): resolve compatibility issue with node-sdk to remove the forced type casting
+        participant = (await client.getParticipant(
+          roomName,
+          participantIdentity,
+        )) as unknown as ParticipantInfo;
       } catch (e) {
         this.#logger.fatal(
           `participant with identity ${participantIdentity} not found in room ${roomName}`,
@@ -567,7 +566,14 @@ export class Worker {
           if (!msg.message.value.job) return;
           const task = this.#availability(msg.message.value);
           this.#tasks.push(task);
-          task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
+          task.finally(() => {
+            const taskIndex = this.#tasks.indexOf(task);
+            if (taskIndex !== -1) {
+              this.#tasks.splice(taskIndex, 1);
+            } else {
+              throw new Error(`task ${task} not found in tasks`);
+            }
+          });
           break;
         }
         case 'assignment': {
@@ -585,7 +591,14 @@ export class Worker {
         case 'termination': {
           const task = this.#termination(msg.message.value);
           this.#tasks.push(task);
-          task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
+          task.finally(() => {
+            const taskIndex = this.#tasks.indexOf(task);
+            if (taskIndex !== -1) {
+              this.#tasks.splice(taskIndex, 1);
+            } else {
+              throw new Error(`task ${task} not found in tasks`);
+            }
+          });
           break;
         }
       }
@@ -737,7 +750,14 @@ export class Worker {
 
     const task = jobRequestTask();
     this.#tasks.push(task);
-    task.finally(() => this.#tasks.splice(this.#tasks.indexOf(task)));
+    task.finally(() => {
+      const taskIndex = this.#tasks.indexOf(task);
+      if (taskIndex !== -1) {
+        this.#tasks.splice(taskIndex, 1);
+      } else {
+        throw new Error(`task ${task} not found in tasks`);
+      }
+    });
   }
 
   async #termination(msg: JobTermination) {

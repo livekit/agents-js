@@ -31,7 +31,7 @@ Looking for the Python library? Check out [Agents](https://github.com/livekit/ag
 
 ## ✨ 1.0 Release ✨
 
-This README reflects the 1.0 release.
+This README reflects the 1.0 release. See the [migration guide](https://docs.livekit.io/agents/start/v0-migration/nodejs/) if you're trying to upgrade from `0.x`.
 
 ## Features
 
@@ -40,7 +40,6 @@ This README reflects the 1.0 release.
 - **Exchange data with clients**: Use [RPCs](https://docs.livekit.io/home/client/data/rpc/) and other [Data APIs](https://docs.livekit.io/home/client/data/) to seamlessly exchange data with clients.
 - **Semantic turn detection**: Uses a transformer model to detect when a user is done with their turn, helps to reduce interruptions.
 - **Open-source**: Fully open-source, allowing you to run the entire stack on your own servers, including [LiveKit server](https://github.com/livekit/livekit), one of the most widely used WebRTC media servers.
-
 
 ## Installation
 
@@ -62,17 +61,17 @@ pnpm install @livekit/agents
 
 Currently, only the following plugins are supported:
 
-| Plugin                                                                                               | Features |
-| ---------------------------------------------------------------------------------------------------- | -------- |
+| Plugin                                                                                               | Features      |
+| ---------------------------------------------------------------------------------------------------- | ------------- |
 | [@livekit/agents-plugin-openai](https://www.npmjs.com/package/@livekit/agents-plugin-openai)         | LLM, TTS, STT |
-| [@livekit/agents-plugin-google](https://www.npmjs.com/package/@livekit/agents-plugin-google)         | LLM, TTS |
-| [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT      |
-| [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS      |
-| [@livekit/agents-plugin-cartesia](https://www.npmjs.com/package/@livekit/agents-plugin-cartesia)     | TTS      |
-| [@livekit/agents-plugin-neuphonic](https://www.npmjs.com/package/@livekit/agents-plugin-neuphonic)   | TTS      |
-| [@livekit/agents-plugin-resemble](https://www.npmjs.com/package/@livekit/agents-plugin-resemble)     | TTS      |
-| [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD      |
-| [@livekit/agents-plugin-livekit](https://www.npmjs.com/package/@livekit/agents-plugin-livekit)       | EOU |
+| [@livekit/agents-plugin-google](https://www.npmjs.com/package/@livekit/agents-plugin-google)         | LLM, TTS      |
+| [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT           |
+| [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS           |
+| [@livekit/agents-plugin-cartesia](https://www.npmjs.com/package/@livekit/agents-plugin-cartesia)     | TTS           |
+| [@livekit/agents-plugin-neuphonic](https://www.npmjs.com/package/@livekit/agents-plugin-neuphonic)   | TTS           |
+| [@livekit/agents-plugin-resemble](https://www.npmjs.com/package/@livekit/agents-plugin-resemble)     | TTS           |
+| [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD           |
+| [@livekit/agents-plugin-livekit](https://www.npmjs.com/package/@livekit/agents-plugin-livekit)       | EOU           |
 
 ## Docs and guides
 
@@ -86,6 +85,8 @@ Documentation on the framework and how to use it can be found [here](https://doc
 - Worker: The main process that coordinates job scheduling and launches agents for user sessions.
 
 ## Usage
+
+Checkout the [quickstart guide](https://docs.livekit.io/agents/start/voice-ai/)
 
 ### Simple voice agent
 
@@ -192,7 +193,7 @@ class IntroAgent extends voice.Agent<StoryData> {
           },
         }),
       },
-    })
+    });
   }
 
   // Use inheritance to create agent with custom hooks
@@ -305,6 +306,41 @@ are ongoing.
 When calling SIGTERM on a worker, the worker will signal to LiveKit server that it no longer wants
 additional jobs. It will also auto-reject any new job requests that get through before the server
 signal is received. The worker will remain alive while it manages any agents connected to rooms.
+
+## Contributing
+
+To contribute to this project:
+
+1. Fork the [agents-js repository](https://github.com/livekit/agents-js)
+2. Create a new branch based on the `main` branch
+3. Make your changes
+4. Submit a pull request
+5. Make sure to complete the pre-review checklist before tagging reviewers
+
+### Testing changes and plugins
+
+To test any changes or plugins:
+
+1. Build the project:
+   ```bash
+   pnpm build
+   ```
+
+2. Edit `./examples/src/basic_agent.ts` as necessary for any plugin changes
+
+3. Run the basic agent with debug logging:
+   ```bash
+   node ./examples/src/basic_agent.ts dev --log-level=debug
+   ```
+
+### Testing agent connectivity
+
+To connect and talk to your agent:
+
+1. Go to the [LiveKit dashboard sandbox section](https://cloud.livekit.io/projects/<your-project-id>/sandbox)
+2. Launch a sandbox app called "Web Voice Agent"
+3. Run your agent and make sure all LiveKit API keys are configured correctly
+4. Click the "START CALL" blue button on the sandbox UI to test the connection and talk to your agent
 
 ## License
 

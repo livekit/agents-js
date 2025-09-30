@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
+import type {
+  ParticipantKind,
+  RemoteParticipant,
+  RemoteTrackPublication,
+  Room,
+  TrackKind,
+} from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler, RoomEvent } from '@livekit/rtc-node';
 import { EventEmitter, once } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { TransformStream, type TransformStreamDefaultController } from 'node:stream/web';
@@ -500,6 +507,10 @@ export class Task<T> {
   get done(): boolean {
     return this.resultFuture.done;
   }
+
+  addDoneCallback(callback: () => void) {
+    this.resultFuture.await.finally(callback);
+  }
 }
 
 export async function waitFor(tasks: Task<void>[]): Promise<void> {
@@ -696,4 +707,124 @@ export function delay(ms: number, options: DelayOptions = {}): Promise<void> {
     const i = setTimeout(done, ms);
     signal?.addEventListener('abort', abort, { once: true });
   });
+}
+
+/**
+ * Returns a participant that matches the given identity. If identity is None, the first
+ * participant that joins the room will be returned.
+ * If the participant has already joined, the function will return immediately.
+ * @param room - The room to wait for a participant in.
+ * @param identity - The identity of the participant to wait for.
+ * @param kind - The kind of the participant to wait for.
+ * @returns A promise that resolves to the participant.
+ */
+export async function waitForParticipant({
+  room,
+  identity,
+  kind,
+}: {
+  room: Room;
+  identity?: string;
+  kind?: ParticipantKind | ParticipantKind[];
+}): Promise<RemoteParticipant> {
+  if (!room.isConnected) {
+    throw new Error('Room is not connected');
+  }
+
+  const fut = new Future<RemoteParticipant>();
+
+  const kindMatch = (participant: RemoteParticipant) => {
+    if (kind === undefined) return true;
+
+    if (Array.isArray(kind)) {
+      return kind.includes(participant.kind);
+    }
+
+    return participant.kind === kind;
+  };
+
+  const onParticipantConnected = (p: RemoteParticipant) => {
+    if ((identity === undefined || p.identity === identity) && kindMatch(p)) {
+      if (!fut.done) {
+        fut.resolve(p);
+      }
+    }
+  };
+
+  room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
+
+  try {
+    for (const p of room.remoteParticipants.values()) {
+      onParticipantConnected(p);
+      if (fut.done) {
+        break;
+      }
+    }
+
+    return await fut.await;
+  } finally {
+    room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
+  }
+}
+
+export async function waitForTrackPublication({
+  room,
+  identity,
+  kind,
+}: {
+  room: Room;
+  identity: string;
+  kind: TrackKind;
+}): Promise<RemoteTrackPublication> {
+  if (!room.isConnected) {
+    throw new Error('Room is not connected');
+  }
+
+  const fut = new Future<RemoteTrackPublication>();
+
+  const kindMatch = (k: TrackKind | undefined) => {
+    if (kind === undefined || kind === null) {
+      return true;
+    }
+    return k === kind;
+  };
+
+  const onTrackPublished = (
+    publication: RemoteTrackPublication,
+    participant: RemoteParticipant,
+  ) => {
+    if (fut.done) return;
+    if (
+      (identity === undefined || participant.identity === identity) &&
+      kindMatch(publication.kind)
+    ) {
+      fut.resolve(publication);
+    }
+  };
+
+  room.on(RoomEvent.TrackPublished, onTrackPublished);
+
+  try {
+    for (const p of room.remoteParticipants.values()) {
+      for (const publication of p.trackPublications.values()) {
+        onTrackPublished(publication, p);
+        if (fut.done) break;
+      }
+    }
+
+    return await fut.await;
+  } finally {
+    room.off(RoomEvent.TrackPublished, onTrackPublished);
+  }
+}
+
+export async function waitForAbort(signal: AbortSignal) {
+  const abortFuture = new Future<void>();
+  const handler = () => {
+    abortFuture.resolve();
+    signal.removeEventListener('abort', handler);
+  };
+
+  signal.addEventListener('abort', handler, { once: true });
+  return await abortFuture.await;
 }

@@ -29,6 +29,11 @@ export interface TTSOptions {
   apiKey?: string;
   language: string;
   baseUrl: string;
+
+  /**
+   * The timeout for the next chunk to be received from the Cartesia API.
+   */
+  chunkTimeout: number;
 }
 
 const defaultTTSOptions: TTSOptions = {
@@ -39,6 +44,7 @@ const defaultTTSOptions: TTSOptions = {
   apiKey: process.env.CARTESIA_API_KEY,
   language: 'en',
   baseUrl: 'https://api.cartesia.ai',
+  chunkTimeout: 5000,
 };
 
 export class TTS extends tts.TTS {
@@ -227,6 +233,15 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       };
 
+      let timeout: NodeJS.Timeout | null = null;
+
+      const clearTTSChunkTimeout = () => {
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+      };
+
       while (!this.closed && !this.abortController.signal.aborted && !shouldExit) {
         try {
           await new Promise<RawData | null>((resolve, reject) => {
@@ -236,6 +251,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               if (!closing) {
                 this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
               }
+
+              clearTTSChunkTimeout();
               if (!finalReceived) {
                 reject(new Error('WebSocket closed'));
               } else {
@@ -254,6 +271,17 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 sendLastFrame(segmentId, false);
                 lastFrame = frame;
               }
+
+              // IMPORTANT: close WS if TTS chunk stream been stuck too long
+              // this allows unblock the current "broken" TTS node so that any future TTS nodes
+              // can continue to process the stream without been blocked by the stuck node
+              clearTTSChunkTimeout();
+              timeout = setTimeout(() => {
+                this.#logger.error(
+                  `Cartesia WebSocket STT chunk stream timeout after ${this.#opts.chunkTimeout}ms`,
+                );
+                ws.close();
+              }, this.#opts.chunkTimeout);
             } else if ('done' in json) {
               finalReceived = true;
               for (const frame of bstream.flush()) {
@@ -268,6 +296,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               if (segmentId === requestId) {
                 closing = true;
                 shouldExit = true;
+                clearTTSChunkTimeout();
                 ws.close();
               }
             }
@@ -277,6 +306,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           if (err instanceof Error && !err.message.includes('WebSocket closed')) {
             this.#logger.error({ err }, 'Error in recvTask from Cartesia WebSocket');
           }
+          clearTTSChunkTimeout();
           break;
         }
       }

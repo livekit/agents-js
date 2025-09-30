@@ -1,5 +1,85 @@
 # @livekit/agents
 
+## 1.0.6
+
+### Patch Changes
+
+- add logs for tracks on participant - [#721](https://github.com/livekit/agents-js/pull/721) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+## 1.0.5
+
+### Patch Changes
+
+- add some logging to debug track not being subscribed - [#708](https://github.com/livekit/agents-js/pull/708) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+## 1.0.4
+
+### Patch Changes
+
+- Add avatar datastream io component - [#687](https://github.com/livekit/agents-js/pull/687) ([@toubatbrian](https://github.com/toubatbrian))
+
+- bugfix: agent not recieving audio from room sometimes - [#705](https://github.com/livekit/agents-js/pull/705) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- refactor speech handle to allow waiting for playout in tool calls - [#693](https://github.com/livekit/agents-js/pull/693) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+## 1.0.3
+
+### Patch Changes
+
+- Remove requirement to call ctx.connect in entrypoint function - [#689](https://github.com/livekit/agents-js/pull/689) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- Fix agent session race condition by always waiting for activity to start - [#688](https://github.com/livekit/agents-js/pull/688) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.2
+
+### Patch Changes
+
+- Fix Job memory monitoring. - [#676](https://github.com/livekit/agents-js/pull/676) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- Fix issues with splicing arrays and memory watch interval - [#670](https://github.com/livekit/agents-js/pull/670) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- fix division by zero errors - [#674](https://github.com/livekit/agents-js/pull/674) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- bugfix with setting sample rate - [#672](https://github.com/livekit/agents-js/pull/672) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- bugfix with inferenceDurationTotal accumulation on inference done - [#671](https://github.com/livekit/agents-js/pull/671) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- bugfix in uuid generation for inference process - [#675](https://github.com/livekit/agents-js/pull/675) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+## 1.0.1
+
+### Patch Changes
+
+- fix sharpe package version - [#661](https://github.com/livekit/agents-js/pull/661) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+## 1.0.0
+
+### Major Changes
+
+- Release @livekit/agents and all plugins to version 1.0.0 - [#626](https://github.com/livekit/agents-js/pull/626) ([@toubatbrian](https://github.com/toubatbrian))
+
+### Patch Changes
+
+- fix: set correct attribute name for transcription_final - [#589](https://github.com/livekit/agents-js/pull/589) ([@lukasIO](https://github.com/lukasIO))
+
+- Fix monorepo dependencies - [#634](https://github.com/livekit/agents-js/pull/634) ([@lukasIO](https://github.com/lukasIO))
+
+- fix ctrl c logs - [#656](https://github.com/livekit/agents-js/pull/656) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- fix google LLM and gemini realtime - [#646](https://github.com/livekit/agents-js/pull/646) ([@toubatbrian](https://github.com/toubatbrian))
+
+- pin onnxruntime to 1.21.1 - [#639](https://github.com/livekit/agents-js/pull/639) ([@toubatbrian](https://github.com/toubatbrian))
+
+- update logs - [#643](https://github.com/livekit/agents-js/pull/643) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- Remove @jsr dependencies - [#630](https://github.com/livekit/agents-js/pull/630) ([@lukasIO](https://github.com/lukasIO))
+
+- fix: avoid masquerading types as mjs - [#434](https://github.com/livekit/agents-js/pull/434) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- pin onnxruntime to be 1.21.0 aligned with deps in huggingface transformers.js - [#638](https://github.com/livekit/agents-js/pull/638) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix nuphonic plugin - [#645](https://github.com/livekit/agents-js/pull/645) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
 ## 1.0.0-next.7
 
 ### Patch Changes

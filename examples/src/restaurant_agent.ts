@@ -399,8 +399,6 @@ export default defineAgent({
       agent: userData.agents.greeter!,
       room: ctx.room,
     });
-
-    await ctx.connect();
   },
 });
 

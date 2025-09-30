@@ -1,0 +1,537 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+---
+description: Guidline on how to write code for @livekit/agents JS package
+globs: *.ts,package.json
+alwaysApply: false
+---
+
+# LiveKit Agents
+
+Realtime framework for production-grade multimodal and voice AI agents.
+
+## Project structure
+
+```
+.
+|-- KMS
+|   `-- logs
+|-- LICENSES
+|   |-- Apache-2.0.txt
+|   `-- CC-BY-NC-SA-4.0.txt
+|-- agents
+|   |-- src
+|   |   |-- ipc
+|   |   |   |-- index.ts
+|   |   |   |-- inference_executor.ts
+|   |   |   |-- inference_proc_executor.ts
+|   |   |   |-- inference_proc_lazy_main.ts
+|   |   |   |-- job_executor.ts
+|   |   |   |-- job_proc_executor.ts
+|   |   |   |-- job_proc_lazy_main.ts
+|   |   |   |-- message.ts
+|   |   |   |-- proc_pool.ts
+|   |   |   `-- supervised_proc.ts
+|   |   |-- llm
+|   |   |   |-- __snapshots__
+|   |   |   |   |-- chat_context.test.ts.snap
+|   |   |   |   |-- tool_context.test.ts.snap
+|   |   |   |   `-- utils.test.ts.snap
+|   |   |   |-- provider_format
+|   |   |   |   |-- google.test.ts
+|   |   |   |   |-- google.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   |-- openai.test.ts
+|   |   |   |   |-- openai.ts
+|   |   |   |   `-- utils.ts
+|   |   |   |-- chat_context.test.ts
+|   |   |   |-- chat_context.ts
+|   |   |   |-- index.ts
+|   |   |   |-- llm.ts
+|   |   |   |-- realtime.ts
+|   |   |   |-- remote_chat_context.test.ts
+|   |   |   |-- remote_chat_context.ts
+|   |   |   |-- tool_context.test.ts
+|   |   |   |-- tool_context.ts
+|   |   |   |-- tool_context.type.test.ts
+|   |   |   |-- utils.test.ts
+|   |   |   `-- utils.ts
+|   |   |-- metrics
+|   |   |   |-- base.ts
+|   |   |   |-- index.ts
+|   |   |   |-- usage_collector.ts
+|   |   |   `-- utils.ts
+|   |   |-- multimodal
+|   |   |   |-- agent_playout.ts
+|   |   |   `-- index.ts
+|   |   |-- stream
+|   |   |   |-- deferred_stream.test.ts
+|   |   |   |-- deferred_stream.ts
+|   |   |   |-- identity_transform.test.ts
+|   |   |   |-- identity_transform.ts
+|   |   |   |-- index.ts
+|   |   |   |-- merge_readable_streams.ts
+|   |   |   |-- stream_channel.test.ts
+|   |   |   `-- stream_channel.ts
+|   |   |-- stt
+|   |   |   |-- index.ts
+|   |   |   |-- stream_adapter.ts
+|   |   |   `-- stt.ts
+|   |   |-- tokenize
+|   |   |   |-- basic
+|   |   |   |   |-- basic.ts
+|   |   |   |   |-- hyphenator.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   |-- paragraph.ts
+|   |   |   |   |-- sentence.ts
+|   |   |   |   `-- word.ts
+|   |   |   |-- index.ts
+|   |   |   |-- token_stream.ts
+|   |   |   |-- tokenizer.test.ts
+|   |   |   `-- tokenizer.ts
+|   |   |-- tts
+|   |   |   |-- index.ts
+|   |   |   |-- stream_adapter.ts
+|   |   |   `-- tts.ts
+|   |   |-- voice   # voice agent core components
+|   |   |   |-- avatar
+|   |   |   |   |-- datastream_io.ts
+|   |   |   |   `-- index.ts
+|   |   |   |-- room_io
+|   |   |   |   |-- _input.ts
+|   |   |   |   |-- _output.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   `-- room_io.ts
+|   |   |   |-- transcription
+|   |   |   |   |-- _utils.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   `-- synchronizer.ts
+|   |   |   |-- agent.test.ts
+|   |   |   |-- agent.ts
+|   |   |   |-- agent_activity.ts
+|   |   |   |-- agent_session.ts
+|   |   |   |-- audio_recognition.ts
+|   |   |   |-- events.ts
+|   |   |   |-- generation.ts
+|   |   |   |-- index.ts
+|   |   |   |-- io.ts
+|   |   |   |-- run_context.ts
+|   |   |   `-- speech_handle.ts
+|   |   |-- _exceptions.ts
+|   |   |-- audio.ts
+|   |   |-- cli.ts
+|   |   |-- constants.ts
+|   |   |-- generator.ts
+|   |   |-- http_server.ts
+|   |   |-- index.ts
+|   |   |-- inference_runner.ts
+|   |   |-- job.ts
+|   |   |-- log.ts
+|   |   |-- plugin.ts
+|   |   |-- transcription.ts
+|   |   |-- types.ts
+|   |   |-- utils.test.ts
+|   |   |-- utils.ts
+|   |   |-- vad.ts
+|   |   |-- version.ts
+|   |   `-- worker.ts
+|   |-- CHANGELOG.md
+|   |-- README.md
+|   |-- api-extractor.json
+|   |-- package.json
+|   |-- tsconfig.json
+|   `-- tsup.config.ts
+|-- examples
+|   |-- src
+|   |   |-- drive-thru
+|   |   |   |-- database.ts
+|   |   |   |-- drivethru_agent.ts
+|   |   |   `-- order.ts
+|   |   |-- frontdesk
+|   |   |   |-- calendar_api.test.ts
+|   |   |   |-- calendar_api.ts
+|   |   |   |-- calendar_integration.test.ts
+|   |   |   `-- frontdesk_agent.ts
+|   |   |-- Dockerfile-example
+|   |   |-- basic_agent.ts
+|   |   |-- basic_eou.ts
+|   |   |-- basic_tool_call_agent.ts
+|   |   |-- cartersia_tts.ts
+|   |   |-- comprehensive_test.ts
+|   |   |-- gemini_realtime_agent.ts
+|   |   |-- multi_agent.ts
+|   |   |-- push_to_talk.ts
+|   |   |-- raw_function_description.ts
+|   |   |-- realtime_agent.ts
+|   |   |-- realtime_turn_detector.ts
+|   |   `-- restaurant_agent.ts
+|   |-- CHANGELOG.md
+|   |-- package.json
+|   `-- tsconfig.json
+|-- plugins     # plugins for the livekit agents framework
+|   |-- cartesia
+|   |   |-- src
+|   |   |   |-- index.ts
+|   |   |   |-- models.ts
+|   |   |   |-- tts.test.ts
+|   |   |   `-- tts.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- deepgram
+|   |   |-- src
+|   |   |   |-- _utils.ts
+|   |   |   |-- index.ts
+|   |   |   |-- models.ts
+|   |   |   |-- stt.test.ts
+|   |   |   `-- stt.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- elevenlabs
+|   |   |-- src
+|   |   |   |-- index.ts
+|   |   |   |-- models.ts
+|   |   |   |-- tts.test.ts
+|   |   |   `-- tts.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- google
+|   |   |-- src
+|   |   |   |-- beta
+|   |   |   |   |-- realtime
+|   |   |   |   |   |-- api_proto.ts
+|   |   |   |   |   |-- index.ts
+|   |   |   |   |   `-- realtime_api.ts
+|   |   |   |   |-- gemini_tts.test.ts
+|   |   |   |   |-- gemini_tts.ts
+|   |   |   |   `-- index.ts
+|   |   |   |-- index.ts
+|   |   |   |-- llm.test.ts
+|   |   |   |-- llm.ts
+|   |   |   |-- models.ts
+|   |   |   |-- tools.ts
+|   |   |   `-- utils.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- livekit
+|   |   |-- src
+|   |   |   |-- turn_detector
+|   |   |   |   |-- base.ts
+|   |   |   |   |-- constants.ts
+|   |   |   |   |-- english.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   |-- multilingual.ts
+|   |   |   |   |-- utils.test.ts
+|   |   |   |   `-- utils.ts
+|   |   |   |-- hf_utils.test.ts
+|   |   |   |-- hf_utils.ts
+|   |   |   |-- index.ts
+|   |   |   `-- onnxruntime.d.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- neuphonic
+|   |   |-- src
+|   |   |   |-- index.ts
+|   |   |   |-- models.ts
+|   |   |   |-- tts.test.ts
+|   |   |   `-- tts.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- openai
+|   |   |-- src
+|   |   |   |-- realtime
+|   |   |   |   |-- api_proto.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   `-- realtime_model.ts
+|   |   |   |-- index.ts
+|   |   |   |-- llm.test.ts
+|   |   |   |-- llm.ts
+|   |   |   |-- models.ts
+|   |   |   |-- stt.test.ts
+|   |   |   |-- stt.ts
+|   |   |   |-- tts.test.ts
+|   |   |   `-- tts.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- resemble
+|   |   |-- src
+|   |   |   |-- index.ts
+|   |   |   |-- models.ts
+|   |   |   |-- tts.test.ts
+|   |   |   `-- tts.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   |-- silero
+|   |   |-- src
+|   |   |   |-- index.ts
+|   |   |   |-- onnx_model.ts
+|   |   |   |-- onnxruntime.d.ts
+|   |   |   |-- silero_vad.onnx
+|   |   |   `-- vad.ts
+|   |   |-- CHANGELOG.md
+|   |   |-- README.md
+|   |   |-- api-extractor.json
+|   |   |-- package.json
+|   |   |-- tsconfig.json
+|   |   `-- tsup.config.ts
+|   `-- test
+|       |-- src
+|       |   |-- index.ts
+|       |   |-- llm.ts
+|       |   |-- long.wav
+|       |   |-- stt.ts
+|       |   `-- tts.ts
+|       |-- CHANGELOG.md
+|       |-- README.md
+|       |-- package.json
+|       |-- tsconfig.json
+|       `-- tsup.config.ts
+|-- scripts
+|   `-- copyDeclarationOutput.js
+|-- CODE_OF_CONDUCT.md
+|-- CONTRIBUTING.md
+|-- LICENSE
+|-- NOTICE
+|-- README.md
+|-- REUSE.toml
+|-- api-extractor-shared.json
+|-- package.json
+|-- pnpm-lock.yaml
+|-- pnpm-workspace.yaml
+|-- tsconfig.json
+|-- tsup.config.ts
+|-- turbo.json
+`-- vitest.config.ts
+```
+
+# Basic Agent Example
+
+```ts
+import {
+  type JobContext,
+  type JobProcess,
+  WorkerOptions,
+  cli,
+  defineAgent,
+  voice,
+} from '@livekit/agents';
+import * as cartesia from '@livekit/agents-plugin-cartesia';
+import * as deepgram from '@livekit/agents-plugin-deepgram';
+import * as livekit from '@livekit/agents-plugin-livekit';
+import * as openai from '@livekit/agents-plugin-openai';
+import * as silero from '@livekit/agents-plugin-silero';
+import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
+import { fileURLToPath } from 'node:url';
+
+
+export default defineAgent({
+  prewarm: async (proc: JobProcess) => {
+    proc.userData.vad = await silero.VAD.load();
+  },
+  entry: async (ctx: JobContext) => {
+    const vad = ctx.proc.userData.vad! as silero.VAD;
+    
+    // Define the agent
+    const assistant = new voice.Agent({
+	    instructions: 'You are a helpful voice AI assistant.',
+    });
+
+    const session = new voice.AgentSession({
+      vad,
+      stt: new deepgram.STT({ model: 'nova-3' }),
+      llm: new openai.LLM({ model: 'gpt-4o-mini' }),
+      tts: new cartesia.TTS({ 
+        model: 'sonic-2', 
+        voice: 'f786b574-daa5-4673-aa0c-cbe3e8534c02' 
+      }),
+      turnDetection: new livekit.turnDetector.MultilingualModel(),
+    });
+
+    await session.start({
+      agent: assistant,
+      room: ctx.room,
+      inputOptions: {
+        // For telephony applications, use `TelephonyBackgroundVoiceCancellation` for best results
+        noiseCancellation: BackgroundVoiceCancellation(),
+      },
+    });
+
+    await ctx.connect();
+
+    const handle = session.generateReply({
+      instructions: 'Greet the user and offer your assistance.',
+    });
+  },
+});
+
+cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
+```
+
+If you want to override agent hooks (sttNode, ttsNode, llmNode), you can do so by creating a class that extends the `voice.Agent` class and override the hooks. Below is an example of how to override the hooks that can adjust audio volume of agent with combintion of custom hooks and LLM tool calls.
+
+```ts
+class Assistant extends voice.Agent {
+  private volume = 50;
+
+  constructor(initialVolume: number) {
+    super({
+      instructions: `You are a helpful voice AI assistant. Your starting volume level is ${initialVolume}.`,
+      tools: {
+        setVolume: llm.tool({
+          description: 'Set the volume of the audio output.',
+          parameters: z.object({
+            volume: z
+              .number()
+              .min(0)
+              .max(100)
+              .describe('The volume level to set. Must be between 0 and 100.'),
+          }),
+          execute: async ({ volume }) => {
+            this.volume = volume;
+            return `Volume set to ${volume}`;
+          },
+        }),
+      },
+    });
+    this.volume = initialVolume;
+  }
+
+  // Audio node used by STT-LLM-TTS pipeline models
+  async ttsNode(
+    text: ReadableStream<string>,
+    modelSettings: voice.ModelSettings,
+  ): Promise<ReadableStream<AudioFrame> | null> {
+    const baseStream = await voice.Agent.default.ttsNode(this, text, modelSettings);
+    if (!baseStream) return null;
+    return this.adjustVolumeInStream(baseStream);
+  }
+
+  // Audio node used by realtime models
+  async realtimeAudioOutputNode(
+    audio: ReadableStream<AudioFrame>,
+    modelSettings: voice.ModelSettings,
+  ): Promise<ReadableStream<AudioFrame> | null> {
+    const baseStream = await voice.Agent.default.realtimeAudioOutputNode(
+      this,
+      audio,
+      modelSettings,
+    );
+    if (!baseStream) return null;
+    return this.adjustVolumeInStream(baseStream);
+  }
+
+  private adjustVolumeInStream(
+    audioStream: ReadableStream<AudioFrame>,
+  ): ReadableStream<AudioFrame> {
+    return new ReadableStream({
+      start: async (controller) => {
+        const reader = audioStream.getReader();
+        try {
+          while (true) {
+            const { done, value: frame } = await reader.read();
+            if (done) break;
+
+            const adjustedFrame = this.adjustVolumeInFrame(frame);
+            controller.enqueue(adjustedFrame);
+          }
+        } finally {
+          reader.releaseLock();
+          controller.close();
+        }
+      },
+    });
+  }
+
+  private adjustVolumeInFrame(frame: AudioFrame): AudioFrame {
+    const audioData = new Int16Array(frame.data);
+    const volumeMultiplier = Math.max(0, Math.min(this.volume, 100)) / 100.0;
+
+    const processedData = new Int16Array(audioData.length);
+    for (let i = 0; i < audioData.length; i++) {
+      const floatSample = audioData[i]! / 32767.0;
+      const adjustedSample = floatSample * volumeMultiplier;
+      processedData[i] = Math.round(adjustedSample * 32767.0);
+    }
+
+    return new AudioFrame(processedData, frame.sampleRate, frame.channels, frame.samplesPerChannel);
+  }
+}
+```
+
+For more information, read the example agent file under the `examples` directory.
+
+# Project Guidlines
+
+> [!NOTE]
+> Whenever you have solved a complex task, which can be a tricky debugging process or a complex code implementation, document the core process under this section to illustrates any obstables you have faced during the dev, DO and DON'TS, and relevant files (specifide by relative path to code file) that are relevant to the task. You should add a new ## header section for each of such task. When user do /agent-guidline <description>, you should add guidline for the task based on user description.
+
+## Important Commands
+
+### Build the project
+
+`pnpm build` - always run this command after making any changes before testing
+
+### Run an example agent under the `examples` directory
+
+`pnpm build && pnpm dlx tsx ./examples/src/my_agent.ts dev|download-files --log-level=debug|info(default)`
+
+
+## License
+
+Remember to always add the following header to the top of every newly added file.
+```
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+```
+
+## Debugging Plugins
+
+For plugin components such as STT, TTS, LLM. You can debug these individual components by creating a new example agent file under the `examples` directory. You do not need to have `defineAgent` function if you only want to debug individual plugin components, just run `pnpm build` and `node ./examples/src/test_my_plugin.ts` to test the plugin. Test file is prefixed with `test_`.
+
+### Inference LLM Testing Guidelines
+
+When testing the inference LLM (`inference.LLM`):
+
+1. **Model Names**: Always use the full model names from `agents/src/inference/models.ts`. Use `'openai/gpt-4o-mini'` instead of just `'gpt-4o-mini'`.
+
+2. **Logger Initialization**: Always initialize the logger before using any LLM functionality:
+   ```typescript
+   import { initializeLogger } from '@livekit/agents';
+   initializeLogger({ pretty: true });
+   ```
+
+6. **Test Structure**: Include both basic streaming and tool calling tests to verify full functionality.
