@@ -475,7 +475,6 @@ export class RoomIO {
     this.initTask = Task.from((controller) => this.init(controller.signal));
 
     /** attach the agent to the session */
-    // Note: Fixed spelling from 'attatch' to 'attach'
     if (this.audioInput) {
       this.agentSession.input.audio = this.audioInput;
     }
