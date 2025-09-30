@@ -641,6 +641,7 @@ export class AgentActivity implements RecognitionHooks {
       createUserInputTranscribedEvent({
         transcript: ev.alternatives![0].text,
         isFinal: false,
+        language: ev.alternatives![0].language,
         // TODO(AJS-106): add multi participant support
       }),
     );
@@ -657,6 +658,7 @@ export class AgentActivity implements RecognitionHooks {
       createUserInputTranscribedEvent({
         transcript: ev.alternatives![0].text,
         isFinal: true,
+        language: ev.alternatives![0].language,
         // TODO(AJS-106): add multi participant support
       }),
     );
