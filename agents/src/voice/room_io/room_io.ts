@@ -137,7 +137,7 @@ export class RoomIO {
   private participantAvailableFuture: Future<RemoteParticipant> = new Future();
   private roomConnectedFuture: Future<void> = new Future();
 
-  /** Use stream API for transcript queue */
+  // Use stream API for transcript queue
   private userTranscriptStream = new IdentityTransform<UserInputTranscribedEvent>();
   private userTranscriptWriter: WritableStreamDefaultWriter<UserInputTranscribedEvent>;
   private forwardUserTranscriptTask?: Task<void>;
@@ -452,9 +452,8 @@ export class RoomIO {
         participant: null,
       });
 
-      /** use the RoomIO's audio output if available, otherwise use the agent's audio output
-       * TODO(AJS-176): check for agent output
-       */
+      // use the RoomIO's audio output if available, otherwise use the agent's audio output
+      // TODO(AJS-176): check for agent output
       const audioOutput = this.participantAudioOutput;
       if (this.outputOptions.syncTranscription && audioOutput) {
         this.transcriptionSynchronizer = new TranscriptionSynchronizer(
@@ -474,7 +473,7 @@ export class RoomIO {
 
     this.initTask = Task.from((controller) => this.init(controller.signal));
 
-    /** attach the agent to the session */
+    // attach the agent to the session
     if (this.audioInput) {
       this.agentSession.input.audio = this.audioInput;
     }
