@@ -54,7 +54,7 @@ export function isStopResponse(value: unknown): value is StopResponse {
 }
 
 export interface ModelSettings {
-  /* The tool choice to use when calling the LLM. */
+  /** The tool choice to use when calling the LLM. */
   toolChoice?: ToolChoice;
 }
 

@@ -6,9 +6,9 @@ import type { ChatItem } from './chat_context.js';
 
 export interface RemoteChatItem {
   item: ChatItem;
-  /* @internal */
+  /** @internal */
   _prev?: RemoteChatItem | null;
-  /* @internal */
+  /** @internal */
   _next?: RemoteChatItem | null;
 }
 
