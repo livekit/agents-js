@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@changesets/assemble-release-plan':
+    hash: wy7r54pxmuo7fdh5qymk2adrlq
+    path: patches/@changesets__assemble-release-plan.patch
+
 importers:
 
   .:
@@ -4604,7 +4609,7 @@ snapshots:
       resolve-from: 5.0.0
       semver: 7.6.3
 
-  '@changesets/assemble-release-plan@6.0.9':
+  '@changesets/assemble-release-plan@6.0.9(patch_hash=wy7r54pxmuo7fdh5qymk2adrlq)':
     dependencies:
       '@changesets/errors': 0.2.0
       '@changesets/get-dependents-graph': 2.1.3
@@ -4620,7 +4625,7 @@ snapshots:
   '@changesets/cli@2.29.6(@types/node@22.15.30)':
     dependencies:
       '@changesets/apply-release-plan': 7.0.12
-      '@changesets/assemble-release-plan': 6.0.9
+      '@changesets/assemble-release-plan': 6.0.9(patch_hash=wy7r54pxmuo7fdh5qymk2adrlq)
       '@changesets/changelog-git': 0.2.1
       '@changesets/config': 3.1.1
       '@changesets/errors': 0.2.0
@@ -4680,7 +4685,7 @@ snapshots:
 
   '@changesets/get-release-plan@4.0.13':
     dependencies:
-      '@changesets/assemble-release-plan': 6.0.9
+      '@changesets/assemble-release-plan': 6.0.9(patch_hash=wy7r54pxmuo7fdh5qymk2adrlq)
       '@changesets/config': 3.1.1
       '@changesets/pre': 2.0.2
       '@changesets/read': 0.6.5

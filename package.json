@@ -46,5 +46,10 @@
     "typescript": "^5.4.5",
     "vitest": "^3.2.2"
   },
-  "packageManager": "pnpm@9.7.0"
+  "packageManager": "pnpm@9.7.0",
+  "pnpm": {
+    "patchedDependencies": {
+      "@changesets/assemble-release-plan": "patches/@changesets__assemble-release-plan.patch"
+    }
+  }
 }
