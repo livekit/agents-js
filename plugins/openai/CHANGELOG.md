@@ -1,16 +1,5 @@
 # @livekit/agents-plugin-openai
 
-## 2.0.0
-
-### Patch Changes
-
-- update debug logs to be enabled by env variable - [#729](https://github.com/livekit/agents-js/pull/729) ([@Shubhrakanti](https://github.com/Shubhrakanti))
-
-- Add LiveKit gateway model integrations - [#694](https://github.com/livekit/agents-js/pull/694) ([@toubatbrian](https://github.com/toubatbrian))
-
-- Updated dependencies [[`0ea5d771d768bb62ac326b7f0cc580ff1f051c48`](https://github.com/livekit/agents-js/commit/0ea5d771d768bb62ac326b7f0cc580ff1f051c48)]:
-  - @livekit/agents@1.1.0
-
 ## 1.0.6
 
 ### Patch Changes
