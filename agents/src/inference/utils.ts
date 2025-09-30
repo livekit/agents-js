@@ -5,7 +5,7 @@ import { AccessToken } from 'livekit-server-sdk';
 import { WebSocket } from 'ws';
 import { APIConnectionError, APIStatusError } from '../index.js';
 
-export type AnyModels = string & NonNullable<unknown>;
+export type AnyString = string & NonNullable<unknown>;
 
 export async function createAccessToken(
   apiKey: string,
