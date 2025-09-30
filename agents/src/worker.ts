@@ -347,7 +347,7 @@ export class Worker {
     }));
   }
 
-  /* @throws {@link WorkerError} if worker failed to connect or already running */
+  /** @throws {@link WorkerError} if worker failed to connect or already running */
   async run() {
     if (!this.#closed) {
       throw new WorkerError('worker is already running');
