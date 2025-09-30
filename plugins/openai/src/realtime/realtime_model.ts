@@ -134,7 +134,7 @@ export class RealtimeModel extends llm.RealtimeModel {
   inFrameSize = api_proto.IN_FRAME_SIZE;
   outFrameSize = api_proto.OUT_FRAME_SIZE;
 
-  /** @internal */
+  /* @internal */
   _options: RealtimeOptions;
 
   constructor(
