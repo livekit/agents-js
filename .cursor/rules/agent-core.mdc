@@ -508,30 +508,6 @@ For more information, read the example agent file under the `examples` directory
 
 `pnpm build && pnpm dlx tsx ./examples/src/my_agent.ts dev|download-files --log-level=debug|info(default)`
 
-
-## License
-
-Remember to always add the following header to the top of every newly added file.
-```
-// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
-//
-// SPDX-License-Identifier: Apache-2.0
-```
-
 ## Debugging Plugins
 
 For plugin components such as STT, TTS, LLM. You can debug these individual components by creating a new example agent file under the `examples` directory. You do not need to have `defineAgent` function if you only want to debug individual plugin components, just run `pnpm build` and `node ./examples/src/test_my_plugin.ts` to test the plugin. Test file is prefixed with `test_`.
-
-### Inference LLM Testing Guidelines
-
-When testing the inference LLM (`inference.LLM`):
-
-1. **Model Names**: Always use the full model names from `agents/src/inference/models.ts`. Use `'openai/gpt-4o-mini'` instead of just `'gpt-4o-mini'`.
-
-2. **Logger Initialization**: Always initialize the logger before using any LLM functionality:
-   ```typescript
-   import { initializeLogger } from '@livekit/agents';
-   initializeLogger({ pretty: true });
-   ```
-
-6. **Test Structure**: Include both basic streaming and tool calling tests to verify full functionality.
