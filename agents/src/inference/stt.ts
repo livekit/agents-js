@@ -50,7 +50,7 @@ export interface DeepgramOptions {
   mip_opt_out?: boolean;
 }
 
-export interface AssemblyaiOptions {
+export interface AssemblyAIOptions {
   format_turns?: boolean; // default: false
   end_of_turn_confidence_threshold?: number; // default: 0.01
   min_end_of_turn_silence_when_confident?: number; // default: 0
@@ -70,31 +70,18 @@ export type STTLanguages =
   | 'hi'
   | AnyString;
 
-export type _LanguageAsModels =
-  | 'lang/multi'
-  | 'lang/en'
-  | 'lang/de'
-  | 'lang/es'
-  | 'lang/fr'
-  | 'lang/ja'
-  | 'lang/pt'
-  | 'lang/zh'
-  | 'lang/hi';
-// other languages not listed here are also supported
+type _STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels;
 
-export type STTModels =
-  | DeepgramModels
-  | CartesiaModels
-  | AssemblyaiModels
-  | _LanguageAsModels
-  | AnyString;
+export type STTModels = _STTModels | 'auto' | AnyString;
+
+export type ModelWithLanguage = `${_STTModels}:${STTLanguages}` | STTModels;
 
 export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
   ? DeepgramOptions
   : TModel extends CartesiaModels
     ? CartesiaOptions
     : TModel extends AssemblyaiModels
-      ? AssemblyaiOptions
+      ? AssemblyAIOptions
       : Record<string, unknown>;
 
 export type STTEncoding = 'pcm_s16le';
@@ -112,9 +99,12 @@ export interface InferenceSTTOptions<TModel extends STTModels> {
   baseURL: string;
   apiKey: string;
   apiSecret: string;
-  extraKwargs: STTOptions<TModel>;
+  modelOptions: STTOptions<TModel>;
 }
 
+/**
+ * Livekit Cloud Inference STT
+ */
 export class STT<TModel extends STTModels> extends BaseSTT {
   private opts: InferenceSTTOptions<TModel>;
   private streams: Set<SpeechStream<TModel>> = new Set();
@@ -129,19 +119,19 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     sampleRate?: number;
     apiKey?: string;
     apiSecret?: string;
-    extraKwargs?: STTOptions<TModel>;
+    modelOptions?: STTOptions<TModel>;
   }) {
     super({ streaming: true, interimResults: true });
 
     const {
-      model: rawModel,
-      language: rawLanguage,
+      model,
+      language,
       baseURL,
       encoding = DEFAULT_ENCODING,
       sampleRate = DEFAULT_SAMPLE_RATE,
       apiKey,
       apiSecret,
-      extraKwargs = {} as STTOptions<TModel>,
+      modelOptions = {} as STTOptions<TModel>,
     } = opts || {};
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
@@ -156,23 +146,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
     }
 
-    let language = rawLanguage;
-    let model = rawModel;
-    if (model && model.startsWith('lang/')) {
-      if (language !== undefined) {
-        this.#logger.warn(
-          {
-            language,
-            model,
-          },
-          'language is provided via both argument and model, using the one from the argument',
-        );
-      } else {
-        language = model.slice(5).trim();
-      }
-      model = undefined;
-    }
-
     this.opts = {
       model,
       language,
@@ -181,12 +154,20 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       baseURL: lkBaseURL,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
-      extraKwargs,
+      modelOptions,
     };
   }
 
   get label(): string {
     return 'inference.STT';
+  }
+
+  static fromModelString(modelString: string): STT<AnyString> {
+    if (modelString.includes(':')) {
+      const [model, language] = modelString.split(':') as [AnyString, STTLanguages];
+      return new STT({ model, language });
+    }
+    return new STT({ model: modelString });
   }
 
   protected async _recognize(_: AudioBuffer): Promise<SpeechEvent> {
@@ -255,11 +236,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         settings: {
           sample_rate: String(this.opts.sampleRate),
           encoding: this.opts.encoding,
-          extra: this.opts.extraKwargs,
+          extra: this.opts.modelOptions,
         },
       } as Record<string, unknown>;
 
-      if (this.opts.model) {
+      if (this.opts.model && this.opts.model !== 'auto') {
         params.model = this.opts.model;
       }
 

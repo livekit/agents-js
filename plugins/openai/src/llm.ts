@@ -484,17 +484,17 @@ export class LLM extends llm.LLM {
       extras.tool_choice = toolChoice;
     }
 
-    return new LLMStream(this as unknown as inference.LLM<inference.AzureModels>, {
-      model: this.#opts.model as inference.AzureModels,
+    return new LLMStream(this as unknown as inference.LLM, {
+      model: this.#opts.model,
       providerFmt: this.#providerFmt,
       client: this.#client,
       chatCtx,
       toolCtx,
       connOptions,
-      extraKwargs: extras,
+      modelOptions: extras,
       gatewayOptions: undefined, // OpenAI plugin doesn't use gateway authentication
     });
   }
 }
 
-export class LLMStream extends inference.LLMStream<inference.AzureModels> {}
+export class LLMStream extends inference.LLMStream {}
