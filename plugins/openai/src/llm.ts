@@ -491,7 +491,7 @@ export class LLM extends llm.LLM {
       chatCtx,
       toolCtx,
       connOptions,
-      extraKwargs: extras,
+      modelOptions: extras,
       gatewayOptions: undefined, // OpenAI plugin doesn't use gateway authentication
     });
   }

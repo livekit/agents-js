@@ -85,7 +85,7 @@ export interface InferenceLLMOptions {
   baseURL: string;
   apiKey: string;
   apiSecret: string;
-  extraKwargs: ChatCompletionOptions;
+  modelOptions: ChatCompletionOptions;
 }
 
 export interface GatewayOptions {
@@ -106,11 +106,11 @@ export class LLM extends llm.LLM {
     baseURL?: string;
     apiKey?: string;
     apiSecret?: string;
-    extraKwargs?: InferenceLLMOptions['extraKwargs'];
+    modelOptions?: InferenceLLMOptions['modelOptions'];
   }) {
     super();
 
-    const { model, provider, baseURL, apiKey, apiSecret, extraKwargs } = opts;
+    const { model, provider, baseURL, apiKey, apiSecret, modelOptions } = opts;
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
     const lkApiKey = apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
@@ -130,7 +130,7 @@ export class LLM extends llm.LLM {
       baseURL: lkBaseURL,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
-      extraKwargs: extraKwargs || {},
+      modelOptions: modelOptions || {},
     };
 
     this.client = new OpenAI({
@@ -168,25 +168,25 @@ export class LLM extends llm.LLM {
     // TODO(AJS-270): Add responseFormat parameter
     extraKwargs?: Record<string, unknown>;
   }): LLMStream {
-    let extras: Record<string, unknown> = { ...(extraKwargs || {}) };
+    let modelOptions: Record<string, unknown> = { ...(extraKwargs || {}) };
 
     parallelToolCalls =
       parallelToolCalls !== undefined
         ? parallelToolCalls
-        : this.opts.extraKwargs.parallel_tool_calls;
+        : this.opts.modelOptions.parallel_tool_calls;
 
     if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
-      extras.parallel_tool_calls = parallelToolCalls;
+      modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
-    toolChoice = toolChoice !== undefined ? toolChoice : this.opts.extraKwargs.tool_choice;
+    toolChoice = toolChoice !== undefined ? toolChoice : this.opts.modelOptions.tool_choice;
     if (toolChoice) {
-      extras.tool_choice = toolChoice;
+      modelOptions.tool_choice = toolChoice;
     }
 
     // TODO(AJS-270): Add response_format support here
 
-    extras = { ...extras, ...this.opts.extraKwargs };
+    modelOptions = { ...modelOptions, ...this.opts.modelOptions };
 
     return new LLMStream(this, {
       model: this.opts.model,
@@ -195,7 +195,7 @@ export class LLM extends llm.LLM {
       chatCtx,
       toolCtx,
       connOptions,
-      extraKwargs: extras,
+      modelOptions,
       gatewayOptions: {
         apiKey: this.opts.apiKey,
         apiSecret: this.opts.apiSecret,
@@ -209,7 +209,7 @@ export class LLMStream extends llm.LLMStream {
   private provider?: string;
   private providerFmt: llm.ProviderFormat;
   private client: OpenAI;
-  private extraKwargs: Record<string, unknown>;
+  private modelOptions: Record<string, unknown>;
 
   private gatewayOptions?: GatewayOptions;
   private toolCallId?: string;
@@ -227,7 +227,7 @@ export class LLMStream extends llm.LLMStream {
       toolCtx,
       gatewayOptions,
       connOptions,
-      extraKwargs,
+      modelOptions,
       providerFmt,
     }: {
       model: LLMModels;
@@ -237,7 +237,7 @@ export class LLMStream extends llm.LLMStream {
       toolCtx?: llm.ToolContext;
       gatewayOptions?: GatewayOptions;
       connOptions: APIConnectOptions;
-      extraKwargs: Record<string, any>;
+      modelOptions: Record<string, any>;
       providerFmt?: llm.ProviderFormat;
     },
   ) {
@@ -246,7 +246,7 @@ export class LLMStream extends llm.LLMStream {
     this.gatewayOptions = gatewayOptions;
     this.provider = provider;
     this.providerFmt = providerFmt || 'openai';
-    this.extraKwargs = extraKwargs;
+    this.modelOptions = modelOptions;
     this.model = model;
   }
 
@@ -274,9 +274,9 @@ export class LLMStream extends llm.LLMStream {
           }))
         : undefined;
 
-      const requestExtras: Record<string, unknown> = { ...this.extraKwargs };
+      const requestOptions: Record<string, unknown> = { ...this.modelOptions };
       if (!tools) {
-        delete requestExtras.tool_choice;
+        delete requestOptions.tool_choice;
       }
 
       // Dynamically set the access token for the LiveKit Agent Gateway API
@@ -288,11 +288,11 @@ export class LLMStream extends llm.LLMStream {
       }
 
       if (this.provider) {
-        const extraHeaders = requestExtras.extra_headers
-          ? (requestExtras.extra_headers as Record<string, string>)
+        const extraHeaders = requestOptions.extra_headers
+          ? (requestOptions.extra_headers as Record<string, string>)
           : {};
         extraHeaders['X-LiveKit-Inference-Provider'] = this.provider;
-        requestExtras.extra_headers = extraHeaders;
+        requestOptions.extra_headers = extraHeaders;
       }
 
       const stream = await this.client.chat.completions.create(
@@ -302,7 +302,7 @@ export class LLMStream extends llm.LLMStream {
           tools,
           stream: true,
           stream_options: { include_usage: true },
-          ...requestExtras,
+          ...requestOptions,
         },
         {
           timeout: this.connOptions.timeoutMs,

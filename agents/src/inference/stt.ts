@@ -99,7 +99,7 @@ export interface InferenceSTTOptions<TModel extends STTModels> {
   baseURL: string;
   apiKey: string;
   apiSecret: string;
-  extraKwargs: STTOptions<TModel>;
+  modelOptions: STTOptions<TModel>;
 }
 
 /**
@@ -119,7 +119,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     sampleRate?: number;
     apiKey?: string;
     apiSecret?: string;
-    extraKwargs?: STTOptions<TModel>;
+    modelOptions?: STTOptions<TModel>;
   }) {
     super({ streaming: true, interimResults: true });
 
@@ -131,7 +131,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       sampleRate = DEFAULT_SAMPLE_RATE,
       apiKey,
       apiSecret,
-      extraKwargs = {} as STTOptions<TModel>,
+      modelOptions = {} as STTOptions<TModel>,
     } = opts || {};
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
@@ -154,7 +154,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       baseURL: lkBaseURL,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
-      extraKwargs,
+      modelOptions,
     };
   }
 
@@ -236,7 +236,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         settings: {
           sample_rate: String(this.opts.sampleRate),
           encoding: this.opts.encoding,
-          extra: this.opts.extraKwargs,
+          extra: this.opts.modelOptions,
         },
       } as Record<string, unknown>;
 

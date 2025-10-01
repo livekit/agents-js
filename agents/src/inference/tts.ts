@@ -89,7 +89,7 @@ export interface InferenceTTSOptions<TModel extends TTSModels> {
   baseURL: string;
   apiKey: string;
   apiSecret: string;
-  extraKwargs: TTSOptions<TModel>;
+  modelOptions: TTSOptions<TModel>;
 }
 
 /**
@@ -110,7 +110,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     sampleRate?: number;
     apiKey?: string;
     apiSecret?: string;
-    extraKwargs?: TTSOptions<TModel>;
+    modelOptions?: TTSOptions<TModel>;
   }) {
     const sampleRate = opts?.sampleRate ?? DEFAULT_SAMPLE_RATE;
     super(sampleRate, 1, { streaming: true });
@@ -123,7 +123,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       encoding = DEFAULT_ENCODING,
       apiKey,
       apiSecret,
-      extraKwargs = {} as TTSOptions<TModel>,
+      modelOptions = {} as TTSOptions<TModel>,
     } = opts || {};
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
@@ -166,7 +166,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       baseURL: lkBaseURL,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
-      extraKwargs,
+      modelOptions,
     };
   }
 
@@ -214,7 +214,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       type: 'session.create',
       sample_rate: String(this.opts.sampleRate),
       encoding: this.opts.encoding,
-      extra: this.opts.extraKwargs,
+      extra: this.opts.modelOptions,
     } as TtsSessionCreateEvent;
 
     if (this.opts.voice) params.voice = this.opts.voice;
