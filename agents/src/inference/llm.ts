@@ -13,83 +13,79 @@ import * as llm from '../llm/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { type AnyString, createAccessToken } from './utils.js';
 
-export type AzureModels =
-  | 'azure/gpt-5'
-  | 'azure/gpt-5-mini'
-  | 'azure/gpt-5-nano'
-  | 'azure/gpt-4.1'
-  | 'azure/gpt-4.1-mini'
-  | 'azure/gpt-4.1-nano'
-  | 'azure/gpt-4o'
-  | 'azure/gpt-4o-mini';
-
-// https://inference-docs.cerebras.ai/models/overview
-export type CerebrasModels =
-  | 'cerebras/llama3.1-8b'
-  | 'cerebras/llama-3.3-70b'
-  | 'cerebras/llama-4-scout'
-  | 'cerebras/qwen-3-32b'
-  | 'cerebras/qwen-3-235b-a22b-instruct-2507';
-
-// https://console.groq.com/docs/models
-export type GroqModels =
-  | 'groq/llama-3.3-70b'
-  | 'groq/llama-4-scout'
-  | 'groq/llama-4-maverick'
-  | 'groq/gpt-oss-120b'
-  | 'groq/kimi-k2'
-  | 'groq/qwen-3-32b';
-
-// https://www.baseten.co/library/tag/llms
-export type BasetenModels =
-  | 'baseten/qwen-3-235b'
-  | 'baseten/deepseek-v3'
-  | 'baseten/kimi-k2'
-  | 'baseten/gpt-oss-120b';
-
-export interface AzureOptions {
-  top_p?: number;
-  reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high';
-}
-
-export interface CerebrasOptions {
-  top_p?: number;
-}
-
-export interface GroqOptions {
-  top_p?: number;
-}
-
-export interface BasetenOptions {
-  top_p?: number;
-}
-
-export type LLMModels = AzureModels | CerebrasModels | GroqModels | BasetenModels | AnyString;
-
-export type LLMOptions<T extends LLMModels> = T extends AzureModels
-  ? AzureOptions
-  : T extends CerebrasModels
-    ? CerebrasOptions
-    : T extends GroqOptions
-      ? GroqOptions
-      : T extends BasetenOptions
-        ? BasetenOptions
-        : Record<string, unknown>;
-
-export type Verbosity = 'low' | 'medium' | 'high';
 const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 
-export interface InferenceLLMOptions<TModel extends LLMModels> {
-  model: TModel;
+export type OpenAIModels =
+  | 'openai/gpt-5'
+  | 'openai/gpt-5-mini'
+  | 'openai/gpt-5-nano'
+  | 'openai/gpt-4.1'
+  | 'openai/gpt-4.1-mini'
+  | 'openai/gpt-4.1-nano'
+  | 'openai/gpt-4o'
+  | 'openai/gpt-4o-mini'
+  | 'openai/gpt-oss-120b';
+
+export type GoogleModels = 'google/gemini-2.0-flash-lite';
+
+export type QwenModels = 'qwen/qwen3-235b-a22b-instruct';
+
+export type KimiModels = 'moonshotai/kimi-k2-instruct';
+
+export type DeepSeekModels = 'deepseek-ai/deepseek-v3';
+
+type ChatCompletionPredictionContentParam = OpenAI.Chat.Completions.ChatCompletionPredictionContent;
+type WebSearchOptions = OpenAI.Chat.Completions.ChatCompletionCreateParams.WebSearchOptions;
+type ToolChoice = OpenAI.Chat.Completions.ChatCompletionCreateParams['tool_choice'];
+type Verbosity = 'low' | 'medium' | 'high';
+
+export interface ChatCompletionOptions extends Record<string, unknown> {
+  frequency_penalty?: number;
+  logit_bias?: Record<string, number>;
+  logprobs?: boolean;
+  max_completion_tokens?: number;
+  max_tokens?: number;
+  metadata?: Record<string, string>;
+  modalities?: Array<'text' | 'audio'>;
+  n?: number;
+  parallel_tool_calls?: boolean;
+  prediction?: ChatCompletionPredictionContentParam | null;
+  presence_penalty?: number;
+  prompt_cache_key?: string;
+  reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high';
+  safety_identifier?: string;
+  seed?: number;
+  service_tier?: 'auto' | 'default' | 'flex' | 'scale' | 'priority';
+  stop?: string | string[];
+  store?: boolean;
   temperature?: number;
-  parallelToolCalls?: boolean;
-  toolChoice?: llm.ToolChoice;
-  maxCompletionTokens?: number;
+  top_logprobs?: number;
+  top_p?: number;
+  user?: string;
+  verbosity?: Verbosity;
+  web_search_options?: WebSearchOptions;
+
+  // livekit-typed arguments
+  tool_choice?: ToolChoice;
+  // TODO(brian): support response format
+  // response_format?: OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format']
+}
+
+export type LLMModels =
+  | OpenAIModels
+  | GoogleModels
+  | QwenModels
+  | KimiModels
+  | DeepSeekModels
+  | AnyString;
+
+export interface InferenceLLMOptions {
+  model: LLMModels;
+  provider?: string;
   baseURL: string;
   apiKey: string;
   apiSecret: string;
-  verbosity?: Verbosity;
-  extraKwargs: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  extraKwargs: ChatCompletionOptions;
 }
 
 export interface GatewayOptions {
@@ -97,40 +93,24 @@ export interface GatewayOptions {
   apiSecret: string;
 }
 
-export class LLM<TModel extends LLMModels> extends llm.LLM {
+/**
+ * Livekit Cloud Inference LLM
+ */
+export class LLM extends llm.LLM {
   private client: OpenAI;
-  private opts: InferenceLLMOptions<TModel>;
+  private opts: InferenceLLMOptions;
 
   constructor(opts: {
-    model: TModel;
-    temperature?: number;
-    parallelToolCalls?: boolean;
-    toolChoice?: llm.ToolChoice;
-    maxCompletionTokens?: number;
+    model: LLMModels;
+    provider?: string;
     baseURL?: string;
     apiKey?: string;
     apiSecret?: string;
-    maxRetries?: number;
-    timeout?: number;
-    verbosity?: Verbosity;
-    extraKwargs?: LLMOptions<TModel>;
+    extraKwargs?: InferenceLLMOptions['extraKwargs'];
   }) {
     super();
 
-    const {
-      model,
-      temperature,
-      parallelToolCalls,
-      toolChoice,
-      maxCompletionTokens,
-      baseURL,
-      apiKey,
-      apiSecret,
-      maxRetries,
-      timeout,
-      verbosity,
-      extraKwargs,
-    } = opts;
+    const { model, provider, baseURL, apiKey, apiSecret, extraKwargs } = opts;
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
     const lkApiKey = apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
@@ -146,11 +126,7 @@ export class LLM<TModel extends LLMModels> extends llm.LLM {
 
     this.opts = {
       model,
-      temperature,
-      parallelToolCalls,
-      toolChoice,
-      verbosity,
-      maxCompletionTokens,
+      provider,
       baseURL: lkBaseURL,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
@@ -159,8 +135,7 @@ export class LLM<TModel extends LLMModels> extends llm.LLM {
 
     this.client = new OpenAI({
       baseURL: this.opts.baseURL,
-      maxRetries: maxRetries || 0,
-      timeout: timeout || 15000,
+      timeout: 15000,
     });
   }
 
@@ -170,6 +145,10 @@ export class LLM<TModel extends LLMModels> extends llm.LLM {
 
   get model(): string {
     return this.opts.model;
+  }
+
+  static fromModelString(modelString: string): LLM {
+    return new LLM({ model: modelString });
   }
 
   chat({
@@ -188,26 +167,19 @@ export class LLM<TModel extends LLMModels> extends llm.LLM {
     toolChoice?: llm.ToolChoice;
     // TODO(AJS-270): Add responseFormat parameter
     extraKwargs?: Record<string, unknown>;
-  }): LLMStream<TModel> {
+  }): LLMStream {
     let extras: Record<string, unknown> = { ...(extraKwargs || {}) };
 
-    if (this.opts.maxCompletionTokens !== undefined) {
-      extras.max_completion_tokens = this.opts.maxCompletionTokens;
-    }
-    if (this.opts.temperature !== undefined) {
-      extras.temperature = this.opts.temperature;
-    }
-    if (this.opts.verbosity !== undefined) {
-      extras.verbosity = this.opts.verbosity;
-    }
-
     parallelToolCalls =
-      parallelToolCalls !== undefined ? parallelToolCalls : this.opts.parallelToolCalls;
+      parallelToolCalls !== undefined
+        ? parallelToolCalls
+        : this.opts.extraKwargs.parallel_tool_calls;
+
     if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
       extras.parallel_tool_calls = parallelToolCalls;
     }
 
-    toolChoice = toolChoice !== undefined ? toolChoice : this.opts.toolChoice;
+    toolChoice = toolChoice !== undefined ? toolChoice : this.opts.extraKwargs.tool_choice;
     if (toolChoice) {
       extras.tool_choice = toolChoice;
     }
@@ -218,7 +190,7 @@ export class LLM<TModel extends LLMModels> extends llm.LLM {
 
     return new LLMStream(this, {
       model: this.opts.model,
-      providerFmt: 'openai',
+      provider: this.opts.provider,
       client: this.client,
       chatCtx,
       toolCtx,
@@ -232,8 +204,9 @@ export class LLM<TModel extends LLMModels> extends llm.LLM {
   }
 }
 
-export class LLMStream<TModel extends LLMModels> extends llm.LLMStream {
-  private model: TModel;
+export class LLMStream extends llm.LLMStream {
+  private model: LLMModels;
+  private provider?: string;
   private providerFmt: llm.ProviderFormat;
   private client: OpenAI;
   private extraKwargs: Record<string, unknown>;
@@ -245,31 +218,34 @@ export class LLMStream<TModel extends LLMModels> extends llm.LLMStream {
   private fncRawArguments?: string;
 
   constructor(
-    llm: LLM<TModel>,
+    llm: LLM,
     {
       model,
-      providerFmt,
+      provider,
       client,
       chatCtx,
       toolCtx,
       gatewayOptions,
       connOptions,
       extraKwargs,
+      providerFmt,
     }: {
-      model: TModel;
-      providerFmt: llm.ProviderFormat;
+      model: LLMModels;
+      provider?: string;
       client: OpenAI;
       chatCtx: llm.ChatContext;
       toolCtx?: llm.ToolContext;
       gatewayOptions?: GatewayOptions;
       connOptions: APIConnectOptions;
       extraKwargs: Record<string, any>;
+      providerFmt?: llm.ProviderFormat;
     },
   ) {
     super(llm, { chatCtx, toolCtx, connOptions });
     this.client = client;
     this.gatewayOptions = gatewayOptions;
-    this.providerFmt = providerFmt;
+    this.provider = provider;
+    this.providerFmt = providerFmt || 'openai';
     this.extraKwargs = extraKwargs;
     this.model = model;
   }
@@ -309,6 +285,14 @@ export class LLMStream<TModel extends LLMModels> extends llm.LLMStream {
           this.gatewayOptions.apiKey,
           this.gatewayOptions.apiSecret,
         );
+      }
+
+      if (this.provider) {
+        const extraHeaders = requestExtras.extra_headers
+          ? (requestExtras.extra_headers as Record<string, string>)
+          : {};
+        extraHeaders['X-LiveKit-Inference-Provider'] = this.provider;
+        requestExtras.extra_headers = extraHeaders;
       }
 
       const stream = await this.client.chat.completions.create(

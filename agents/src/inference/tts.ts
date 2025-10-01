@@ -24,11 +24,13 @@ import {
 } from './api_protos.js';
 import { type AnyString, connectWs, createAccessToken } from './utils.js';
 
-type _CartesiaModels = 'cartesia' | 'cartesia/sonic' | 'cartesia/sonic-2' | 'cartesia/sonic-turbo';
+export type CartesiaModels =
+  | 'cartesia'
+  | 'cartesia/sonic'
+  | 'cartesia/sonic-2'
+  | 'cartesia/sonic-turbo';
 
-export type CartesiaModels = _CartesiaModels | `${_CartesiaModels}:${string}`;
-
-type _ElevenlabsModels =
+export type ElevenlabsModels =
   | 'elevenlabs'
   | 'elevenlabs/eleven_flash_v2'
   | 'elevenlabs/eleven_flash_v2_5'
@@ -36,15 +38,9 @@ type _ElevenlabsModels =
   | 'elevenlabs/eleven_turbo_v2_5'
   | 'elevenlabs/eleven_multilingual_v2';
 
-export type ElevenlabsModels = _ElevenlabsModels | `${_ElevenlabsModels}:${string}`;
+export type RimeModels = 'rime' | 'rime/mist' | 'rime/mistv2' | 'rime/arcana';
 
-export type _RimeModels = 'rime' | 'rime/mist' | 'rime/mistv2' | 'rime/arcana';
-
-export type RimeModels = _RimeModels | `${_RimeModels}:${string}`;
-
-export type _InworldModels = 'inworld' | 'inworld/inworld-tts-1';
-
-export type InworldModels = _InworldModels | `${_InworldModels}:${string}`;
+export type InworldModels = 'inworld' | 'inworld/inworld-tts-1';
 
 export interface CartesiaOptions {
   duration?: number; // max duration of audio in seconds
@@ -60,7 +56,11 @@ export interface RimeOptions {}
 
 export interface InworldOptions {}
 
+type _TTSModels = CartesiaModels | ElevenlabsModels | RimeModels | InworldModels;
+
 export type TTSModels = CartesiaModels | ElevenlabsModels | RimeModels | InworldModels | AnyString;
+
+export type ModelWithVoice = `${_TTSModels}:${string}` | TTSModels;
 
 export type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels
   ? CartesiaOptions
@@ -92,6 +92,9 @@ export interface InferenceTTSOptions<TModel extends TTSModels> {
   extraKwargs: TTSOptions<TModel>;
 }
 
+/**
+ * Livekit Cloud Inference TTS
+ */
 export class TTS<TModel extends TTSModels> extends BaseTTS {
   private opts: InferenceTTSOptions<TModel>;
   private streams: Set<SynthesizeStream<TModel>> = new Set();
@@ -169,6 +172,14 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
 
   get label() {
     return 'inference.TTS';
+  }
+
+  static fromModelString(modelString: string): TTS<AnyString> {
+    if (modelString.includes(':')) {
+      const [model, voice] = modelString.split(':') as [TTSModels, string];
+      return new TTS({ model, voice });
+    }
+    return new TTS({ model: modelString });
   }
 
   updateOptions(opts: Partial<Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language'>>) {
