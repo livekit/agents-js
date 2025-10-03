@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-rime",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Rime plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

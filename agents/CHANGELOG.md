@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.8
+
+### Patch Changes
+
+- Fix inference gateway LLM to allow not passing OPENAI_API_KEY - [#743](https://github.com/livekit/agents-js/pull/743) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.7
 
 ### Patch Changes
