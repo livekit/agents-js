@@ -1,5 +1,11 @@
 # @livekit/agents-plugin-rime
 
+## 1.0.2
+
+### Patch Changes
+
+- Add Rime TTS plugin for LiveKit agents - [#746](https://github.com/livekit/agents-js/pull/746) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.1
 
 ### Patch Changes
