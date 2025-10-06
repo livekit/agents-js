@@ -22,13 +22,15 @@ import {
   ttsClientEventSchema,
   ttsServerEventSchema,
 } from './api_protos.js';
-import { type AnyModels, connectWs, createAccessToken } from './utils.js';
+import { type AnyString, connectWs, createAccessToken } from './utils.js';
 
-type _CartesiaModels = 'cartesia' | 'cartesia/sonic' | 'cartesia/sonic-2' | 'cartesia/sonic-turbo';
+export type CartesiaModels =
+  | 'cartesia'
+  | 'cartesia/sonic'
+  | 'cartesia/sonic-2'
+  | 'cartesia/sonic-turbo';
 
-export type CartesiaModels = _CartesiaModels | `${_CartesiaModels}:${string}`;
-
-type _ElevenlabsModels =
+export type ElevenlabsModels =
   | 'elevenlabs'
   | 'elevenlabs/eleven_flash_v2'
   | 'elevenlabs/eleven_flash_v2_5'
@@ -36,15 +38,9 @@ type _ElevenlabsModels =
   | 'elevenlabs/eleven_turbo_v2_5'
   | 'elevenlabs/eleven_multilingual_v2';
 
-export type ElevenlabsModels = _ElevenlabsModels | `${_ElevenlabsModels}:${string}`;
+export type RimeModels = 'rime' | 'rime/mist' | 'rime/mistv2' | 'rime/arcana';
 
-export type _RimeModels = 'rime' | 'rime/mist' | 'rime/mistv2' | 'rime/arcana';
-
-export type RimeModels = _RimeModels | `${_RimeModels}:${string}`;
-
-export type _InworldModels = 'inworld' | 'inworld/inworld-tts-1';
-
-export type InworldModels = _InworldModels | `${_InworldModels}:${string}`;
+export type InworldModels = 'inworld' | 'inworld/inworld-tts-1';
 
 export interface CartesiaOptions {
   duration?: number; // max duration of audio in seconds
@@ -60,7 +56,11 @@ export interface RimeOptions {}
 
 export interface InworldOptions {}
 
-export type TTSModels = CartesiaModels | ElevenlabsModels | RimeModels | InworldModels | AnyModels;
+type _TTSModels = CartesiaModels | ElevenlabsModels | RimeModels | InworldModels;
+
+export type TTSModels = CartesiaModels | ElevenlabsModels | RimeModels | InworldModels | AnyString;
+
+export type ModelWithVoice = `${_TTSModels}:${string}` | TTSModels;
 
 export type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels
   ? CartesiaOptions
@@ -89,9 +89,12 @@ export interface InferenceTTSOptions<TModel extends TTSModels> {
   baseURL: string;
   apiKey: string;
   apiSecret: string;
-  extraKwargs: TTSOptions<TModel>;
+  modelOptions: TTSOptions<TModel>;
 }
 
+/**
+ * Livekit Cloud Inference TTS
+ */
 export class TTS<TModel extends TTSModels> extends BaseTTS {
   private opts: InferenceTTSOptions<TModel>;
   private streams: Set<SynthesizeStream<TModel>> = new Set();
@@ -107,7 +110,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     sampleRate?: number;
     apiKey?: string;
     apiSecret?: string;
-    extraKwargs?: TTSOptions<TModel>;
+    modelOptions?: TTSOptions<TModel>;
   }) {
     const sampleRate = opts?.sampleRate ?? DEFAULT_SAMPLE_RATE;
     super(sampleRate, 1, { streaming: true });
@@ -120,7 +123,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       encoding = DEFAULT_ENCODING,
       apiKey,
       apiSecret,
-      extraKwargs = {} as TTSOptions<TModel>,
+      modelOptions = {} as TTSOptions<TModel>,
     } = opts || {};
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
@@ -163,12 +166,20 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       baseURL: lkBaseURL,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
-      extraKwargs,
+      modelOptions,
     };
   }
 
   get label() {
     return 'inference.TTS';
+  }
+
+  static fromModelString(modelString: string): TTS<AnyString> {
+    if (modelString.includes(':')) {
+      const [model, voice] = modelString.split(':') as [TTSModels, string];
+      return new TTS({ model, voice });
+    }
+    return new TTS({ model: modelString });
   }
 
   updateOptions(opts: Partial<Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language'>>) {
@@ -203,7 +214,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       type: 'session.create',
       sample_rate: String(this.opts.sampleRate),
       encoding: this.opts.encoding,
-      extra: this.opts.extraKwargs,
+      extra: this.opts.modelOptions,
     } as TtsSessionCreateEvent;
 
     if (this.opts.voice) params.voice = this.opts.voice;

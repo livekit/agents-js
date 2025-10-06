@@ -11,91 +11,81 @@ import {
 } from '../index.js';
 import * as llm from '../llm/index.js';
 import type { APIConnectOptions } from '../types.js';
-import { type AnyModels, createAccessToken } from './utils.js';
+import { type AnyString, createAccessToken } from './utils.js';
 
-export type AzureModels =
-  // | "azure/gpt-5"
-  // | "azure/gpt-5-mini"
-  // | "azure/gpt-5-nano"
-  'azure/gpt-4.1' | 'azure/gpt-4.1-mini' | 'azure/gpt-4.1-nano';
-// | "azure/gpt-4o"
-// | "azure/gpt-4o-mini"
-
-// https://inference-docs.cerebras.ai/models/overview
-export type CerebrasModels =
-  // production models
-  | 'cerebras/llama3.1-8b'
-  | 'cerebras/llama-3.3-70b'
-  | 'cerebras/llama-4-scout-17b-16e-instruct'
-  | 'cerebras/gpt-oss-120b'
-  | 'cerebras/qwen-3-32b'
-  // preview models
-  | 'cerebras/llama-4-maverick-17b-128e-instruct'
-  | 'cerebras/qwen-3-235b-a22b-instruct-2507';
-
-// https://console.groq.com/docs/models
-export type GroqModels =
-  // production models
-  | 'groq/llama-3.1-8b-instant'
-  | 'groq/llama-3.3-70b-versatile'
-  | 'groq/openai/gpt-oss-120b'
-  | 'groq/openai/gpt-oss-20b'
-  // preview models
-  | 'groq/meta-llama/llama-4-maverick-17b-128e-instruct'
-  | 'groq/meta-llama/llama-4-scout-17b-16e-instruct'
-  | 'groq/qwen/qwen3-32b';
-
-// https://www.baseten.co/library/tag/llms
-export type BasetenModels =
-  | 'baseten/deepseek-ai/DeepSeek-V3-0324'
-  | 'baseten/meta-llama/Llama-4-Scout-17B-16E-Instruct'
-  | 'baseten/meta-llama/Llama-4-Maverick-17B-128E-Instruct'
-  | 'baseten/moonshotai/Kimi-K2-Instruct'
-  | 'baseten/openai/gpt-oss-120b'
-  | 'baseten/Qwen/Qwen3-235B-A22B-Instruct-2507';
-
-export interface AzureOptions {
-  top_p?: number;
-}
-
-export interface CerebrasOptions {
-  top_p?: number;
-}
-
-export interface GroqOptions {
-  top_p?: number;
-}
-
-export interface BasetenOptions {
-  top_p?: number;
-}
-
-export type LLMModels = AzureModels | CerebrasModels | GroqModels | BasetenModels | AnyModels;
-
-export type LLMOptions<T extends LLMModels> = T extends AzureModels
-  ? AzureOptions
-  : T extends CerebrasModels
-    ? CerebrasOptions
-    : T extends GroqOptions
-      ? GroqOptions
-      : T extends BasetenOptions
-        ? BasetenOptions
-        : Record<string, unknown>;
-
-export type Verbosity = 'low' | 'medium' | 'high';
 const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 
-export interface InferenceLLMOptions<TModel extends LLMModels> {
-  model: TModel;
+export type OpenAIModels =
+  | 'openai/gpt-5'
+  | 'openai/gpt-5-mini'
+  | 'openai/gpt-5-nano'
+  | 'openai/gpt-4.1'
+  | 'openai/gpt-4.1-mini'
+  | 'openai/gpt-4.1-nano'
+  | 'openai/gpt-4o'
+  | 'openai/gpt-4o-mini'
+  | 'openai/gpt-oss-120b';
+
+export type GoogleModels = 'google/gemini-2.0-flash-lite';
+
+export type QwenModels = 'qwen/qwen3-235b-a22b-instruct';
+
+export type KimiModels = 'moonshotai/kimi-k2-instruct';
+
+export type DeepSeekModels = 'deepseek-ai/deepseek-v3';
+
+type ChatCompletionPredictionContentParam = OpenAI.Chat.Completions.ChatCompletionPredictionContent;
+type WebSearchOptions = OpenAI.Chat.Completions.ChatCompletionCreateParams.WebSearchOptions;
+type ToolChoice = OpenAI.Chat.Completions.ChatCompletionCreateParams['tool_choice'];
+type Verbosity = 'low' | 'medium' | 'high';
+
+export interface ChatCompletionOptions extends Record<string, unknown> {
+  frequency_penalty?: number;
+  logit_bias?: Record<string, number>;
+  logprobs?: boolean;
+  max_completion_tokens?: number;
+  max_tokens?: number;
+  metadata?: Record<string, string>;
+  modalities?: Array<'text' | 'audio'>;
+  n?: number;
+  parallel_tool_calls?: boolean;
+  prediction?: ChatCompletionPredictionContentParam | null;
+  presence_penalty?: number;
+  prompt_cache_key?: string;
+  reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high';
+  safety_identifier?: string;
+  seed?: number;
+  service_tier?: 'auto' | 'default' | 'flex' | 'scale' | 'priority';
+  stop?: string | string[];
+  store?: boolean;
   temperature?: number;
-  parallelToolCalls?: boolean;
-  toolChoice?: llm.ToolChoice;
-  maxCompletionTokens?: number;
+  top_logprobs?: number;
+  top_p?: number;
+  user?: string;
+  verbosity?: Verbosity;
+  web_search_options?: WebSearchOptions;
+
+  // livekit-typed arguments
+  tool_choice?: ToolChoice;
+  // TODO(brian): support response format
+  // response_format?: OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format']
+}
+
+export type LLMModels =
+  | OpenAIModels
+  | GoogleModels
+  | QwenModels
+  | KimiModels
+  | DeepSeekModels
+  | AnyString;
+
+export interface InferenceLLMOptions {
+  model: LLMModels;
+  provider?: string;
   baseURL: string;
   apiKey: string;
   apiSecret: string;
-  verbosity?: Verbosity;
-  extraKwargs: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  modelOptions: ChatCompletionOptions;
 }
 
 export interface GatewayOptions {
@@ -103,40 +93,24 @@ export interface GatewayOptions {
   apiSecret: string;
 }
 
-export class LLM<TModel extends LLMModels> extends llm.LLM {
+/**
+ * Livekit Cloud Inference LLM
+ */
+export class LLM extends llm.LLM {
   private client: OpenAI;
-  private opts: InferenceLLMOptions<TModel>;
+  private opts: InferenceLLMOptions;
 
   constructor(opts: {
-    model: TModel;
-    temperature?: number;
-    parallelToolCalls?: boolean;
-    toolChoice?: llm.ToolChoice;
-    maxCompletionTokens?: number;
+    model: LLMModels;
+    provider?: string;
     baseURL?: string;
     apiKey?: string;
     apiSecret?: string;
-    maxRetries?: number;
-    timeout?: number;
-    verbosity?: Verbosity;
-    extraKwargs?: LLMOptions<TModel>;
+    modelOptions?: InferenceLLMOptions['modelOptions'];
   }) {
     super();
 
-    const {
-      model,
-      temperature,
-      parallelToolCalls,
-      toolChoice,
-      maxCompletionTokens,
-      baseURL,
-      apiKey,
-      apiSecret,
-      maxRetries,
-      timeout,
-      verbosity,
-      extraKwargs,
-    } = opts;
+    const { model, provider, baseURL, apiKey, apiSecret, modelOptions } = opts;
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
     const lkApiKey = apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
@@ -152,21 +126,17 @@ export class LLM<TModel extends LLMModels> extends llm.LLM {
 
     this.opts = {
       model,
-      temperature,
-      parallelToolCalls,
-      toolChoice,
-      verbosity,
-      maxCompletionTokens,
+      provider,
       baseURL: lkBaseURL,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
-      extraKwargs: extraKwargs || {},
+      modelOptions: modelOptions || {},
     };
 
     this.client = new OpenAI({
       baseURL: this.opts.baseURL,
-      maxRetries: maxRetries || 0,
-      timeout: timeout || 15000,
+      apiKey: '', // leave a temporary empty string to avoid OpenAI complain about missing key
+      timeout: 15000,
     });
   }
 
@@ -176,6 +146,10 @@ export class LLM<TModel extends LLMModels> extends llm.LLM {
 
   get model(): string {
     return this.opts.model;
+  }
+
+  static fromModelString(modelString: string): LLM {
+    return new LLM({ model: modelString });
   }
 
   chat({
@@ -194,42 +168,35 @@ export class LLM<TModel extends LLMModels> extends llm.LLM {
     toolChoice?: llm.ToolChoice;
     // TODO(AJS-270): Add responseFormat parameter
     extraKwargs?: Record<string, unknown>;
-  }): LLMStream<TModel> {
-    let extras: Record<string, unknown> = { ...(extraKwargs || {}) };
-
-    if (this.opts.maxCompletionTokens !== undefined) {
-      extras.max_completion_tokens = this.opts.maxCompletionTokens;
-    }
-    if (this.opts.temperature !== undefined) {
-      extras.temperature = this.opts.temperature;
-    }
-    if (this.opts.verbosity !== undefined) {
-      extras.verbosity = this.opts.verbosity;
-    }
+  }): LLMStream {
+    let modelOptions: Record<string, unknown> = { ...(extraKwargs || {}) };
 
     parallelToolCalls =
-      parallelToolCalls !== undefined ? parallelToolCalls : this.opts.parallelToolCalls;
+      parallelToolCalls !== undefined
+        ? parallelToolCalls
+        : this.opts.modelOptions.parallel_tool_calls;
+
     if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
-      extras.parallel_tool_calls = parallelToolCalls;
+      modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
-    toolChoice = toolChoice !== undefined ? toolChoice : this.opts.toolChoice;
+    toolChoice = toolChoice !== undefined ? toolChoice : this.opts.modelOptions.tool_choice;
     if (toolChoice) {
-      extras.tool_choice = toolChoice;
+      modelOptions.tool_choice = toolChoice;
     }
 
     // TODO(AJS-270): Add response_format support here
 
-    extras = { ...extras, ...this.opts.extraKwargs };
+    modelOptions = { ...modelOptions, ...this.opts.modelOptions };
 
     return new LLMStream(this, {
       model: this.opts.model,
-      providerFmt: 'openai',
+      provider: this.opts.provider,
       client: this.client,
       chatCtx,
       toolCtx,
       connOptions,
-      extraKwargs: extras,
+      modelOptions,
       gatewayOptions: {
         apiKey: this.opts.apiKey,
         apiSecret: this.opts.apiSecret,
@@ -238,11 +205,12 @@ export class LLM<TModel extends LLMModels> extends llm.LLM {
   }
 }
 
-export class LLMStream<TModel extends LLMModels> extends llm.LLMStream {
-  private model: TModel;
+export class LLMStream extends llm.LLMStream {
+  private model: LLMModels;
+  private provider?: string;
   private providerFmt: llm.ProviderFormat;
   private client: OpenAI;
-  private extraKwargs: Record<string, unknown>;
+  private modelOptions: Record<string, unknown>;
 
   private gatewayOptions?: GatewayOptions;
   private toolCallId?: string;
@@ -251,32 +219,35 @@ export class LLMStream<TModel extends LLMModels> extends llm.LLMStream {
   private fncRawArguments?: string;
 
   constructor(
-    llm: LLM<TModel>,
+    llm: LLM,
     {
       model,
-      providerFmt,
+      provider,
       client,
       chatCtx,
       toolCtx,
       gatewayOptions,
       connOptions,
-      extraKwargs,
+      modelOptions,
+      providerFmt,
     }: {
-      model: TModel;
-      providerFmt: llm.ProviderFormat;
+      model: LLMModels;
+      provider?: string;
       client: OpenAI;
       chatCtx: llm.ChatContext;
       toolCtx?: llm.ToolContext;
       gatewayOptions?: GatewayOptions;
       connOptions: APIConnectOptions;
-      extraKwargs: Record<string, any>;
+      modelOptions: Record<string, any>;
+      providerFmt?: llm.ProviderFormat;
     },
   ) {
     super(llm, { chatCtx, toolCtx, connOptions });
     this.client = client;
     this.gatewayOptions = gatewayOptions;
-    this.providerFmt = providerFmt;
-    this.extraKwargs = extraKwargs;
+    this.provider = provider;
+    this.providerFmt = providerFmt || 'openai';
+    this.modelOptions = modelOptions;
     this.model = model;
   }
 
@@ -304,9 +275,9 @@ export class LLMStream<TModel extends LLMModels> extends llm.LLMStream {
           }))
         : undefined;
 
-      const requestExtras: Record<string, unknown> = { ...this.extraKwargs };
+      const requestOptions: Record<string, unknown> = { ...this.modelOptions };
       if (!tools) {
-        delete requestExtras.tool_choice;
+        delete requestOptions.tool_choice;
       }
 
       // Dynamically set the access token for the LiveKit Agent Gateway API
@@ -317,6 +288,14 @@ export class LLMStream<TModel extends LLMModels> extends llm.LLMStream {
         );
       }
 
+      if (this.provider) {
+        const extraHeaders = requestOptions.extra_headers
+          ? (requestOptions.extra_headers as Record<string, string>)
+          : {};
+        extraHeaders['X-LiveKit-Inference-Provider'] = this.provider;
+        requestOptions.extra_headers = extraHeaders;
+      }
+
       const stream = await this.client.chat.completions.create(
         {
           model: this.model,
@@ -324,7 +303,7 @@ export class LLMStream<TModel extends LLMModels> extends llm.LLMStream {
           tools,
           stream: true,
           stream_options: { include_usage: true },
-          ...requestExtras,
+          ...requestOptions,
         },
         {
           timeout: this.connOptions.timeoutMs,

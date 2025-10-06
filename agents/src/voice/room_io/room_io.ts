@@ -64,22 +64,41 @@ const CLOSE_ON_DISCONNECT_REASONS: DisconnectReason[] = [
 export interface RoomInputOptions {
   audioSampleRate: number;
   audioNumChannels: number;
+  /** If not given, default to True. */
   textEnabled: boolean;
+  /** If not given, default to True. */
   audioEnabled: boolean;
+  /** If not given, default to False. */
   videoEnabled: boolean;
+  /** The participant to link to. If not provided, link to the first participant.
+    Can be overridden by the `participant` argument of RoomIO constructor or `set_participant`.
+  */
   participantIdentity?: string;
   noiseCancellation?: NoiseCancellationOptions;
   textInputCallback?: TextInputCallback;
+  /** Participant kinds accepted for auto subscription. If not provided,
+    accept `DEFAULT_PARTICIPANT_KINDS`
+  */
   participantKinds?: ParticipantKind[];
+  /** Close the AgentSession if the linked participant disconnects with reasons in
+    CLIENT_INITIATED, ROOM_DELETED, or USER_REJECTED.
+  */
   closeOnDisconnect: boolean;
 }
 
 export interface RoomOutputOptions {
+  /** If not given, default to True. */
   transcriptionEnabled: boolean;
+  /** If not given, default to True. */
   audioEnabled: boolean;
   audioSampleRate: number;
   audioNumChannels: number;
+  /** False to disable transcription synchronization with audio output.
+    Otherwise, transcription is emitted as quickly as available.
+  */
   syncTranscription: boolean;
+  /** The name of the audio track to publish. If not provided, default to "roomio_audio".
+   */
   audioPublishOptions: TrackPublishOptions;
 }
 
@@ -350,7 +369,7 @@ export class RoomIO {
     return this.transcriptionSynchronizer.textOutput;
   }
 
-  /* Switch to a different participant */
+  /** Switch to a different participant */
   setParticipant(participantIdentity: string | null) {
     this.logger.debug({ participantIdentity }, 'setting participant');
     if (participantIdentity === null) {
@@ -454,7 +473,7 @@ export class RoomIO {
 
     this.initTask = Task.from((controller) => this.init(controller.signal));
 
-    // -- attatch the agent to the session --
+    // attach the agent to the session
     if (this.audioInput) {
       this.agentSession.input.audio = this.audioInput;
     }

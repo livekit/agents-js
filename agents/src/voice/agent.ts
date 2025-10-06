@@ -9,8 +9,8 @@ import {
   STT as InferenceSTT,
   TTS as InferenceTTS,
   type LLMModels,
-  type STTModels,
-  type TTSModels,
+  type STTModelString,
+  type TTSModelString,
 } from '../inference/index.js';
 import { ReadonlyChatContext } from '../llm/chat_context.js';
 import type { ChatMessage, FunctionCall, RealtimeModel } from '../llm/index.js';
@@ -54,7 +54,7 @@ export function isStopResponse(value: unknown): value is StopResponse {
 }
 
 export interface ModelSettings {
-  /* The tool choice to use when calling the LLM. */
+  /** The tool choice to use when calling the LLM. */
   toolChoice?: ToolChoice;
 }
 
@@ -63,10 +63,10 @@ export interface AgentOptions<UserData> {
   chatCtx?: ChatContext;
   tools?: ToolContext<UserData>;
   turnDetection?: TurnDetectionMode;
-  stt?: STT | STTModels;
+  stt?: STT | STTModelString;
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
-  tts?: TTS | TTSModels;
+  tts?: TTS | TTSModelString;
   allowInterruptions?: boolean;
   minConsecutiveSpeechDelay?: number;
 }
@@ -112,19 +112,19 @@ export class Agent<UserData = any> {
     this._vad = vad;
 
     if (typeof stt === 'string') {
-      this._stt = new InferenceSTT({ model: stt });
+      this._stt = InferenceSTT.fromModelString(stt);
     } else {
       this._stt = stt;
     }
 
     if (typeof llm === 'string') {
-      this._llm = new InferenceLLM({ model: llm });
+      this._llm = InferenceLLM.fromModelString(llm);
     } else {
       this._llm = llm;
     }
 
     if (typeof tts === 'string') {
-      this._tts = new InferenceTTS({ model: tts });
+      this._tts = InferenceTTS.fromModelString(tts);
     } else {
       this._tts = tts;
     }

@@ -7,7 +7,7 @@ import {
   WorkerOptions,
   cli,
   defineAgent,
-  inference,
+  llm,
   metrics,
   voice,
 } from '@livekit/agents';
@@ -24,33 +24,26 @@ export default defineAgent({
     const agent = new voice.Agent({
       instructions:
         "You are a helpful assistant, you can hear the user's message and respond to it.",
+      tools: {
+        getWeather: llm.tool({
+          description: 'Get the weather for a given location.',
+          execute: async ({ location }) => {
+            return `The weather in ${location} is sunny.`;
+          },
+        }),
+      },
     });
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
 
     const session = new voice.AgentSession({
       vad,
-      // stt: 'deepgram/nova-3',
-      stt: new inference.STT({
-        model: 'deepgram/nova-3',
-        extraKwargs: {
-          filler_words: false,
-        },
-      }),
-      // llm: 'azure/gpt-4.1',
-      llm: new inference.LLM({
-        model: 'azure/gpt-4.1',
-        extraKwargs: {
-          top_p: 0.9,
-        },
-      }),
-      // tts: 'elevenlabs:cgSgspJ2msm6clMCkdW9',
-      tts: new inference.TTS({
-        model: 'elevenlabs:cgSgspJ2msm6clMCkdW9',
-        extraKwargs: {
-          apply_text_normalization: 'on',
-        },
-      }),
+      // stt: new inference.STT({ model: 'cartesia/ink-whisper', language: 'en' }),
+      stt: 'cartesia/ink-whisper:en',
+      // llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      llm: 'openai/gpt-4.1-mini',
+      // tts: new inference.TTS({ model: 'cartesia/sonic-2', voice: '794f9389-aac1-45b6-b726-9d9369183238' }),
+      tts: 'cartesia/sonic-2:794f9389-aac1-45b6-b726-9d9369183238',
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
       turnDetection: new livekit.turnDetector.MultilingualModel(),

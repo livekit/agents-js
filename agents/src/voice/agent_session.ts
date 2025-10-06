@@ -10,8 +10,8 @@ import {
   STT as InferenceSTT,
   TTS as InferenceTTS,
   type LLMModels,
-  type STTModels,
-  type TTSModels,
+  type STTModelString,
+  type TTSModelString,
 } from '../inference/index.js';
 import { getJobContext } from '../job.js';
 import { ChatContext, ChatMessage } from '../llm/chat_context.js';
@@ -85,10 +85,10 @@ export type AgentSessionCallbacks = {
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
   turnDetection?: TurnDetectionMode;
-  stt?: STT | STTModels;
+  stt?: STT | STTModelString;
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
-  tts?: TTS | TTSModels;
+  tts?: TTS | TTSModelString;
   userData?: UserData;
   voiceOptions?: Partial<VoiceOptions>;
 };
@@ -138,22 +138,23 @@ export class AgentSession<
     this.vad = vad;
 
     if (typeof stt === 'string') {
-      this.stt = new InferenceSTT({ model: stt });
+      this.stt = InferenceSTT.fromModelString(stt);
     } else {
       this.stt = stt;
     }
 
     if (typeof llm === 'string') {
-      this.llm = new InferenceLLM({ model: llm });
+      this.llm = InferenceLLM.fromModelString(llm);
     } else {
       this.llm = llm;
     }
 
     if (typeof tts === 'string') {
-      this.tts = new InferenceTTS({ model: tts });
+      this.tts = InferenceTTS.fromModelString(tts);
     } else {
       this.tts = tts;
     }
+
     this.turnDetection = turnDetection;
     this._userData = userData;
 
