@@ -27,7 +27,13 @@ export default defineAgent({
       parameters: z.object({
         location: z.string().describe('The location to get the weather for'),
       }),
-      execute: async ({ location }) => {
+      execute: async ({ location }, { ctx }) => {
+        ctx.session.generateReply({
+          userInput: `Tell user wait a moment for about 5 seconds while you are checking the weather`,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 5));
+
         return `The weather in ${location} is sunny today.`;
       },
     });

@@ -1775,6 +1775,23 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
+      while (this.currentSpeech !== undefined || this.speechQueue.length > 0) {
+        this.logger.info(
+          { currentSpeech: this.currentSpeech, queueLength: this.speechQueue.length },
+          'waiting for the current speech to finish',
+        );
+        if (
+          this.currentSpeech !== undefined &&
+          !this.currentSpeech.done() &&
+          this.currentSpeech !== speechHandle
+        ) {
+          this.logger.info('waiting for the current speech to finish');
+          await this.currentSpeech._waitForGeneration();
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+      }
+
       const chatCtx = this.realtimeSession.chatCtx.copy();
       chatCtx.items.push(...functionToolsExecutedEvent.functionCallOutputs);
       try {
