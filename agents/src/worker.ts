@@ -279,7 +279,7 @@ export class Worker {
   #logger = log().child({ version });
   #inferenceExecutor?: InferenceProcExecutor;
 
-  /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
+  /** @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: WorkerOptions) {
     opts.wsURL = opts.wsURL || process.env.LIVEKIT_URL || '';
     opts.apiKey = opts.apiKey || process.env.LIVEKIT_API_KEY || '';
@@ -347,7 +347,7 @@ export class Worker {
     }));
   }
 
-  /* @throws {@link WorkerError} if worker failed to connect or already running */
+  /** @throws {@link WorkerError} if worker failed to connect or already running */
   async run() {
     if (!this.#closed) {
       throw new WorkerError('worker is already running');
@@ -428,7 +428,7 @@ export class Worker {
       .map((proc) => proc.runningJob!);
   }
 
-  /* @throws {@link WorkerError} if worker did not drain in time */
+  /** @throws {@link WorkerError} if worker did not drain in time */
   async drain(timeout?: number) {
     if (this.#draining) {
       return;

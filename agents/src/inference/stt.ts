@@ -15,13 +15,14 @@ import {
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
-import { type AnyModels, connectWs, createAccessToken } from './utils.js';
+import { type AnyString, connectWs, createAccessToken } from './utils.js';
 
 export type DeepgramModels =
   | 'deepgram'
   | 'deepgram/nova-3'
   | 'deepgram/nova-3-general'
   | 'deepgram/nova-3-medical'
+  | 'deepgram/nova-2-conversationalai'
   | 'deepgram/nova-2'
   | 'deepgram/nova-2-general'
   | 'deepgram/nova-2-medical'
@@ -49,7 +50,7 @@ export interface DeepgramOptions {
   mip_opt_out?: boolean;
 }
 
-export interface AssemblyaiOptions {
+export interface AssemblyAIOptions {
   format_turns?: boolean; // default: false
   end_of_turn_confidence_threshold?: number; // default: 0.01
   min_end_of_turn_silence_when_confident?: number; // default: 0
@@ -57,16 +58,32 @@ export interface AssemblyaiOptions {
   keyterms_prompt?: string[]; // default: not specified
 }
 
-export type STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels | AnyModels;
+export type STTLanguages =
+  | 'multi'
+  | 'en'
+  | 'de'
+  | 'es'
+  | 'fr'
+  | 'ja'
+  | 'pt'
+  | 'zh'
+  | 'hi'
+  | AnyString;
+
+type _STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels;
+
+export type STTModels = _STTModels | 'auto' | AnyString;
+
+export type ModelWithLanguage = `${_STTModels}:${STTLanguages}` | STTModels;
+
 export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
   ? DeepgramOptions
   : TModel extends CartesiaModels
     ? CartesiaOptions
     : TModel extends AssemblyaiModels
-      ? AssemblyaiOptions
+      ? AssemblyAIOptions
       : Record<string, unknown>;
 
-export type STTLanguages = 'en' | 'de' | 'es' | 'fr' | 'ja' | 'pt' | 'zh';
 export type STTEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
@@ -75,29 +92,34 @@ const DEFAULT_BASE_URL = 'wss://agent-gateway.livekit.cloud/v1';
 const DEFAULT_CANCEL_TIMEOUT = 5000;
 
 export interface InferenceSTTOptions<TModel extends STTModels> {
-  model: TModel;
-  language?: STTLanguages | string;
+  model?: TModel;
+  language?: STTLanguages;
   encoding: STTEncoding;
   sampleRate: number;
   baseURL: string;
   apiKey: string;
   apiSecret: string;
-  extraKwargs: STTOptions<TModel>;
+  modelOptions: STTOptions<TModel>;
 }
 
+/**
+ * Livekit Cloud Inference STT
+ */
 export class STT<TModel extends STTModels> extends BaseSTT {
   private opts: InferenceSTTOptions<TModel>;
   private streams: Set<SpeechStream<TModel>> = new Set();
 
-  constructor(opts: {
-    model: TModel;
-    language?: STTLanguages | string;
+  #logger = log();
+
+  constructor(opts?: {
+    model?: TModel;
+    language?: STTLanguages;
     baseURL?: string;
     encoding?: STTEncoding;
     sampleRate?: number;
     apiKey?: string;
     apiSecret?: string;
-    extraKwargs?: STTOptions<TModel>;
+    modelOptions?: STTOptions<TModel>;
   }) {
     super({ streaming: true, interimResults: true });
 
@@ -109,7 +131,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       sampleRate = DEFAULT_SAMPLE_RATE,
       apiKey,
       apiSecret,
-      extraKwargs = {} as STTOptions<TModel>,
+      modelOptions = {} as STTOptions<TModel>,
     } = opts || {};
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
@@ -132,12 +154,20 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       baseURL: lkBaseURL,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
-      extraKwargs,
+      modelOptions,
     };
   }
 
   get label(): string {
     return 'inference.STT';
+  }
+
+  static fromModelString(modelString: string): STT<AnyString> {
+    if (modelString.includes(':')) {
+      const [model, language] = modelString.split(':') as [AnyString, STTLanguages];
+      return new STT({ model, language });
+    }
+    return new STT({ model: modelString });
   }
 
   protected async _recognize(_: AudioBuffer): Promise<SpeechEvent> {
@@ -206,11 +236,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         settings: {
           sample_rate: String(this.opts.sampleRate),
           encoding: this.opts.encoding,
-          extra: this.opts.extraKwargs,
+          extra: this.opts.modelOptions,
         },
       } as Record<string, unknown>;
 
-      if (this.opts.model) {
+      if (this.opts.model && this.opts.model !== 'auto') {
         params.model = this.opts.model;
       }
 

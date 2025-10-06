@@ -290,7 +290,7 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
 }
 
 export class ParalellTextOutput extends TextOutput {
-  /* @internal */
+  /** @internal */
   _sinks: TextOutput[];
 
   constructor(sinks: TextOutput[], nextInChain?: TextOutput) {

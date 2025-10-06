@@ -277,7 +277,7 @@ export class TranscriptionSynchronizer {
   private _enabled: boolean = true;
   private closed: boolean = false;
 
-  /* @internal */
+  /** @internal */
   _impl: SegmentSynchronizerImpl;
 
   private logger = log();
