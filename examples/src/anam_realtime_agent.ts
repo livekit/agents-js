@@ -10,6 +10,9 @@ import {
   voice,
 } from '@livekit/agents';
 import * as anam from '@livekit/agents-plugin-anam';
+import * as deepgram from '@livekit/agents-plugin-deepgram';
+import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
+import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
@@ -26,16 +29,26 @@ export default defineAgent({
     });
 
     const session = new voice.AgentSession({
-      llm: new openai.realtime.RealtimeModel(),
-      voiceOptions: {
-        // allow the model to call multiple tools in a single turn if needed
-        maxToolSteps: 3,
-      },
+      vad: ctx.proc.userData.vad! as silero.VAD,
+      stt: new deepgram.STT(),
+      tts: new elevenlabs.TTS(),
+      // To use OpenAI Realtime API
+      llm: new openai.realtime.RealtimeModel({
+        voice: 'alloy',
+        // it's necessary to turn off turn detection in the OpenAI Realtime API in order to use
+        // LiveKit's turn detection model
+        turnDetection: null,
+        inputAudioTranscription: null,
+      }),
+      turnDetection: new livekit.turnDetector.EnglishModel(),
     });
 
     await session.start({
       agent,
       room: ctx.room,
+      outputOptions: {
+        syncTranscription: false,
+      },
     });
 
     // Join the LiveKit room first (ensures room name and identity available)
@@ -51,15 +64,9 @@ export default defineAgent({
     // Start the Anam avatar session and route Agent audio to the avatar
     const avatar = new anam.AvatarSession({
       personaConfig: { name: personaName, avatarId },
-      // Allow overriding base URL via env
       apiUrl: process.env.ANAM_API_URL,
-      // connOptions: { maxRetry: 5, retryInterval: 2, timeout: 15 },
     });
     await avatar.start(session, ctx.room);
-
-    session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
-      console.log('metrics_collected', ev);
-    });
 
     // With Realtime LLM, generateReply will synthesize audio via the model
     session.generateReply({
