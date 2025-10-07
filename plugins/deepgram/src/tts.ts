@@ -270,7 +270,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
         ws.on('close', (_code, _reason) => {
           if (!finalReceived) {
-
             for (const frame of bstream.flush()) {
               sendLastFrame(false);
               lastFrame = frame;
