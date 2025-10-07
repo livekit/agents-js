@@ -11,7 +11,6 @@ import {
   llm,
   voice,
 } from '@livekit/agents';
-import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
@@ -46,7 +45,7 @@ export default defineAgent({
       }),
       execute: async ({ location }, { ctx }) => {
         ctx.session.generateReply({
-          instructions: 'Tell the user you are looking it up to hold on a sec.',
+          userInput: 'Tell the user you are looking it up to hold on a sec.',
         });
 
         return `The weather in ${location} is sunny today.`;
