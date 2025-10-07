@@ -569,6 +569,9 @@ importers:
       '@livekit/agents-plugin-openai':
         specifier: workspace:*
         version: link:../openai
+      '@livekit/agents-plugin-silero':
+        specifier: ^1.0.8
+        version: 1.0.8(@livekit/agents@agents)(@livekit/rtc-node@0.13.13)
       '@livekit/agents-plugins-test':
         specifier: workspace:*
         version: link:../test
@@ -1432,6 +1435,12 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.25':
     resolution: {integrity: sha512-vNk6aEwybGtawWmy/PzwnGDOjCkLWSD2wqvjGGAgOAwCGWySYXfYoxt00IJkTF+8Lb57DwOb3Aa0o9CApepiYQ==}
+
+  '@livekit/agents-plugin-silero@1.0.8':
+    resolution: {integrity: sha512-jXhavW+EqzCbJ23taB05jup1/KOnhXP+K5cW6LUjqWT26v95BXCiBbxsmmnmYKA4/VEOaUlplz8pIuYnKiYiFw==}
+    peerDependencies:
+      '@livekit/agents': 1.0.8
+      '@livekit/rtc-node': ^0.13.12
 
   '@livekit/changesets-changelog-github@0.0.4':
     resolution: {integrity: sha512-MXaiLYwgkYciZb8G2wkVtZ1pJJzZmVx5cM30Q+ClslrIYyAqQhRbPmZDM79/5CGxb1MTemR/tfOM25tgJgAK0g==}
@@ -5206,6 +5215,16 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.4.15
+
+  '@livekit/agents-plugin-silero@1.0.8(@livekit/agents@agents)(@livekit/rtc-node@0.13.13)':
+    dependencies:
+      '@livekit/agents': link:agents
+      '@livekit/rtc-node': 0.13.13
+      onnxruntime-node: 1.21.0
+      ws: 8.18.3
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@livekit/changesets-changelog-github@0.0.4':
     dependencies:

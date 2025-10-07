@@ -167,7 +167,12 @@ export class STT extends stt.STT {
   }
 
   stream({ connOptions = DEFAULT_API_CONNECT_OPTIONS } = {}): SpeechStream {
-    return new SpeechStream(this, this.#opts.sampleRate, connOptions, this.#opts);
+    return new SpeechStream(
+      this, 
+      this.#opts.sampleRate, 
+      connOptions, 
+      this.#opts,
+    );
   }
 }
 
