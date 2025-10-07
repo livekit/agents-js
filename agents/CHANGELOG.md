@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.9
+
+### Patch Changes
+
+- Wait for all speech playouts inside tool before tool reply in realtime model - [#753](https://github.com/livekit/agents-js/pull/753) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.8
 
 ### Patch Changes
