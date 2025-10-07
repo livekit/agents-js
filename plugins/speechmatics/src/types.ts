@@ -1,9 +1,7 @@
-// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 export type EndOfUtteranceMode = 'none' | 'fixed' | 'adaptive';
-
 export type OperatingPoint = 'standard' | 'enhanced';
 
 export type AdditionalVocabEntry = {
@@ -12,38 +10,41 @@ export type AdditionalVocabEntry = {
 };
 
 export type PunctuationOverrides = {
-  sensitivity?: number;      // 0..1
-  permitted_marks?: string[]; // remove "all"
+  sensitivity?: number;
+  permitted_marks?: string[];
 };
 
 export type DiarizationFocusMode = 'retain' | 'ignore';
 
-export type KnownSpeaker = { label: string; speaker_identifiers: string[] };
+export type KnownSpeaker = {
+  label: string;
+  speaker_identifiers: string[];
+};
 
 export type SpeechmaticsSTTOptions = {
-  apiKey?: string;                 // OR pass a JWT via getJwt()
-  baseUrl?: string;                // e.g. "wss://eu2.rt.speechmatics.com/v2"
-  appId?: string;                  // sm-app tag
-  operatingPoint?: OperatingPoint; // enhanced recommended
-  language?: string;               // "en"
-  outputLocale?: string;           // "en-GB"
+  apiKey?: string;
+  baseUrl?: string;
+  appId?: string;
+  operatingPoint?: OperatingPoint;
+  language?: string;
+  outputLocale?: string;
   enablePartials?: boolean;
   enableDiarization?: boolean;
-  maxDelay?: number;               // 0.7
-  endOfUtteranceSilence?: number;  // 0.3s
+  maxDelay?: number;
+  endOfUtteranceSilence?: number;
   endOfUtteranceMode?: EndOfUtteranceMode;
   additionalVocab?: AdditionalVocabEntry[];
   punctuationOverrides?: PunctuationOverrides;
-  diarizationSensitivity?: number; // 0..1
-  speakerActiveFormat?: string;    // e.g. "<{speaker_id}>{text}</{speaker_id}>"
-  speakerPassiveFormat?: string;   // e.g. "{text}"
+  diarizationSensitivity?: number;
+  speakerActiveFormat?: string;
+  speakerPassiveFormat?: string;
   preferCurrentSpeaker?: boolean;
   focusSpeakers?: string[];
   ignoreSpeakers?: string[];
   focusMode?: DiarizationFocusMode;
   knownSpeakers?: KnownSpeaker[];
-  sampleRate?: number;             // default 16000
-  chunkSize?: number;              // internal audio chunking to WS
+  sampleRate?: number;
+  chunkSize?: number;
   /** Optional override to fetch a temporary JWT (recommended) */
   getJwt?: () => Promise<string>;
 };
