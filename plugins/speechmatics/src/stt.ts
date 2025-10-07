@@ -2,21 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
-  DEFAULT_API_CONNECT_OPTIONS,
+  type APIConnectOptions,
   AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
   log,
   stt,
-  type APIConnectOptions,
 } from '@livekit/agents';
 import { createSpeechmaticsJWT } from '@speechmatics/auth';
 import {
-  RealtimeClient,
   type AddPartialTranscript,
   type AddTranscript,
-  type RecognitionAlternative,
+  RealtimeClient,
   type RealtimeTranscriptionConfig,
+  type RecognitionAlternative,
 } from '@speechmatics/real-time-client';
-
 import type {
   AdditionalVocabEntry,
   DiarizationFocusMode,
@@ -167,12 +166,7 @@ export class STT extends stt.STT {
   }
 
   stream({ connOptions = DEFAULT_API_CONNECT_OPTIONS } = {}): SpeechStream {
-    return new SpeechStream(
-      this, 
-      this.#opts.sampleRate, 
-      connOptions, 
-      this.#opts,
-    );
+    return new SpeechStream(this, this.#opts.sampleRate, connOptions, this.#opts);
   }
 }
 
@@ -295,15 +289,14 @@ class SpeechStream extends stt.SpeechStream {
           continue;
         }
 
-        const entry =
-          altMap.get(index) ?? {
-            text: '',
-            startTime: resultStart,
-            endTime: resultEnd,
-            language: alt.language ?? this.#opts.language,
-            speaker: alt.speaker ?? null,
-            confidences: [],
-          };
+        const entry = altMap.get(index) ?? {
+          text: '',
+          startTime: resultStart,
+          endTime: resultEnd,
+          language: alt.language ?? this.#opts.language,
+          speaker: alt.speaker ?? null,
+          confidences: [],
+        };
 
         entry.text = appendToken(entry.text, alt.content, type, attachesTo);
         entry.startTime = Math.min(entry.startTime, resultStart);
@@ -390,10 +383,7 @@ class SpeechStream extends stt.SpeechStream {
       this.#mergeFinalAlternatives(alternatives);
       merged = this.#buildCombinedAlternatives(this.#finalizedAlternatives);
     } else {
-      merged = this.#buildCombinedAlternatives([
-        ...this.#finalizedAlternatives,
-        ...alternatives,
-      ]);
+      merged = this.#buildCombinedAlternatives([...this.#finalizedAlternatives, ...alternatives]);
     }
 
     if (merged) {

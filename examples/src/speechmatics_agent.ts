@@ -36,7 +36,7 @@ export default defineAgent({
     logger.info('starting Speechmatics agent');
     const agent = new voice.Agent({
       instructions:
-        "You are a helpful assistant. Listen to the caller, transcribe with Speechmatics, and answer helpfully.",
+        'You are a helpful assistant. Listen to the caller, transcribe with Speechmatics, and answer helpfully.',
     });
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
