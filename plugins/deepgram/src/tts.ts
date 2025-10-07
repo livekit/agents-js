@@ -80,7 +80,6 @@ export class ChunkedStream extends tts.ChunkedStream {
   protected async run() {
     const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
-    // HTTP endpoint expects simple JSON format, not WebSocket format
     const json = { text: this.#text };
     const url = new URL(`${this.#opts.baseUrl!}/v1/speak`);
     url.searchParams.append('sample_rate', this.#opts.sampleRate.toString());
@@ -271,7 +270,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
         ws.on('close', (_code, _reason) => {
           if (!finalReceived) {
-            // Handle unexpected close with batched pattern
+
             for (const frame of bstream.flush()) {
               sendLastFrame(false);
               lastFrame = frame;
