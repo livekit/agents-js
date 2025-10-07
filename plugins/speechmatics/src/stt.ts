@@ -86,6 +86,15 @@ const DEFAULT_OPTIONS: ResolvedSpeechmaticsSTTOptions = {
   getJwt: undefined,
 };
 
+type AggregatedAlternativeState = {
+  text: string;
+  startTime: number;
+  endTime: number;
+  language?: string;
+  speaker?: string | null;
+  confidences: number[];
+};
+
 export class STT extends stt.STT {
   #opts: ResolvedSpeechmaticsSTTOptions;
   label = 'speechmatics.STT';
@@ -168,6 +177,7 @@ class SpeechStream extends stt.SpeechStream {
   #logger = log();
   #fallbackEouTimer?: NodeJS.Timeout;
   #bstream: AudioByteStream;
+  #finalizedAlternatives: stt.SpeechData[] = [];
   label = 'speechmatics.SpeechStream';
 
   constructor(
@@ -186,11 +196,8 @@ class SpeechStream extends stt.SpeechStream {
     const client = new RealtimeClient({ url: this.#opts.baseUrl, appId: this.#opts.appId });
     this.#client = client;
 
-    const getPreview = (msg: TranscriptMessage) => {
-      const firstResult = msg.results?.[0];
-      const firstAlt = firstResult?.alternatives?.[0];
-      return firstAlt?.content ?? '';
-    };
+    const getPreview = (msg: TranscriptMessage) =>
+      msg.metadata?.transcript?.trim() ?? msg.results?.[0]?.alternatives?.[0]?.content ?? '';
 
     client.addEventListener('receiveMessage', ({ data }) => {
       const message = data.message ?? 'unknown';
@@ -266,24 +273,101 @@ class SpeechStream extends stt.SpeechStream {
     }
   }
 
-  #handleTranscript(msg: TranscriptMessage, isFinal: boolean) {
-    const alternatives: stt.SpeechData[] = (msg.results ?? []).flatMap((result) => {
-      const startTime = result.start_time ?? msg.metadata?.start_time ?? 0;
-      const endTime = result.end_time ?? msg.metadata?.end_time ?? 0;
+  #aggregateAlternatives(msg: TranscriptMessage): stt.SpeechData[] {
+    const defaultStart = msg.metadata?.start_time ?? 0;
+    const defaultEnd = msg.metadata?.end_time ?? defaultStart;
+    const altMap = new Map<number, AggregatedAlternativeState>();
 
-      return (result.alternatives ?? []).map((alt): stt.SpeechData => ({
-        language: alt.language ?? this.#opts.language,
-        text: toSpeakerFormatted(
-          alt,
-          this.#opts.speakerActiveFormat,
-          this.#opts.speakerPassiveFormat,
-          this.#opts,
-        ),
-        startTime,
-        endTime,
-        confidence: alt.confidence ?? 0,
-      }));
-    });
+    for (const result of msg.results ?? []) {
+      const resultStart = result.start_time ?? defaultStart;
+      const resultEnd = result.end_time ?? defaultEnd;
+      const attachesTo = (result as { attaches_to?: 'previous' | 'next' }).attaches_to;
+      const { type } = result;
+
+      for (const [index, alt] of (result.alternatives ?? []).entries()) {
+        if (!alt?.content) {
+          continue;
+        }
+
+        const entry =
+          altMap.get(index) ?? {
+            text: '',
+            startTime: resultStart,
+            endTime: resultEnd,
+            language: alt.language ?? this.#opts.language,
+            speaker: alt.speaker ?? null,
+            confidences: [],
+          };
+
+        entry.text = appendToken(entry.text, alt.content, type, attachesTo);
+        entry.startTime = Math.min(entry.startTime, resultStart);
+        entry.endTime = Math.max(entry.endTime, resultEnd);
+        entry.language = alt.language ?? entry.language;
+        entry.speaker = alt.speaker ?? entry.speaker;
+        if (typeof alt.confidence === 'number') {
+          entry.confidences.push(alt.confidence);
+        }
+
+        altMap.set(index, entry);
+      }
+    }
+
+    if (!altMap.size) {
+      const transcript = msg.metadata?.transcript?.trim();
+      if (!transcript) {
+        return [];
+      }
+
+      return [
+        {
+          language: this.#opts.language,
+          text: toSpeakerFormatted(
+            { content: transcript, language: this.#opts.language, confidence: 0 },
+            this.#opts.speakerActiveFormat,
+            this.#opts.speakerPassiveFormat,
+            this.#opts,
+          ),
+          startTime: defaultStart,
+          endTime: defaultEnd,
+          confidence: 0,
+        },
+      ];
+    }
+
+    return Array.from(altMap.values())
+      .map((entry) => {
+        const content = entry.text.trim() || msg.metadata?.transcript?.trim() || '';
+        if (!content) {
+          return undefined;
+        }
+
+        const confidence = entry.confidences.length
+          ? entry.confidences.reduce((sum, value) => sum + value, 0) / entry.confidences.length
+          : 0;
+
+        return {
+          language: entry.language ?? this.#opts.language,
+          text: toSpeakerFormatted(
+            {
+              content,
+              language: entry.language ?? this.#opts.language,
+              speaker: entry.speaker ?? undefined,
+              confidence,
+            } as RecognitionAlternative,
+            this.#opts.speakerActiveFormat,
+            this.#opts.speakerPassiveFormat,
+            this.#opts,
+          ),
+          startTime: entry.startTime,
+          endTime: entry.endTime,
+          confidence,
+        } satisfies stt.SpeechData;
+      })
+      .filter((alt): alt is stt.SpeechData => alt !== undefined);
+  }
+
+  #handleTranscript(msg: TranscriptMessage, isFinal: boolean) {
+    const alternatives = this.#aggregateAlternatives(msg);
 
     if (!alternatives.length) {
       if (isFinal) {
@@ -294,17 +378,64 @@ class SpeechStream extends stt.SpeechStream {
       return;
     }
 
-    const [primary, ...rest] = alternatives as [stt.SpeechData, ...stt.SpeechData[]];
-    this.queue.put({
-      type: isFinal
-        ? stt.SpeechEventType.FINAL_TRANSCRIPT
-        : stt.SpeechEventType.INTERIM_TRANSCRIPT,
-      alternatives: [primary, ...rest],
-    });
-
-    if (!isFinal) {
+    if (isFinal) {
+      this.#mergeFinalAlternatives(alternatives);
+      const merged = this.#buildCombinedAlternatives(this.#finalizedAlternatives);
+      if (merged) {
+        this.queue.put({
+          type: stt.SpeechEventType.FINAL_TRANSCRIPT,
+          alternatives: [merged],
+        });
+      }
+    } else {
+      const merged = this.#buildCombinedAlternatives([
+        ...this.#finalizedAlternatives,
+        ...alternatives,
+      ]);
+      if (merged) {
+        this.queue.put({
+          type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
+          alternatives: [merged],
+        });
+      }
       this.#armFallbackEOU();
     }
+  }
+
+  #mergeFinalAlternatives(alternatives: stt.SpeechData[]) {
+    const eps = 0.02;
+    for (const alt of alternatives) {
+      this.#finalizedAlternatives = this.#finalizedAlternatives.filter(
+        (existing) => existing.startTime + eps < alt.startTime,
+      );
+      this.#finalizedAlternatives.push(alt);
+    }
+    this.#finalizedAlternatives.sort((a, b) => a.startTime - b.startTime);
+  }
+
+  #buildCombinedAlternatives(segments: stt.SpeechData[]): stt.SpeechData | undefined {
+    if (!segments.length) {
+      return undefined;
+    }
+
+    const text = combineTextSegments(segments.map((seg) => seg.text));
+    if (!text) {
+      return undefined;
+    }
+
+    const startTime = Math.min(...segments.map((s) => s.startTime));
+    const endTime = Math.max(...segments.map((s) => s.endTime));
+    const language = segments.find((s) => s.language)?.language ?? this.#opts.language;
+    const confidence =
+      segments.reduce((sum, seg) => sum + (seg.confidence ?? 0), 0) / segments.length;
+
+    return {
+      language,
+      text,
+      startTime,
+      endTime,
+      confidence,
+    } satisfies stt.SpeechData;
   }
 
   #armFallbackEOU() {
@@ -328,6 +459,7 @@ class SpeechStream extends stt.SpeechStream {
       clearTimeout(this.#fallbackEouTimer);
       this.#fallbackEouTimer = undefined;
     }
+    this.#finalizedAlternatives = [];
   }
 
   #toTranscriptionConfig(): RealtimeTranscriptionConfig {
@@ -398,5 +530,38 @@ function toSpeakerFormatted(
     opts.enableDiarization && speaker && opts.focusSpeakers?.includes(speaker)
       ? activeFmt
       : passiveFmt;
-  return speaker ? fmt.replace('{speaker_id}', speaker).replace('{text}', content) : content;
+  const formatted = speaker
+    ? fmt.replace('{speaker_id}', speaker).replace('{text}', content)
+    : content;
+  return formatted.trim();
+}
+
+function appendToken(
+  current: string,
+  token: string,
+  type: string | undefined,
+  attachesTo: 'previous' | 'next' | undefined,
+): string {
+  if (!token) {
+    return current;
+  }
+  if (!current) {
+    return token;
+  }
+  if (type === 'punctuation' || attachesTo === 'previous') {
+    return `${current}${token}`;
+  }
+  return `${current} ${token}`;
+}
+
+function combineTextSegments(segments: string[]): string {
+  const text = segments
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)
+    .join(' ')
+    .replace(/\s+([,.;!?])/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return text;
 }
