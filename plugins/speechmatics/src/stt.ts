@@ -178,6 +178,7 @@ class SpeechStream extends stt.SpeechStream {
   #fallbackEouTimer?: NodeJS.Timeout;
   #bstream: AudioByteStream;
   #finalizedAlternatives: stt.SpeechData[] = [];
+  #latestSpeech?: stt.SpeechData;
   label = 'speechmatics.SpeechStream';
 
   constructor(
@@ -378,26 +379,30 @@ class SpeechStream extends stt.SpeechStream {
       return;
     }
 
+    let merged: stt.SpeechData | undefined;
+
     if (isFinal) {
       this.#mergeFinalAlternatives(alternatives);
-      const merged = this.#buildCombinedAlternatives(this.#finalizedAlternatives);
-      if (merged) {
-        this.queue.put({
-          type: stt.SpeechEventType.FINAL_TRANSCRIPT,
-          alternatives: [merged],
-        });
-      }
+      merged = this.#buildCombinedAlternatives(this.#finalizedAlternatives);
     } else {
-      const merged = this.#buildCombinedAlternatives([
+      merged = this.#buildCombinedAlternatives([
         ...this.#finalizedAlternatives,
         ...alternatives,
       ]);
-      if (merged) {
+    }
+
+    if (merged) {
+      const changed = this.#latestSpeech?.text !== merged.text;
+      this.#latestSpeech = merged;
+      if (changed) {
         this.queue.put({
           type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
           alternatives: [merged],
         });
       }
+    }
+
+    if (!isFinal) {
       this.#armFallbackEOU();
     }
   }
@@ -454,12 +459,20 @@ class SpeechStream extends stt.SpeechStream {
   }
 
   #flushEOU() {
+    if (this.#latestSpeech) {
+      this.queue.put({
+        type: stt.SpeechEventType.FINAL_TRANSCRIPT,
+        alternatives: [this.#latestSpeech],
+      });
+    }
+
     this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
     if (this.#fallbackEouTimer) {
       clearTimeout(this.#fallbackEouTimer);
       this.#fallbackEouTimer = undefined;
     }
     this.#finalizedAlternatives = [];
+    this.#latestSpeech = undefined;
   }
 
   #toTranscriptionConfig(): RealtimeTranscriptionConfig {
