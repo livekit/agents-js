@@ -45,8 +45,9 @@ export default defineAgent({
         location: z.string().describe('The location to get the weather for'),
       }),
       execute: async ({ location }, { ctx }) => {
-        ctx.session.say('Let me look up the weather for you.');
-        await ctx.waitForPlayout();
+        ctx.session.generateReply({
+          instructions: 'Tell the user you are looking it up to hold on a sec.',
+        });
 
         return `The weather in ${location} is sunny today.`;
       },
@@ -62,8 +63,7 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT(),
-      llm: new openai.LLM(),
+      llm: new openai.realtime.RealtimeModel(),
       tts: new elevenlabs.TTS(),
       turnDetection: new livekit.turnDetector.MultilingualModel(),
     });
