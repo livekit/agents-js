@@ -133,6 +133,7 @@ export class SpeechHandle {
           "To wait for the assistant's spoken response prior to running this tool, use RunContext.wait_for_playout() instead.",
       );
     }
+    await this.doneFut.await;
   }
 
   async waitIfNotInterrupted(aw: Promise<unknown>[]): Promise<void> {

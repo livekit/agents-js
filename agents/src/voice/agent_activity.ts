@@ -1775,6 +1775,24 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
+      // wait all speeches played before updating the tool output and generating the response
+      // most realtime models dont support generating multiple responses at the same time
+      while (this.currentSpeech || this.speechQueue.size() > 0) {
+        if (
+          this.currentSpeech &&
+          !this.currentSpeech.done() &&
+          this.currentSpeech !== speechHandle
+        ) {
+          this.logger.info(
+            { speech_id: this.currentSpeech.id, speechQueue: this.speechQueue.toArray() },
+            'waiting for playout',
+          );
+          await this.currentSpeech.waitForPlayout();
+        } else {
+          // Don't block the event loop
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+      }
       const chatCtx = this.realtimeSession.chatCtx.copy();
       chatCtx.items.push(...functionToolsExecutedEvent.functionCallOutputs);
       try {
