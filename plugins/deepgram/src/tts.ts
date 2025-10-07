@@ -31,7 +31,7 @@ const defaultTTSOptions: TTSOptions = {
     streaming: true,
   },
   sentenceTokenizer: new tokenize.basic.SentenceTokenizer({
-    minSentenceLength: MIN_SENTENCE_LENGTH, // Use character-based length for proper sentence boundaries
+    minSentenceLength: MIN_SENTENCE_LENGTH,
   }),
 };
 
