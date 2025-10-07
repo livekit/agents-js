@@ -1,5 +1,5 @@
 ---
-"@livekit/agents-plugin-anam": minor
+"@livekit/agents-plugin-anam": major
 ---
 
 Add new Anam plugin for avatar integration
