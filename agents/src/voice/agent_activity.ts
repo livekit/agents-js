@@ -1783,10 +1783,6 @@ export class AgentActivity implements RecognitionHooks {
           !this.currentSpeech.done() &&
           this.currentSpeech !== speechHandle
         ) {
-          this.logger.debug(
-            { speech_id: this.currentSpeech.id, speechQueue: this.speechQueue.toArray() },
-            'waiting for playouts to finish before tool response in realtime generation',
-          );
           await this.currentSpeech.waitForPlayout();
         } else {
           // Don't block the event loop
