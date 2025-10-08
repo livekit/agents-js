@@ -1506,6 +1506,13 @@ export class AgentActivity implements RecognitionHooks {
       abortController: AbortController,
       outputs: Array<[string, _TextOut | null, _AudioOut | null]>,
     ) => {
+      // Create a child controller for forwarders to avoid propagating cleanup aborts
+      // to other tasks (e.g., tool execution) that share the replyAbortController.
+      const forwarderController = new AbortController();
+      abortController.signal.addEventListener('abort', () => forwarderController.abort(), {
+        once: true,
+      });
+
       const forwardTasks: Array<Task<void>> = [];
       try {
         for await (const msg of ev.messageStream) {
@@ -1520,7 +1527,7 @@ export class AgentActivity implements RecognitionHooks {
           if (trNodeResult) {
             const [textForwardTask, _textOut] = performTextForwarding(
               trNodeResult,
-              abortController,
+              forwarderController,
               textOutput,
             );
             forwardTasks.push(textForwardTask);
@@ -1536,7 +1543,7 @@ export class AgentActivity implements RecognitionHooks {
               const [forwardTask, _audioOut] = performAudioForwarding(
                 realtimeAudio,
                 audioOutput,
-                abortController,
+                forwarderController,
               );
               forwardTasks.push(forwardTask);
               audioOut = _audioOut;
