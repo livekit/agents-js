@@ -46,6 +46,7 @@ export default defineAgent({
     await session.start({
       agent,
       room: ctx.room,
+      // TODO: transcription is not sync yet, will work on a proper fix for it later
       outputOptions: {
         syncTranscription: false,
       },
