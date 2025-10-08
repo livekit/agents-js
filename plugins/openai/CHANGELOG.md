@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-openai
 
+## 1.0.10
+
+### Patch Changes
+
+- Updated dependencies [[`25b20308cdff0118c0fb07abbf5bb19e1d4be1e3`](https://github.com/livekit/agents-js/commit/25b20308cdff0118c0fb07abbf5bb19e1d4be1e3)]:
+  - @livekit/agents@1.0.10
+
 ## 1.0.9
 
 ### Patch Changes
