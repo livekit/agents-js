@@ -109,7 +109,7 @@ export class AvatarSession {
    * Creates a new AvatarSession.
    *
    * @param options - Configuration options for the avatar session
-   * @throws {BeyException} If BEY_API_KEY is not set
+   * @throws BeyException if BEY_API_KEY is not set
    */
   constructor(options: AvatarSessionOptions = {}) {
     this.avatarId = options.avatarId || EGE_STOCK_AVATAR_ID;
@@ -139,7 +139,7 @@ export class AvatarSession {
    * @param agentSession - The agent session to connect to the avatar
    * @param room - The LiveKit room where the avatar will join
    * @param options - Optional LiveKit credentials (falls back to environment variables)
-   * @throws {BeyException} If LiveKit credentials are not available or if the avatar session fails to start
+   * @throws BeyException if LiveKit credentials are not available or if the avatar session fails to start
    */
   async start(
     agentSession: voice.AgentSession,
