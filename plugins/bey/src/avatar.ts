@@ -22,6 +22,9 @@ const DEFAULT_API_URL = 'https://api.bey.dev';
 const AVATAR_AGENT_IDENTITY = 'bey-avatar-agent';
 const AVATAR_AGENT_NAME = 'bey-avatar-agent';
 
+/**
+ * Exception thrown when there are errors with the Beyond Presence API.
+ */
 export class BeyException extends Error {
   constructor(message: string) {
     super(message);
@@ -29,23 +32,68 @@ export class BeyException extends Error {
   }
 }
 
+/**
+ * Options for configuring an AvatarSession.
+ */
 export interface AvatarSessionOptions {
+  /**
+   * The avatar ID to use. If not provided, defaults to a stock avatar.
+   */
   avatarId?: string | null;
+  /**
+   * The Beyond Presence API URL. Defaults to https://api.bey.dev or BEY_API_URL environment variable.
+   */
   apiUrl?: string;
+  /**
+   * The Beyond Presence API key. Can also be set via BEY_API_KEY environment variable.
+   */
   apiKey?: string;
+  /**
+   * The identity of the avatar participant in the room. Defaults to 'bey-avatar-agent'.
+   */
   avatarParticipantIdentity?: string;
+  /**
+   * The name of the avatar participant in the room. Defaults to 'bey-avatar-agent'.
+   */
   avatarParticipantName?: string;
+  /**
+   * Connection options for API requests.
+   */
   connOptions?: APIConnectOptions;
 }
 
+/**
+ * Options for starting an avatar session.
+ */
 export interface StartOptions {
+  /**
+   * LiveKit server URL. Falls back to LIVEKIT_URL environment variable.
+   */
   livekitUrl?: string;
+  /**
+   * LiveKit API key. Falls back to LIVEKIT_API_KEY environment variable.
+   */
   livekitApiKey?: string;
+  /**
+   * LiveKit API secret. Falls back to LIVEKIT_API_SECRET environment variable.
+   */
   livekitApiSecret?: string;
 }
 
 /**
- * A Beyond Presence avatar session
+ * A Beyond Presence avatar session.
+ *
+ * This class manages the connection between a LiveKit agent and a Beyond Presence avatar,
+ * routing agent audio output to the avatar for visual representation.
+ *
+ * @example
+ * ```typescript
+ * const avatar = new AvatarSession({
+ *   avatarId: 'your-avatar-id',
+ *   apiKey: 'your-bey-api-key',
+ * });
+ * await avatar.start(agentSession, room);
+ * ```
  */
 export class AvatarSession {
   private avatarId: string;
@@ -57,6 +105,12 @@ export class AvatarSession {
 
   #logger = log();
 
+  /**
+   * Creates a new AvatarSession.
+   *
+   * @param options - Configuration options for the avatar session
+   * @throws {BeyException} If BEY_API_KEY is not set
+   */
   constructor(options: AvatarSessionOptions = {}) {
     this.avatarId = options.avatarId || EGE_STOCK_AVATAR_ID;
     this.apiUrl = options.apiUrl || process.env.BEY_API_URL || DEFAULT_API_URL;
@@ -74,6 +128,19 @@ export class AvatarSession {
     this.connOptions = options.connOptions || DEFAULT_API_CONNECT_OPTIONS;
   }
 
+  /**
+   * Starts the avatar session and connects it to the agent.
+   *
+   * This method:
+   * 1. Creates a LiveKit token for the avatar participant
+   * 2. Calls the Beyond Presence API to start the avatar session
+   * 3. Configures the agent's audio output to stream to the avatar
+   *
+   * @param agentSession - The agent session to connect to the avatar
+   * @param room - The LiveKit room where the avatar will join
+   * @param options - Optional LiveKit credentials (falls back to environment variables)
+   * @throws {BeyException} If LiveKit credentials are not available or if the avatar session fails to start
+   */
   async start(
     agentSession: voice.AgentSession,
     room: Room,

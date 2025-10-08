@@ -14,7 +14,6 @@ import * as bey from '@livekit/agents-plugin-bey';
 import * as openai from '@livekit/agents-plugin-openai';
 import { fileURLToPath } from 'node:url';
 
-
 export default defineAgent({
   entry: async (ctx: JobContext) => {
     const agent = new voice.Agent({
