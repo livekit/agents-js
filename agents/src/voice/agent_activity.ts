@@ -1506,10 +1506,7 @@ export class AgentActivity implements RecognitionHooks {
       abortController: AbortController,
       outputs: Array<[string, _TextOut | null, _AudioOut | null]>,
     ) => {
-      // Create a child controller for forwarders to avoid propagating cleanup aborts
-      // to other tasks (e.g., tool execution) that share the replyAbortController.
-      const forwarderController = new AbortController();
-      abortController.signal.addEventListener('abort', () => forwarderController.abort(), {
+      replyAbortController.signal.addEventListener('abort', () => abortController.abort(), {
         once: true,
       });
 
@@ -1527,7 +1524,7 @@ export class AgentActivity implements RecognitionHooks {
           if (trNodeResult) {
             const [textForwardTask, _textOut] = performTextForwarding(
               trNodeResult,
-              forwarderController,
+              replyAbortController,
               textOutput,
             );
             forwardTasks.push(textForwardTask);
@@ -1543,7 +1540,7 @@ export class AgentActivity implements RecognitionHooks {
               const [forwardTask, _audioOut] = performAudioForwarding(
                 realtimeAudio,
                 audioOutput,
-                forwarderController,
+                replyAbortController,
               );
               forwardTasks.push(forwardTask);
               audioOut = _audioOut;
@@ -1570,7 +1567,7 @@ export class AgentActivity implements RecognitionHooks {
     const tasks = [
       Task.from(
         (controller) => readMessages(controller, messageOutputs),
-        replyAbortController,
+        undefined,
         'AgentActivity.realtime_generation.read_messages',
       ),
     ];
