@@ -25,10 +25,8 @@ export default defineAgent({
       room: ctx.room,
     });
 
-    // Get avatar ID from environment variable or use default
     const avatarId = process.env.BEY_AVATAR_ID;
 
-    // Start the Bey avatar session and route Agent audio to the avatar
     const avatar = new bey.AvatarSession({
       avatarId: avatarId || undefined,
     });
@@ -41,7 +39,6 @@ export default defineAgent({
       usageCollector.collect(ev.metrics);
     });
 
-    // Start the agent session
     session.generateReply({
       instructions: 'Greet the user briefly and confirm you are ready.',
     });
