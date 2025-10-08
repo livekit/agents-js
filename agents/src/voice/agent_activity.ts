@@ -1524,7 +1524,7 @@ export class AgentActivity implements RecognitionHooks {
           if (trNodeResult) {
             const [textForwardTask, _textOut] = performTextForwarding(
               trNodeResult,
-              replyAbortController,
+              abortController,
               textOutput,
             );
             forwardTasks.push(textForwardTask);
@@ -1540,7 +1540,7 @@ export class AgentActivity implements RecognitionHooks {
               const [forwardTask, _audioOut] = performAudioForwarding(
                 realtimeAudio,
                 audioOutput,
-                replyAbortController,
+                abortController,
               );
               forwardTasks.push(forwardTask);
               audioOut = _audioOut;
