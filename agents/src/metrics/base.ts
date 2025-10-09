@@ -15,7 +15,7 @@ export type LLMMetrics = {
   label: string;
   requestId: string;
   timestamp: number;
-  duration: number;
+  duration: number; // in milliseconds
   ttft: number;
   cancelled: boolean;
   completionTokens: number;
