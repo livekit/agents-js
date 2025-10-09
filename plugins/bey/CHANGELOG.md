@@ -1,6 +1,6 @@
 # @livekit/agents-plugin-bey
 
-## 1.0.0
+## 0.0.1
 
 ### Major Changes
 
