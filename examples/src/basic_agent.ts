@@ -34,19 +34,25 @@ export default defineAgent({
       },
     });
 
-    const vad = ctx.proc.userData.vad! as silero.VAD;
-
     const session = new voice.AgentSession({
-      vad,
-      // stt: new inference.STT({ model: 'cartesia/ink-whisper', language: 'en' }),
-      stt: 'cartesia/ink-whisper:en',
+      // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
+      // See all available models at https://docs.livekit.io/agents/models/stt/
+      // stt: new inference.STT({ model: 'assemblyai/universal-streaming:en', language: 'en' }),
+      stt: 'assemblyai/universal-streaming:en',
+      // A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
+      // See all available models at https://docs.livekit.io/agents/models/llm/
       // llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
       llm: 'openai/gpt-4.1-mini',
-      // tts: new inference.TTS({ model: 'cartesia/sonic-2', voice: '794f9389-aac1-45b6-b726-9d9369183238' }),
-      tts: 'cartesia/sonic-2:794f9389-aac1-45b6-b726-9d9369183238',
+      // Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
+      // See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
+      // tts: new inference.TTS({ model: 'cartesia/sonic-2:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
+      tts: 'cartesia/sonic-2:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
+      // See more at https://docs.livekit.io/agents/build/turns
+      vad: ctx.proc.userData.vad! as silero.VAD,
+      turnDetection: new livekit.turnDetector.MultilingualModel(),
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
     });
 
     const usageCollector = new metrics.UsageCollector();
