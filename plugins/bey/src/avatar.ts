@@ -17,7 +17,7 @@ import { log } from './log.js';
 
 const ATTRIBUTE_PUBLISH_ON_BEHALF = 'lk.publish_on_behalf';
 
-const EGE_STOCK_AVATAR_ID = 'b9be11b8-89fb-4227-8f86-4a881393cbdb';
+const STOCK_AVATAR_ID = '694c83e2-8895-4a98-bd16-56332ca3f449';
 const DEFAULT_API_URL = 'https://api.bey.dev';
 const AVATAR_AGENT_IDENTITY = 'bey-avatar-agent';
 const AVATAR_AGENT_NAME = 'bey-avatar-agent';
@@ -112,7 +112,7 @@ export class AvatarSession {
    * @throws BeyException if BEY_API_KEY is not set
    */
   constructor(options: AvatarSessionOptions = {}) {
-    this.avatarId = options.avatarId || EGE_STOCK_AVATAR_ID;
+    this.avatarId = options.avatarId || STOCK_AVATAR_ID;
     this.apiUrl = options.apiUrl || process.env.BEY_API_URL || DEFAULT_API_URL;
     this.apiKey = options.apiKey || process.env.BEY_API_KEY || '';
 
