@@ -1506,6 +1506,10 @@ export class AgentActivity implements RecognitionHooks {
       abortController: AbortController,
       outputs: Array<[string, _TextOut | null, _AudioOut | null]>,
     ) => {
+      replyAbortController.signal.addEventListener('abort', () => abortController.abort(), {
+        once: true,
+      });
+
       const forwardTasks: Array<Task<void>> = [];
       try {
         for await (const msg of ev.messageStream) {
@@ -1563,7 +1567,7 @@ export class AgentActivity implements RecognitionHooks {
     const tasks = [
       Task.from(
         (controller) => readMessages(controller, messageOutputs),
-        replyAbortController,
+        undefined,
         'AgentActivity.realtime_generation.read_messages',
       ),
     ];

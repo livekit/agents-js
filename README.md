@@ -70,12 +70,22 @@ Currently, only the following plugins are supported:
 | [@livekit/agents-plugin-cartesia](https://www.npmjs.com/package/@livekit/agents-plugin-cartesia)     | TTS           |
 | [@livekit/agents-plugin-neuphonic](https://www.npmjs.com/package/@livekit/agents-plugin-neuphonic)   | TTS           |
 | [@livekit/agents-plugin-resemble](https://www.npmjs.com/package/@livekit/agents-plugin-resemble)     | TTS           |
+| [@livekit/agents-plugin-rime](https://www.npmjs.com/package/@livekit/agents-plugin-rime)             | TTS           |
 | [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD           |
 | [@livekit/agents-plugin-livekit](https://www.npmjs.com/package/@livekit/agents-plugin-livekit)       | EOU           |
+| [@livekit/agents-plugin-anam](https://www.npmjs.com/package/@livekit/agents-plugin-anam)             | Avatar        |
 
 ## Docs and guides
 
 Documentation on the framework and how to use it can be found [here](https://docs.livekit.io/agents/)
+
+## Recommended starter app
+
+Kickstart a complete voice AI pipeline (LLM, STT, TTS) with the LiveKit Agents Starter for Node.js:
+
+- [livekit-examples/agent-starter-node](https://github.com/livekit-examples/agent-starter-node)
+
+It includes a ready-made assistant, multilingual turn detection, background noise cancellation, metrics/logging, and a production-ready Dockerfile. Start fast, then tailor it with your preferred models and plugins.
 
 ## Core concepts
 
@@ -101,10 +111,8 @@ import {
   defineAgent,
   llm,
   voice,
+  inference,
 } from '@livekit/agents';
-import * as deepgram from '@livekit/agents-plugin-deepgram';
-import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
-import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -124,18 +132,30 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    await ctx.connect();
-
     const agent = new voice.Agent({
       instructions: 'You are a friendly voice assistant built by LiveKit.',
       tools: { lookupWeather },
     });
 
     const session = new voice.AgentSession({
+      // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
+      // See all available models at https://docs.livekit.io/agents/models/stt/
+      // stt: new inference.STT({ model: 'assemblyai/universal-streaming:en', language: 'en' }),
+      stt: 'assemblyai/universal-streaming:en',
+      // A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
+      // See all available models at https://docs.livekit.io/agents/models/llm/
+      // llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      llm: 'openai/gpt-4.1-mini',
+      // Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
+      // See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
+      // tts: new inference.TTS({ model: 'cartesia/sonic-2:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
+      tts: 'cartesia/sonic-2:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
+      // See more at https://docs.livekit.io/agents/build/turns
       vad: ctx.proc.userData.vad! as silero.VAD,
-      stt: new deepgram.STT(),
-      llm: new openai.LLM(),
-      tts: new elevenlabs.TTS(),
+      turnDetection: new livekit.turnDetector.MultilingualModel(),
+      // to use realtime model, replace the stt, llm, tts and vad with the following
+      // llm: new openai.realtime.RealtimeModel(),
     });
 
     await session.start({
@@ -152,11 +172,7 @@ export default defineAgent({
 cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
 ```
 
-You'll need the following environment variables for this example:
-
-- DEEPGRAM_API_KEY
-- OPENAI_API_KEY
-- ELEVEN_API_KEY
+No third-party API keys are required for this example. It runs out of the box via the [LiveKit Inference Gateway](https://docs.livekit.io/agents/models/#inference).
 
 ### Multi-agent handoff
 
