@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, log, shortuuid, tokenize, tts } from '@livekit/agents';
+import { AudioByteStream, shortuuid, tokenize, tts } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
 import { type RawData, WebSocket } from 'ws';
@@ -36,7 +36,7 @@ const defaultTTSOptions: TTSOptions = {
 };
 
 export class TTS extends tts.TTS {
-  #opts: TTSOptions;
+  private opts: TTSOptions;
   label = 'deepgram.TTS';
 
   constructor(opts: Partial<TTSOptions> = {}) {
@@ -44,12 +44,12 @@ export class TTS extends tts.TTS {
       streaming: opts.capabilities?.streaming ?? defaultTTSOptions.capabilities.streaming,
     });
 
-    this.#opts = {
+    this.opts = {
       ...defaultTTSOptions,
       ...opts,
     };
 
-    if (this.#opts.apiKey === undefined) {
+    if (this.opts.apiKey === undefined) {
       throw new Error(
         'Deepgram API key is required, whether as an argument or as $DEEPGRAM_API_KEY',
       );
@@ -57,34 +57,33 @@ export class TTS extends tts.TTS {
   }
 
   synthesize(text: string): tts.ChunkedStream {
-    return new ChunkedStream(this, text, this.#opts);
+    return new ChunkedStream(this, text, this.opts);
   }
 
   stream(): tts.SynthesizeStream {
-    return new SynthesizeStream(this, this.#opts);
+    return new SynthesizeStream(this, this.opts);
   }
 }
 
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'deepgram.ChunkedStream';
-  #opts: TTSOptions;
-  #logger = log();
-  #text: string;
+  private opts: TTSOptions;
+  private text: string;
 
   constructor(tts: TTS, text: string, opts: TTSOptions) {
     super(text, tts);
-    this.#text = text;
-    this.#opts = opts;
+    this.text = text;
+    this.opts = opts;
   }
 
   protected async run() {
     const requestId = shortuuid();
-    const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
-    const json = { text: this.#text };
-    const url = new URL(`${this.#opts.baseUrl!}/v1/speak`);
-    url.searchParams.append('sample_rate', this.#opts.sampleRate.toString());
-    url.searchParams.append('model', this.#opts.model);
-    url.searchParams.append('encoding', this.#opts.encoding);
+    const bstream = new AudioByteStream(this.opts.sampleRate, NUM_CHANNELS);
+    const json = { text: this.text };
+    const url = new URL(`${this.opts.baseUrl!}/v1/speak`);
+    url.searchParams.append('sample_rate', this.opts.sampleRate.toString());
+    url.searchParams.append('model', this.opts.model);
+    url.searchParams.append('encoding', this.opts.encoding);
 
     await new Promise<void>((resolve, reject) => {
       const req = request(
@@ -94,7 +93,7 @@ export class ChunkedStream extends tts.ChunkedStream {
           path: url.pathname + url.search,
           method: 'POST',
           headers: {
-            [AUTHORIZATION_HEADER]: `Token ${this.#opts.apiKey!}`,
+            [AUTHORIZATION_HEADER]: `Token ${this.opts.apiKey!}`,
             'Content-Type': 'application/json',
           },
         },
@@ -120,7 +119,6 @@ export class ChunkedStream extends tts.ChunkedStream {
           });
 
           res.on('error', (err) => {
-            this.#logger.error(`Deepgram TTS response error: ${err}`);
             reject(err);
           });
 
@@ -144,7 +142,6 @@ export class ChunkedStream extends tts.ChunkedStream {
       );
 
       req.on('error', (err) => {
-        this.#logger.error(`Deepgram TTS request error: ${err}`);
         reject(err);
       });
 
@@ -155,29 +152,29 @@ export class ChunkedStream extends tts.ChunkedStream {
 }
 
 export class SynthesizeStream extends tts.SynthesizeStream {
-  #opts: TTSOptions;
-  #tokenizer: tokenize.SentenceStream;
+  private opts: TTSOptions;
+  private tokenizer: tokenize.SentenceStream;
   label = 'deepgram.SynthesizeStream';
 
   constructor(tts: TTS, opts: TTSOptions) {
     super(tts);
-    this.#opts = opts;
-    this.#tokenizer = opts.sentenceTokenizer.stream();
+    this.opts = opts;
+    this.tokenizer = opts.sentenceTokenizer.stream();
   }
 
   protected async run() {
     const requestId = shortuuid();
     const segmentId = shortuuid();
 
-    const wsUrl = this.#opts.baseUrl!.replace(/^http/, 'ws');
+    const wsUrl = this.opts.baseUrl!.replace(/^http/, 'ws');
     const url = new URL(`${wsUrl}/v1/speak`);
-    url.searchParams.append('sample_rate', this.#opts.sampleRate.toString());
-    url.searchParams.append('model', this.#opts.model);
-    url.searchParams.append('encoding', this.#opts.encoding);
+    url.searchParams.append('sample_rate', this.opts.sampleRate.toString());
+    url.searchParams.append('model', this.opts.model);
+    url.searchParams.append('encoding', this.opts.encoding);
 
     const ws = new WebSocket(url, {
       headers: {
-        [AUTHORIZATION_HEADER]: `Token ${this.#opts.apiKey!}`,
+        [AUTHORIZATION_HEADER]: `Token ${this.opts.apiKey!}`,
       },
     });
 
@@ -190,17 +187,17 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const inputTask = async () => {
       for await (const data of this.input) {
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
-          this.#tokenizer.flush();
+          this.tokenizer.flush();
           continue;
         }
-        this.#tokenizer.pushText(data);
+        this.tokenizer.pushText(data);
       }
-      this.#tokenizer.endInput();
-      this.#tokenizer.close();
+      this.tokenizer.endInput();
+      this.tokenizer.close();
     };
 
     const sendTask = async () => {
-      for await (const event of this.#tokenizer) {
+      for await (const event of this.tokenizer) {
         if (this.abortController.signal.aborted) break;
 
         const message = JSON.stringify({
@@ -219,7 +216,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     const recvTask = async () => {
-      const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
+      const bstream = new AudioByteStream(this.opts.sampleRate, NUM_CHANNELS);
       let finalReceived = false;
       let timeout: NodeJS.Timeout | null = null;
       let lastFrame: AudioFrame | undefined;
