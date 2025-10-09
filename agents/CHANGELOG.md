@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.11
+
+### Patch Changes
+
+- Add comment on units for LLM metrics - [#764](https://github.com/livekit/agents-js/pull/764) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- Support custom text callback - [#761](https://github.com/livekit/agents-js/pull/761) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.10
 
 ### Patch Changes
