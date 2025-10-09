@@ -51,14 +51,9 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad,
-      // stt: new inference.STT({ model: 'cartesia/ink-whisper', language: 'en' }),
       stt: 'cartesia/ink-whisper:en',
-      // llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
       llm: 'openai/gpt-4.1-mini',
-      // tts: new inference.TTS({ model: 'cartesia/sonic-2', voice: '794f9389-aac1-45b6-b726-9d9369183238' }),
       tts: 'cartesia/sonic-2:794f9389-aac1-45b6-b726-9d9369183238',
-      // to use realtime model, replace the stt, llm, tts and vad with the following
-      // llm: new openai.realtime.RealtimeModel(),
       turnDetection: new livekit.turnDetector.MultilingualModel(),
     });
 
