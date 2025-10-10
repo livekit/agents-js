@@ -173,6 +173,9 @@ importers:
       '@livekit/agents-plugin-anam':
         specifier: workspace:*
         version: link:../plugins/anam
+      '@livekit/agents-plugin-bey':
+        specifier: workspace:*
+        version: link:../plugins/bey
       '@livekit/agents-plugin-cartesia':
         specifier: workspace:*
         version: link:../plugins/cartesia
@@ -256,6 +259,31 @@ importers:
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.4.5
+
+  plugins/bey:
+    dependencies:
+      livekit-server-sdk:
+        specifier: ^2.13.3
+        version: 2.13.3
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/rtc-node':
+        specifier: ^0.13.12
+        version: 0.13.13
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@22.15.30)
+      pino:
+        specifier: ^8.19.0
+        version: 8.21.0
       tsup:
         specifier: ^8.3.5
         version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
