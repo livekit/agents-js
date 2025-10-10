@@ -203,12 +203,13 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     this.output.close();
 
     const duration = process.hrtime.bigint() - startTime;
+    const durationMs = Math.trunc(Number(duration / BigInt(1000000)));
     const metrics: LLMMetrics = {
       type: 'llm_metrics',
       timestamp: Date.now(),
       requestId,
-      ttft: ttft === BigInt(-1) ? -1 : Math.trunc(Number(ttft / BigInt(1000000))),
-      duration: Math.trunc(Number(duration / BigInt(1000000))),
+      ttftMs: ttft === BigInt(-1) ? -1 : Math.trunc(Number(ttft / BigInt(1000000))),
+      durationMs,
       cancelled: this.abortController.signal.aborted,
       label: this.#llm.label(),
       completionTokens: usage?.completionTokens || 0,
@@ -216,8 +217,10 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       promptCachedTokens: usage?.promptCachedTokens || 0,
       totalTokens: usage?.totalTokens || 0,
       tokensPerSecond: (() => {
-        const durationSeconds = Math.trunc(Number(duration / BigInt(1000000000)));
-        return durationSeconds > 0 ? (usage?.completionTokens || 0) / durationSeconds : 0;
+        if (durationMs <= 0) {
+          return 0;
+        }
+        return (usage?.completionTokens || 0) / (durationMs / 1000);
       })(),
     };
     this.#llm.emit('metrics_collected', metrics);

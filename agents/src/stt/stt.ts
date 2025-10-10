@@ -6,7 +6,7 @@ import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { APIConnectionError, APIError } from '../_exceptions.js';
-import { calculateAudioDuration } from '../audio.js';
+import { calculateAudioDurationSeconds } from '../audio.js';
 import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
@@ -110,14 +110,14 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
   async recognize(frame: AudioBuffer): Promise<SpeechEvent> {
     const startTime = process.hrtime.bigint();
     const event = await this._recognize(frame);
-    const duration = Number((process.hrtime.bigint() - startTime) / BigInt(1000000));
+    const durationMs = Number((process.hrtime.bigint() - startTime) / BigInt(1000000));
     this.emit('metrics_collected', {
       type: 'stt_metrics',
       requestId: event.requestId ?? '',
       timestamp: Date.now(),
-      duration,
+      durationMs,
       label: this.label,
-      audioDuration: calculateAudioDuration(frame),
+      audioDurationMs: Math.round(calculateAudioDurationSeconds(frame) * 1000),
       streamed: false,
     });
     return event;
@@ -252,9 +252,9 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         type: 'stt_metrics',
         timestamp: Date.now(),
         requestId: event.requestId!,
-        duration: 0,
+        durationMs: 0,
         label: this.#stt.label,
-        audioDuration: event.recognitionUsage!.audioDuration,
+        audioDurationMs: Math.round(event.recognitionUsage!.audioDuration * 1000),
         streamed: true,
       };
       this.#stt.emit('metrics_collected', metrics);

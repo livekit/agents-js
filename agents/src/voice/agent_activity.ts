@@ -984,9 +984,9 @@ export class AgentActivity implements RecognitionHooks {
     const eouMetrics: EOUMetrics = {
       type: 'eou_metrics',
       timestamp: Date.now(),
-      endOfUtteranceDelay: info.endOfUtteranceDelay,
-      transcriptionDelay: info.transcriptionDelay,
-      onUserTurnCompletedDelay: callbackDuration,
+      endOfUtteranceDelayMs: info.endOfUtteranceDelay,
+      transcriptionDelayMs: info.transcriptionDelay,
+      onUserTurnCompletedDelayMs: callbackDuration,
       speechId: speechHandle.id,
     };
 
