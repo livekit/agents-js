@@ -139,7 +139,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   }
 
   protected async monitorMetrics() {
-    let inferenceDurationTotal = 0;
+    let inferenceDurationTotalMs = 0;
     let inferenceCount = 0;
     const metricsReader = this.metricsStream.getReader();
     while (true) {
@@ -154,20 +154,20 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
             this.#vad.emit('metrics_collected', {
               type: 'vad_metrics',
               timestamp: Date.now(),
-              idleTime: Math.trunc(
+              idleTimeMs: Math.trunc(
                 Number((process.hrtime.bigint() - this.#lastActivityTime) / BigInt(1000000)),
               ),
-              inferenceDurationTotal,
+              inferenceDurationTotalMs,
               inferenceCount,
               label: this.#vad.label,
             });
 
             inferenceCount = 0;
-            inferenceDurationTotal = 0;
+            inferenceDurationTotalMs = 0;
           }
           break;
         case VADEventType.INFERENCE_DONE:
-          inferenceDurationTotal += value.inferenceDuration;
+          inferenceDurationTotalMs += Math.round(value.inferenceDuration);
           this.#lastActivityTime = process.hrtime.bigint();
           break;
         case VADEventType.END_OF_SPEECH:

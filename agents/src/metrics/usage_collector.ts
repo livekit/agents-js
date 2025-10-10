@@ -8,7 +8,7 @@ export interface UsageSummary {
   llmPromptCachedTokens: number;
   llmCompletionTokens: number;
   ttsCharactersCount: number;
-  sttAudioDuration: number;
+  sttAudioDurationMs: number;
 }
 
 export class UsageCollector {
@@ -20,7 +20,7 @@ export class UsageCollector {
       llmPromptCachedTokens: 0,
       llmCompletionTokens: 0,
       ttsCharactersCount: 0,
-      sttAudioDuration: 0,
+      sttAudioDurationMs: 0,
     };
   }
 
@@ -36,7 +36,7 @@ export class UsageCollector {
     } else if (metrics.type === 'tts_metrics') {
       this.summary.ttsCharactersCount += metrics.charactersCount;
     } else if (metrics.type === 'stt_metrics') {
-      this.summary.sttAudioDuration += metrics.audioDuration;
+      this.summary.sttAudioDurationMs += metrics.audioDurationMs;
     }
   }
 

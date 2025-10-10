@@ -13,7 +13,7 @@ export const logMetrics = (metrics: AgentMetrics) => {
   if (metrics.type === 'llm_metrics') {
     logger
       .child({
-        ttft: roundTwoDecimals(metrics.ttft),
+        ttftMs: roundTwoDecimals(metrics.ttftMs),
         inputTokens: metrics.promptTokens,
         promptCachedTokens: metrics.promptCachedTokens,
         outputTokens: metrics.completionTokens,
@@ -23,7 +23,7 @@ export const logMetrics = (metrics: AgentMetrics) => {
   } else if (metrics.type === 'realtime_model_metrics') {
     logger
       .child({
-        ttft: roundTwoDecimals(metrics.ttft),
+        ttftMs: roundTwoDecimals(metrics.ttftMs),
         input_tokens: metrics.inputTokens,
         cached_input_tokens: metrics.inputTokenDetails.cachedTokens,
         output_tokens: metrics.outputTokens,
@@ -34,21 +34,30 @@ export const logMetrics = (metrics: AgentMetrics) => {
   } else if (metrics.type === 'tts_metrics') {
     logger
       .child({
-        ttfb: roundTwoDecimals(metrics.ttfb),
-        audioDuration: metrics.audioDuration,
+        ttfbMs: roundTwoDecimals(metrics.ttfbMs),
+        audioDurationMs: Math.round(metrics.audioDurationMs),
       })
       .info('TTS metrics');
   } else if (metrics.type === 'eou_metrics') {
     logger
       .child({
-        end_of_utterance_delay: roundTwoDecimals(metrics.endOfUtteranceDelay),
-        transcription_delay: roundTwoDecimals(metrics.transcriptionDelay),
+        endOfUtteranceDelayMs: roundTwoDecimals(metrics.endOfUtteranceDelayMs),
+        transcriptionDelayMs: roundTwoDecimals(metrics.transcriptionDelayMs),
+        onUserTurnCompletedDelayMs: roundTwoDecimals(metrics.onUserTurnCompletedDelayMs),
       })
       .info('EOU metrics');
+  } else if (metrics.type === 'vad_metrics') {
+    logger
+      .child({
+        idleTimeMs: Math.round(metrics.idleTimeMs),
+        inferenceDurationTotalMs: Math.round(metrics.inferenceDurationTotalMs),
+        inferenceCount: metrics.inferenceCount,
+      })
+      .info('VAD metrics');
   } else if (metrics.type === 'stt_metrics') {
     logger
       .child({
-        audioDuration: metrics.audioDuration,
+        audioDurationMs: Math.round(metrics.audioDurationMs),
       })
       .info('STT metrics');
   }

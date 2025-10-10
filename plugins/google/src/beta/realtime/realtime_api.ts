@@ -1338,8 +1338,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     const completedTimestamp = gen._completedTimestamp || Date.now();
 
     // Calculate metrics
-    const ttft = firstTokenTimestamp ? firstTokenTimestamp - createdTimestamp : -1;
-    const duration = (completedTimestamp - createdTimestamp) / 1000; // Convert to seconds
+    const ttftMs = firstTokenTimestamp ? firstTokenTimestamp - createdTimestamp : -1;
+    const durationMs = completedTimestamp - createdTimestamp;
 
     const inputTokens = usage.promptTokenCount || 0;
     const outputTokens = usage.responseTokenCount || 0;
@@ -1347,16 +1347,16 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const realtimeMetrics = {
       type: 'realtime_model_metrics',
-      timestamp: createdTimestamp / 1000,
+      timestamp: createdTimestamp,
       requestId: gen.responseId,
-      ttft,
-      duration,
+      ttftMs,
+      durationMs,
       cancelled: gen._done && !gen._completedTimestamp,
       label: 'google_realtime',
       inputTokens,
       outputTokens,
       totalTokens,
-      tokensPerSecond: duration > 0 ? outputTokens / duration : 0,
+      tokensPerSecond: durationMs > 0 ? outputTokens / (durationMs / 1000) : 0,
       inputTokenDetails: {
         ...this.tokenDetailsMap(usage.promptTokensDetails),
         cachedTokens: (usage.cacheTokensDetails || []).reduce(
