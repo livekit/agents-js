@@ -1,7 +1,7 @@
 {
-  "name": "@livekit/agents-plugin-rime",
-  "version": "1.0.3",
-  "description": "Rime plugin for LiveKit Node Agents",
+  "name": "@livekit/agents-plugin-anam",
+  "version": "1.0.0",
+  "description": "Anam plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",
@@ -36,7 +36,6 @@
   "devDependencies": {
     "@livekit/agents": "workspace:*",
     "@livekit/agents-plugin-openai": "workspace:*",
-    "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "^0.13.12",
     "@microsoft/api-extractor": "^7.35.0",
@@ -45,6 +44,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "livekit-server-sdk": "^2.9.2",
     "ws": "^8.16.0"
   },
   "peerDependencies": {

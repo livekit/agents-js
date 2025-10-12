@@ -1,5 +1,17 @@
 # @livekit/agents
 
+## 1.0.10
+
+### Patch Changes
+
+- Ensure tool calls are not aborted when preamble text forwarding stops. It refines the execution flow so that cleanup of preamble forwarders does not propagate an abort to in-flight tool executions. - [#756](https://github.com/livekit/agents-js/pull/756) ([@jjsquillante](https://github.com/jjsquillante))
+
+## 1.0.9
+
+### Patch Changes
+
+- Wait for all speech playouts inside tool before tool reply in realtime model - [#753](https://github.com/livekit/agents-js/pull/753) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.8
 
 ### Patch Changes
