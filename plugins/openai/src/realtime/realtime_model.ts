@@ -1303,21 +1303,21 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     // Calculate and emit metrics
     const usage = _event.response.usage;
-    const ttft = firstTokenTimestamp ? firstTokenTimestamp - createdTimestamp : -1;
-    const duration = (Date.now() - createdTimestamp) / 1000; // Convert to seconds
+    const ttftMs = firstTokenTimestamp ? firstTokenTimestamp - createdTimestamp : -1;
+    const durationMs = Date.now() - createdTimestamp;
 
     const realtimeMetrics: metrics.RealtimeModelMetrics = {
       type: 'realtime_model_metrics',
-      timestamp: createdTimestamp / 1000, // Convert to seconds
+      timestamp: createdTimestamp,
       requestId: _event.response.id || '',
-      ttft,
-      duration,
+      ttftMs,
+      durationMs,
       cancelled: _event.response.status === 'cancelled',
       label: 'openai_realtime',
       inputTokens: usage?.input_tokens ?? 0,
       outputTokens: usage?.output_tokens ?? 0,
       totalTokens: usage?.total_tokens ?? 0,
-      tokensPerSecond: duration > 0 ? (usage?.output_tokens ?? 0) / duration : 0,
+      tokensPerSecond: durationMs > 0 ? (usage?.output_tokens ?? 0) / (durationMs / 1000) : 0,
       inputTokenDetails: {
         audioTokens: usage?.input_token_details?.audio_tokens ?? 0,
         textTokens: usage?.input_token_details?.text_tokens ?? 0,

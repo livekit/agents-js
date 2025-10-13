@@ -228,7 +228,7 @@ export abstract class SynthesizeStream
 
   protected async monitorMetrics() {
     const startTime = process.hrtime.bigint();
-    let audioDuration = 0;
+    let audioDurationMs = 0;
     let ttfb: bigint = BigInt(-1);
     let requestId = '';
 
@@ -236,14 +236,15 @@ export abstract class SynthesizeStream
       if (this.#metricsPendingTexts.length) {
         const text = this.#metricsPendingTexts.shift()!;
         const duration = process.hrtime.bigint() - startTime;
+        const roundedAudioDurationMs = Math.round(audioDurationMs);
         const metrics: TTSMetrics = {
           type: 'tts_metrics',
           timestamp: Date.now(),
           requestId,
-          ttfb: ttfb === BigInt(-1) ? -1 : Math.trunc(Number(ttfb / BigInt(1000000))),
-          duration: Math.trunc(Number(duration / BigInt(1000000))),
+          ttfbMs: ttfb === BigInt(-1) ? -1 : Math.trunc(Number(ttfb / BigInt(1000000))),
+          durationMs: Math.trunc(Number(duration / BigInt(1000000))),
           charactersCount: text.length,
-          audioDuration,
+          audioDurationMs: roundedAudioDurationMs,
           cancelled: this.abortController.signal.aborted,
           label: this.#tts.label,
           streamed: false,
@@ -263,7 +264,7 @@ export abstract class SynthesizeStream
         ttfb = process.hrtime.bigint() - startTime;
       }
       // TODO(AJS-102): use frame.durationMs once available in rtc-node
-      audioDuration += audio.frame.samplesPerChannel / audio.frame.sampleRate;
+      audioDurationMs += (audio.frame.samplesPerChannel / audio.frame.sampleRate) * 1000;
       if (audio.final) {
         emit();
       }
@@ -436,7 +437,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
 
   protected async monitorMetrics() {
     const startTime = process.hrtime.bigint();
-    let audioDuration = 0;
+    let audioDurationMs = 0;
     let ttfb: bigint = BigInt(-1);
     let requestId = '';
 
@@ -446,7 +447,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       if (ttfb === BigInt(-1)) {
         ttfb = process.hrtime.bigint() - startTime;
       }
-      audioDuration += audio.frame.samplesPerChannel / audio.frame.sampleRate;
+      audioDurationMs += (audio.frame.samplesPerChannel / audio.frame.sampleRate) * 1000;
     }
     this.output.close();
 
@@ -455,10 +456,10 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       type: 'tts_metrics',
       timestamp: Date.now(),
       requestId,
-      ttfb: ttfb === BigInt(-1) ? -1 : Math.trunc(Number(ttfb / BigInt(1000000))),
-      duration: Math.trunc(Number(duration / BigInt(1000000))),
+      ttfbMs: ttfb === BigInt(-1) ? -1 : Math.trunc(Number(ttfb / BigInt(1000000))),
+      durationMs: Math.trunc(Number(duration / BigInt(1000000))),
       charactersCount: this.#text.length,
-      audioDuration,
+      audioDurationMs: Math.round(audioDurationMs),
       cancelled: false, // TODO(AJS-186): support ChunkedStream with 1.0 - add this.abortController.signal.aborted here
       label: this.#tts.label,
       streamed: false,
