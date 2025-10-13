@@ -85,14 +85,31 @@ const DEFAULT_OPTIONS: ResolvedSpeechmaticsSTTOptions = {
   getJwt: undefined,
 };
 
-type AggregatedAlternativeState = {
-  text: string;
+type FragmentAttachment = 'previous' | 'next' | 'both' | 'none' | undefined;
+
+type SpeechFragment = {
   startTime: number;
   endTime: number;
-  language?: string;
-  speaker?: string | null;
-  confidences: number[];
+  language: string;
+  content: string;
+  speaker: string | null;
+  confidence: number;
+  attachesTo: FragmentAttachment;
+  isFinal: boolean;
+  isEos: boolean;
+  tokenType?: string;
 };
+
+type SpeakerFragments = {
+  startTime: number;
+  endTime: number;
+  language: string;
+  speakerId: string | null;
+  isActive: boolean;
+  fragments: SpeechFragment[];
+};
+
+const SPEAKER_FILTER_REGEX = /^__[A-Z0-9_]{2,}__$/;
 
 export class STT extends stt.STT {
   #opts: ResolvedSpeechmaticsSTTOptions;
@@ -176,8 +193,8 @@ class SpeechStream extends stt.SpeechStream {
   #logger = log();
   #fallbackEouTimer?: NodeJS.Timeout;
   #bstream: AudioByteStream;
-  #finalizedAlternatives: stt.SpeechData[] = [];
-  #latestSpeech?: stt.SpeechData;
+  #speechFragments: SpeechFragment[] = [];
+  #lastSpeakerTexts = new Map<string, string>();
   label = 'speechmatics.SpeechStream';
 
   constructor(
@@ -273,169 +290,301 @@ class SpeechStream extends stt.SpeechStream {
     }
   }
 
-  #aggregateAlternatives(msg: TranscriptMessage): stt.SpeechData[] {
-    const defaultStart = msg.metadata?.start_time ?? 0;
-    const defaultEnd = msg.metadata?.end_time ?? defaultStart;
-    const altMap = new Map<number, AggregatedAlternativeState>();
-
-    for (const result of msg.results ?? []) {
-      const resultStart = result.start_time ?? defaultStart;
-      const resultEnd = result.end_time ?? defaultEnd;
-      const attachesTo = (result as { attaches_to?: 'previous' | 'next' }).attaches_to;
-      const { type } = result;
-
-      for (const [index, alt] of (result.alternatives ?? []).entries()) {
-        if (!alt?.content) {
-          continue;
-        }
-
-        const entry = altMap.get(index) ?? {
-          text: '',
-          startTime: resultStart,
-          endTime: resultEnd,
-          language: alt.language ?? this.#opts.language,
-          speaker: alt.speaker ?? null,
-          confidences: [],
-        };
-
-        entry.text = appendToken(entry.text, alt.content, type, attachesTo);
-        entry.startTime = Math.min(entry.startTime, resultStart);
-        entry.endTime = Math.max(entry.endTime, resultEnd);
-        entry.language = alt.language ?? entry.language;
-        entry.speaker = alt.speaker ?? entry.speaker;
-        if (typeof alt.confidence === 'number') {
-          entry.confidences.push(alt.confidence);
-        }
-
-        altMap.set(index, entry);
-      }
-    }
-
-    if (!altMap.size) {
-      const transcript = msg.metadata?.transcript?.trim();
-      if (!transcript) {
-        return [];
-      }
-
-      return [
-        {
-          language: this.#opts.language,
-          text: toSpeakerFormatted(
-            { content: transcript, language: this.#opts.language, confidence: 0 },
-            this.#opts.speakerActiveFormat,
-            this.#opts.speakerPassiveFormat,
-            this.#opts,
-          ),
-          startTime: defaultStart,
-          endTime: defaultEnd,
-          confidence: 0,
-        },
-      ];
-    }
-
-    return Array.from(altMap.values())
-      .map((entry) => {
-        const content = entry.text.trim() || msg.metadata?.transcript?.trim() || '';
-        if (!content) {
-          return undefined;
-        }
-
-        const confidence = entry.confidences.length
-          ? entry.confidences.reduce((sum, value) => sum + value, 0) / entry.confidences.length
-          : 0;
-
-        return {
-          language: entry.language ?? this.#opts.language,
-          text: toSpeakerFormatted(
-            {
-              content,
-              language: entry.language ?? this.#opts.language,
-              speaker: entry.speaker ?? undefined,
-              confidence,
-            } as RecognitionAlternative,
-            this.#opts.speakerActiveFormat,
-            this.#opts.speakerPassiveFormat,
-            this.#opts,
-          ),
-          startTime: entry.startTime,
-          endTime: entry.endTime,
-          confidence,
-        } satisfies stt.SpeechData;
-      })
-      .filter((alt): alt is stt.SpeechData => alt !== undefined);
-  }
-
   #handleTranscript(msg: TranscriptMessage, isFinal: boolean) {
-    const alternatives = this.#aggregateAlternatives(msg);
+    const hasChanged = this.#addSpeechFragments(msg, isFinal);
 
-    if (!alternatives.length) {
+    if (!hasChanged) {
       if (isFinal) {
-        this.#flushEOU();
+        if (this.#speechFragments.length === 0) {
+          this.#flushEOU();
+        } else {
+          this.#armFallbackEOU();
+        }
       } else {
         this.#armFallbackEOU();
       }
       return;
     }
 
-    let merged: stt.SpeechData | undefined;
+    this.#armFallbackEOU();
+    this.#sendFrames(false);
+  }
 
-    if (isFinal) {
-      this.#mergeFinalAlternatives(alternatives);
-      merged = this.#buildCombinedAlternatives(this.#finalizedAlternatives);
-    } else {
-      merged = this.#buildCombinedAlternatives([...this.#finalizedAlternatives, ...alternatives]);
+  #addSpeechFragments(msg: TranscriptMessage, isFinal: boolean): boolean {
+    const newFragments = this.#extractFragments(msg, isFinal);
+    const currentLength = this.#speechFragments.length;
+
+    this.#speechFragments = this.#speechFragments.filter((fragment) => fragment.isFinal);
+
+    if (!newFragments.length && this.#speechFragments.length === currentLength) {
+      return false;
     }
 
-    if (merged) {
-      const changed = this.#latestSpeech?.text !== merged.text;
-      this.#latestSpeech = merged;
-      if (changed) {
-        this.queue.put({
-          type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
-          alternatives: [merged],
+    const combined = [...this.#speechFragments, ...newFragments];
+    combined.sort((a, b) => a.startTime - b.startTime || a.endTime - b.endTime);
+    this.#speechFragments = combined;
+
+    return true;
+  }
+
+  #extractFragments(msg: TranscriptMessage, isFinal: boolean): SpeechFragment[] {
+    const fragments: SpeechFragment[] = [];
+    const defaultStart = Number(msg.metadata?.start_time ?? 0);
+    const defaultEnd = Number(msg.metadata?.end_time ?? defaultStart);
+
+    for (const result of msg.results ?? []) {
+      const alternatives = result.alternatives ?? [];
+      if (!alternatives.length) {
+        continue;
+      }
+
+      const alt = alternatives[0];
+      const content = alt?.content?.trim();
+      if (!content) {
+        continue;
+      }
+
+      const speaker = (alt?.speaker ?? null) as string | null;
+      if (!this.#shouldRetainSpeaker(speaker)) {
+        continue;
+      }
+
+      fragments.push({
+        startTime: Number((result as { start_time?: number }).start_time ?? defaultStart),
+        endTime: Number((result as { end_time?: number }).end_time ?? defaultEnd),
+        language: alt?.language ?? this.#opts.language,
+        content,
+        speaker,
+        confidence: typeof alt?.confidence === 'number' ? alt.confidence : 0,
+        attachesTo: (result as { attaches_to?: FragmentAttachment }).attaches_to,
+        isFinal,
+        isEos: Boolean((alt as { is_eos?: boolean }).is_eos),
+        tokenType: (result as { type?: string }).type,
+      });
+    }
+
+    if (!fragments.length) {
+      const transcript = msg.metadata?.transcript?.trim();
+      if (transcript) {
+        fragments.push({
+          startTime: defaultStart,
+          endTime: defaultEnd,
+          language: this.#opts.language,
+          content: transcript,
+          speaker: null,
+          confidence: 0,
+          attachesTo: undefined,
+          isFinal,
+          isEos: false,
+          tokenType: undefined,
         });
       }
     }
 
-    if (!isFinal) {
-      this.#armFallbackEOU();
-    }
+    return fragments;
   }
 
-  #mergeFinalAlternatives(alternatives: stt.SpeechData[]) {
-    const eps = 0.02;
-    for (const alt of alternatives) {
-      this.#finalizedAlternatives = this.#finalizedAlternatives.filter(
-        (existing) => existing.startTime + eps < alt.startTime,
-      );
-      this.#finalizedAlternatives.push(alt);
+  #shouldRetainSpeaker(speaker: string | null): boolean {
+    if (!speaker) {
+      return true;
     }
-    this.#finalizedAlternatives.sort((a, b) => a.startTime - b.startTime);
+
+    if (SPEAKER_FILTER_REGEX.test(speaker)) {
+      return false;
+    }
+
+    if (
+      this.#opts.focusMode === 'ignore' &&
+      this.#opts.focusSpeakers.length > 0 &&
+      !this.#opts.focusSpeakers.includes(speaker)
+    ) {
+      return false;
+    }
+
+    if (this.#opts.ignoreSpeakers.length > 0 && this.#opts.ignoreSpeakers.includes(speaker)) {
+      return false;
+    }
+
+    return true;
   }
 
-  #buildCombinedAlternatives(segments: stt.SpeechData[]): stt.SpeechData | undefined {
-    if (!segments.length) {
+  #sendFrames(finalized: boolean): boolean {
+    const frames = this.#getSpeakerFragments();
+    if (!frames.length) {
+      return false;
+    }
+
+    if (!frames.some((frame) => frame.isActive)) {
+      return false;
+    }
+
+    const eventType = finalized
+      ? stt.SpeechEventType.FINAL_TRANSCRIPT
+      : stt.SpeechEventType.INTERIM_TRANSCRIPT;
+
+    let emitted = false;
+
+    for (const frame of frames) {
+      if (!frame.isActive) {
+        continue;
+      }
+
+      const speechData = this.#buildSpeechDataFromGroup(frame);
+      if (!speechData) {
+        continue;
+      }
+
+      const speakerKey = frame.speakerId ?? '__default__';
+      const previous = this.#lastSpeakerTexts.get(speakerKey);
+      if (!finalized && previous === speechData.text) {
+        continue;
+      }
+
+      this.#lastSpeakerTexts.set(speakerKey, speechData.text);
+      this.queue.put({
+        type: eventType,
+        alternatives: [speechData],
+      });
+      emitted = true;
+    }
+
+    return emitted;
+  }
+
+  #getSpeakerFragments(): SpeakerFragments[] {
+    if (!this.#speechFragments.length) {
+      return [];
+    }
+
+    const speakerGroups: SpeechFragment[][] = [];
+    let currentGroup: SpeechFragment[] | undefined;
+    let currentSpeaker: string | null | undefined;
+
+    for (const fragment of this.#speechFragments) {
+      const speakerId = fragment.speaker;
+      if (!currentGroup || speakerId !== currentSpeaker) {
+        currentGroup = [];
+        speakerGroups.push(currentGroup);
+        currentSpeaker = speakerId;
+      }
+      currentGroup.push(fragment);
+    }
+
+    const assembled: SpeakerFragments[] = [];
+    for (const group of speakerGroups) {
+      const fragments = this.#getSpeakerFragmentsFromGroup(group);
+      if (fragments) {
+        assembled.push(fragments);
+      }
+    }
+
+    return assembled;
+  }
+
+  #getSpeakerFragmentsFromGroup(group: SpeechFragment[]): SpeakerFragments | undefined {
+    if (!group.length) {
       return undefined;
     }
 
-    const text = combineTextSegments(segments.map((seg) => seg.text));
+    let trimmed = [...group];
+    while (trimmed.length > 0 && trimmed[0]?.attachesTo === 'previous') {
+      trimmed = trimmed.slice(1);
+    }
+
+    while (
+      trimmed.length > 0 &&
+      trimmed[trimmed.length - 1]?.attachesTo === 'next'
+    ) {
+      trimmed = trimmed.slice(0, -1);
+    }
+
+    if (!trimmed.length) {
+      return undefined;
+    }
+
+    const startTime = Math.min(...trimmed.map((fragment) => fragment.startTime));
+    const endTime = Math.max(...trimmed.map((fragment) => fragment.endTime));
+    const language = trimmed.find((fragment) => fragment.language)?.language ?? this.#opts.language;
+    const firstFragment = trimmed[0];
+    if (!firstFragment) {
+      return undefined;
+    }
+    const speakerId = firstFragment.speaker;
+
+    let isActive = true;
+    if (this.#opts.enableDiarization && this.#opts.focusSpeakers.length > 0) {
+      isActive = Boolean(speakerId && this.#opts.focusSpeakers.includes(speakerId));
+    }
+
+    return {
+      startTime,
+      endTime,
+      language,
+      speakerId,
+      isActive,
+      fragments: trimmed,
+    };
+  }
+
+  #buildSpeechDataFromGroup(group: SpeakerFragments): stt.SpeechData | undefined {
+    const text = this.#formatGroupText(group.fragments);
     if (!text) {
       return undefined;
     }
 
-    const startTime = Math.min(...segments.map((s) => s.startTime));
-    const endTime = Math.max(...segments.map((s) => s.endTime));
-    const language = segments.find((s) => s.language)?.language ?? this.#opts.language;
-    const confidence =
-      segments.reduce((sum, seg) => sum + (seg.confidence ?? 0), 0) / segments.length;
+    const confidences = group.fragments
+      .map((fragment) => fragment.confidence)
+      .filter((value) => Number.isFinite(value));
+    const confidence = confidences.length
+      ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
+      : 0;
+
+    const formatted = toSpeakerFormatted(
+      {
+        content: text,
+        language: group.language,
+        speaker: group.speakerId ?? undefined,
+        confidence,
+      } as RecognitionAlternative,
+      this.#opts.speakerActiveFormat,
+      this.#opts.speakerPassiveFormat,
+      this.#opts,
+    );
 
     return {
-      language,
-      text,
-      startTime,
-      endTime,
+      language: group.language,
+      text: formatted,
+      startTime: group.startTime,
+      endTime: group.endTime,
       confidence,
     } satisfies stt.SpeechData;
+  }
+
+  #formatGroupText(fragments: SpeechFragment[]): string {
+    let text = '';
+    let previousAttachesToNext = false;
+
+    for (const fragment of fragments) {
+      const token = fragment.content;
+      if (!token) {
+        continue;
+      }
+
+      const attachesToPrev = fragment.attachesTo === 'previous' || fragment.attachesTo === 'both';
+      const attachesToNext = fragment.attachesTo === 'next' || fragment.attachesTo === 'both';
+
+      if (text && !previousAttachesToNext && !attachesToPrev) {
+        text += ' ';
+      }
+
+      text += token;
+      previousAttachesToNext = attachesToNext;
+    }
+
+    return text
+      .replace(/\s+([,.;!?])/g, '$1')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   #armFallbackEOU() {
@@ -454,20 +603,14 @@ class SpeechStream extends stt.SpeechStream {
   }
 
   #flushEOU() {
-    if (this.#latestSpeech) {
-      this.queue.put({
-        type: stt.SpeechEventType.FINAL_TRANSCRIPT,
-        alternatives: [this.#latestSpeech],
-      });
-    }
-
+    this.#sendFrames(true);
     this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
     if (this.#fallbackEouTimer) {
       clearTimeout(this.#fallbackEouTimer);
       this.#fallbackEouTimer = undefined;
     }
-    this.#finalizedAlternatives = [];
-    this.#latestSpeech = undefined;
+    this.#speechFragments = [];
+    this.#lastSpeakerTexts.clear();
   }
 
   #toTranscriptionConfig(): RealtimeTranscriptionConfig {
@@ -542,34 +685,4 @@ function toSpeakerFormatted(
     ? fmt.replace('{speaker_id}', speaker).replace('{text}', content)
     : content;
   return formatted.trim();
-}
-
-function appendToken(
-  current: string,
-  token: string,
-  type: string | undefined,
-  attachesTo: 'previous' | 'next' | undefined,
-): string {
-  if (!token) {
-    return current;
-  }
-  if (!current) {
-    return token;
-  }
-  if (type === 'punctuation' || attachesTo === 'previous') {
-    return `${current}${token}`;
-  }
-  return `${current} ${token}`;
-}
-
-function combineTextSegments(segments: string[]): string {
-  const text = segments
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.length > 0)
-    .join(' ')
-    .replace(/\s+([,.;!?])/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return text;
 }
