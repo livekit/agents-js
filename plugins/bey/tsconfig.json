@@ -1,9 +1,16 @@
 {
   "extends": "../../tsconfig.json",
+  "include": ["./src"],
   "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist"
+    // match output dir to input dir. e.g. dist/index instead of dist/src/index
+    "rootDir": "./src",
+    "declarationDir": "./dist",
+    "outDir": "./dist"
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  "typedocOptions": {
+    "name": "plugins/agents-plugin-bey",
+    "entryPointStrategy": "resolve",
+    "readme": "none",
+    "entryPoints": ["src/index.ts"]
+  }
 }
