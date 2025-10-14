@@ -1,5 +1,11 @@
 # @livekit/agents-plugin-bey
 
+## 1.0.1
+
+### Patch Changes
+
+- Added package-specific TypeDoc config - [#768](https://github.com/livekit/agents-js/pull/768) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.0
 
 ### Major Changes
