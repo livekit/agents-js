@@ -23,6 +23,7 @@
   "dependencies": {
     "@livekit/agents": "workspace:*",
     "@livekit/agents-plugin-anam": "workspace:*",
+    "@livekit/agents-plugin-bey": "workspace:*",
     "@livekit/agents-plugin-cartesia": "workspace:*",
     "@livekit/agents-plugin-deepgram": "workspace:*",
     "@livekit/agents-plugin-elevenlabs": "workspace:*",
