@@ -1,5 +1,5 @@
 ---
-'@livekit/agents-plugin-bey': minor
+'@livekit/agents-plugin-bey': major
 ---
 
 Add Beyond Presence (Bey) plugin for LiveKit agents
