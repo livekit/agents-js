@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-google
 
+## 1.0.11
+
+### Patch Changes
+
+- Convert and rename all time-based metric fields to \*Ms variants - [#765](https://github.com/livekit/agents-js/pull/765) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`5358bb8308ebb350fe0f4f99834772715a9f0e0a`](https://github.com/livekit/agents-js/commit/5358bb8308ebb350fe0f4f99834772715a9f0e0a), [`7817d7964a7babb4dc6ed777ca5476647513b1e3`](https://github.com/livekit/agents-js/commit/7817d7964a7babb4dc6ed777ca5476647513b1e3), [`3549f1a65da3ffc2033ea473540fc1282224a12a`](https://github.com/livekit/agents-js/commit/3549f1a65da3ffc2033ea473540fc1282224a12a)]:
+  - @livekit/agents@1.0.11
+
 ## 1.0.10
 
 ### Patch Changes
