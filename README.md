@@ -74,6 +74,7 @@ Currently, only the following plugins are supported:
 | [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD           |
 | [@livekit/agents-plugin-livekit](https://www.npmjs.com/package/@livekit/agents-plugin-livekit)       | EOU           |
 | [@livekit/agents-plugin-anam](https://www.npmjs.com/package/@livekit/agents-plugin-anam)             | Avatar        |
+| [@livekit/agents-plugin-bey](https://www.npmjs.com/package/@livekit/agents-plugin-bey)               | Avatar        |
 
 ## Docs and guides
 
