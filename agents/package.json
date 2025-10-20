@@ -11,8 +11,8 @@
       "default": "./dist/index.js"
     },
     "require": {
-      "types": "./index.d.cts",
-      "default": "./index.cjs"
+      "types": "./dist/index.d.cts",
+      "default": "./dist/index.cjs"
     }
   },
   "author": "LiveKit",
