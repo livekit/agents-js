@@ -247,7 +247,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       for await (const event of this.tokenizer) {
         if (this.abortController.signal.aborted) break;
 
-        // Ensure text ends with a space for proper processing.
         let text = event.token;
         if (!text.endsWith(' ')) {
           text += ' ';
@@ -270,10 +269,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const bstream = new AudioByteStream(this.opts.sampleRate, NUM_CHANNELS);
       let finalReceived = false;
       let timeout: NodeJS.Timeout | null = null;
+      let lastFrame: AudioFrame | undefined;
 
-      const sendFrame = (frame: AudioFrame, final: boolean) => {
-        if (!this.queue.closed) {
-          this.queue.put({ requestId, segmentId, frame, final });
+      const sendLastFrame = (segmentId: string, final: boolean) => {
+        if (lastFrame && !this.queue.closed) {
+          this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+          lastFrame = undefined;
         }
       };
 
@@ -294,8 +295,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               finalReceived = true;
               clearMessageTimeout();
               for (const frame of bstream.flush()) {
-                sendFrame(frame, false);
+                sendLastFrame(segmentId, false);
+                lastFrame = frame;
               }
+              sendLastFrame(segmentId, true);
 
               if (!this.queue.closed) {
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
@@ -311,15 +314,18 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
               : (data as ArrayBuffer);
           for (const frame of bstream.write(buffer as ArrayBuffer)) {
-            sendFrame(frame, false);
+            sendLastFrame(segmentId, false);
+            lastFrame = frame;
           }
         });
 
         ws.on('close', (_code, _reason) => {
           if (!finalReceived) {
             for (const frame of bstream.flush()) {
-              sendFrame(frame, false);
+              sendLastFrame(segmentId, false);
+              lastFrame = frame;
             }
+            sendLastFrame(segmentId, true);
 
             if (!this.queue.closed) {
               this.queue.put(SynthesizeStream.END_OF_STREAM);
