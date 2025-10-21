@@ -156,10 +156,57 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   private tokenizer: tokenize.SentenceStream;
   label = 'deepgram.SynthesizeStream';
 
+  private static readonly FLUSH_MSG = JSON.stringify({ type: 'Flush' });
+  private static readonly CLOSE_MSG = JSON.stringify({ type: 'Close' });
+
   constructor(tts: TTS, opts: TTSOptions) {
     super(tts);
     this.opts = opts;
     this.tokenizer = opts.sentenceTokenizer.stream();
+  }
+
+  private async closeWebSocket(ws: WebSocket): Promise<void> {
+    try {
+      // Send Flush and Close messages to ensure Deepgram processes all remaining audio
+      // and properly terminates the session, preventing lingering TTS sessions
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(SynthesizeStream.FLUSH_MSG);
+        ws.send(SynthesizeStream.CLOSE_MSG);
+
+        // Wait for server acknowledgment to prevent race conditions and ensure
+        // proper cleanup, avoiding 429 Too Many Requests errors from lingering sessions
+        try {
+          await new Promise<void>((resolve, _reject) => {
+            const timeout = setTimeout(() => {
+              resolve();
+            }, 1000);
+
+            ws.once('message', () => {
+              clearTimeout(timeout);
+              resolve();
+            });
+
+            ws.once('close', () => {
+              clearTimeout(timeout);
+              resolve();
+            });
+
+            ws.once('error', () => {
+              clearTimeout(timeout);
+              resolve();
+            });
+          });
+        } catch (e) {
+          // Ignore timeout or other errors during close sequence
+        }
+      }
+    } catch (e) {
+      console.warn(`Error during WebSocket close sequence: ${e}`);
+    } finally {
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+    }
   }
 
   protected async run() {
@@ -200,18 +247,22 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       for await (const event of this.tokenizer) {
         if (this.abortController.signal.aborted) break;
 
+        // Ensure text ends with a space for proper processing.
+        let text = event.token;
+        if (!text.endsWith(' ')) {
+          text += ' ';
+        }
+
         const message = JSON.stringify({
           type: 'Speak',
-          text: event.token,
+          text: text,
         });
+
         ws.send(message);
       }
 
       if (!this.abortController.signal.aborted) {
-        const flushMessage = JSON.stringify({
-          type: 'Flush',
-        });
-        ws.send(flushMessage);
+        ws.send(SynthesizeStream.FLUSH_MSG);
       }
     };
 
@@ -219,12 +270,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const bstream = new AudioByteStream(this.opts.sampleRate, NUM_CHANNELS);
       let finalReceived = false;
       let timeout: NodeJS.Timeout | null = null;
-      let lastFrame: AudioFrame | undefined;
 
-      const sendLastFrame = (final: boolean) => {
-        if (lastFrame && !this.queue.closed) {
-          this.queue.put({ requestId, segmentId, frame: lastFrame, final });
-          lastFrame = undefined;
+      const sendFrame = (frame: AudioFrame, final: boolean) => {
+        if (!this.queue.closed) {
+          this.queue.put({ requestId, segmentId, frame, final });
         }
       };
 
@@ -245,10 +294,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               finalReceived = true;
               clearMessageTimeout();
               for (const frame of bstream.flush()) {
-                sendLastFrame(false);
-                lastFrame = frame;
+                sendFrame(frame, false);
               }
-              sendLastFrame(true);
 
               if (!this.queue.closed) {
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
@@ -259,19 +306,21 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             return;
           }
 
-          for (const frame of bstream.write(data as Buffer)) {
-            sendLastFrame(false);
-            lastFrame = frame;
+          const buffer =
+            data instanceof Buffer
+              ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+              : (data as ArrayBuffer);
+          for (const frame of bstream.write(buffer as ArrayBuffer)) {
+            sendFrame(frame, false);
           }
         });
 
         ws.on('close', (_code, _reason) => {
           if (!finalReceived) {
             for (const frame of bstream.flush()) {
-              sendLastFrame(false);
-              lastFrame = frame;
+              sendFrame(frame, false);
             }
-            sendLastFrame(true);
+
             if (!this.queue.closed) {
               this.queue.put(SynthesizeStream.END_OF_STREAM);
             }
@@ -291,9 +340,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     } catch (e) {
       throw new Error(`failed in main task: ${e}`);
     } finally {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
-      }
+      await this.closeWebSocket(ws);
     }
   }
 }
