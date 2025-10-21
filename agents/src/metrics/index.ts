@@ -4,6 +4,7 @@
 
 export type {
   AgentMetrics,
+  EOUMetrics,
   LLMMetrics,
   RealtimeModelMetrics,
   STTMetrics,
