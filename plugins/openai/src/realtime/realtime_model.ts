@@ -122,7 +122,7 @@ const DEFAULT_REALTIME_MODEL_OPTIONS = {
   model: 'gpt-realtime',
   voice: 'marin',
   temperature: DEFAULT_TEMPERATURE,
-  modalities: ['text', 'audio'] as api_proto.Modality[],
+  modalities: ['audio'] as api_proto.Modality[],
   inputAudioTranscription: DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
   turnDetection: DEFAULT_TURN_DETECTION,
   toolChoice: DEFAULT_TOOL_CHOICE,
@@ -399,6 +399,17 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private createSessionUpdateEvent(): api_proto.SessionUpdateEvent {
+    // OpenAI doesn't support both modalities simultaneously.
+    // If audio is in modalities, prefer audio; otherwise use text.
+
+    // from the docs (https://platform.openai.com/docs/api-reference/realtime-client-events/session)
+    // output_modalities [array]
+    //
+    // The set of modalities the model can respond with. It defaults to ["audio"], indicating that the model will respond with audio plus a transcript. ["text"] can be used to make the model respond with text only. It is not possible to request both text and audio at the same time.
+    const outputModality = this.oaiRealtimeModel._options.modalities.includes('audio')
+      ? 'audio'
+      : 'text';
+
     return {
       type: 'session.update',
       session: {
@@ -406,10 +417,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         voice: this.oaiRealtimeModel._options.voice,
         input_audio_format: 'pcm16',
         output_audio_format: 'pcm16',
-        output_modalities: this.oaiRealtimeModel._options.modalities as
-          | ['text', 'audio']
-          | ['text']
-          | ['audio'],
+        output_modalities: [outputModality],
         turn_detection: this.oaiRealtimeModel._options.turnDetection,
         input_audio_transcription: this.oaiRealtimeModel._options.inputAudioTranscription,
         // TODO(shubhra): add inputAudioNoiseReduction
