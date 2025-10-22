@@ -1,17 +1,33 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { Session } from '@google/genai';
-import * as types from '@google/genai';
 import {
+  type FunctionDeclaration,
+  type FunctionResponse,
+  type GoogleGenAIOptions,
+  type LiveClientToolResponse,
+  type Session,
   ActivityHandling,
   type AudioTranscriptionConfig,
+  Behavior,
   type ContextWindowCompressionConfig,
+  FunctionResponseScheduling,
   GoogleGenAI,
   type HttpOptions,
-  Modality,
   type RealtimeInputConfig,
-} from '@google/genai';
+  type LiveServerMessage,
+  type LiveConnectConfig,
+  type LiveServerContent,
+  type LiveServerToolCall,
+  type LiveServerToolCallCancellation,
+  type UsageMetadata,
+  type ModalityTokenCount,
+  MediaModality,
+  type LiveServerGoAway,
+  Modality,
+  type Content,
+  type LiveClientRealtimeInput
+} from "@google/genai";
 import type { APIConnectOptions } from '@livekit/agents';
 import {
   APIConnectionError,
@@ -34,6 +50,8 @@ import { type LLMTools } from '../../tools.js';
 import { toFunctionDeclarations } from '../../utils.js';
 import type * as api_proto from './api_proto.js';
 import type { LiveAPIModels, Voice } from './api_proto.js';
+
+export { Behavior, FunctionResponseScheduling, Modality };
 
 // Input audio constants (matching Python)
 const INPUT_AUDIO_SAMPLE_RATE = 16000;
@@ -102,6 +120,8 @@ interface RealtimeOptions {
   contextWindowCompression?: ContextWindowCompressionConfig;
   apiVersion?: string;
   geminiTools?: LLMTools;
+  toolBehavior?: Behavior;
+  toolResponseScheduling?: FunctionResponseScheduling;
 }
 
 /**
@@ -273,6 +293,18 @@ export class RealtimeModel extends llm.RealtimeModel {
        * Gemini-specific tools to use for the session
        */
       geminiTools?: LLMTools;
+
+      /**
+       * Tool behavior for function calls (BLOCKING or NON_BLOCKING)
+       * Defaults to NON_BLOCKING to prevent generateReply timeouts
+       */
+      toolBehavior?: Behavior;
+
+      /**
+       * Function response scheduling (SILENT, WHEN_IDLE, or INTERRUPT)
+       * Defaults to WHEN_IDLE
+       */
+      toolResponseScheduling?: FunctionResponseScheduling;
     } = {},
   ) {
     const inputAudioTranscription =
@@ -329,6 +361,9 @@ export class RealtimeModel extends llm.RealtimeModel {
       contextWindowCompression: options.contextWindowCompression,
       apiVersion: options.apiVersion,
       geminiTools: options.geminiTools,
+      toolBehavior: options.toolBehavior ?? Behavior.NON_BLOCKING,
+      toolResponseScheduling:
+        options.toolResponseScheduling ?? FunctionResponseScheduling.WHEN_IDLE,
     };
   }
 
@@ -372,7 +407,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private _chatCtx = llm.ChatContext.empty();
 
   private options: RealtimeOptions;
-  private geminiDeclarations: types.FunctionDeclaration[] = [];
+  private geminiDeclarations: FunctionDeclaration[] = [];
   private messageChannel = new Queue<api_proto.ClientEvents>();
   private inputResampler?: AudioResampler;
   private inputResamplerInputRate?: number;
@@ -421,7 +456,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       timeout: this.options.connOptions.timeoutMs,
     };
 
-    const clientOptions: types.GoogleGenAIOptions = vertexai
+    const clientOptions: GoogleGenAIOptions = vertexai
       ? {
           vertexai: true,
           project,
@@ -463,15 +498,18 @@ export class RealtimeSession extends llm.RealtimeSession {
   private getToolResultsForRealtime(
     ctx: llm.ChatContext,
     vertexai: boolean,
-  ): types.LiveClientToolResponse | undefined {
-    const toolResponses: types.FunctionResponse[] = [];
+  ): LiveClientToolResponse | undefined {
+    const toolResponses: FunctionResponse[] = [];
 
     for (const item of ctx.items) {
       if (item.type === 'function_call_output') {
-        const response: types.FunctionResponse = {
+        const response: FunctionResponse = {
           id: item.callId,
           name: item.name,
-          response: { output: item.output },
+          response: {
+            output: item.output,
+            scheduling: this.options.toolResponseScheduling,
+          },
         };
 
         if (!vertexai) {
@@ -552,7 +590,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.sendClientEvent({
           type: 'content',
           value: {
-            turns: turns as types.Content[],
+            turns: turns as Content[],
             turnComplete: false,
           },
         });
@@ -572,7 +610,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateTools(tools: llm.ToolContext): Promise<void> {
-    const newDeclarations = toFunctionDeclarations(tools);
+    const newDeclarations = toFunctionDeclarations(tools, this.options.toolBehavior);
     const currentToolNames = new Set(this.geminiDeclarations.map((f) => f.name));
     const newToolNames = new Set(newDeclarations.map((f) => f.name));
 
@@ -601,7 +639,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     for (const f of this.resampleAudio(frame)) {
       for (const nf of this.bstream.write(f.data.buffer)) {
-        const realtimeInput: types.LiveClientRealtimeInput = {
+        const realtimeInput: LiveClientRealtimeInput = {
           mediaChunks: [
             {
               mimeType: 'audio/pcm',
@@ -648,7 +686,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     // Gemini requires the last message to end with user's turn
     // so we need to add a placeholder user turn in order to trigger a new generation
-    const turns: types.Content[] = [];
+    const turns: Content[] = [];
     if (instructions !== undefined) {
       turns.push({
         parts: [{ text: instructions }],
@@ -752,7 +790,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           model: this.options.model,
           callbacks: {
             onopen: () => sessionOpened.set(),
-            onmessage: (message: types.LiveServerMessage) => {
+            onmessage: (message: LiveServerMessage) => {
               this.onReceiveMessage(session, message);
             },
             onerror: (error: ErrorEvent) => {
@@ -846,7 +884,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private async sendTask(session: types.Session, controller: AbortController): Promise<void> {
+  private async sendTask(session: Session, controller: AbortController): Promise<void> {
     try {
       while (!this.#closed && !this.sessionShouldClose.isSet && !controller.signal.aborted) {
         const msg = await this.messageChannel.get();
@@ -912,8 +950,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private async onReceiveMessage(
-    session: types.Session,
-    response: types.LiveServerMessage,
+    session: Session,
+    response: LiveServerMessage,
   ): Promise<void> {
     // Skip logging verbose audio data events
     const hasAudioData = response.serverContent?.modelTurn?.parts?.some(
@@ -1006,7 +1044,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private loggableServerMessage(
-    message: types.LiveServerMessage,
+    message: LiveServerMessage,
     maxLength: number = 30,
   ): Record<string, unknown> {
     const obj: any = { ...message };
@@ -1090,10 +1128,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
   }
 
-  private buildConnectConfig(): types.LiveConnectConfig {
+  private buildConnectConfig(): LiveConnectConfig {
     const opts = this.options;
 
-    const config: types.LiveConnectConfig = {
+    const config: LiveConnectConfig = {
       responseModalities: opts.responseModalities,
       systemInstruction: opts.instructions
         ? {
@@ -1214,7 +1252,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     } as llm.InputSpeechStoppedEvent);
   }
 
-  private handleServerContent(serverContent: types.LiveServerContent): void {
+  private handleServerContent(serverContent: LiveServerContent): void {
     if (!this.currentGeneration) {
       this.#logger.warn('received server content but no active generation.');
       return;
@@ -1298,7 +1336,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private handleToolCall(toolCall: types.LiveServerToolCall): void {
+  private handleToolCall(toolCall: LiveServerToolCall): void {
     if (!this.currentGeneration) {
       this.#logger.warn('received tool call but no active generation.');
       return;
@@ -1317,7 +1355,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.markCurrentGenerationDone();
   }
 
-  private handleToolCallCancellation(cancellation: types.LiveServerToolCallCancellation): void {
+  private handleToolCallCancellation(cancellation: LiveServerToolCallCancellation): void {
     this.#logger.warn(
       {
         functionCallIds: cancellation.ids,
@@ -1326,7 +1364,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     );
   }
 
-  private handleUsageMetadata(usage: types.UsageMetadata): void {
+  private handleUsageMetadata(usage: UsageMetadata): void {
     if (!this.currentGeneration) {
       this.#logger.debug('Received usage metadata but no active generation');
       return;
@@ -1371,7 +1409,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.emit('metrics_collected', realtimeMetrics);
   }
 
-  private tokenDetailsMap(tokenDetails: types.ModalityTokenCount[] | undefined): {
+  private tokenDetailsMap(tokenDetails: ModalityTokenCount[] | undefined): {
     audioTokens: number;
     textTokens: number;
     imageTokens: number;
@@ -1386,18 +1424,18 @@ export class RealtimeSession extends llm.RealtimeSession {
         continue;
       }
 
-      if (tokenDetail.modality === types.MediaModality.AUDIO) {
+      if (tokenDetail.modality === MediaModality.AUDIO) {
         tokenDetailsMap.audioTokens += tokenDetail.tokenCount;
-      } else if (tokenDetail.modality === types.MediaModality.TEXT) {
+      } else if (tokenDetail.modality === MediaModality.TEXT) {
         tokenDetailsMap.textTokens += tokenDetail.tokenCount;
-      } else if (tokenDetail.modality === types.MediaModality.IMAGE) {
+      } else if (tokenDetail.modality === MediaModality.IMAGE) {
         tokenDetailsMap.imageTokens += tokenDetail.tokenCount;
       }
     }
     return tokenDetailsMap;
   }
 
-  private handleGoAway(goAway: types.LiveServerGoAway): void {
+  private handleGoAway(goAway: LiveServerGoAway): void {
     this.#logger.warn({ timeLeft: goAway.timeLeft }, 'Gemini server indicates disconnection soon.');
     // TODO(brian): this isn't a seamless reconnection just yet
     this.sessionShouldClose.set();
