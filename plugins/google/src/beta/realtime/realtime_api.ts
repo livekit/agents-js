@@ -2,32 +2,32 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
-  type FunctionDeclaration,
-  type FunctionResponse,
-  type GoogleGenAIOptions,
-  type LiveClientToolResponse,
-  type Session,
   ActivityHandling,
   type AudioTranscriptionConfig,
   Behavior,
+  type Content,
   type ContextWindowCompressionConfig,
+  type FunctionDeclaration,
+  type FunctionResponse,
   FunctionResponseScheduling,
   GoogleGenAI,
+  type GoogleGenAIOptions,
   type HttpOptions,
-  type RealtimeInputConfig,
-  type LiveServerMessage,
+  type LiveClientRealtimeInput,
+  type LiveClientToolResponse,
   type LiveConnectConfig,
   type LiveServerContent,
+  type LiveServerGoAway,
+  type LiveServerMessage,
   type LiveServerToolCall,
   type LiveServerToolCallCancellation,
-  type UsageMetadata,
-  type ModalityTokenCount,
   MediaModality,
-  type LiveServerGoAway,
   Modality,
-  type Content,
-  type LiveClientRealtimeInput
-} from "@google/genai";
+  type ModalityTokenCount,
+  type RealtimeInputConfig,
+  type Session,
+  type UsageMetadata,
+} from '@google/genai';
 import type { APIConnectOptions } from '@livekit/agents';
 import {
   APIConnectionError,
@@ -949,10 +949,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private async onReceiveMessage(
-    session: Session,
-    response: LiveServerMessage,
-  ): Promise<void> {
+  private async onReceiveMessage(session: Session, response: LiveServerMessage): Promise<void> {
     // Skip logging verbose audio data events
     const hasAudioData = response.serverContent?.modelTurn?.parts?.some(
       (part) => part.inlineData?.data,
