@@ -406,7 +406,10 @@ export class RealtimeSession extends llm.RealtimeSession {
         voice: this.oaiRealtimeModel._options.voice,
         input_audio_format: 'pcm16',
         output_audio_format: 'pcm16',
-        modalities: this.oaiRealtimeModel._options.modalities as ['text', 'audio'] | ['text'],
+        output_modalities: this.oaiRealtimeModel._options.modalities as
+          | ['text', 'audio']
+          | ['text']
+          | ['audio'],
         turn_detection: this.oaiRealtimeModel._options.turnDetection,
         input_audio_transcription: this.oaiRealtimeModel._options.inputAudioTranscription,
         // TODO(shubhra): add inputAudioNoiseReduction
