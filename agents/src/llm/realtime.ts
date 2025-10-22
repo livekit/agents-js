@@ -40,6 +40,7 @@ export interface RealtimeCapabilities {
   turnDetection: boolean;
   userTranscription: boolean;
   autoToolReplyGeneration: boolean;
+  audioOutput: boolean;
 }
 
 export interface InputTranscriptionCompleted {
