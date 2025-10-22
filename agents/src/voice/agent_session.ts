@@ -57,6 +57,14 @@ export interface VoiceOptions {
   minEndpointingDelay: number;
   maxEndpointingDelay: number;
   maxToolSteps: number;
+  /**
+   * Enable preemptive generation to reduce latency.
+   * When enabled, the agent starts generating a response as soon as a confident
+   * interim transcript (preflight) is available, before the final transcript is ready.
+   * The preemptive generation is validated and potentially discarded if the chat context
+   * or tool definitions change during the turn.
+   */
+  preemptiveGeneration: boolean;
 }
 
 const defaultVoiceOptions: VoiceOptions = {
@@ -67,6 +75,7 @@ const defaultVoiceOptions: VoiceOptions = {
   minEndpointingDelay: 500,
   maxEndpointingDelay: 6000,
   maxToolSteps: 3,
+  preemptiveGeneration: false,
 } as const;
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;

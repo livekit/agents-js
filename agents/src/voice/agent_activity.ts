@@ -43,6 +43,7 @@ import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
 import {
   AudioRecognition,
   type EndOfTurnInfo,
+  type PreemptiveGenerationInfo,
   type RecognitionHooks,
   type _TurnDetector,
 } from './audio_recognition.js';
@@ -71,6 +72,15 @@ import { SpeechHandle } from './speech_handle.js';
 // equivalent to Python's contextvars
 const speechHandleStorage = new AsyncLocalStorage<SpeechHandle>();
 
+interface PreemptiveGeneration {
+  speechHandle: SpeechHandle;
+  info: PreemptiveGenerationInfo;
+  chatCtx: ChatContext;
+  tools: ToolContext;
+  toolChoice: ToolChoice | null;
+  createdAt: number;
+}
+
 export class AgentActivity implements RecognitionHooks {
   private static readonly REPLY_TASK_CANCEL_TIMEOUT = 5000;
   private started = false;
@@ -87,6 +97,7 @@ export class AgentActivity implements RecognitionHooks {
   private audioStream = new DeferredReadableStream<AudioFrame>();
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
+  private preemptiveGeneration?: PreemptiveGeneration;
 
   agent: Agent;
   agentSession: AgentSession;
@@ -664,6 +675,64 @@ export class AgentActivity implements RecognitionHooks {
     );
   }
 
+  onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
+    if (!this.agentSession.options.preemptiveGeneration) {
+      return;
+    }
+
+    if (this.draining) {
+      this.logger.debug('skipping preemptive generation, agent is draining');
+      return;
+    }
+
+    if (this._currentSpeech && !this._currentSpeech.interrupted) {
+      this.logger.debug('skipping preemptive generation, current speech is not interrupted');
+      return;
+    }
+
+    if (!(this.llm instanceof LLM)) {
+      this.logger.debug('skipping preemptive generation, LLM is not a standard LLM instance');
+      return;
+    }
+
+    // Cancel any existing preemptive generation
+    this.cancelPreemptiveGeneration();
+
+    const chatCtx = this.agent.chatCtx.copy();
+    const userMessage = ChatMessage.create({
+      role: 'user',
+      content: info.newTranscript,
+    });
+
+    this.logger.info(
+      { transcript: info.newTranscript, confidence: info.transcriptConfidence },
+      'starting preemptive generation',
+    );
+
+    const speechHandle = this.generateReply({
+      userMessage,
+      chatCtx,
+      scheduleSpeech: false, // Don't schedule yet!
+    });
+
+    this.preemptiveGeneration = {
+      speechHandle,
+      info,
+      chatCtx,
+      tools: this.agent.toolCtx,
+      toolChoice: this.toolChoice,
+      createdAt: Date.now(),
+    };
+  }
+
+  private cancelPreemptiveGeneration(): void {
+    if (this.preemptiveGeneration) {
+      this.logger.debug('cancelling existing preemptive generation');
+      this.preemptiveGeneration.speechHandle._cancel();
+      this.preemptiveGeneration = undefined;
+    }
+  }
+
   private createSpeechTask(options: {
     task: Task<void>;
     ownedSpeechHandle?: SpeechHandle;
@@ -775,6 +844,7 @@ export class AgentActivity implements RecognitionHooks {
     instructions?: string;
     toolChoice?: ToolChoice | null;
     allowInterruptions?: boolean;
+    scheduleSpeech?: boolean;
   }): SpeechHandle {
     const {
       userMessage,
@@ -782,6 +852,7 @@ export class AgentActivity implements RecognitionHooks {
       instructions: defaultInstructions,
       toolChoice: defaultToolChoice,
       allowInterruptions: defaultAllowInterruptions,
+      scheduleSpeech = true,
     } = options;
 
     let instructions = defaultInstructions;
@@ -871,7 +942,9 @@ export class AgentActivity implements RecognitionHooks {
       task.finally(() => this.onPipelineReplyDone());
     }
 
-    this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+    if (scheduleSpeech) {
+      this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+    }
     return handle;
   }
 
@@ -975,6 +1048,70 @@ export class AgentActivity implements RecognitionHooks {
       userMessage = undefined;
     } else if (this.llm === undefined) {
       return;
+    }
+
+    // Check if we can use preemptive generation
+    const preemptive = this.preemptiveGeneration;
+    if (preemptive) {
+      // Add the user message to the chat context for comparison
+      const validationChatCtx = this.agent.chatCtx.copy();
+      if (userMessage) {
+        validationChatCtx.insert(userMessage);
+      }
+
+      // Validate: transcript matches, context equivalent, tools unchanged, toolChoice unchanged
+      const transcriptMatches = preemptive.info.newTranscript === info.newTranscript;
+      const contextEquivalent = preemptive.chatCtx.isEquivalent(validationChatCtx);
+      const toolsUnchanged = preemptive.tools === this.agent.toolCtx;
+      const toolChoiceUnchanged = preemptive.toolChoice === this.toolChoice;
+
+      if (transcriptMatches && contextEquivalent && toolsUnchanged && toolChoiceUnchanged) {
+        // Use preemptive generation!
+        const speechHandle = preemptive.speechHandle;
+        this.preemptiveGeneration = undefined;
+
+        const leadTime = Date.now() - preemptive.createdAt;
+        this.logger.info(
+          {
+            transcript: info.newTranscript,
+            leadTimeMs: leadTime,
+            confidence: preemptive.info.transcriptConfidence,
+          },
+          'using preemptive generation',
+        );
+
+        // Schedule the preemptive speech
+        this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+
+        // Emit metrics
+        const eouMetrics: EOUMetrics = {
+          type: 'eou_metrics',
+          timestamp: Date.now(),
+          endOfUtteranceDelayMs: info.endOfUtteranceDelay,
+          transcriptionDelayMs: info.transcriptionDelay,
+          onUserTurnCompletedDelayMs: callbackDuration,
+          speechId: speechHandle.id,
+        };
+
+        this.agentSession.emit(
+          AgentSessionEventTypes.MetricsCollected,
+          createMetricsCollectedEvent({ metrics: eouMetrics }),
+        );
+
+        return;
+      } else {
+        // Context changed, discard and regenerate
+        this.logger.warn(
+          {
+            transcriptMatches,
+            contextEquivalent,
+            toolsUnchanged,
+            toolChoiceUnchanged,
+          },
+          'preemptive generation invalidated, regenerating',
+        );
+        this.cancelPreemptiveGeneration();
+      }
     }
 
     // Ensure the new message is passed to generateReply

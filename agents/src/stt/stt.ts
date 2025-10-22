@@ -38,6 +38,13 @@ export enum SpeechEventType {
   END_OF_SPEECH = 3,
   /** Usage event, emitted periodically to indicate usage metrics. */
   RECOGNITION_USAGE = 4,
+  /**
+   * Preflight transcript, emitted when the STT has a confident interim result
+   * before the final transcript is ready. This is useful for preemptive generation
+   * to reduce latency. Contains all pre-committed transcripts including final
+   * transcripts from previous STT runs.
+   */
+  PREFLIGHT_TRANSCRIPT = 5,
 }
 
 /** SpeechData contains metadata about this {@link SpeechEvent}. */
