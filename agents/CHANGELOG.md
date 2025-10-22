@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.12
+
+### Patch Changes
+
+- Expose EOUMetrics type - [#776](https://github.com/livekit/agents-js/pull/776) ([@toubatbrian](https://github.com/toubatbrian))
+
+- - Fix CommonJS entrypoint to resolve files from `dist` - [#777](https://github.com/livekit/agents-js/pull/777) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.11
 
 ### Patch Changes
