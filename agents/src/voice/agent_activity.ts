@@ -1520,10 +1520,29 @@ export class AgentActivity implements RecognitionHooks {
             break;
           }
           const trNodeResult = await this.agent.transcriptionNode(msg.textStream, modelSettings);
+
+          // Determine if we need to tee the text stream for both text output and TTS
+          const needsTextOutput = !!textOutput && !!trNodeResult;
+          const needsTTSSynthesis =
+            audioOutput &&
+            this.llm instanceof RealtimeModel &&
+            !this.llm.capabilities.audioOutput &&
+            this.tts;
+          const needsBothTextAndTTS = needsTextOutput && needsTTSSynthesis;
+
+          // Tee the stream if we need it for both purposes
+          let textStreamForOutput = trNodeResult;
+          let textStreamForTTS = trNodeResult;
+          if (needsBothTextAndTTS && trNodeResult) {
+            const [stream1, stream2] = trNodeResult.tee();
+            textStreamForOutput = stream1;
+            textStreamForTTS = stream2;
+          }
+
           let textOut: _TextOut | null = null;
-          if (trNodeResult) {
+          if (textStreamForOutput) {
             const [textForwardTask, _textOut] = performTextForwarding(
-              trNodeResult,
+              textStreamForOutput,
               abortController,
               textOutput,
             );
@@ -1532,23 +1551,49 @@ export class AgentActivity implements RecognitionHooks {
           }
           let audioOut: _AudioOut | null = null;
           if (audioOutput) {
-            const realtimeAudio = await this.agent.realtimeAudioOutputNode(
-              msg.audioStream,
-              modelSettings,
-            );
-            if (realtimeAudio) {
-              const [forwardTask, _audioOut] = performAudioForwarding(
-                realtimeAudio,
-                audioOutput,
-                abortController,
+            // Check if realtime model has audio output capability
+            if (this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput) {
+              // Use realtime audio output
+              const realtimeAudio = await this.agent.realtimeAudioOutputNode(
+                msg.audioStream,
+                modelSettings,
               );
-              forwardTasks.push(forwardTask);
-              audioOut = _audioOut;
-              audioOut.firstFrameFut.await.finally(onFirstFrame);
+              if (realtimeAudio) {
+                const [forwardTask, _audioOut] = performAudioForwarding(
+                  realtimeAudio,
+                  audioOutput,
+                  abortController,
+                );
+                forwardTasks.push(forwardTask);
+                audioOut = _audioOut;
+                audioOut.firstFrameFut.await.finally(onFirstFrame);
+              } else {
+                this.logger.warn(
+                  'audio output is enabled but neither tts nor realtime audio is available',
+                );
+              }
             } else {
-              this.logger.warn(
-                'audio output is enabled but neither tts nor realtime audio is available',
-              );
+              // Text-only mode - synthesize audio using TTS
+              if (this.tts && textStreamForTTS) {
+                const [ttsTask, ttsStream] = performTTSInference(
+                  (...args) => this.agent.ttsNode(...args),
+                  textStreamForTTS,
+                  modelSettings,
+                  abortController,
+                );
+                forwardTasks.push(ttsTask);
+
+                const [forwardTask, _audioOut] = performAudioForwarding(
+                  ttsStream,
+                  audioOutput,
+                  abortController,
+                );
+                forwardTasks.push(forwardTask);
+                audioOut = _audioOut;
+                audioOut.firstFrameFut.await.finally(onFirstFrame);
+              } else if (!this.tts) {
+                this.logger.warn('realtime model in text-only mode but no TTS is configured');
+              }
             }
           } else if (textOut) {
             textOut.firstTextFut.await.finally(onFirstFrame);
