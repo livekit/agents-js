@@ -267,7 +267,7 @@ export interface SessionUpdateEvent extends BaseClientEvent {
   type: 'session.update';
   session: Partial<{
     model: Model;
-    output_modalities: ['text'] | ['audio'];
+    modalities: ['text'] | ['audio', 'text'];
     instructions: string;
     voice: Voice;
     input_audio_format: AudioFormat;
@@ -511,6 +511,7 @@ export interface ResponseContentPartDoneEvent extends BaseServerEvent {
 export interface ResponseTextDeltaEvent extends BaseServerEvent {
   type: 'response.text.delta';
   response_id: string;
+  item_id: string;
   output_index: number;
   content_index: number;
   delta: string;
@@ -519,6 +520,7 @@ export interface ResponseTextDeltaEvent extends BaseServerEvent {
 export interface ResponseTextDoneEvent extends BaseServerEvent {
   type: 'response.text.done';
   response_id: string;
+  item_id: string;
   output_index: number;
   content_index: number;
   text: string;

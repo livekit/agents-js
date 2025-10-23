@@ -19,6 +19,7 @@ export interface MessageGeneration {
   messageId: string;
   textStream: ReadableStream<string>;
   audioStream: ReadableStream<AudioFrame>;
+  modalities?: ['text'] | ['text', 'audio'];
 }
 
 export interface GenerationCreatedEvent {

@@ -38,7 +38,7 @@ interface RealtimeOptions {
   model: api_proto.Model;
   voice: api_proto.Voice;
   temperature: number;
-  modalities: api_proto.Modality[];
+  modalities: ['text'] | ['audio', 'text'];
   toolChoice?: llm.ToolChoice;
   inputAudioTranscription?: api_proto.InputAudioTranscription | null;
   // TODO(shubhra): add inputAudioNoiseReduction
@@ -62,6 +62,7 @@ interface MessageGeneration {
   textChannel: stream.StreamChannel<string>;
   audioChannel: stream.StreamChannel<AudioFrame>;
   audioTranscript: string;
+  modalities?: ['text'] | ['text', 'audio'];
 }
 
 interface ResponseGeneration {
@@ -122,7 +123,7 @@ const DEFAULT_REALTIME_MODEL_OPTIONS = {
   model: 'gpt-realtime',
   voice: 'marin',
   temperature: DEFAULT_TEMPERATURE,
-  modalities: ['audio'] as api_proto.Modality[],
+  modalities: ['audio', 'text'] as ['audio', 'text'],
   inputAudioTranscription: DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
   turnDetection: DEFAULT_TURN_DETECTION,
   toolChoice: DEFAULT_TOOL_CHOICE,
@@ -144,7 +145,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       model?: string;
       voice?: string;
       temperature?: number;
-      modalities?: api_proto.Modality[];
+      modalities?: ['text'] | ['audio', 'text'];
       toolChoice?: llm.ToolChoice;
       baseURL?: string;
       inputAudioTranscription?: api_proto.InputAudioTranscription | null;
@@ -165,7 +166,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       turnDetection: options.turnDetection !== null,
       userTranscription: options.inputAudioTranscription !== null,
       autoToolReplyGeneration: false,
-      audioOutput: options.modalities ? options.modalities.includes('audio') : true,
+      audioOutput: options.modalities ? (options.modalities as string[]).includes('audio') : true,
     });
 
     const isAzure = !!(options.apiVersion || options.entraToken || options.azureDeployment);
@@ -247,7 +248,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     entraToken?: string;
     baseURL?: string;
     voice?: string;
-    modalities?: api_proto.Modality[];
+    modalities?: ['text'] | ['audio', 'text'];
     inputAudioTranscription?: api_proto.InputAudioTranscription;
     // TODO(shubhra): add inputAudioNoiseReduction
     turnDetection?: api_proto.TurnDetectionType;
@@ -399,17 +400,6 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private createSessionUpdateEvent(): api_proto.SessionUpdateEvent {
-    // OpenAI doesn't support both modalities simultaneously.
-    // If audio is in modalities, prefer audio; otherwise use text.
-
-    // from the docs (https://platform.openai.com/docs/api-reference/realtime-client-events/session)
-    // output_modalities [array]
-    //
-    // The set of modalities the model can respond with. It defaults to ["audio"], indicating that the model will respond with audio plus a transcript. ["text"] can be used to make the model respond with text only. It is not possible to request both text and audio at the same time.
-    const outputModality = this.oaiRealtimeModel._options.modalities.includes('audio')
-      ? 'audio'
-      : 'text';
-
     return {
       type: 'session.update',
       session: {
@@ -417,7 +407,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         voice: this.oaiRealtimeModel._options.voice,
         input_audio_format: 'pcm16',
         output_audio_format: 'pcm16',
-        output_modalities: [outputModality],
+        modalities: this.oaiRealtimeModel._options.modalities, // Supported combinations are: ['text'] and ['audio', 'text'].",
         turn_detection: this.oaiRealtimeModel._options.turnDetection,
         input_audio_transcription: this.oaiRealtimeModel._options.inputAudioTranscription,
         // TODO(shubhra): add inputAudioNoiseReduction
@@ -928,6 +918,12 @@ export class RealtimeSession extends llm.RealtimeSession {
         case 'response.content_part.done':
           this.handleResponseContentPartDone(event);
           break;
+        case 'response.text.delta':
+          this.handleResponseTextDelta(event);
+          break;
+        case 'response.text.done':
+          this.handleResponseTextDone(event);
+          break;
         case 'response.audio_transcript.delta':
           this.handleResponseAudioTranscriptDelta(event);
           break;
@@ -1148,35 +1144,40 @@ export class RealtimeSession extends llm.RealtimeSession {
     const itemType = event.part.type;
     const responseId = event.response_id;
 
-    if (itemType === 'audio') {
-      this.resolveGeneration(responseId);
-      if (this.textModeRecoveryRetries > 0) {
-        this.#logger.info(
-          { retries: this.textModeRecoveryRetries },
-          'recovered from text-only response',
-        );
-        this.textModeRecoveryRetries = 0;
-      }
+    this.resolveGeneration(responseId);
+    if (this.textModeRecoveryRetries > 0) {
+      this.#logger.info(
+        { retries: this.textModeRecoveryRetries },
+        'recovered from text-only response',
+      );
+      this.textModeRecoveryRetries = 0;
+    }
 
-      const itemGeneration: MessageGeneration = {
-        messageId: itemId,
-        textChannel: stream.createStreamChannel<string>(),
-        audioChannel: stream.createStreamChannel<AudioFrame>(),
-        audioTranscript: '',
-      };
+    const itemGeneration: MessageGeneration = {
+      messageId: itemId,
+      textChannel: stream.createStreamChannel<string>(),
+      audioChannel: stream.createStreamChannel<AudioFrame>(),
+      audioTranscript: '',
+    };
 
-      this.currentGeneration.messageChannel.write({
-        messageId: itemId,
-        textStream: itemGeneration.textChannel.stream(),
-        audioStream: itemGeneration.audioChannel.stream(),
-      });
+    if (!this.oaiRealtimeModel.capabilities.audioOutput) {
+      itemGeneration.audioChannel.close();
+      itemGeneration.modalities = ['text'];
+    }
 
-      this.currentGeneration.messages.set(itemId, itemGeneration);
-      this.currentGeneration._firstTokenTimestamp = Date.now();
-      return;
-    } else {
-      this.interrupt();
-      if (this.textModeRecoveryRetries === 0) {
+    this.currentGeneration.messageChannel.write({
+      messageId: itemId,
+      textStream: itemGeneration.textChannel.stream(),
+      audioStream: itemGeneration.audioChannel.stream(),
+      modalities: itemGeneration.modalities || ['text', 'audio'],
+    });
+
+    this.currentGeneration.messages.set(itemId, itemGeneration);
+    this.currentGeneration._firstTokenTimestamp = Date.now();
+
+    if (itemType === 'text') {
+      // Only warn if we expected audio but received text
+      if (this.textModeRecoveryRetries === 0 && this.oaiRealtimeModel.capabilities.audioOutput) {
         this.#logger.warn({ responseId }, 'received text-only response from OpenAI Realtime API');
       }
     }
@@ -1192,6 +1193,32 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     // TODO(shubhra): handle text mode recovery
+  }
+
+  private handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
+
+    const itemGeneration = this.currentGeneration.messages.get(event.item_id);
+    if (!itemGeneration) {
+      throw new Error('itemGeneration is not set');
+    }
+
+    // Set first token timestamp if in text-only mode
+    if (itemGeneration.modalities?.[0] === 'text' && !this.currentGeneration._firstTokenTimestamp) {
+      this.currentGeneration._firstTokenTimestamp = Date.now();
+    }
+
+    itemGeneration.textChannel.write(event.delta);
+    itemGeneration.audioTranscript += event.delta;
+  }
+
+  private handleResponseTextDone(_event: api_proto.ResponseTextDoneEvent): void {
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
+    // No additional processing needed - just assert generation exists
   }
 
   private handleResponseAudioTranscriptDelta(
