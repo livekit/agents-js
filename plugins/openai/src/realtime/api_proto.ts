@@ -267,7 +267,7 @@ export interface SessionUpdateEvent extends BaseClientEvent {
   type: 'session.update';
   session: Partial<{
     model: Model;
-    modalities: ['text'] | ['audio', 'text'];
+    modalities: ['text'] | ['text', 'audio'];
     instructions: string;
     voice: Voice;
     input_audio_format: AudioFormat;

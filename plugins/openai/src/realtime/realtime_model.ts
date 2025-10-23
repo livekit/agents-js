@@ -38,7 +38,7 @@ interface RealtimeOptions {
   model: api_proto.Model;
   voice: api_proto.Voice;
   temperature: number;
-  modalities: ['text'] | ['audio', 'text'];
+  modalities: ['text'] | ['text', 'audio'];
   toolChoice?: llm.ToolChoice;
   inputAudioTranscription?: api_proto.InputAudioTranscription | null;
   // TODO(shubhra): add inputAudioNoiseReduction
@@ -123,7 +123,7 @@ const DEFAULT_REALTIME_MODEL_OPTIONS = {
   model: 'gpt-realtime',
   voice: 'marin',
   temperature: DEFAULT_TEMPERATURE,
-  modalities: ['audio', 'text'] as ['audio', 'text'],
+  modalities: ['text', 'audio'] as ['text', 'audio'],
   inputAudioTranscription: DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
   turnDetection: DEFAULT_TURN_DETECTION,
   toolChoice: DEFAULT_TOOL_CHOICE,
@@ -145,7 +145,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       model?: string;
       voice?: string;
       temperature?: number;
-      modalities?: ['text'] | ['audio', 'text'];
+      modalities?: ['text'] | ['text', 'audio'];
       toolChoice?: llm.ToolChoice;
       baseURL?: string;
       inputAudioTranscription?: api_proto.InputAudioTranscription | null;
@@ -248,7 +248,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     entraToken?: string;
     baseURL?: string;
     voice?: string;
-    modalities?: ['text'] | ['audio', 'text'];
+    modalities?: ['text'] | ['text', 'audio'];
     inputAudioTranscription?: api_proto.InputAudioTranscription;
     // TODO(shubhra): add inputAudioNoiseReduction
     turnDetection?: api_proto.TurnDetectionType;
@@ -1173,7 +1173,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
 
     this.currentGeneration.messages.set(itemId, itemGeneration);
-    this.currentGeneration._firstTokenTimestamp = Date.now();
 
     if (itemType === 'text') {
       // Only warn if we expected audio but received text
@@ -1250,6 +1249,13 @@ export class RealtimeSession extends llm.RealtimeSession {
     const itemGeneration = this.currentGeneration.messages.get(event.item_id);
     if (!itemGeneration) {
       throw new Error('itemGeneration is not set');
+    }
+
+    if (!this.currentGeneration._firstTokenTimestamp) {
+      this.currentGeneration._firstTokenTimestamp = Date.now();
+    }
+    if (!itemGeneration.modalities) {
+      itemGeneration.modalities = ['text', 'audio'];
     }
 
     const binaryString = atob(event.delta);
