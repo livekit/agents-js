@@ -324,19 +324,13 @@ importers:
 
   plugins/deepgram:
     dependencies:
+      '@livekit/agents':
+        specifier: file:../../agents/
+        version: file:agents(@livekit/rtc-node@0.13.13)
       ws:
         specifier: ^8.16.0
         version: 8.17.0
     devDependencies:
-      '@livekit/agents':
-        specifier: workspace:*
-        version: link:../../agents
-      '@livekit/agents-plugin-silero':
-        specifier: workspace:*
-        version: link:../silero
-      '@livekit/agents-plugins-test':
-        specifier: workspace:*
-        version: link:../test
       '@livekit/rtc-node':
         specifier: ^0.13.12
         version: 0.13.13
@@ -1457,6 +1451,11 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.25':
     resolution: {integrity: sha512-vNk6aEwybGtawWmy/PzwnGDOjCkLWSD2wqvjGGAgOAwCGWySYXfYoxt00IJkTF+8Lb57DwOb3Aa0o9CApepiYQ==}
+
+  '@livekit/agents@file:agents':
+    resolution: {directory: agents, type: directory}
+    peerDependencies:
+      '@livekit/rtc-node': ^0.13.12
 
   '@livekit/changesets-changelog-github@0.0.4':
     resolution: {integrity: sha512-MXaiLYwgkYciZb8G2wkVtZ1pJJzZmVx5cM30Q+ClslrIYyAqQhRbPmZDM79/5CGxb1MTemR/tfOM25tgJgAK0g==}
@@ -5223,6 +5222,31 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.4.15
 
+  '@livekit/agents@file:agents(@livekit/rtc-node@0.13.13)':
+    dependencies:
+      '@livekit/mutex': 1.1.1
+      '@livekit/protocol': 1.41.0
+      '@livekit/rtc-node': 0.13.13
+      '@livekit/typed-emitter': 3.0.0
+      '@types/pidusage': 2.0.5
+      commander: 12.0.0
+      heap-js: 2.6.0
+      json-schema: 0.4.0
+      livekit-server-sdk: 2.13.3
+      openai: 4.91.1(ws@8.18.3)(zod@3.23.8)
+      pidusage: 4.0.1
+      pino: 8.21.0
+      pino-pretty: 11.0.0
+      sharp: 0.34.3
+      uuid: 11.1.0
+      ws: 8.18.3
+      zod: 3.23.8
+      zod-to-json-schema: 3.24.6(zod@3.23.8)
+    transitivePeerDependencies:
+      - bufferutil
+      - encoding
+      - utf-8-validate
+
   '@livekit/changesets-changelog-github@0.0.4':
     dependencies:
       '@changesets/get-github-info': 0.5.2
@@ -7531,6 +7555,21 @@ snapshots:
       node-fetch: 2.7.0
     optionalDependencies:
       ws: 8.17.0
+      zod: 3.23.8
+    transitivePeerDependencies:
+      - encoding
+
+  openai@4.91.1(ws@8.18.3)(zod@3.23.8):
+    dependencies:
+      '@types/node': 18.19.64
+      '@types/node-fetch': 2.6.11
+      abort-controller: 3.0.0
+      agentkeepalive: 4.5.0
+      form-data-encoder: 1.7.2
+      formdata-node: 4.4.1
+      node-fetch: 2.7.0
+    optionalDependencies:
+      ws: 8.18.3
       zod: 3.23.8
     transitivePeerDependencies:
       - encoding
