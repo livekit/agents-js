@@ -268,7 +268,7 @@ export class SpeechStream extends stt.SpeechStream {
       while (!this.closed && !closing) {
         try {
           await new Promise<RawData>((resolve) => {
-            ws.once('message', (data) => resolve(data));
+            ws.on('message', (data) => resolve(data));
           }).then((msg) => {
             const json = JSON.parse(msg.toString());
             switch (json['type']) {
