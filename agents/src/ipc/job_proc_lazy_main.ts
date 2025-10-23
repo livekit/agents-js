@@ -136,7 +136,8 @@ const startJob = (
     //   [1] import.meta.filename
     //   [2] import.meta.filename of function containing entry file
     const moduleFile = process.argv[2];
-    const agent: Agent = await import(pathToFileURL(moduleFile!).pathname).then((module) => {
+    const pathname = pathToFileURL(moduleFile!).pathname.replace(/^\/(\w:)/, "$1")
+    const agent: Agent = await import(pathname).then((module) => {
       const agent = module.default;
       if (agent === undefined || !isAgent(agent)) {
         throw new Error(`Unable to load agent: Missing or invalid default export in ${moduleFile}`);
