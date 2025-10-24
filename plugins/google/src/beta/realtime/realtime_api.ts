@@ -296,7 +296,7 @@ export class RealtimeModel extends llm.RealtimeModel {
 
       /**
        * Tool behavior for function calls (BLOCKING or NON_BLOCKING)
-       * Defaults to NON_BLOCKING to prevent generateReply timeouts
+       * Defaults to BLOCKING
        */
       toolBehavior?: Behavior;
 
@@ -361,7 +361,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       contextWindowCompression: options.contextWindowCompression,
       apiVersion: options.apiVersion,
       geminiTools: options.geminiTools,
-      toolBehavior: options.toolBehavior ?? Behavior.NON_BLOCKING,
+      toolBehavior: options.toolBehavior ?? Behavior.BLOCKING,
       toolResponseScheduling:
         options.toolResponseScheduling ?? FunctionResponseScheduling.WHEN_IDLE,
     };
