@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { VADEvent } from '@livekit/agents';
 import {
   ExpFilter,
   VADEventType,
@@ -15,6 +16,21 @@ import type { SampleRate } from './onnx_model.js';
 import { OnnxModel, newInferenceSession } from './onnx_model.js';
 
 const SLOW_INFERENCE_THRESHOLD = 200; // late by 200ms
+
+/**
+ * Helper function to check if an error is related to writer being released during stream closure.
+ * This can happen during shutdown when close() releases the writer while the VAD task is still running.
+ */
+function isWriterReleaseError(e: unknown): boolean {
+  if (e instanceof TypeError) {
+    const message = e.message;
+    return (
+      message.includes('Writer is not bound to a WritableStream') ||
+      message.includes('WritableStream is closed')
+    );
+  }
+  return false;
+}
 
 export interface VADOptions {
   /** Minimum duration of speech to start a new speech chunk */
@@ -260,26 +276,30 @@ export class VADStream extends baseStream {
             pubSilenceDuration += windowDuration;
           }
 
-          this.outputWriter.write({
-            type: VADEventType.INFERENCE_DONE,
-            samplesIndex: pubCurrentSample,
-            timestamp: pubTimestamp,
-            silenceDuration: pubSilenceDuration,
-            speechDuration: pubSpeechDuration,
-            probability: p,
-            inferenceDuration,
-            frames: [
-              new AudioFrame(
-                inputFrame.data.subarray(0, toCopyInt),
-                this.#inputSampleRate,
-                1,
-                toCopyInt,
-              ),
-            ],
-            speaking: pubSpeaking,
-            rawAccumulatedSilence: silenceThresholdDuration,
-            rawAccumulatedSpeech: speechThresholdDuration,
-          });
+          if (
+            !this.safeWriteEvent({
+              type: VADEventType.INFERENCE_DONE,
+              samplesIndex: pubCurrentSample,
+              timestamp: pubTimestamp,
+              silenceDuration: pubSilenceDuration,
+              speechDuration: pubSpeechDuration,
+              probability: p,
+              inferenceDuration,
+              frames: [
+                new AudioFrame(
+                  inputFrame.data.subarray(0, toCopyInt),
+                  this.#inputSampleRate,
+                  1,
+                  toCopyInt,
+                ),
+              ],
+              speaking: pubSpeaking,
+              rawAccumulatedSilence: silenceThresholdDuration,
+              rawAccumulatedSpeech: speechThresholdDuration,
+            })
+          ) {
+            break; // Exit the inference loop since the stream is closing
+          }
 
           const resetWriteCursor = () => {
             if (!this.#speechBuffer) throw new Error('speechBuffer is empty');
@@ -314,19 +334,23 @@ export class VADStream extends baseStream {
               pubSilenceDuration = 0;
               pubSpeechDuration = speechThresholdDuration;
 
-              this.outputWriter.write({
-                type: VADEventType.START_OF_SPEECH,
-                samplesIndex: pubCurrentSample,
-                timestamp: pubTimestamp,
-                silenceDuration: pubSilenceDuration,
-                speechDuration: pubSpeechDuration,
-                probability: p,
-                inferenceDuration,
-                frames: [copySpeechBuffer()],
-                speaking: pubSpeaking,
-                rawAccumulatedSilence: 0,
-                rawAccumulatedSpeech: 0,
-              });
+              if (
+                !this.safeWriteEvent({
+                  type: VADEventType.START_OF_SPEECH,
+                  samplesIndex: pubCurrentSample,
+                  timestamp: pubTimestamp,
+                  silenceDuration: pubSilenceDuration,
+                  speechDuration: pubSpeechDuration,
+                  probability: p,
+                  inferenceDuration,
+                  frames: [copySpeechBuffer()],
+                  speaking: pubSpeaking,
+                  rawAccumulatedSilence: 0,
+                  rawAccumulatedSpeech: 0,
+                })
+              ) {
+                break; // Exit the inference loop since the stream is closing
+              }
             }
           } else {
             silenceThresholdDuration += windowDuration;
@@ -341,19 +365,23 @@ export class VADStream extends baseStream {
               pubSpeechDuration = 0;
               pubSilenceDuration = silenceThresholdDuration;
 
-              this.outputWriter.write({
-                type: VADEventType.END_OF_SPEECH,
-                samplesIndex: pubCurrentSample,
-                timestamp: pubTimestamp,
-                silenceDuration: pubSilenceDuration,
-                speechDuration: pubSpeechDuration,
-                probability: p,
-                inferenceDuration,
-                frames: [copySpeechBuffer()],
-                speaking: pubSpeaking,
-                rawAccumulatedSilence: 0,
-                rawAccumulatedSpeech: 0,
-              });
+              if (
+                !this.safeWriteEvent({
+                  type: VADEventType.END_OF_SPEECH,
+                  samplesIndex: pubCurrentSample,
+                  timestamp: pubTimestamp,
+                  silenceDuration: pubSilenceDuration,
+                  speechDuration: pubSpeechDuration,
+                  probability: p,
+                  inferenceDuration,
+                  frames: [copySpeechBuffer()],
+                  speaking: pubSpeaking,
+                  rawAccumulatedSilence: 0,
+                  rawAccumulatedSpeech: 0,
+                })
+              ) {
+                break; // Exit the inference loop since the stream is closing
+              }
 
               resetWriteCursor();
             }
@@ -377,6 +405,24 @@ export class VADStream extends baseStream {
         }
       }
     });
+  }
+
+  /**
+   * Safely write a VAD event to the output stream, handling writer release errors during shutdown.
+   * @returns true if the write succeeded, false if the stream is closing
+   * @throws Error if an unexpected error occurs
+   */
+  private safeWriteEvent(event: VADEvent): boolean {
+    try {
+      this.outputWriter.write(event);
+      return true;
+    } catch (e) {
+      // Ignore writer release errors during stream closure (e.g., on participant disconnect)
+      if (isWriterReleaseError(e)) {
+        return false; // Signal that the stream is closing
+      }
+      throw e; // Re-throw unexpected errors
+    }
   }
 
   /**
