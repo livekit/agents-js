@@ -298,6 +298,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             });
           }).then((msg) => {
             const json = JSON.parse(msg.toString());
+            if (json.error) {
+              throw new Error(json.error);
+            }
             // remove the "audio" field from the json object when printing
             if ('audio' in json && json.audio !== null) {
               const data = new Int8Array(Buffer.from(json.audio, 'base64'));
@@ -324,6 +327,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           // skip log error for normal websocket close
           if (err instanceof Error && !err.message.includes('WebSocket closed')) {
             this.#logger.error({ err }, 'Error in listenTask from ElevenLabs WebSocket');
+            throw err;
           }
           break;
         }
