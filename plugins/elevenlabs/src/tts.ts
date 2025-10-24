@@ -12,6 +12,7 @@ import {
 import type { AudioFrame } from '@livekit/rtc-node';
 import { URL } from 'node:url';
 import { type RawData, WebSocket } from 'ws';
+import { ElevenLabsConnectionError, ElevenLabsError } from './errors.js';
 import type { TTSEncoding, TTSModels } from './models.js';
 
 const DEFAULT_INACTIVITY_TIMEOUT = 300;
@@ -213,7 +214,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         break;
       } catch (e) {
         if (retries >= maxRetry) {
-          throw new Error(`failed to connect to ElevenLabs after ${retries} attempts: ${e}`);
+          throw new ElevenLabsConnectionError({
+            message: `Failed to connect to ElevenLabs after ${retries} attempts: ${e}`,
+            retries,
+          });
         }
 
         const delay = Math.min(retries * 5, 5);
@@ -299,7 +303,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }).then((msg) => {
             const json = JSON.parse(msg.toString());
             if (json.error) {
-              throw new Error(json.error);
+              throw new ElevenLabsError({
+                message: json.error,
+                body: json,
+              });
             }
             // remove the "audio" field from the json object when printing
             if ('audio' in json && json.audio !== null) {

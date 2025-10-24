@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Plugin } from '@livekit/agents';
 
+export * from './errors.js';
 export * from './tts.js';
 
 class ElevenLabsPlugin extends Plugin {
