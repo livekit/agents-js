@@ -20,9 +20,19 @@ const SLOW_INFERENCE_THRESHOLD = 200; // late by 200ms
 /**
  * Helper function to check if an error is related to writer being released during stream closure.
  * This can happen during shutdown when close() releases the writer while the VAD task is still running.
+ *
+ * Handles Node.js stream errors with code ERR_INVALID_STATE:
+ * - "Invalid state: Writer is not bound to a WritableStream" (after releaseLock())
+ * - "Invalid state: WritableStream is closed" (after close())
  */
 function isWriterReleaseError(e: unknown): boolean {
   if (e instanceof TypeError) {
+    // Check for ERR_INVALID_STATE error code (most reliable)
+    if ('code' in e && e.code === 'ERR_INVALID_STATE') {
+      return true;
+    }
+
+    // Fallback to message checking for compatibility
     const message = e.message;
     return (
       message.includes('Writer is not bound to a WritableStream') ||
