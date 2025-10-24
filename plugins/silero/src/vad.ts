@@ -431,7 +431,7 @@ export class VADStream extends baseStream {
       if (isWriterReleaseError(e)) {
         return false; // Signal that the stream is closing
       }
-      throw e; // Re-throw unexpected errors
+      throw e;
     }
   }
 
