@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, WorkerOptions, cli, codecs, defineAgent, log } from '@livekit/agents';
+import {
+  type JobContext,
+  WorkerOptions,
+  cli,
+  defineAgent,
+  log,
+  loopAudioFramesFromFile,
+} from '@livekit/agents';
 import { AudioSource, LocalAudioTrack, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,7 +49,7 @@ export default defineAgent({
     });
 
     let frameCount = 0;
-    for await (const frame of codecs.loopAudioFramesFromFile(audioFile, {
+    for await (const frame of loopAudioFramesFromFile(audioFile, {
       sampleRate: 48000,
       numChannels: 1,
       abortSignal: abortController.signal,

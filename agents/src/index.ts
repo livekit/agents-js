@@ -10,7 +10,6 @@
  * @packageDocumentation
  */
 import * as cli from './cli.js';
-import * as codecs from './codecs/utils.js';
 import * as inference from './inference/index.js';
 import * as ipc from './ipc/index.js';
 import * as llm from './llm/index.js';
@@ -35,4 +34,4 @@ export * from './vad.js';
 export * from './version.js';
 export * from './worker.js';
 
-export { cli, codecs, inference, ipc, llm, metrics, stream, stt, tokenize, tts, voice };
+export { cli, inference, ipc, llm, metrics, stream, stt, tokenize, tts, voice };
