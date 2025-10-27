@@ -44,6 +44,8 @@ export async function* audioFramesFromFile(
   const audioStream = new AudioByteStream(sampleRate, numChannels);
   const channel = createStreamChannel<AudioFrame>();
 
+  let ffmpegError: Error | null = null;
+
   const command = ffmpeg(filePath)
     .inputOptions([
       '-probesize',
@@ -57,14 +59,7 @@ export async function* audioFramesFromFile(
     ])
     .format('s16le') // signed 16-bit little-endian PCM to be consistent cross-platform
     .audioChannels(numChannels)
-    .audioFrequency(sampleRate)
-    .on('error', async (err: Error) => {
-      await channel.close();
-      throw err;
-    })
-    .on('end', async () => {
-      await channel.close();
-    });
+    .audioFrequency(sampleRate);
 
   const outputStream = command.pipe() as Readable;
 
@@ -80,21 +75,26 @@ export async function* audioFramesFromFile(
     }
   });
 
-  outputStream.on('end', async () => {
+  outputStream.on('end', () => {
     const frames = audioStream.flush();
     for (const frame of frames) {
-      await channel.write(frame);
+      channel.write(frame);
     }
-    await channel.close();
+    channel.close();
   });
 
-  outputStream.on('error', async (err: Error) => {
-    await channel.close();
-    throw err;
+  outputStream.on('error', (err: Error) => {
+    ffmpegError = err;
+    channel.close();
   });
 
-  for await (const frame of channel.stream()) {
-    yield frame;
+  try {
+    for await (const frame of channel.stream()) {
+      if (ffmpegError) throw ffmpegError;
+      yield frame;
+    }
+  } finally {
+    channel.close();
   }
 }
 
