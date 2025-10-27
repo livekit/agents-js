@@ -4,8 +4,9 @@
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { AudioFrame } from '@livekit/rtc-node';
 import ffmpeg from 'fluent-ffmpeg';
-import { Readable } from 'node:stream';
+import type { ReadableStream } from 'node:stream/web';
 import { AudioByteStream } from '../audio.js';
+import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
@@ -18,6 +19,7 @@ export interface AudioStreamDecoderOptions {
    * If not provided, FFmpeg will auto-detect
    */
   format?: string;
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -34,18 +36,17 @@ export interface AudioStreamDecoderOptions {
  * }
  * ```
  */
-export async function* audioFramesFromFile(
+export function audioFramesFromFile(
   filePath: string,
   options: AudioStreamDecoderOptions = {},
-): AsyncGenerator<AudioFrame, void, unknown> {
+  abortSignal?: AbortSignal,
+): ReadableStream<AudioFrame> {
   const sampleRate = options.sampleRate ?? 48000;
   const numChannels = options.numChannels ?? 1;
 
   const audioStream = new AudioByteStream(sampleRate, numChannels);
   const channel = createStreamChannel<AudioFrame>();
-
-  let ffmpegError: Error | null = null;
-
+  const logger = log();
   const command = ffmpeg(filePath)
     .inputOptions([
       '-probesize',
@@ -61,7 +62,20 @@ export async function* audioFramesFromFile(
     .audioChannels(numChannels)
     .audioFrequency(sampleRate);
 
-  const outputStream = command.pipe() as Readable;
+  let commandRunning = true;
+
+  const onClose = () => {
+    logger.debug('Audio file playback aborted');
+
+    channel.close();
+    if (commandRunning) {
+      commandRunning = false;
+      command.kill('SIGKILL');
+    }
+  };
+
+  const outputStream = command.pipe();
+  options.abortSignal?.addEventListener('abort', onClose, { once: true });
 
   outputStream.on('data', (chunk: Buffer) => {
     const arrayBuffer = chunk.buffer.slice(
@@ -80,22 +94,17 @@ export async function* audioFramesFromFile(
     for (const frame of frames) {
       channel.write(frame);
     }
+    commandRunning = false;
     channel.close();
   });
 
   outputStream.on('error', (err: Error) => {
-    ffmpegError = err;
-    channel.close();
+    logger.error(err);
+    commandRunning = false;
+    onClose();
   });
 
-  try {
-    for await (const frame of channel.stream()) {
-      if (ffmpegError) throw ffmpegError;
-      yield frame;
-    }
-  } finally {
-    channel.close();
-  }
+  return channel.stream();
 }
 
 /**
@@ -110,14 +119,18 @@ export async function* loopAudioFramesFromFile(
   options: AudioStreamDecoderOptions = {},
 ): AsyncGenerator<AudioFrame, void, unknown> {
   const frames: AudioFrame[] = [];
+  const logger = log();
+
   for await (const frame of audioFramesFromFile(filePath, options)) {
     frames.push(frame);
     yield frame;
   }
 
-  while (true) {
+  while (!options.abortSignal?.aborted) {
     for (const frame of frames) {
       yield frame;
     }
   }
+
+  logger.debug('Audio file playback loop finished');
 }
