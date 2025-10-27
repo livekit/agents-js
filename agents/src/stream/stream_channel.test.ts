@@ -126,4 +126,50 @@ describe('StreamChannel', () => {
     const nextResult = await reader.read();
     expect(nextResult.done).toBe(true);
   });
+
+  it('should gracefully handle close while read is pending', async () => {
+    const channel = createStreamChannel<string>();
+    const reader = channel.stream().getReader();
+
+    const readPromise = reader.read();
+
+    await channel.close();
+
+    const result = await readPromise;
+    expect(result.done).toBe(true);
+    expect(result.value).toBeUndefined();
+  });
+
+  it('should not throw error when writing after close', async () => {
+    const channel = createStreamChannel<string>();
+    channel.stream().getReader();
+
+    await channel.close();
+
+    await expect(channel.write('test')).rejects.toThrow();
+  });
+
+  it('should complete all pending reads when closed', async () => {
+    const channel = createStreamChannel<number>();
+    const reader = channel.stream().getReader();
+
+    const read1 = reader.read();
+    const read2 = reader.read();
+    const read3 = reader.read();
+
+    await channel.write(42);
+    await channel.write(43);
+    await channel.close();
+
+    const result1 = await read1;
+    expect(result1.done).toBe(false);
+    expect(result1.value).toBe(42);
+
+    const result2 = await read2;
+    expect(result2.done).toBe(false);
+    expect(result2.value).toBe(43);
+
+    const result3 = await read3;
+    expect(result3.done).toBe(true);
+  });
 });
