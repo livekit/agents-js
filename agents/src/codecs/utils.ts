@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
-import { AudioFrame } from '@livekit/rtc-node';
+import type { AudioFrame } from '@livekit/rtc-node';
 import ffmpeg from 'fluent-ffmpeg';
 import type { ReadableStream } from 'node:stream/web';
 import { AudioByteStream } from '../audio.js';
@@ -39,7 +39,6 @@ export interface AudioStreamDecoderOptions {
 export function audioFramesFromFile(
   filePath: string,
   options: AudioStreamDecoderOptions = {},
-  abortSignal?: AbortSignal,
 ): ReadableStream<AudioFrame> {
   const sampleRate = options.sampleRate ?? 48000;
   const numChannels = options.numChannels ?? 1;

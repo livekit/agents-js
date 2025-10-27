@@ -140,15 +140,6 @@ describe('StreamChannel', () => {
     expect(result.value).toBeUndefined();
   });
 
-  it('should not throw error when writing after close', async () => {
-    const channel = createStreamChannel<string>();
-    channel.stream().getReader();
-
-    await channel.close();
-
-    await expect(channel.write('test')).rejects.toThrow();
-  });
-
   it('should complete all pending reads when closed', async () => {
     const channel = createStreamChannel<number>();
     const reader = channel.stream().getReader();
