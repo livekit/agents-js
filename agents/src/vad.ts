@@ -177,6 +177,28 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     }
   }
 
+  /**
+   * Safely send a VAD event to the output stream, handling writer release errors during shutdown.
+   * @returns true if the event was sent, false if the stream is closing
+   * @throws Error if an unexpected error occurs
+   */
+  protected sendVADEvent(event: VADEvent): boolean {
+    if (this.closed) {
+      return false;
+    }
+
+    try {
+      this.outputWriter.write(event);
+      return true;
+    } catch (e) {
+      // Ignore writer release errors during stream closure (e.g., on participant disconnect)
+      if (isWriterReleaseError(e)) {
+        return false; // Signal that the stream is closing
+      }
+      throw e;
+    }
+  }
+
   updateInputStream(audioStream: ReadableStream<AudioFrame>) {
     this.deferredInputStream.setSource(audioStream);
   }
@@ -237,4 +259,29 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   [Symbol.asyncIterator](): VADStream {
     return this;
   }
+}
+
+/**
+ * Helper function to check if an error is related to writer being released during stream closure.
+ * This can happen during shutdown when close() releases the writer while the VAD task is still running.
+ *
+ * Handles Node.js stream errors with code ERR_INVALID_STATE:
+ * - "Invalid state: Writer is not bound to a WritableStream" (after releaseLock())
+ * - "Invalid state: WritableStream is closed" (after close())
+ */
+function isWriterReleaseError(e: unknown): boolean {
+  if (e instanceof TypeError) {
+    // Check for ERR_INVALID_STATE error code (most reliable)
+    if ('code' in e && e.code === 'ERR_INVALID_STATE') {
+      return true;
+    }
+
+    // Fallback to message checking for compatibility
+    const message = e.message;
+    return (
+      message.includes('Writer is not bound to a WritableStream') ||
+      message.includes('WritableStream is closed')
+    );
+  }
+  return false;
 }
