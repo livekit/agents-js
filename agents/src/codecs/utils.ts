@@ -46,6 +46,8 @@ export function audioFramesFromFile(
   const audioStream = new AudioByteStream(sampleRate, numChannels);
   const channel = createStreamChannel<AudioFrame>();
   const logger = log();
+
+  // TODO (Brian): decode WAV using a custom decoder instead of FFmpeg
   const command = ffmpeg(filePath)
     .inputOptions([
       '-probesize',
