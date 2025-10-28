@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { audioFramesFromFile, loopAudioFramesFromFile } from '../audio.js';
 import { log } from '../log.js';
-import { Task, cancelAndWait } from '../utils.js';
+import { Future, Task, cancelAndWait } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import { AgentSessionEventTypes, type AgentStateChangedEvent } from './events.js';
 
@@ -90,61 +90,33 @@ export interface BackgroundAudioStartOptions {
 // Kept small to avoid abrupt cutoffs when removing sounds
 const AUDIO_SOURCE_BUFFER_MS = 400;
 
-/**
- * Handle for controlling audio playback
- */
 export class PlayHandle {
-  private doneFuture: Promise<void>;
-  private doneResolve!: () => void;
-  private stopFuture: Promise<void>;
-  private stopResolve!: () => void;
-  private stopped = false;
+  private doneFuture = new Future<void>();
+  private stopFuture = new Future<void>();
 
-  constructor() {
-    this.doneFuture = new Promise<void>((resolve) => {
-      this.doneResolve = resolve;
-    });
-    this.stopFuture = new Promise<void>((resolve) => {
-      this.stopResolve = resolve;
-    });
-  }
-
-  /**
-   * Returns true if the sound has finished playing
-   */
   done(): boolean {
-    return this.stopped;
+    return this.doneFuture.done;
   }
 
-  /**
-   * Stop the sound from playing
-   */
   stop(): void {
-    if (this.done()) {
-      return;
+    if (this.done()) return;
+
+    try {
+      this.stopFuture.resolve();
+      this._markPlayoutDone();
+    } catch {
+      // Ignore if already resolved
     }
-
-    this.stopped = true;
-    this.stopResolve();
-    this._markPlayoutDone();
   }
 
-  /**
-   * Wait for the sound to finish playing
-   */
   async waitForPlayout(): Promise<void> {
-    return this.doneFuture;
+    return this.doneFuture.await;
   }
 
-  /** @internal */
   _markPlayoutDone(): void {
-    this.stopped = true;
-    this.doneResolve();
-  }
-
-  /** @internal */
-  _getStopPromise(): Promise<void> {
-    return this.stopFuture;
+    if (!this.doneFuture.done) {
+      this.doneFuture.resolve();
+    }
   }
 }
 
@@ -446,54 +418,67 @@ export class BackgroundAudioPlayer {
         : audioFramesFromFile(sound, { abortSignal: signal });
     }
 
-    // Apply volume to frames and capture them
-    for await (const frame of sound) {
-      if (signal.aborted) break;
-
-      let processedFrame: AudioFrame;
-
-      if (volume !== 1.0) {
-        // Convert int16 to float32 for volume processing
-        const int16Data = new Int16Array(
-          frame.data.buffer,
-          frame.data.byteOffset,
-          frame.data.byteLength / 2,
-        );
-        const float32Data = new Float32Array(int16Data.length);
-
-        // Convert to float32
-        for (let i = 0; i < int16Data.length; i++) {
-          float32Data[i] = int16Data[i]!;
-        }
-
-        // Apply volume with logarithmic scale
-        const volumeFactor = 10 ** Math.log10(volume);
-        for (let i = 0; i < float32Data.length; i++) {
-          float32Data[i]! *= volumeFactor;
-        }
-
-        // Clip and convert back to int16
-        const outputData = new Int16Array(float32Data.length);
-        for (let i = 0; i < float32Data.length; i++) {
-          const clipped = Math.max(-32768, Math.min(32767, float32Data[i]!));
-          outputData[i] = Math.round(clipped);
-        }
-
-        processedFrame = new AudioFrame(
-          outputData,
-          frame.sampleRate,
-          frame.channels,
-          frame.samplesPerChannel,
-        );
-      } else {
-        processedFrame = frame;
-      }
-
-      // TODO (Brian): use AudioMixer to add/remove frame streams
-      await this.audioSource.captureFrame(processedFrame);
-    }
+    await this.processFrameStream({ stream: sound, volume, playHandle, signal });
 
     // TODO: the waitForPlayout() may be innaccurate by 400ms
-    playHandle._markPlayoutDone();
+    await playHandle.waitForPlayout();
+  }
+
+  private async processFrameStream({
+    stream,
+    volume,
+    playHandle,
+    signal,
+  }: {
+    stream: AsyncIterable<AudioFrame>;
+    volume: number;
+    playHandle: PlayHandle;
+    signal: AbortSignal;
+  }) {
+    try {
+      for await (const frame of stream) {
+        if (signal.aborted) break;
+
+        let processedFrame: AudioFrame;
+
+        if (volume !== 1.0) {
+          const int16Data = new Int16Array(
+            frame.data.buffer,
+            frame.data.byteOffset,
+            frame.data.byteLength / 2,
+          );
+          const float32Data = new Float32Array(int16Data.length);
+
+          for (let i = 0; i < int16Data.length; i++) {
+            float32Data[i] = int16Data[i]!;
+          }
+
+          const volumeFactor = 10 ** Math.log10(volume);
+          for (let i = 0; i < float32Data.length; i++) {
+            float32Data[i]! *= volumeFactor;
+          }
+
+          const outputData = new Int16Array(float32Data.length);
+          for (let i = 0; i < float32Data.length; i++) {
+            const clipped = Math.max(-32768, Math.min(32767, float32Data[i]!));
+            outputData[i] = Math.round(clipped);
+          }
+
+          processedFrame = new AudioFrame(
+            outputData,
+            frame.sampleRate,
+            frame.channels,
+            frame.samplesPerChannel,
+          );
+        } else {
+          processedFrame = frame;
+        }
+
+        // TODO (Brian): use AudioMixer to add/remove frame streams
+        await this.audioSource.captureFrame(processedFrame);
+      }
+    } finally {
+      playHandle._markPlayoutDone();
+    }
   }
 }
