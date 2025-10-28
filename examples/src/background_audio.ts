@@ -58,7 +58,9 @@ export default defineAgent({
     });
 
     await backgroundAudio.start({ room: ctx.room, agentSession: session });
-    logger.info(`Background audio started, track: ${backgroundAudio.getPublication()?.sid}`);
+
+    // Play another audio file at any time using the play method:
+    // backgroundAudio.play('filepath.ogg');
   },
 });
 
