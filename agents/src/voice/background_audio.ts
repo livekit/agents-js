@@ -9,18 +9,16 @@ import {
   type Room,
   TrackPublishOptions,
 } from '@livekit/rtc-node';
-import { assert } from 'node:console';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { audioFramesFromFile, loopAudioFramesFromFile } from '../audio.js';
 import { log } from '../log.js';
-import { Task } from '../utils.js';
+import { Task, cancelAndWait } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import { AgentSessionEventTypes, type AgentStateChangedEvent } from './events.js';
 
-/**
- * Built-in audio clips bundled with the agents package
- */
+const TASK_TIMEOUT_MS = 500;
+
 export enum BuiltinAudioClip {
   OFFICE_AMBIENCE = 'office-ambience.ogg',
   KEYBOARD_TYPING = 'keyboard-typing.ogg',
@@ -36,9 +34,6 @@ export function isBuiltinAudioClip(
   );
 }
 
-/**
- * Get the file path for a built-in audio clip
- */
 export function getBuiltinAudioPath(clip: BuiltinAudioClip): string {
   const resourcesPath = join(dirname(fileURLToPath(import.meta.url)), '../../resources');
   return join(resourcesPath, clip);
@@ -54,8 +49,8 @@ export type AudioSourceType = string | BuiltinAudioClip | AsyncIterable<AudioFra
  */
 export interface AudioConfig {
   source: AudioSourceType;
-  volume?: number;
-  probability?: number;
+  probability: number;
+  volume: number;
 }
 
 /**
@@ -206,17 +201,18 @@ export class BackgroundAudioPlayer {
   }
 
   /**
-   * Select a sound from a list based on probability weights
+   * Select a sound from a list of background sound based on probability weights
+   * Return undefined if no sound is selected (when sum of probabilities < 1.0).
    */
-  private selectSoundFromList(sounds: AudioConfig[]): AudioConfig | null {
-    const totalProbability = sounds.reduce((sum, s) => sum + (s.probability ?? 1.0), 0);
+  private selectSoundFromList(sounds: AudioConfig[]): AudioConfig | undefined {
+    const totalProbability = sounds.reduce((sum, sound) => sum + sound.probability, 0);
 
     if (totalProbability <= 0) {
-      return null;
+      return undefined;
     }
 
     if (totalProbability < 1.0 && Math.random() > totalProbability) {
-      return null;
+      return undefined;
     }
 
     const normalizeFactor = totalProbability <= 1.0 ? 1.0 : totalProbability;
@@ -224,12 +220,11 @@ export class BackgroundAudioPlayer {
     let cumulative = 0.0;
 
     for (const sound of sounds) {
-      const prob = sound.probability ?? 1.0;
-      if (prob <= 0) {
+      if (sound.probability <= 0) {
         continue;
       }
 
-      const normProb = prob / normalizeFactor;
+      const normProb = sound.probability / normalizeFactor;
       cumulative += normProb;
 
       if (r <= cumulative) {
@@ -237,12 +232,9 @@ export class BackgroundAudioPlayer {
       }
     }
 
-    return sounds[sounds.length - 1] ?? null;
+    return sounds[sounds.length - 1];
   }
 
-  /**
-   * Normalize sound source to a consistent format
-   */
   private normalizeSoundSource(
     source?: AudioSourceType | AudioConfig | AudioConfig[],
   ): { source: AudioSourceType; volume: number } | undefined {
@@ -250,88 +242,64 @@ export class BackgroundAudioPlayer {
       return undefined;
     }
 
-    if (isBuiltinAudioClip(source)) {
-      return { source, volume: 1.0 };
-    }
-
-    // Check if it's a BuiltinAudioClip enum value
-    const builtinClips = Object.values(BuiltinAudioClip) as string[];
-    if (typeof source === 'string' && builtinClips.includes(source)) {
-      return { source: source as BuiltinAudioClip, volume: 1.0 };
+    if (typeof source === 'string') {
+      return {
+        source: this.normalizeBuiltinAudio(source),
+        volume: 1.0,
+      };
     }
 
     if (Array.isArray(source)) {
-      const selected = this.selectSoundFromList(source as AudioConfig[]);
-      if (selected === null) {
-        return null;
+      const selected = this.selectSoundFromList(source);
+      if (selected === undefined) {
+        return undefined;
       }
-      return { source: selected.source, volume: selected.volume ?? 1.0 };
+
+      return {
+        source: selected.source,
+        volume: selected.volume,
+      };
     }
 
-    // It's an AudioConfig
-    const config = source as AudioConfig;
-    return { source: config.source, volume: config.volume ?? 1.0 };
+    if (typeof source === 'object' && 'source' in source && 'volume' in source) {
+      return {
+        source: this.normalizeBuiltinAudio(source.source),
+        volume: source.volume,
+      };
+    }
+
+    return { source, volume: 1.0 };
   }
 
-  /**
-   * Get the file path for an audio source
-   */
-  private getAudioPath(source: AudioSourceType): string | null {
-    if (typeof source === 'string') {
-      // Check if it's a BuiltinAudioClip value
-      const builtinClips = Object.values(BuiltinAudioClip) as string[];
-      if (builtinClips.includes(source)) {
-        return getBuiltinAudioPath(source as BuiltinAudioClip);
-      }
-      return source;
+  private normalizeBuiltinAudio(source: AudioSourceType): AudioSourceType {
+    if (isBuiltinAudioClip(source)) {
+      return getBuiltinAudioPath(source);
     }
-
-    return null;
+    return source;
   }
 
   /**
    * Play an audio file once or in a loop
    */
   play(audio: AudioSourceType | AudioConfig | AudioConfig[], loop = false): PlayHandle {
-    if (!this.audioSource) {
-      throw new Error('BackgroundAudioPlayer not started');
-    }
-
     const normalized = this.normalizeSoundSource(audio);
-    if (normalized === null) {
+    if (normalized === undefined) {
       const handle = new PlayHandle();
       handle._markPlayoutDone();
       return handle;
     }
 
     const { source, volume } = normalized;
-
-    // TODO: Support AsyncIterable sources when AudioMixer is available
-    const filePath = this.getAudioPath(source);
-    if (!filePath) {
-      throw new Error(
-        'AsyncIterable audio sources require AudioMixer - not yet supported. Use file path or BuiltinAudioClip.',
-      );
-    }
-
     const playHandle = new PlayHandle();
-    const controller = new AbortController();
 
-    const task = new Task<void>(
-      async (ctrl) => {
-        try {
-          await this.playTask(playHandle, filePath, volume, loop, ctrl.signal);
-        } finally {
-          const index = this.playTasks.indexOf(task);
-          if (index > -1) {
-            this.playTasks.splice(index, 1);
-          }
-          playHandle._markPlayoutDone();
-        }
-      },
-      controller,
-      `play-${filePath}`,
-    );
+    const task = Task.from(async ({ signal }) => {
+      await this.playTask({ playHandle, sound: source, volume, loop, signal });
+    });
+
+    task.addDoneCallback(() => {
+      playHandle._markPlayoutDone();
+      this.playTasks.splice(this.playTasks.indexOf(task), 1);
+    });
 
     this.playTasks.push(task);
     return playHandle;
@@ -349,7 +317,6 @@ export class BackgroundAudioPlayer {
    */
   async start(options: BackgroundAudioStartOptions): Promise<void> {
     const { room, agentSession, trackPublishOptions } = options;
-
     this.room = room;
     this.agentSession = agentSession;
     this.trackPublishOptions = trackPublishOptions;
@@ -365,61 +332,36 @@ export class BackgroundAudioPlayer {
       this.agentSession.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
     }
 
-    if (this.ambientSound) {
-      const normalized = this.normalizeSoundSource(this.ambientSound);
-      if (normalized) {
-        const { volume } = normalized;
-        const filePath = this.getAudioPath(normalized.source);
-        if (filePath) {
-          const audioConfig: AudioConfig = { source: normalized.source, volume };
-          this.ambientHandle = this.play(audioConfig, true);
-        } else {
-          this.#logger.warn('Ambient sound source must be a file path or BuiltinAudioClip');
-        }
-      }
-    }
+    if (!this.ambientSound) return;
+
+    const normalized = this.normalizeSoundSource(this.ambientSound);
+    if (!normalized) return;
+
+    const { source, volume } = normalized;
+    const selectedSound = { source, volume, probability: 1.0 } as AudioConfig;
+    this.ambientHandle = this.play(selectedSound, typeof source === 'string');
   }
 
   /**
    * Close and cleanup the background audio system
    */
   async close(): Promise<void> {
-    if (!this.audioSource) {
-      return; // Not started
-    }
+    await cancelAndWait(this.playTasks, TASK_TIMEOUT_MS);
 
-    // Cancel all play tasks
-    await Promise.all(this.playTasks.map((task) => task.cancel()));
-    this.playTasks = [];
-
-    // Cancel republish task if running
     if (this.republishTask) {
-      await this.republishTask.cancel();
+      await this.republishTask.cancelAndWait(TASK_TIMEOUT_MS);
     }
 
-    // Close audio source
+    // TODO (Brian): cancel audio mixer task and close audio mixer
+
     await this.audioSource.close();
 
-    // Remove event listeners
-    if (this.agentSession) {
-      this.agentSession.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
-    }
-
+    this.agentSession?.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
     this.room?.off('reconnected', this.onReconnected);
 
-    // Unpublish track
-    if (this.publication) {
-      try {
-        const sid = this.publication.sid;
-        if (sid && this.room?.localParticipant) {
-          await this.room.localParticipant.unpublishTrack(sid);
-        }
-      } catch (error) {
-        // Ignore errors during unpublish
-      }
+    if (this.publication && this.publication.sid) {
+      await this.room?.localParticipant?.unpublishTrack(this.publication.sid);
     }
-
-    this.publication = undefined;
   }
 
   /**
@@ -450,16 +392,11 @@ export class BackgroundAudioPlayer {
   }
 
   private onReconnected = (): void => {
-    this.#logger.info('Room reconnected, republishing background audio track');
-
-    // Cancel any existing republish task
     if (this.republishTask) {
       this.republishTask.cancel();
     }
 
     this.publication = undefined;
-
-    // Start new republish task
     this.republishTask = Task.from(async () => {
       await this.republishTrackTask();
     });
@@ -467,11 +404,7 @@ export class BackgroundAudioPlayer {
 
   private async republishTrackTask(): Promise<void> {
     // TODO (Brian): add lock protection when implementing lock
-    try {
-      await this.publishTrack();
-    } catch (error) {
-      this.#logger.error('Failed to republish track', error);
-    }
+    await this.publishTrack();
   }
 
   private onAgentStateChanged = (ev: AgentStateChangedEvent): void => {
@@ -484,78 +417,83 @@ export class BackgroundAudioPlayer {
         return;
       }
 
-      assert(this.thinkingSound !== undefined, 'thinkingSound is not set');
-
       // TODO (Brian): play thinking sound and assign to thinkingHandle
-    } else if (this.thinkingHandle) {
-      this.thinkingHandle.stop();
+    } else {
+      this.thinkingHandle?.stop();
     }
   };
 
-  private async playTask(
-    playHandle: PlayHandle,
-    filePath: string,
-    volume: number,
-    loop: boolean,
-    signal: AbortSignal,
-  ): Promise<void> {
-    if (!this.audioSource) {
-      throw new Error('AudioSource not initialized');
+  private async playTask({
+    playHandle,
+    sound,
+    volume,
+    loop,
+    signal,
+  }: {
+    playHandle: PlayHandle;
+    sound: AudioSourceType;
+    volume: number;
+    loop: boolean;
+    signal: AbortSignal;
+  }): Promise<void> {
+    if (isBuiltinAudioClip(sound)) {
+      sound = getBuiltinAudioPath(sound);
     }
 
-    // Stop playback if handle is stopped
-    playHandle._getStopPromise().then(() => {
-      // Signal is already provided by Task
-    });
+    if (typeof sound === 'string') {
+      sound = loop
+        ? loopAudioFramesFromFile(sound, { abortSignal: signal })
+        : audioFramesFromFile(sound, { abortSignal: signal });
+    }
 
-    try {
-      if (loop) {
-        // Infinite loop
-        for await (const frame of loopAudioFramesFromFile(filePath, {
-          sampleRate: 48000,
-          numChannels: 1,
-          abortSignal: signal,
-        })) {
-          if (signal.aborted) {
-            break;
-          }
+    // Apply volume to frames and capture them
+    for await (const frame of sound) {
+      if (signal.aborted) break;
 
-          // Apply volume if needed
-          const adjustedFrame = volume !== 1.0 ? this.applyVolume(frame, volume) : frame;
-          await this.audioSource.captureFrame(adjustedFrame);
+      let processedFrame: AudioFrame;
+
+      if (volume !== 1.0) {
+        // Convert int16 to float32 for volume processing
+        const int16Data = new Int16Array(
+          frame.data.buffer,
+          frame.data.byteOffset,
+          frame.data.byteLength / 2,
+        );
+        const float32Data = new Float32Array(int16Data.length);
+
+        // Convert to float32
+        for (let i = 0; i < int16Data.length; i++) {
+          float32Data[i] = int16Data[i]!;
         }
+
+        // Apply volume with logarithmic scale
+        const volumeFactor = 10 ** Math.log10(volume);
+        for (let i = 0; i < float32Data.length; i++) {
+          float32Data[i]! *= volumeFactor;
+        }
+
+        // Clip and convert back to int16
+        const outputData = new Int16Array(float32Data.length);
+        for (let i = 0; i < float32Data.length; i++) {
+          const clipped = Math.max(-32768, Math.min(32767, float32Data[i]!));
+          outputData[i] = Math.round(clipped);
+        }
+
+        processedFrame = new AudioFrame(
+          outputData,
+          frame.sampleRate,
+          frame.channels,
+          frame.samplesPerChannel,
+        );
       } else {
-        // Play once
-        const stream = audioFramesFromFile(filePath, {
-          sampleRate: 48000,
-          numChannels: 1,
-          abortSignal: signal,
-        });
-
-        for await (const frame of stream) {
-          if (signal.aborted) {
-            break;
-          }
-
-          const adjustedFrame = volume !== 1.0 ? this.applyVolume(frame, volume) : frame;
-          await this.audioSource.captureFrame(adjustedFrame);
-        }
+        processedFrame = frame;
       }
-    } catch (error) {
-      this.#logger.error('Error playing audio', error);
-    } finally {
-      playHandle._markPlayoutDone();
+
+      // TODO (Brian): use AudioMixer to add/remove frame streams
+      await this.audioSource.captureFrame(processedFrame);
     }
-  }
 
-  private applyVolume(frame: AudioFrame, volume: number): AudioFrame {
-    // Apply volume using logarithmic scale (matching Python)
-    const data = new Int16Array(frame.data.length);
-    frame.data.forEach((sample, i) => {
-      const factor = 10 ** Math.log10(volume);
-      data[i] = Math.max(-32768, Math.min(32767, Math.round(sample * factor)));
-    });
-
-    return new AudioFrame(data, frame.sampleRate, frame.channels, frame.samplesPerChannel);
+    // TODO: the waitForPlayout() may be innaccurate by 400ms
+    playHandle._markPlayoutDone();
   }
 }
