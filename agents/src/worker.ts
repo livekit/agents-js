@@ -9,9 +9,9 @@ import type {
 } from '@livekit/protocol';
 import {
   type AvailabilityRequest,
+  JobType,
   ParticipantPermission,
   ServerMessage,
-  ServerType,
   WorkerMessage,
   WorkerStatus,
 } from '@livekit/protocol';
@@ -146,7 +146,7 @@ export class WorkerPermissions {
  *
  * This class is mostly useful in conjunction with {@link cli.runApp}.
  */
-export class WorkerOptions {
+export class ServerOptions {
   agent: string;
   requestFunc: (job: JobRequest) => Promise<void>;
   loadFunc: (worker: AgentServer) => Promise<number>;
@@ -156,7 +156,7 @@ export class WorkerOptions {
   initializeProcessTimeout: number;
   permissions: WorkerPermissions;
   agentName: string;
-  serverType: ServerType;
+  serverType: JobType;
   maxRetry: number;
   wsURL: string;
   apiKey?: string;
@@ -180,7 +180,7 @@ export class WorkerOptions {
     initializeProcessTimeout = 10 * 1000,
     permissions = new WorkerPermissions(),
     agentName = '',
-    serverType = ServerType.JT_ROOM,
+    serverType = JobType.JT_ROOM,
     maxRetry = MAX_RECONNECT_ATTEMPTS,
     wsURL = 'ws://localhost:7880',
     apiKey = undefined,
@@ -208,7 +208,7 @@ export class WorkerOptions {
     initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;
     agentName?: string;
-    serverType?: ServerType;
+    serverType?: JobType;
     maxRetry?: number;
     wsURL?: string;
     apiKey?: string;
@@ -267,7 +267,7 @@ class PendingAssignment {
  * behind a wrapper.
  */
 export class AgentServer {
-  #opts: WorkerOptions;
+  #opts: ServerOptions;
   #procPool: ProcPool;
 
   #id = 'unregistered';
@@ -285,22 +285,22 @@ export class AgentServer {
   #inferenceExecutor?: InferenceProcExecutor;
 
   /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
-  constructor(opts: WorkerOptions) {
+  constructor(opts: ServerOptions) {
     opts.wsURL = opts.wsURL || process.env.LIVEKIT_URL || '';
     opts.apiKey = opts.apiKey || process.env.LIVEKIT_API_KEY || '';
     opts.apiSecret = opts.apiSecret || process.env.LIVEKIT_API_SECRET || '';
 
     if (opts.wsURL === '')
       throw new MissingCredentialsError(
-        'URL is required: Set LIVEKIT_URL, run with --url, or pass wsURL in WorkerOptions',
+        'URL is required: Set LIVEKIT_URL, run with --url, or pass wsURL in ServerOptions',
       );
     if (opts.apiKey === '')
       throw new MissingCredentialsError(
-        'API Key is required: Set LIVEKIT_API_KEY, run with --api-key, or pass apiKey in WorkerOptions',
+        'API Key is required: Set LIVEKIT_API_KEY, run with --api-key, or pass apiKey in ServerOptions',
       );
     if (opts.apiSecret === '')
       throw new MissingCredentialsError(
-        'API Secret is required: Set LIVEKIT_API_SECRET, run with --api-secret, or pass apiSecret in WorkerOptions',
+        'API Secret is required: Set LIVEKIT_API_SECRET, run with --api-secret, or pass apiSecret in ServerOptions',
       );
 
     if (opts.workerToken) {
@@ -345,7 +345,7 @@ export class AgentServer {
     this.#opts = opts;
     this.#httpServer = new HTTPServer(opts.host, opts.port, () => ({
       agent_name: opts.agentName,
-      worker_type: ServerType[opts.serverType],
+      worker_type: JobType[opts.serverType],
       active_jobs: this.activeJobs.length,
       sdk_version: version,
       project_type: PROJECT_TYPE,
@@ -503,7 +503,7 @@ export class AgentServer {
         message: {
           case: 'simulateJob',
           value: {
-            type: ServerType.JT_PUBLISHER,
+            type: JobType.JT_PUBLISHER,
             room,
             participant,
           },
@@ -793,3 +793,13 @@ export class AgentServer {
     await this.#close.await;
   }
 }
+
+/**
+ * @deprecated Use {@link AgentServer} instead. This alias is provided for backward compatibility.
+ */
+export const Worker = AgentServer;
+
+/**
+ * @deprecated Use {@link ServerOptions} instead. This alias is provided for backward compatibility.
+ */
+export const WorkerOptions = ServerOptions;
