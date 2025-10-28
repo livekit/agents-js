@@ -101,12 +101,11 @@ export class PlayHandle {
   stop(): void {
     if (this.done()) return;
 
-    try {
+    if (!this.stopFuture.done) {
       this.stopFuture.resolve();
-      this._markPlayoutDone();
-    } catch {
-      // Ignore if already resolved
     }
+
+    this._markPlayoutDone();
   }
 
   async waitForPlayout(): Promise<void> {
@@ -300,9 +299,7 @@ export class BackgroundAudioPlayer {
     // TODO (Brian): start audio mixer task
     this.room.on('reconnected', this.onReconnected);
 
-    if (this.agentSession) {
-      this.agentSession.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
-    }
+    this.agentSession?.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
 
     if (!this.ambientSound) return;
 
@@ -310,7 +307,7 @@ export class BackgroundAudioPlayer {
     if (!normalized) return;
 
     const { source, volume } = normalized;
-    const selectedSound = { source, volume, probability: 1.0 } as AudioConfig;
+    const selectedSound: AudioConfig = { source, volume, probability: 1.0 };
     this.ambientHandle = this.play(selectedSound, typeof source === 'string');
   }
 
