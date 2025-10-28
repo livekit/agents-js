@@ -39,23 +39,14 @@ export function getBuiltinAudioPath(clip: BuiltinAudioClip): string {
   return join(resourcesPath, clip);
 }
 
-/**
- * Audio source types supported by BackgroundAudioPlayer
- */
 export type AudioSourceType = string | BuiltinAudioClip | AsyncIterable<AudioFrame>;
 
-/**
- * Configuration for background audio playback
- */
 export interface AudioConfig {
   source: AudioSourceType;
   volume?: number;
   probability?: number;
 }
 
-/**
- * Options for initializing BackgroundAudioPlayer
- */
 export interface BackgroundAudioPlayerOptions {
   /**
    * Ambient sound to play continuously in the background.
@@ -77,9 +68,6 @@ export interface BackgroundAudioPlayerOptions {
   streamTimeoutMs?: number;
 }
 
-/**
- * Options for starting background audio playback
- */
 export interface BackgroundAudioStartOptions {
   room: Room;
   agentSession?: AgentSession;
@@ -250,9 +238,6 @@ export class BackgroundAudioPlayer {
     return source;
   }
 
-  /**
-   * Play an audio file once or in a loop
-   */
   play(audio: AudioSourceType | AudioConfig | AudioConfig[], loop = false): PlayHandle {
     const normalized = this.normalizeSoundSource(audio);
     if (normalized === undefined) {
@@ -416,7 +401,6 @@ export class BackgroundAudioPlayer {
         : audioFramesFromFile(sound, { abortSignal: signal });
     }
 
-    // Apply volume to frames and capture them
     try {
       for await (const frame of sound) {
         if (signal.aborted || playHandle.done()) break;
@@ -424,7 +408,6 @@ export class BackgroundAudioPlayer {
         let processedFrame: AudioFrame;
 
         if (volume !== 1.0) {
-          // Convert int16 to float32 for volume processing
           const int16Data = new Int16Array(
             frame.data.buffer,
             frame.data.byteOffset,
@@ -432,18 +415,15 @@ export class BackgroundAudioPlayer {
           );
           const float32Data = new Float32Array(int16Data.length);
 
-          // Convert to float32
           for (let i = 0; i < int16Data.length; i++) {
             float32Data[i] = int16Data[i]!;
           }
 
-          // Apply volume with logarithmic scale
           const volumeFactor = 10 ** Math.log10(volume);
           for (let i = 0; i < float32Data.length; i++) {
             float32Data[i]! *= volumeFactor;
           }
 
-          // Clip and convert back to int16
           const outputData = new Int16Array(float32Data.length);
           for (let i = 0; i < float32Data.length; i++) {
             const clipped = Math.max(-32768, Math.min(32767, float32Data[i]!));
