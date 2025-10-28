@@ -49,8 +49,8 @@ export type AudioSourceType = string | BuiltinAudioClip | AsyncIterable<AudioFra
  */
 export interface AudioConfig {
   source: AudioSourceType;
-  probability: number;
-  volume: number;
+  volume?: number;
+  probability?: number;
 }
 
 /**
@@ -176,7 +176,7 @@ export class BackgroundAudioPlayer {
    * Return undefined if no sound is selected (when sum of probabilities < 1.0).
    */
   private selectSoundFromList(sounds: AudioConfig[]): AudioConfig | undefined {
-    const totalProbability = sounds.reduce((sum, sound) => sum + sound.probability, 0);
+    const totalProbability = sounds.reduce((sum, sound) => sum + (sound.probability ?? 1.0), 0);
 
     if (totalProbability <= 0) {
       return undefined;
@@ -191,11 +191,12 @@ export class BackgroundAudioPlayer {
     let cumulative = 0.0;
 
     for (const sound of sounds) {
-      if (sound.probability <= 0) {
+      const prob = sound.probability ?? 1.0;
+      if (prob <= 0) {
         continue;
       }
 
-      const normProb = sound.probability / normalizeFactor;
+      const normProb = prob / normalizeFactor;
       cumulative += normProb;
 
       if (r <= cumulative) {
@@ -228,14 +229,14 @@ export class BackgroundAudioPlayer {
 
       return {
         source: selected.source,
-        volume: selected.volume,
+        volume: selected.volume ?? 1.0,
       };
     }
 
-    if (typeof source === 'object' && 'source' in source && 'volume' in source) {
+    if (typeof source === 'object' && 'source' in source) {
       return {
         source: this.normalizeBuiltinAudio(source.source),
-        volume: source.volume,
+        volume: source.volume ?? 1.0,
       };
     }
 
