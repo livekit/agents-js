@@ -282,7 +282,7 @@ export class VADStream extends baseStream {
               rawAccumulatedSpeech: speechThresholdDuration,
             })
           ) {
-            break; // Exit the inference loop since the stream is closing
+            continue;
           }
 
           const resetWriteCursor = () => {
@@ -333,7 +333,7 @@ export class VADStream extends baseStream {
                   rawAccumulatedSpeech: 0,
                 })
               ) {
-                break; // Exit the inference loop since the stream is closing
+                continue;
               }
             }
           } else {
@@ -364,7 +364,7 @@ export class VADStream extends baseStream {
                   rawAccumulatedSpeech: 0,
                 })
               ) {
-                break; // Exit the inference loop since the stream is closing
+                continue;
               }
 
               resetWriteCursor();
