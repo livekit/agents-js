@@ -416,53 +416,55 @@ export class BackgroundAudioPlayer {
     }
 
     // Apply volume to frames and capture them
-    for await (const frame of sound) {
-      if (signal.aborted) break;
+    try {
+      for await (const frame of sound) {
+        if (signal.aborted || playHandle.done()) break;
 
-      let processedFrame: AudioFrame;
+        let processedFrame: AudioFrame;
 
-      if (volume !== 1.0) {
-        // Convert int16 to float32 for volume processing
-        const int16Data = new Int16Array(
-          frame.data.buffer,
-          frame.data.byteOffset,
-          frame.data.byteLength / 2,
-        );
-        const float32Data = new Float32Array(int16Data.length);
+        if (volume !== 1.0) {
+          // Convert int16 to float32 for volume processing
+          const int16Data = new Int16Array(
+            frame.data.buffer,
+            frame.data.byteOffset,
+            frame.data.byteLength / 2,
+          );
+          const float32Data = new Float32Array(int16Data.length);
 
-        // Convert to float32
-        for (let i = 0; i < int16Data.length; i++) {
-          float32Data[i] = int16Data[i]!;
+          // Convert to float32
+          for (let i = 0; i < int16Data.length; i++) {
+            float32Data[i] = int16Data[i]!;
+          }
+
+          // Apply volume with logarithmic scale
+          const volumeFactor = 10 ** Math.log10(volume);
+          for (let i = 0; i < float32Data.length; i++) {
+            float32Data[i]! *= volumeFactor;
+          }
+
+          // Clip and convert back to int16
+          const outputData = new Int16Array(float32Data.length);
+          for (let i = 0; i < float32Data.length; i++) {
+            const clipped = Math.max(-32768, Math.min(32767, float32Data[i]!));
+            outputData[i] = Math.round(clipped);
+          }
+
+          processedFrame = new AudioFrame(
+            outputData,
+            frame.sampleRate,
+            frame.channels,
+            frame.samplesPerChannel,
+          );
+        } else {
+          processedFrame = frame;
         }
 
-        // Apply volume with logarithmic scale
-        const volumeFactor = 10 ** Math.log10(volume);
-        for (let i = 0; i < float32Data.length; i++) {
-          float32Data[i]! *= volumeFactor;
-        }
-
-        // Clip and convert back to int16
-        const outputData = new Int16Array(float32Data.length);
-        for (let i = 0; i < float32Data.length; i++) {
-          const clipped = Math.max(-32768, Math.min(32767, float32Data[i]!));
-          outputData[i] = Math.round(clipped);
-        }
-
-        processedFrame = new AudioFrame(
-          outputData,
-          frame.sampleRate,
-          frame.channels,
-          frame.samplesPerChannel,
-        );
-      } else {
-        processedFrame = frame;
+        // TODO (Brian): use AudioMixer to add/remove frame streams
+        await this.audioSource.captureFrame(processedFrame);
       }
-
-      // TODO (Brian): use AudioMixer to add/remove frame streams
-      await this.audioSource.captureFrame(processedFrame);
+    } finally {
+      // TODO: the waitForPlayout() may be innaccurate by 400ms
+      playHandle._markPlayoutDone();
     }
-
-    // TODO: the waitForPlayout() may be innaccurate by 400ms
-    playHandle._markPlayoutDone();
   }
 }
