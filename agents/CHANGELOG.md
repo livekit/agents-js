@@ -1,5 +1,63 @@
 # @livekit/agents
 
+## 1.0.12
+
+### Patch Changes
+
+- Expose EOUMetrics type - [#776](https://github.com/livekit/agents-js/pull/776) ([@toubatbrian](https://github.com/toubatbrian))
+
+- - Fix CommonJS entrypoint to resolve files from `dist` - [#777](https://github.com/livekit/agents-js/pull/777) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.11
+
+### Patch Changes
+
+- Convert and rename all time-based metric fields to \*Ms variants - [#765](https://github.com/livekit/agents-js/pull/765) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add comment on units for LLM metrics - [#764](https://github.com/livekit/agents-js/pull/764) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- Support custom text callback - [#761](https://github.com/livekit/agents-js/pull/761) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.10
+
+### Patch Changes
+
+- Ensure tool calls are not aborted when preamble text forwarding stops. It refines the execution flow so that cleanup of preamble forwarders does not propagate an abort to in-flight tool executions. - [#756](https://github.com/livekit/agents-js/pull/756) ([@jjsquillante](https://github.com/jjsquillante))
+
+## 1.0.9
+
+### Patch Changes
+
+- Wait for all speech playouts inside tool before tool reply in realtime model - [#753](https://github.com/livekit/agents-js/pull/753) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.8
+
+### Patch Changes
+
+- Fix inference gateway LLM to allow not passing OPENAI_API_KEY - [#743](https://github.com/livekit/agents-js/pull/743) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.7
+
+### Patch Changes
+
+- Support using 'lang/\*' format for defining gateway STT - [#728](https://github.com/livekit/agents-js/pull/728) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Update LLM inference gateway model names - [#742](https://github.com/livekit/agents-js/pull/742) ([@toubatbrian](https://github.com/toubatbrian))
+
+- update comments on room io configs - [#739](https://github.com/livekit/agents-js/pull/739) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- fix docstrings - [#740](https://github.com/livekit/agents-js/pull/740) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- update UserInputTranscribedEvent with language - [#741](https://github.com/livekit/agents-js/pull/741) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+- Add LiveKit gateway model integrations - [#734](https://github.com/livekit/agents-js/pull/734) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.6
+
+### Patch Changes
+
+- add logs for tracks on participant - [#721](https://github.com/livekit/agents-js/pull/721) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
 ## 1.0.5
 
 ### Patch Changes

@@ -4,6 +4,14 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
+import {
+  LLM as InferenceLLM,
+  STT as InferenceSTT,
+  TTS as InferenceTTS,
+  type LLMModels,
+  type STTModelString,
+  type TTSModelString,
+} from '../inference/index.js';
 import { ReadonlyChatContext } from '../llm/chat_context.js';
 import type { ChatMessage, FunctionCall, RealtimeModel } from '../llm/index.js';
 import {
@@ -46,7 +54,7 @@ export function isStopResponse(value: unknown): value is StopResponse {
 }
 
 export interface ModelSettings {
-  /* The tool choice to use when calling the LLM. */
+  /** The tool choice to use when calling the LLM. */
   toolChoice?: ToolChoice;
 }
 
@@ -55,10 +63,10 @@ export interface AgentOptions<UserData> {
   chatCtx?: ChatContext;
   tools?: ToolContext<UserData>;
   turnDetection?: TurnDetectionMode;
-  stt?: STT;
+  stt?: STT | STTModelString;
   vad?: VAD;
-  llm?: LLM | RealtimeModel;
-  tts?: TTS;
+  llm?: LLM | RealtimeModel | LLMModels;
+  tts?: TTS | TTSModelString;
   allowInterruptions?: boolean;
   minConsecutiveSpeechDelay?: number;
 }
@@ -101,10 +109,26 @@ export class Agent<UserData = any> {
       : ChatContext.empty();
 
     this.turnDetection = turnDetection;
-    this._stt = stt;
     this._vad = vad;
-    this._llm = llm;
-    this._tts = tts;
+
+    if (typeof stt === 'string') {
+      this._stt = InferenceSTT.fromModelString(stt);
+    } else {
+      this._stt = stt;
+    }
+
+    if (typeof llm === 'string') {
+      this._llm = InferenceLLM.fromModelString(llm);
+    } else {
+      this._llm = llm;
+    }
+
+    if (typeof tts === 'string') {
+      this._tts = InferenceTTS.fromModelString(tts);
+    } else {
+      this._tts = tts;
+    }
+
     this._agentActivity = undefined;
   }
 

@@ -641,6 +641,7 @@ export class AgentActivity implements RecognitionHooks {
       createUserInputTranscribedEvent({
         transcript: ev.alternatives![0].text,
         isFinal: false,
+        language: ev.alternatives![0].language,
         // TODO(AJS-106): add multi participant support
       }),
     );
@@ -657,6 +658,7 @@ export class AgentActivity implements RecognitionHooks {
       createUserInputTranscribedEvent({
         transcript: ev.alternatives![0].text,
         isFinal: true,
+        language: ev.alternatives![0].language,
         // TODO(AJS-106): add multi participant support
       }),
     );
@@ -982,9 +984,9 @@ export class AgentActivity implements RecognitionHooks {
     const eouMetrics: EOUMetrics = {
       type: 'eou_metrics',
       timestamp: Date.now(),
-      endOfUtteranceDelay: info.endOfUtteranceDelay,
-      transcriptionDelay: info.transcriptionDelay,
-      onUserTurnCompletedDelay: callbackDuration,
+      endOfUtteranceDelayMs: info.endOfUtteranceDelay,
+      transcriptionDelayMs: info.transcriptionDelay,
+      onUserTurnCompletedDelayMs: callbackDuration,
       speechId: speechHandle.id,
     };
 
@@ -1504,6 +1506,10 @@ export class AgentActivity implements RecognitionHooks {
       abortController: AbortController,
       outputs: Array<[string, _TextOut | null, _AudioOut | null]>,
     ) => {
+      replyAbortController.signal.addEventListener('abort', () => abortController.abort(), {
+        once: true,
+      });
+
       const forwardTasks: Array<Task<void>> = [];
       try {
         for await (const msg of ev.messageStream) {
@@ -1561,7 +1567,7 @@ export class AgentActivity implements RecognitionHooks {
     const tasks = [
       Task.from(
         (controller) => readMessages(controller, messageOutputs),
-        replyAbortController,
+        undefined,
         'AgentActivity.realtime_generation.read_messages',
       ),
     ];
@@ -1773,6 +1779,20 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
+      // wait all speeches played before updating the tool output and generating the response
+      // most realtime models dont support generating multiple responses at the same time
+      while (this.currentSpeech || this.speechQueue.size() > 0) {
+        if (
+          this.currentSpeech &&
+          !this.currentSpeech.done() &&
+          this.currentSpeech !== speechHandle
+        ) {
+          await this.currentSpeech.waitForPlayout();
+        } else {
+          // Don't block the event loop
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+      }
       const chatCtx = this.realtimeSession.chatCtx.copy();
       chatCtx.items.push(...functionToolsExecutedEvent.functionCallOutputs);
       try {

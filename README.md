@@ -65,17 +65,28 @@ Currently, only the following plugins are supported:
 | ---------------------------------------------------------------------------------------------------- | ------------- |
 | [@livekit/agents-plugin-openai](https://www.npmjs.com/package/@livekit/agents-plugin-openai)         | LLM, TTS, STT |
 | [@livekit/agents-plugin-google](https://www.npmjs.com/package/@livekit/agents-plugin-google)         | LLM, TTS      |
-| [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT           |
+| [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT, TTS      |
 | [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS           |
 | [@livekit/agents-plugin-cartesia](https://www.npmjs.com/package/@livekit/agents-plugin-cartesia)     | TTS           |
 | [@livekit/agents-plugin-neuphonic](https://www.npmjs.com/package/@livekit/agents-plugin-neuphonic)   | TTS           |
 | [@livekit/agents-plugin-resemble](https://www.npmjs.com/package/@livekit/agents-plugin-resemble)     | TTS           |
+| [@livekit/agents-plugin-rime](https://www.npmjs.com/package/@livekit/agents-plugin-rime)             | TTS           |
 | [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD           |
 | [@livekit/agents-plugin-livekit](https://www.npmjs.com/package/@livekit/agents-plugin-livekit)       | EOU           |
+| [@livekit/agents-plugin-anam](https://www.npmjs.com/package/@livekit/agents-plugin-anam)             | Avatar        |
+| [@livekit/agents-plugin-bey](https://www.npmjs.com/package/@livekit/agents-plugin-bey)               | Avatar        |
 
 ## Docs and guides
 
 Documentation on the framework and how to use it can be found [here](https://docs.livekit.io/agents/)
+
+## Recommended starter app
+
+Kickstart a complete voice AI pipeline (LLM, STT, TTS) with the LiveKit Agents Starter for Node.js:
+
+- [livekit-examples/agent-starter-node](https://github.com/livekit-examples/agent-starter-node)
+
+It includes a ready-made assistant, multilingual turn detection, background noise cancellation, metrics/logging, and a production-ready Dockerfile. Start fast, then tailor it with your preferred models and plugins.
 
 ## Core concepts
 
@@ -101,10 +112,8 @@ import {
   defineAgent,
   llm,
   voice,
+  inference,
 } from '@livekit/agents';
-import * as deepgram from '@livekit/agents-plugin-deepgram';
-import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
-import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -124,18 +133,30 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    await ctx.connect();
-
     const agent = new voice.Agent({
       instructions: 'You are a friendly voice assistant built by LiveKit.',
       tools: { lookupWeather },
     });
 
     const session = new voice.AgentSession({
+      // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
+      // See all available models at https://docs.livekit.io/agents/models/stt/
+      // stt: new inference.STT({ model: 'assemblyai/universal-streaming:en', language: 'en' }),
+      stt: 'assemblyai/universal-streaming:en',
+      // A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
+      // See all available models at https://docs.livekit.io/agents/models/llm/
+      // llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      llm: 'openai/gpt-4.1-mini',
+      // Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
+      // See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
+      // tts: new inference.TTS({ model: 'cartesia/sonic-2:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
+      tts: 'cartesia/sonic-2:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
+      // See more at https://docs.livekit.io/agents/build/turns
       vad: ctx.proc.userData.vad! as silero.VAD,
-      stt: new deepgram.STT(),
-      llm: new openai.LLM(),
-      tts: new elevenlabs.TTS(),
+      turnDetection: new livekit.turnDetector.MultilingualModel(),
+      // to use realtime model, replace the stt, llm, tts and vad with the following
+      // llm: new openai.realtime.RealtimeModel(),
     });
 
     await session.start({
@@ -152,11 +173,7 @@ export default defineAgent({
 cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
 ```
 
-You'll need the following environment variables for this example:
-
-- DEEPGRAM_API_KEY
-- OPENAI_API_KEY
-- ELEVEN_API_KEY
+No third-party API keys are required for this example. It runs out of the box via the [LiveKit Inference Gateway](https://docs.livekit.io/agents/models/#inference).
 
 ### Multi-agent handoff
 
@@ -306,6 +323,41 @@ are ongoing.
 When calling SIGTERM on a worker, the worker will signal to LiveKit server that it no longer wants
 additional jobs. It will also auto-reject any new job requests that get through before the server
 signal is received. The worker will remain alive while it manages any agents connected to rooms.
+
+## Contributing
+
+To contribute to this project:
+
+1. Fork the [agents-js repository](https://github.com/livekit/agents-js)
+2. Create a new branch based on the `main` branch
+3. Make your changes
+4. Submit a pull request
+5. Make sure to complete the pre-review checklist before tagging reviewers
+
+### Testing changes and plugins
+
+To test any changes or plugins:
+
+1. Build the project:
+   ```bash
+   pnpm build
+   ```
+
+2. Edit `./examples/src/basic_agent.ts` as necessary for any plugin changes
+
+3. Run the basic agent with debug logging:
+   ```bash
+   node ./examples/src/basic_agent.ts dev --log-level=debug
+   ```
+
+### Testing agent connectivity
+
+To connect and talk to your agent:
+
+1. Go to the [LiveKit dashboard sandbox section](https://cloud.livekit.io/projects/<your-project-id>/sandbox)
+2. Launch a sandbox app called "Web Voice Agent"
+3. Run your agent and make sure all LiveKit API keys are configured correctly
+4. Click the "START CALL" blue button on the sandbox UI to test the connection and talk to your agent
 
 ## License
 

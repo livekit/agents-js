@@ -28,7 +28,7 @@ import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 
-/* @internal */
+/** @internal */
 export class _LLMGenerationData {
   generatedText: string = '';
   generatedToolCalls: FunctionCall[];

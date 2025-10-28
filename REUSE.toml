@@ -15,7 +15,7 @@ SPDX-License-Identifier = "Apache-2.0"
 
 # pnpm files
 [[annotations]]
-path = ["pnpm-workspace.yaml", "pnpm-lock.yaml"]
+path = ["pnpm-workspace.yaml", "pnpm-lock.yaml", "patches/**"]
 SPDX-FileCopyrightText = "2024 LiveKit, Inc."
 SPDX-License-Identifier = "Apache-2.0"
 

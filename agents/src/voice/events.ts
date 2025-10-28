@@ -80,25 +80,31 @@ export type UserInputTranscribedEvent = {
   type: 'user_input_transcribed';
   transcript: string;
   isFinal: boolean;
+  // TODO(AJS-106): add multi participant support
+  /** Not supported yet. Always null by default. */
   speakerId: string | null;
   createdAt: number;
+  language: string | null;
 };
 
 export const createUserInputTranscribedEvent = ({
   transcript,
   isFinal,
   speakerId = null,
+  language = null,
   createdAt = Date.now(),
 }: {
   transcript: string;
   isFinal: boolean;
   speakerId?: string | null;
+  language?: string | null;
   createdAt?: number;
 }): UserInputTranscribedEvent => ({
   type: 'user_input_transcribed',
   transcript,
   isFinal,
   speakerId,
+  language,
   createdAt,
 });
 

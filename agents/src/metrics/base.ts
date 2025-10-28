@@ -15,8 +15,10 @@ export type LLMMetrics = {
   label: string;
   requestId: string;
   timestamp: number;
-  duration: number;
-  ttft: number;
+  /** Duration of the request in milliseconds. */
+  durationMs: number;
+  /** Time to first token in milliseconds. */
+  ttftMs: number;
   cancelled: boolean;
   completionTokens: number;
   promptTokens: number;
@@ -32,13 +34,13 @@ export type STTMetrics = {
   requestId: string;
   timestamp: number;
   /**
-   * The request duration in seconds, 0.0 if the STT is streaming.
+   * The request duration in milliseconds, 0.0 if the STT is streaming.
    */
-  duration: number;
+  durationMs: number;
   /**
-   * The duration of the pushed audio in seconds.
+   * The duration of the pushed audio in milliseconds.
    */
-  audioDuration: number;
+  audioDurationMs: number;
   /**
    * Whether the STT is streaming (e.g using websocket).
    */
@@ -50,9 +52,12 @@ export type TTSMetrics = {
   label: string;
   requestId: string;
   timestamp: number;
-  ttfb: number;
-  duration: number;
-  audioDuration: number;
+  /** Time to first byte in milliseconds. */
+  ttfbMs: number;
+  /** Total synthesis duration in milliseconds. */
+  durationMs: number;
+  /** Generated audio duration in milliseconds. */
+  audioDurationMs: number;
   cancelled: boolean;
   charactersCount: number;
   streamed: boolean;
@@ -64,8 +69,8 @@ export type VADMetrics = {
   type: 'vad_metrics';
   label: string;
   timestamp: number;
-  idleTime: number;
-  inferenceDurationTotal: number;
+  idleTimeMs: number;
+  inferenceDurationTotalMs: number;
   inferenceCount: number;
 };
 
@@ -76,16 +81,16 @@ export type EOUMetrics = {
    * Amount of time between the end of speech from VAD and the decision to end the user's turn.
    * Set to 0.0 if the end of speech was not detected.
    */
-  endOfUtteranceDelay: number;
+  endOfUtteranceDelayMs: number;
   /**
    * Time taken to obtain the transcript after the end of the user's speech.
    * Set to 0.0 if the end of speech was not detected.
    */
-  transcriptionDelay: number;
+  transcriptionDelayMs: number;
   /**
    * Time taken to invoke the user's `Agent.onUserTurnCompleted` callback.
    */
-  onUserTurnCompletedDelay: number;
+  onUserTurnCompletedDelayMs: number;
   speechId?: string;
 };
 
@@ -118,13 +123,13 @@ export type RealtimeModelMetrics = {
    */
   timestamp: number;
   /**
-   * The duration of the response from created to done in seconds.
+   * The duration of the response from created to done in milliseconds.
    */
-  duration: number;
+  durationMs: number;
   /**
-   * Time to first audio token in seconds. -1 if no audio token was sent.
+   * Time to first audio token in milliseconds. -1 if no audio token was sent.
    */
-  ttft: number;
+  ttftMs: number;
   /**
    * Whether the request was cancelled.
    */
