@@ -110,7 +110,7 @@ export class AgentSession<
   private started = false;
   private userState: UserState = 'listening';
 
-  private roomIO?: RoomIO;
+  roomIO?: RoomIO;
   private logger = log();
 
   private _chatCtx: ChatContext;

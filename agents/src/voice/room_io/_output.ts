@@ -82,7 +82,7 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
 
   protected onLocalTrackPublished = (track: LocalTrackPublication) => {
     if (
-      !this.participantIdentity ||
+      !this.participantIdentity || !track ||
       this.participantIdentity !== this.room.localParticipant?.identity ||
       track.source !== TrackSource.SOURCE_MICROPHONE
     ) {
