@@ -14,16 +14,7 @@ import {
   zodSchemaToJsonSchema,
 } from './zod-utils.js';
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value as Record<string, unknown>;
-}
-
-// Helper type for accessing JSON schema properties
 type JSONSchemaProperties = Record<string, Record<string, unknown>>;
-
-function getProperties(schema: Record<string, unknown>): JSONSchemaProperties {
-  return schema.properties as JSONSchemaProperties;
-}
 
 describe('Zod Utils', () => {
   describe('isZod4Schema', () => {
@@ -100,8 +91,8 @@ describe('Zod Utils', () => {
         expect(jsonSchema).toHaveProperty('properties');
         expect(jsonSchema.properties).toHaveProperty('name');
         expect(jsonSchema.properties).toHaveProperty('age');
-        expect(getProperties(asRecord(jsonSchema)).name.type).toBe('string');
-        expect(getProperties(asRecord(jsonSchema)).age.type).toBe('number');
+        expect((jsonSchema.properties as JSONSchemaProperties).name?.type).toBe('string');
+        expect((jsonSchema.properties as JSONSchemaProperties).age?.type).toBe('number');
       });
 
       it.skip('should handle v4 schemas with descriptions', () => {
@@ -113,7 +104,7 @@ describe('Zod Utils', () => {
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
 
-        expect(getProperties(asRecord(jsonSchema)).location.description).toBe(
+        expect((jsonSchema.properties as JSONSchemaProperties).location?.description).toBe(
           'The location to search',
         );
       });
@@ -137,7 +128,11 @@ describe('Zod Utils', () => {
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
 
-        expect(getProperties(asRecord(jsonSchema)).color.enum).toEqual(['red', 'blue', 'green']);
+        expect((jsonSchema.properties as JSONSchemaProperties).color?.enum).toEqual([
+          'red',
+          'blue',
+          'green',
+        ]);
       });
 
       it('should handle v4 array schemas', () => {
@@ -147,8 +142,8 @@ describe('Zod Utils', () => {
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
 
-        expect(getProperties(asRecord(jsonSchema)).tags.type).toBe('array');
-        expect(getProperties(asRecord(jsonSchema)).tags.items.type).toBe('string');
+        expect((jsonSchema.properties as JSONSchemaProperties).tags?.type).toBe('array');
+        expect((jsonSchema.properties as JSONSchemaProperties).tags?.items?.type).toBe('string'); // eslint-disable-line @typescript-eslint/no-unsafe-member-access
       });
 
       it('should handle v4 nested object schemas', () => {
@@ -161,9 +156,13 @@ describe('Zod Utils', () => {
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
 
-        expect(getProperties(asRecord(jsonSchema)).user.type).toBe('object');
-        expect(getProperties(asRecord(jsonSchema)).user.properties).toHaveProperty('name');
-        expect(getProperties(asRecord(jsonSchema)).user.properties).toHaveProperty('email');
+        expect((jsonSchema.properties as JSONSchemaProperties).user?.type).toBe('object');
+        expect((jsonSchema.properties as JSONSchemaProperties).user?.properties).toHaveProperty(
+          'name',
+        );
+        expect((jsonSchema.properties as JSONSchemaProperties).user?.properties).toHaveProperty(
+          'email',
+        );
       });
     });
 
@@ -180,8 +179,8 @@ describe('Zod Utils', () => {
         expect(jsonSchema).toHaveProperty('properties');
         expect(jsonSchema.properties).toHaveProperty('name');
         expect(jsonSchema.properties).toHaveProperty('age');
-        expect(getProperties(asRecord(jsonSchema)).name.type).toBe('string');
-        expect(getProperties(asRecord(jsonSchema)).age.type).toBe('number');
+        expect((jsonSchema.properties as JSONSchemaProperties).name?.type).toBe('string');
+        expect((jsonSchema.properties as JSONSchemaProperties).age?.type).toBe('number');
       });
 
       it('should handle v3 schemas with descriptions', () => {
@@ -191,7 +190,7 @@ describe('Zod Utils', () => {
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
 
-        expect(getProperties(asRecord(jsonSchema)).location.description).toBe(
+        expect((jsonSchema.properties as JSONSchemaProperties).location?.description).toBe(
           'The location to search',
         );
       });
@@ -218,7 +217,11 @@ describe('Zod Utils', () => {
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
 
-        expect(getProperties(asRecord(jsonSchema)).color.enum).toEqual(['red', 'blue', 'green']);
+        expect((jsonSchema.properties as JSONSchemaProperties).color?.enum).toEqual([
+          'red',
+          'blue',
+          'green',
+        ]);
       });
 
       it('should handle v3 array schemas', () => {
@@ -228,8 +231,8 @@ describe('Zod Utils', () => {
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
 
-        expect(getProperties(asRecord(jsonSchema)).tags.type).toBe('array');
-        expect(getProperties(asRecord(jsonSchema)).tags.items.type).toBe('string');
+        expect((jsonSchema.properties as JSONSchemaProperties).tags?.type).toBe('array');
+        expect((jsonSchema.properties as JSONSchemaProperties).tags?.items?.type).toBe('string'); // eslint-disable-line @typescript-eslint/no-unsafe-member-access
       });
 
       it('should handle v3 nested object schemas', () => {
@@ -242,9 +245,13 @@ describe('Zod Utils', () => {
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
 
-        expect(getProperties(asRecord(jsonSchema)).user.type).toBe('object');
-        expect(getProperties(asRecord(jsonSchema)).user.properties).toHaveProperty('name');
-        expect(getProperties(asRecord(jsonSchema)).user.properties).toHaveProperty('email');
+        expect((jsonSchema.properties as JSONSchemaProperties).user?.type).toBe('object');
+        expect((jsonSchema.properties as JSONSchemaProperties).user?.properties).toHaveProperty(
+          'name',
+        );
+        expect((jsonSchema.properties as JSONSchemaProperties).user?.properties).toHaveProperty(
+          'email',
+        );
       });
     });
 
@@ -462,8 +469,8 @@ describe('Zod Utils', () => {
       // Both should produce valid JSON Schema
       expect(v3Json.type).toBe('object');
       expect(v4Json.type).toBe('object');
-      expect(getProperties(asRecord(v3Json)).count.type).toBe('number');
-      expect(getProperties(asRecord(v4Json)).count.type).toBe('number');
+      expect((v3Json.properties as JSONSchemaProperties).count?.type).toBe('number');
+      expect((v4Json.properties as JSONSchemaProperties).count?.type).toBe('number');
     });
   });
 });

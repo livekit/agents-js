@@ -323,7 +323,6 @@ export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): Di
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Function needs to accept any ToolInputSchema type
 export function toJsonSchema(schema: ToolInputSchema<any>, isOpenai: boolean = true): JSONSchema7 {
   if (isZodSchema(schema)) {
     return zodSchemaToJsonSchema(schema, isOpenai);

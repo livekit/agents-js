@@ -351,7 +351,7 @@ describe('Tool Context', () => {
         const result = oaiParams(schema);
 
         const properties = result.properties as Record<string, Record<string, unknown>>;
-        expect(properties.status.enum).toEqual(['pending', 'approved', 'rejected']);
+        expect(properties.status?.enum).toEqual(['pending', 'approved', 'rejected']);
       });
 
       it('should handle v4 array fields', () => {
@@ -361,9 +361,17 @@ describe('Tool Context', () => {
 
         const result = oaiParams(schema);
 
-        const properties = result.properties as Record<string, Record<string, unknown>>;
-        expect(properties.items.type).toBe('array');
-        expect(properties.items.items).toHaveProperty('type', 'string');
+        const properties = result.properties as Record<string, any>;
+        expect(
+          properties.items && typeof properties.items === 'object'
+            ? properties.items.type
+            : undefined,
+        ).toBe('array');
+        expect(
+          properties.items && properties.items.items && typeof properties.items.items === 'object'
+            ? properties.items.items.type
+            : undefined,
+        ).toBe('string');
       });
     });
   });

@@ -33,7 +33,6 @@ export type JSONObject = {
 // - Zod v3: Has `_output` property
 // - Zod v4: Implements Standard Schema spec with `~standard` property
 // - JSON Schema: Plain object fallback
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ToolInputSchema<T extends JSONObject> =
   | {
       // Zod v3 schema - has _output property for type inference
