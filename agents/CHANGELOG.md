@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.13
+
+### Patch Changes
+
+- Add utility to play local audio file to livekit - [#788](https://github.com/livekit/agents-js/pull/788) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add BackgroundAudio support - [#789](https://github.com/livekit/agents-js/pull/789) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.12
 
 ### Patch Changes
