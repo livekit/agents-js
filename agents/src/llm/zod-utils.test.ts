@@ -10,7 +10,6 @@ import {
   isZodObjectSchema,
   isZodSchema,
   parseZodSchema,
-  parseZodSchemaSync,
   zodSchemaToJsonSchema,
 } from './zod-utils.js';
 
@@ -380,68 +379,6 @@ describe('Zod Utils', () => {
         expect(result.success).toBe(true);
         if (result.success) {
           expect(result.data).toEqual({ name: 'John', role: 'user' });
-        }
-      });
-    });
-  });
-
-  describe('parseZodSchemaSync', () => {
-    describe('Zod v4 schemas', () => {
-      it('should successfully parse valid v4 data synchronously', () => {
-        const schema = z4.object({
-          name: z4.string(),
-          age: z4.number(),
-        });
-
-        const result = parseZodSchemaSync(schema, { name: 'John', age: 30 });
-
-        expect(result.success).toBe(true);
-        if (result.success) {
-          expect(result.data).toEqual({ name: 'John', age: 30 });
-        }
-      });
-
-      it('should fail to parse invalid v4 data synchronously', () => {
-        const schema = z4.object({
-          name: z4.string(),
-          age: z4.number(),
-        });
-
-        const result = parseZodSchemaSync(schema, { name: 'John', age: 'invalid' });
-
-        expect(result.success).toBe(false);
-        if (!result.success) {
-          expect(result.error).toBeDefined();
-        }
-      });
-    });
-
-    describe('Zod v3 schemas', () => {
-      it('should successfully parse valid v3 data synchronously', () => {
-        const schema = z3.object({
-          name: z3.string(),
-          age: z3.number(),
-        });
-
-        const result = parseZodSchemaSync(schema, { name: 'John', age: 30 });
-
-        expect(result.success).toBe(true);
-        if (result.success) {
-          expect(result.data).toEqual({ name: 'John', age: 30 });
-        }
-      });
-
-      it('should fail to parse invalid v3 data synchronously', () => {
-        const schema = z3.object({
-          name: z3.string(),
-          age: z3.number(),
-        });
-
-        const result = parseZodSchemaSync(schema, { name: 'John', age: 'invalid' });
-
-        expect(result.success).toBe(false);
-        if (!result.success) {
-          expect(result.error).toBeDefined();
         }
       });
     });

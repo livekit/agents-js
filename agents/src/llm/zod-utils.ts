@@ -1,16 +1,12 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-// Adapted from Vercel AI SDK's approach to supporting both Zod v3 and v4
-// Source: https://github.com/vercel/ai/blob/main/packages/provider-utils/src/schema.ts
-// Detection strategy from: https://zod.dev/library-authors?id=how-to-support-zod-3-and-zod-4-simultaneously
 import type { JSONSchema7 } from 'json-schema';
 import type * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
 
 /**
  * Result type from Zod schema parsing.
- * Adapted from Vercel AI SDK's ValidationResult type.
  */
 export type ZodParseResult<T = unknown> =
   | { success: true; data: T }
@@ -29,9 +25,6 @@ export type ZodSchema = z4.core.$ZodType<any, any> | z3.Schema<any, z3.ZodTypeDe
 /**
  * Detects if a schema is a Zod v4 schema.
  * Zod v4 schemas have a `_zod` property that v3 schemas don't have.
- *
- * Adapted from Vercel AI SDK's isZod4Schema function.
- * Source: https://github.com/vercel/ai/blob/main/packages/provider-utils/src/schema.ts#L271-L276
  *
  * @param schema - The schema to check
  * @returns True if the schema is a Zod v4 schema
@@ -148,27 +141,6 @@ export async function parseZodSchema<T = unknown>(
     return result as ZodParseResult<T>;
   } else {
     const result = await schema.safeParseAsync(value);
-    return result as ZodParseResult<T>;
-  }
-}
-
-/**
- * Synchronously parses a value against a Zod schema.
- * Handles both Zod v3 and v4 parse APIs automatically.
- *
- * @param schema - The Zod schema to parse against
- * @param value - The value to parse
- * @returns The parse result
- */
-export function parseZodSchemaSync<T = unknown>(
-  schema: ZodSchema,
-  value: unknown,
-): ZodParseResult<T> {
-  if (isZod4Schema(schema)) {
-    const result = z4.safeParse(schema, value);
-    return result as ZodParseResult<T>;
-  } else {
-    const result = schema.safeParse(value);
     return result as ZodParseResult<T>;
   }
 }
