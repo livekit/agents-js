@@ -19,7 +19,7 @@
     "tsx": "^4.19.2",
     "typescript": "^5.0.0",
     "vitest": "^3.2.2",
-    "zod": "3.25.76"
+    "zod": "^4.1.12"
   },
   "dependencies": {
     "@livekit/agents": "workspace:*",

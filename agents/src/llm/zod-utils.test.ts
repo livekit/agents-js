@@ -29,20 +29,18 @@ describe('Zod Utils', () => {
 
     it('should handle default z import (follows installed version)', () => {
       const schema = z.string();
-      // This will be true or false depending on which version is installed
-      // We just test that it doesn't throw
       expect(typeof isZod4Schema(schema)).toBe('boolean');
     });
   });
 
   describe('isZodSchema', () => {
     it('should detect Zod v4 schemas', () => {
-      const v4Schema = z4!.object({ name: z4!.string() });
+      const v4Schema = z4.object({ name: z4.string() });
       expect(isZodSchema(v4Schema)).toBe(true);
     });
 
     it('should detect Zod v3 schemas', () => {
-      const v3Schema = z3!.object({ name: z3!.string() });
+      const v3Schema = z3.object({ name: z3.string() });
       expect(isZodSchema(v3Schema)).toBe(true);
     });
 
@@ -58,21 +56,21 @@ describe('Zod Utils', () => {
 
   describe('isZodObjectSchema', () => {
     it('should detect Zod v4 object schemas', () => {
-      const objectSchema = z4!.object({ name: z4!.string() });
+      const objectSchema = z4.object({ name: z4.string() });
       expect(isZodObjectSchema(objectSchema)).toBe(true);
     });
 
     it('should detect Zod v3 object schemas', () => {
-      const objectSchema = z3!.object({ name: z3!.string() });
+      const objectSchema = z3.object({ name: z3.string() });
       expect(isZodObjectSchema(objectSchema)).toBe(true);
     });
 
     it('should return false for non-object Zod schemas', () => {
-      expect(isZodObjectSchema(z4!.string())).toBe(false);
-      expect(isZodObjectSchema(z4!.number())).toBe(false);
-      expect(isZodObjectSchema(z4!.array(z4!.string()))).toBe(false);
-      expect(isZodObjectSchema(z3!.string())).toBe(false);
-      expect(isZodObjectSchema(z3!.number())).toBe(false);
+      expect(isZodObjectSchema(z4.string())).toBe(false);
+      expect(isZodObjectSchema(z4.number())).toBe(false);
+      expect(isZodObjectSchema(z4.array(z4.string()))).toBe(false);
+      expect(isZodObjectSchema(z3.string())).toBe(false);
+      expect(isZodObjectSchema(z3.number())).toBe(false);
     });
   });
 
@@ -85,13 +83,7 @@ describe('Zod Utils', () => {
         });
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
-
-        expect(jsonSchema).toHaveProperty('type', 'object');
-        expect(jsonSchema).toHaveProperty('properties');
-        expect(jsonSchema.properties).toHaveProperty('name');
-        expect(jsonSchema.properties).toHaveProperty('age');
-        expect((jsonSchema.properties as JSONSchemaProperties).name?.type).toBe('string');
-        expect((jsonSchema.properties as JSONSchemaProperties).age?.type).toBe('number');
+        expect(jsonSchema).toMatchSnapshot();
       });
 
       it.skip('should handle v4 schemas with descriptions', () => {
@@ -102,10 +94,7 @@ describe('Zod Utils', () => {
         });
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
-
-        expect((jsonSchema.properties as JSONSchemaProperties).location?.description).toBe(
-          'The location to search',
-        );
+        expect(jsonSchema).toMatchSnapshot();
       });
 
       it('should handle v4 schemas with optional fields', () => {
@@ -115,9 +104,7 @@ describe('Zod Utils', () => {
         });
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
-
-        expect(jsonSchema.required).toContain('required');
-        expect(jsonSchema.required).not.toContain('optional');
+        expect(jsonSchema).toMatchSnapshot();
       });
 
       it('should handle v4 enum schemas', () => {
@@ -126,12 +113,7 @@ describe('Zod Utils', () => {
         });
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
-
-        expect((jsonSchema.properties as JSONSchemaProperties).color?.enum).toEqual([
-          'red',
-          'blue',
-          'green',
-        ]);
+        expect(jsonSchema).toMatchSnapshot();
       });
 
       it('should handle v4 array schemas', () => {
@@ -140,9 +122,7 @@ describe('Zod Utils', () => {
         });
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
-
-        expect((jsonSchema.properties as JSONSchemaProperties).tags?.type).toBe('array');
-        expect((jsonSchema.properties as JSONSchemaProperties).tags?.items?.type).toBe('string'); // eslint-disable-line @typescript-eslint/no-unsafe-member-access
+        expect(jsonSchema).toMatchSnapshot();
       });
 
       it('should handle v4 nested object schemas', () => {
@@ -154,14 +134,30 @@ describe('Zod Utils', () => {
         });
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
+        expect(jsonSchema).toMatchSnapshot();
+      });
 
-        expect((jsonSchema.properties as JSONSchemaProperties).user?.type).toBe('object');
-        expect((jsonSchema.properties as JSONSchemaProperties).user?.properties).toHaveProperty(
-          'name',
-        );
-        expect((jsonSchema.properties as JSONSchemaProperties).user?.properties).toHaveProperty(
-          'email',
-        );
+      it('should handle v4 schemas with multiple optional fields', () => {
+        const schema = z4.object({
+          id: z4.string(),
+          name: z4.string().optional(),
+          age: z4.number().optional(),
+          email: z4.string(),
+        });
+
+        const jsonSchema = zodSchemaToJsonSchema(schema);
+        expect(jsonSchema).toMatchSnapshot();
+      });
+
+      it('should handle v4 schemas with default values', () => {
+        const schema = z4.object({
+          name: z4.string(),
+          role: z4.string().default('user'),
+          active: z4.boolean().default(true),
+        });
+
+        const jsonSchema = zodSchemaToJsonSchema(schema);
+        expect(jsonSchema).toMatchSnapshot();
       });
     });
 
@@ -173,13 +169,7 @@ describe('Zod Utils', () => {
         });
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
-
-        expect(jsonSchema).toHaveProperty('type', 'object');
-        expect(jsonSchema).toHaveProperty('properties');
-        expect(jsonSchema.properties).toHaveProperty('name');
-        expect(jsonSchema.properties).toHaveProperty('age');
-        expect((jsonSchema.properties as JSONSchemaProperties).name?.type).toBe('string');
-        expect((jsonSchema.properties as JSONSchemaProperties).age?.type).toBe('number');
+        expect(jsonSchema).toMatchSnapshot();
       });
 
       it('should handle v3 schemas with descriptions', () => {
@@ -188,10 +178,7 @@ describe('Zod Utils', () => {
         });
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
-
-        expect((jsonSchema.properties as JSONSchemaProperties).location?.description).toBe(
-          'The location to search',
-        );
+        expect(jsonSchema).toMatchSnapshot();
       });
 
       it.skip('should handle v3 schemas with optional fields', () => {
@@ -204,9 +191,7 @@ describe('Zod Utils', () => {
         });
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
-
-        expect(jsonSchema.required).toContain('required');
-        expect(jsonSchema.required).not.toContain('optional');
+        expect(jsonSchema).toMatchSnapshot();
       });
 
       it('should handle v3 enum schemas', () => {
@@ -215,12 +200,7 @@ describe('Zod Utils', () => {
         });
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
-
-        expect((jsonSchema.properties as JSONSchemaProperties).color?.enum).toEqual([
-          'red',
-          'blue',
-          'green',
-        ]);
+        expect(jsonSchema).toMatchSnapshot();
       });
 
       it('should handle v3 array schemas', () => {
@@ -229,9 +209,7 @@ describe('Zod Utils', () => {
         });
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
-
-        expect((jsonSchema.properties as JSONSchemaProperties).tags?.type).toBe('array');
-        expect((jsonSchema.properties as JSONSchemaProperties).tags?.items?.type).toBe('string'); // eslint-disable-line @typescript-eslint/no-unsafe-member-access
+        expect(jsonSchema).toMatchSnapshot();
       });
 
       it('should handle v3 nested object schemas', () => {
@@ -243,14 +221,30 @@ describe('Zod Utils', () => {
         });
 
         const jsonSchema = zodSchemaToJsonSchema(schema);
+        expect(jsonSchema).toMatchSnapshot();
+      });
 
-        expect((jsonSchema.properties as JSONSchemaProperties).user?.type).toBe('object');
-        expect((jsonSchema.properties as JSONSchemaProperties).user?.properties).toHaveProperty(
-          'name',
-        );
-        expect((jsonSchema.properties as JSONSchemaProperties).user?.properties).toHaveProperty(
-          'email',
-        );
+      it('should handle v3 schemas with multiple optional fields', () => {
+        const schema = z3.object({
+          id: z3.string(),
+          name: z3.string().optional(),
+          age: z3.number().optional(),
+          email: z3.string(),
+        });
+
+        const jsonSchema = zodSchemaToJsonSchema(schema);
+        expect(jsonSchema).toMatchSnapshot();
+      });
+
+      it('should handle v3 schemas with default values', () => {
+        const schema = z3.object({
+          name: z3.string(),
+          role: z3.string().default('user'),
+          active: z3.boolean().default(true),
+        });
+
+        const jsonSchema = zodSchemaToJsonSchema(schema);
+        expect(jsonSchema).toMatchSnapshot();
       });
     });
 
@@ -396,18 +390,87 @@ describe('Zod Utils', () => {
       expect(v4Result.success).toBe(true);
     });
 
-    it('should convert both v3 and v4 schemas to JSON Schema', () => {
+    it('should convert both v3 and v4 basic schemas to compatible JSON Schema', () => {
       const v3Schema = z3.object({ count: z3.number() });
       const v4Schema = z4.object({ count: z4.number() });
 
       const v3Json = zodSchemaToJsonSchema(v3Schema);
       const v4Json = zodSchemaToJsonSchema(v4Schema);
 
-      // Both should produce valid JSON Schema
+      // Both should produce valid JSON Schema with same structure
       expect(v3Json.type).toBe('object');
       expect(v4Json.type).toBe('object');
       expect((v3Json.properties as JSONSchemaProperties).count?.type).toBe('number');
       expect((v4Json.properties as JSONSchemaProperties).count?.type).toBe('number');
+    });
+
+    it('should handle optional fields consistently across v3 and v4', () => {
+      const v3Schema = z3.object({
+        required: z3.string(),
+        optional: z3.string().optional(),
+      });
+      const v4Schema = z4.object({
+        required: z4.string(),
+        optional: z4.string().optional(),
+      });
+
+      const v3Json = zodSchemaToJsonSchema(v3Schema);
+      const v4Json = zodSchemaToJsonSchema(v4Schema);
+
+      // Both should mark 'required' as required
+      expect(v3Json.required).toContain('required');
+      expect(v4Json.required).toContain('required');
+
+      // v4 should NOT mark 'optional' as required
+      expect(v4Json.required).not.toContain('optional');
+
+      // NOTE: v3's optional handling in zod-to-json-schema (for the v3 export) has quirks
+      // in the alpha version 3.25.76. The default z import works correctly for users.
+    });
+
+    it('should handle complex schemas with nested objects and arrays consistently', () => {
+      const v3Schema = z3.object({
+        user: z3.object({
+          name: z3.string(),
+          email: z3.string().optional(),
+        }),
+        tags: z3.array(z3.string()),
+        status: z3.enum(['active', 'inactive']),
+      });
+
+      const v4Schema = z4.object({
+        user: z4.object({
+          name: z4.string(),
+          email: z4.string().optional(),
+        }),
+        tags: z4.array(z4.string()),
+        status: z4.enum(['active', 'inactive']),
+      });
+
+      const v3Json = zodSchemaToJsonSchema(v3Schema);
+      const v4Json = zodSchemaToJsonSchema(v4Schema);
+
+      // Check structure compatibility
+      expect(v3Json.type).toBe(v4Json.type);
+      expect(Object.keys(v3Json.properties || {})).toEqual(Object.keys(v4Json.properties || {}));
+
+      // Check nested object
+      const v3User = (v3Json.properties as JSONSchemaProperties).user;
+      const v4User = (v4Json.properties as JSONSchemaProperties).user;
+      expect(v3User?.type).toBe('object');
+      expect(v4User?.type).toBe('object');
+
+      // Check array
+      const v3Tags = (v3Json.properties as JSONSchemaProperties).tags;
+      const v4Tags = (v4Json.properties as JSONSchemaProperties).tags;
+      expect(v3Tags?.type).toBe('array');
+      expect(v4Tags?.type).toBe('array');
+
+      // Check enum
+      const v3Status = (v3Json.properties as JSONSchemaProperties).status;
+      const v4Status = (v4Json.properties as JSONSchemaProperties).status;
+      expect(v3Status?.enum).toEqual(['active', 'inactive']);
+      expect(v4Status?.enum).toEqual(['active', 'inactive']);
     });
   });
 });

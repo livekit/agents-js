@@ -74,10 +74,13 @@ export default defineAgent({
       description:
         'Called when the user wants to get a number value, None if user want a random value',
       parameters: z.object({
-        value: z.number().nullable().describe('The number value'),
+        value: z
+          .number()
+          .optional()
+          .describe('The number value, do not pass this parameter if you want a random value'),
       }),
       execute: async ({ value }) => {
-        if (value === null) {
+        if (value === undefined) {
           value = Math.floor(Math.random() * 100);
         }
         return `The number value is ${value}.`;
