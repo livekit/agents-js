@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-google
 
+## 1.0.13
+
+### Patch Changes
+
+- Updated dependencies [[`ac1db651e9d313799e0d67642c05dff25ea0d0a5`](https://github.com/livekit/agents-js/commit/ac1db651e9d313799e0d67642c05dff25ea0d0a5), [`e1a5eb333c356f444d57b7382d065ed06f6384f7`](https://github.com/livekit/agents-js/commit/e1a5eb333c356f444d57b7382d065ed06f6384f7)]:
+  - @livekit/agents@1.0.13
+
 ## 1.0.12
 
 ### Patch Changes
