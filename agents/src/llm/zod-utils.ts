@@ -75,10 +75,17 @@ export function isZodSchema(value: unknown): value is ZodSchema {
  * @returns True if the schema is an object schema
  */
 export function isZodObjectSchema(schema: ZodSchema): boolean {
-  // Both v3 and v4 use _def.typeName to identify schema types
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Need to access internal _def property
-  const def = (schema as any)._def;
-  return def && def.typeName === 'ZodObject';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Need to access internal properties
+  const schemaAny = schema as any;
+
+  // Check for v4 schema first
+  if (isZod4Schema(schema)) {
+    // v4 uses _def.type and _zod.traits
+    return schemaAny._def?.type === 'object' || schemaAny._zod?.traits?.has('ZodObject');
+  }
+
+  // v3 uses _def.typeName
+  return schemaAny._def?.typeName === 'ZodObject';
 }
 
 /**

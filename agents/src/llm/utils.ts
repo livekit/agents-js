@@ -327,5 +327,5 @@ export function toJsonSchema(schema: ToolInputSchema<any>, isOpenai: boolean = t
   if (isZodSchema(schema)) {
     return zodSchemaToJsonSchema(schema, isOpenai);
   }
-  return schema;
+  return schema as JSONSchema7;
 }

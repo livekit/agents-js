@@ -25,8 +25,36 @@ export type JSONObject = {
 };
 
 // Supports both Zod v3 and v4 schemas, as well as raw JSON schema
+// Adapted from Vercel AI SDK's FlexibleSchema approach
+// Source: https://github.com/vercel/ai/blob/main/packages/provider-utils/src/schema.ts#L67-L70
+//
+// Vercel uses StandardSchemaV1 from @standard-schema/spec package.
+// We use a simpler approach by directly checking for schema properties:
+// - Zod v3: Has `_output` property
+// - Zod v4: Implements Standard Schema spec with `~standard` property
+// - JSON Schema: Plain object fallback
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type ToolInputSchema<T extends JSONObject> = any | JSONSchema7;
+export type ToolInputSchema<T extends JSONObject> =
+  | {
+      // Zod v3 schema - has _output property for type inference
+      _output: T;
+    }
+  | {
+      // Zod v4 schema (Standard Schema) - has ~standard property
+      '~standard': {
+        types?: { output: T };
+      };
+    }
+  | JSONSchema7;
+
+/**
+ * Infer the output type from a ToolInputSchema.
+ */
+export type InferToolInput<T> = T extends { _output: infer O }
+  ? O
+  : T extends { '~standard': { types?: { output: infer O } } }
+    ? O
+    : any;
 
 export type ToolType = 'function' | 'provider-defined';
 
@@ -158,14 +186,10 @@ export type ToolContext<UserData = UnknownUserData> = {
 };
 
 /**
- * Create a function tool.
- *
- * @param description - The description of the tool.
- * @param parameters - The schema of the input that the tool expects. If not provided, defaults to z.object({}).
- * @param execute - The function that is called with the arguments from the tool call and produces a result.
+ * Create a function tool with inferred parameters from the schema.
  */
 export function tool<
-  Parameters extends JSONObject = Record<string, never>,
+  Schema extends ToolInputSchema<any>,
   UserData = UnknownUserData,
   Result = unknown,
 >({
@@ -174,9 +198,21 @@ export function tool<
   execute,
 }: {
   description: string;
-  parameters?: ToolInputSchema<Parameters>;
-  execute: ToolExecuteFunction<Parameters, UserData, Result>;
-}): FunctionTool<Parameters, UserData, Result>;
+  parameters: Schema;
+  execute: ToolExecuteFunction<InferToolInput<Schema>, UserData, Result>;
+}): FunctionTool<InferToolInput<Schema>, UserData, Result>;
+
+/**
+ * Create a function tool without parameters.
+ */
+export function tool<UserData = UnknownUserData, Result = unknown>({
+  description,
+  execute,
+}: {
+  description: string;
+  parameters?: never;
+  execute: ToolExecuteFunction<Record<string, never>, UserData, Result>;
+}): FunctionTool<Record<string, never>, UserData, Result>;
 
 /**
  * Create a provider-defined tool.
