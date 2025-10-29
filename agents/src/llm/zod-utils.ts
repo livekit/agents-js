@@ -5,7 +5,7 @@
 // Source: https://github.com/vercel/ai/blob/main/packages/provider-utils/src/schema.ts
 // Detection strategy from: https://zod.dev/library-authors?id=how-to-support-zod-3-and-zod-4-simultaneously
 import type { JSONSchema7 } from 'json-schema';
-import * as z3 from 'zod/v3';
+import type * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
 
 /**
@@ -36,6 +36,7 @@ export type ZodSchema = z4.core.$ZodType<any, any> | z3.Schema<any, z3.ZodTypeDe
  * @param schema - The schema to check
  * @returns True if the schema is a Zod v4 schema
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Required to match Zod v4's type signature
 export function isZod4Schema(schema: ZodSchema): schema is z4.core.$ZodType<any, any> {
   // https://zod.dev/library-authors?id=how-to-support-zod-3-and-zod-4-simultaneously
   return '_zod' in schema;
@@ -75,17 +76,24 @@ export function isZodSchema(value: unknown): value is ZodSchema {
  * @returns True if the schema is an object schema
  */
 export function isZodObjectSchema(schema: ZodSchema): boolean {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Need to access internal properties
-  const schemaAny = schema as any;
+  // Need to access internal Zod properties to check schema type
+  const schemaWithInternals = schema as {
+    _def?: { type?: string; typeName?: string };
+    _zod?: { traits?: Set<string> };
+  };
 
   // Check for v4 schema first
   if (isZod4Schema(schema)) {
     // v4 uses _def.type and _zod.traits
-    return schemaAny._def?.type === 'object' || schemaAny._zod?.traits?.has('ZodObject');
+    return (
+      schemaWithInternals._def?.type === 'object' ||
+      schemaWithInternals._zod?.traits?.has('ZodObject') ||
+      false
+    );
   }
 
   // v3 uses _def.typeName
-  return schemaAny._def?.typeName === 'ZodObject';
+  return schemaWithInternals._def?.typeName === 'ZodObject';
 }
 
 /**
@@ -112,6 +120,7 @@ export function zodSchemaToJsonSchema(schema: ZodSchema, isOpenai: boolean = tru
   } else {
     // Zod v3 requires the zod-to-json-schema library
     // We dynamically import it to avoid type conflicts between v3 and v4
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- Dynamic require needed for v3 compatibility
     const { zodToJsonSchema } = require('zod-to-json-schema');
     // Configuration adapted from Vercel AI SDK
     // $refStrategy: 'none' is equivalent to v4's reused: 'inline'

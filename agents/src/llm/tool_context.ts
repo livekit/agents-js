@@ -49,12 +49,14 @@ export type ToolInputSchema<T extends JSONObject> =
 
 /**
  * Infer the output type from a ToolInputSchema.
+ * Adapted from Vercel AI SDK's InferSchema type.
+ * Source: https://github.com/vercel/ai/blob/main/packages/provider-utils/src/schema.ts#L72-L79
  */
 export type InferToolInput<T> = T extends { _output: infer O }
   ? O
   : T extends { '~standard': { types?: { output: infer O } } }
     ? O
-    : any;
+    : any; // eslint-disable-line @typescript-eslint/no-explicit-any -- Fallback type for JSON Schema objects without type inference
 
 export type ToolType = 'function' | 'provider-defined';
 
@@ -182,14 +184,15 @@ export interface FunctionTool<
 
 // TODO(AJS-112): support provider-defined tools in the future)
 export type ToolContext<UserData = UnknownUserData> = {
-  [name: string]: FunctionTool<any, UserData, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic tool registry needs to accept any parameter/result types
+  [name: string]: FunctionTool<any, UserData, any>;
 };
 
 /**
  * Create a function tool with inferred parameters from the schema.
  */
 export function tool<
-  Schema extends ToolInputSchema<any>,
+  Schema extends ToolInputSchema<any>, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
   UserData = UnknownUserData,
   Result = unknown,
 >({
