@@ -33,7 +33,7 @@ export type JSONObject = {
 // - Zod v3: Has `_output` property
 // - Zod v4: Implements Standard Schema spec with `~standard` property
 // - JSON Schema: Plain object fallback
-export type ToolInputSchema<T extends JSONObject> =
+export type ToolInputSchema<T = JSONObject> =
   | {
       // Zod v3 schema - has _output property for type inference
       _output: T;

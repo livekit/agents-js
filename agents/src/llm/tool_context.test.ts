@@ -166,12 +166,41 @@ describe('Tool Context', () => {
         expect(simpleAction.type).toBe('function');
         expect(simpleAction.description).toBe('Perform a simple action');
         expect(simpleAction.parameters).toBeDefined();
-        // Type assertion needed to access internal Zod properties
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         expect((simpleAction.parameters as any)._def.typeName).toBe('ZodObject');
 
         const result = await simpleAction.execute({}, createToolOptions('123'));
         expect(result).toBe('Action performed');
+      });
+
+      it('should support .optional() fields in tool parameters', async () => {
+        const weatherTool = tool({
+          description: 'Get weather information',
+          parameters: z.object({
+            location: z.string().describe('The city or location').optional(),
+            units: z.enum(['celsius', 'fahrenheit']).describe('Temperature units').optional(),
+          }),
+          execute: async ({ location, units }) => {
+            const loc = location ?? 'Unknown';
+            const unit = units ?? 'celsius';
+            return `Weather in ${loc} (${unit})`;
+          },
+        });
+
+        expect(weatherTool.type).toBe('function');
+        expect(weatherTool.description).toBe('Get weather information');
+
+        const result1 = await weatherTool.execute(
+          { location: 'London', units: 'celsius' },
+          createToolOptions('123'),
+        );
+        expect(result1).toBe('Weather in London (celsius)');
+
+        const result2 = await weatherTool.execute({}, createToolOptions('123'));
+        expect(result2).toBe('Weather in Unknown (celsius)');
+
+        const result3 = await weatherTool.execute({ location: 'Paris' }, createToolOptions('123'));
+        expect(result3).toBe('Weather in Paris (celsius)');
       });
 
       it('should handle tools with context but no parameters', async () => {
