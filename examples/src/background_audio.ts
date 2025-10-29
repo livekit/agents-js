@@ -46,11 +46,8 @@ export default defineAgent({
     await session.start({ agent, room: ctx.room });
 
     const backgroundAudio = new voice.BackgroundAudioPlayer({
-      ambientSound: {
-        source: voice.BuiltinAudioClip.OFFICE_AMBIENCE,
-        volume: 1,
-      },
-      // TODO: Thinking sound not yet supported (requires AudioMixer)
+      ambientSound: voice.BuiltinAudioClip.OFFICE_AMBIENCE,
+      // TODO: Thinking sound not yet supported
       // thinkingSound: [
       //   { source: voice.BuiltinAudioClip.KEYBOARD_TYPING, volume: 0.8 },
       //   { source: voice.BuiltinAudioClip.KEYBOARD_TYPING2, volume: 0.7 },
