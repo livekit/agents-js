@@ -2,9 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { JSONSchema7 } from 'json-schema';
-import { ZodObject, ZodType, z } from 'zod';
+import { z } from 'zod';
 import type { Agent } from '../voice/agent.js';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
+import { isZodObjectSchema, isZodSchema } from './zod-utils.js';
 
 // heavily inspired by Vercel AI's `tool()`:
 // https://github.com/vercel/ai/blob/3b0983b/packages/ai/core/tool/tool.ts
@@ -23,9 +24,9 @@ export type JSONObject = {
   [key: string]: JSONValue;
 };
 
-// TODO(AJS-111): support Zod cross-version compatibility, raw JSON schema, both strict and non-strict versions
+// Supports both Zod v3 and v4 schemas, as well as raw JSON schema
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type ToolInputSchema<T extends JSONObject> = ZodObject<any, any, any, T, T> | JSONSchema7;
+export type ToolInputSchema<T extends JSONObject> = any | JSONSchema7;
 
 export type ToolType = 'function' | 'provider-defined';
 
@@ -197,12 +198,13 @@ export function tool(tool: any): any {
     // Default parameters to z.object({}) if not provided
     const parameters = tool.parameters ?? z.object({});
 
-    // if parameters is not zod object, throw an error
-    if (parameters instanceof ZodType && parameters._def.typeName !== 'ZodObject') {
+    // if parameters is a Zod schema, ensure it's an object schema
+    if (isZodSchema(parameters) && !isZodObjectSchema(parameters)) {
       throw new Error('Tool parameters must be a Zod object schema (z.object(...))');
     }
 
-    if (!(parameters instanceof ZodObject) && !(typeof parameters === 'object')) {
+    // Ensure parameters is either a Zod schema or a plain object (JSON schema)
+    if (!isZodSchema(parameters) && !(typeof parameters === 'object')) {
       throw new Error('Tool parameters must be a Zod object schema or a raw JSON schema');
     }
 

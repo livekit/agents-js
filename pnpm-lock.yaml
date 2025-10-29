@@ -12,6 +12,10 @@ patchedDependencies:
 importers:
 
   .:
+    dependencies:
+      zod:
+        specifier: ^4.1.12
+        version: 4.1.12
     devDependencies:
       '@changesets/cli':
         specifier: ^2.29.6
@@ -137,7 +141,7 @@ importers:
         specifier: ^8.16.0
         version: 8.17.0
       zod:
-        specifier: ^3.23.8
+        specifier: ^3.23.8 || ^4.0.0
         version: 3.23.8
       zod-to-json-schema:
         specifier: ^3.24.6
@@ -225,7 +229,7 @@ importers:
         specifier: ^8.16.0
         version: 8.18.3
       zod:
-        specifier: ^3.23.8
+        specifier: ^3.23.8 || ^4.0.0
         version: 3.23.8
     devDependencies:
       '@types/node':
@@ -631,7 +635,7 @@ importers:
         specifier: ^1.6.0
         version: 1.6.0(@types/node@22.15.30)
       zod:
-        specifier: ^3.23.8
+        specifier: ^3.23.8 || ^4.0.0
         version: 3.23.8
     devDependencies:
       '@livekit/agents':
@@ -4650,6 +4654,9 @@ packages:
 
   zod@3.23.8:
     resolution: {integrity: sha512-XBx9AXhXktjUqnepgTiE5flcKIYWi/rme0Eaj+5Y0lftuGBq+jyRu/md4WnuxqgP1ubdpNCsYEYPxrzVHD8d6g==}
+
+  zod@4.1.12:
+    resolution: {integrity: sha512-JInaHOamG8pt5+Ey8kGmdcAcg3OL9reK8ltczgHTAwNhMys/6ThXHityHxVV2p3fkw/c+MAvBHFVYHFZDmjMCQ==}
 
 snapshots:
 
@@ -8797,3 +8804,5 @@ snapshots:
       zod: 3.23.8
 
   zod@3.23.8: {}
+
+  zod@4.1.12: {}
