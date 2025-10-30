@@ -91,6 +91,9 @@ importers:
 
   agents:
     dependencies:
+      '@ffmpeg-installer/ffmpeg':
+        specifier: ^1.1.0
+        version: 1.1.0
       '@livekit/mutex':
         specifier: ^1.1.1
         version: 1.1.1
@@ -106,6 +109,9 @@ importers:
       commander:
         specifier: ^12.0.0
         version: 12.0.0
+      fluent-ffmpeg:
+        specifier: ^2.1.3
+        version: 2.1.3
       heap-js:
         specifier: ^2.6.0
         version: 2.6.0
@@ -143,9 +149,6 @@ importers:
         specifier: ^3.24.6
         version: 3.24.6(zod@3.23.8)
     devDependencies:
-      '@ffmpeg-installer/ffmpeg':
-        specifier: ^1.1.0
-        version: 1.1.0
       '@livekit/rtc-node':
         specifier: ^0.13.13
         version: 0.13.13
@@ -164,9 +167,6 @@ importers:
       '@types/ws':
         specifier: ^8.5.10
         version: 8.5.10
-      fluent-ffmpeg:
-        specifier: ^2.1.3
-        version: 2.1.3
       tsup:
         specifier: ^8.4.0
         version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.4.5)
