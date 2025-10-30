@@ -4,8 +4,6 @@
 import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import type { JSONSchema7 } from 'json-schema';
 import sharp from 'sharp';
-import { ZodObject } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { UnknownUserData } from '../voice/run_context.js';
 import type { ChatContext } from './chat_context.js';
 import {
@@ -15,6 +13,7 @@ import {
   type ImageContent,
 } from './chat_context.js';
 import type { ToolContext, ToolInputSchema, ToolOptions } from './tool_context.js';
+import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils.js';
 
 export interface SerializedImage {
   inferenceDetail: 'auto' | 'high' | 'low';
@@ -151,15 +150,10 @@ export const createToolOptions = <UserData extends UnknownUserData>(
 
 /** @internal */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const oaiParams = (
-  p: ZodObject<any>,
-  isOpenai: boolean = true,
-): OpenAIFunctionParameters => {
+export const oaiParams = (schema: any, isOpenai: boolean = true): OpenAIFunctionParameters => {
   // Adapted from https://github.com/vercel/ai/blob/56eb0ee9/packages/provider-utils/src/zod-schema.ts
-  const { properties, required, additionalProperties } = zodToJsonSchema(p, {
-    // note: openai mode breaks various gemini conversions
-    target: isOpenai ? 'openAi' : 'jsonSchema7',
-  }) as OpenAIFunctionParameters;
+  const jsonSchema = zodSchemaToJsonSchema(schema, isOpenai);
+  const { properties, required, additionalProperties } = jsonSchema as OpenAIFunctionParameters;
 
   return {
     type: 'object',
@@ -209,8 +203,17 @@ export async function executeToolCall(
 
   // Ensure valid arguments schema
   try {
-    if (tool.parameters instanceof ZodObject) {
-      params = tool.parameters.parse(args);
+    if (isZodSchema(tool.parameters)) {
+      const result = await parseZodSchema<object>(tool.parameters, args);
+      if (result.success) {
+        params = result.data;
+      } else {
+        return FunctionCallOutput.create({
+          callId: toolCall.callId,
+          output: `Arguments parsing failed: ${result.error}`,
+          isError: true,
+        });
+      }
     } else {
       params = args;
     }
@@ -321,8 +324,8 @@ export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): Di
 }
 
 export function toJsonSchema(schema: ToolInputSchema<any>, isOpenai: boolean = true): JSONSchema7 {
-  if (schema instanceof ZodObject) {
-    return oaiParams(schema, isOpenai);
+  if (isZodSchema(schema)) {
+    return zodSchemaToJsonSchema(schema, isOpenai);
   }
-  return schema;
+  return schema as JSONSchema7;
 }

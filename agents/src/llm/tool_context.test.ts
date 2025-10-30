@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import * as z3 from 'zod/v3';
+import * as z4 from 'zod/v4';
 import { type ToolOptions, tool } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
 
@@ -164,10 +166,41 @@ describe('Tool Context', () => {
         expect(simpleAction.type).toBe('function');
         expect(simpleAction.description).toBe('Perform a simple action');
         expect(simpleAction.parameters).toBeDefined();
-        expect(simpleAction.parameters._def.typeName).toBe('ZodObject');
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        expect((simpleAction.parameters as any)._def.typeName).toBe('ZodObject');
 
         const result = await simpleAction.execute({}, createToolOptions('123'));
         expect(result).toBe('Action performed');
+      });
+
+      it('should support .optional() fields in tool parameters', async () => {
+        const weatherTool = tool({
+          description: 'Get weather information',
+          parameters: z.object({
+            location: z.string().describe('The city or location').optional(),
+            units: z.enum(['celsius', 'fahrenheit']).describe('Temperature units').optional(),
+          }),
+          execute: async ({ location, units }) => {
+            const loc = location ?? 'Unknown';
+            const unit = units ?? 'celsius';
+            return `Weather in ${loc} (${unit})`;
+          },
+        });
+
+        expect(weatherTool.type).toBe('function');
+        expect(weatherTool.description).toBe('Get weather information');
+
+        const result1 = await weatherTool.execute(
+          { location: 'London', units: 'celsius' },
+          createToolOptions('123'),
+        );
+        expect(result1).toBe('Weather in London (celsius)');
+
+        const result2 = await weatherTool.execute({}, createToolOptions('123'));
+        expect(result2).toBe('Weather in Unknown (celsius)');
+
+        const result3 = await weatherTool.execute({ location: 'Paris' }, createToolOptions('123'));
+        expect(result3).toBe('Weather in Paris (celsius)');
       });
 
       it('should handle tools with context but no parameters', async () => {
@@ -192,6 +225,182 @@ describe('Tool Context', () => {
 
         const result = await getCallId.execute({}, createToolOptions('test-id-456'));
         expect(result).toBe('Tool call ID: test-id-456');
+      });
+    });
+
+    describe('Zod v3 and v4 compatibility', () => {
+      it('should work with Zod v3 schemas', async () => {
+        const v3Tool = tool({
+          description: 'A tool using Zod v3 schema',
+          parameters: z3.object({
+            name: z3.string(),
+            count: z3.number(),
+          }),
+          execute: async ({ name, count }) => {
+            return `${name}: ${count}`;
+          },
+        });
+
+        const result = await v3Tool.execute(
+          { name: 'Test', count: 42 },
+          createToolOptions('v3-test'),
+        );
+        expect(result).toBe('Test: 42');
+      });
+
+      it('should work with Zod v4 schemas', async () => {
+        const v4Tool = tool({
+          description: 'A tool using Zod v4 schema',
+          parameters: z4.object({
+            name: z4.string(),
+            count: z4.number(),
+          }),
+          execute: async ({ name, count }) => {
+            return `${name}: ${count}`;
+          },
+        });
+
+        const result = await v4Tool.execute(
+          { name: 'Test', count: 42 },
+          createToolOptions('v4-test'),
+        );
+        expect(result).toBe('Test: 42');
+      });
+
+      it('should handle v4 schemas with optional fields', async () => {
+        const v4Tool = tool({
+          description: 'Tool with optional field using v4',
+          parameters: z4.object({
+            required: z4.string(),
+            optional: z4.string().optional(),
+          }),
+          execute: async ({ required, optional }) => {
+            return optional ? `${required} - ${optional}` : required;
+          },
+        });
+
+        const result1 = await v4Tool.execute({ required: 'Hello' }, createToolOptions('test-1'));
+        expect(result1).toBe('Hello');
+
+        const result2 = await v4Tool.execute(
+          { required: 'Hello', optional: 'World' },
+          createToolOptions('test-2'),
+        );
+        expect(result2).toBe('Hello - World');
+      });
+
+      it('should handle v4 enum schemas', async () => {
+        const v4Tool = tool({
+          description: 'Tool with enum using v4',
+          parameters: z4.object({
+            color: z4.enum(['red', 'blue', 'green']),
+          }),
+          execute: async ({ color }) => {
+            return `Selected color: ${color}`;
+          },
+        });
+
+        const result = await v4Tool.execute({ color: 'blue' }, createToolOptions('test-enum'));
+        expect(result).toBe('Selected color: blue');
+      });
+
+      it('should handle v4 array schemas', async () => {
+        const v4Tool = tool({
+          description: 'Tool with array using v4',
+          parameters: z4.object({
+            tags: z4.array(z4.string()),
+          }),
+          execute: async ({ tags }) => {
+            return `Tags: ${tags.join(', ')}`;
+          },
+        });
+
+        const result = await v4Tool.execute(
+          { tags: ['nodejs', 'typescript', 'testing'] },
+          createToolOptions('test-array'),
+        );
+        expect(result).toBe('Tags: nodejs, typescript, testing');
+      });
+
+      it('should handle v4 nested object schemas', async () => {
+        const v4Tool = tool({
+          description: 'Tool with nested object using v4',
+          parameters: z4.object({
+            user: z4.object({
+              name: z4.string(),
+              email: z4.string(),
+            }),
+          }),
+          execute: async ({ user }) => {
+            return `${user.name} (${user.email})`;
+          },
+        });
+
+        const result = await v4Tool.execute(
+          { user: { name: 'John Doe', email: 'john@example.com' } },
+          createToolOptions('test-nested'),
+        );
+        expect(result).toBe('John Doe (john@example.com)');
+      });
+    });
+
+    describe('oaiParams with v4 schemas', () => {
+      it('should convert v4 basic object schema', () => {
+        const schema = z4.object({
+          name: z4.string().describe('User name'),
+          age: z4.number().describe('User age'),
+        });
+
+        const result = oaiParams(schema);
+
+        expect(result.type).toBe('object');
+        expect(result.properties).toHaveProperty('name');
+        expect(result.properties).toHaveProperty('age');
+        expect(result.required).toContain('name');
+        expect(result.required).toContain('age');
+      });
+
+      it('should handle v4 optional fields', () => {
+        const schema = z4.object({
+          required: z4.string(),
+          optional: z4.string().optional(),
+        });
+
+        const result = oaiParams(schema);
+
+        expect(result.required).toContain('required');
+        expect(result.required).not.toContain('optional');
+      });
+
+      it('should handle v4 enum fields', () => {
+        const schema = z4.object({
+          status: z4.enum(['pending', 'approved', 'rejected']),
+        });
+
+        const result = oaiParams(schema);
+
+        const properties = result.properties as Record<string, Record<string, unknown>>;
+        expect(properties.status?.enum).toEqual(['pending', 'approved', 'rejected']);
+      });
+
+      it('should handle v4 array fields', () => {
+        const schema = z4.object({
+          items: z4.array(z4.string()),
+        });
+
+        const result = oaiParams(schema);
+
+        const properties = result.properties as Record<string, any>;
+        expect(
+          properties.items && typeof properties.items === 'object'
+            ? properties.items.type
+            : undefined,
+        ).toBe('array');
+        expect(
+          properties.items && properties.items.items && typeof properties.items.items === 'object'
+            ? properties.items.items.type
+            : undefined,
+        ).toBe('string');
       });
     });
   });
