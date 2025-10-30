@@ -260,26 +260,30 @@ export class VADStream extends baseStream {
             pubSilenceDuration += windowDuration;
           }
 
-          this.outputWriter.write({
-            type: VADEventType.INFERENCE_DONE,
-            samplesIndex: pubCurrentSample,
-            timestamp: pubTimestamp,
-            silenceDuration: pubSilenceDuration,
-            speechDuration: pubSpeechDuration,
-            probability: p,
-            inferenceDuration,
-            frames: [
-              new AudioFrame(
-                inputFrame.data.subarray(0, toCopyInt),
-                this.#inputSampleRate,
-                1,
-                toCopyInt,
-              ),
-            ],
-            speaking: pubSpeaking,
-            rawAccumulatedSilence: silenceThresholdDuration,
-            rawAccumulatedSpeech: speechThresholdDuration,
-          });
+          if (
+            !this.sendVADEvent({
+              type: VADEventType.INFERENCE_DONE,
+              samplesIndex: pubCurrentSample,
+              timestamp: pubTimestamp,
+              silenceDuration: pubSilenceDuration,
+              speechDuration: pubSpeechDuration,
+              probability: p,
+              inferenceDuration,
+              frames: [
+                new AudioFrame(
+                  inputFrame.data.subarray(0, toCopyInt),
+                  this.#inputSampleRate,
+                  1,
+                  toCopyInt,
+                ),
+              ],
+              speaking: pubSpeaking,
+              rawAccumulatedSilence: silenceThresholdDuration,
+              rawAccumulatedSpeech: speechThresholdDuration,
+            })
+          ) {
+            continue;
+          }
 
           const resetWriteCursor = () => {
             if (!this.#speechBuffer) throw new Error('speechBuffer is empty');
@@ -314,19 +318,23 @@ export class VADStream extends baseStream {
               pubSilenceDuration = 0;
               pubSpeechDuration = speechThresholdDuration;
 
-              this.outputWriter.write({
-                type: VADEventType.START_OF_SPEECH,
-                samplesIndex: pubCurrentSample,
-                timestamp: pubTimestamp,
-                silenceDuration: pubSilenceDuration,
-                speechDuration: pubSpeechDuration,
-                probability: p,
-                inferenceDuration,
-                frames: [copySpeechBuffer()],
-                speaking: pubSpeaking,
-                rawAccumulatedSilence: 0,
-                rawAccumulatedSpeech: 0,
-              });
+              if (
+                !this.sendVADEvent({
+                  type: VADEventType.START_OF_SPEECH,
+                  samplesIndex: pubCurrentSample,
+                  timestamp: pubTimestamp,
+                  silenceDuration: pubSilenceDuration,
+                  speechDuration: pubSpeechDuration,
+                  probability: p,
+                  inferenceDuration,
+                  frames: [copySpeechBuffer()],
+                  speaking: pubSpeaking,
+                  rawAccumulatedSilence: 0,
+                  rawAccumulatedSpeech: 0,
+                })
+              ) {
+                continue;
+              }
             }
           } else {
             silenceThresholdDuration += windowDuration;
@@ -341,19 +349,23 @@ export class VADStream extends baseStream {
               pubSpeechDuration = 0;
               pubSilenceDuration = silenceThresholdDuration;
 
-              this.outputWriter.write({
-                type: VADEventType.END_OF_SPEECH,
-                samplesIndex: pubCurrentSample,
-                timestamp: pubTimestamp,
-                silenceDuration: pubSilenceDuration,
-                speechDuration: pubSpeechDuration,
-                probability: p,
-                inferenceDuration,
-                frames: [copySpeechBuffer()],
-                speaking: pubSpeaking,
-                rawAccumulatedSilence: 0,
-                rawAccumulatedSpeech: 0,
-              });
+              if (
+                !this.sendVADEvent({
+                  type: VADEventType.END_OF_SPEECH,
+                  samplesIndex: pubCurrentSample,
+                  timestamp: pubTimestamp,
+                  silenceDuration: pubSilenceDuration,
+                  speechDuration: pubSpeechDuration,
+                  probability: p,
+                  inferenceDuration,
+                  frames: [copySpeechBuffer()],
+                  speaking: pubSpeaking,
+                  rawAccumulatedSilence: 0,
+                  rawAccumulatedSpeech: 0,
+                })
+              ) {
+                continue;
+              }
 
               resetWriteCursor();
             }

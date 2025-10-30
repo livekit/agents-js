@@ -177,6 +177,24 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     }
   }
 
+  /**
+   * Safely send a VAD event to the output stream, handling writer release errors during shutdown.
+   * @returns true if the event was sent, false if the stream is closing
+   * @throws Error if an unexpected error occurs
+   */
+  protected sendVADEvent(event: VADEvent): boolean {
+    if (this.closed) {
+      return false;
+    }
+
+    try {
+      this.outputWriter.write(event);
+      return true;
+    } catch (e) {
+      throw e;
+    }
+  }
+
   updateInputStream(audioStream: ReadableStream<AudioFrame>) {
     this.deferredInputStream.setSource(audioStream);
   }
