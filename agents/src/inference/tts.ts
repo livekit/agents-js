@@ -8,11 +8,8 @@ import { AudioByteStream } from '../audio.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import { basic as tokenizeBasic } from '../tokenize/index.js';
-import {
-  SynthesizeStream as BaseSynthesizeStream,
-  TTS as BaseTTS,
-  ChunkedStream,
-} from '../tts/index.js';
+import type { ChunkedStream } from '../tts/index.js';
+import { SynthesizeStream as BaseSynthesizeStream, TTS as BaseTTS } from '../tts/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { shortuuid } from '../utils.js';
 import {

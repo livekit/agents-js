@@ -10,7 +10,8 @@ import {
   WorkerMessage,
   WorkerStatus,
 } from '@livekit/protocol';
-import { AccessToken, ParticipantInfo, RoomServiceClient } from 'livekit-server-sdk';
+import type { ParticipantInfo } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import { WebSocket } from 'ws';
