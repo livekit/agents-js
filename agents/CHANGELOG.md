@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.15
+
+### Patch Changes
+
+- Fix race condition causing "Writer is not bound to a WritableStream" error in Silero VAD - [#786](https://github.com/livekit/agents-js/pull/786) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Support Zod V4 tool schema and backward competible to V3 - [#792](https://github.com/livekit/agents-js/pull/792) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.14
 
 ### Patch Changes

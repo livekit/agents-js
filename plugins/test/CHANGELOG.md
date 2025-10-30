@@ -1,5 +1,14 @@
 # @livekit/agents-plugins-test
 
+## 1.0.15
+
+### Patch Changes
+
+- Support Zod V4 tool schema and backward competible to V3 - [#792](https://github.com/livekit/agents-js/pull/792) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`9cdc59edd0321c69538698eb8b9c129f41728a65`](https://github.com/livekit/agents-js/commit/9cdc59edd0321c69538698eb8b9c129f41728a65), [`9b50d8829ff38d9795f7d8912749cb7fc5b0b2ae`](https://github.com/livekit/agents-js/commit/9b50d8829ff38d9795f7d8912749cb7fc5b0b2ae)]:
+  - @livekit/agents@1.0.15
+
 ## 1.0.14
 
 ### Patch Changes
