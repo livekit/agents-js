@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-deepgram",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "Deepgram plugin for LiveKit Agents for Node.js",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

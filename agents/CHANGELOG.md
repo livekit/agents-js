@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.14
+
+### Patch Changes
+
+- Fix ffmpeg dependency cannot found issue - [#793](https://github.com/livekit/agents-js/pull/793) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.13
 
 ### Patch Changes
