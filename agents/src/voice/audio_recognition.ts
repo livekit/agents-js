@@ -21,6 +21,11 @@ export interface EndOfTurnInfo {
   endOfUtteranceDelay: number;
 }
 
+export interface PreemptiveGenerationInfo {
+  newTranscript: string;
+  transcriptConfidence: number;
+}
+
 export interface RecognitionHooks {
   onStartOfSpeech: (ev: VADEvent) => void;
   onVADInferenceDone: (ev: VADEvent) => void;
@@ -28,6 +33,7 @@ export interface RecognitionHooks {
   onInterimTranscript: (ev: SpeechEvent) => void;
   onFinalTranscript: (ev: SpeechEvent) => void;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
+  onPreemptiveGeneration?: (info: PreemptiveGenerationInfo) => void;
 
   retrieveChatCtx: () => ChatContext;
 }
@@ -63,10 +69,13 @@ export class AudioRecognition {
   private lastFinalTranscriptTime = 0;
   private audioTranscript = '';
   private audioInterimTranscript = '';
+  private audioPreflightTranscript = '';
   private lastSpeakingTime = 0;
   private userTurnCommitted = false;
   private speaking = false;
   private sampleRate?: number;
+  private finalTranscriptConfidences: number[] = [];
+  private preflightTranscriptConfidence = 0;
 
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
@@ -145,6 +154,7 @@ export class AudioRecognition {
         this.hooks.onFinalTranscript(ev);
         const transcript = ev.alternatives?.[0]?.text;
         this.lastLanguage = ev.alternatives?.[0]?.language;
+        const confidence = ev.alternatives?.[0]?.confidence ?? 0;
 
         if (!transcript) {
           // stt final transcript received but no transcript
@@ -155,14 +165,38 @@ export class AudioRecognition {
           {
             user_transcript: transcript,
             language: this.lastLanguage,
+            confidence,
           },
           'received user transcript',
         );
 
         this.lastFinalTranscriptTime = Date.now();
-        this.audioTranscript += ` ${transcript}`;
-        this.audioTranscript = this.audioTranscript.trimStart();
+
+        // Track confidence for preemptive generation
+        this.finalTranscriptConfidences.push(confidence);
+
+        const newAudioTranscript = `${this.audioTranscript} ${transcript}`.trim();
+        const transcriptChanged = newAudioTranscript !== this.audioPreflightTranscript;
+
+        this.audioTranscript = newAudioTranscript;
         this.audioInterimTranscript = '';
+
+        // Trigger preemptive generation if transcript changed from preflight
+        if (
+          transcriptChanged &&
+          this.hooks.onPreemptiveGeneration &&
+          (this.vadBaseTurnDetection || this.userTurnCommitted)
+        ) {
+          const avgConfidence = this.calculateAverageConfidence();
+          this.logger.debug(
+            { transcript: this.audioTranscript, confidence: avgConfidence },
+            'triggering preemptive generation on final transcript',
+          );
+          this.hooks.onPreemptiveGeneration({
+            newTranscript: this.audioTranscript,
+            transcriptConfidence: avgConfidence,
+          });
+        }
 
         if (!this.speaking) {
           if (!this.vad) {
@@ -180,6 +214,54 @@ export class AudioRecognition {
             this.logger.debug('running EOU detection on stt FINAL_TRANSCRIPT');
             this.runEOUDetection(chatCtx);
           }
+        }
+        break;
+      case SpeechEventType.PREFLIGHT_TRANSCRIPT:
+        {
+          const preflightTranscript = ev.alternatives?.[0]?.text;
+          const preflightConfidence = ev.alternatives?.[0]?.confidence ?? 0;
+
+          if (!preflightTranscript) {
+            return;
+          }
+
+          this.logger.debug(
+            {
+              preflight_transcript: preflightTranscript,
+              confidence: preflightConfidence,
+            },
+            'received preflight transcript',
+          );
+
+          // Update preflight transcript and confidence
+          this.audioPreflightTranscript = `${this.audioTranscript} ${preflightTranscript}`.trim();
+          this.preflightTranscriptConfidence = preflightConfidence;
+
+          // Trigger preemptive generation if conditions are met
+          if (
+            this.hooks.onPreemptiveGeneration &&
+            (this.turnDetectionMode !== 'manual' || this.userTurnCommitted)
+          ) {
+            // Calculate confidence including all final transcripts plus the current preflight
+            const allConfidences = [...this.finalTranscriptConfidences, preflightConfidence];
+            const avgConfidence =
+              allConfidences.length > 0
+                ? allConfidences.reduce((a, b) => a + b, 0) / allConfidences.length
+                : 0;
+
+            this.logger.debug(
+              { transcript: this.audioPreflightTranscript, confidence: avgConfidence },
+              'triggering preemptive generation on preflight transcript',
+            );
+
+            this.hooks.onPreemptiveGeneration({
+              newTranscript: this.audioPreflightTranscript,
+              transcriptConfidence: avgConfidence,
+            });
+          }
+
+          // Still need to increment confidence tracking for turn detection
+          this.finalTranscriptConfidences.push(preflightConfidence);
         }
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
@@ -412,7 +494,10 @@ export class AudioRecognition {
   clearUserTurn() {
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
+    this.audioPreflightTranscript = '';
     this.userTurnCommitted = false;
+    this.finalTranscriptConfidences = [];
+    this.preflightTranscriptConfidence = 0;
 
     this.sttTask?.cancelAndWait().finally(() => {
       this.sttTask = Task.from(({ signal }) => this.createSttTask(this.stt, signal));
@@ -462,6 +547,14 @@ export class AudioRecognition {
       .catch((err: unknown) => {
         this.logger.error(err, 'Error in user turn commit task:');
       });
+  }
+
+  private calculateAverageConfidence(): number {
+    if (this.finalTranscriptConfidences.length === 0) {
+      return 0;
+    }
+    const sum = this.finalTranscriptConfidences.reduce((a, b) => a + b, 0);
+    return sum / this.finalTranscriptConfidences.length;
   }
 
   async close() {
