@@ -19,6 +19,7 @@ export interface MessageGeneration {
   messageId: string;
   textStream: ReadableStream<string>;
   audioStream: ReadableStream<AudioFrame>;
+  modalities?: ['text'] | ['text', 'audio'];
 }
 
 export interface GenerationCreatedEvent {
@@ -40,6 +41,7 @@ export interface RealtimeCapabilities {
   turnDetection: boolean;
   userTranscription: boolean;
   autoToolReplyGeneration: boolean;
+  audioOutput: boolean;
 }
 
 export interface InputTranscriptionCompleted {
