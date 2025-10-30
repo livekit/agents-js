@@ -171,7 +171,7 @@ importers:
         specifier: ^5.0.0
         version: 5.4.5
       zod:
-        specifier: 3.25.76
+        specifier: ^3.25.76
         version: 3.25.76
 
   examples:
@@ -647,7 +647,7 @@ importers:
         specifier: ^5.0.0
         version: 5.4.5
       zod:
-        specifier: 3.25.76
+        specifier: ^3.25.76
         version: 3.25.76
 
 packages:
