@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-bey
 
+## 1.0.5
+
+### Patch Changes
+
+- Updated dependencies [[`9cdc59edd0321c69538698eb8b9c129f41728a65`](https://github.com/livekit/agents-js/commit/9cdc59edd0321c69538698eb8b9c129f41728a65), [`9b50d8829ff38d9795f7d8912749cb7fc5b0b2ae`](https://github.com/livekit/agents-js/commit/9b50d8829ff38d9795f7d8912749cb7fc5b0b2ae)]:
+  - @livekit/agents@1.0.15
+
 ## 1.0.4
 
 ### Patch Changes
