@@ -22,6 +22,7 @@ import {
   type ToolContext,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
+import { isSameToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
   EOUMetrics,
@@ -43,6 +44,7 @@ import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
 import {
   AudioRecognition,
   type EndOfTurnInfo,
+  type PreemptiveGenerationInfo,
   type RecognitionHooks,
   type _TurnDetector,
 } from './audio_recognition.js';
@@ -71,6 +73,16 @@ import { SpeechHandle } from './speech_handle.js';
 // equivalent to Python's contextvars
 const speechHandleStorage = new AsyncLocalStorage<SpeechHandle>();
 
+interface PreemptiveGeneration {
+  speechHandle: SpeechHandle;
+  userMessage: ChatMessage;
+  info: PreemptiveGenerationInfo;
+  chatCtx: ChatContext;
+  tools: ToolContext;
+  toolChoice: ToolChoice | null;
+  createdAt: number;
+}
+
 export class AgentActivity implements RecognitionHooks {
   private static readonly REPLY_TASK_CANCEL_TIMEOUT = 5000;
   private started = false;
@@ -87,6 +99,7 @@ export class AgentActivity implements RecognitionHooks {
   private audioStream = new DeferredReadableStream<AudioFrame>();
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
+  private _preemptiveGeneration?: PreemptiveGeneration;
 
   agent: Agent;
   agentSession: AgentSession;
@@ -664,6 +677,46 @@ export class AgentActivity implements RecognitionHooks {
     );
   }
 
+  onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
+    if (
+      !this.agentSession.options.preemptiveGeneration ||
+      this.draining ||
+      (this._currentSpeech !== undefined && !this._currentSpeech.interrupted) ||
+      !(this.llm instanceof LLM)
+    ) {
+      return;
+    }
+
+    this.cancelPreemptiveGeneration();
+
+    const userMessage = ChatMessage.create({
+      role: 'user',
+      content: info.newTranscript,
+    });
+    const chatCtx = this.agent.chatCtx.copy();
+    const speechHandle = this.generateReply({
+      userMessage,
+      chatCtx,
+      scheduleSpeech: false,
+    });
+
+    this._preemptiveGeneration = {
+      speechHandle,
+      info,
+      chatCtx: chatCtx.copy(),
+      tools: { ...this.tools },
+      toolChoice: this.toolChoice,
+      createdAt: Date.now(),
+    };
+  }
+
+  private cancelPreemptiveGeneration(): void {
+    if (this._preemptiveGeneration !== undefined) {
+      this._preemptiveGeneration.speechHandle._cancel();
+      this._preemptiveGeneration = undefined;
+    }
+  }
+
   private createSpeechTask(options: {
     task: Task<void>;
     ownedSpeechHandle?: SpeechHandle;
@@ -694,6 +747,7 @@ export class AgentActivity implements RecognitionHooks {
 
   async onEndOfTurn(info: EndOfTurnInfo): Promise<boolean> {
     if (this.draining) {
+      this.cancelPreemptiveGeneration();
       this.logger.warn({ user_input: info.newTranscript }, 'skipping user input, task is draining');
       // copied from python:
       // TODO(shubhra): should we "forward" this new turn to the next agent/activity?
@@ -710,6 +764,7 @@ export class AgentActivity implements RecognitionHooks {
       info.newTranscript.split(' ').length < this.agentSession.options.minInterruptionWords
     ) {
       // avoid interruption if the new_transcript is too short
+      this.cancelPreemptiveGeneration();
       this.logger.info('skipping user input, new_transcript is too short');
       return false;
     }
@@ -775,6 +830,7 @@ export class AgentActivity implements RecognitionHooks {
     instructions?: string;
     toolChoice?: ToolChoice | null;
     allowInterruptions?: boolean;
+    scheduleSpeech?: boolean;
   }): SpeechHandle {
     const {
       userMessage,
@@ -782,6 +838,7 @@ export class AgentActivity implements RecognitionHooks {
       instructions: defaultInstructions,
       toolChoice: defaultToolChoice,
       allowInterruptions: defaultAllowInterruptions,
+      scheduleSpeech = true,
     } = options;
 
     let instructions = defaultInstructions;
@@ -871,7 +928,9 @@ export class AgentActivity implements RecognitionHooks {
       task.finally(() => this.onPipelineReplyDone());
     }
 
-    this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+    if (scheduleSpeech) {
+      this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+    }
     return handle;
   }
 
@@ -977,9 +1036,40 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    // Ensure the new message is passed to generateReply
-    // This preserves the original message id, making it easier for users to track responses
-    const speechHandle = this.generateReply({ userMessage, chatCtx });
+    let speechHandle: SpeechHandle | undefined;
+    if (this._preemptiveGeneration !== undefined) {
+      const preemptive = this._preemptiveGeneration;
+      // make sure the onUserTurnCompleted didn't change some request parameters
+      // otherwise invalidate the preemptive generation
+      if (
+        preemptive.info.newTranscript === userMessage?.textContent &&
+        preemptive.chatCtx.isEquivalent(chatCtx) &&
+        isSameToolContext(preemptive.tools, this.tools) &&
+        JSON.stringify(preemptive.toolChoice) === JSON.stringify(this.toolChoice)
+      ) {
+        speechHandle = preemptive.speechHandle;
+        this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+        this.logger.debug(
+          {
+            preemptiveLeadTime: Date.now() - preemptive.createdAt,
+          },
+          'using preemptive generation',
+        );
+      } else {
+        this.logger.warn(
+          'preemptive generation enabled but chat context or tools have changed after `onUserTurnCompleted`',
+        );
+        preemptive.speechHandle._cancel();
+      }
+
+      this._preemptiveGeneration = undefined;
+    }
+
+    if (speechHandle === undefined) {
+      // Ensure the new message is passed to generateReply
+      // This preserves the original message id, making it easier for users to track responses
+      speechHandle = this.generateReply({ userMessage, chatCtx });
+    }
 
     const eouMetrics: EOUMetrics = {
       type: 'eou_metrics',
@@ -987,6 +1077,7 @@ export class AgentActivity implements RecognitionHooks {
       endOfUtteranceDelayMs: info.endOfUtteranceDelay,
       transcriptionDelayMs: info.transcriptionDelay,
       onUserTurnCompletedDelayMs: callbackDuration,
+      lastSpeakingTimeMs: info.stoppedSpeakingAt,
       speechId: speechHandle.id,
     };
 
@@ -1917,6 +2008,7 @@ export class AgentActivity implements RecognitionHooks {
     try {
       if (this._draining) return;
 
+      this.cancelPreemptiveGeneration();
       this.createSpeechTask({
         task: Task.from(() => this.agent.onExit()),
         name: 'AgentActivity_onExit',
@@ -1937,6 +2029,7 @@ export class AgentActivity implements RecognitionHooks {
         this.logger.warn('task closing without draining');
       }
 
+      this.cancelPreemptiveGeneration();
       // Unregister event handlers to prevent duplicate metrics
       if (this.llm instanceof LLM) {
         this.llm.off('metrics_collected', this.onMetricsCollected);
