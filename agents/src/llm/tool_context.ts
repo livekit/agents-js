@@ -187,6 +187,55 @@ export type ToolContext<UserData = UnknownUserData> = {
   [name: string]: FunctionTool<any, UserData, any>;
 };
 
+export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean {
+  // return true if they have the same tool names and descriptions
+  const toolNames = new Set(Object.keys(ctx1));
+  const toolNames2 = new Set(Object.keys(ctx2));
+
+  // Check if they have the same number of tools
+  if (toolNames.size !== toolNames2.size) {
+    return false;
+  }
+
+  // Check if they have the same set of tool names and descriptions
+  for (const name of toolNames) {
+    if (!toolNames2.has(name)) {
+      return false;
+    }
+
+    const tool1 = ctx1[name];
+    const tool2 = ctx2[name];
+
+    // Check if both tools exist and are function tools
+    if (!tool1 || !tool2) {
+      return false;
+    }
+
+    // Check if they have the same description
+    if (tool1.description !== tool2.description) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export function isSameToolChoice(choice1: ToolChoice | null, choice2: ToolChoice | null): boolean {
+  if (choice1 === choice2) {
+    return true;
+  }
+  if (choice1 === null || choice2 === null) {
+    return false;
+  }
+  if (typeof choice1 === 'string' && typeof choice2 === 'string') {
+    return choice1 === choice2;
+  }
+  if (typeof choice1 === 'object' && typeof choice2 === 'object') {
+    return choice1.type === choice2.type && choice1.function.name === choice2.function.name;
+  }
+  return false;
+}
+
 /**
  * Create a function tool with inferred parameters from the schema.
  */

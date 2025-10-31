@@ -91,6 +91,13 @@ export type EOUMetrics = {
    * Time taken to invoke the user's `Agent.onUserTurnCompleted` callback.
    */
   onUserTurnCompletedDelayMs: number;
+  /**
+   * The time the user stopped speaking.
+   */
+  lastSpeakingTimeMs: number;
+  /**
+   * The ID of the speech handle.
+   */
   speechId?: string;
 };
 

@@ -57,6 +57,7 @@ export interface VoiceOptions {
   minEndpointingDelay: number;
   maxEndpointingDelay: number;
   maxToolSteps: number;
+  preemptiveGeneration: boolean;
 }
 
 const defaultVoiceOptions: VoiceOptions = {
@@ -67,6 +68,7 @@ const defaultVoiceOptions: VoiceOptions = {
   minEndpointingDelay: 500,
   maxEndpointingDelay: 6000,
   maxToolSteps: 3,
+  preemptiveGeneration: false,
 } as const;
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;

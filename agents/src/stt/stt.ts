@@ -32,12 +32,18 @@ export enum SpeechEventType {
    */
   FINAL_TRANSCRIPT = 2,
   /**
+   * Preflight transcript, emitted before final transcript when STT has high confidence
+   * but hasn't fully committed yet. Includes all pre-committed transcripts including
+   * final transcript from the previous STT run.
+   */
+  PREFLIGHT_TRANSCRIPT = 3,
+  /**
    * Indicate the end of speech, emitted when the user stops speaking.
    * The first alternative is a combination of all the previous FINAL_TRANSCRIPT events.
    */
-  END_OF_SPEECH = 3,
+  END_OF_SPEECH = 4,
   /** Usage event, emitted periodically to indicate usage metrics. */
-  RECOGNITION_USAGE = 4,
+  RECOGNITION_USAGE = 5,
 }
 
 /** SpeechData contains metadata about this {@link SpeechEvent}. */

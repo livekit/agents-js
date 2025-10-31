@@ -19,6 +19,12 @@ export interface EndOfTurnInfo {
   newTranscript: string;
   transcriptionDelay: number;
   endOfUtteranceDelay: number;
+  stoppedSpeakingAt: number;
+}
+
+export interface PreemptiveGenerationInfo {
+  newTranscript: string;
+  transcriptConfidence: number;
 }
 
 export interface RecognitionHooks {
@@ -28,6 +34,7 @@ export interface RecognitionHooks {
   onInterimTranscript: (ev: SpeechEvent) => void;
   onFinalTranscript: (ev: SpeechEvent) => void;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
+  onPreemptiveGeneration: (info: PreemptiveGenerationInfo) => void;
 
   retrieveChatCtx: () => ChatContext;
 }
@@ -63,6 +70,8 @@ export class AudioRecognition {
   private lastFinalTranscriptTime = 0;
   private audioTranscript = '';
   private audioInterimTranscript = '';
+  private audioPreflightTranscript = '';
+  private finalTranscriptConfidence: number[] = [];
   private lastSpeakingTime = 0;
   private userTurnCommitted = false;
   private speaking = false;
@@ -144,6 +153,7 @@ export class AudioRecognition {
       case SpeechEventType.FINAL_TRANSCRIPT:
         this.hooks.onFinalTranscript(ev);
         const transcript = ev.alternatives?.[0]?.text;
+        const confidence = ev.alternatives?.[0]?.confidence ?? 0;
         this.lastLanguage = ev.alternatives?.[0]?.language;
 
         if (!transcript) {
@@ -162,24 +172,87 @@ export class AudioRecognition {
         this.lastFinalTranscriptTime = Date.now();
         this.audioTranscript += ` ${transcript}`;
         this.audioTranscript = this.audioTranscript.trimStart();
+        this.finalTranscriptConfidence.push(confidence);
+        const transcriptChanged = this.audioTranscript !== this.audioPreflightTranscript;
         this.audioInterimTranscript = '';
+        this.audioPreflightTranscript = '';
 
-        if (!this.speaking) {
-          if (!this.vad) {
-            // Copied from python agents:
-            // vad disabled, use stt timestamp
-            // TODO: this would screw up transcription latency metrics
-            // but we'll live with it for now.
-            // the correct way is to ensure STT fires SpeechEventType.END_OF_SPEECH
-            // and using that timestamp for _last_speaking_time
-            this.lastSpeakingTime = Date.now();
+        if (!this.vad || this.lastSpeakingTime === 0) {
+          // Copied from python agents:
+          // vad disabled, use stt timestamp
+          // TODO: this would screw up transcription latency metrics
+          // but we'll live with it for now.
+          // the correct way is to ensure STT fires SpeechEventType.END_OF_SPEECH
+          // and using that timestamp for lastSpeakingTime
+          this.lastSpeakingTime = Date.now();
+        }
+
+        if (this.vadBaseTurnDetection || this.userTurnCommitted) {
+          if (transcriptChanged) {
+            this.hooks.onPreemptiveGeneration({
+              newTranscript: this.audioTranscript,
+              transcriptConfidence:
+                this.finalTranscriptConfidence.length > 0
+                  ? this.finalTranscriptConfidence.reduce((a, b) => a + b, 0) /
+                    this.finalTranscriptConfidence.length
+                  : 0,
+            });
           }
 
-          if (this.vadBaseTurnDetection || this.userTurnCommitted) {
+          if (!this.speaking) {
             const chatCtx = this.hooks.retrieveChatCtx();
             this.logger.debug('running EOU detection on stt FINAL_TRANSCRIPT');
             this.runEOUDetection(chatCtx);
           }
+        }
+        break;
+      case SpeechEventType.PREFLIGHT_TRANSCRIPT:
+        this.hooks.onInterimTranscript(ev);
+        const preflightTranscript = ev.alternatives?.[0]?.text ?? '';
+        const preflightConfidence = ev.alternatives?.[0]?.confidence ?? 0;
+        const preflightLanguage = ev.alternatives?.[0]?.language;
+
+        const MIN_LANGUAGE_DETECTION_LENGTH = 5;
+        if (
+          !this.lastLanguage ||
+          (preflightLanguage && preflightTranscript.length > MIN_LANGUAGE_DETECTION_LENGTH)
+        ) {
+          this.lastLanguage = preflightLanguage;
+        }
+
+        if (!preflightTranscript) {
+          return;
+        }
+
+        this.logger.debug(
+          {
+            user_transcript: preflightTranscript,
+            language: this.lastLanguage,
+          },
+          'received user preflight transcript',
+        );
+
+        // still need to increment it as it's used for turn detection,
+        this.lastFinalTranscriptTime = Date.now();
+        // preflight transcript includes all pre-committed transcripts (including final transcript from the previous STT run)
+        this.audioPreflightTranscript =
+          `${this.audioTranscript} ${preflightTranscript}`.trimStart();
+        this.audioInterimTranscript = preflightTranscript;
+
+        if (!this.vad || this.lastSpeakingTime === 0) {
+          // vad disabled, use stt timestamp
+          this.lastSpeakingTime = Date.now();
+        }
+
+        if (this.turnDetectionMode !== 'manual' || this.userTurnCommitted) {
+          const confidenceVals = [...this.finalTranscriptConfidence, preflightConfidence];
+          this.hooks.onPreemptiveGeneration({
+            newTranscript: this.audioPreflightTranscript,
+            transcriptConfidence:
+              confidenceVals.length > 0
+                ? confidenceVals.reduce((a, b) => a + b, 0) / confidenceVals.length
+                : 0,
+          });
         }
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
@@ -264,6 +337,7 @@ export class AudioRecognition {
         newTranscript: this.audioTranscript,
         transcriptionDelay: Math.max(this.lastFinalTranscriptTime - lastSpeakingTime, 0),
         endOfUtteranceDelay: Date.now() - lastSpeakingTime,
+        stoppedSpeakingAt: lastSpeakingTime,
       });
 
       if (committed) {
@@ -366,6 +440,7 @@ export class AudioRecognition {
             this.logger.debug('VAD task: START_OF_SPEECH');
             this.hooks.onStartOfSpeech(ev);
             this.speaking = true;
+            this.lastSpeakingTime = Date.now() - ev.speechDuration;
 
             // Capture sample rate from the first VAD event if not already set
             if (ev.frames.length > 0 && ev.frames[0]) {
@@ -376,6 +451,7 @@ export class AudioRecognition {
             break;
           case VADEventType.INFERENCE_DONE:
             this.hooks.onVADInferenceDone(ev);
+            this.lastSpeakingTime = Date.now() - ev.silenceDuration;
             break;
           case VADEventType.END_OF_SPEECH:
             this.logger.debug('VAD task: END_OF_SPEECH');
@@ -412,6 +488,8 @@ export class AudioRecognition {
   clearUserTurn() {
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
+    this.audioPreflightTranscript = '';
+    this.finalTranscriptConfidence = [];
     this.userTurnCommitted = false;
 
     this.sttTask?.cancelAndWait().finally(() => {
