@@ -206,6 +206,55 @@ export class AudioRecognition {
           }
         }
         break;
+      case SpeechEventType.PREFLIGHT_TRANSCRIPT:
+        this.hooks.onInterimTranscript(ev);
+        const preflightTranscript = ev.alternatives?.[0]?.text ?? '';
+        const preflightConfidence = ev.alternatives?.[0]?.confidence ?? 0;
+        const preflightLanguage = ev.alternatives?.[0]?.language;
+
+        const MIN_LANGUAGE_DETECTION_LENGTH = 5;
+        if (
+          !this.lastLanguage ||
+          (preflightLanguage && preflightTranscript.length > MIN_LANGUAGE_DETECTION_LENGTH)
+        ) {
+          this.lastLanguage = preflightLanguage;
+        }
+
+        if (!preflightTranscript) {
+          return;
+        }
+
+        this.logger.debug(
+          {
+            user_transcript: preflightTranscript,
+            language: this.lastLanguage,
+          },
+          'received user preflight transcript',
+        );
+
+        // still need to increment it as it's used for turn detection,
+        this.lastFinalTranscriptTime = Date.now();
+        // preflight transcript includes all pre-committed transcripts (including final transcript from the previous STT run)
+        this.audioPreflightTranscript =
+          `${this.audioTranscript} ${preflightTranscript}`.trimStart();
+        this.audioInterimTranscript = preflightTranscript;
+
+        if (!this.vad || this.lastSpeakingTime === 0) {
+          // vad disabled, use stt timestamp
+          this.lastSpeakingTime = Date.now();
+        }
+
+        if (this.turnDetectionMode !== 'manual' || this.userTurnCommitted) {
+          const confidenceVals = [...this.finalTranscriptConfidence, preflightConfidence];
+          this.hooks.onPreemptiveGeneration({
+            newTranscript: this.audioPreflightTranscript,
+            transcriptConfidence:
+              confidenceVals.length > 0
+                ? confidenceVals.reduce((a, b) => a + b, 0) / confidenceVals.length
+                : 0,
+          });
+        }
+        break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
         this.logger.debug({ transcript: ev.alternatives?.[0]?.text }, 'interim transcript');
         this.hooks.onInterimTranscript(ev);
