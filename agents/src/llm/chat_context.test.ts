@@ -448,3 +448,610 @@ describe('ReadonlyChatContext with immutable array', () => {
     expect(ids).toEqual(['msg_1', 'msg_2']);
   });
 });
+
+describe('ChatContext.isEquivalent', () => {
+  it('should return true for same reference', () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({
+      id: 'msg_1',
+      role: 'user',
+      content: 'Hello',
+    });
+
+    expect(ctx.isEquivalent(ctx)).toBe(true);
+  });
+
+  it('should return true for identical empty contexts', () => {
+    const ctx1 = new ChatContext();
+    const ctx2 = new ChatContext();
+
+    expect(ctx1.isEquivalent(ctx2)).toBe(true);
+  });
+
+  it('should return false for contexts with different lengths', () => {
+    const ctx1 = new ChatContext();
+    ctx1.addMessage({
+      id: 'msg_1',
+      role: 'user',
+      content: 'Hello',
+    });
+
+    const ctx2 = new ChatContext();
+    ctx2.addMessage({
+      id: 'msg_1',
+      role: 'user',
+      content: 'Hello',
+    });
+    ctx2.addMessage({
+      id: 'msg_2',
+      role: 'assistant',
+      content: 'Hi',
+    });
+
+    expect(ctx1.isEquivalent(ctx2)).toBe(false);
+  });
+
+  it('should return false for contexts with different item IDs', () => {
+    const ctx1 = new ChatContext();
+    ctx1.addMessage({
+      id: 'msg_1',
+      role: 'user',
+      content: 'Hello',
+    });
+
+    const ctx2 = new ChatContext();
+    ctx2.addMessage({
+      id: 'msg_2',
+      role: 'user',
+      content: 'Hello',
+    });
+
+    expect(ctx1.isEquivalent(ctx2)).toBe(false);
+  });
+
+  it('should return false for contexts with different item types', () => {
+    const ctx1 = new ChatContext();
+    ctx1.addMessage({
+      id: 'msg_1',
+      role: 'user',
+      content: 'Hello',
+    });
+
+    const ctx2 = new ChatContext();
+    ctx2.insert(
+      new FunctionCall({
+        id: 'msg_1',
+        callId: 'call_1',
+        name: 'test',
+        args: '{}',
+      }),
+    );
+
+    expect(ctx1.isEquivalent(ctx2)).toBe(false);
+  });
+
+  describe('message comparison', () => {
+    it('should return true for identical messages', () => {
+      const ctx1 = new ChatContext();
+      ctx1.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: 'Hello',
+        interrupted: false,
+      });
+
+      const ctx2 = new ChatContext();
+      ctx2.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: 'Hello',
+        interrupted: false,
+      });
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(true);
+    });
+
+    it('should return false for messages with different roles', () => {
+      const ctx1 = new ChatContext();
+      ctx1.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: 'Hello',
+      });
+
+      const ctx2 = new ChatContext();
+      ctx2.addMessage({
+        id: 'msg_1',
+        role: 'assistant',
+        content: 'Hello',
+      });
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(false);
+    });
+
+    it('should return false for messages with different interrupted flags', () => {
+      const ctx1 = new ChatContext();
+      ctx1.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: 'Hello',
+        interrupted: false,
+      });
+
+      const ctx2 = new ChatContext();
+      ctx2.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: 'Hello',
+        interrupted: true,
+      });
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(false);
+    });
+
+    it('should return false for messages with different content', () => {
+      const ctx1 = new ChatContext();
+      ctx1.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: 'Hello',
+      });
+
+      const ctx2 = new ChatContext();
+      ctx2.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: 'World',
+      });
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(false);
+    });
+
+    it('should return true for messages with identical array content', () => {
+      const ctx1 = new ChatContext();
+      ctx1.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: ['Hello', 'World'],
+      });
+
+      const ctx2 = new ChatContext();
+      ctx2.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: ['Hello', 'World'],
+      });
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(true);
+    });
+
+    it('should return false for messages with different array content', () => {
+      const ctx1 = new ChatContext();
+      ctx1.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: ['Hello', 'World'],
+      });
+
+      const ctx2 = new ChatContext();
+      ctx2.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: ['Hello'],
+      });
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(false);
+    });
+
+    it('should return true for messages with identical image content', () => {
+      const imageContent: ImageContent = {
+        id: 'img_1',
+        type: 'image_content',
+        image: 'https://example.com/image.jpg',
+        inferenceDetail: 'high',
+        inferenceWidth: 1024,
+        inferenceHeight: 768,
+        mimeType: 'image/jpeg',
+        _cache: {},
+      };
+
+      const ctx1 = new ChatContext();
+      ctx1.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: ['Check this:', imageContent],
+      });
+
+      const ctx2 = new ChatContext();
+      ctx2.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: ['Check this:', { ...imageContent }],
+      });
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(true);
+    });
+
+    it('should return false for messages with different image content', () => {
+      const imageContent1: ImageContent = {
+        id: 'img_1',
+        type: 'image_content',
+        image: 'https://example.com/image1.jpg',
+        inferenceDetail: 'high',
+        _cache: {},
+      };
+
+      const imageContent2: ImageContent = {
+        id: 'img_2',
+        type: 'image_content',
+        image: 'https://example.com/image2.jpg',
+        inferenceDetail: 'high',
+        _cache: {},
+      };
+
+      const ctx1 = new ChatContext();
+      ctx1.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: ['Check this:', imageContent1],
+      });
+
+      const ctx2 = new ChatContext();
+      ctx2.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: ['Check this:', imageContent2],
+      });
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(false);
+    });
+  });
+
+  describe('function call comparison', () => {
+    it('should return true for identical function calls', () => {
+      const ctx1 = new ChatContext();
+      ctx1.insert(
+        new FunctionCall({
+          id: 'func_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          args: '{"location": "Paris"}',
+        }),
+      );
+
+      const ctx2 = new ChatContext();
+      ctx2.insert(
+        new FunctionCall({
+          id: 'func_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          args: '{"location": "Paris"}',
+        }),
+      );
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(true);
+    });
+
+    it('should return false for function calls with different names', () => {
+      const ctx1 = new ChatContext();
+      ctx1.insert(
+        new FunctionCall({
+          id: 'func_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          args: '{}',
+        }),
+      );
+
+      const ctx2 = new ChatContext();
+      ctx2.insert(
+        new FunctionCall({
+          id: 'func_1',
+          callId: 'call_1',
+          name: 'get_time',
+          args: '{}',
+        }),
+      );
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(false);
+    });
+
+    it('should return false for function calls with different call IDs', () => {
+      const ctx1 = new ChatContext();
+      ctx1.insert(
+        new FunctionCall({
+          id: 'func_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          args: '{}',
+        }),
+      );
+
+      const ctx2 = new ChatContext();
+      ctx2.insert(
+        new FunctionCall({
+          id: 'func_1',
+          callId: 'call_2',
+          name: 'get_weather',
+          args: '{}',
+        }),
+      );
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(false);
+    });
+
+    it('should return false for function calls with different arguments', () => {
+      const ctx1 = new ChatContext();
+      ctx1.insert(
+        new FunctionCall({
+          id: 'func_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          args: '{"location": "Paris"}',
+        }),
+      );
+
+      const ctx2 = new ChatContext();
+      ctx2.insert(
+        new FunctionCall({
+          id: 'func_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          args: '{"location": "London"}',
+        }),
+      );
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(false);
+    });
+
+    it('should ignore timestamps', () => {
+      const ctx1 = new ChatContext();
+      ctx1.insert(
+        new FunctionCall({
+          id: 'func_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          args: '{}',
+          createdAt: 1000,
+        }),
+      );
+
+      const ctx2 = new ChatContext();
+      ctx2.insert(
+        new FunctionCall({
+          id: 'func_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          args: '{}',
+          createdAt: 2000,
+        }),
+      );
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(true);
+    });
+  });
+
+  describe('function call output comparison', () => {
+    it('should return true for identical function call outputs', () => {
+      const ctx1 = new ChatContext();
+      ctx1.insert(
+        new FunctionCallOutput({
+          id: 'output_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          output: '{"temperature": 22}',
+          isError: false,
+        }),
+      );
+
+      const ctx2 = new ChatContext();
+      ctx2.insert(
+        new FunctionCallOutput({
+          id: 'output_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          output: '{"temperature": 22}',
+          isError: false,
+        }),
+      );
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(true);
+    });
+
+    it('should return false for function call outputs with different names', () => {
+      const ctx1 = new ChatContext();
+      ctx1.insert(
+        new FunctionCallOutput({
+          id: 'output_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          output: '{}',
+          isError: false,
+        }),
+      );
+
+      const ctx2 = new ChatContext();
+      ctx2.insert(
+        new FunctionCallOutput({
+          id: 'output_1',
+          callId: 'call_1',
+          name: 'get_time',
+          output: '{}',
+          isError: false,
+        }),
+      );
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(false);
+    });
+
+    it('should return false for function call outputs with different call IDs', () => {
+      const ctx1 = new ChatContext();
+      ctx1.insert(
+        new FunctionCallOutput({
+          id: 'output_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          output: '{}',
+          isError: false,
+        }),
+      );
+
+      const ctx2 = new ChatContext();
+      ctx2.insert(
+        new FunctionCallOutput({
+          id: 'output_1',
+          callId: 'call_2',
+          name: 'get_weather',
+          output: '{}',
+          isError: false,
+        }),
+      );
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(false);
+    });
+
+    it('should return false for function call outputs with different output values', () => {
+      const ctx1 = new ChatContext();
+      ctx1.insert(
+        new FunctionCallOutput({
+          id: 'output_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          output: '{"temperature": 22}',
+          isError: false,
+        }),
+      );
+
+      const ctx2 = new ChatContext();
+      ctx2.insert(
+        new FunctionCallOutput({
+          id: 'output_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          output: '{"temperature": 25}',
+          isError: false,
+        }),
+      );
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(false);
+    });
+
+    it('should return false for function call outputs with different error flags', () => {
+      const ctx1 = new ChatContext();
+      ctx1.insert(
+        new FunctionCallOutput({
+          id: 'output_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          output: 'Error occurred',
+          isError: false,
+        }),
+      );
+
+      const ctx2 = new ChatContext();
+      ctx2.insert(
+        new FunctionCallOutput({
+          id: 'output_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          output: 'Error occurred',
+          isError: true,
+        }),
+      );
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(false);
+    });
+
+    it('should ignore timestamps', () => {
+      const ctx1 = new ChatContext();
+      ctx1.insert(
+        new FunctionCallOutput({
+          id: 'output_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          output: '{}',
+          isError: false,
+          createdAt: 1000,
+        }),
+      );
+
+      const ctx2 = new ChatContext();
+      ctx2.insert(
+        new FunctionCallOutput({
+          id: 'output_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          output: '{}',
+          isError: false,
+          createdAt: 2000,
+        }),
+      );
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(true);
+    });
+  });
+
+  describe('complex context comparison', () => {
+    it('should return true for identical complex contexts', () => {
+      const ctx1 = new ChatContext();
+      ctx1.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: 'What is the weather?',
+      });
+      ctx1.insert(
+        new FunctionCall({
+          id: 'func_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          args: '{"location": "Paris"}',
+        }),
+      );
+      ctx1.insert(
+        new FunctionCallOutput({
+          id: 'output_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          output: '{"temperature": 22}',
+          isError: false,
+        }),
+      );
+      ctx1.addMessage({
+        id: 'msg_2',
+        role: 'assistant',
+        content: 'The weather is 22°C',
+      });
+
+      const ctx2 = new ChatContext();
+      ctx2.addMessage({
+        id: 'msg_1',
+        role: 'user',
+        content: 'What is the weather?',
+      });
+      ctx2.insert(
+        new FunctionCall({
+          id: 'func_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          args: '{"location": "Paris"}',
+        }),
+      );
+      ctx2.insert(
+        new FunctionCallOutput({
+          id: 'output_1',
+          callId: 'call_1',
+          name: 'get_weather',
+          output: '{"temperature": 22}',
+          isError: false,
+        }),
+      );
+      ctx2.addMessage({
+        id: 'msg_2',
+        role: 'assistant',
+        content: 'The weather is 22°C',
+      });
+
+      expect(ctx1.isEquivalent(ctx2)).toBe(true);
+    });
+  });
+});
