@@ -702,6 +702,7 @@ export class AgentActivity implements RecognitionHooks {
 
     this._preemptiveGeneration = {
       speechHandle,
+      userMessage,
       info,
       chatCtx: chatCtx.copy(),
       tools: { ...this.tools },
