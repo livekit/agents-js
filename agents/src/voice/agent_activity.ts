@@ -22,7 +22,7 @@ import {
   type ToolContext,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
-import { isSameToolContext } from '../llm/tool_context.js';
+import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
   EOUMetrics,
@@ -1046,7 +1046,7 @@ export class AgentActivity implements RecognitionHooks {
         preemptive.info.newTranscript === userMessage?.textContent &&
         preemptive.chatCtx.isEquivalent(chatCtx) &&
         isSameToolContext(preemptive.tools, this.tools) &&
-        JSON.stringify(preemptive.toolChoice) === JSON.stringify(this.toolChoice)
+        isSameToolChoice(preemptive.toolChoice, this.toolChoice)
       ) {
         speechHandle = preemptive.speechHandle;
         this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
@@ -1231,10 +1231,9 @@ export class AgentActivity implements RecognitionHooks {
 
     chatCtx = chatCtx.copy();
 
+    // Insert new message into temporary chat context for LLM inference
     if (newMessage) {
       chatCtx.insert(newMessage);
-      this.agent._chatCtx.insert(newMessage);
-      this.agentSession._conversationItemAdded(newMessage);
     }
 
     if (instructions) {
@@ -1249,7 +1248,6 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    this.agentSession._updateAgentState('thinking');
     const tasks: Array<Task<void>> = [];
     const [llmTask, llmGenData] = performLLMInference(
       // preserve  `this` context in llmNode
@@ -1276,6 +1274,12 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForScheduled()]);
+
+    // Add new message to actual chat context if the speech is scheduled
+    if (newMessage && speechHandle.scheduled) {
+      this.agent._chatCtx.insert(newMessage);
+      this.agentSession._conversationItemAdded(newMessage);
+    }
 
     if (speechHandle.interrupted) {
       replyAbortController.abort();

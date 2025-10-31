@@ -220,6 +220,22 @@ export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean
   return true;
 }
 
+export function isSameToolChoice(choice1: ToolChoice | null, choice2: ToolChoice | null): boolean {
+  if (choice1 === choice2) {
+    return true;
+  }
+  if (choice1 === null || choice2 === null) {
+    return false;
+  }
+  if (typeof choice1 === 'string' && typeof choice2 === 'string') {
+    return choice1 === choice2;
+  }
+  if (typeof choice1 === 'object' && typeof choice2 === 'object') {
+    return choice1.type === choice2.type && choice1.function.name === choice2.function.name;
+  }
+  return false;
+}
+
 /**
  * Create a function tool with inferred parameters from the schema.
  */
