@@ -188,16 +188,13 @@ export type ToolContext<UserData = UnknownUserData> = {
 };
 
 export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean {
-  // return true if they have the same tool names and descriptions
   const toolNames = new Set(Object.keys(ctx1));
   const toolNames2 = new Set(Object.keys(ctx2));
 
-  // Check if they have the same number of tools
   if (toolNames.size !== toolNames2.size) {
     return false;
   }
 
-  // Check if they have the same set of tool names and descriptions
   for (const name of toolNames) {
     if (!toolNames2.has(name)) {
       return false;
@@ -206,12 +203,10 @@ export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean
     const tool1 = ctx1[name];
     const tool2 = ctx2[name];
 
-    // Check if both tools exist and are function tools
     if (!tool1 || !tool2) {
       return false;
     }
 
-    // Check if they have the same description
     if (tool1.description !== tool2.description) {
       return false;
     }
