@@ -693,7 +693,7 @@ export class AgentActivity implements RecognitionHooks {
 
     this.cancelPreemptiveGeneration();
 
-    this.logger.debug(
+    this.logger.info(
       {
         newTranscript: info.newTranscript,
         transcriptConfidence: info.transcriptConfidence,
