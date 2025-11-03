@@ -19,7 +19,8 @@ export interface EndOfTurnInfo {
   newTranscript: string;
   transcriptionDelay: number;
   endOfUtteranceDelay: number;
-  stoppedSpeakingAt: number;
+  startedSpeakingAt: number | undefined;
+  stoppedSpeakingAt: number | undefined;
 }
 
 export interface PreemptiveGenerationInfo {
@@ -72,7 +73,8 @@ export class AudioRecognition {
   private audioInterimTranscript = '';
   private audioPreflightTranscript = '';
   private finalTranscriptConfidence: number[] = [];
-  private lastSpeakingTime = 0;
+  private lastSpeakingTime: number | undefined;
+  private speechStartTime: number | undefined;
   private userTurnCommitted = false;
   private speaking = false;
   private sampleRate?: number;
@@ -177,7 +179,7 @@ export class AudioRecognition {
         this.audioInterimTranscript = '';
         this.audioPreflightTranscript = '';
 
-        if (!this.vad || this.lastSpeakingTime === 0) {
+        if (!this.vad || this.lastSpeakingTime === undefined) {
           // Copied from python agents:
           // vad disabled, use stt timestamp
           // TODO: this would screw up transcription latency metrics
@@ -189,6 +191,10 @@ export class AudioRecognition {
 
         if (this.vadBaseTurnDetection || this.userTurnCommitted) {
           if (transcriptChanged) {
+            this.logger.debug(
+              { transcript: this.audioTranscript },
+              'triggering preemptive generation (FINAL_TRANSCRIPT)',
+            );
             this.hooks.onPreemptiveGeneration({
               newTranscript: this.audioTranscript,
               transcriptConfidence:
@@ -239,13 +245,17 @@ export class AudioRecognition {
           `${this.audioTranscript} ${preflightTranscript}`.trimStart();
         this.audioInterimTranscript = preflightTranscript;
 
-        if (!this.vad || this.lastSpeakingTime === 0) {
+        if (!this.vad || this.lastSpeakingTime === undefined) {
           // vad disabled, use stt timestamp
           this.lastSpeakingTime = Date.now();
         }
 
         if (this.turnDetectionMode !== 'manual' || this.userTurnCommitted) {
           const confidenceVals = [...this.finalTranscriptConfidence, preflightConfidence];
+          this.logger.debug(
+            { transcript: this.audioPreflightTranscript },
+            'triggering preemptive generation (PREFLIGHT_TRANSCRIPT)',
+          );
           this.hooks.onPreemptiveGeneration({
             newTranscript: this.audioPreflightTranscript,
             transcriptConfidence:
@@ -260,9 +270,44 @@ export class AudioRecognition {
         this.hooks.onInterimTranscript(ev);
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
         break;
+      case SpeechEventType.START_OF_SPEECH:
+        if (this.turnDetectionMode !== 'stt') break;
+        this.hooks.onStartOfSpeech({
+          type: VADEventType.START_OF_SPEECH,
+          samplesIndex: 0,
+          timestamp: Date.now(),
+          speechDuration: 0,
+          silenceDuration: 0,
+          frames: [],
+          probability: 0,
+          inferenceDuration: 0,
+          speaking: true,
+          rawAccumulatedSilence: 0,
+          rawAccumulatedSpeech: 0,
+        });
+        this.speaking = true;
+        this.lastSpeakingTime = Date.now();
+
+        this.bounceEOUTask?.cancel();
+        break;
       case SpeechEventType.END_OF_SPEECH:
         if (this.turnDetectionMode !== 'stt') break;
+        this.hooks.onEndOfSpeech({
+          type: VADEventType.END_OF_SPEECH,
+          samplesIndex: 0,
+          timestamp: Date.now(),
+          speechDuration: 0,
+          silenceDuration: 0,
+          frames: [],
+          probability: 0,
+          inferenceDuration: 0,
+          speaking: false,
+          rawAccumulatedSilence: 0,
+          rawAccumulatedSpeech: 0,
+        });
+        this.speaking = false;
         this.userTurnCommitted = true;
+        this.lastSpeakingTime = Date.now();
 
         if (!this.speaking) {
           const chatCtx = this.hooks.retrieveChatCtx();
@@ -295,62 +340,106 @@ export class AudioRecognition {
       // disable EOU model if manual turn detection enabled
       this.audioTranscript && this.turnDetectionMode !== 'manual' ? this.turnDetector : undefined;
 
-    const bounceEOUTask = (lastSpeakingTime: number) => async (controller: AbortController) => {
-      let endpointingDelay = this.minEndpointingDelay;
+    const bounceEOUTask =
+      (
+        lastSpeakingTime: number | undefined,
+        lastFinalTranscriptTime: number,
+        speechStartTime: number | undefined,
+      ) =>
+      async (controller: AbortController) => {
+        let endpointingDelay = this.minEndpointingDelay;
 
-      // TODO(AJS-74): need to support actual turn detection model plugins for following code to run
-      if (turnDetector) {
-        this.logger.debug('Running turn detector model');
-        if (!turnDetector.supportsLanguage(this.lastLanguage)) {
-          this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
-        } else {
-          const endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
-          this.logger.debug(
-            { endOfTurnProbability, language: this.lastLanguage },
-            'end of turn probability',
-          );
+        // TODO(AJS-74): need to support actual turn detection model plugins for following code to run
+        if (turnDetector) {
+          this.logger.debug('Running turn detector model');
+          if (!turnDetector.supportsLanguage(this.lastLanguage)) {
+            this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
+          } else {
+            const endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
+            this.logger.debug(
+              { endOfTurnProbability, language: this.lastLanguage },
+              'end of turn probability',
+            );
 
-          const unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
-          this.logger.debug(
-            {
-              unlikelyThreshold,
-              endOfTurnProbability,
-              language: this.lastLanguage,
-              transcript: this.audioTranscript,
-            },
-            'EOU Detection',
-          );
+            const unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
+            this.logger.debug(
+              {
+                unlikelyThreshold,
+                endOfTurnProbability,
+                language: this.lastLanguage,
+                transcript: this.audioTranscript,
+              },
+              'EOU Detection',
+            );
 
-          if (unlikelyThreshold && endOfTurnProbability < unlikelyThreshold) {
-            endpointingDelay = this.maxEndpointingDelay;
+            if (unlikelyThreshold && endOfTurnProbability < unlikelyThreshold) {
+              endpointingDelay = this.maxEndpointingDelay;
+            }
           }
         }
-      }
 
-      const extraSleep = lastSpeakingTime + endpointingDelay - Date.now();
-      // add delay to see if there's a potential upcoming EOU task that cancels this one
-      await delay(Math.max(extraSleep, 0), { signal: controller.signal });
+        let extraSleep = endpointingDelay;
+        if (lastSpeakingTime !== undefined) {
+          extraSleep += lastSpeakingTime - Date.now();
+        }
 
-      this.logger.debug({ transcript: this.audioTranscript }, 'end of user turn');
+        if (extraSleep > 0) {
+          // add delay to see if there's a potential upcoming EOU task that cancels this one
+          await delay(Math.max(extraSleep, 0), { signal: controller.signal });
+        }
 
-      const committed = await this.hooks.onEndOfTurn({
-        newTranscript: this.audioTranscript,
-        transcriptionDelay: Math.max(this.lastFinalTranscriptTime - lastSpeakingTime, 0),
-        endOfUtteranceDelay: Date.now() - lastSpeakingTime,
-        stoppedSpeakingAt: lastSpeakingTime,
-      });
+        this.logger.debug({ transcript: this.audioTranscript }, 'end of user turn');
 
-      if (committed) {
-        // clear the transcript if the user turn was committed
-        this.audioTranscript = '';
-      }
+        const confidenceAvg =
+          this.finalTranscriptConfidence.length > 0
+            ? this.finalTranscriptConfidence.reduce((a, b) => a + b, 0) /
+              this.finalTranscriptConfidence.length
+            : 0;
 
-      this.userTurnCommitted = false;
-    };
+        let startedSpeakingAt: number | undefined;
+        let stoppedSpeakingAt: number | undefined;
+        let transcriptionDelay: number | undefined;
+        let endOfUtteranceDelay: number | undefined;
+
+        // sometimes, we can't calculate the metrics because VAD was unreliable.
+        // in this case, we just ignore the calculation, it's better than providing likely wrong values
+        if (
+          lastFinalTranscriptTime !== 0 &&
+          lastSpeakingTime !== undefined &&
+          speechStartTime !== undefined
+        ) {
+          startedSpeakingAt = speechStartTime;
+          stoppedSpeakingAt = lastSpeakingTime;
+          transcriptionDelay = Math.max(lastFinalTranscriptTime - lastSpeakingTime, 0);
+          endOfUtteranceDelay = Date.now() - lastSpeakingTime;
+        }
+
+        const committed = await this.hooks.onEndOfTurn({
+          newTranscript: this.audioTranscript,
+          transcriptionDelay: transcriptionDelay ?? 0,
+          endOfUtteranceDelay: endOfUtteranceDelay ?? 0,
+          startedSpeakingAt,
+          stoppedSpeakingAt,
+        });
+
+        if (committed) {
+          // clear the transcript if the user turn was committed
+          this.audioTranscript = '';
+          this.finalTranscriptConfidence = [];
+          this.lastSpeakingTime = undefined;
+          this.lastFinalTranscriptTime = 0;
+          this.speechStartTime = undefined;
+        }
+
+        this.userTurnCommitted = false;
+      };
 
     // cancel any existing EOU task
     this.bounceEOUTask?.cancel();
-    this.bounceEOUTask = Task.from(bounceEOUTask(this.lastSpeakingTime));
+    // copy the values before awaiting (the values can change)
+    this.bounceEOUTask = Task.from(
+      bounceEOUTask(this.lastSpeakingTime, this.lastFinalTranscriptTime, this.speechStartTime),
+    );
 
     this.bounceEOUTask.result
       .then(() => {
@@ -440,7 +529,6 @@ export class AudioRecognition {
             this.logger.debug('VAD task: START_OF_SPEECH');
             this.hooks.onStartOfSpeech(ev);
             this.speaking = true;
-            this.lastSpeakingTime = Date.now() - ev.speechDuration;
 
             // Capture sample rate from the first VAD event if not already set
             if (ev.frames.length > 0 && ev.frames[0]) {
@@ -451,14 +539,21 @@ export class AudioRecognition {
             break;
           case VADEventType.INFERENCE_DONE:
             this.hooks.onVADInferenceDone(ev);
-            this.lastSpeakingTime = Date.now() - ev.silenceDuration;
+            // for metrics, get the "earliest" signal of speech as possible
+            if (ev.rawAccumulatedSpeech > 0.0) {
+              this.lastSpeakingTime = Date.now();
+
+              if (this.speechStartTime === undefined) {
+                this.speechStartTime = Date.now();
+              }
+            }
             break;
           case VADEventType.END_OF_SPEECH:
             this.logger.debug('VAD task: END_OF_SPEECH');
             this.hooks.onEndOfSpeech(ev);
-            this.speaking = false;
+
             // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
-            this.lastSpeakingTime = Date.now() - ev.silenceDuration;
+            this.speaking = false;
 
             if (
               this.vadBaseTurnDetection ||

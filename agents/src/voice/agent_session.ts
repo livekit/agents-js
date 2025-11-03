@@ -423,7 +423,7 @@ export class AgentSession<
   }
 
   /** @internal */
-  _updateUserState(state: UserState) {
+  _updateUserState(state: UserState, lastSpeakingTime?: number) {
     if (this.userState === state) {
       return;
     }

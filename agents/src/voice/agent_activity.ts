@@ -602,8 +602,12 @@ export class AgentActivity implements RecognitionHooks {
     this.agentSession._updateUserState('speaking');
   }
 
-  onEndOfSpeech(_ev: VADEvent): void {
-    this.agentSession._updateUserState('listening');
+  onEndOfSpeech(ev: VADEvent): void {
+    let speechEndTime = Date.now();
+    if (ev) {
+      speechEndTime = speechEndTime - ev.silenceDuration;
+    }
+    this.agentSession._updateUserState('listening', speechEndTime);
   }
 
   onVADInferenceDone(ev: VADEvent): void {
@@ -688,6 +692,14 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     this.cancelPreemptiveGeneration();
+
+    this.logger.debug(
+      {
+        newTranscript: info.newTranscript,
+        transcriptConfidence: info.transcriptConfidence,
+      },
+      'starting preemptive generation',
+    );
 
     const userMessage = ChatMessage.create({
       role: 'user',
@@ -1078,7 +1090,7 @@ export class AgentActivity implements RecognitionHooks {
       endOfUtteranceDelayMs: info.endOfUtteranceDelay,
       transcriptionDelayMs: info.transcriptionDelay,
       onUserTurnCompletedDelayMs: callbackDuration,
-      lastSpeakingTimeMs: info.stoppedSpeakingAt,
+      lastSpeakingTimeMs: info.stoppedSpeakingAt ?? 0,
       speechId: speechHandle.id,
     };
 
