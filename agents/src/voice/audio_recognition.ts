@@ -17,6 +17,7 @@ import type { STTNode } from './io.js';
 
 export interface EndOfTurnInfo {
   newTranscript: string;
+  transcriptConfidence: number;
   transcriptionDelay: number;
   endOfUtteranceDelay: number;
   startedSpeakingAt: number | undefined;
@@ -416,6 +417,7 @@ export class AudioRecognition {
 
         const committed = await this.hooks.onEndOfTurn({
           newTranscript: this.audioTranscript,
+          transcriptConfidence: confidenceAvg,
           transcriptionDelay: transcriptionDelay ?? 0,
           endOfUtteranceDelay: endOfUtteranceDelay ?? 0,
           startedSpeakingAt,

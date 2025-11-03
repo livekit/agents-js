@@ -423,6 +423,7 @@ export class AgentSession<
   }
 
   /** @internal */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _updateUserState(state: UserState, lastSpeakingTime?: number) {
     if (this.userState === state) {
       return;
