@@ -181,7 +181,6 @@ export class AudioRecognition {
         this.audioPreflightTranscript = '';
 
         if (!this.vad || this.lastSpeakingTime === undefined) {
-          // Copied from python agents:
           // vad disabled, use stt timestamp
           // TODO: this would screw up transcription latency metrics
           // but we'll live with it for now.
@@ -350,7 +349,6 @@ export class AudioRecognition {
       async (controller: AbortController) => {
         let endpointingDelay = this.minEndpointingDelay;
 
-        // TODO(AJS-74): need to support actual turn detection model plugins for following code to run
         if (turnDetector) {
           this.logger.debug('Running turn detector model');
           if (!turnDetector.supportsLanguage(this.lastLanguage)) {
