@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { JobContext, JobProcess } from './job.js';
 
-/** @see {@link defineAgentServer} */
+/** @see {@link defineAgent} */
 export interface Agent {
   entry: (ctx: JobContext) => Promise<void>;
   prewarm?: (proc: JobProcess) => unknown;
@@ -33,11 +33,6 @@ export function isAgent(obj: unknown): obj is Agent {
  * })
  * ```
  */
-export function defineAgentServer(agent: Agent): Agent {
+export function defineAgent(agent: Agent): Agent {
   return agent;
 }
-
-/**
- * @deprecated Use {@link defineAgentServer} instead. This alias is provided for backward compatibility.
- */
-export const defineAgent = defineAgentServer;
