@@ -514,6 +514,112 @@ export class ChatContext {
   }
 
   /**
+   * Return true if `other` has the same sequence of items with matching
+   * essential fields (IDs, types, and payload) as this context.
+   *
+   * Comparison rules:
+   * - Messages: compares the full `content` list, `role` and `interrupted`.
+   * - Function calls: compares `name`, `callId`, and `args`.
+   * - Function call outputs: compares `name`, `callId`, `output`, and `isError`.
+   *
+   * Does not consider timestamps or other metadata.
+   */
+  isEquivalent(other: ChatContext): boolean {
+    if (this === other) {
+      return true;
+    }
+
+    if (this.items.length !== other.items.length) {
+      return false;
+    }
+
+    for (let i = 0; i < this.items.length; i++) {
+      const a = this.items[i]!;
+      const b = other.items[i]!;
+
+      if (a.id !== b.id || a.type !== b.type) {
+        return false;
+      }
+
+      if (a.type === 'message' && b.type === 'message') {
+        if (
+          a.role !== b.role ||
+          a.interrupted !== b.interrupted ||
+          !this.compareContent(a.content, b.content)
+        ) {
+          return false;
+        }
+      } else if (a.type === 'function_call' && b.type === 'function_call') {
+        if (a.name !== b.name || a.callId !== b.callId || a.args !== b.args) {
+          return false;
+        }
+      } else if (a.type === 'function_call_output' && b.type === 'function_call_output') {
+        if (
+          a.name !== b.name ||
+          a.callId !== b.callId ||
+          a.output !== b.output ||
+          a.isError !== b.isError
+        ) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Compare two content arrays for equality.
+   */
+  private compareContent(a: ChatContent[], b: ChatContent[]): boolean {
+    if (a.length !== b.length) {
+      return false;
+    }
+
+    for (let i = 0; i < a.length; i++) {
+      const contentA = a[i]!;
+      const contentB = b[i]!;
+
+      if (typeof contentA === 'string' && typeof contentB === 'string') {
+        if (contentA !== contentB) {
+          return false;
+        }
+        continue;
+      }
+
+      if (typeof contentA !== typeof contentB) {
+        return false;
+      }
+
+      if (typeof contentA === 'object' && typeof contentB === 'object') {
+        if (contentA.type === 'image_content' && contentB.type === 'image_content') {
+          if (
+            contentA.id !== contentB.id ||
+            contentA.image !== contentB.image ||
+            contentA.inferenceDetail !== contentB.inferenceDetail ||
+            contentA.inferenceWidth !== contentB.inferenceWidth ||
+            contentA.inferenceHeight !== contentB.inferenceHeight ||
+            contentA.mimeType !== contentB.mimeType
+          ) {
+            return false;
+          }
+        } else if (contentA.type === 'audio_content' && contentB.type === 'audio_content') {
+          if (contentA.frame.length !== contentB.frame.length) {
+            return false;
+          }
+          if (contentA.transcript !== contentB.transcript) {
+            return false;
+          }
+        } else {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
+  /**
    * Indicates whether the context is read-only
    */
   get readonly(): boolean {
