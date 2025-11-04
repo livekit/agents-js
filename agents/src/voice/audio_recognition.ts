@@ -253,7 +253,12 @@ export class AudioRecognition {
         if (this.turnDetectionMode !== 'manual' || this.userTurnCommitted) {
           const confidenceVals = [...this.finalTranscriptConfidence, preflightConfidence];
           this.logger.debug(
-            { transcript: this.audioPreflightTranscript },
+            {
+              transcript:
+                this.audioPreflightTranscript.length > 100
+                  ? this.audioPreflightTranscript.slice(0, 100) + '...'
+                  : this.audioPreflightTranscript,
+            },
             'triggering preemptive generation (PREFLIGHT_TRANSCRIPT)',
           );
           this.hooks.onPreemptiveGeneration({
