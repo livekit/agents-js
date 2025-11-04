@@ -6,10 +6,10 @@ import type { EventEmitter } from 'node:events';
 import { initializeLogger, log } from './log.js';
 import { Plugin } from './plugin.js';
 import { version } from './version.js';
-import { Worker, WorkerOptions } from './worker.js';
+import { AgentServer, ServerOptions } from './worker.js';
 
 type CliArgs = {
-  opts: WorkerOptions;
+  opts: ServerOptions;
   production: boolean;
   watch: boolean;
   event?: EventEmitter;
@@ -17,18 +17,18 @@ type CliArgs = {
   participantIdentity?: string;
 };
 
-const runWorker = async (args: CliArgs) => {
+const runServer = async (args: CliArgs) => {
   initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
   const logger = log();
 
-  // though `production` is defined in WorkerOptions, it will always be overridden by CLI.
+  // though `production` is defined in ServerOptions, it will always be overridden by CLI.
   const { production: _, ...opts } = args.opts; // eslint-disable-line @typescript-eslint/no-unused-vars
-  const worker = new Worker(new WorkerOptions({ production: args.production, ...opts }));
+  const server = new AgentServer(new ServerOptions({ production: args.production, ...opts }));
 
   if (args.room) {
-    worker.event.once('worker_registered', () => {
+    server.event.once('worker_registered', () => {
       logger.info(`connecting to room ${args.room}`);
-      worker.simulateJob(args.room!, args.participantIdentity);
+      server.simulateJob(args.room!, args.participantIdentity);
     });
   }
 
@@ -40,9 +40,9 @@ const runWorker = async (args: CliArgs) => {
       process.exit(130); // SIGINT exit code
     });
     if (args.production) {
-      await worker.drain();
+      await server.drain();
     }
-    await worker.close();
+    await server.close();
     logger.debug('worker closed due to SIGINT.');
     process.exit(130); // SIGINT exit code
   });
@@ -50,15 +50,15 @@ const runWorker = async (args: CliArgs) => {
   process.once('SIGTERM', async () => {
     logger.debug('SIGTERM received in CLI.');
     if (args.production) {
-      await worker.drain();
+      await server.drain();
     }
-    await worker.close();
+    await server.close();
     logger.debug('worker closed due to SIGTERM.');
     process.exit(143); // SIGTERM exit code
   });
 
   try {
-    await worker.run();
+    await server.run();
   } catch {
     logger.fatal('closing worker due to error.');
     process.exit(1);
@@ -72,11 +72,11 @@ const runWorker = async (args: CliArgs) => {
  * @example
  * ```
  * if (process.argv[1] === fileURLToPath(import.meta.url)) {
- *   cli.runApp(new WorkerOptions({ agent: import.meta.filename }));
+ *   cli.runApp(new ServerOptions({ agent: import.meta.filename }));
  * }
  * ```
  */
-export const runApp = (opts: WorkerOptions) => {
+export const runApp = (opts: ServerOptions) => {
   const program = new Command()
     .name('agents')
     .description('LiveKit Agents CLI')
@@ -127,7 +127,7 @@ export const runApp = (opts: WorkerOptions) => {
       opts.apiSecret = options.apiSecret || opts.apiSecret;
       opts.logLevel = options.logLevel || opts.logLevel;
       opts.workerToken = options.workerToken || opts.workerToken;
-      runWorker({
+      runServer({
         opts,
         production: true,
         watch: false,
@@ -150,7 +150,7 @@ export const runApp = (opts: WorkerOptions) => {
       opts.apiSecret = options.apiSecret || opts.apiSecret;
       opts.logLevel = options.logLevel || opts.logLevel;
       opts.workerToken = options.workerToken || opts.workerToken;
-      runWorker({
+      runServer({
         opts,
         production: false,
         watch: false,
@@ -175,7 +175,7 @@ export const runApp = (opts: WorkerOptions) => {
       opts.apiSecret = options.apiSecret || opts.apiSecret;
       opts.logLevel = options.logLevel || opts.logLevel;
       opts.workerToken = options.workerToken || opts.workerToken;
-      runWorker({
+      runServer({
         opts,
         production: false,
         watch: false,
