@@ -215,7 +215,7 @@ export class AgentSession<
     room: Room;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
-    record: boolean;
+    record?: boolean;
   }): Promise<void> {
     if (this.started) {
       return;
