@@ -166,6 +166,12 @@ export interface FunctionTool<
   description: string;
 
   /**
+   * strict schema
+   * default is true
+   */
+  strict?: boolean;
+
+  /**
    * The schema of the input that the tool expects. The language model will use this to generate the input.
    * It is also used to validate the output of the language model.
    * Use descriptions to make the input understandable for the language model.

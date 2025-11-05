@@ -180,7 +180,10 @@ export class LLM extends llm.LLM {
       modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
-    toolChoice = toolChoice !== undefined ? toolChoice : this.opts.modelOptions.tool_choice;
+    toolChoice =
+      toolChoice !== undefined
+        ? toolChoice
+        : (this.opts.modelOptions.tool_choice as llm.ToolChoice | undefined);
     if (toolChoice) {
       modelOptions.tool_choice = toolChoice;
     }
@@ -270,7 +273,8 @@ export class LLMStream extends llm.LLMStream {
               description: func.description,
               parameters: llm.toJsonSchema(
                 func.parameters,
-              ) as unknown as OpenAI.Chat.Completions.ChatCompletionTool['function']['parameters'],
+              ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
+              strict: func.strict ?? true,
             },
           }))
         : undefined;
@@ -345,7 +349,7 @@ export class LLMStream extends llm.LLMStream {
           options: {
             statusCode: error.status,
             body: error.error,
-            requestId: error.request_id,
+            requestId: error.requestID,
             retryable,
           },
         });
