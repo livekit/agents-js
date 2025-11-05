@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-openai
 
+## 1.0.16
+
+### Patch Changes
+
+- use semantic vad as realtime api's default turn detection - [#802](https://github.com/livekit/agents-js/pull/802) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`c54c21e55f65ec3fbeacf1d3555a21982e914337`](https://github.com/livekit/agents-js/commit/c54c21e55f65ec3fbeacf1d3555a21982e914337), [`ac8214d5e13f53bf68fac5195dd4e01a6d05c4de`](https://github.com/livekit/agents-js/commit/ac8214d5e13f53bf68fac5195dd4e01a6d05c4de)]:
+  - @livekit/agents@1.0.16
+
 ## 1.0.15
 
 ### Patch Changes
