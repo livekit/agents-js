@@ -90,10 +90,8 @@ class CreateResponseHandle {
 const DEFAULT_FIRST_RETRY_INTERVAL_MS = 100;
 const DEFAULT_TEMPERATURE = 0.8;
 const DEFAULT_TURN_DETECTION: api_proto.TurnDetectionType = {
-  type: 'server_vad',
-  threshold: 0.5,
-  prefix_padding_ms: 300,
-  silence_duration_ms: 200,
+  type: 'semantic_vad',
+  eagerness: 'medium',
   create_response: true,
   interrupt_response: true,
 };
