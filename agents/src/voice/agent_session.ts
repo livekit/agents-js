@@ -26,6 +26,7 @@ import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import {
+  type AgentEvent,
   AgentSessionEventTypes,
   type AgentState,
   type AgentStateChangedEvent,
@@ -122,6 +123,9 @@ export class AgentSession<
 
   private closingTask: Promise<void> | null = null;
 
+  /** @internal */
+  _recordedEvents: AgentEvent[] = [];
+
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
 
@@ -167,6 +171,15 @@ export class AgentSession<
     this.options = { ...defaultVoiceOptions, ...voiceOptions };
   }
 
+  emit<K extends keyof AgentSessionCallbacks>(
+    event: K,
+    ...args: Parameters<AgentSessionCallbacks[K]>
+  ): boolean {
+    const eventData = args[0] as AgentEvent;
+    this._recordedEvents.push(eventData);
+    return super.emit(event, ...args);
+  }
+
   get input(): AgentInput {
     return this._input;
   }
@@ -196,11 +209,13 @@ export class AgentSession<
     room,
     inputOptions,
     outputOptions,
+    record = true,
   }: {
     agent: Agent;
     room: Room;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
+    record: boolean;
   }): Promise<void> {
     if (this.started) {
       return;
@@ -240,6 +255,17 @@ export class AgentSession<
       this.logger.debug('Auto-connecting to room via job context');
       tasks.push(ctx.connect());
     }
+
+    if (record) {
+      if (ctx._primaryAgentSession === undefined) {
+        ctx._primaryAgentSession = this;
+      } else {
+        throw new Error(
+          'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use session.start(record=False).',
+        );
+      }
+    }
+
     // TODO(AJS-265): add shutdown callback to job context
     tasks.push(this.updateActivity(this.agent));
 
