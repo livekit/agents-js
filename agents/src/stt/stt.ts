@@ -204,7 +204,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
               options: { retryable: false },
             });
           } else {
-            this.emitError({ error, recoverable: true });
+            // Don't emit error event for recoverable errors during retry loop
+            // to avoid ERR_UNHANDLED_ERROR or premature session termination
             this.logger.warn(
               { tts: this.#stt.label, attempt: i + 1, error },
               `failed to recognize speech, retrying in ${retryInterval}s`,
