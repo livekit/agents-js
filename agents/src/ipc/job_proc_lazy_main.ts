@@ -88,7 +88,7 @@ const startJob = (
 
   const ctx = new JobContext(proc, info, room, onConnect, onShutdown, new InfClient());
 
-  const task = new Promise<void>(async () => {
+  const task = (async () => {
     const unconnectedTimeout = setTimeout(() => {
       if (!(connect || shutdown)) {
         logger.warn(
@@ -109,6 +109,14 @@ const startJob = (
       process.send!({ case: 'exiting', value: { reason: close[1] } });
     });
 
+    // Close the primary agent session if it exists
+    if (ctx._primaryAgentSession) {
+      await ctx._primaryAgentSession.close();
+    }
+
+    // Generate and save/upload session report
+    await ctx._onSessionEnd();
+
     await room.disconnect();
     logger.debug('disconnected from room');
 
@@ -122,7 +130,7 @@ const startJob = (
 
     process.send!({ case: 'done' });
     joinFuture.resolve();
-  });
+  })();
 
   return { ctx, task };
 };
