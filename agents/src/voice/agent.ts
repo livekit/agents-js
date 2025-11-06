@@ -59,6 +59,7 @@ export interface ModelSettings {
 }
 
 export interface AgentOptions<UserData> {
+  id?: string;
   instructions: string;
   chatCtx?: ChatContext;
   tools?: ToolContext<UserData>;
@@ -72,6 +73,7 @@ export interface AgentOptions<UserData> {
 }
 
 export class Agent<UserData = any> {
+  private _id: string;
   private turnDetection?: TurnDetectionMode;
   private _stt?: STT;
   private _vad?: VAD;
@@ -91,6 +93,7 @@ export class Agent<UserData = any> {
   _tools?: ToolContext<UserData>;
 
   constructor({
+    id,
     instructions,
     chatCtx,
     tools,
@@ -100,6 +103,21 @@ export class Agent<UserData = any> {
     llm,
     tts,
   }: AgentOptions<UserData>) {
+    if (id) {
+      this._id = id;
+    } else {
+      // Convert class name to snake_case
+      const className = this.constructor.name;
+      if (className === 'Agent') {
+        this._id = 'default_agent';
+      } else {
+        this._id = className
+          .replace(/([A-Z])/g, '_$1')
+          .toLowerCase()
+          .replace(/^_/, '');
+      }
+    }
+
     this._instructions = instructions;
     this._tools = { ...tools };
     this._chatCtx = chatCtx
@@ -150,6 +168,10 @@ export class Agent<UserData = any> {
 
   get chatCtx(): ReadonlyChatContext {
     return new ReadonlyChatContext(this._chatCtx.items);
+  }
+
+  get id(): string {
+    return this._id;
   }
 
   get instructions(): string {

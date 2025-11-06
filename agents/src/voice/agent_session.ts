@@ -14,7 +14,7 @@ import {
   type TTSModelString,
 } from '../inference/index.js';
 import { getJobContext } from '../job.js';
-import { ChatContext, ChatMessage } from '../llm/chat_context.js';
+import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
@@ -336,6 +336,8 @@ export class AgentSession<
     // TODO(AJS-129): add lock to agent activity core lifecycle
     this.nextActivity = new AgentActivity(agent, this);
 
+    const previousActivity = this.activity;
+
     if (this.activity) {
       await this.activity.drain();
       await this.activity.close();
@@ -343,6 +345,15 @@ export class AgentSession<
 
     this.activity = this.nextActivity;
     this.nextActivity = undefined;
+
+    // Insert agent handoff into chat context
+    this._chatCtx.insert(
+      new AgentHandoffItem({
+        oldAgentId: previousActivity?.agent.id,
+        newAgentId: agent.id,
+      }),
+    );
+    this.logger.debug({ previousActivity, agent }, 'Agent handoff inserted into chat context');
 
     await this.activity.start();
 
