@@ -41,37 +41,31 @@ export default defineAgent({
 
     let task: Task<void> | null = null;
 
-    const userPresenceTask = async (signal: AbortSignal): Promise<void> => {
-      try {
-        for (let i = 0; i < 3; i++) {
-          if (signal.aborted) return;
+    const userPresenceTask = async (controller: AbortController): Promise<void> => {
+      for (let i = 0; i < 3; i++) {
+        if (controller.signal.aborted) return;
 
-          const reply = await session.generateReply({
-            instructions:
-              'The user has been inactive. Politely check if the user is still present.',
-          });
+        const reply = await session.generateReply({
+          instructions: 'The user has been inactive. Politely check if the user is still present.',
+        });
 
-          await reply.waitForPlayout();
+        await reply.waitForPlayout();
 
-          await new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(resolve, 10000);
-            signal.addEventListener('abort', () => {
+        await new Promise<void>((resolve) => {
+          const timeout = setTimeout(resolve, 10000);
+          controller.signal.addEventListener(
+            'abort',
+            () => {
               clearTimeout(timeout);
-              reject(new Error('Aborted'));
-            });
-          });
-        }
+              resolve();
+            },
+            { once: true },
+          );
+        });
+      }
 
-        if (!signal.aborted) {
-          await session.close();
-        }
-      } catch (error) {
-        if (error instanceof Error && error.message === 'Aborted') {
-          logger.info({ error }, 'User presence task aborted');
-          // Task was cancelled, which is expected
-          return;
-        }
-        throw error;
+      if (!controller.signal.aborted) {
+        await session.close();
       }
     };
 
@@ -83,7 +77,7 @@ export default defineAgent({
       }
 
       if (event.newState === 'away') {
-        task = Task.from((controller) => userPresenceTask(controller.signal));
+        task = Task.from(userPresenceTask);
         return;
       }
     });
