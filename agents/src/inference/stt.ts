@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { type AudioFrame } from '@livekit/rtc-node';
-import { type RawData, WebSocket } from 'ws';
+import type { WebSocket } from 'ws';
+import { type RawData } from 'ws';
 import { APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { log } from '../log.js';

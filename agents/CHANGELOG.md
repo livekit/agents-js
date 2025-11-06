@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.16
+
+### Patch Changes
+
+- Add preemptive generation - [#798](https://github.com/livekit/agents-js/pull/798) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Rename Worker to AgentServer - [#713](https://github.com/livekit/agents-js/pull/713) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
 ## 1.0.15
 
 ### Patch Changes
