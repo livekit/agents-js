@@ -13,6 +13,7 @@ import {
   WorkerOptions,
   cli,
   defineAgent,
+  delay,
   log,
   voice,
 } from '@livekit/agents';
@@ -51,17 +52,11 @@ export default defineAgent({
 
         await reply.waitForPlayout();
 
-        await new Promise<void>((resolve) => {
-          const timeout = setTimeout(resolve, 10000);
-          controller.signal.addEventListener(
-            'abort',
-            () => {
-              clearTimeout(timeout);
-              resolve();
-            },
-            { once: true },
-          );
-        });
+        try {
+          await delay(10000, { signal: controller.signal });
+        } catch {
+          return;
+        }
       }
 
       if (!controller.signal.aborted) {
