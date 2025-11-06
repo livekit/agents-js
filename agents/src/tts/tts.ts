@@ -5,7 +5,7 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
-import { APIConnectionError, APIStatusError } from '../_exceptions.js';
+import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
@@ -161,7 +161,7 @@ export abstract class SynthesizeStream
       try {
         return await this.run();
       } catch (error) {
-        if (error instanceof APIStatusError) {
+        if (error instanceof APIError) {
           const retryInterval = this._connOptions._intervalForRetry(i);
 
           if (this._connOptions.maxRetry === 0 || !error.retryable) {
@@ -174,7 +174,8 @@ export abstract class SynthesizeStream
               options: { retryable: false },
             });
           } else {
-            this.emitError({ error, recoverable: true });
+            // Don't emit error event for recoverable errors during retry loop
+            // to avoid ERR_UNHANDLED_ERROR or premature session termination
             this.logger.warn(
               { tts: this.#tts.label, attempt: i + 1, error },
               `failed to synthesize speech, retrying in  ${retryInterval}s`,
@@ -388,7 +389,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       try {
         return await this.run();
       } catch (error) {
-        if (error instanceof APIStatusError) {
+        if (error instanceof APIError) {
           const retryInterval = this._connOptions._intervalForRetry(i);
 
           if (this._connOptions.maxRetry === 0 || !error.retryable) {
@@ -401,7 +402,8 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
               options: { retryable: false },
             });
           } else {
-            this.emitError({ error, recoverable: true });
+            // Don't emit error event for recoverable errors during retry loop
+            // to avoid ERR_UNHANDLED_ERROR or premature session termination
             this.logger.warn(
               { tts: this.#tts.label, attempt: i + 1, error },
               `failed to generate TTS completion, retrying in ${retryInterval}s`,
