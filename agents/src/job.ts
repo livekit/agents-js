@@ -244,7 +244,7 @@ export class JobContext {
       throw new Error('Cannot prepare report, no AgentSession was found');
     }
 
-    // TODO(brian): check recorder io
+    // TODO(brian): implement and check recorder io
 
     return createSessionReport({
       jobId: this.job.id,
