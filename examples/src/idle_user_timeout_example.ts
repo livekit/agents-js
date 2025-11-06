@@ -9,6 +9,7 @@
 import {
   type JobContext,
   type JobProcess,
+  Task,
   WorkerOptions,
   cli,
   defineAgent,
@@ -38,7 +39,7 @@ export default defineAgent({
       },
     });
 
-    let inactivityController: AbortController | null = null;
+    let task: Task<void> | null = null;
 
     const userPresenceTask = async (signal: AbortSignal): Promise<void> => {
       try {
@@ -76,20 +77,14 @@ export default defineAgent({
 
     session.on(voice.AgentSessionEventTypes.UserStateChanged, (event) => {
       logger.info({ event }, 'User state changed');
-      if (event.newState === 'away') {
-        if (inactivityController) {
-          inactivityController.abort();
-        }
 
-        // Start new task with fresh controller
-        inactivityController = new AbortController();
-        userPresenceTask(inactivityController.signal);
-        return;
+      if (task) {
+        task.cancel();
       }
 
-      if (inactivityController) {
-        inactivityController.abort();
-        inactivityController = null;
+      if (event.newState === 'away') {
+        task = Task.from((controller) => userPresenceTask(controller.signal));
+        return;
       }
     });
 
