@@ -14,6 +14,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Logger } from 'pino';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
+import type { AgentSession } from './voice/agent_session.js';
+import { type SessionReport, createSessionReport } from './voice/report.js';
 
 // AsyncLocalStorage for job context, similar to Python's contextvars
 const jobContextStorage = new AsyncLocalStorage<JobContext>();
@@ -96,6 +98,9 @@ export class JobContext {
   } = {};
   #logger: Logger;
   #inferenceExecutor: InferenceExecutor;
+
+  /** @internal */
+  _primaryAgentSession?: AgentSession;
 
   private connected: boolean = false;
 
@@ -230,6 +235,45 @@ export class JobContext {
       });
     }
     this.connected = true;
+  }
+
+  makeSessionReport(session?: AgentSession): SessionReport {
+    const targetSession = session || this._primaryAgentSession;
+
+    if (!targetSession) {
+      throw new Error('Cannot prepare report, no AgentSession was found');
+    }
+
+    // TODO(brian): implement and check recorder io
+
+    return createSessionReport({
+      jobId: this.job.id,
+      roomId: this.job.room?.sid || '',
+      room: this.job.room?.name || '',
+      options: targetSession.options,
+      events: targetSession._recordedEvents,
+      enableUserDataTraining: true,
+      chatHistory: targetSession.history.copy(),
+    });
+  }
+
+  async _onSessionEnd(): Promise<void> {
+    const session = this._primaryAgentSession;
+    if (!session) {
+      return;
+    }
+
+    const report = this.makeSessionReport(session);
+
+    // TODO(brian): Implement CLI/console
+
+    // TODO(brian): Implement session report upload to LiveKit Cloud
+
+    this.#logger.debug('Session ended, report generated', {
+      jobId: report.jobId,
+      roomId: report.roomId,
+      eventsCount: report.events.length,
+    });
   }
 
   /**
