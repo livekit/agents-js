@@ -601,7 +601,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.hasReceivedAudioInput = true;
 
     for (const f of this.resampleAudio(frame)) {
-      for (const nf of this.bstream.write(f.data.buffer)) {
+      for (const nf of this.bstream.write(f.data.buffer as ArrayBuffer)) {
         const realtimeInput: types.LiveClientRealtimeInput = {
           mediaChunks: [
             {

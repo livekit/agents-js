@@ -604,7 +604,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   pushAudio(frame: AudioFrame): void {
     for (const f of this.resampleAudio(frame)) {
-      for (const nf of this.bstream.write(f.data.buffer)) {
+      for (const nf of this.bstream.write(f.data.buffer as ArrayBuffer)) {
         this.sendEvent({
           type: 'input_audio_buffer.append',
           audio: Buffer.from(nf.data.buffer).toString('base64'),
