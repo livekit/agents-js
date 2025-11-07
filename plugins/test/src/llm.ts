@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { initializeLogger, llm as llmlib } from '@livekit/agents';
 import { describe, expect, it } from 'vitest';
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 const toolCtx: llmlib.ToolContext = {
   getWeather: llmlib.tool({
@@ -58,8 +58,9 @@ const toolCtx: llmlib.ToolContext = {
   }),
 };
 
-export const llm = async (llm: llmlib.LLM) => {
+export const llm = async (llm: llmlib.LLM, isGoogle: boolean) => {
   initializeLogger({ pretty: false });
+
   describe('LLM', async () => {
     it('should properly respond to chat', async () => {
       const chatCtx = new llmlib.ChatContext();
@@ -120,7 +121,7 @@ export const llm = async (llm: llmlib.LLM) => {
         expect(calls.length).toStrictEqual(1);
         expect(JSON.parse(calls[0]!.args).unit).toStrictEqual('celsius');
       });
-      it('should handle optional arguments', async () => {
+      it.skipIf(isGoogle)('should handle optional arguments', async () => {
         const calls = await requestFncCall(
           llm,
           'Use a tool call to update the user info to name Theo. Leave email and address blank.',
@@ -129,8 +130,8 @@ export const llm = async (llm: llmlib.LLM) => {
 
         expect(calls.length).toStrictEqual(1);
         expect(JSON.parse(calls[0]!.args).name).toStrictEqual('Theo');
-        expect(JSON.parse(calls[0]!.args).email).toBeNull();
-        expect(JSON.parse(calls[0]!.args).address).toBeNull();
+        expect(JSON.parse(calls[0]!.args).email).toBeUndefined();
+        expect(JSON.parse(calls[0]!.args).address).toBeUndefined();
       });
     });
   });

@@ -7,6 +7,7 @@ import {
   APIStatusError,
   APITimeoutError,
   DEFAULT_API_CONNECT_OPTIONS,
+  type Expand,
   toError,
 } from '../index.js';
 import * as llm from '../llm/index.js';
@@ -34,9 +35,10 @@ export type KimiModels = 'moonshotai/kimi-k2-instruct';
 
 export type DeepSeekModels = 'deepseek-ai/deepseek-v3';
 
-type ChatCompletionPredictionContentParam = OpenAI.Chat.Completions.ChatCompletionPredictionContent;
-type WebSearchOptions = OpenAI.Chat.Completions.ChatCompletionCreateParams.WebSearchOptions;
-type ToolChoice = OpenAI.Chat.Completions.ChatCompletionCreateParams['tool_choice'];
+type ChatCompletionPredictionContentParam =
+  Expand<OpenAI.Chat.Completions.ChatCompletionPredictionContent>;
+type WebSearchOptions = Expand<OpenAI.Chat.Completions.ChatCompletionCreateParams.WebSearchOptions>;
+type ToolChoice = Expand<OpenAI.Chat.Completions.ChatCompletionCreateParams['tool_choice']>;
 type Verbosity = 'low' | 'medium' | 'high';
 
 export interface ChatCompletionOptions extends Record<string, unknown> {
@@ -180,9 +182,13 @@ export class LLM extends llm.LLM {
       modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
-    toolChoice = toolChoice !== undefined ? toolChoice : this.opts.modelOptions.tool_choice;
+    toolChoice =
+      toolChoice !== undefined
+        ? toolChoice
+        : (this.opts.modelOptions.tool_choice as llm.ToolChoice | undefined);
+
     if (toolChoice) {
-      modelOptions.tool_choice = toolChoice;
+      modelOptions.tool_choice = toolChoice as ToolChoice;
     }
 
     // TODO(AJS-270): Add response_format support here
@@ -270,7 +276,7 @@ export class LLMStream extends llm.LLMStream {
               description: func.description,
               parameters: llm.toJsonSchema(
                 func.parameters,
-              ) as unknown as OpenAI.Chat.Completions.ChatCompletionTool['function']['parameters'],
+              ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
             },
           }))
         : undefined;
@@ -345,7 +351,7 @@ export class LLMStream extends llm.LLMStream {
           options: {
             statusCode: error.status,
             body: error.error,
-            requestId: error.request_id,
+            requestId: error.requestID,
             retryable,
           },
         });

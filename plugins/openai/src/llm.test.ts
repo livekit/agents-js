@@ -10,5 +10,6 @@ describe('OpenAI', async () => {
     new LLM({
       temperature: 0,
     }),
+    false,
   );
 });
