@@ -17,13 +17,13 @@ import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-const logger = log();
-
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
+    const logger = log();
+
     const getWeather = llm.tool({
       description: 'Called when the user asks about the weather.',
       parameters: z.object({
