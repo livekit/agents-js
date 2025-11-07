@@ -1099,7 +1099,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
-    // Create MessageGeneration for message type
     const itemId = event.item.id;
     if (!itemId) {
       throw new Error('item.id is not set');
@@ -1215,7 +1214,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.#logger.warn('Text response received from OpenAI Realtime API in audio modality.');
     }
 
-    // Resolve modalities based on content part type
     if (!itemGeneration.modalities.done) {
       const modalityResult: Modality[] = itemType === 'text' ? ['text'] : ['audio', 'text'];
       itemGeneration.modalities.resolve(modalityResult);
@@ -1248,7 +1246,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('itemGeneration is not set');
     }
 
-    // Set first token timestamp only if audio is not available
     if (
       !this.oaiRealtimeModel.capabilities.audioOutput &&
       !this.currentGeneration._firstTokenTimestamp
@@ -1297,7 +1294,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('itemGeneration is not set');
     }
 
-    // Resolve modalities future on first audio delta
     if (!itemGeneration.modalities.done) {
       itemGeneration.modalities.resolve(['audio', 'text']);
     }

@@ -1670,7 +1670,6 @@ export class AgentActivity implements RecognitionHooks {
             let realtimeAudioResult: ReadableStream<AudioFrame> | null = null;
 
             if (ttsTextInput) {
-              // Use TTS for text-only responses
               const [ttsTask, ttsStream] = performTTSInference(
                 (...args) => this.agent.ttsNode(...args),
                 ttsTextInput,
@@ -1680,7 +1679,6 @@ export class AgentActivity implements RecognitionHooks {
               tasks.push(ttsTask);
               realtimeAudioResult = ttsStream;
             } else if (msgModalities && msgModalities.includes('audio')) {
-              // Use realtime audio stream
               realtimeAudioResult = await this.agent.realtimeAudioOutputNode(
                 msg.audioStream,
                 modelSettings,
