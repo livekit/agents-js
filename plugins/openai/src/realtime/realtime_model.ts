@@ -34,6 +34,8 @@ const BASE_URL = 'https://api.openai.com/v1';
 
 const MOCK_AUDIO_ID_PREFIX = 'lk_mock_audio_item_';
 
+type Modality = 'text' | 'audio';
+
 interface RealtimeOptions {
   model: api_proto.Model;
   voice: api_proto.Voice;
@@ -54,7 +56,7 @@ interface RealtimeOptions {
   maxSessionDuration: number;
   // reset the connection after this many seconds if provided
   connOptions: APIConnectOptions;
-  modalities: ['text'] | ['text', 'audio'];
+  modalities: Modality[];
 }
 
 interface MessageGeneration {
@@ -127,7 +129,7 @@ const DEFAULT_REALTIME_MODEL_OPTIONS = {
   maxResponseOutputTokens: DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS,
   maxSessionDuration: DEFAULT_MAX_SESSION_DURATION,
   connOptions: DEFAULT_API_CONNECT_OPTIONS,
-  modalities: ['text', 'audio'],
+  modalities: ['text', 'audio'] as Modality[],
 };
 export class RealtimeModel extends llm.RealtimeModel {
   sampleRate = api_proto.SAMPLE_RATE;
@@ -145,7 +147,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       temperature?: number;
       toolChoice?: llm.ToolChoice;
       baseURL?: string;
-      modalities?: ['text'] | ['text', 'audio'];
+      modalities?: Modality[];
       inputAudioTranscription?: api_proto.InputAudioTranscription | null;
       // TODO(shubhra): add inputAudioNoiseReduction
       turnDetection?: api_proto.TurnDetectionType | null;
@@ -159,7 +161,9 @@ export class RealtimeModel extends llm.RealtimeModel {
       connOptions?: APIConnectOptions;
     } = {},
   ) {
-    const modalities = options.modalities || DEFAULT_REALTIME_MODEL_OPTIONS.modalities;
+    const modalities = (options.modalities ||
+      DEFAULT_REALTIME_MODEL_OPTIONS.modalities) as Modality[];
+
     super({
       messageTruncation: true,
       turnDetection: options.turnDetection !== null,
@@ -194,9 +198,10 @@ export class RealtimeModel extends llm.RealtimeModel {
       options.baseURL = `${azureEndpoint.replace(/\/$/, '')}/openai`;
     }
 
+    const { modalities: _, ...optionsWithoutModalities } = options;
     this._options = {
       ...DEFAULT_REALTIME_MODEL_OPTIONS,
-      ...options,
+      ...optionsWithoutModalities,
       baseURL: options.baseURL || BASE_URL,
       apiKey,
       isAzure,
@@ -1144,17 +1149,20 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.textModeRecoveryRetries = 0;
       }
 
+      const modalitiesFut = new Future<Modality[]>();
       const itemGeneration: MessageGeneration = {
         messageId: itemId,
         textChannel: stream.createStreamChannel<string>(),
         audioChannel: stream.createStreamChannel<AudioFrame>(),
         audioTranscript: '',
+        modalities: modalitiesFut,
       };
 
       this.currentGeneration.messageChannel.write({
         messageId: itemId,
         textStream: itemGeneration.textChannel.stream(),
         audioStream: itemGeneration.audioChannel.stream(),
+        modalities: modalitiesFut.await,
       });
 
       this.currentGeneration.messages.set(itemId, itemGeneration);
