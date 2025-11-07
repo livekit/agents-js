@@ -445,9 +445,9 @@ export class LLM extends llm.LLM {
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
-    extraKwargs?: Record<string, any>;
+    extraKwargs?: Record<string, unknown>;
   }): LLMStream {
-    const extras: Record<string, any> = { ...extraKwargs }; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const extras: Record<string, unknown> = { ...extraKwargs };
 
     if (this.#opts.metadata) {
       extras.metadata = this.#opts.metadata;

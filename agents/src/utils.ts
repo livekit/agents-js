@@ -19,6 +19,7 @@ import { log } from './log.js';
  * Recursively expands all nested properties of a type,
  * resolving aliases so as to inspect the real shape in IDE.
  */
+// eslint-disable-next-line @typescript-eslint/ban-types
 export type Expand<T> = T extends Function
   ? T
   : T extends object
