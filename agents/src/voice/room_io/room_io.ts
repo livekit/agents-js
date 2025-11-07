@@ -171,7 +171,7 @@ export class RoomIO {
       ? typeof participant === 'string'
         ? participant
         : participant.identity
-      : this.inputOptions.participantIdentity ?? null;
+      : (this.inputOptions.participantIdentity ?? null);
   }
   private async init(signal: AbortSignal): Promise<void> {
     await this.roomConnectedFuture.await;
