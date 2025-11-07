@@ -195,7 +195,7 @@ export abstract class SynthesizeStream
       const error = toError(lastError);
       const recoverable = error instanceof APIError && error.retryable;
       this.emitError({ error, recoverable });
-      
+
       if (error instanceof APIError && recoverable) {
         throw new APIConnectionError({
           message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
@@ -437,7 +437,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       const error = toError(lastError);
       const recoverable = error instanceof APIError && error.retryable;
       this.emitError({ error, recoverable });
-      
+
       if (error instanceof APIError && recoverable) {
         throw new APIConnectionError({
           message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
@@ -521,4 +521,3 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     return this;
   }
 }
-//change
