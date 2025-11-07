@@ -407,10 +407,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       ? ['text', 'audio']
       : ['text'];
 
-    this.#logger.debug(
-      `=== createSessionUpdateEvent: using modalities=${JSON.stringify(modalities)}`,
-    );
-
     return {
       type: 'session.update',
       session: {
@@ -661,9 +657,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     audioTranscript?: string;
   }): Promise<void> {
     if (!_options.modalities || _options.modalities.includes('audio')) {
-      this.#logger.debug(
-        `=== truncate: audio mode, sending truncate event for messageId=${_options.messageId} at ${_options.audioEndMs}ms`,
-      );
       this.sendEvent({
         type: 'conversation.item.truncate',
         content_index: 0,
@@ -671,9 +664,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         audio_end_ms: _options.audioEndMs,
       } as api_proto.ConversationItemTruncateEvent);
     } else if (_options.audioTranscript !== undefined) {
-      this.#logger.debug(
-        `=== truncate: text-only mode, syncing transcript to chat context for messageId=${_options.messageId}`,
-      );
       // sync it to the remote chat context
       const chatCtx = this.chatCtx.copy();
       const idx = chatCtx.indexById(_options.messageId);
@@ -1115,10 +1105,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('item.id is not set');
     }
 
-    this.#logger.debug(
-      `=== handleResponseOutputItemAdded: creating MessageGeneration for itemId=${itemId}`,
-    );
-
     const modalitiesFut = new Future<Modality[]>();
     const itemGeneration: MessageGeneration = {
       messageId: itemId,
@@ -1130,9 +1116,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     // If audioOutput is not supported, close audio channel immediately
     if (!this.oaiRealtimeModel.capabilities.audioOutput) {
-      this.#logger.debug(
-        '=== handleResponseOutputItemAdded: audioOutput=false, closing audio channel and setting modalities to ["text"]',
-      );
       itemGeneration.audioChannel.close();
       modalitiesFut.resolve(['text']);
     }
@@ -1224,15 +1207,9 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const itemGeneration = this.currentGeneration.messages.get(itemId);
     if (!itemGeneration) {
-      this.#logger.warn(
-        `=== handleResponseContentPartAdded: itemGeneration not found for itemId=${itemId}`,
-      );
+      this.#logger.warn(`itemGeneration not found for itemId=${itemId}`);
       return;
     }
-
-    this.#logger.debug(
-      `=== handleResponseContentPartAdded: itemId=${itemId}, partType=${itemType}`,
-    );
 
     if (itemType === 'text' && this.oaiRealtimeModel.capabilities.audioOutput) {
       this.#logger.warn('Text response received from OpenAI Realtime API in audio modality.');
@@ -1241,9 +1218,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     // Resolve modalities based on content part type
     if (!itemGeneration.modalities.done) {
       const modalityResult: Modality[] = itemType === 'text' ? ['text'] : ['audio', 'text'];
-      this.#logger.debug(
-        `=== handleResponseContentPartAdded: resolving modalities to ${JSON.stringify(modalityResult)}`,
-      );
       itemGeneration.modalities.resolve(modalityResult);
     }
 
@@ -1325,7 +1299,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     // Resolve modalities future on first audio delta
     if (!itemGeneration.modalities.done) {
-      this.#logger.debug(`=== handleResponseAudioDelta: resolving modalities to ['audio', 'text']`);
       itemGeneration.modalities.resolve(['audio', 'text']);
     }
 
@@ -1388,9 +1361,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       itemGeneration.audioChannel.close();
       if (!itemGeneration.modalities.done) {
         // In case message modalities is not set, this shouldn't happen
-        this.#logger.debug(
-          `=== handleResponseOutputItemDone: fallback resolving modalities to ${JSON.stringify(this.oaiRealtimeModel._options.modalities)}`,
-        );
         itemGeneration.modalities.resolve(this.oaiRealtimeModel._options.modalities);
       }
     }
@@ -1417,9 +1387,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       generation.textChannel.close();
       generation.audioChannel.close();
       if (!generation.modalities.done) {
-        this.#logger.debug(
-          `=== handleResponseDone: fallback resolving modalities to ${JSON.stringify(this.oaiRealtimeModel._options.modalities)}`,
-        );
         generation.modalities.resolve(this.oaiRealtimeModel._options.modalities);
       }
     }
