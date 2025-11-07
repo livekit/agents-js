@@ -290,6 +290,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       turnDetection: serverTurnDetection,
       userTranscription: inputAudioTranscription !== null,
       autoToolReplyGeneration: true,
+      audioOutput: options.modalities?.includes(Modality.AUDIO) ?? true,
     });
 
     // Environment variable fallbacks

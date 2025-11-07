@@ -19,6 +19,7 @@ export interface MessageGeneration {
   messageId: string;
   textStream: ReadableStream<string>;
   audioStream: ReadableStream<AudioFrame>;
+  modalities?: Promise<('text' | 'audio')[]>;
 }
 
 export interface GenerationCreatedEvent {
@@ -40,6 +41,7 @@ export interface RealtimeCapabilities {
   turnDetection: boolean;
   userTranscription: boolean;
   autoToolReplyGeneration: boolean;
+  audioOutput: boolean;
 }
 
 export interface InputTranscriptionCompleted {
@@ -121,7 +123,12 @@ export abstract class RealtimeSession extends EventEmitter {
   /**
    * Truncate the message at the given audio end time
    */
-  abstract truncate(options: { messageId: string; audioEndMs: number }): Promise<void>;
+  abstract truncate(options: {
+    messageId: string;
+    audioEndMs: number;
+    modalities?: ('text' | 'audio')[];
+    audioTranscript?: string;
+  }): Promise<void>;
 
   async close(): Promise<void> {
     this._mainTask.cancel();

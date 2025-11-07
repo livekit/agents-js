@@ -54,6 +54,7 @@ interface RealtimeOptions {
   maxSessionDuration: number;
   // reset the connection after this many seconds if provided
   connOptions: APIConnectOptions;
+  modalities: ['text'] | ['text', 'audio'];
 }
 
 interface MessageGeneration {
@@ -61,6 +62,7 @@ interface MessageGeneration {
   textChannel: stream.StreamChannel<string>;
   audioChannel: stream.StreamChannel<AudioFrame>;
   audioTranscript: string;
+  modalities: Future<('text' | 'audio')[]>;
 }
 
 interface ResponseGeneration {
@@ -125,6 +127,7 @@ const DEFAULT_REALTIME_MODEL_OPTIONS = {
   maxResponseOutputTokens: DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS,
   maxSessionDuration: DEFAULT_MAX_SESSION_DURATION,
   connOptions: DEFAULT_API_CONNECT_OPTIONS,
+  modalities: ['text', 'audio'],
 };
 export class RealtimeModel extends llm.RealtimeModel {
   sampleRate = api_proto.SAMPLE_RATE;
@@ -142,6 +145,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       temperature?: number;
       toolChoice?: llm.ToolChoice;
       baseURL?: string;
+      modalities?: ['text'] | ['text', 'audio'];
       inputAudioTranscription?: api_proto.InputAudioTranscription | null;
       // TODO(shubhra): add inputAudioNoiseReduction
       turnDetection?: api_proto.TurnDetectionType | null;
@@ -155,11 +159,13 @@ export class RealtimeModel extends llm.RealtimeModel {
       connOptions?: APIConnectOptions;
     } = {},
   ) {
+    const modalities = options.modalities || DEFAULT_REALTIME_MODEL_OPTIONS.modalities;
     super({
       messageTruncation: true,
       turnDetection: options.turnDetection !== null,
       userTranscription: options.inputAudioTranscription !== null,
       autoToolReplyGeneration: false,
+      audioOutput: modalities.includes('audio'),
     });
 
     const isAzure = !!(options.apiVersion || options.entraToken || options.azureDeployment);
@@ -195,6 +201,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       apiKey,
       isAzure,
       model: options.model || DEFAULT_REALTIME_MODEL_OPTIONS.model,
+      modalities,
     };
   }
 
