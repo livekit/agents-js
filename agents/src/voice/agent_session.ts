@@ -372,7 +372,6 @@ export class AgentSession<
     this.activity = this.nextActivity;
     this.nextActivity = undefined;
 
-    // Insert agent handoff into chat context
     this._chatCtx.insert(
       new AgentHandoffItem({
         oldAgentId: previousActivity?.agent.id,
