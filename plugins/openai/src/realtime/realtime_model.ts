@@ -401,9 +401,15 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private createSessionUpdateEvent(): api_proto.SessionUpdateEvent {
-    // OpenAI doesn't support both text and audio modalities simultaneously
-    // It responds with audio + transcript when audio is in modalities, or text-only when just text
-    const modality = this.oaiRealtimeModel._options.modalities.includes('audio') ? 'audio' : 'text';
+    // OpenAI supports ['text'] or ['text', 'audio'] (audio always includes text transcript)
+    // We normalize to ensure 'text' is always present when using audio
+    const modalities: Modality[] = this.oaiRealtimeModel._options.modalities.includes('audio')
+      ? ['text', 'audio']
+      : ['text'];
+
+    this.#logger.debug(
+      `=== createSessionUpdateEvent: using modalities=${JSON.stringify(modalities)}`,
+    );
 
     return {
       type: 'session.update',
@@ -412,7 +418,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         voice: this.oaiRealtimeModel._options.voice,
         input_audio_format: 'pcm16',
         output_audio_format: 'pcm16',
-        modalities: [modality],
+        modalities: modalities,
         turn_detection: this.oaiRealtimeModel._options.turnDetection,
         input_audio_transcription: this.oaiRealtimeModel._options.inputAudioTranscription,
         // TODO(shubhra): add inputAudioNoiseReduction
@@ -655,6 +661,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     audioTranscript?: string;
   }): Promise<void> {
     if (!_options.modalities || _options.modalities.includes('audio')) {
+      this.#logger.debug(
+        `=== truncate: audio mode, sending truncate event for messageId=${_options.messageId} at ${_options.audioEndMs}ms`,
+      );
       this.sendEvent({
         type: 'conversation.item.truncate',
         content_index: 0,
@@ -662,6 +671,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         audio_end_ms: _options.audioEndMs,
       } as api_proto.ConversationItemTruncateEvent);
     } else if (_options.audioTranscript !== undefined) {
+      this.#logger.debug(
+        `=== truncate: text-only mode, syncing transcript to chat context for messageId=${_options.messageId}`,
+      );
       // sync it to the remote chat context
       const chatCtx = this.chatCtx.copy();
       const idx = chatCtx.indexById(_options.messageId);
@@ -948,6 +960,12 @@ export class RealtimeSession extends llm.RealtimeSession {
         case 'response.content_part.done':
           this.handleResponseContentPartDone(event);
           break;
+        case 'response.text.delta':
+          this.handleResponseTextDelta(event);
+          break;
+        case 'response.text.done':
+          this.handleResponseTextDone(event);
+          break;
         case 'response.audio_transcript.delta':
           this.handleResponseAudioTranscriptDelta(event);
           break;
@@ -1090,6 +1108,43 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.textModeRecoveryRetries = 0;
       return;
     }
+
+    // Create MessageGeneration for message type
+    const itemId = event.item.id;
+    if (!itemId) {
+      throw new Error('item.id is not set');
+    }
+
+    this.#logger.debug(
+      `=== handleResponseOutputItemAdded: creating MessageGeneration for itemId=${itemId}`,
+    );
+
+    const modalitiesFut = new Future<Modality[]>();
+    const itemGeneration: MessageGeneration = {
+      messageId: itemId,
+      textChannel: stream.createStreamChannel<string>(),
+      audioChannel: stream.createStreamChannel<AudioFrame>(),
+      audioTranscript: '',
+      modalities: modalitiesFut,
+    };
+
+    // If audioOutput is not supported, close audio channel immediately
+    if (!this.oaiRealtimeModel.capabilities.audioOutput) {
+      this.#logger.debug(
+        '=== handleResponseOutputItemAdded: audioOutput=false, closing audio channel and setting modalities to ["text"]',
+      );
+      itemGeneration.audioChannel.close();
+      modalitiesFut.resolve(['text']);
+    }
+
+    this.currentGeneration.messageChannel.write({
+      messageId: itemId,
+      textStream: itemGeneration.textChannel.stream(),
+      audioStream: itemGeneration.audioChannel.stream(),
+      modalities: modalitiesFut.await,
+    });
+
+    this.currentGeneration.messages.set(itemId, itemGeneration);
   }
 
   private handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void {
@@ -1166,48 +1221,34 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const itemId = event.item_id;
     const itemType = event.part.type;
-    const responseId = event.response_id;
 
-    if (itemType === 'audio') {
-      this.resolveGeneration(responseId);
-      if (this.textModeRecoveryRetries > 0) {
-        this.#logger.info(
-          { retries: this.textModeRecoveryRetries },
-          'recovered from text-only response',
-        );
-        this.textModeRecoveryRetries = 0;
-      }
-
-      const modalitiesFut = new Future<Modality[]>();
-      const itemGeneration: MessageGeneration = {
-        messageId: itemId,
-        textChannel: stream.createStreamChannel<string>(),
-        audioChannel: stream.createStreamChannel<AudioFrame>(),
-        audioTranscript: '',
-        modalities: modalitiesFut,
-      };
-
-      // If audioOutput is not supported, close audio channel and set modalities to text-only
-      if (!this.oaiRealtimeModel.capabilities.audioOutput) {
-        itemGeneration.audioChannel.close();
-        modalitiesFut.resolve(['text']);
-      }
-
-      this.currentGeneration.messageChannel.write({
-        messageId: itemId,
-        textStream: itemGeneration.textChannel.stream(),
-        audioStream: itemGeneration.audioChannel.stream(),
-        modalities: modalitiesFut.await,
-      });
-
-      this.currentGeneration.messages.set(itemId, itemGeneration);
-      this.currentGeneration._firstTokenTimestamp = Date.now();
+    const itemGeneration = this.currentGeneration.messages.get(itemId);
+    if (!itemGeneration) {
+      this.#logger.warn(
+        `=== handleResponseContentPartAdded: itemGeneration not found for itemId=${itemId}`,
+      );
       return;
-    } else {
-      this.interrupt();
-      if (this.textModeRecoveryRetries === 0) {
-        this.#logger.warn({ responseId }, 'received text-only response from OpenAI Realtime API');
-      }
+    }
+
+    this.#logger.debug(
+      `=== handleResponseContentPartAdded: itemId=${itemId}, partType=${itemType}`,
+    );
+
+    if (itemType === 'text' && this.oaiRealtimeModel.capabilities.audioOutput) {
+      this.#logger.warn('Text response received from OpenAI Realtime API in audio modality.');
+    }
+
+    // Resolve modalities based on content part type
+    if (!itemGeneration.modalities.done) {
+      const modalityResult: Modality[] = itemType === 'text' ? ['text'] : ['audio', 'text'];
+      this.#logger.debug(
+        `=== handleResponseContentPartAdded: resolving modalities to ${JSON.stringify(modalityResult)}`,
+      );
+      itemGeneration.modalities.resolve(modalityResult);
+    }
+
+    if (this.currentGeneration._firstTokenTimestamp === undefined) {
+      this.currentGeneration._firstTokenTimestamp = Date.now();
     }
   }
 
@@ -1221,6 +1262,34 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     // TODO(shubhra): handle text mode recovery
+  }
+
+  private handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
+
+    const itemGeneration = this.currentGeneration.messages.get(event.item_id);
+    if (!itemGeneration) {
+      throw new Error('itemGeneration is not set');
+    }
+
+    // Set first token timestamp only if audio is not available
+    if (
+      !this.oaiRealtimeModel.capabilities.audioOutput &&
+      !this.currentGeneration._firstTokenTimestamp
+    ) {
+      this.currentGeneration._firstTokenTimestamp = Date.now();
+    }
+
+    itemGeneration.textChannel.write(event.delta);
+    itemGeneration.audioTranscript += event.delta;
+  }
+
+  private handleResponseTextDone(_event: api_proto.ResponseTextDoneEvent): void {
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
   }
 
   private handleResponseAudioTranscriptDelta(
@@ -1256,6 +1325,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     // Resolve modalities future on first audio delta
     if (!itemGeneration.modalities.done) {
+      this.#logger.debug(`=== handleResponseAudioDelta: resolving modalities to ['audio', 'text']`);
       itemGeneration.modalities.resolve(['audio', 'text']);
     }
 
@@ -1318,6 +1388,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       itemGeneration.audioChannel.close();
       if (!itemGeneration.modalities.done) {
         // In case message modalities is not set, this shouldn't happen
+        this.#logger.debug(
+          `=== handleResponseOutputItemDone: fallback resolving modalities to ${JSON.stringify(this.oaiRealtimeModel._options.modalities)}`,
+        );
         itemGeneration.modalities.resolve(this.oaiRealtimeModel._options.modalities);
       }
     }
@@ -1344,6 +1417,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       generation.textChannel.close();
       generation.audioChannel.close();
       if (!generation.modalities.done) {
+        this.#logger.debug(
+          `=== handleResponseDone: fallback resolving modalities to ${JSON.stringify(this.oaiRealtimeModel._options.modalities)}`,
+        );
         generation.modalities.resolve(this.oaiRealtimeModel._options.modalities);
       }
     }

@@ -14,6 +14,7 @@ import {
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
+import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -36,7 +37,7 @@ export default defineAgent({
     });
 
     const agent = new voice.Agent({
-      instructions: 'You are a weather agent.',
+      instructions: 'You are a helpful assistant. Always speak in English.',
       tools: {
         getWeather,
       },
@@ -45,7 +46,7 @@ export default defineAgent({
     const session = new voice.AgentSession({
       // Use RealtimeModel with text-only modality + separate TTS
       llm: new openai.realtime.RealtimeModel({
-        modalities: ['text'], // Audio-in, text-out
+        modalities: ['text'],
       }),
       tts: new elevenlabs.TTS(),
       voiceOptions: {
@@ -56,11 +57,16 @@ export default defineAgent({
     await session.start({
       agent,
       room: ctx.room,
+      inputOptions: {
+        noiseCancellation: BackgroundVoiceCancellation(),
+      },
       outputOptions: {
         transcriptionEnabled: true,
         audioEnabled: true, // You can also disable audio output to use text modality only
       },
     });
+
+    session.say('Hello, how can I help you today?');
 
     session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
       logger.debug('metrics_collected', ev);

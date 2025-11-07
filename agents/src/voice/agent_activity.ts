@@ -1640,10 +1640,14 @@ export class AgentActivity implements RecognitionHooks {
           let ttsTextInput: ReadableStream<string> | null = null;
           let trTextInput: ReadableStream<string>;
 
+          this.logger.debug(
+            `=== realtimeGenerationTask: msgModalities=${JSON.stringify(msgModalities)}, hasTTS=${!!this.tts}`,
+          );
+
           if (msgModalities && !msgModalities.includes('audio') && this.tts) {
             if (this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput) {
               this.logger.warn(
-                'text response received from realtime API, falling back to use a TTS model.',
+                '=== text response received from realtime API, falling back to use a TTS model.',
               );
             }
             const [_ttsTextInput, _trTextInput] = msg.textStream.tee();
@@ -1670,6 +1674,7 @@ export class AgentActivity implements RecognitionHooks {
             let realtimeAudioResult: ReadableStream<AudioFrame> | null = null;
 
             if (ttsTextInput) {
+              this.logger.debug('=== using TTS for text-only response from realtime API');
               // Use TTS for text-only responses
               const [ttsTask, ttsStream] = performTTSInference(
                 (...args) => this.agent.ttsNode(...args),
@@ -1680,6 +1685,7 @@ export class AgentActivity implements RecognitionHooks {
               tasks.push(ttsTask);
               realtimeAudioResult = ttsStream;
             } else if (msgModalities && msgModalities.includes('audio')) {
+              this.logger.debug('=== using realtime audio stream');
               // Use realtime audio stream
               realtimeAudioResult = await this.agent.realtimeAudioOutputNode(
                 msg.audioStream,
@@ -1687,13 +1693,13 @@ export class AgentActivity implements RecognitionHooks {
               );
             } else if (this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput) {
               this.logger.error(
-                'Text message received from Realtime API with audio modality. ' +
+                '=== Text message received from Realtime API with audio modality. ' +
                   'This usually happens when text chat context is synced to the API. ' +
                   'Try to add a TTS model as fallback or use text modality with TTS instead.',
               );
             } else {
               this.logger.warn(
-                'audio output is enabled but neither tts nor realtime audio is available',
+                '=== audio output is enabled but neither tts nor realtime audio is available',
               );
             }
 
@@ -1823,6 +1829,9 @@ export class AgentActivity implements RecognitionHooks {
           }
 
           // truncate server-side message
+          this.logger.debug(
+            `=== truncating message: messageId=${msgId}, audioEndMs=${Math.floor(playbackPosition)}, modalities=${JSON.stringify(msgModalities)}`,
+          );
           this.realtimeSession.truncate({
             messageId: msgId,
             audioEndMs: Math.floor(playbackPosition),

@@ -511,6 +511,7 @@ export interface ResponseContentPartDoneEvent extends BaseServerEvent {
 export interface ResponseTextDeltaEvent extends BaseServerEvent {
   type: 'response.text.delta';
   response_id: string;
+  item_id: string;
   output_index: number;
   content_index: number;
   delta: string;
@@ -519,6 +520,7 @@ export interface ResponseTextDeltaEvent extends BaseServerEvent {
 export interface ResponseTextDoneEvent extends BaseServerEvent {
   type: 'response.text.done';
   response_id: string;
+  item_id: string;
   output_index: number;
   content_index: number;
   text: string;
