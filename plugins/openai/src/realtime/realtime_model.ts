@@ -1294,6 +1294,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('itemGeneration is not set');
     }
 
+    if (this.currentGeneration._firstTokenTimestamp === undefined) {
+      this.currentGeneration._firstTokenTimestamp = Date.now();
+    }
+
     if (!itemGeneration.modalities.done) {
       itemGeneration.modalities.resolve(['audio', 'text']);
     }
