@@ -13,7 +13,7 @@ import {
   type ImageContent,
 } from './chat_context.js';
 import type { ToolContext, ToolInputSchema, ToolOptions } from './tool_context.js';
-import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils';
+import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils.js';
 
 export interface SerializedImage {
   inferenceDetail: 'auto' | 'high' | 'low';

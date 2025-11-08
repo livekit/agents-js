@@ -119,20 +119,19 @@ export function ensureStrictJsonSchema(schema: JSONSchema7, strict: boolean = tr
   // Recursively apply strict mode to nested object schemas
   if (strictSchema.properties) {
     for (const [key, propSchema] of Object.entries(strictSchema.properties)) {
-      if (typeof propSchema === 'object' && propSchema !== null) {
+      if (typeof propSchema === 'object' && propSchema !== null && !Array.isArray(propSchema)) {
         strictSchema.properties[key] = ensureStrictJsonSchema(propSchema, strict);
       }
     }
   }
   
-  // Handle array items
-  if (strictSchema.items && typeof strictSchema.items === 'object') {
+  // Handle array items (single schema, not array of schemas)
+  if (strictSchema.items && typeof strictSchema.items === 'object' && !Array.isArray(strictSchema.items)) {
     strictSchema.items = ensureStrictJsonSchema(strictSchema.items, strict);
   }
   
   return strictSchema;
 }
-
 /**
  * Converts a Zod schema to JSON Schema format with strict mode support.
  * Handles both Zod v3 and v4 schemas automatically.
