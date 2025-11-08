@@ -143,7 +143,7 @@ export type OpenAIFunctionParameters = {
 // TODO(brian): remove this helper once we have the real RunContext user data
 export const createToolOptions = <UserData extends UnknownUserData>(
   toolCallId: string,
-  userData: UserData = {} as UserData,
+  userData: UserData = {} as UserData
 ): ToolOptions<UserData> => {
   return { ctx: { userData }, toolCallId } as unknown as ToolOptions<UserData>;
 };
@@ -153,7 +153,7 @@ export const createToolOptions = <UserData extends UnknownUserData>(
 export const oaiParams = (
   schema: any,
   isOpenai = true,
-  strict = true,
+  strict = true
 ): OpenAIFunctionParameters => {
   // Adapted from https://github.com/vercel/ai/blob/56eb0ee9/packages/provider-utils/src/zod-schema.ts
   const jsonSchema = zodSchemaToJsonSchema(schema, isOpenai, strict);
@@ -171,7 +171,7 @@ export const oaiBuildFunctionInfo = (
   toolCtx: ToolContext,
   toolCallId: string,
   toolName: string,
-  rawArgs: string,
+  rawArgs: string
 ): FunctionCall => {
   const tool = toolCtx[toolName];
   if (!tool) {
@@ -329,7 +329,7 @@ export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): Di
 export function toJsonSchema(
   schema: ToolInputSchema<any>,
   isOpenai = true,
-  strict = true,
+  strict = true
 ): JSONSchema7 {
   if (isZodSchema(schema)) {
     return zodSchemaToJsonSchema(schema, isOpenai, strict);

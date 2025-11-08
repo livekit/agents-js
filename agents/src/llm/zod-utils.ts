@@ -93,7 +93,7 @@ export function isZodObjectSchema(schema: ZodSchema): boolean {
 /**
  * Ensures a JSON schema has strict validation enabled.
  * Based on OpenAI's ensureStrictJsonSchema implementation.
- * 
+ *
  * @param schema - The JSON schema to make strict
  * @param strict - Whether to enable strict mode (default: true)
  * @returns The strict JSON schema
@@ -105,17 +105,17 @@ export function ensureStrictJsonSchema(schema: JSONSchema7, strict: boolean = tr
 
   // Create a deep copy to avoid mutating the original
   const strictSchema = JSON.parse(JSON.stringify(schema)) as JSONSchema7;
-  
+
   // Set strict mode for object schemas
   if (strictSchema.type === 'object' && strictSchema.properties) {
     strictSchema.additionalProperties = false;
-    
+
     // Ensure required array exists for object schemas
     if (!strictSchema.required && strictSchema.properties) {
       strictSchema.required = Object.keys(strictSchema.properties);
     }
   }
-  
+
   // Recursively apply strict mode to nested object schemas
   if (strictSchema.properties) {
     for (const [key, propSchema] of Object.entries(strictSchema.properties)) {
@@ -124,12 +124,12 @@ export function ensureStrictJsonSchema(schema: JSONSchema7, strict: boolean = tr
       }
     }
   }
-  
+
   // Handle array items (single schema, not array of schemas)
   if (strictSchema.items && typeof strictSchema.items === 'object' && !Array.isArray(strictSchema.items)) {
     strictSchema.items = ensureStrictJsonSchema(strictSchema.items, strict);
   }
-  
+
   return strictSchema;
 }
 /**
@@ -142,12 +142,12 @@ export function ensureStrictJsonSchema(schema: JSONSchema7, strict: boolean = tr
  * @returns A JSON Schema representation of the Zod schema
  */
 export function zodSchemaToJsonSchema(
-  schema: ZodSchema, 
+  schema: ZodSchema,
   isOpenai: boolean = true,
   strict: boolean = true
 ): JSONSchema7 {
   let jsonSchema: JSONSchema7;
-  
+
   if (isZod4Schema(schema)) {
     jsonSchema = z4.toJSONSchema(schema, {
       target: 'draft-7',
@@ -160,7 +160,7 @@ export function zodSchemaToJsonSchema(
       $refStrategy: 'none',
     }) as JSONSchema7;
   }
-  
+
   // Apply strict schema enforcement
   return ensureStrictJsonSchema(jsonSchema, strict);
 }
