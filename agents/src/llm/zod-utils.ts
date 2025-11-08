@@ -91,35 +91,79 @@ export function isZodObjectSchema(schema: ZodSchema): boolean {
 }
 
 /**
- * Converts a Zod schema to JSON Schema format.
+ * Ensures a JSON schema has strict validation enabled.
+ * Based on OpenAI's ensureStrictJsonSchema implementation.
+ * 
+ * @param schema - The JSON schema to make strict
+ * @param strict - Whether to enable strict mode (default: true)
+ * @returns The strict JSON schema
+ */
+export function ensureStrictJsonSchema(schema: JSONSchema7, strict: boolean = true): JSONSchema7 {
+  if (!strict) {
+    return schema;
+  }
+
+  // Create a deep copy to avoid mutating the original
+  const strictSchema = JSON.parse(JSON.stringify(schema)) as JSONSchema7;
+  
+  // Set strict mode for object schemas
+  if (strictSchema.type === 'object' && strictSchema.properties) {
+    strictSchema.additionalProperties = false;
+    
+    // Ensure required array exists for object schemas
+    if (!strictSchema.required && strictSchema.properties) {
+      strictSchema.required = Object.keys(strictSchema.properties);
+    }
+  }
+  
+  // Recursively apply strict mode to nested object schemas
+  if (strictSchema.properties) {
+    for (const [key, propSchema] of Object.entries(strictSchema.properties)) {
+      if (typeof propSchema === 'object' && propSchema !== null) {
+        strictSchema.properties[key] = ensureStrictJsonSchema(propSchema, strict);
+      }
+    }
+  }
+  
+  // Handle array items
+  if (strictSchema.items && typeof strictSchema.items === 'object') {
+    strictSchema.items = ensureStrictJsonSchema(strictSchema.items, strict);
+  }
+  
+  return strictSchema;
+}
+
+/**
+ * Converts a Zod schema to JSON Schema format with strict mode support.
  * Handles both Zod v3 and v4 schemas automatically.
- *
- * Adapted from Vercel AI SDK's zod3Schema and zod4Schema functions.
- * Source: https://github.com/vercel/ai/blob/main/packages/provider-utils/src/schema.ts#L237-L269
  *
  * @param schema - The Zod schema to convert
  * @param isOpenai - Whether to use OpenAI-specific formatting (default: true)
+ * @param strict - Whether to enable strict validation (default: true)
  * @returns A JSON Schema representation of the Zod schema
  */
-export function zodSchemaToJsonSchema(schema: ZodSchema, isOpenai: boolean = true): JSONSchema7 {
+export function zodSchemaToJsonSchema(
+  schema: ZodSchema, 
+  isOpenai: boolean = true,
+  strict: boolean = true
+): JSONSchema7 {
+  let jsonSchema: JSONSchema7;
+  
   if (isZod4Schema(schema)) {
-    // Zod v4 has native toJSONSchema support
-    // Configuration adapted from Vercel AI SDK to support OpenAPI conversion for Google
-    // Source: https://github.com/vercel/ai/blob/main/packages/provider-utils/src/schema.ts#L255-L258
-    return z4.toJSONSchema(schema, {
+    jsonSchema = z4.toJSONSchema(schema, {
       target: 'draft-7',
       io: 'output',
-      reused: 'inline', // Don't use references by default (to support openapi conversion for google)
+      reused: 'inline',
     }) as JSONSchema7;
   } else {
-    // Zod v3 requires the zod-to-json-schema library
-    // Configuration adapted from Vercel AI SDK
-    // $refStrategy: 'none' is equivalent to v4's reused: 'inline'
-    return zodToJsonSchemaV3(schema, {
+    jsonSchema = zodToJsonSchemaV3(schema, {
       target: isOpenai ? 'openAi' : 'jsonSchema7',
-      $refStrategy: 'none', // Don't use references by default (to support openapi conversion for google)
+      $refStrategy: 'none',
     }) as JSONSchema7;
   }
+  
+  // Apply strict schema enforcement
+  return ensureStrictJsonSchema(jsonSchema, strict);
 }
 
 /**

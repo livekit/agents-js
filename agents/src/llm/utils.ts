@@ -13,7 +13,7 @@ import {
   type ImageContent,
 } from './chat_context.js';
 import type { ToolContext, ToolInputSchema, ToolOptions } from './tool_context.js';
-import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils.js';
+import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils';
 
 export interface SerializedImage {
   inferenceDetail: 'auto' | 'high' | 'low';
@@ -150,9 +150,13 @@ export const createToolOptions = <UserData extends UnknownUserData>(
 
 /** @internal */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const oaiParams = (schema: any, isOpenai: boolean = true): OpenAIFunctionParameters => {
+export const oaiParams = (
+  schema: any,
+  isOpenai = true,
+  strict = true,
+): OpenAIFunctionParameters => {
   // Adapted from https://github.com/vercel/ai/blob/56eb0ee9/packages/provider-utils/src/zod-schema.ts
-  const jsonSchema = zodSchemaToJsonSchema(schema, isOpenai);
+  const jsonSchema = zodSchemaToJsonSchema(schema, isOpenai, strict);
   const { properties, required, additionalProperties } = jsonSchema as OpenAIFunctionParameters;
 
   return {
@@ -162,7 +166,6 @@ export const oaiParams = (schema: any, isOpenai: boolean = true): OpenAIFunction
     additionalProperties,
   };
 };
-
 /** @internal */
 export const oaiBuildFunctionInfo = (
   toolCtx: ToolContext,
@@ -323,9 +326,14 @@ export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): Di
   };
 }
 
-export function toJsonSchema(schema: ToolInputSchema<any>, isOpenai: boolean = true): JSONSchema7 {
+export function toJsonSchema(
+  schema: ToolInputSchema<any>,
+  isOpenai = true,
+  strict = true,
+): JSONSchema7 {
   if (isZodSchema(schema)) {
-    return zodSchemaToJsonSchema(schema, isOpenai);
+    return zodSchemaToJsonSchema(schema, isOpenai, strict);
   }
+
   return schema as JSONSchema7;
 }
