@@ -33,7 +33,9 @@ function getChannelsFromVideoBufferType(type: VideoBufferType): 3 | 4 {
       return 3;
     default:
       // YUV formats (I420, I420A, I422, I444, I010, NV12) need conversion
-      throw new Error(`Unsupported VideoBufferType: ${type}. Only RGB/RGBA formats are supported.`);
+      throw new Error(
+        `Unsupported VideoBufferType: ${type}. Only RGB/RGBA formats are supported.`
+      );
   }
 }
 
@@ -117,10 +119,7 @@ export async function serializeImage(image: ImageContent): Promise<SerializedIma
       encoded = encoded.resize(image.inferenceWidth, image.inferenceHeight);
     }
 
-    const base64Data = await encoded
-      .png()
-      .toBuffer()
-      .then((buffer) => buffer.toString('base64'));
+    const base64Data = await encoded.png().toBuffer().then((buffer) => buffer.toString('base64'));
 
     return {
       base64Data,
@@ -185,9 +184,10 @@ export const oaiBuildFunctionInfo = (
   });
 };
 
+
 export async function executeToolCall(
   toolCall: FunctionCall,
-  toolCtx: ToolContext,
+  toolCtx: ToolContext
 ): Promise<FunctionCallOutput> {
   const tool = toolCtx[toolCall.name]!;
   let args: object | undefined;
