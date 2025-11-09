@@ -148,10 +148,10 @@ export const createToolOptions = <UserData extends UnknownUserData>(
 };
 
 /** @internal */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+//eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const oaiParams = (
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  schema: any,  // KEEP as 'any' but disable the warning
+  schema: any, //KEEP as'any'but disable the warning
   isOpenai = true,
   strict = true,
 ): OpenAIFunctionParameters => {
