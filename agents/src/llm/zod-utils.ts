@@ -79,11 +79,9 @@ export function isZodObjectSchema(schema: ZodSchema): boolean {
   // Check for v4 schema first
   if (isZod4Schema(schema)) {
     // v4 uses _def.type and _zod.traits
-    return (
-      schemaWithInternals._def?.type === 'object' ||
-      schemaWithInternals._zod?.traits?.has('ZodObject') ||
-      false
-    );
+    return schemaWithInternals._def?.type === 'object' 
+      || schemaWithInternals._zod?.traits?.has('ZodObject') 
+      || false;
   }
 
   // v3 uses _def.typeName
@@ -126,12 +124,17 @@ export function ensureStrictJsonSchema(schema: JSONSchema7, strict: boolean = tr
   }
 
   // Handle array items (single schema, not array of schemas)
-  if (strictSchema.items && typeof strictSchema.items === 'object' && !Array.isArray(strictSchema.items)) {
+  if (
+    strictSchema.items &&
+    typeof strictSchema.items === 'object' &&
+    !Array.isArray(strictSchema.items)
+  ) {
     strictSchema.items = ensureStrictJsonSchema(strictSchema.items, strict);
   }
 
   return strictSchema;
 }
+
 /**
  * Converts a Zod schema to JSON Schema format with strict mode support.
  * Handles both Zod v3 and v4 schemas automatically.
@@ -175,7 +178,7 @@ export function zodSchemaToJsonSchema(
  */
 export async function parseZodSchema<T = unknown>(
   schema: ZodSchema,
-  value: unknown,
+  value: unknown
 ): Promise<ZodParseResult<T>> {
   if (isZod4Schema(schema)) {
     const result = await z4.safeParseAsync(schema, value);

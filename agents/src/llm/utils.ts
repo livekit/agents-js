@@ -14,6 +14,7 @@ import {
 } from './chat_context.js';
 import type { ToolContext, ToolInputSchema, ToolOptions } from './tool_context.js';
 import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils.js';
+import type { ZodSchema } from './zod-utils.js';
 
 export interface SerializedImage {
   inferenceDetail: 'auto' | 'high' | 'low';
@@ -41,13 +42,11 @@ function getChannelsFromVideoBufferType(type: VideoBufferType): 3 | 4 {
 
 function ensureRGBCompatible(frame: VideoFrame): VideoFrame {
   // If the frame is already in an RGB/RGBA-compatible format, return it directly
-  if (
-    frame.type === VideoBufferType.RGBA ||
-    frame.type === VideoBufferType.BGRA ||
-    frame.type === VideoBufferType.ARGB ||
-    frame.type === VideoBufferType.ABGR ||
-    frame.type === VideoBufferType.RGB24
-  ) {
+  if (frame.type === VideoBufferType.RGBA 
+    || frame.type === VideoBufferType.BGRA 
+    || frame.type === VideoBufferType.ARGB 
+    || frame.type === VideoBufferType.ABGR 
+    || frame.type === VideoBufferType.RGB24) {
     return frame;
   }
 
@@ -55,10 +54,7 @@ function ensureRGBCompatible(frame: VideoFrame): VideoFrame {
   try {
     return frame.convert(VideoBufferType.RGBA);
   } catch (error) {
-    throw new Error(
-      `Failed to convert format ${frame.type} to RGB: ${error}. ` +
-        `Consider using RGB/RGBA formats or converting on the client side.`,
-    );
+    throw new Error(`Failed to convert format ${frame.type} to RGB: ${error}. Consider using RGB/RGBA formats or converting on the client side.`);
   }
 }
 
@@ -119,7 +115,10 @@ export async function serializeImage(image: ImageContent): Promise<SerializedIma
       encoded = encoded.resize(image.inferenceWidth, image.inferenceHeight);
     }
 
-    const base64Data = await encoded.png().toBuffer().then((buffer) => buffer.toString('base64'));
+    const base64Data = await encoded
+      .png()
+      .toBuffer()
+      .then((buffer) => buffer.toString('base64'));
 
     return {
       base64Data,
@@ -134,7 +133,7 @@ export async function serializeImage(image: ImageContent): Promise<SerializedIma
 /** Raw OpenAI-adherent function parameters. */
 export type OpenAIFunctionParameters = {
   type: 'object';
-  properties: { [id: string]: any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  properties: { [id: string]: unknown }; // Using unknown instead of any
   required: string[];
   additionalProperties?: boolean;
 };
@@ -150,9 +149,9 @@ export const createToolOptions = <UserData extends UnknownUserData>(
 /** @internal */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const oaiParams = (
-  schema: any,
+  schema: any, // Using any here since the function handles both Zod schemas and JSON schemas
   isOpenai = true,
-  strict = true
+  strict = true,
 ): OpenAIFunctionParameters => {
   // Adapted from https://github.com/vercel/ai/blob/56eb0ee9/packages/provider-utils/src/zod-schema.ts
   const jsonSchema = zodSchemaToJsonSchema(schema, isOpenai, strict);
@@ -327,9 +326,9 @@ export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): Di
 }
 
 export function toJsonSchema(
-  schema: ToolInputSchema<any>,
+  schema: ToolInputSchema<unknown>,
   isOpenai = true,
-  strict = true
+  strict = true,
 ): JSONSchema7 {
   if (isZodSchema(schema)) {
     return zodSchemaToJsonSchema(schema, isOpenai, strict);
