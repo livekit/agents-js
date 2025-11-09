@@ -14,7 +14,6 @@ import {
 } from './chat_context.js';
 import type { ToolContext, ToolInputSchema, ToolOptions } from './tool_context.js';
 import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils.js';
-import type { ZodSchema } from './zod-utils.js';
 
 export interface SerializedImage {
   inferenceDetail: 'auto' | 'high' | 'low';
@@ -34,19 +33,19 @@ function getChannelsFromVideoBufferType(type: VideoBufferType): 3 | 4 {
       return 3;
     default:
       // YUV formats (I420, I420A, I422, I444, I010, NV12) need conversion
-      throw new Error(
-        `Unsupported VideoBufferType: ${type}. Only RGB/RGBA formats are supported.`
-      );
+      throw new Error(`Unsupported VideoBufferType: ${type}. Only RGB/RGBA formats are supported.`);
   }
 }
 
 function ensureRGBCompatible(frame: VideoFrame): VideoFrame {
   // If the frame is already in an RGB/RGBA-compatible format, return it directly
-  if (frame.type === VideoBufferType.RGBA 
-    || frame.type === VideoBufferType.BGRA 
-    || frame.type === VideoBufferType.ARGB 
-    || frame.type === VideoBufferType.ABGR 
-    || frame.type === VideoBufferType.RGB24) {
+  if (
+    frame.type === VideoBufferType.RGBA ||
+    frame.type === VideoBufferType.BGRA ||
+    frame.type === VideoBufferType.ARGB ||
+    frame.type === VideoBufferType.ABGR ||
+    frame.type === VideoBufferType.RGB24
+  ) {
     return frame;
   }
 
@@ -54,7 +53,9 @@ function ensureRGBCompatible(frame: VideoFrame): VideoFrame {
   try {
     return frame.convert(VideoBufferType.RGBA);
   } catch (error) {
-    throw new Error(`Failed to convert format ${frame.type} to RGB: ${error}. Consider using RGB/RGBA formats or converting on the client side.`);
+    throw new Error(
+      `Failed to convert format ${frame.type} to RGB: ${error}. Consider using RGB/RGBA formats or converting on the client side.`,
+    );
   }
 }
 
@@ -141,7 +142,7 @@ export type OpenAIFunctionParameters = {
 // TODO(brian): remove this helper once we have the real RunContext user data
 export const createToolOptions = <UserData extends UnknownUserData>(
   toolCallId: string,
-  userData: UserData = {} as UserData
+  userData: UserData = {} as UserData,
 ): ToolOptions<UserData> => {
   return { ctx: { userData }, toolCallId } as unknown as ToolOptions<UserData>;
 };
@@ -149,7 +150,7 @@ export const createToolOptions = <UserData extends UnknownUserData>(
 /** @internal */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const oaiParams = (
-  schema: any, // Using any here since the function handles both Zod schemas and JSON schemas
+  schema: unknown, // Using any here since the function handles both Zod schemas and JSON schemas
   isOpenai = true,
   strict = true,
 ): OpenAIFunctionParameters => {
@@ -169,7 +170,7 @@ export const oaiBuildFunctionInfo = (
   toolCtx: ToolContext,
   toolCallId: string,
   toolName: string,
-  rawArgs: string
+  rawArgs: string,
 ): FunctionCall => {
   const tool = toolCtx[toolName];
   if (!tool) {
@@ -183,10 +184,9 @@ export const oaiBuildFunctionInfo = (
   });
 };
 
-
 export async function executeToolCall(
   toolCall: FunctionCall,
-  toolCtx: ToolContext
+  toolCtx: ToolContext,
 ): Promise<FunctionCallOutput> {
   const tool = toolCtx[toolCall.name]!;
   let args: object | undefined;

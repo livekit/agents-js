@@ -79,9 +79,11 @@ export function isZodObjectSchema(schema: ZodSchema): boolean {
   // Check for v4 schema first
   if (isZod4Schema(schema)) {
     // v4 uses _def.type and _zod.traits
-    return schemaWithInternals._def?.type === 'object' 
-      || schemaWithInternals._zod?.traits?.has('ZodObject') 
-      || false;
+    return (
+      schemaWithInternals._def?.type === 'object' ||
+      schemaWithInternals._zod?.traits?.has('ZodObject') ||
+      false
+    );
   }
 
   // v3 uses _def.typeName
@@ -147,7 +149,7 @@ export function ensureStrictJsonSchema(schema: JSONSchema7, strict: boolean = tr
 export function zodSchemaToJsonSchema(
   schema: ZodSchema,
   isOpenai: boolean = true,
-  strict: boolean = true
+  strict: boolean = true,
 ): JSONSchema7 {
   let jsonSchema: JSONSchema7;
 
@@ -178,7 +180,7 @@ export function zodSchemaToJsonSchema(
  */
 export async function parseZodSchema<T = unknown>(
   schema: ZodSchema,
-  value: unknown
+  value: unknown,
 ): Promise<ZodParseResult<T>> {
   if (isZod4Schema(schema)) {
     const result = await z4.safeParseAsync(schema, value);
