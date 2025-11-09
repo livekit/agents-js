@@ -150,7 +150,8 @@ export const createToolOptions = <UserData extends UnknownUserData>(
 /** @internal */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const oaiParams = (
-  schema: unknown, // Using any here since the function handles both Zod schemas and JSON schemas
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  schema: any,  // KEEP as 'any' but disable the warning
   isOpenai = true,
   strict = true,
 ): OpenAIFunctionParameters => {
