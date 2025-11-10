@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { JSONSchema7 } from 'json-schema';
+import { toStrictJsonSchema } from 'openai/lib/transform';
 import { zodToJsonSchema as zodToJsonSchemaV3 } from 'zod-to-json-schema';
 import type * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
@@ -101,12 +102,18 @@ export function isZodObjectSchema(schema: ZodSchema): boolean {
  * @param isOpenai - Whether to use OpenAI-specific formatting (default: true)
  * @returns A JSON Schema representation of the Zod schema
  */
-export function zodSchemaToJsonSchema(schema: ZodSchema, isOpenai: boolean = true): JSONSchema7 {
+export function zodSchemaToJsonSchema(
+  schema: ZodSchema,
+  isOpenai: boolean = true,
+  strict: boolean = false,
+): JSONSchema7 {
+  let result: JSONSchema7;
+
   if (isZod4Schema(schema)) {
     // Zod v4 has native toJSONSchema support
     // Configuration adapted from Vercel AI SDK to support OpenAPI conversion for Google
     // Source: https://github.com/vercel/ai/blob/main/packages/provider-utils/src/schema.ts#L255-L258
-    return z4.toJSONSchema(schema, {
+    result = z4.toJSONSchema(schema, {
       target: 'draft-7',
       io: 'output',
       reused: 'inline', // Don't use references by default (to support openapi conversion for google)
@@ -115,11 +122,13 @@ export function zodSchemaToJsonSchema(schema: ZodSchema, isOpenai: boolean = tru
     // Zod v3 requires the zod-to-json-schema library
     // Configuration adapted from Vercel AI SDK
     // $refStrategy: 'none' is equivalent to v4's reused: 'inline'
-    return zodToJsonSchemaV3(schema, {
+    result = zodToJsonSchemaV3(schema, {
       target: isOpenai ? 'openAi' : 'jsonSchema7',
       $refStrategy: 'none', // Don't use references by default (to support openapi conversion for google)
     }) as JSONSchema7;
   }
+
+  return strict ? (toStrictJsonSchema(result) as JSONSchema7) : result;
 }
 
 /**
