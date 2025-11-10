@@ -369,6 +369,10 @@ export class RoomIO {
     return this.transcriptionSynchronizer.textOutput;
   }
 
+  get isParticipantAvailable(): boolean {
+    return this.participantAvailableFuture.done;
+  }
+
   /** Switch to a different participant */
   setParticipant(participantIdentity: string | null) {
     this.logger.debug({ participantIdentity }, 'setting participant');
