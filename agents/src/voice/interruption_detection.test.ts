@@ -65,32 +65,6 @@ describe('Interruption Detection - Word Counting', () => {
   });
 
 
-  describe('Undefined and Null Handling', () => {
-    it('should normalize undefined to empty string', () => {
-      const text: string | undefined = undefined;
-      const normalizedText = text ?? '';
-      expect(normalizedText).toBe('');
-    });
-
-    it('should normalize null to empty string', () => {
-      const text: string | null = null;
-      const normalizedText = text ?? '';
-      expect(normalizedText).toBe('');
-    });
-
-    it('should preserve empty string during normalization', () => {
-      const text = '';
-      const normalizedText = text ?? '';
-      expect(normalizedText).toBe('');
-    });
-
-    it('should preserve valid string during normalization', () => {
-      const text = 'hello';
-      const normalizedText = text ?? '';
-      expect(normalizedText).toBe('hello');
-    });
-  });
-
   describe('Integration: Full Interruption Check Logic', () => {
     it('should block interruption for empty transcript with threshold 2', () => {
       const text = '';
