@@ -64,41 +64,6 @@ describe('Interruption Detection - Word Counting', () => {
     });
   });
 
-  describe('Interruption Threshold Logic', () => {
-    it('should block interruption when word count is below threshold', () => {
-      const minInterruptionWords = 2;
-      const wordCount = 1;
-      const shouldBlock = wordCount < minInterruptionWords;
-      expect(shouldBlock).toBe(true);
-    });
-
-    it('should allow interruption when word count meets threshold', () => {
-      const minInterruptionWords = 2;
-      const wordCount = 2;
-      const shouldBlock = wordCount < minInterruptionWords;
-      expect(shouldBlock).toBe(false);
-    });
-
-    it('should allow interruption when word count exceeds threshold', () => {
-      const minInterruptionWords = 2;
-      const wordCount = 6;
-      const shouldBlock = wordCount < minInterruptionWords;
-      expect(shouldBlock).toBe(false);
-    });
-
-    it('should skip word count check when minInterruptionWords is 0', () => {
-      const minInterruptionWords = 0;
-      const shouldPerformCheck = minInterruptionWords > 0;
-      expect(shouldPerformCheck).toBe(false);
-    });
-
-    it('should respect high minInterruptionWords threshold', () => {
-      const minInterruptionWords = 5;
-      const wordCount = 2;
-      const shouldBlock = wordCount < minInterruptionWords;
-      expect(shouldBlock).toBe(true);
-    });
-  });
 
   describe('Undefined and Null Handling', () => {
     it('should normalize undefined to empty string', () => {
