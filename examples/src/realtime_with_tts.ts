@@ -11,7 +11,7 @@ import {
   log,
   voice,
 } from '@livekit/agents';
-import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
+import * as cartesia from '@livekit/agents-plugin-cartesia';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
@@ -48,7 +48,7 @@ export default defineAgent({
       llm: new openai.realtime.RealtimeModel({
         modalities: ['text'],
       }),
-      tts: new elevenlabs.TTS(),
+      tts: new cartesia.TTS(),
       voiceOptions: {
         maxToolSteps: 5,
       },
