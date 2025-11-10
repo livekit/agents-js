@@ -88,6 +88,7 @@ export interface InferenceLLMOptions {
   apiKey: string;
   apiSecret: string;
   modelOptions: ChatCompletionOptions;
+  strictToolSchema?: boolean;
 }
 
 export interface GatewayOptions {
@@ -109,10 +110,19 @@ export class LLM extends llm.LLM {
     apiKey?: string;
     apiSecret?: string;
     modelOptions?: InferenceLLMOptions['modelOptions'];
+    strictToolSchema?: boolean;
   }) {
     super();
 
-    const { model, provider, baseURL, apiKey, apiSecret, modelOptions } = opts;
+    const {
+      model,
+      provider,
+      baseURL,
+      apiKey,
+      apiSecret,
+      modelOptions,
+      strictToolSchema = false,
+    } = opts;
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
     const lkApiKey = apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
@@ -133,6 +143,7 @@ export class LLM extends llm.LLM {
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
       modelOptions: modelOptions || {},
+      strictToolSchema,
     };
 
     this.client = new OpenAI({
@@ -203,6 +214,7 @@ export class LLM extends llm.LLM {
       toolCtx,
       connOptions,
       modelOptions,
+      strictToolSchema: this.opts.strictToolSchema ?? false, // default to false if not set
       gatewayOptions: {
         apiKey: this.opts.apiKey,
         apiSecret: this.opts.apiSecret,
@@ -217,6 +229,7 @@ export class LLMStream extends llm.LLMStream {
   private providerFmt: llm.ProviderFormat;
   private client: OpenAI;
   private modelOptions: Record<string, unknown>;
+  private strictToolSchema: boolean;
 
   private gatewayOptions?: GatewayOptions;
   private toolCallId?: string;
@@ -236,6 +249,7 @@ export class LLMStream extends llm.LLMStream {
       connOptions,
       modelOptions,
       providerFmt,
+      strictToolSchema,
     }: {
       model: LLMModels;
       provider?: string;
@@ -246,6 +260,7 @@ export class LLMStream extends llm.LLMStream {
       connOptions: APIConnectOptions;
       modelOptions: Record<string, unknown>;
       providerFmt?: llm.ProviderFormat;
+      strictToolSchema: boolean;
     },
   ) {
     super(llm, { chatCtx, toolCtx, connOptions });
@@ -255,6 +270,7 @@ export class LLMStream extends llm.LLMStream {
     this.providerFmt = providerFmt || 'openai';
     this.modelOptions = modelOptions;
     this.model = model;
+    this.strictToolSchema = strictToolSchema;
   }
 
   protected async run(): Promise<void> {
@@ -269,16 +285,26 @@ export class LLMStream extends llm.LLMStream {
       )) as OpenAI.ChatCompletionMessageParam[];
 
       const tools = this.toolCtx
-        ? Object.entries(this.toolCtx).map(([name, func]) => ({
-            type: 'function' as const,
-            function: {
-              name,
-              description: func.description,
-              parameters: llm.toJsonSchema(
-                func.parameters,
-              ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
-            },
-          }))
+        ? Object.entries(this.toolCtx).map(([name, func]) => {
+            const oaiParams = {
+              type: 'function' as const,
+              function: {
+                name,
+                description: func.description,
+                parameters: llm.toJsonSchema(
+                  func.parameters,
+                  true,
+                  this.strictToolSchema,
+                ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
+              } as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function'],
+            };
+
+            if (this.strictToolSchema) {
+              oaiParams.function.strict = true;
+            }
+
+            return oaiParams;
+          })
         : undefined;
 
       const requestOptions: Record<string, unknown> = { ...this.modelOptions };
