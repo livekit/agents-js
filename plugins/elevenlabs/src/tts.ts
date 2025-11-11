@@ -248,11 +248,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const requestId = shortuuid();
     const segmentId = shortuuid();
 
-    /** simple helper to make sure what we send to ws.send */
+    // simple helper to make sure what we send to ws.send
     const wsSend = (data: {
       // (SynthesizeContent from python)
       text: string;
-      flush?: boolean;
+      // setting flush somehow never finishes the current speech generation
+      // https://github.com/livekit/agents-js/pull/820#issuecomment-3517138706
+      // flush?: boolean;
       // initialization
       voice_settings?: VoiceSettings;
       generation_config?: {
@@ -275,10 +277,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     const sendTask = async () => {
       // Determine if we should flush on each chunk (sentence)
-      const flushOnChunk =
+      /*const flushOnChunk =
         this.#opts.wordTokenizer instanceof tokenize.SentenceTokenizer &&
         this.#opts.autoMode !== undefined &&
-        this.#opts.autoMode;
+        this.#opts.autoMode;*/
 
       let xmlContent: string[] = [];
       for await (const data of stream) {
@@ -299,7 +301,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
         wsSend({
           text: text + ' ', // must always end with a space
-          ...(flushOnChunk && { flush: true }),
+          // ...(flushOnChunk && { flush: true }),
         });
       }
 
@@ -308,7 +310,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
 
       // no more tokens, mark eos with flush
-      wsSend({ text: '', flush: true });
+      // setting flush somehow never finishes the current speech generation
+      // wsSend({ text: '', flush: true });
+      wsSend({ text: '' });
       eosSent = true;
     };
 
