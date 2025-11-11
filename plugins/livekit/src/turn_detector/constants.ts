@@ -8,7 +8,7 @@ export const MAX_HISTORY_TURNS = 6;
 
 export const MODEL_REVISIONS: Record<EOUModelType, string> = {
   en: 'v1.2.2-en',
-  multilingual: 'v0.3.0-intl',
+  multilingual: 'v0.4.0-intl',
 };
 
 export const HG_MODEL_REPO = 'livekit/turn-detector';
