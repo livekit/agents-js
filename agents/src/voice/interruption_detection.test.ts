@@ -64,7 +64,6 @@ describe('Interruption Detection - Word Counting', () => {
     });
   });
 
-
   describe('Integration: Full Interruption Check Logic', () => {
     it('should block interruption for empty transcript with threshold 2', () => {
       const text = '';
