@@ -11,7 +11,6 @@
  * - Efficient send/recv loops with proper lifecycle management
  * - Graceful connection draining when connection is replaced
  */
-
 import {
   AsyncIterableQueue,
   AudioByteStream,
@@ -54,7 +53,6 @@ const DEFAULT_VOICE: Voice = {
 };
 
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1/';
-
 
 export interface TTSOptions {
   apiKey?: string;
