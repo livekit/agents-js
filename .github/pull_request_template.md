@@ -12,6 +12,7 @@
 - [ ] **AI-generated code reviewed**: Removed unnecessary comments and ensured code quality
 - [ ] **Changes explained**: All changes are properly documented and justified above
 - [ ] **Scope appropriate**: All changes relate to the PR title, or explanations provided for why they're included
+- [ ] **Video demo**: A small video demo showing changes works as expected (if applicable)
 
 ## Testing
 <!-- Describe how you tested these changes -->
