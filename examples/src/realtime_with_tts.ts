@@ -48,7 +48,9 @@ export default defineAgent({
       llm: new openai.realtime.RealtimeModel({
         modalities: ['text'],
       }),
-      tts: new cartesia.TTS(),
+      tts: new cartesia.TTS({
+        model: 'sonic-3',
+      }),
       voiceOptions: {
         maxToolSteps: 5,
       },
