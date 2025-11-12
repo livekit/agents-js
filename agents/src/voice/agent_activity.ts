@@ -633,11 +633,21 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
+    // Refactored interruption word count check:
+    // - Always apply minInterruptionWords filtering when STT is available and minInterruptionWords > 0
+    // - Apply check to all STT results: empty string, undefined, or any length
+    // - This ensures consistent behavior across all interruption scenarios
     if (this.stt && this.agentSession.options.minInterruptionWords > 0 && this.audioRecognition) {
       const text = this.audioRecognition.currentTranscript;
-
       // TODO(shubhra): better word splitting for multi-language
-      if (text && splitWords(text, true).length < this.agentSession.options.minInterruptionWords) {
+
+      // Normalize text: convert undefined/null to empty string for consistent word counting
+      const normalizedText = text ?? '';
+      const wordCount = splitWords(normalizedText, true).length;
+
+      // Only allow interruption if word count meets or exceeds minInterruptionWords
+      // This applies to all cases: empty strings, partial speech, and full speech
+      if (wordCount < this.agentSession.options.minInterruptionWords) {
         return;
       }
     }
@@ -775,19 +785,30 @@ export class AgentActivity implements RecognitionHooks {
       return true;
     }
 
+    // Refactored interruption word count check for consistency with onVADInferenceDone:
+    // - Always apply minInterruptionWords filtering when STT is available and minInterruptionWords > 0
+    // - Use consistent word splitting logic with splitWords (matching onVADInferenceDone pattern)
     if (
       this.stt &&
       this.turnDetection !== 'manual' &&
       this._currentSpeech &&
       this._currentSpeech.allowInterruptions &&
       !this._currentSpeech.interrupted &&
-      this.agentSession.options.minInterruptionWords > 0 &&
-      info.newTranscript.split(' ').length < this.agentSession.options.minInterruptionWords
+      this.agentSession.options.minInterruptionWords > 0
     ) {
-      // avoid interruption if the new_transcript is too short
-      this.cancelPreemptiveGeneration();
-      this.logger.info('skipping user input, new_transcript is too short');
-      return false;
+      const wordCount = splitWords(info.newTranscript, true).length;
+      if (wordCount < this.agentSession.options.minInterruptionWords) {
+        // avoid interruption if the new_transcript contains fewer words than minInterruptionWords
+        this.cancelPreemptiveGeneration();
+        this.logger.info(
+          {
+            wordCount,
+            minInterruptionWords: this.agentSession.options.minInterruptionWords,
+          },
+          'skipping user input, word count below minimum interruption threshold',
+        );
+        return false;
+      }
     }
 
     const oldTask = this._userTurnCompletedTask;

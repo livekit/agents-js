@@ -45,8 +45,8 @@
   },
   "dependencies": {
     "@livekit/mutex": "^1.1.1",
-    "openai": "^4.91.1",
-    "ws": "^8.16.0"
+    "openai": "^6.8.1",
+    "ws": "^8.18.0"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
