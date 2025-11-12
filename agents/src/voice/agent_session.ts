@@ -212,6 +212,9 @@ export class AgentSession<
   }
 
   async start({
+    // TODO(brian): PR2 - Add setupCloudTracer() call if on LiveKit Cloud with recording enabled
+    // TODO(brian): PR3 - Add span: this._sessionSpan = tracer.startSpan('agent_session'), store as instance property
+    // TODO(brian): PR4 - Add setupCloudLogger() call in setupCloudTracer() to setup OTEL logging with Pino bridge
     agent,
     room,
     inputOptions,
@@ -445,6 +448,8 @@ export class AgentSession<
       return;
     }
 
+    // TODO(brian): PR3 - Add span: if state === 'speaking' && !this._agentSpeakingSpan, create tracer.startSpan('agent_speaking') with participant attributes
+    // TODO(brian): PR3 - Add span: if state !== 'speaking' && this._agentSpeakingSpan, end and clear this._agentSpeakingSpan
     const oldState = this._agentState;
     this._agentState = state;
 
@@ -467,6 +472,8 @@ export class AgentSession<
       return;
     }
 
+    // TODO(brian): PR3 - Add span: if state === 'speaking' && !this._userSpeakingSpan, create tracer.startSpan('user_speaking') with participant attributes
+    // TODO(brian): PR3 - Add span: if state !== 'speaking' && this._userSpeakingSpan, end and clear this._userSpeakingSpan
     const oldState = this.userState;
     this.userState = state;
 

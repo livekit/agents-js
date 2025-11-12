@@ -40,6 +40,11 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
   };
 }
 
+// TODO(brian): PR5 - Add uploadSessionReport() function that creates multipart form with:
+//   - header: protobuf MetricsRecordingHeader (room_id, duration, start_time)
+//   - chat_history: JSON serialized chat history (use sessionReportToJSON)
+//   - audio: audio recording file if available (ogg format)
+//   - Uploads to LiveKit Cloud observability endpoint with JWT auth
 export function sessionReportToJSON(report: SessionReport): Record<string, unknown> {
   const events: Record<string, unknown>[] = [];
 

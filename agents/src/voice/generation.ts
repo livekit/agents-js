@@ -377,6 +377,7 @@ export function updateInstructions(options: {
   }
 }
 
+// TODO(brian): PR3 - Add @tracer.startActiveSpan('llm_node') decorator/wrapper
 export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
@@ -467,6 +468,7 @@ export function performLLMInference(
   ];
 }
 
+// TODO(brian): PR3 - Add @tracer.startActiveSpan('tts_node') decorator/wrapper
 export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string>,
@@ -650,6 +652,7 @@ export function performAudioForwarding(
   ];
 }
 
+// TODO(brian): PR3 - Add @tracer.startActiveSpan('function_tool') wrapper for each tool execution
 export function performToolExecutions({
   session,
   speechHandle,

@@ -16,6 +16,7 @@ import * as llm from './llm/index.js';
 import * as metrics from './metrics/index.js';
 import * as stream from './stream/index.js';
 import * as stt from './stt/index.js';
+import * as telemetry from './telemetry/index.js';
 import * as tokenize from './tokenize/index.js';
 import * as tts from './tts/index.js';
 import * as voice from './voice/index.js';
@@ -34,4 +35,4 @@ export * from './vad.js';
 export * from './version.js';
 export * from './worker.js';
 
-export { cli, inference, ipc, llm, metrics, stream, stt, tokenize, tts, voice };
+export { cli, inference, ipc, llm, metrics, stream, stt, telemetry, tokenize, tts, voice };
