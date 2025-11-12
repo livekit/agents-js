@@ -323,9 +323,14 @@ export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): Di
   };
 }
 
-export function toJsonSchema(schema: ToolInputSchema<any>, isOpenai: boolean = true): JSONSchema7 {
+export function toJsonSchema(
+  schema: ToolInputSchema<any>,
+  isOpenai: boolean = true,
+  strict: boolean = false,
+): JSONSchema7 {
   if (isZodSchema(schema)) {
-    return zodSchemaToJsonSchema(schema, isOpenai);
+    return zodSchemaToJsonSchema(schema, isOpenai, strict);
   }
+
   return schema as JSONSchema7;
 }

@@ -30,17 +30,20 @@ export interface LLMOptions {
   maxCompletionTokens?: number;
   serviceTier?: string;
   store?: boolean;
+  strictToolSchema?: boolean;
 }
 
 const defaultLLMOptions: LLMOptions = {
   model: 'gpt-4.1',
   apiKey: process.env.OPENAI_API_KEY,
   parallelToolCalls: true,
+  strictToolSchema: false,
 };
 
 const defaultAzureLLMOptions: LLMOptions = {
   model: 'gpt-4.1',
   apiKey: process.env.AZURE_API_KEY,
+  strictToolSchema: false,
 };
 
 export class LLM extends llm.LLM {
@@ -492,6 +495,7 @@ export class LLM extends llm.LLM {
       toolCtx,
       connOptions,
       modelOptions: extras,
+      strictToolSchema: this.#opts.strictToolSchema || false,
       gatewayOptions: undefined, // OpenAI plugin doesn't use gateway authentication
     });
   }

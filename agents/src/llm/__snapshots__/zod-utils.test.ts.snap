@@ -339,3 +339,221 @@ exports[`Zod Utils > zodSchemaToJsonSchema > Zod v4 schemas > should handle v4 s
   "type": "object",
 }
 `;
+
+exports[`Zod Utils > zodSchemaToJsonSchema > strict parameter > should handle arrays in strict mode 1`] = `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "numbers": {
+      "items": {
+        "type": "number",
+      },
+      "type": "array",
+    },
+    "tags": {
+      "items": {
+        "type": "string",
+      },
+      "type": "array",
+    },
+  },
+  "required": [
+    "tags",
+    "numbers",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`Zod Utils > zodSchemaToJsonSchema > strict parameter > should handle default values in strict mode 1`] = `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "active": {
+      "default": true,
+      "type": "boolean",
+    },
+    "name": {
+      "type": "string",
+    },
+    "role": {
+      "default": "user",
+      "type": "string",
+    },
+  },
+  "required": [
+    "name",
+    "role",
+    "active",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`Zod Utils > zodSchemaToJsonSchema > strict parameter > should handle nested objects in strict mode 1`] = `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "created": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "created",
+      ],
+      "type": "object",
+    },
+    "user": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "anyOf": [
+            {
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "name": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "name",
+        "email",
+      ],
+      "type": "object",
+    },
+  },
+  "required": [
+    "user",
+    "metadata",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`Zod Utils > zodSchemaToJsonSchema > strict parameter > should handle nullable fields in strict mode 1`] = `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "optional": {
+      "anyOf": [
+        {
+          "type": "string",
+        },
+        {
+          "type": "null",
+        },
+      ],
+    },
+    "required": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "required",
+    "optional",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`Zod Utils > zodSchemaToJsonSchema > strict parameter > should handle optional fields in strict mode 1`] = `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "optional": {
+      "anyOf": [
+        {
+          "type": "string",
+        },
+        {
+          "type": "null",
+        },
+      ],
+    },
+    "required": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "required",
+    "optional",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`Zod Utils > zodSchemaToJsonSchema > strict parameter > should handle v3 schemas in strict mode 1`] = `
+{
+  "$schema": "https://json-schema.org/draft/2019-09/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "age": {
+      "type": [
+        "number",
+        "null",
+      ],
+    },
+    "name": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "name",
+    "age",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`Zod Utils > zodSchemaToJsonSchema > strict parameter > should produce standard JSON schema with strict: false 1`] = `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "age": {
+      "type": "number",
+    },
+    "name": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "name",
+    "age",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`Zod Utils > zodSchemaToJsonSchema > strict parameter > should produce strict JSON schema with strict: true 1`] = `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "age": {
+      "type": "number",
+    },
+    "name": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "name",
+    "age",
+  ],
+  "type": "object",
+}
+`;
