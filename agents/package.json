@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "description": "LiveKit Agents - Node.js",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -56,13 +56,13 @@
     "heap-js": "^2.6.0",
     "json-schema": "^0.4.0",
     "livekit-server-sdk": "^2.13.3",
-    "openai": "^4.91.1",
+    "openai": "^6.8.1",
     "pidusage": "^4.0.1",
     "pino": "^8.19.0",
     "pino-pretty": "^11.0.0",
     "sharp": "0.34.3",
     "uuid": "^11.1.0",
-    "ws": "^8.16.0",
+    "ws": "^8.18.0",
     "zod-to-json-schema": "^3.24.6"
   },
   "peerDependencies": {

@@ -78,7 +78,7 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: ToolChoice;
-    extraKwargs?: Record<string, any>;
+    extraKwargs?: Record<string, unknown>;
   }): LLMStream;
 
   /**

@@ -59,6 +59,7 @@ export interface VoiceOptions {
   maxEndpointingDelay: number;
   maxToolSteps: number;
   preemptiveGeneration: boolean;
+  userAwayTimeout?: number | null;
 }
 
 const defaultVoiceOptions: VoiceOptions = {
@@ -70,6 +71,7 @@ const defaultVoiceOptions: VoiceOptions = {
   maxEndpointingDelay: 6000,
   maxToolSteps: 3,
   preemptiveGeneration: false,
+  userAwayTimeout: 15.0,
 } as const;
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
@@ -124,6 +126,7 @@ export class AgentSession<
   private _output: AgentOutput;
 
   private closingTask: Promise<void> | null = null;
+  private userAwayTimer: NodeJS.Timeout | null = null;
 
   /** @internal */
   _recordedEvents: AgentEvent[] = [];
@@ -171,6 +174,8 @@ export class AgentSession<
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
     this.options = { ...defaultVoiceOptions, ...voiceOptions };
+
+    this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed.bind(this));
   }
 
   emit<K extends keyof AgentSessionCallbacks>(
@@ -442,6 +447,14 @@ export class AgentSession<
 
     const oldState = this._agentState;
     this._agentState = state;
+
+    // Handle user away timer based on state changes
+    if (state === 'listening' && this.userState === 'listening') {
+      this._setUserAwayTimer();
+    } else {
+      this._cancelUserAwayTimer();
+    }
+
     this.emit(
       AgentSessionEventTypes.AgentStateChanged,
       createAgentStateChangedEvent(oldState, state),
@@ -456,6 +469,14 @@ export class AgentSession<
 
     const oldState = this.userState;
     this.userState = state;
+
+    // Handle user away timer based on state changes
+    if (state === 'listening' && this._agentState === 'listening') {
+      this._setUserAwayTimer();
+    } else {
+      this._cancelUserAwayTimer();
+    }
+
     this.emit(
       AgentSessionEventTypes.UserStateChanged,
       createUserStateChangedEvent(oldState, state),
@@ -477,6 +498,37 @@ export class AgentSession<
 
   private onTextOutputChanged(): void {}
 
+  private _setUserAwayTimer(): void {
+    this._cancelUserAwayTimer();
+
+    if (this.options.userAwayTimeout === null || this.options.userAwayTimeout === undefined) {
+      return;
+    }
+
+    if (this.roomIO && !this.roomIO.isParticipantAvailable) {
+      return;
+    }
+
+    this.userAwayTimer = setTimeout(() => {
+      this.logger.debug('User away timeout triggered');
+      this._updateUserState('away');
+    }, this.options.userAwayTimeout * 1000);
+  }
+
+  private _cancelUserAwayTimer(): void {
+    if (this.userAwayTimer !== null) {
+      clearTimeout(this.userAwayTimer);
+      this.userAwayTimer = null;
+    }
+  }
+
+  private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {
+    if (this.userState === 'away' && ev.isFinal) {
+      this.logger.debug('User returned from away state due to speech input');
+      this._updateUserState('listening');
+    }
+  }
+
   private async closeImpl(
     reason: CloseReason,
     error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
@@ -485,6 +537,8 @@ export class AgentSession<
     if (!this.started) {
       return;
     }
+
+    this._cancelUserAwayTimer();
 
     if (this.activity) {
       if (!drain) {

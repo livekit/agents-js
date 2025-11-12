@@ -260,6 +260,107 @@ describe('Zod Utils', () => {
         expect(jsonSchema7).toHaveProperty('properties');
       });
     });
+
+    describe('strict parameter', () => {
+      it('should produce strict JSON schema with strict: true', () => {
+        const schema = z4.object({
+          name: z4.string(),
+          age: z4.number(),
+        });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true);
+        expect(strictSchema).toMatchSnapshot();
+      });
+
+      it('should handle nullable fields in strict mode', () => {
+        const schema = z4.object({
+          required: z4.string(),
+          optional: z4.string().nullable(),
+        });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true);
+        expect(strictSchema).toMatchSnapshot();
+      });
+
+      it('should handle default values in strict mode', () => {
+        const schema = z4.object({
+          name: z4.string(),
+          role: z4.string().default('user'),
+          active: z4.boolean().default(true),
+        });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true);
+        expect(strictSchema).toMatchSnapshot();
+      });
+
+      it('should handle nested objects in strict mode', () => {
+        const schema = z4.object({
+          user: z4.object({
+            name: z4.string(),
+            email: z4.string().nullable(),
+          }),
+          metadata: z4.object({
+            created: z4.string(),
+          }),
+        });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true);
+        expect(strictSchema).toMatchSnapshot();
+      });
+
+      it('should handle arrays in strict mode', () => {
+        const schema = z4.object({
+          tags: z4.array(z4.string()),
+          numbers: z4.array(z4.number()),
+        });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true);
+        expect(strictSchema).toMatchSnapshot();
+      });
+
+      it('should handle v3 schemas in strict mode', () => {
+        const schema = z3.object({
+          name: z3.string(),
+          age: z3.number().optional(),
+        });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true);
+        expect(strictSchema).toMatchSnapshot();
+      });
+
+      it('should throw error when using .optional() without .nullable() in strict mode', () => {
+        const schema = z4.object({
+          required: z4.string(),
+          optional: z4.string().optional(),
+        });
+
+        expect(() => zodSchemaToJsonSchema(schema, true, true)).toThrow(
+          /uses `.optional\(\)` without `.nullable\(\)` which is not supported by the API/,
+        );
+      });
+
+      it('should throw error for nested .optional() fields in strict mode', () => {
+        const schema = z4.object({
+          user: z4.object({
+            name: z4.string(),
+            email: z4.string().optional(),
+          }),
+        });
+
+        expect(() => zodSchemaToJsonSchema(schema, true, true)).toThrow(
+          /uses `.optional\(\)` without `.nullable\(\)` which is not supported by the API/,
+        );
+      });
+
+      it('should NOT throw error when using .optional() in non-strict mode', () => {
+        const schema = z4.object({
+          required: z4.string(),
+          optional: z4.string().optional(),
+        });
+
+        expect(() => zodSchemaToJsonSchema(schema, true, false)).not.toThrow();
+      });
+    });
   });
 
   describe('parseZodSchema', () => {

@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.17
+
+### Patch Changes
+
+- handle APIError in STT & TTS retry mechanism and prevent ERR_UNHANDLED_ERROR - [#804](https://github.com/livekit/agents-js/pull/804) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.16
 
 ### Patch Changes
