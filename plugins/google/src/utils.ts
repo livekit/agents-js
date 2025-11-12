@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { FunctionDeclaration, Schema } from '@google/genai';
+import type { Behavior, FunctionDeclaration, Schema } from '@google/genai';
 import { llm } from '@livekit/agents';
 import type { JSONSchema7 } from 'json-schema';
 
@@ -136,7 +136,10 @@ function isEmptyObjectSchema(jsonSchema: JSONSchema7Definition): boolean {
   );
 }
 
-export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclaration[] {
+export function toFunctionDeclarations(
+  toolCtx: llm.ToolContext,
+  behavior?: Behavior,
+): FunctionDeclaration[] {
   const functionDeclarations: FunctionDeclaration[] = [];
 
   for (const [name, tool] of Object.entries(toolCtx)) {
@@ -146,11 +149,17 @@ export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclar
     // Create a deep copy to prevent the Google GenAI library from mutating the schema
     const schemaCopy = JSON.parse(JSON.stringify(jsonSchema));
 
-    functionDeclarations.push({
+    const declaration: FunctionDeclaration = {
       name,
       description,
       parameters: convertJSONSchemaToOpenAPISchema(schemaCopy) as Schema,
-    });
+    };
+
+    if (behavior !== undefined) {
+      declaration.behavior = behavior;
+    }
+
+    functionDeclarations.push(declaration);
   }
 
   return functionDeclarations;
