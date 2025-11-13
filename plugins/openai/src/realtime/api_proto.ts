@@ -113,6 +113,10 @@ export type InputAudioTranscription = {
   prompt?: string;
 };
 
+export interface InputAudioNoiseReduction {
+  type?: 'near_field' | 'far_field';
+}
+
 export interface InputTextContent {
   type: 'input_text';
   text: string;
@@ -196,6 +200,7 @@ export interface SessionResource {
   input_audio_format: AudioFormat; // default: "pcm16"
   output_audio_format: AudioFormat; // default: "pcm16"
   input_audio_transcription: InputAudioTranscription | null;
+  input_audio_noise_reduction: InputAudioNoiseReduction | null;
   turn_detection: TurnDetectionType | null;
   tools: Tool[];
   tool_choice: ToolChoice; // default: "auto"
@@ -273,6 +278,7 @@ export interface SessionUpdateEvent extends BaseClientEvent {
     input_audio_format: AudioFormat;
     output_audio_format: AudioFormat;
     input_audio_transcription: InputAudioTranscription | null;
+    input_audio_noise_reduction: InputAudioNoiseReduction | null;
     turn_detection: TurnDetectionType | null;
     tools: Tool[];
     tool_choice: ToolChoice;
