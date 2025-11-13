@@ -278,6 +278,8 @@ export class SpeechStream extends stt.SpeechStream {
           throw new Error(`failed to connect to ElevenLabs after ${retries} attempts: ${e}`);
         }
 
+        ws.removeAllListeners();
+
         const delay = Math.min(retries * 5, 10);
         retries++;
 
