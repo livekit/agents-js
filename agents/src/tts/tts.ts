@@ -157,38 +157,52 @@ export abstract class SynthesizeStream
   }
 
   private async mainTask() {
+    let lastError: unknown;
+
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
         return await this.run();
-      } catch (error) {
+      } catch (error: unknown) {
+        lastError = error;
+
         if (error instanceof APIError) {
           const retryInterval = this._connOptions._intervalForRetry(i);
 
           if (this._connOptions.maxRetry === 0 || !error.retryable) {
-            this.emitError({ error, recoverable: false });
-            throw error;
-          } else if (i === this._connOptions.maxRetry) {
-            this.emitError({ error, recoverable: false });
-            throw new APIConnectionError({
-              message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
-              options: { retryable: false },
-            });
-          } else {
-            // Don't emit error event for recoverable errors during retry loop
-            // to avoid ERR_UNHANDLED_ERROR or premature session termination
+            // Non-retryable error or retries disabled - break immediately
+            break;
+          } else if (i < this._connOptions.maxRetry) {
+            // Retryable error with retries remaining - log and wait
             this.logger.warn(
               { tts: this.#tts.label, attempt: i + 1, error },
-              `failed to synthesize speech, retrying in  ${retryInterval}s`,
+              `failed to synthesize speech, retrying in ${retryInterval}s`,
             );
-          }
 
-          if (retryInterval > 0) {
-            await delay(retryInterval);
+            if (retryInterval > 0) {
+              await delay(retryInterval);
+            }
           }
+          // If i === maxRetry, we break and handle below
         } else {
-          this.emitError({ error: toError(error), recoverable: false });
-          throw error;
+          // Non-APIError - break immediately
+          break;
         }
+      }
+    }
+
+    // Only emit error after all retries are exhausted
+    if (lastError) {
+      const error = toError(lastError);
+      const recoverable = error instanceof APIError && error.retryable;
+      this.emitError({ error, recoverable });
+
+      if (error instanceof APIError && recoverable) {
+        throw new APIConnectionError({
+          message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
+          options: { retryable: false },
+        });
+      } else {
+        throw error;
       }
     }
   }
@@ -385,38 +399,52 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   }
 
   private async mainTask() {
+    let lastError: unknown;
+
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
         return await this.run();
-      } catch (error) {
+      } catch (error: unknown) {
+        lastError = error;
+
         if (error instanceof APIError) {
           const retryInterval = this._connOptions._intervalForRetry(i);
 
           if (this._connOptions.maxRetry === 0 || !error.retryable) {
-            this.emitError({ error, recoverable: false });
-            throw error;
-          } else if (i === this._connOptions.maxRetry) {
-            this.emitError({ error, recoverable: false });
-            throw new APIConnectionError({
-              message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
-              options: { retryable: false },
-            });
-          } else {
-            // Don't emit error event for recoverable errors during retry loop
-            // to avoid ERR_UNHANDLED_ERROR or premature session termination
+            // Non-retryable error or retries disabled - break immediately
+            break;
+          } else if (i < this._connOptions.maxRetry) {
+            // Retryable error with retries remaining - log and wait
             this.logger.warn(
               { tts: this.#tts.label, attempt: i + 1, error },
               `failed to generate TTS completion, retrying in ${retryInterval}s`,
             );
-          }
 
-          if (retryInterval > 0) {
-            await delay(retryInterval);
+            if (retryInterval > 0) {
+              await delay(retryInterval);
+            }
           }
+          // If i === maxRetry, we break and handle below
         } else {
-          this.emitError({ error: toError(error), recoverable: false });
-          throw error;
+          // Non-APIError - break immediately
+          break;
         }
+      }
+    }
+
+    // Only emit error after all retries are exhausted
+    if (lastError) {
+      const error = toError(lastError);
+      const recoverable = error instanceof APIError && error.retryable;
+      this.emitError({ error, recoverable });
+
+      if (error instanceof APIError && recoverable) {
+        throw new APIConnectionError({
+          message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
+          options: { retryable: false },
+        });
+      } else {
+        throw error;
       }
     }
   }
