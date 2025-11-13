@@ -42,4 +42,5 @@ export const initializeLogger = ({ pretty, level }: LoggerOptions) => {
   if (level) {
     logger.level = level;
   }
+  // TODO(brian): PR4 - Add Pino bridge to OTEL LoggingHandler for structured logging integration
 };

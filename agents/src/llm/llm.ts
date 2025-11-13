@@ -136,8 +136,10 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   }
 
   private async mainTask() {
+    // TODO(brian): PR3 - Add span wrapping: tracer.startActiveSpan('llm_request', ..., { endOnExit: false })
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
+        // TODO(brian): PR3 - Add span for retry attempts: tracer.startActiveSpan('llm_request_run', ...)
         return await this.run();
       } catch (error) {
         if (error instanceof APIError) {

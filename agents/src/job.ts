@@ -81,6 +81,8 @@ export class FunctionExistsError extends Error {
 }
 
 /** The job and environment context as seen by the agent, accessible by the entrypoint function. */
+// TODO(brian): PR3 - Add @tracer.startActiveSpan('job_entrypoint') wrapper in entrypoint
+// TODO(brian): PR5 - Add uploadSessionReport() call in cleanup/session end
 export class JobContext {
   #proc: JobProcess;
   #info: RunningJobInfo;
@@ -245,6 +247,7 @@ export class JobContext {
     }
 
     // TODO(brian): implement and check recorder io
+    // TODO(brian): PR5 - Ensure chat history serialization includes all required fields (use sessionReportToJSON helper)
 
     return createSessionReport({
       jobId: this.job.id,
@@ -267,7 +270,8 @@ export class JobContext {
 
     // TODO(brian): Implement CLI/console
 
-    // TODO(brian): Implement session report upload to LiveKit Cloud
+    // TODO(brian): PR5 - Call uploadSessionReport() if report.enableUserDataTraining is true
+    // TODO(brian): PR5 - Upload includes: multipart form with header (protobuf), chat_history (JSON), and audio recording (if available)
 
     this.#logger.debug('Session ended, report generated', {
       jobId: report.jobId,
