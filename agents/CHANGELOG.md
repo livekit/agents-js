@@ -1,5 +1,17 @@
 # @livekit/agents
 
+## 1.0.18
+
+### Patch Changes
+
+- bump openai to 6.x - [#813](https://github.com/livekit/agents-js/pull/813) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Emit away events for User - [#801](https://github.com/livekit/agents-js/pull/801) ([@paulheinrichs-jb](https://github.com/paulheinrichs-jb))
+
+- Support openai half-duplex mode (audio in -> text out -> custom TTS model) - [#814](https://github.com/livekit/agents-js/pull/814) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Support strict tool schema for openai-competible model - [#816](https://github.com/livekit/agents-js/pull/816) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.17
 
 ### Patch Changes
