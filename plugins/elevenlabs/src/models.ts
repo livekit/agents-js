@@ -21,3 +21,50 @@ export type TTSEncoding =
   // | 'mp3_44100_128'
   // | 'mp3_44100_192'
   'pcm_16000' | 'pcm_22050' | 'pcm_44100';
+
+export type STTModels = 'scribe_v1' | 'scribe_v2' | 'scribe_v2_realtime';
+
+export type STTAudioFormat = 'pcm_16000' | 'pcm_22050' | 'pcm_44100';
+
+export type STTCommitStrategy = 'vad' | 'manual';
+
+export type STTLanguages =
+  | 'en'
+  | 'es'
+  | 'fr'
+  | 'de'
+  | 'it'
+  | 'pt'
+  | 'pl'
+  | 'nl'
+  | 'sv'
+  | 'fi'
+  | 'da'
+  | 'no'
+  | 'cs'
+  | 'ro'
+  | 'sk'
+  | 'uk'
+  | 'el'
+  | 'tr'
+  | 'ru'
+  | 'bg'
+  | 'hr'
+  | 'sr'
+  | 'hu'
+  | 'lt'
+  | 'lv'
+  | 'et'
+  | 'ja'
+  | 'zh'
+  | 'ko'
+  | 'hi'
+  | 'ar'
+  | 'fa'
+  | 'he'
+  | 'id'
+  | 'ms'
+  | 'th'
+  | 'vi'
+  | 'ta'
+  | 'ur';
