@@ -269,6 +269,9 @@ export class SpeechStream extends stt.SpeechStream {
           ws.on('close', (code) => reject(`WebSocket returned ${code}`));
         });
 
+        // on success reset retries
+        retries = 0;
+
         await this.#runWS(ws);
       } catch (e) {
         if (retries >= maxRetry) {
@@ -279,7 +282,7 @@ export class SpeechStream extends stt.SpeechStream {
         retries++;
 
         this.#logger.warn(
-          `failed to connect to ElevenLabs, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
+          `STT: failed to connect to ElevenLabs, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
         );
         await new Promise((resolve) => setTimeout(resolve, delay * 1000));
       }
@@ -291,17 +294,6 @@ export class SpeechStream extends stt.SpeechStream {
   async #runWS(ws: WebSocket) {
     let closing = false;
 
-    const keepalive = setInterval(() => {
-      try {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ message_type: 'keepalive' }));
-        }
-      } catch {
-        clearInterval(keepalive);
-        return;
-      }
-    }, 5000);
-
     const sendTask = async () => {
       const samples100Ms = Math.floor(this.#opts.sampleRate / 10);
       const stream = new AudioByteStream(
@@ -310,6 +302,7 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
+      let frame_count = 0;
       for await (const data of this.input) {
         let frames: AudioFrame[];
         if (data === SpeechStream.FLUSH_SENTINEL) {
@@ -349,6 +342,11 @@ export class SpeechStream extends stt.SpeechStream {
             );
           }
           frames = stream.write(data.data.buffer);
+          frame_count += frames.length;
+
+          if (frame_count % 100 == 0) {
+            this.#logger.debug(`STT: Sent ${frame_count} audio frames`);
+          }
 
           for (const frame of frames) {
             const audioB64 = Buffer.from(frame.data.buffer).toString('base64');
@@ -364,26 +362,36 @@ export class SpeechStream extends stt.SpeechStream {
         }
       }
 
+      this.#logger.info(`STT: Send task complete, sent ${frame_count} total frames`);
       closing = true;
     };
 
-    const wsMonitor = new Promise<void>((_, reject) =>
+    const wsMonitor = new Promise<void>((resolve, reject) =>
       ws.once('close', (code, reason) => {
+        console.log('code', code, reason);
         if (!closing) {
-          this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+          this.#logger.error(`STT: WebSocket closed unexpectedly with code ${code}: ${reason}`);
           reject(new Error('WebSocket closed'));
+        } else {
+          this.#logger.error(`STT: WebSocket closed normally ${code}: ${reason}`);
+          resolve();
         }
       }),
     );
 
     const listenTask = async () => {
-      await new Promise<void>((resolve) => {
+      await new Promise<void>((resolve, reject) => {
         ws.on('message', (msg) => {
-          const json = JSON.parse(msg.toString());
-          this.#processStreamEvent(json);
+          try {
+            const json = JSON.parse(msg.toString());
+            this.#processStreamEvent(json);
 
-          if (this.closed || closing) {
-            resolve();
+            if (this.closed || closing) {
+              resolve();
+            }
+          } catch (err) {
+            this.#logger.error(`STT: Error processing message: ${msg}`);
+            reject(err);
           }
         });
       });
@@ -392,7 +400,6 @@ export class SpeechStream extends stt.SpeechStream {
     await Promise.all([sendTask(), listenTask(), wsMonitor]);
     closing = true;
     ws.close();
-    clearInterval(keepalive);
   }
 
   #processStreamEvent(data: any) {
@@ -463,9 +470,11 @@ export class SpeechStream extends stt.SpeechStream {
       }
     } else if (messageType === 'session_started') {
       const sessionId = data.session_id || 'unknown';
-      this.#logger.info(`ElevenLabs session started with ID: ${sessionId}`);
+      this.#logger.info(`STT: ElevenLabs session started with ID: ${sessionId}`);
+    } else if (messageType === 'input_error') {
+      this.#logger.error(`STT: Input Error received: ${data.error}. We ignore this for now.`);
     } else {
-      this.#logger.warn(`Unknown message type: ${messageType}`);
+      this.#logger.warn(`STT: Unknown message type: ${messageType}`);
     }
   }
 }
