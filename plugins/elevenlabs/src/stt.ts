@@ -296,6 +296,17 @@ export class SpeechStream extends stt.SpeechStream {
   async #runWS(ws: WebSocket) {
     let closing = false;
 
+    const keepalive = setInterval(() => {
+      try {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.ping();
+        }
+      } catch {
+        clearInterval(keepalive);
+        return;
+      }
+    }, 5000);
+
     const sendTask = async () => {
       const samples100Ms = Math.floor(this.#opts.sampleRate / 10);
       const stream = new AudioByteStream(
@@ -402,6 +413,7 @@ export class SpeechStream extends stt.SpeechStream {
     await Promise.all([sendTask(), listenTask(), wsMonitor]);
     closing = true;
     ws.close();
+    clearInterval(keepalive);
   }
 
   #processStreamEvent(data: any) {
