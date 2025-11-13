@@ -258,13 +258,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       const url = `${baseURL}/stt`;
       const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
 
-      this.#logger.debug(
-        {
-          url,
-          baseURL: this.opts.baseURL,
-        },
-        'connecting to inference STT WebSocket',
-      );
       const socket = await connectWs(url, headers, 10000);
       const msg = { ...params, type: 'session.create' };
       socket.send(JSON.stringify(msg));
