@@ -1578,6 +1578,8 @@ function livekitItemToOpenAIItem(item: llm.ChatItem): api_proto.ItemResource {
         role,
         content: contentList,
       } as api_proto.UserItem;
+    default:
+      throw new Error(`Unsupported item type: ${(item as any).type}`);
   }
 }
 
