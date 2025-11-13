@@ -12,7 +12,10 @@ import { z } from 'zod';
  * Background audio could make the agent feel more realistic, versus perfect silence
  * in the background.
  *
- * NOTE: Thinking sound is not yet supported (requires AudioMixer implementation)
+ * This example demonstrates:
+ * - Ambient background sound (office ambience) playing continuously
+ * - Thinking sound (keyboard typing) that plays when the agent is processing/thinking
+ * - Multiple sounds can play simultaneously via AudioMixer
  */
 
 export default defineAgent({
@@ -47,11 +50,12 @@ export default defineAgent({
 
     const backgroundAudio = new voice.BackgroundAudioPlayer({
       ambientSound: voice.BuiltinAudioClip.OFFICE_AMBIENCE,
-      // TODO: Thinking sound not yet supported
-      // thinkingSound: [
-      //   { source: voice.BuiltinAudioClip.KEYBOARD_TYPING, volume: 0.8 },
-      //   { source: voice.BuiltinAudioClip.KEYBOARD_TYPING2, volume: 0.7 },
-      // ],
+      // Thinking sound will play when the agent enters 'thinking' state (e.g., during tool calls)
+      // Multiple sounds with different probabilities/volumes can be provided
+      thinkingSound: [
+        { source: voice.BuiltinAudioClip.KEYBOARD_TYPING, volume: 0.8, probability: 0.6 },
+        { source: voice.BuiltinAudioClip.KEYBOARD_TYPING2, volume: 0.7, probability: 0.4 },
+      ],
     });
 
     await backgroundAudio.start({ room: ctx.room, agentSession: session });
