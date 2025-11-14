@@ -14,7 +14,7 @@ import {
   type TTSModelString,
 } from '../inference/index.js';
 import { getJobContext } from '../job.js';
-import { ChatContext, ChatMessage } from '../llm/chat_context.js';
+import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
@@ -26,6 +26,7 @@ import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import {
+  type AgentEvent,
   AgentSessionEventTypes,
   type AgentState,
   type AgentStateChangedEvent,
@@ -127,6 +128,9 @@ export class AgentSession<
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
 
+  /** @internal */
+  _recordedEvents: AgentEvent[] = [];
+
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
 
@@ -174,6 +178,15 @@ export class AgentSession<
     this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed.bind(this));
   }
 
+  emit<K extends keyof AgentSessionCallbacks>(
+    event: K,
+    ...args: Parameters<AgentSessionCallbacks[K]>
+  ): boolean {
+    const eventData = args[0] as AgentEvent;
+    this._recordedEvents.push(eventData);
+    return super.emit(event, ...args);
+  }
+
   get input(): AgentInput {
     return this._input;
   }
@@ -199,15 +212,20 @@ export class AgentSession<
   }
 
   async start({
+    // TODO(brian): PR2 - Add setupCloudTracer() call if on LiveKit Cloud with recording enabled
+    // TODO(brian): PR3 - Add span: this._sessionSpan = tracer.startSpan('agent_session'), store as instance property
+    // TODO(brian): PR4 - Add setupCloudLogger() call in setupCloudTracer() to setup OTEL logging with Pino bridge
     agent,
     room,
     inputOptions,
     outputOptions,
+    record = true,
   }: {
     agent: Agent;
     room: Room;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
+    record?: boolean;
   }): Promise<void> {
     if (this.started) {
       return;
@@ -247,6 +265,17 @@ export class AgentSession<
       this.logger.debug('Auto-connecting to room via job context');
       tasks.push(ctx.connect());
     }
+
+    if (record) {
+      if (ctx._primaryAgentSession === undefined) {
+        ctx._primaryAgentSession = this;
+      } else {
+        throw new Error(
+          'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use session.start(record=False).',
+        );
+      }
+    }
+
     // TODO(AJS-265): add shutdown callback to job context
     tasks.push(this.updateActivity(this.agent));
 
@@ -341,6 +370,8 @@ export class AgentSession<
     // TODO(AJS-129): add lock to agent activity core lifecycle
     this.nextActivity = new AgentActivity(agent, this);
 
+    const previousActivity = this.activity;
+
     if (this.activity) {
       await this.activity.drain();
       await this.activity.close();
@@ -348,6 +379,14 @@ export class AgentSession<
 
     this.activity = this.nextActivity;
     this.nextActivity = undefined;
+
+    this._chatCtx.insert(
+      new AgentHandoffItem({
+        oldAgentId: previousActivity?.agent.id,
+        newAgentId: agent.id,
+      }),
+    );
+    this.logger.debug({ previousActivity, agent }, 'Agent handoff inserted into chat context');
 
     await this.activity.start();
 
@@ -419,6 +458,8 @@ export class AgentSession<
       return;
     }
 
+    // TODO(brian): PR3 - Add span: if state === 'speaking' && !this._agentSpeakingSpan, create tracer.startSpan('agent_speaking') with participant attributes
+    // TODO(brian): PR3 - Add span: if state !== 'speaking' && this._agentSpeakingSpan, end and clear this._agentSpeakingSpan
     const oldState = this._agentState;
     this._agentState = state;
 
@@ -441,6 +482,8 @@ export class AgentSession<
       return;
     }
 
+    // TODO(brian): PR3 - Add span: if state === 'speaking' && !this._userSpeakingSpan, create tracer.startSpan('user_speaking') with participant attributes
+    // TODO(brian): PR3 - Add span: if state !== 'speaking' && this._userSpeakingSpan, end and clear this._userSpeakingSpan
     const oldState = this.userState;
     this.userState = state;
 

@@ -300,7 +300,59 @@ export class FunctionCallOutput {
   }
 }
 
-export type ChatItem = ChatMessage | FunctionCall | FunctionCallOutput;
+export class AgentHandoffItem {
+  readonly id: string;
+
+  readonly type = 'agent_handoff' as const;
+
+  oldAgentId: string | undefined;
+
+  newAgentId: string;
+
+  createdAt: number;
+
+  constructor(params: {
+    oldAgentId?: string;
+    newAgentId: string;
+    id?: string;
+    createdAt?: number;
+  }) {
+    const { oldAgentId, newAgentId, id = shortuuid('item_'), createdAt = Date.now() } = params;
+    this.id = id;
+    this.oldAgentId = oldAgentId;
+    this.newAgentId = newAgentId;
+    this.createdAt = createdAt;
+  }
+
+  static create(params: {
+    oldAgentId?: string;
+    newAgentId: string;
+    id?: string;
+    createdAt?: number;
+  }) {
+    return new AgentHandoffItem(params);
+  }
+
+  toJSON(excludeTimestamp: boolean = false): JSONValue {
+    const result: JSONValue = {
+      id: this.id,
+      type: this.type,
+      newAgentId: this.newAgentId,
+    };
+
+    if (this.oldAgentId !== undefined) {
+      result.oldAgentId = this.oldAgentId;
+    }
+
+    if (!excludeTimestamp) {
+      result.createdAt = this.createdAt;
+    }
+
+    return result;
+  }
+}
+
+export type ChatItem = ChatMessage | FunctionCall | FunctionCallOutput | AgentHandoffItem;
 
 export class ChatContext {
   protected _items: ChatItem[];

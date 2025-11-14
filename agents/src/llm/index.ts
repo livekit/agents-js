@@ -17,6 +17,7 @@ export {
 } from './tool_context.js';
 
 export {
+  AgentHandoffItem,
   ChatContext,
   ChatMessage,
   createAudioContent,

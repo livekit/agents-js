@@ -4,7 +4,12 @@
 import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../../log.js';
-import { ChatContext, FunctionCall, FunctionCallOutput } from '../chat_context.js';
+import {
+  AgentHandoffItem,
+  ChatContext,
+  FunctionCall,
+  FunctionCallOutput,
+} from '../chat_context.js';
 import { serializeImage } from '../utils.js';
 import { toChatCtx } from './google.js';
 
@@ -765,6 +770,72 @@ describe('Google Provider Format - toChatCtx', () => {
       {
         role: 'user',
         parts: [{ text: 'First part' }, { text: 'Second part' }],
+      },
+    ]);
+    expect(formatData.systemMessages).toBeNull();
+  });
+
+  it('should filter out agent handoff items', async () => {
+    const ctx = ChatContext.empty();
+
+    ctx.addMessage({ role: 'user', content: 'Hello' });
+
+    // Insert an agent handoff item
+    const handoff = new AgentHandoffItem({
+      oldAgentId: 'agent_1',
+      newAgentId: 'agent_2',
+    });
+    ctx.insert(handoff);
+
+    ctx.addMessage({ role: 'assistant', content: 'Hi there!' });
+
+    const [result, formatData] = await toChatCtx(ctx, false);
+
+    // Agent handoff should be filtered out, only messages should remain
+    expect(result).toEqual([
+      {
+        role: 'user',
+        parts: [{ text: 'Hello' }],
+      },
+      {
+        role: 'model',
+        parts: [{ text: 'Hi there!' }],
+      },
+    ]);
+    expect(formatData.systemMessages).toBeNull();
+  });
+
+  it('should handle multiple agent handoffs without errors', async () => {
+    const ctx = ChatContext.empty();
+
+    ctx.addMessage({ role: 'user', content: 'Start' });
+
+    // Multiple handoffs
+    ctx.insert(new AgentHandoffItem({ oldAgentId: undefined, newAgentId: 'agent_1' }));
+    ctx.addMessage({ role: 'assistant', content: 'Response from agent 1' });
+
+    ctx.insert(new AgentHandoffItem({ oldAgentId: 'agent_1', newAgentId: 'agent_2' }));
+    ctx.addMessage({ role: 'assistant', content: 'Response from agent 2' });
+
+    ctx.insert(new AgentHandoffItem({ oldAgentId: 'agent_2', newAgentId: 'agent_3' }));
+    ctx.addMessage({ role: 'assistant', content: 'Response from agent 3' });
+
+    const [result, formatData] = await toChatCtx(ctx, false);
+
+    // All handoffs should be filtered out
+    // Note: Google provider groups consecutive messages by the same role
+    expect(result).toEqual([
+      {
+        role: 'user',
+        parts: [{ text: 'Start' }],
+      },
+      {
+        role: 'model',
+        parts: [
+          { text: 'Response from agent 1' },
+          { text: 'Response from agent 2' },
+          { text: 'Response from agent 3' },
+        ],
       },
     ]);
     expect(formatData.systemMessages).toBeNull();

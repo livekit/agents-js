@@ -157,8 +157,10 @@ export abstract class SynthesizeStream
   }
 
   private async mainTask() {
+    // TODO(brian): PR3 - Add span wrapping: tracer.startActiveSpan('tts_request', ..., { endOnExit: false })
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
+        // TODO(brian): PR3 - Add span for retry attempts: tracer.startActiveSpan('tts_request_run', ...)
         return await this.run();
       } catch (error) {
         if (error instanceof APIError) {
@@ -385,8 +387,10 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   }
 
   private async mainTask() {
+    // TODO(brian): PR3 - Add span wrapping: tracer.startActiveSpan('tts_request', ..., { endOnExit: false })
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
+        // TODO(brian): PR3 - Add span for retry attempts: tracer.startActiveSpan('tts_request_run', ...)
         return await this.run();
       } catch (error) {
         if (error instanceof APIError) {

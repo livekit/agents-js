@@ -190,3 +190,7 @@ docs
 agents-js.code-workspace
 
 examples/src/test_*.ts
+
+# Ignore all markdown files except root README
+*.md
+!README.md

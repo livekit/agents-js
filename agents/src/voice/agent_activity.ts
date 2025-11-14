@@ -202,6 +202,8 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async start(): Promise<void> {
+    // TODO(brian): PR3 - Add span: startSpan = tracer.startSpan('start_agent_activity', { attributes: { 'lk.agent_label': this.agent.label } })
+    // TODO(brian): PR3 - Wrap prewarm calls with trace.useSpan(startSpan, endOnExit: false)
     const unlock = await this.lock.lock();
     try {
       this.agent._agentActivity = this;
@@ -289,6 +291,7 @@ export class AgentActivity implements RecognitionHooks {
       this.started = true;
 
       this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
+      // TODO(brian): PR3 - Wrap onEnter with tracer.startActiveSpan('on_enter', { attributes: { 'lk.agent_label': this.agent.label }, context: startSpan context })
       this.createSpeechTask({
         task: Task.from(() => this.agent.onEnter()),
         name: 'AgentActivity_onEnter',
@@ -1251,6 +1254,7 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  // TODO(brian): PR3 - Wrap entire pipelineReplyTask() method with tracer.startActiveSpan('agent_turn')
   private async pipelineReplyTask(
     speechHandle: SpeechHandle,
     chatCtx: ChatContext,
@@ -2092,12 +2096,14 @@ export class AgentActivity implements RecognitionHooks {
     this.wakeupMainTask();
   }
 
+  // TODO(brian): PR3 - Wrap entire drain() method with tracer.startActiveSpan('drain_agent_activity', { attributes: { 'lk.agent_label': this.agent.label } })
   async drain(): Promise<void> {
     const unlock = await this.lock.lock();
     try {
       if (this._draining) return;
 
       this.cancelPreemptiveGeneration();
+      // TODO(brian): PR3 - Wrap onExit with tracer.startActiveSpan('on_exit', { attributes: { 'lk.agent_label': this.agent.label } })
       this.createSpeechTask({
         task: Task.from(() => this.agent.onExit()),
         name: 'AgentActivity_onExit',
