@@ -3,12 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import type { Span } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
+// Ref: Python tts.py lines 15-16 imports telemetry for span instrumentation
+import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { AsyncIterableQueue, delay, mergeFrames, startSoon, toError } from '../utils.js';
 
@@ -130,6 +133,8 @@ export abstract class SynthesizeStream
   #monitorMetricsTask?: Promise<void>;
   private _connOptions: APIConnectOptions;
   protected abortController = new AbortController();
+  // Ref: Python tts.py line 219 - Store span for setting attributes and ending later
+  #ttsRequestSpan?: Span;
 
   private deferredInputStream: DeferredReadableStream<
     string | typeof SynthesizeStream.FLUSH_SENTINEL
@@ -156,44 +161,68 @@ export abstract class SynthesizeStream
     startSoon(() => this.mainTask().then(() => this.queue.close()));
   }
 
-  private async mainTask() {
-    // TODO(brian): PR3 - Add span wrapping: tracer.startActiveSpan('tts_request', ..., { endOnExit: false })
-    for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
-      try {
-        // TODO(brian): PR3 - Add span for retry attempts: tracer.startActiveSpan('tts_request_run', ...)
-        return await this.run();
-      } catch (error) {
-        if (error instanceof APIError) {
-          const retryInterval = this._connOptions._intervalForRetry(i);
+  // Ref: Python tts.py lines 364-365 (streaming) or 241-242 (non-streaming) - Create 'tts_request' span with endOnExit=False
+  private mainTask = async () =>
+    tracer.startActiveSpan(
+      async (span) => {
+        this.#ttsRequestSpan = span;
+        // Ref: Python tts.py lines 369-373 (streaming) or 244-248 (non-streaming) - Set TTS attributes
+        span.setAttributes({
+          [traceTypes.ATTR_TTS_STREAMING]: true,
+          [traceTypes.ATTR_TTS_LABEL]: this.#tts.label,
+        });
 
-          if (this._connOptions.maxRetry === 0 || !error.retryable) {
-            this.emitError({ error, recoverable: false });
-            throw error;
-          } else if (i === this._connOptions.maxRetry) {
-            this.emitError({ error, recoverable: false });
-            throw new APIConnectionError({
-              message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
-              options: { retryable: false },
-            });
-          } else {
-            // Don't emit error event for recoverable errors during retry loop
-            // to avoid ERR_UNHANDLED_ERROR or premature session termination
-            this.logger.warn(
-              { tts: this.#tts.label, attempt: i + 1, error },
-              `failed to synthesize speech, retrying in  ${retryInterval}s`,
+        for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
+          try {
+            // Ref: Python tts.py lines 376-383 (streaming) or 254-260 (non-streaming) - Create 'tts_request_run' span for each retry attempt
+            return await tracer.startActiveSpan(
+              async (attemptSpan) => {
+                // Ref: Python tts.py line 377 (streaming) or 255 (non-streaming) - Set retry count attribute
+                attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
+                try {
+                  return await this.run();
+                } catch (error) {
+                  // Ref: Python tts.py line 381 (streaming) or 259 (non-streaming) - Record exception on span
+                  recordException(attemptSpan, toError(error));
+                  throw error;
+                }
+              },
+              { name: 'tts_request_run' },
             );
-          }
+          } catch (error) {
+            if (error instanceof APIError) {
+              const retryInterval = this._connOptions._intervalForRetry(i);
 
-          if (retryInterval > 0) {
-            await delay(retryInterval);
+              if (this._connOptions.maxRetry === 0 || !error.retryable) {
+                this.emitError({ error, recoverable: false });
+                throw error;
+              } else if (i === this._connOptions.maxRetry) {
+                this.emitError({ error, recoverable: false });
+                throw new APIConnectionError({
+                  message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
+                  options: { retryable: false },
+                });
+              } else {
+                // Don't emit error event for recoverable errors during retry loop
+                // to avoid ERR_UNHANDLED_ERROR or premature session termination
+                this.logger.warn(
+                  { tts: this.#tts.label, attempt: i + 1, error },
+                  `failed to synthesize speech, retrying in  ${retryInterval}s`,
+                );
+              }
+
+              if (retryInterval > 0) {
+                await delay(retryInterval);
+              }
+            } else {
+              this.emitError({ error: toError(error), recoverable: false });
+              throw error;
+            }
           }
-        } else {
-          this.emitError({ error: toError(error), recoverable: false });
-          throw error;
         }
-      }
-    }
-  }
+      },
+      { name: 'tts_request', endOnExit: false },
+    );
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
     this.#tts.emit('error', {
@@ -252,6 +281,10 @@ export abstract class SynthesizeStream
           label: this.#tts.label,
           streamed: false,
         };
+        // Ref: Python tts.py lines 475-478 - Set TTS metrics attribute on span
+        if (this.#ttsRequestSpan) {
+          this.#ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
+        }
         this.#tts.emit('metrics_collected', metrics);
       }
     };
@@ -275,6 +308,12 @@ export abstract class SynthesizeStream
 
     if (requestId) {
       emit();
+    }
+
+    // Ref: Python tts.py lines 468-470 (streaming) - End the span when metrics collection is complete
+    if (this.#ttsRequestSpan) {
+      this.#ttsRequestSpan.end();
+      this.#ttsRequestSpan = undefined;
     }
   }
 

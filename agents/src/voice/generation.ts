@@ -21,6 +21,8 @@ import {
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
+// Ref: Python generation.py lines 17-18 - Import telemetry for span instrumentation
+import { traceTypes, tracer } from '../telemetry/index.js';
 import { Future, Task, shortuuid, toError } from '../utils.js';
 import { type Agent, type ModelSettings, asyncLocalStorage, isStopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
@@ -788,36 +790,64 @@ export function performToolExecutions({
         });
       });
 
-      const tracableToolExecution = async (toolExecTask: Promise<unknown>) => {
-        // TODO(brian): add tracing
+      // Ref: Python generation.py lines 544-575 - Wrap tool execution with 'function_tool' span
+      const tracableToolExecution = (toolExecTask: Promise<unknown>) =>
+        tracer.startActiveSpan(
+          async (span) => {
+            // Ref: Python generation.py lines 549-552 - Set function tool name and arguments attributes
+            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
+            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
 
-        // await for task to complete, if task is aborted, set exception
-        let toolOutput: ToolExecutionOutput | undefined;
-        try {
-          const { result, isAborted } = await waitUntilAborted(toolExecTask, signal);
-          toolOutput = createToolOutput({
-            toolCall,
-            exception: isAborted ? new Error('tool call was aborted') : undefined,
-            output: isAborted ? undefined : result,
-          });
-        } catch (rawError) {
-          logger.error(
-            {
-              function: toolCall.name,
-              speech_id: speechHandle.id,
-              error: toError(rawError).message,
-            },
-            'exception occurred while executing tool',
-          );
-          toolOutput = createToolOutput({
-            toolCall,
-            exception: toError(rawError),
-          });
-        } finally {
-          if (!toolOutput) throw new Error('toolOutput is undefined');
-          toolCompleted(toolOutput);
-        }
-      };
+            // await for task to complete, if task is aborted, set exception
+            let toolOutput: ToolExecutionOutput | undefined;
+            try {
+              const { result, isAborted } = await waitUntilAborted(toolExecTask, signal);
+              toolOutput = createToolOutput({
+                toolCall,
+                exception: isAborted ? new Error('tool call was aborted') : undefined,
+                output: isAborted ? undefined : result,
+              });
+
+              // Ref: Python generation.py lines 567-572 - Set tool output and error attributes
+              if (toolOutput.toolCallOutput) {
+                span.setAttribute(
+                  traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
+                  toolOutput.toolCallOutput.output,
+                );
+                span.setAttribute(
+                  traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR,
+                  toolOutput.toolCallOutput.isError,
+                );
+              }
+            } catch (rawError) {
+              logger.error(
+                {
+                  function: toolCall.name,
+                  speech_id: speechHandle.id,
+                  error: toError(rawError).message,
+                },
+                'exception occurred while executing tool',
+              );
+              toolOutput = createToolOutput({
+                toolCall,
+                exception: toError(rawError),
+              });
+
+              // Ref: Python generation.py lines 567-572 - Set error attributes
+              if (toolOutput.toolCallOutput) {
+                span.setAttribute(
+                  traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
+                  toolOutput.toolCallOutput.output,
+                );
+                span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, true);
+              }
+            } finally {
+              if (!toolOutput) throw new Error('toolOutput is undefined');
+              toolCompleted(toolOutput);
+            }
+          },
+          { name: 'function_tool' },
+        );
 
       // wait, not cancelling all tool calling tasks
       tasks.push(tracableToolExecution(toolExecution));

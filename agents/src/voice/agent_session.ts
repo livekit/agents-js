@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import type { Context, Span } from '@opentelemetry/api';
+import { context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import {
@@ -20,6 +22,8 @@ import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
+// Ref: Python agent_session.py lines 30-31 - Import telemetry for span instrumentation
+import { traceTypes, tracer } from '../telemetry/index.js';
 import type { TTS, TTSError } from '../tts/tts.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
@@ -128,6 +132,10 @@ export class AgentSession<
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
 
+  // Ref: Python agent_session.py line 264 - Store session span for lifecycle management
+  private sessionSpan?: Span;
+  private rootSpanContext?: Context;
+
   /** @internal */
   _recordedEvents: AgentEvent[] = [];
 
@@ -213,7 +221,6 @@ export class AgentSession<
 
   async start({
     // TODO(brian): PR2 - Add setupCloudTracer() call if on LiveKit Cloud with recording enabled
-    // TODO(brian): PR3 - Add span: this._sessionSpan = tracer.startSpan('agent_session'), store as instance property
     // TODO(brian): PR4 - Add setupCloudLogger() call in setupCloudTracer() to setup OTEL logging with Pino bridge
     agent,
     room,
@@ -229,6 +236,16 @@ export class AgentSession<
   }): Promise<void> {
     if (this.started) {
       return;
+    }
+
+    // Ref: Python agent_session.py line 519 - Create agent_session span
+    this.sessionSpan = tracer.startSpan({ name: 'agent_session' });
+    this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
+
+    // Ref: Python agent_session.py lines 527-528 - Get current span and set agent label (agent.id in TS, agent.label in Python)
+    const currentSpan = trace.getSpan(this.rootSpanContext);
+    if (currentSpan) {
+      currentSpan.setAttribute(traceTypes.ATTR_AGENT_LABEL, agent.id);
     }
 
     this.agent = agent;
@@ -584,12 +601,19 @@ export class AgentSession<
     await this.activity?.close();
     this.activity = undefined;
 
+    // Ref: Python agent_session.py lines 813-815 - End session span
+    if (this.sessionSpan) {
+      this.sessionSpan.end();
+      this.sessionSpan = undefined;
+    }
+
     this.started = false;
 
     this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
 
     this.userState = 'listening';
     this._agentState = 'initializing';
+    this.rootSpanContext = undefined;
 
     this.logger.info({ reason, error }, 'AgentSession closed');
   }

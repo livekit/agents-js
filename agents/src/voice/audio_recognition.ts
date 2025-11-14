@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
+import type { Span } from '@opentelemetry/api';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
 import { type ChatContext } from '../llm/chat_context.js';
@@ -10,6 +11,8 @@ import { DeferredReadableStream, isStreamReaderReleaseError } from '../stream/de
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+// Ref: Python audio_recognition.py lines 18-19 - Import telemetry for span instrumentation
+import { traceTypes, tracer } from '../telemetry/index.js';
 import { Task, delay } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
@@ -57,7 +60,6 @@ export interface AudioRecognitionOptions {
   maxEndpointingDelay: number;
 }
 
-// TODO(brian): PR3 - Add span: private _userTurnSpan?: Span, create lazily in _ensureUserTurnSpan() method (tracer.startSpan('user_turn') with participant attributes)
 // TODO(brian): PR3 - Add span: 'eou_detection' span when running EOU detection (in runEOUDetection method)
 export class AudioRecognition {
   private hooks: RecognitionHooks;
@@ -81,6 +83,9 @@ export class AudioRecognition {
   private userTurnCommitted = false;
   private speaking = false;
   private sampleRate?: number;
+
+  // Ref: Python audio_recognition.py line 660 - Store user_turn span for lifecycle management
+  private userTurnSpan?: Span;
 
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
@@ -430,6 +435,18 @@ export class AudioRecognition {
         });
 
         if (committed) {
+          // Ref: Python audio_recognition.py lines 573-582 - Set span attributes and end user_turn span
+          if (this.userTurnSpan) {
+            this.userTurnSpan.setAttributes({
+              [traceTypes.ATTR_USER_TRANSCRIPT]: this.audioTranscript,
+              [traceTypes.ATTR_TRANSCRIPT_CONFIDENCE]: confidenceAvg,
+              [traceTypes.ATTR_TRANSCRIPTION_DELAY]: transcriptionDelay ?? 0,
+              [traceTypes.ATTR_END_OF_TURN_DELAY]: endOfUtteranceDelay ?? 0,
+            });
+            this.userTurnSpan.end();
+            this.userTurnSpan = undefined;
+          }
+
           // clear the transcript if the user turn was committed
           this.audioTranscript = '';
           this.finalTranscriptConfidence = [];
@@ -536,6 +553,11 @@ export class AudioRecognition {
             this.logger.debug('VAD task: START_OF_SPEECH');
             this.hooks.onStartOfSpeech(ev);
             this.speaking = true;
+
+            // Ref: Python audio_recognition.py line 660 - Create user_turn span when speech starts
+            if (!this.userTurnSpan) {
+              this.userTurnSpan = tracer.startSpan({ name: 'user_turn' });
+            }
 
             // Capture sample rate from the first VAD event if not already set
             if (ev.frames.length > 0 && ev.frames[0]) {

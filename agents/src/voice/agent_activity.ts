@@ -24,6 +24,7 @@ import {
 import type { LLMError } from '../llm/llm.js';
 import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
+// Ref: Python agent_activity.py lines 17-18 - Import telemetry for span instrumentation
 import type {
   EOUMetrics,
   LLMMetrics,
@@ -34,6 +35,7 @@ import type {
 } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
+import { traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
 import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
@@ -1254,8 +1256,8 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  // TODO(brian): PR3 - Wrap entire pipelineReplyTask() method with tracer.startActiveSpan('agent_turn')
-  private async pipelineReplyTask(
+  // Ref: Python agent_activity.py line 1673 - Wrap with 'agent_turn' span via decorator
+  private pipelineReplyTask = async (
     speechHandle: SpeechHandle,
     chatCtx: ChatContext,
     toolCtx: ToolContext,
@@ -1264,345 +1266,359 @@ export class AgentActivity implements RecognitionHooks {
     instructions?: string,
     newMessage?: ChatMessage,
     toolsMessages?: ChatItem[],
-  ): Promise<void> {
-    speechHandleStorage.enterWith(speechHandle);
+  ): Promise<void> =>
+    tracer.startActiveSpan(
+      async (span) => {
+        // Ref: Python agent_activity.py lines 1689-1694 - Set span attributes
+        span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
+        if (instructions) {
+          span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, instructions);
+        }
+        if (newMessage) {
+          span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.textContent || '');
+        }
 
-    const audioOutput = this.agentSession.output.audioEnabled
-      ? this.agentSession.output.audio
-      : null;
-    const transcriptionOutput = this.agentSession.output.transcriptionEnabled
-      ? this.agentSession.output.transcription
-      : null;
+        speechHandleStorage.enterWith(speechHandle);
 
-    chatCtx = chatCtx.copy();
+        const audioOutput = this.agentSession.output.audioEnabled
+          ? this.agentSession.output.audio
+          : null;
+        const transcriptionOutput = this.agentSession.output.transcriptionEnabled
+          ? this.agentSession.output.transcription
+          : null;
 
-    // Insert new message into temporary chat context for LLM inference
-    if (newMessage) {
-      chatCtx.insert(newMessage);
-    }
+        chatCtx = chatCtx.copy();
 
-    if (instructions) {
-      try {
-        updateInstructions({
+        // Insert new message into temporary chat context for LLM inference
+        if (newMessage) {
+          chatCtx.insert(newMessage);
+        }
+
+        if (instructions) {
+          try {
+            updateInstructions({
+              chatCtx,
+              instructions,
+              addIfMissing: true,
+            });
+          } catch (e) {
+            this.logger.error({ error: e }, 'error occurred during updateInstructions');
+          }
+        }
+
+        const tasks: Array<Task<void>> = [];
+        const [llmTask, llmGenData] = performLLMInference(
+          // preserve  `this` context in llmNode
+          (...args) => this.agent.llmNode(...args),
           chatCtx,
-          instructions,
-          addIfMissing: true,
-        });
-      } catch (e) {
-        this.logger.error({ error: e }, 'error occurred during updateInstructions');
-      }
-    }
-
-    const tasks: Array<Task<void>> = [];
-    const [llmTask, llmGenData] = performLLMInference(
-      // preserve  `this` context in llmNode
-      (...args) => this.agent.llmNode(...args),
-      chatCtx,
-      toolCtx,
-      modelSettings,
-      replyAbortController,
-    );
-    tasks.push(llmTask);
-
-    const [ttsTextInput, llmOutput] = llmGenData.textStream.tee();
-
-    let ttsTask: Task<void> | null = null;
-    let ttsStream: ReadableStream<AudioFrame> | null = null;
-    if (audioOutput) {
-      [ttsTask, ttsStream] = performTTSInference(
-        (...args) => this.agent.ttsNode(...args),
-        ttsTextInput,
-        modelSettings,
-        replyAbortController,
-      );
-      tasks.push(ttsTask);
-    }
-
-    await speechHandle.waitIfNotInterrupted([speechHandle._waitForScheduled()]);
-
-    // Add new message to actual chat context if the speech is scheduled
-    if (newMessage && speechHandle.scheduled) {
-      this.agent._chatCtx.insert(newMessage);
-      this.agentSession._conversationItemAdded(newMessage);
-    }
-
-    if (speechHandle.interrupted) {
-      replyAbortController.abort();
-      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
-      return;
-    }
-
-    this.agentSession._updateAgentState('thinking');
-
-    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
-    speechHandle._clearAuthorization();
-
-    const replyStartedAt = Date.now();
-    const trNodeResult = await this.agent.transcriptionNode(llmOutput, modelSettings);
-    let textOut: _TextOut | null = null;
-    if (trNodeResult) {
-      const [textForwardTask, _textOut] = performTextForwarding(
-        trNodeResult,
-        replyAbortController,
-        transcriptionOutput,
-      );
-      tasks.push(textForwardTask);
-      textOut = _textOut;
-    }
-
-    const onFirstFrame = () => {
-      this.agentSession._updateAgentState('speaking');
-    };
-
-    let audioOut: _AudioOut | null = null;
-    if (audioOutput) {
-      if (ttsStream) {
-        const [forwardTask, _audioOut] = performAudioForwarding(
-          ttsStream,
-          audioOutput,
+          toolCtx,
+          modelSettings,
           replyAbortController,
         );
-        audioOut = _audioOut;
-        tasks.push(forwardTask);
-        audioOut.firstFrameFut.await.finally(onFirstFrame);
-      } else {
-        throw Error('ttsStream is null when audioOutput is enabled');
-      }
-    } else {
-      textOut?.firstTextFut.await.finally(onFirstFrame);
-    }
+        tasks.push(llmTask);
 
-    //TODO(AJS-272): before executing tools, make sure we generated all the text
-    // (this ensure everything is kept ordered)
+        const [ttsTextInput, llmOutput] = llmGenData.textStream.tee();
 
-    const onToolExecutionStarted = (_: FunctionCall) => {
-      // TODO(brian): handle speech_handle item_added
-    };
-
-    const onToolExecutionCompleted = (_: ToolExecutionOutput) => {
-      // TODO(brian): handle speech_handle item_added
-    };
-
-    const [executeToolsTask, toolOutput] = performToolExecutions({
-      session: this.agentSession,
-      speechHandle,
-      toolCtx,
-      toolChoice: modelSettings.toolChoice,
-      toolCallStream: llmGenData.toolCallStream,
-      controller: replyAbortController,
-      onToolExecutionStarted,
-      onToolExecutionCompleted,
-    });
-
-    await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
-
-    if (audioOutput) {
-      await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
-    }
-
-    // add the tools messages that triggers this reply to the chat context
-    if (toolsMessages) {
-      for (const msg of toolsMessages) {
-        msg.createdAt = replyStartedAt;
-      }
-      this.agent._chatCtx.insert(toolsMessages);
-    }
-
-    if (speechHandle.interrupted) {
-      this.logger.debug(
-        { speech_id: speechHandle.id },
-        'Aborting all pipeline reply tasks due to interruption',
-      );
-      replyAbortController.abort();
-      await Promise.allSettled(
-        tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
-      );
-
-      let forwardedText = textOut?.text || '';
-
-      if (audioOutput) {
-        audioOutput.clearBuffer();
-        const playbackEv = await audioOutput.waitForPlayout();
-        if (audioOut?.firstFrameFut.done) {
-          // playback EV is valid only if the first frame was already played
-          this.logger.info(
-            { speech_id: speechHandle.id, playbackPosition: playbackEv.playbackPosition },
-            'playout interrupted',
+        let ttsTask: Task<void> | null = null;
+        let ttsStream: ReadableStream<AudioFrame> | null = null;
+        if (audioOutput) {
+          [ttsTask, ttsStream] = performTTSInference(
+            (...args) => this.agent.ttsNode(...args),
+            ttsTextInput,
+            modelSettings,
+            replyAbortController,
           );
-          if (playbackEv.synchronizedTranscript) {
-            forwardedText = playbackEv.synchronizedTranscript;
+          tasks.push(ttsTask);
+        }
+
+        await speechHandle.waitIfNotInterrupted([speechHandle._waitForScheduled()]);
+
+        // Add new message to actual chat context if the speech is scheduled
+        if (newMessage && speechHandle.scheduled) {
+          this.agent._chatCtx.insert(newMessage);
+          this.agentSession._conversationItemAdded(newMessage);
+        }
+
+        if (speechHandle.interrupted) {
+          replyAbortController.abort();
+          await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+          return;
+        }
+
+        this.agentSession._updateAgentState('thinking');
+
+        await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
+        speechHandle._clearAuthorization();
+
+        const replyStartedAt = Date.now();
+        const trNodeResult = await this.agent.transcriptionNode(llmOutput, modelSettings);
+        let textOut: _TextOut | null = null;
+        if (trNodeResult) {
+          const [textForwardTask, _textOut] = performTextForwarding(
+            trNodeResult,
+            replyAbortController,
+            transcriptionOutput,
+          );
+          tasks.push(textForwardTask);
+          textOut = _textOut;
+        }
+
+        const onFirstFrame = () => {
+          this.agentSession._updateAgentState('speaking');
+        };
+
+        let audioOut: _AudioOut | null = null;
+        if (audioOutput) {
+          if (ttsStream) {
+            const [forwardTask, _audioOut] = performAudioForwarding(
+              ttsStream,
+              audioOutput,
+              replyAbortController,
+            );
+            audioOut = _audioOut;
+            tasks.push(forwardTask);
+            audioOut.firstFrameFut.await.finally(onFirstFrame);
+          } else {
+            throw Error('ttsStream is null when audioOutput is enabled');
           }
         } else {
-          forwardedText = '';
+          textOut?.firstTextFut.await.finally(onFirstFrame);
         }
-      }
 
-      if (forwardedText) {
-        const message = ChatMessage.create({
-          role: 'assistant',
-          content: forwardedText,
-          id: llmGenData.id,
-          interrupted: true,
-          createdAt: replyStartedAt,
+        //TODO(AJS-272): before executing tools, make sure we generated all the text
+        // (this ensure everything is kept ordered)
+
+        const onToolExecutionStarted = (_: FunctionCall) => {
+          // TODO(brian): handle speech_handle item_added
+        };
+
+        const onToolExecutionCompleted = (_: ToolExecutionOutput) => {
+          // TODO(brian): handle speech_handle item_added
+        };
+
+        const [executeToolsTask, toolOutput] = performToolExecutions({
+          session: this.agentSession,
+          speechHandle,
+          toolCtx,
+          toolChoice: modelSettings.toolChoice,
+          toolCallStream: llmGenData.toolCallStream,
+          controller: replyAbortController,
+          onToolExecutionStarted,
+          onToolExecutionCompleted,
         });
-        chatCtx.insert(message);
-        this.agent._chatCtx.insert(message);
-        this.agentSession._conversationItemAdded(message);
-      }
 
-      if (this.agentSession.agentState === 'speaking') {
-        this.agentSession._updateAgentState('listening');
-      }
+        await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
-      this.logger.info(
-        { speech_id: speechHandle.id, message: forwardedText },
-        'playout completed with interrupt',
-      );
-      // TODO(shubhra) add chat message to speech handle
-      speechHandle._markGenerationDone();
-      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
-      return;
-    }
-
-    if (textOut && textOut.text) {
-      const message = ChatMessage.create({
-        role: 'assistant',
-        id: llmGenData.id,
-        interrupted: false,
-        createdAt: replyStartedAt,
-        content: textOut.text,
-      });
-      chatCtx.insert(message);
-      this.agent._chatCtx.insert(message);
-      this.agentSession._conversationItemAdded(message);
-      this.logger.info(
-        { speech_id: speechHandle.id, message: textOut.text },
-        'playout completed without interruption',
-      );
-    }
-
-    if (toolOutput.output.length > 0) {
-      this.agentSession._updateAgentState('thinking');
-    } else if (this.agentSession.agentState === 'speaking') {
-      this.agentSession._updateAgentState('listening');
-    }
-
-    // mark the playout done before waiting for the tool execution
-    speechHandle._markGenerationDone();
-    await executeToolsTask.result;
-
-    if (toolOutput.output.length === 0) return;
-
-    // important: no agent output should be used after this point
-    const { maxToolSteps } = this.agentSession.options;
-    if (speechHandle.numSteps >= maxToolSteps) {
-      this.logger.warn(
-        { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
-        'maximum number of function calls steps reached',
-      );
-      return;
-    }
-
-    const functionToolsExecutedEvent = createFunctionToolsExecutedEvent({
-      functionCalls: [],
-      functionCallOutputs: [],
-    });
-    let shouldGenerateToolReply: boolean = false;
-    let newAgentTask: Agent | null = null;
-    let ignoreTaskSwitch: boolean = false;
-
-    for (const sanitizedOut of toolOutput.output) {
-      if (sanitizedOut.toolCallOutput !== undefined) {
-        functionToolsExecutedEvent.functionCalls.push(sanitizedOut.toolCall);
-        functionToolsExecutedEvent.functionCallOutputs.push(sanitizedOut.toolCallOutput);
-        if (sanitizedOut.replyRequired) {
-          shouldGenerateToolReply = true;
+        if (audioOutput) {
+          await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
         }
-      }
 
-      if (newAgentTask !== null && sanitizedOut.agentTask !== undefined) {
-        this.logger.error('expected to receive only one agent task from the tool executions');
-        ignoreTaskSwitch = true;
-        // TODO(brian): should we mark the function call as failed to notify the LLM?
-      }
+        // add the tools messages that triggers this reply to the chat context
+        if (toolsMessages) {
+          for (const msg of toolsMessages) {
+            msg.createdAt = replyStartedAt;
+          }
+          this.agent._chatCtx.insert(toolsMessages);
+        }
 
-      newAgentTask = sanitizedOut.agentTask ?? null;
+        if (speechHandle.interrupted) {
+          this.logger.debug(
+            { speech_id: speechHandle.id },
+            'Aborting all pipeline reply tasks due to interruption',
+          );
+          replyAbortController.abort();
+          await Promise.allSettled(
+            tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
+          );
 
-      this.logger.debug(
-        {
-          speechId: speechHandle.id,
-          name: sanitizedOut.toolCall?.name,
-          args: sanitizedOut.toolCall.args,
-          output: sanitizedOut.toolCallOutput?.output,
-          isError: sanitizedOut.toolCallOutput?.isError,
-        },
-        'Tool call execution finished',
-      );
-    }
+          let forwardedText = textOut?.text || '';
 
-    this.agentSession.emit(
-      AgentSessionEventTypes.FunctionToolsExecuted,
-      functionToolsExecutedEvent,
+          if (audioOutput) {
+            audioOutput.clearBuffer();
+            const playbackEv = await audioOutput.waitForPlayout();
+            if (audioOut?.firstFrameFut.done) {
+              // playback EV is valid only if the first frame was already played
+              this.logger.info(
+                { speech_id: speechHandle.id, playbackPosition: playbackEv.playbackPosition },
+                'playout interrupted',
+              );
+              if (playbackEv.synchronizedTranscript) {
+                forwardedText = playbackEv.synchronizedTranscript;
+              }
+            } else {
+              forwardedText = '';
+            }
+          }
+
+          if (forwardedText) {
+            const message = ChatMessage.create({
+              role: 'assistant',
+              content: forwardedText,
+              id: llmGenData.id,
+              interrupted: true,
+              createdAt: replyStartedAt,
+            });
+            chatCtx.insert(message);
+            this.agent._chatCtx.insert(message);
+            this.agentSession._conversationItemAdded(message);
+          }
+
+          if (this.agentSession.agentState === 'speaking') {
+            this.agentSession._updateAgentState('listening');
+          }
+
+          this.logger.info(
+            { speech_id: speechHandle.id, message: forwardedText },
+            'playout completed with interrupt',
+          );
+          // TODO(shubhra) add chat message to speech handle
+          speechHandle._markGenerationDone();
+          await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+          return;
+        }
+
+        if (textOut && textOut.text) {
+          const message = ChatMessage.create({
+            role: 'assistant',
+            id: llmGenData.id,
+            interrupted: false,
+            createdAt: replyStartedAt,
+            content: textOut.text,
+          });
+          chatCtx.insert(message);
+          this.agent._chatCtx.insert(message);
+          this.agentSession._conversationItemAdded(message);
+          this.logger.info(
+            { speech_id: speechHandle.id, message: textOut.text },
+            'playout completed without interruption',
+          );
+        }
+
+        if (toolOutput.output.length > 0) {
+          this.agentSession._updateAgentState('thinking');
+        } else if (this.agentSession.agentState === 'speaking') {
+          this.agentSession._updateAgentState('listening');
+        }
+
+        // mark the playout done before waiting for the tool execution
+        speechHandle._markGenerationDone();
+        await executeToolsTask.result;
+
+        if (toolOutput.output.length === 0) return;
+
+        // important: no agent output should be used after this point
+        const { maxToolSteps } = this.agentSession.options;
+        if (speechHandle.numSteps >= maxToolSteps) {
+          this.logger.warn(
+            { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
+            'maximum number of function calls steps reached',
+          );
+          return;
+        }
+
+        const functionToolsExecutedEvent = createFunctionToolsExecutedEvent({
+          functionCalls: [],
+          functionCallOutputs: [],
+        });
+        let shouldGenerateToolReply: boolean = false;
+        let newAgentTask: Agent | null = null;
+        let ignoreTaskSwitch: boolean = false;
+
+        for (const sanitizedOut of toolOutput.output) {
+          if (sanitizedOut.toolCallOutput !== undefined) {
+            functionToolsExecutedEvent.functionCalls.push(sanitizedOut.toolCall);
+            functionToolsExecutedEvent.functionCallOutputs.push(sanitizedOut.toolCallOutput);
+            if (sanitizedOut.replyRequired) {
+              shouldGenerateToolReply = true;
+            }
+          }
+
+          if (newAgentTask !== null && sanitizedOut.agentTask !== undefined) {
+            this.logger.error('expected to receive only one agent task from the tool executions');
+            ignoreTaskSwitch = true;
+            // TODO(brian): should we mark the function call as failed to notify the LLM?
+          }
+
+          newAgentTask = sanitizedOut.agentTask ?? null;
+
+          this.logger.debug(
+            {
+              speechId: speechHandle.id,
+              name: sanitizedOut.toolCall?.name,
+              args: sanitizedOut.toolCall.args,
+              output: sanitizedOut.toolCallOutput?.output,
+              isError: sanitizedOut.toolCallOutput?.isError,
+            },
+            'Tool call execution finished',
+          );
+        }
+
+        this.agentSession.emit(
+          AgentSessionEventTypes.FunctionToolsExecuted,
+          functionToolsExecutedEvent,
+        );
+
+        let draining = this.draining;
+        if (!ignoreTaskSwitch && newAgentTask !== null) {
+          this.agentSession.updateAgent(newAgentTask);
+          draining = true;
+        }
+
+        const toolMessages = [
+          ...functionToolsExecutedEvent.functionCalls,
+          ...functionToolsExecutedEvent.functionCallOutputs,
+        ] as ChatItem[];
+        if (shouldGenerateToolReply) {
+          chatCtx.insert(toolMessages);
+
+          const handle = SpeechHandle.create({
+            allowInterruptions: speechHandle.allowInterruptions,
+            stepIndex: speechHandle._stepIndex + 1,
+            parent: speechHandle,
+          });
+          this.agentSession.emit(
+            AgentSessionEventTypes.SpeechCreated,
+            createSpeechCreatedEvent({
+              userInitiated: false,
+              source: 'tool_response',
+              speechHandle: handle,
+            }),
+          );
+
+          // Avoid setting tool_choice to "required" or a specific function when
+          // passing tool response back to the LLM
+          const respondToolChoice =
+            draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
+
+          const toolResponseTask = this.createSpeechTask({
+            task: Task.from(() =>
+              this.pipelineReplyTask(
+                handle,
+                chatCtx,
+                toolCtx,
+                { toolChoice: respondToolChoice },
+                replyAbortController,
+                instructions,
+                undefined,
+                toolMessages,
+              ),
+            ),
+            ownedSpeechHandle: handle,
+            name: 'AgentActivity.pipelineReply',
+          });
+
+          toolResponseTask.finally(() => this.onPipelineReplyDone());
+
+          this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
+        } else if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
+          for (const msg of toolMessages) {
+            msg.createdAt = replyStartedAt;
+          }
+          this.agent._chatCtx.insert(toolMessages);
+        }
+      },
+      { name: 'agent_turn' },
     );
-
-    let draining = this.draining;
-    if (!ignoreTaskSwitch && newAgentTask !== null) {
-      this.agentSession.updateAgent(newAgentTask);
-      draining = true;
-    }
-
-    const toolMessages = [
-      ...functionToolsExecutedEvent.functionCalls,
-      ...functionToolsExecutedEvent.functionCallOutputs,
-    ] as ChatItem[];
-    if (shouldGenerateToolReply) {
-      chatCtx.insert(toolMessages);
-
-      const handle = SpeechHandle.create({
-        allowInterruptions: speechHandle.allowInterruptions,
-        stepIndex: speechHandle._stepIndex + 1,
-        parent: speechHandle,
-      });
-      this.agentSession.emit(
-        AgentSessionEventTypes.SpeechCreated,
-        createSpeechCreatedEvent({
-          userInitiated: false,
-          source: 'tool_response',
-          speechHandle: handle,
-        }),
-      );
-
-      // Avoid setting tool_choice to "required" or a specific function when
-      // passing tool response back to the LLM
-      const respondToolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
-
-      const toolResponseTask = this.createSpeechTask({
-        task: Task.from(() =>
-          this.pipelineReplyTask(
-            handle,
-            chatCtx,
-            toolCtx,
-            { toolChoice: respondToolChoice },
-            replyAbortController,
-            instructions,
-            undefined,
-            toolMessages,
-          ),
-        ),
-        ownedSpeechHandle: handle,
-        name: 'AgentActivity.pipelineReply',
-      });
-
-      toolResponseTask.finally(() => this.onPipelineReplyDone());
-
-      this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
-    } else if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
-      for (const msg of toolMessages) {
-        msg.createdAt = replyStartedAt;
-      }
-      this.agent._chatCtx.insert(toolMessages);
-    }
-  }
 
   private async realtimeGenerationTask(
     speechHandle: SpeechHandle,

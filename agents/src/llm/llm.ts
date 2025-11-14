@@ -2,10 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import type { Span } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
+// Ref: Python llm.py lines 8-9 imports telemetry for span instrumentation
+import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
@@ -104,6 +107,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   #llm: LLM;
   #chatCtx: ChatContext;
   #toolCtx?: ToolContext;
+  // Ref: Python llm.py line 172 - Store span for setting attributes after metrics collection
+  #llmRequestSpan?: Span;
 
   constructor(
     llm: LLM,
@@ -135,43 +140,64 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     startSoon(() => this.mainTask().then(() => this.queue.close()));
   }
 
-  private async mainTask() {
-    // TODO(brian): PR3 - Add span wrapping: tracer.startActiveSpan('llm_request', ..., { endOnExit: false })
-    for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
-      try {
-        // TODO(brian): PR3 - Add span for retry attempts: tracer.startActiveSpan('llm_request_run', ...)
-        return await this.run();
-      } catch (error) {
-        if (error instanceof APIError) {
-          const retryInterval = this._connOptions._intervalForRetry(i);
+  // Ref: Python llm.py lines 177-178 - Create 'llm_request' span with endOnExit=False
+  private mainTask = async () =>
+    tracer.startActiveSpan(
+      async (span) => {
+        this.#llmRequestSpan = span;
+        // Ref: Python llm.py line 180 - Set model name attribute on span
+        span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.#llm.model);
 
-          if (this._connOptions.maxRetry === 0 || !error.retryable) {
-            this.emitError({ error, recoverable: false });
-            throw error;
-          } else if (i === this._connOptions.maxRetry) {
-            this.emitError({ error, recoverable: false });
-            throw new APIConnectionError({
-              message: `failed to generate LLM completion after ${this._connOptions.maxRetry + 1} attempts`,
-              options: { retryable: false },
-            });
-          } else {
-            this.emitError({ error, recoverable: true });
-            this.logger.warn(
-              { llm: this.#llm.label(), attempt: i + 1, error },
-              `failed to generate LLM completion, retrying in ${retryInterval}s`,
+        for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
+          try {
+            // Ref: Python llm.py lines 184-190 - Create 'llm_request_run' span for each retry attempt
+            return await tracer.startActiveSpan(
+              async (attemptSpan) => {
+                // Ref: Python llm.py line 185 - Set retry count attribute
+                attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
+                try {
+                  return await this.run();
+                } catch (error) {
+                  // Ref: Python llm.py line 189 - Record exception on span
+                  recordException(attemptSpan, toError(error));
+                  throw error;
+                }
+              },
+              { name: 'llm_request_run' },
             );
-          }
+          } catch (error) {
+            if (error instanceof APIError) {
+              const retryInterval = this._connOptions._intervalForRetry(i);
 
-          if (retryInterval > 0) {
-            await delay(retryInterval);
+              if (this._connOptions.maxRetry === 0 || !error.retryable) {
+                this.emitError({ error, recoverable: false });
+                throw error;
+              } else if (i === this._connOptions.maxRetry) {
+                this.emitError({ error, recoverable: false });
+                throw new APIConnectionError({
+                  message: `failed to generate LLM completion after ${this._connOptions.maxRetry + 1} attempts`,
+                  options: { retryable: false },
+                });
+              } else {
+                this.emitError({ error, recoverable: true });
+                this.logger.warn(
+                  { llm: this.#llm.label(), attempt: i + 1, error },
+                  `failed to generate LLM completion, retrying in ${retryInterval}s`,
+                );
+              }
+
+              if (retryInterval > 0) {
+                await delay(retryInterval);
+              }
+            } else {
+              this.emitError({ error: toError(error), recoverable: false });
+              throw error;
+            }
           }
-        } else {
-          this.emitError({ error: toError(error), recoverable: false });
-          throw error;
         }
-      }
-    }
-  }
+      },
+      { name: 'llm_request', endOnExit: false },
+    );
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
     this.#llm.emit('error', {
@@ -188,6 +214,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     let ttft: bigint = BigInt(-1);
     let requestId = '';
     let usage: CompletionUsage | undefined;
+    // Ref: Python llm.py line 251 - Track completion start time for LangFuse
+    let completionStartTime: string | undefined;
 
     for await (const ev of this.queue) {
       if (this.abortController.signal.aborted) {
@@ -197,6 +225,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       requestId = ev.id;
       if (ttft === BigInt(-1)) {
         ttft = process.hrtime.bigint() - startTime;
+        // Ref: Python llm.py line 251 - Record completion start time when first token arrives
+        completionStartTime = new Date().toISOString();
       }
       if (ev.usage) {
         usage = ev.usage;
@@ -225,6 +255,30 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         return (usage?.completionTokens || 0) / (durationMs / 1000);
       })(),
     };
+
+    // Ref: Python llm.py lines 285-300 - Set telemetry attributes on the span
+    if (this.#llmRequestSpan) {
+      // Ref: Python llm.py lines 286-289 - Set livekit metrics attribute
+      this.#llmRequestSpan.setAttribute(traceTypes.ATTR_LLM_METRICS, JSON.stringify(metrics));
+
+      // Ref: Python llm.py lines 291-296 - Set OpenTelemetry GenAI attributes
+      this.#llmRequestSpan.setAttributes({
+        [traceTypes.ATTR_GEN_AI_USAGE_INPUT_TOKENS]: metrics.promptTokens,
+        [traceTypes.ATTR_GEN_AI_USAGE_OUTPUT_TOKENS]: metrics.completionTokens,
+      });
+
+      // Ref: Python llm.py lines 298-300 - Set LangFuse-compatible completion start time
+      if (completionStartTime) {
+        this.#llmRequestSpan.setAttribute(
+          traceTypes.ATTR_LANGFUSE_COMPLETION_START_TIME,
+          completionStartTime,
+        );
+      }
+
+      // End the span now that metrics are collected
+      this.#llmRequestSpan.end();
+    }
+
     this.#llm.emit('metrics_collected', metrics);
   }
 
