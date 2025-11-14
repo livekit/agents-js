@@ -44,6 +44,12 @@ const DEFAULT_VOICE: Voice = {
 
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1/';
 
+interface TimedWord {
+  text: string;
+  startTime: number;
+  endTime: number;
+}
+
 export interface TTSOptions {
   apiKey?: string;
   voice: Voice;
@@ -57,6 +63,7 @@ export interface TTSOptions {
   enableSsmlParsing: boolean;
   inactivityTimeout: number;
   syncAlignment: boolean;
+  preferredAlignment: 'normalized' | 'original';
   autoMode?: boolean;
 }
 
@@ -69,7 +76,87 @@ const defaultTTSOptionsBase = {
   enableSsmlParsing: false,
   inactivityTimeout: DEFAULT_INACTIVITY_TIMEOUT,
   syncAlignment: true,
+  preferredAlignment: 'normalized' as const,
 };
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Convert character-level timing to word-level timing
+ * Returns timed words and the remaining text buffer
+ */
+function toTimedWords(
+  text: string,
+  startTimesMs: number[],
+  durationsMs: number[],
+  flush: boolean = false,
+): [TimedWord[], string] {
+  if (!text || startTimesMs.length === 0 || durationsMs.length === 0) {
+    return [[], ''];
+  }
+
+  const { splitWords } = tokenize.basic;
+
+  // Calculate timestamps (N+1)
+  const lastStartTime = startTimesMs[startTimesMs.length - 1];
+  const lastDuration = durationsMs[durationsMs.length - 1];
+  if (lastStartTime === undefined || lastDuration === undefined) {
+    return [[], text];
+  }
+  const timestamps = [...startTimesMs, lastStartTime + lastDuration];
+
+  // Split text into words
+  const words = splitWords(text, false);
+  const timedWords: TimedWord[] = [];
+
+  if (words.length === 0) {
+    return [[], text];
+  }
+
+  const startIndices = words.map((w) => w[1]);
+  let end = 0;
+
+  // We don't know if the last word is complete, always leave it as remaining
+  for (let i = 0; i < startIndices.length - 1; i++) {
+    const start = startIndices[i];
+    const nextStart = startIndices[i + 1];
+    if (start === undefined || nextStart === undefined) continue;
+    end = nextStart;
+    const startT = timestamps[start];
+    const endT = timestamps[end];
+    if (startT === undefined || endT === undefined) continue;
+    timedWords.push({
+      text: text.substring(start, end),
+      startTime: startT / 1000,
+      endTime: endT / 1000,
+    });
+  }
+
+  if (flush && startIndices.length > 0) {
+    const start = startIndices[startIndices.length - 1];
+    if (start !== undefined) {
+      end = text.length;
+      const startT = timestamps[start];
+      const endT = timestamps[timestamps.length - 1];
+      if (startT !== undefined && endT !== undefined) {
+        timedWords.push({
+          text: text.substring(start, end),
+          startTime: startT / 1000,
+          endTime: endT / 1000,
+        });
+      }
+    }
+  } else if (startIndices.length > 0) {
+    const lastStart = startIndices[startIndices.length - 1];
+    if (lastStart !== undefined) {
+      end = lastStart;
+    }
+  }
+
+  return [timedWords, text.substring(end)];
+}
 
 // ============================================================================
 // WebSocket Connection Manager - Manages persistent connection with multi-stream support
@@ -78,15 +165,19 @@ const defaultTTSOptionsBase = {
 interface DeferredPromise<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
-  reject: (reason?: any) => void;
+  reject: (reason?: unknown) => void;
 }
 
 interface StreamContext {
   contextId: string;
   audioQueue: AsyncIterableQueue<Int8Array>;
+  transcriptQueue: AsyncIterableQueue<TimedWord[]>;
   eos: DeferredPromise<void>;
   timeoutTimer: NodeJS.Timeout | null;
   timeoutSeconds: number;
+  textBuffer: string;
+  startTimesMs: number[];
+  durationsMs: number[];
 }
 
 interface SynthesizeContent {
@@ -177,9 +268,13 @@ class WebSocketManager {
       this.contextData.set(contextId, {
         contextId,
         audioQueue: new AsyncIterableQueue<Int8Array>(),
+        transcriptQueue: new AsyncIterableQueue<TimedWord[]>(),
         eos: eos,
         timeoutTimer: null,
         timeoutSeconds,
+        textBuffer: '',
+        startTimesMs: [],
+        durationsMs: [],
       });
     }
   }
@@ -212,6 +307,10 @@ class WebSocketManager {
     return this.contextData.get(contextId)?.audioQueue ?? null;
   }
 
+  getContextTranscriptQueue(contextId: string): AsyncIterableQueue<TimedWord[]> | null {
+    return this.contextData.get(contextId)?.transcriptQueue ?? null;
+  }
+
   getContextEOSPromise(contextId: string): Promise<void> | null {
     return this.contextData.get(contextId)?.eos.promise ?? null;
   }
@@ -231,6 +330,7 @@ class WebSocketManager {
         clearTimeout(ctx.timeoutTimer);
       }
       ctx.audioQueue.close();
+      ctx.transcriptQueue.close();
     }
     this.contextData.delete(contextId);
     this.activeContexts.delete(contextId);
@@ -423,6 +523,73 @@ class WebSocketManager {
               return;
             }
 
+            // Process alignment data if available
+            const alignment =
+              this.opts.preferredAlignment === 'normalized'
+                ? data.normalizedAlignment
+                : data.alignment;
+
+            if (alignment && typeof alignment === 'object') {
+              const alignmentObj = alignment as {
+                chars?: string[];
+                charStartTimesMs?: number[];
+                charsStartTimesMs?: number[];
+                charDurationsMs?: number[];
+                charsDurationsMs?: number[];
+              };
+
+              const chars = alignmentObj.chars;
+              const starts = alignmentObj.charStartTimesMs || alignmentObj.charsStartTimesMs;
+              const durs = alignmentObj.charDurationsMs || alignmentObj.charsDurationsMs;
+
+              if (
+                chars &&
+                starts &&
+                durs &&
+                chars.length === durs.length &&
+                starts.length === durs.length
+              ) {
+                context.textBuffer += chars.join('');
+
+                // Handle multi-character items in chars array
+                for (let i = 0; i < chars.length; i++) {
+                  const char = chars[i];
+                  const start = starts[i];
+                  const dur = durs[i];
+
+                  if (char === undefined || start === undefined || dur === undefined) {
+                    continue;
+                  }
+
+                  if (char.length > 1) {
+                    // Add padding for multi-character items
+                    for (let j = 0; j < char.length - 1; j++) {
+                      context.startTimesMs.push(start);
+                      context.durationsMs.push(0);
+                    }
+                  }
+                  context.startTimesMs.push(start);
+                  context.durationsMs.push(dur);
+                }
+
+                // Convert to timed words
+                const [timedWords, remainingText] = toTimedWords(
+                  context.textBuffer,
+                  context.startTimesMs,
+                  context.durationsMs,
+                );
+
+                if (timedWords.length > 0) {
+                  context.transcriptQueue.put(timedWords);
+                }
+
+                // Update buffers with remaining text
+                context.textBuffer = remainingText;
+                context.startTimesMs = context.startTimesMs.slice(-remainingText.length);
+                context.durationsMs = context.durationsMs.slice(-remainingText.length);
+              }
+            }
+
             if (data.audio) {
               const audioBuffer = Buffer.from(data.audio as string, 'base64');
               const audioArray = new Int8Array(audioBuffer);
@@ -436,6 +603,19 @@ class WebSocketManager {
             }
 
             if (data.isFinal) {
+              // Flush remaining text buffer
+              if (context.textBuffer.length > 0) {
+                const [timedWords] = toTimedWords(
+                  context.textBuffer,
+                  context.startTimesMs,
+                  context.durationsMs,
+                  true,
+                );
+                if (timedWords.length > 0) {
+                  context.transcriptQueue.put(timedWords);
+                }
+              }
+
               context.eos.resolve();
               this.cleanupContext(contextId);
 
@@ -707,15 +887,18 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     let lastFrame: AudioFrame | undefined;
+    let lastDeltaText: string | undefined;
     const sendLastFrame = (segmentId: string, final: boolean) => {
       if (lastFrame) {
         this.queue.put({
           requestId: this.#contextId,
           segmentId,
           frame: lastFrame,
+          deltaText: lastDeltaText,
           final,
         });
         lastFrame = undefined;
+        lastDeltaText = undefined;
       }
     };
 
@@ -725,12 +908,17 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         return;
       }
 
+      const transcriptQueue = this.#connection!.getContextTranscriptQueue(this.#contextId);
+      if (!transcriptQueue) {
+        return;
+      }
+
       const eosPromise = this.#connection!.getContextEOSPromise(this.#contextId);
       if (!eosPromise) {
         return;
       }
 
-      // Process audio as it arrives, until EOS
+      // Process audio and transcript as they arrive, until EOS
       const processAudio = async () => {
         for await (const buffer of audioQueue) {
           for (const frame of bstream.write(buffer)) {
@@ -740,8 +928,34 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       };
 
-      // Race between audio processing and EOS
-      await Promise.race([processAudio(), eosPromise]);
+      const processTranscript = async () => {
+        for await (const timedWords of transcriptQueue) {
+          // Concatenate timed words into deltaText
+          // In a more sophisticated implementation, we could track timing
+          // and associate words with specific frames
+          const deltaText = timedWords.map((w) => w.text).join('');
+          if (deltaText) {
+            lastDeltaText = deltaText;
+          }
+        }
+      };
+
+      // Start processing immediately, but catch errors of promises immediately
+      await new Promise<void>(async (resolve, reject) => {
+        const audioTask = processAudio().catch(reject);
+        const transcriptTask = processTranscript().catch(reject);
+
+        try {
+          // Wait for EOS to be signaled
+          await eosPromise;
+
+          // Ensure both queues are fully drained after EOS
+          await Promise.all([audioTask, transcriptTask]);
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
 
       // Flush remaining frames
       for (const frame of bstream.flush()) {
