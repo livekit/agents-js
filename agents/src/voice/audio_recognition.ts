@@ -59,7 +59,7 @@ export interface AudioRecognitionOptions {
   maxEndpointingDelay: number;
 }
 
-// TODO(brian): PR3 - Add span: 'eou_detection' span when running EOU detection (in runEOUDetection method)
+// TODO(brian): PR4 - Add 'eou_detection' span (Ref: Python audio_recognition.py line 493)
 export class AudioRecognition {
   private hooks: RecognitionHooks;
   private stt?: STTNode;

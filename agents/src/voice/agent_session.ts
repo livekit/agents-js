@@ -481,8 +481,7 @@ export class AgentSession<
       return;
     }
 
-    // TODO(brian): PR3 - Add span: if state === 'speaking' && !this._agentSpeakingSpan, create tracer.startSpan('agent_speaking') with participant attributes
-    // TODO(brian): PR3 - Add span: if state !== 'speaking' && this._agentSpeakingSpan, end and clear this._agentSpeakingSpan
+    // TODO(brian): PR4 - Add 'agent_speaking' span (Ref: Python agent_session.py line 1156)
     const oldState = this._agentState;
     this._agentState = state;
 
@@ -505,8 +504,7 @@ export class AgentSession<
       return;
     }
 
-    // TODO(brian): PR3 - Add span: if state === 'speaking' && !this._userSpeakingSpan, create tracer.startSpan('user_speaking') with participant attributes
-    // TODO(brian): PR3 - Add span: if state !== 'speaking' && this._userSpeakingSpan, end and clear this._userSpeakingSpan
+    // TODO(brian): PR4 - Add 'user_speaking' span (Ref: Python agent_session.py line 1189)
     const oldState = this.userState;
     this.userState = state;
 

@@ -378,7 +378,7 @@ export function updateInstructions(options: {
   }
 }
 
-// TODO(brian): PR3 - Add @tracer.startActiveSpan('llm_node') decorator/wrapper
+// Ref: Python generation.py line 86 - Wrap LLM inference with 'llm_node' span
 export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
@@ -393,75 +393,89 @@ export function performLLMInference(
   const toolCallWriter = toolCallStream.writable.getWriter();
   const data = new _LLMGenerationData(textStream.readable, toolCallStream.readable);
 
-  const inferenceTask = async (signal: AbortSignal) => {
-    let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk> | null = null;
-    let llmStream: ReadableStream<string | ChatChunk> | null = null;
+  const inferenceTask = async (signal: AbortSignal) =>
+    tracer.startActiveSpan(
+      async (span) => {
+        // Ref: Python generation.py lines 101-109 - Set chat context and function tools attributes
+        span.setAttribute(
+          traceTypes.ATTR_CHAT_CTX,
+          JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
+        );
+        span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(Object.keys(toolCtx)));
 
-    try {
-      llmStream = await node(chatCtx, toolCtx, modelSettings);
-      if (llmStream === null) {
-        await textWriter.close();
-        return;
-      }
+        let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk> | null = null;
+        let llmStream: ReadableStream<string | ChatChunk> | null = null;
 
-      // TODO(brian): add support for dynamic tools
-
-      llmStreamReader = llmStream.getReader();
-      while (true) {
-        if (signal.aborted) {
-          break;
-        }
-        const { done, value: chunk } = await llmStreamReader.read();
-        if (done) {
-          break;
-        }
-
-        if (typeof chunk === 'string') {
-          data.generatedText += chunk;
-          await textWriter.write(chunk);
-          // TODO(shubhra): better way to check??
-        } else {
-          if (chunk.delta === undefined) {
-            continue;
+        try {
+          llmStream = await node(chatCtx, toolCtx, modelSettings);
+          if (llmStream === null) {
+            await textWriter.close();
+            return;
           }
 
-          if (chunk.delta.toolCalls) {
-            for (const tool of chunk.delta.toolCalls) {
-              if (tool.type !== 'function_call') continue;
+          // TODO(brian): add support for dynamic tools
 
-              const toolCall = FunctionCall.create({
-                callId: `${data.id}/fnc_${data.generatedToolCalls.length}`,
-                name: tool.name,
-                args: tool.args,
-              });
-
-              data.generatedToolCalls.push(toolCall);
-              await toolCallWriter.write(toolCall);
+          llmStreamReader = llmStream.getReader();
+          while (true) {
+            if (signal.aborted) {
+              break;
             }
+            const { done, value: chunk } = await llmStreamReader.read();
+            if (done) {
+              break;
+            }
+
+            if (typeof chunk === 'string') {
+              data.generatedText += chunk;
+              await textWriter.write(chunk);
+              // TODO(shubhra): better way to check??
+            } else {
+              if (chunk.delta === undefined) {
+                continue;
+              }
+
+              if (chunk.delta.toolCalls) {
+                for (const tool of chunk.delta.toolCalls) {
+                  if (tool.type !== 'function_call') continue;
+
+                  const toolCall = FunctionCall.create({
+                    callId: `${data.id}/fnc_${data.generatedToolCalls.length}`,
+                    name: tool.name,
+                    args: tool.args,
+                  });
+
+                  data.generatedToolCalls.push(toolCall);
+                  await toolCallWriter.write(toolCall);
+                }
+              }
+
+              if (chunk.delta.content) {
+                data.generatedText += chunk.delta.content;
+                await textWriter.write(chunk.delta.content);
+              }
+            }
+
+            // No need to check if chunk is of type other than ChatChunk or string like in
+            // Python since chunk is defined in the type ChatChunk | string in TypeScript
           }
 
-          if (chunk.delta.content) {
-            data.generatedText += chunk.delta.content;
-            await textWriter.write(chunk.delta.content);
+          // Ref: Python generation.py line 121 - Set response text attribute
+          span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
+        } catch (error) {
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            // Abort signal was triggered, handle gracefully
+            return;
           }
+          throw error;
+        } finally {
+          llmStreamReader?.releaseLock();
+          await llmStream?.cancel();
+          await textWriter.close();
+          await toolCallWriter.close();
         }
-
-        // No need to check if chunk is of type other than ChatChunk or string like in
-        // Python since chunk is defined in the type ChatChunk | string in TypeScript
-      }
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        // Abort signal was triggered, handle gracefully
-        return;
-      }
-      throw error;
-    } finally {
-      llmStreamReader?.releaseLock();
-      await llmStream?.cancel();
-      await textWriter.close();
-      await toolCallWriter.close();
-    }
-  };
+      },
+      { name: 'llm_node' },
+    );
 
   return [
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performLLMInference'),
@@ -469,7 +483,7 @@ export function performLLMInference(
   ];
 }
 
-// TODO(brian): PR3 - Add @tracer.startActiveSpan('tts_node') decorator/wrapper
+// Ref: Python generation.py line 214 - Wrap TTS inference with 'tts_node' span
 export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string>,
@@ -480,40 +494,44 @@ export function performTTSInference(
   const outputWriter = audioStream.writable.getWriter();
   const audioOutputStream = audioStream.readable;
 
-  const inferenceTask = async (signal: AbortSignal) => {
-    let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
-    let ttsStream: ReadableStream<AudioFrame> | null = null;
+  const inferenceTask = async (signal: AbortSignal) =>
+    tracer.startActiveSpan(
+      async () => {
+        let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
+        let ttsStream: ReadableStream<AudioFrame> | null = null;
 
-    try {
-      ttsStream = await node(text, modelSettings);
-      if (ttsStream === null) {
-        await outputWriter.close();
-        return;
-      }
+        try {
+          ttsStream = await node(text, modelSettings);
+          if (ttsStream === null) {
+            await outputWriter.close();
+            return;
+          }
 
-      ttsStreamReader = ttsStream.getReader();
-      while (true) {
-        if (signal.aborted) {
-          break;
+          ttsStreamReader = ttsStream.getReader();
+          while (true) {
+            if (signal.aborted) {
+              break;
+            }
+            const { done, value: chunk } = await ttsStreamReader.read();
+            if (done) {
+              break;
+            }
+            await outputWriter.write(chunk);
+          }
+        } catch (error) {
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            // Abort signal was triggered, handle gracefully
+            return;
+          }
+          throw error;
+        } finally {
+          ttsStreamReader?.releaseLock();
+          await ttsStream?.cancel();
+          await outputWriter.close();
         }
-        const { done, value: chunk } = await ttsStreamReader.read();
-        if (done) {
-          break;
-        }
-        await outputWriter.write(chunk);
-      }
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        // Abort signal was triggered, handle gracefully
-        return;
-      }
-      throw error;
-    } finally {
-      ttsStreamReader?.releaseLock();
-      await ttsStream?.cancel();
-      await outputWriter.close();
-    }
-  };
+      },
+      { name: 'tts_node' },
+    );
 
   return [
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performTTSInference'),
@@ -653,7 +671,7 @@ export function performAudioForwarding(
   ];
 }
 
-// TODO(brian): PR3 - Add @tracer.startActiveSpan('function_tool') wrapper for each tool execution
+// function_tool span is already implemented in tracableToolExecution below (line ~796)
 export function performToolExecutions({
   session,
   speechHandle,

@@ -81,7 +81,7 @@ export class FunctionExistsError extends Error {
 }
 
 /** The job and environment context as seen by the agent, accessible by the entrypoint function. */
-// TODO(brian): PR3 - Add @tracer.startActiveSpan('job_entrypoint') wrapper in entrypoint
+// TODO(brian): PR4 - Add 'job_entrypoint' span (Ref: Python job.py line 739)
 // TODO(brian): PR5 - Add uploadSessionReport() call in cleanup/session end
 export class JobContext {
   #proc: JobProcess;
