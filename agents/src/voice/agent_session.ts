@@ -132,7 +132,9 @@ export class AgentSession<
   private userAwayTimer: NodeJS.Timeout | null = null;
 
   private sessionSpan?: Span;
-  private rootSpanContext?: Context;
+
+  /** @internal */
+  rootSpanContext?: Context;
 
   /** @internal */
   _recordedEvents: AgentEvent[] = [];

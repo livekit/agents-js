@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
-import type { Span } from '@opentelemetry/api';
+import type { Context, Span } from '@opentelemetry/api';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
 import { type ChatContext } from '../llm/chat_context.js';
@@ -57,6 +57,7 @@ export interface AudioRecognitionOptions {
   turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
   minEndpointingDelay: number;
   maxEndpointingDelay: number;
+  rootSpanContext?: Context;
 }
 
 // TODO(brian): PR4 - Add 'eou_detection' span (Ref: Python audio_recognition.py line 493)
@@ -69,6 +70,7 @@ export class AudioRecognition {
   private minEndpointingDelay: number;
   private maxEndpointingDelay: number;
   private lastLanguage?: string;
+  private rootSpanContext?: Context;
 
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
@@ -105,6 +107,7 @@ export class AudioRecognition {
     this.minEndpointingDelay = opts.minEndpointingDelay;
     this.maxEndpointingDelay = opts.maxEndpointingDelay;
     this.lastLanguage = undefined;
+    this.rootSpanContext = opts.rootSpanContext;
 
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
@@ -548,7 +551,10 @@ export class AudioRecognition {
             this.speaking = true;
 
             if (!this.userTurnSpan) {
-              this.userTurnSpan = tracer.startSpan({ name: 'user_turn' });
+              this.userTurnSpan = tracer.startSpan({
+                name: 'user_turn',
+                context: this.rootSpanContext,
+              });
             }
 
             // Capture sample rate from the first VAD event if not already set

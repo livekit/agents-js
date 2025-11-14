@@ -286,6 +286,7 @@ export class AgentActivity implements RecognitionHooks {
         turnDetectionMode: this.turnDetectionMode,
         minEndpointingDelay: this.agentSession.options.minEndpointingDelay,
         maxEndpointingDelay: this.agentSession.options.maxEndpointingDelay,
+        rootSpanContext: this.agentSession.rootSpanContext,
       });
       this.audioRecognition.start();
       this.started = true;
@@ -1643,7 +1644,10 @@ export class AgentActivity implements RecognitionHooks {
           toolsMessages,
           span,
         }),
-      { name: 'agent_turn' },
+      {
+        name: 'agent_turn',
+        context: this.agentSession.rootSpanContext,
+      },
     );
 
   private async realtimeGenerationTask(
