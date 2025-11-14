@@ -24,7 +24,6 @@ import {
 import type { LLMError } from '../llm/llm.js';
 import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
-// Ref: Python agent_activity.py lines 17-18 - Import telemetry for span instrumentation
 import type {
   EOUMetrics,
   LLMMetrics,
@@ -72,7 +71,6 @@ import {
 } from './generation.js';
 import { SpeechHandle } from './speech_handle.js';
 
-// equivalent to Python's contextvars
 const speechHandleStorage = new AsyncLocalStorage<SpeechHandle>();
 
 interface PreemptiveGeneration {
@@ -579,7 +577,6 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (this.draining) {
-      // copied from python:
       // TODO(shubhra): should we "forward" this new turn to the next agent?
       this.logger.warn('skipping new realtime generation, the agent is draining');
       return;
@@ -785,7 +782,6 @@ export class AgentActivity implements RecognitionHooks {
     if (this.draining) {
       this.cancelPreemptiveGeneration();
       this.logger.warn({ user_input: info.newTranscript }, 'skipping user input, task is draining');
-      // copied from python:
       // TODO(shubhra): should we "forward" this new turn to the next agent/activity?
       return true;
     }
@@ -1256,7 +1252,6 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  // Ref: Python agent_activity.py line 1673 - Wrap with 'agent_turn' span via decorator
   private pipelineReplyTask = async (
     speechHandle: SpeechHandle,
     chatCtx: ChatContext,
@@ -1269,7 +1264,6 @@ export class AgentActivity implements RecognitionHooks {
   ): Promise<void> =>
     tracer.startActiveSpan(
       async (span) => {
-        // Ref: Python agent_activity.py lines 1689-1694 - Set span attributes
         span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
         if (instructions) {
           span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, instructions);

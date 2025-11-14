@@ -22,7 +22,6 @@ import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
-// Ref: Python agent_session.py lines 30-31 - Import telemetry for span instrumentation
 import { traceTypes, tracer } from '../telemetry/index.js';
 import type { TTS, TTSError } from '../tts/tts.js';
 import type { VAD } from '../vad.js';
@@ -132,7 +131,6 @@ export class AgentSession<
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
 
-  // Ref: Python agent_session.py line 264 - Store session span for lifecycle management
   private sessionSpan?: Span;
   private rootSpanContext?: Context;
 
@@ -238,9 +236,7 @@ export class AgentSession<
       return;
     }
 
-    // Ref: Python agent_session.py lines 519-528 - Create agent_session span and set as active context
     this.sessionSpan = tracer.startSpan({ name: 'agent_session' });
-    console.log('[TRACE] Created agent_session span:', this.sessionSpan.spanContext().spanId);
 
     // Set the session span as the active span in the context
     // This ensures all child spans (agent_turn, user_turn, etc.) are parented to it
@@ -385,7 +381,6 @@ export class AgentSession<
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
-    // Ref: Python agent_session.py line 1033 - Run activity operations within root span context
     const runWithContext = async () => {
       // TODO(AJS-129): add lock to agent activity core lifecycle
       this.nextActivity = new AgentActivity(agent, this);
@@ -579,7 +574,6 @@ export class AgentSession<
     error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
     drain: boolean = false,
   ): Promise<void> {
-    // Ref: Python agent_session.py lines 751-753 - Attach root span context for cleanup operations
     if (this.rootSpanContext) {
       return otelContext.with(this.rootSpanContext, async () => {
         await this.closeImplInner(reason, error, drain);
@@ -605,7 +599,6 @@ export class AgentSession<
         try {
           this.activity.interrupt();
         } catch (error) {
-          // uninterruptible speech [copied from python]
           // TODO(shubhra): force interrupt or wait for it to finish?
           // it might be an audio played from the error callback
         }
@@ -627,9 +620,7 @@ export class AgentSession<
     await this.activity?.close();
     this.activity = undefined;
 
-    // Ref: Python agent_session.py lines 813-815 - End session span
     if (this.sessionSpan) {
-      console.log('[TRACE] Ending agent_session span:', this.sessionSpan.spanContext().spanId);
       this.sessionSpan.end();
       this.sessionSpan = undefined;
     }

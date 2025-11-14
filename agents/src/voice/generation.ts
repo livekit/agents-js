@@ -21,7 +21,6 @@ import {
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
-// Ref: Python generation.py lines 17-18 - Import telemetry for span instrumentation
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { Future, Task, shortuuid, toError } from '../utils.js';
 import { type Agent, type ModelSettings, asyncLocalStorage, isStopResponse } from './agent.js';
@@ -790,11 +789,9 @@ export function performToolExecutions({
         });
       });
 
-      // Ref: Python generation.py lines 544-575 - Wrap tool execution with 'function_tool' span
       const tracableToolExecution = (toolExecTask: Promise<unknown>) =>
         tracer.startActiveSpan(
           async (span) => {
-            // Ref: Python generation.py lines 549-552 - Set function tool name and arguments attributes
             span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
             span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
 
@@ -808,7 +805,6 @@ export function performToolExecutions({
                 output: isAborted ? undefined : result,
               });
 
-              // Ref: Python generation.py lines 567-572 - Set tool output and error attributes
               if (toolOutput.toolCallOutput) {
                 span.setAttribute(
                   traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
@@ -833,7 +829,6 @@ export function performToolExecutions({
                 exception: toError(rawError),
               });
 
-              // Ref: Python generation.py lines 567-572 - Set error attributes
               if (toolOutput.toolCallOutput) {
                 span.setAttribute(
                   traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,

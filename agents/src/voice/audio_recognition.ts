@@ -11,7 +11,6 @@ import { DeferredReadableStream, isStreamReaderReleaseError } from '../stream/de
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-// Ref: Python audio_recognition.py lines 18-19 - Import telemetry for span instrumentation
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { Task, delay } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
@@ -84,7 +83,6 @@ export class AudioRecognition {
   private speaking = false;
   private sampleRate?: number;
 
-  // Ref: Python audio_recognition.py line 660 - Store user_turn span for lifecycle management
   private userTurnSpan?: Span;
 
   private vadInputStream: ReadableStream<AudioFrame>;
@@ -435,7 +433,6 @@ export class AudioRecognition {
         });
 
         if (committed) {
-          // Ref: Python audio_recognition.py lines 573-582 - Set span attributes and end user_turn span
           if (this.userTurnSpan) {
             this.userTurnSpan.setAttributes({
               [traceTypes.ATTR_USER_TRANSCRIPT]: this.audioTranscript,
@@ -554,7 +551,6 @@ export class AudioRecognition {
             this.hooks.onStartOfSpeech(ev);
             this.speaking = true;
 
-            // Ref: Python audio_recognition.py line 660 - Create user_turn span when speech starts
             if (!this.userTurnSpan) {
               this.userTurnSpan = tracer.startSpan({ name: 'user_turn' });
             }

@@ -10,7 +10,6 @@ import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
-// Ref: Python tts.py lines 15-16 imports telemetry for span instrumentation
 import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { AsyncIterableQueue, delay, mergeFrames, startSoon, toError } from '../utils.js';
@@ -133,7 +132,6 @@ export abstract class SynthesizeStream
   #monitorMetricsTask?: Promise<void>;
   private _connOptions: APIConnectOptions;
   protected abortController = new AbortController();
-  // Ref: Python tts.py line 219 - Store span for setting attributes and ending later
   #ttsRequestSpan?: Span;
 
   private deferredInputStream: DeferredReadableStream<
@@ -161,12 +159,10 @@ export abstract class SynthesizeStream
     startSoon(() => this.mainTask().then(() => this.queue.close()));
   }
 
-  // Ref: Python tts.py lines 364-365 (streaming) or 241-242 (non-streaming) - Create 'tts_request' span with endOnExit=False
   private mainTask = async () =>
     tracer.startActiveSpan(
       async (span) => {
         this.#ttsRequestSpan = span;
-        // Ref: Python tts.py lines 369-373 (streaming) or 244-248 (non-streaming) - Set TTS attributes
         span.setAttributes({
           [traceTypes.ATTR_TTS_STREAMING]: true,
           [traceTypes.ATTR_TTS_LABEL]: this.#tts.label,
@@ -174,15 +170,12 @@ export abstract class SynthesizeStream
 
         for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
           try {
-            // Ref: Python tts.py lines 376-383 (streaming) or 254-260 (non-streaming) - Create 'tts_request_run' span for each retry attempt
             return await tracer.startActiveSpan(
               async (attemptSpan) => {
-                // Ref: Python tts.py line 377 (streaming) or 255 (non-streaming) - Set retry count attribute
                 attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
                 try {
                   return await this.run();
                 } catch (error) {
-                  // Ref: Python tts.py line 381 (streaming) or 259 (non-streaming) - Record exception on span
                   recordException(attemptSpan, toError(error));
                   throw error;
                 }
@@ -281,7 +274,6 @@ export abstract class SynthesizeStream
           label: this.#tts.label,
           streamed: false,
         };
-        // Ref: Python tts.py lines 475-478 - Set TTS metrics attribute on span
         if (this.#ttsRequestSpan) {
           this.#ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
         }
@@ -310,7 +302,6 @@ export abstract class SynthesizeStream
       emit();
     }
 
-    // Ref: Python tts.py lines 468-470 (streaming) - End the span when metrics collection is complete
     if (this.#ttsRequestSpan) {
       this.#ttsRequestSpan.end();
       this.#ttsRequestSpan = undefined;
