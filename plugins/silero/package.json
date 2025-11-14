@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-silero",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "Silero voice activity detection LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
