@@ -171,8 +171,7 @@ class MetadataSpanProcessor implements SpanProcessor {
  * This should be called before agent session start if using custom tracer providers.
  *
  * @param provider - The tracer provider to use (must be a NodeTracerProvider)
- * @param options - Optional configuration
- * @param options.metadata - Metadata to inject into all spans
+ * @param options - Optional configuration with metadata property to inject into all spans
  *
  * @example
  * ```typescript
@@ -190,7 +189,6 @@ export function setTracerProvider(
   options?: { metadata?: Attributes },
 ): void {
   if (options?.metadata) {
-    // eslint-disable-next-line deprecation/deprecation
     provider.addSpanProcessor(new MetadataSpanProcessor(options.metadata));
   }
 
@@ -201,10 +199,7 @@ export function setTracerProvider(
  * Setup OpenTelemetry tracer for LiveKit Cloud observability.
  * This configures OTLP exporters to send traces to LiveKit Cloud.
  *
- * @param options - Configuration for cloud tracer
- * @param options.roomId - The room ID
- * @param options.jobId - The job ID
- * @param options.cloudHostname - The LiveKit Cloud hostname (e.g., 'myproject.livekit.cloud')
+ * @param options - Configuration for cloud tracer with roomId, jobId, and cloudHostname properties
  *
  * @internal
  */
