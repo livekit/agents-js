@@ -421,7 +421,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         createRecvTask(),
       ]);
     } catch (e) {
-      this.#logger.error('Error in SynthesizeStream', { error: e });
+      this.#logger.error({ error: e }, 'Error in SynthesizeStream');
     } finally {
       resourceCleanup();
     }
