@@ -221,9 +221,7 @@ export async function setupCloudTracer(options: {
     identity: 'livekit-agents-telemetry',
     ttl: '6h',
   });
-
-  // TODO(SDK): Add observability grant once available:
-  // token.addObservabilityGrant({ write: true });
+  token.addObservabilityGrant({ write: true });
 
   try {
     const jwt = await token.toJwt();
