@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
+import type { Span } from '@opentelemetry/api';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
 import {
   type ChatContext,
@@ -393,89 +394,90 @@ export function performLLMInference(
   const toolCallWriter = toolCallStream.writable.getWriter();
   const data = new _LLMGenerationData(textStream.readable, toolCallStream.readable);
 
-  const inferenceTask = async (signal: AbortSignal) =>
-    tracer.startActiveSpan(
-      async (span) => {
-        // Ref: Python generation.py lines 101-109 - Set chat context and function tools attributes
-        span.setAttribute(
-          traceTypes.ATTR_CHAT_CTX,
-          JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
-        );
-        span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(Object.keys(toolCtx)));
-
-        let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk> | null = null;
-        let llmStream: ReadableStream<string | ChatChunk> | null = null;
-
-        try {
-          llmStream = await node(chatCtx, toolCtx, modelSettings);
-          if (llmStream === null) {
-            await textWriter.close();
-            return;
-          }
-
-          // TODO(brian): add support for dynamic tools
-
-          llmStreamReader = llmStream.getReader();
-          while (true) {
-            if (signal.aborted) {
-              break;
-            }
-            const { done, value: chunk } = await llmStreamReader.read();
-            if (done) {
-              break;
-            }
-
-            if (typeof chunk === 'string') {
-              data.generatedText += chunk;
-              await textWriter.write(chunk);
-              // TODO(shubhra): better way to check??
-            } else {
-              if (chunk.delta === undefined) {
-                continue;
-              }
-
-              if (chunk.delta.toolCalls) {
-                for (const tool of chunk.delta.toolCalls) {
-                  if (tool.type !== 'function_call') continue;
-
-                  const toolCall = FunctionCall.create({
-                    callId: `${data.id}/fnc_${data.generatedToolCalls.length}`,
-                    name: tool.name,
-                    args: tool.args,
-                  });
-
-                  data.generatedToolCalls.push(toolCall);
-                  await toolCallWriter.write(toolCall);
-                }
-              }
-
-              if (chunk.delta.content) {
-                data.generatedText += chunk.delta.content;
-                await textWriter.write(chunk.delta.content);
-              }
-            }
-
-            // No need to check if chunk is of type other than ChatChunk or string like in
-            // Python since chunk is defined in the type ChatChunk | string in TypeScript
-          }
-
-          // Ref: Python generation.py line 121 - Set response text attribute
-          span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
-        } catch (error) {
-          if (error instanceof DOMException && error.name === 'AbortError') {
-            // Abort signal was triggered, handle gracefully
-            return;
-          }
-          throw error;
-        } finally {
-          llmStreamReader?.releaseLock();
-          await llmStream?.cancel();
-          await textWriter.close();
-          await toolCallWriter.close();
-        }
-      },
-      { name: 'llm_node' },
+  const _performLLMInferenceImpl = async (signal: AbortSignal, span: Span) => {
+    // Ref: Python generation.py lines 101-109 - Set chat context and function tools attributes
+    span.setAttribute(
+      traceTypes.ATTR_CHAT_CTX,
+      JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
     );
+    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(Object.keys(toolCtx)));
+
+    let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk> | null = null;
+    let llmStream: ReadableStream<string | ChatChunk> | null = null;
+
+    try {
+      llmStream = await node(chatCtx, toolCtx, modelSettings);
+      if (llmStream === null) {
+        await textWriter.close();
+        return;
+      }
+
+      // TODO(brian): add support for dynamic tools
+
+      llmStreamReader = llmStream.getReader();
+      while (true) {
+        if (signal.aborted) {
+          break;
+        }
+        const { done, value: chunk } = await llmStreamReader.read();
+        if (done) {
+          break;
+        }
+
+        if (typeof chunk === 'string') {
+          data.generatedText += chunk;
+          await textWriter.write(chunk);
+          // TODO(shubhra): better way to check??
+        } else {
+          if (chunk.delta === undefined) {
+            continue;
+          }
+
+          if (chunk.delta.toolCalls) {
+            for (const tool of chunk.delta.toolCalls) {
+              if (tool.type !== 'function_call') continue;
+
+              const toolCall = FunctionCall.create({
+                callId: `${data.id}/fnc_${data.generatedToolCalls.length}`,
+                name: tool.name,
+                args: tool.args,
+              });
+
+              data.generatedToolCalls.push(toolCall);
+              await toolCallWriter.write(toolCall);
+            }
+          }
+
+          if (chunk.delta.content) {
+            data.generatedText += chunk.delta.content;
+            await textWriter.write(chunk.delta.content);
+          }
+        }
+
+        // No need to check if chunk is of type other than ChatChunk or string like in
+        // Python since chunk is defined in the type ChatChunk | string in TypeScript
+      }
+
+      // Ref: Python generation.py line 121 - Set response text attribute
+      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        // Abort signal was triggered, handle gracefully
+        return;
+      }
+      throw error;
+    } finally {
+      llmStreamReader?.releaseLock();
+      await llmStream?.cancel();
+      await textWriter.close();
+      await toolCallWriter.close();
+    }
+  };
+
+  const inferenceTask = async (signal: AbortSignal) =>
+    tracer.startActiveSpan(async (span) => _performLLMInferenceImpl(signal, span), {
+      name: 'llm_node',
+    });
 
   return [
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performLLMInference'),
@@ -494,44 +496,43 @@ export function performTTSInference(
   const outputWriter = audioStream.writable.getWriter();
   const audioOutputStream = audioStream.readable;
 
-  const inferenceTask = async (signal: AbortSignal) =>
-    tracer.startActiveSpan(
-      async () => {
-        let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
-        let ttsStream: ReadableStream<AudioFrame> | null = null;
+  const _performTTSInferenceImpl = async (signal: AbortSignal) => {
+    let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
+    let ttsStream: ReadableStream<AudioFrame> | null = null;
 
-        try {
-          ttsStream = await node(text, modelSettings);
-          if (ttsStream === null) {
-            await outputWriter.close();
-            return;
-          }
+    try {
+      ttsStream = await node(text, modelSettings);
+      if (ttsStream === null) {
+        await outputWriter.close();
+        return;
+      }
 
-          ttsStreamReader = ttsStream.getReader();
-          while (true) {
-            if (signal.aborted) {
-              break;
-            }
-            const { done, value: chunk } = await ttsStreamReader.read();
-            if (done) {
-              break;
-            }
-            await outputWriter.write(chunk);
-          }
-        } catch (error) {
-          if (error instanceof DOMException && error.name === 'AbortError') {
-            // Abort signal was triggered, handle gracefully
-            return;
-          }
-          throw error;
-        } finally {
-          ttsStreamReader?.releaseLock();
-          await ttsStream?.cancel();
-          await outputWriter.close();
+      ttsStreamReader = ttsStream.getReader();
+      while (true) {
+        if (signal.aborted) {
+          break;
         }
-      },
-      { name: 'tts_node' },
-    );
+        const { done, value: chunk } = await ttsStreamReader.read();
+        if (done) {
+          break;
+        }
+        await outputWriter.write(chunk);
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        // Abort signal was triggered, handle gracefully
+        return;
+      }
+      throw error;
+    } finally {
+      ttsStreamReader?.releaseLock();
+      await ttsStream?.cancel();
+      await outputWriter.close();
+    }
+  };
+
+  const inferenceTask = async (signal: AbortSignal) =>
+    tracer.startActiveSpan(async () => _performTTSInferenceImpl(signal), { name: 'tts_node' });
 
   return [
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performTTSInference'),
@@ -807,60 +808,61 @@ export function performToolExecutions({
         });
       });
 
+      const _tracableToolExecutionImpl = async (toolExecTask: Promise<unknown>, span: Span) => {
+        span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
+        span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
+
+        // await for task to complete, if task is aborted, set exception
+        let toolOutput: ToolExecutionOutput | undefined;
+        try {
+          const { result, isAborted } = await waitUntilAborted(toolExecTask, signal);
+          toolOutput = createToolOutput({
+            toolCall,
+            exception: isAborted ? new Error('tool call was aborted') : undefined,
+            output: isAborted ? undefined : result,
+          });
+
+          if (toolOutput.toolCallOutput) {
+            span.setAttribute(
+              traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
+              toolOutput.toolCallOutput.output,
+            );
+            span.setAttribute(
+              traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR,
+              toolOutput.toolCallOutput.isError,
+            );
+          }
+        } catch (rawError) {
+          logger.error(
+            {
+              function: toolCall.name,
+              speech_id: speechHandle.id,
+              error: toError(rawError).message,
+            },
+            'exception occurred while executing tool',
+          );
+          toolOutput = createToolOutput({
+            toolCall,
+            exception: toError(rawError),
+          });
+
+          if (toolOutput.toolCallOutput) {
+            span.setAttribute(
+              traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
+              toolOutput.toolCallOutput.output,
+            );
+            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, true);
+          }
+        } finally {
+          if (!toolOutput) throw new Error('toolOutput is undefined');
+          toolCompleted(toolOutput);
+        }
+      };
+
       const tracableToolExecution = (toolExecTask: Promise<unknown>) =>
-        tracer.startActiveSpan(
-          async (span) => {
-            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
-            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
-
-            // await for task to complete, if task is aborted, set exception
-            let toolOutput: ToolExecutionOutput | undefined;
-            try {
-              const { result, isAborted } = await waitUntilAborted(toolExecTask, signal);
-              toolOutput = createToolOutput({
-                toolCall,
-                exception: isAborted ? new Error('tool call was aborted') : undefined,
-                output: isAborted ? undefined : result,
-              });
-
-              if (toolOutput.toolCallOutput) {
-                span.setAttribute(
-                  traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
-                  toolOutput.toolCallOutput.output,
-                );
-                span.setAttribute(
-                  traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR,
-                  toolOutput.toolCallOutput.isError,
-                );
-              }
-            } catch (rawError) {
-              logger.error(
-                {
-                  function: toolCall.name,
-                  speech_id: speechHandle.id,
-                  error: toError(rawError).message,
-                },
-                'exception occurred while executing tool',
-              );
-              toolOutput = createToolOutput({
-                toolCall,
-                exception: toError(rawError),
-              });
-
-              if (toolOutput.toolCallOutput) {
-                span.setAttribute(
-                  traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
-                  toolOutput.toolCallOutput.output,
-                );
-                span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, true);
-              }
-            } finally {
-              if (!toolOutput) throw new Error('toolOutput is undefined');
-              toolCompleted(toolOutput);
-            }
-          },
-          { name: 'function_tool' },
-        );
+        tracer.startActiveSpan(async (span) => _tracableToolExecutionImpl(toolExecTask, span), {
+          name: 'function_tool',
+        });
 
       // wait, not cancelling all tool calling tasks
       tasks.push(tracableToolExecution(toolExecution));

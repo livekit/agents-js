@@ -217,33 +217,22 @@ export class AgentSession<
     this._userData = value;
   }
 
-  async start({
-    // TODO(brian): PR2 - Add setupCloudTracer() call if on LiveKit Cloud with recording enabled
-    // TODO(brian): PR4 - Add setupCloudLogger() call in setupCloudTracer() to setup OTEL logging with Pino bridge
+  private async _startImpl({
     agent,
     room,
     inputOptions,
     outputOptions,
-    record = true,
+    record,
+    span,
   }: {
     agent: Agent;
     room: Room;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
-    record?: boolean;
+    record: boolean;
+    span: Span;
   }): Promise<void> {
-    if (this.started) {
-      return;
-    }
-
-    this.sessionSpan = tracer.startSpan({ name: 'agent_session' });
-
-    // Set the session span as the active span in the context
-    // This ensures all child spans (agent_turn, user_turn, etc.) are parented to it
-    this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
-
-    // Set agent label attribute on the session span
-    this.sessionSpan.setAttribute(traceTypes.ATTR_AGENT_LABEL, agent.id);
+    span.setAttribute(traceTypes.ATTR_AGENT_LABEL, agent.id);
 
     this.agent = agent;
     this._updateAgentState('initializing');
@@ -306,6 +295,40 @@ export class AgentSession<
 
     this.started = true;
     this._updateAgentState('listening');
+  }
+
+  // TODO(brian): PR4 - Add setupCloudLogger() call in setupCloudTracer() to setup OTEL logging with Pino bridge
+  async start({
+    agent,
+    room,
+    inputOptions,
+    outputOptions,
+    record = true,
+  }: {
+    agent: Agent;
+    room: Room;
+    inputOptions?: Partial<RoomInputOptions>;
+    outputOptions?: Partial<RoomOutputOptions>;
+    record?: boolean;
+  }): Promise<void> {
+    if (this.started) {
+      return;
+    }
+
+    this.sessionSpan = tracer.startSpan({ name: 'agent_session' });
+
+    // Set the session span as the active span in the context
+    // This ensures all child spans (agent_turn, user_turn, etc.) are parented to it
+    this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
+
+    await this._startImpl({
+      agent,
+      room,
+      inputOptions,
+      outputOptions,
+      record,
+      span: this.sessionSpan,
+    });
   }
 
   updateAgent(agent: Agent): void {

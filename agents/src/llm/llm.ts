@@ -138,59 +138,61 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     startSoon(() => this.mainTask().then(() => this.queue.close()));
   }
 
-  private mainTask = async () =>
-    tracer.startActiveSpan(
-      async (span) => {
-        this.#llmRequestSpan = span;
-        span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.#llm.model);
+  private _mainTaskImpl = async (span: Span) => {
+    this.#llmRequestSpan = span;
+    span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.#llm.model);
 
-        for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
-          try {
-            return await tracer.startActiveSpan(
-              async (attemptSpan) => {
-                attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
-                try {
-                  return await this.run();
-                } catch (error) {
-                  recordException(attemptSpan, toError(error));
-                  throw error;
-                }
-              },
-              { name: 'llm_request_run' },
-            );
-          } catch (error) {
-            if (error instanceof APIError) {
-              const retryInterval = this._connOptions._intervalForRetry(i);
-
-              if (this._connOptions.maxRetry === 0 || !error.retryable) {
-                this.emitError({ error, recoverable: false });
-                throw error;
-              } else if (i === this._connOptions.maxRetry) {
-                this.emitError({ error, recoverable: false });
-                throw new APIConnectionError({
-                  message: `failed to generate LLM completion after ${this._connOptions.maxRetry + 1} attempts`,
-                  options: { retryable: false },
-                });
-              } else {
-                this.emitError({ error, recoverable: true });
-                this.logger.warn(
-                  { llm: this.#llm.label(), attempt: i + 1, error },
-                  `failed to generate LLM completion, retrying in ${retryInterval}s`,
-                );
-              }
-
-              if (retryInterval > 0) {
-                await delay(retryInterval);
-              }
-            } else {
-              this.emitError({ error: toError(error), recoverable: false });
+    for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
+      try {
+        return await tracer.startActiveSpan(
+          async (attemptSpan) => {
+            attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
+            try {
+              return await this.run();
+            } catch (error) {
+              recordException(attemptSpan, toError(error));
               throw error;
             }
+          },
+          { name: 'llm_request_run' },
+        );
+      } catch (error) {
+        if (error instanceof APIError) {
+          const retryInterval = this._connOptions._intervalForRetry(i);
+
+          if (this._connOptions.maxRetry === 0 || !error.retryable) {
+            this.emitError({ error, recoverable: false });
+            throw error;
+          } else if (i === this._connOptions.maxRetry) {
+            this.emitError({ error, recoverable: false });
+            throw new APIConnectionError({
+              message: `failed to generate LLM completion after ${this._connOptions.maxRetry + 1} attempts`,
+              options: { retryable: false },
+            });
+          } else {
+            this.emitError({ error, recoverable: true });
+            this.logger.warn(
+              { llm: this.#llm.label(), attempt: i + 1, error },
+              `failed to generate LLM completion, retrying in ${retryInterval}s`,
+            );
           }
+
+          if (retryInterval > 0) {
+            await delay(retryInterval);
+          }
+        } else {
+          this.emitError({ error: toError(error), recoverable: false });
+          throw error;
         }
-      },
-      { name: 'llm_request', endOnExit: false },
-    );
+      }
+    }
+  };
+
+  private mainTask = async () =>
+    tracer.startActiveSpan(async (span) => this._mainTaskImpl(span), {
+      name: 'llm_request',
+      endOnExit: false,
+    });
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
     this.#llm.emit('error', {

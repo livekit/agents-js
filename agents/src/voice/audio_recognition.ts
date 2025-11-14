@@ -433,16 +433,12 @@ export class AudioRecognition {
         });
 
         if (committed) {
-          if (this.userTurnSpan) {
-            this.userTurnSpan.setAttributes({
-              [traceTypes.ATTR_USER_TRANSCRIPT]: this.audioTranscript,
-              [traceTypes.ATTR_TRANSCRIPT_CONFIDENCE]: confidenceAvg,
-              [traceTypes.ATTR_TRANSCRIPTION_DELAY]: transcriptionDelay ?? 0,
-              [traceTypes.ATTR_END_OF_TURN_DELAY]: endOfUtteranceDelay ?? 0,
-            });
-            this.userTurnSpan.end();
-            this.userTurnSpan = undefined;
-          }
+          this._endUserTurnSpan({
+            transcript: this.audioTranscript,
+            confidence: confidenceAvg,
+            transcriptionDelay: transcriptionDelay ?? 0,
+            endOfUtteranceDelay: endOfUtteranceDelay ?? 0,
+          });
 
           // clear the transcript if the user turn was committed
           this.audioTranscript = '';
@@ -668,6 +664,29 @@ export class AudioRecognition {
     await this.sttTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
     await this.bounceEOUTask?.cancelAndWait();
+  }
+
+  private _endUserTurnSpan({
+    transcript,
+    confidence,
+    transcriptionDelay,
+    endOfUtteranceDelay,
+  }: {
+    transcript: string;
+    confidence: number;
+    transcriptionDelay: number;
+    endOfUtteranceDelay: number;
+  }): void {
+    if (this.userTurnSpan) {
+      this.userTurnSpan.setAttributes({
+        [traceTypes.ATTR_USER_TRANSCRIPT]: transcript,
+        [traceTypes.ATTR_TRANSCRIPT_CONFIDENCE]: confidence,
+        [traceTypes.ATTR_TRANSCRIPTION_DELAY]: transcriptionDelay,
+        [traceTypes.ATTR_END_OF_TURN_DELAY]: endOfUtteranceDelay,
+      });
+      this.userTurnSpan.end();
+      this.userTurnSpan = undefined;
+    }
   }
 
   private get vadBaseTurnDetection() {

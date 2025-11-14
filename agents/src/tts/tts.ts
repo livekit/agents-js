@@ -159,63 +159,65 @@ export abstract class SynthesizeStream
     startSoon(() => this.mainTask().then(() => this.queue.close()));
   }
 
-  private mainTask = async () =>
-    tracer.startActiveSpan(
-      async (span) => {
-        this.#ttsRequestSpan = span;
-        span.setAttributes({
-          [traceTypes.ATTR_TTS_STREAMING]: true,
-          [traceTypes.ATTR_TTS_LABEL]: this.#tts.label,
-        });
+  private _mainTaskImpl = async (span: Span) => {
+    this.#ttsRequestSpan = span;
+    span.setAttributes({
+      [traceTypes.ATTR_TTS_STREAMING]: true,
+      [traceTypes.ATTR_TTS_LABEL]: this.#tts.label,
+    });
 
-        for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
-          try {
-            return await tracer.startActiveSpan(
-              async (attemptSpan) => {
-                attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
-                try {
-                  return await this.run();
-                } catch (error) {
-                  recordException(attemptSpan, toError(error));
-                  throw error;
-                }
-              },
-              { name: 'tts_request_run' },
-            );
-          } catch (error) {
-            if (error instanceof APIError) {
-              const retryInterval = this._connOptions._intervalForRetry(i);
-
-              if (this._connOptions.maxRetry === 0 || !error.retryable) {
-                this.emitError({ error, recoverable: false });
-                throw error;
-              } else if (i === this._connOptions.maxRetry) {
-                this.emitError({ error, recoverable: false });
-                throw new APIConnectionError({
-                  message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
-                  options: { retryable: false },
-                });
-              } else {
-                // Don't emit error event for recoverable errors during retry loop
-                // to avoid ERR_UNHANDLED_ERROR or premature session termination
-                this.logger.warn(
-                  { tts: this.#tts.label, attempt: i + 1, error },
-                  `failed to synthesize speech, retrying in  ${retryInterval}s`,
-                );
-              }
-
-              if (retryInterval > 0) {
-                await delay(retryInterval);
-              }
-            } else {
-              this.emitError({ error: toError(error), recoverable: false });
+    for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
+      try {
+        return await tracer.startActiveSpan(
+          async (attemptSpan) => {
+            attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
+            try {
+              return await this.run();
+            } catch (error) {
+              recordException(attemptSpan, toError(error));
               throw error;
             }
+          },
+          { name: 'tts_request_run' },
+        );
+      } catch (error) {
+        if (error instanceof APIError) {
+          const retryInterval = this._connOptions._intervalForRetry(i);
+
+          if (this._connOptions.maxRetry === 0 || !error.retryable) {
+            this.emitError({ error, recoverable: false });
+            throw error;
+          } else if (i === this._connOptions.maxRetry) {
+            this.emitError({ error, recoverable: false });
+            throw new APIConnectionError({
+              message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
+              options: { retryable: false },
+            });
+          } else {
+            // Don't emit error event for recoverable errors during retry loop
+            // to avoid ERR_UNHANDLED_ERROR or premature session termination
+            this.logger.warn(
+              { tts: this.#tts.label, attempt: i + 1, error },
+              `failed to synthesize speech, retrying in  ${retryInterval}s`,
+            );
           }
+
+          if (retryInterval > 0) {
+            await delay(retryInterval);
+          }
+        } else {
+          this.emitError({ error: toError(error), recoverable: false });
+          throw error;
         }
-      },
-      { name: 'tts_request', endOnExit: false },
-    );
+      }
+    }
+  };
+
+  private mainTask = async () =>
+    tracer.startActiveSpan(async (span) => this._mainTaskImpl(span), {
+      name: 'tts_request',
+      endOnExit: false,
+    });
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
     this.#tts.emit('error', {
