@@ -132,6 +132,8 @@ export class AgentSession<
   private userAwayTimer: NodeJS.Timeout | null = null;
 
   private sessionSpan?: Span;
+  private userSpeakingSpan?: Span;
+  private agentSpeakingSpan?: Span;
 
   /** @internal */
   rootSpanContext?: Context;
@@ -506,7 +508,25 @@ export class AgentSession<
       return;
     }
 
-    // TODO(brian): PR4 - Add 'agent_speaking' span (Ref: Python agent_session.py line 1156)
+    if (state === 'speaking') {
+      // TODO(brian): PR4 - Track error counts
+
+      if (this.agentSpeakingSpan === undefined) {
+        this.agentSpeakingSpan = tracer.startSpan({
+          name: 'agent_speaking',
+          context: this.rootSpanContext,
+        });
+
+        // TODO(brian): PR4 - Set participant attributes if roomIO.room.localParticipant is available
+        // (Ref: Python agent_session.py line 1161-1164)
+      }
+    } else if (this.agentSpeakingSpan !== undefined) {
+      // Ref: Python agent_session.py line 1166-1169 - End span when agent stops speaking
+      // TODO(brian): PR4 - Set ATTR_END_TIME attribute if available
+      this.agentSpeakingSpan.end();
+      this.agentSpeakingSpan = undefined;
+    }
+
     const oldState = this._agentState;
     this._agentState = state;
 
@@ -529,7 +549,22 @@ export class AgentSession<
       return;
     }
 
-    // TODO(brian): PR4 - Add 'user_speaking' span (Ref: Python agent_session.py line 1189)
+    // Ref: Python agent_session.py line 1189 - Create 'user_speaking' span when user starts speaking
+    if (state === 'speaking' && this.userSpeakingSpan === undefined) {
+      this.userSpeakingSpan = tracer.startSpan({
+        name: 'user_speaking',
+        context: this.rootSpanContext,
+      });
+
+      // TODO(brian): PR4 - Set participant attributes if roomIO.linkedParticipant is available
+      // (Ref: Python agent_session.py line 1192-1195)
+    } else if (this.userSpeakingSpan !== undefined) {
+      // Ref: Python agent_session.py line 1198-1202 - End span when user stops speaking
+      // TODO(brian): PR4 - Set ATTR_END_TIME attribute with lastSpeakingTime if available
+      this.userSpeakingSpan.end();
+      this.userSpeakingSpan = undefined;
+    }
+
     const oldState = this.userState;
     this.userState = state;
 
@@ -646,6 +681,16 @@ export class AgentSession<
     if (this.sessionSpan) {
       this.sessionSpan.end();
       this.sessionSpan = undefined;
+    }
+
+    if (this.userSpeakingSpan) {
+      this.userSpeakingSpan.end();
+      this.userSpeakingSpan = undefined;
+    }
+
+    if (this.agentSpeakingSpan) {
+      this.agentSpeakingSpan.end();
+      this.agentSpeakingSpan = undefined;
     }
 
     this.started = false;
