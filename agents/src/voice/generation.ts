@@ -379,7 +379,6 @@ export function updateInstructions(options: {
   }
 }
 
-// Ref: Python generation.py line 86 - Wrap LLM inference with 'llm_node' span
 export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
@@ -395,7 +394,6 @@ export function performLLMInference(
   const data = new _LLMGenerationData(textStream.readable, toolCallStream.readable);
 
   const _performLLMInferenceImpl = async (signal: AbortSignal, span: Span) => {
-    // Ref: Python generation.py lines 101-109 - Set chat context and function tools attributes
     span.setAttribute(
       traceTypes.ATTR_CHAT_CTX,
       JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
@@ -458,7 +456,6 @@ export function performLLMInference(
         // Python since chunk is defined in the type ChatChunk | string in TypeScript
       }
 
-      // Ref: Python generation.py line 121 - Set response text attribute
       span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -485,7 +482,6 @@ export function performLLMInference(
   ];
 }
 
-// Ref: Python generation.py line 214 - Wrap TTS inference with 'tts_node' span
 export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string>,
