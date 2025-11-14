@@ -38,7 +38,7 @@ const defaultSTTOptions: STTOptions = {
   apiKey: process.env.ELEVEN_API_KEY,
   baseURL: API_BASE_URL_V1,
   model: 'scribe_v2_realtime',
-  tagAudioEvents: true,
+  tagAudioEvents: false,
   sampleRate: 16000,
   numChannels: 1,
   commitStrategy: 'vad',
@@ -61,7 +61,7 @@ export class STT extends stt.STT {
    * @param opts.baseURL - Base URL for the API (defaults to https://api.elevenlabs.io/v1)
    * @param opts.model - Model to use: 'scribe_v1' (non-streaming), 'scribe_v2' (non-streaming), or 'scribe_v2_realtime' (streaming)
    * @param opts.languageCode - Language code for transcription (optional, auto-detected if not set)
-   * @param opts.tagAudioEvents - Whether to tag audio events like (laughter), (footsteps), etc. (defaults to true, scribe_v1 only)
+   * @param opts.tagAudioEvents - Whether to tag audio events like (laughter), (footsteps), etc. (defaults to false)
    * @param opts.sampleRate - Sample rate for audio (defaults to 16000)
    * @param opts.numChannels - Number of audio channels (defaults to 1)
    * @param opts.commitStrategy - Commit strategy: 'vad' (auto) or 'manual' (defaults to 'vad', scribe_v2_realtime only)
@@ -264,9 +264,9 @@ export class SpeechStream extends stt.SpeechStream {
 
       try {
         await new Promise((resolve, reject) => {
-          ws.on('open', resolve);
-          ws.on('error', (error) => reject(error));
-          ws.on('close', (code) => reject(`WebSocket returned ${code}`));
+          ws.once('open', resolve);
+          ws.once('error', (error) => reject(error));
+          ws.once('close', (code) => reject(`WebSocket returned ${code}`));
         });
 
         // on success reset retries
