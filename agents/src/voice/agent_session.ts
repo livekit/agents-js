@@ -238,15 +238,16 @@ export class AgentSession<
       return;
     }
 
-    // Ref: Python agent_session.py line 519 - Create agent_session span
+    // Ref: Python agent_session.py lines 519-528 - Create agent_session span and set as active context
     this.sessionSpan = tracer.startSpan({ name: 'agent_session' });
+    console.log('[TRACE] Created agent_session span:', this.sessionSpan.spanContext().spanId);
+
+    // Set the session span as the active span in the context
+    // This ensures all child spans (agent_turn, user_turn, etc.) are parented to it
     this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
 
-    // Ref: Python agent_session.py lines 527-528 - Get current span and set agent label (agent.id in TS, agent.label in Python)
-    const currentSpan = trace.getSpan(this.rootSpanContext);
-    if (currentSpan) {
-      currentSpan.setAttribute(traceTypes.ATTR_AGENT_LABEL, agent.id);
-    }
+    // Set agent label attribute on the session span
+    this.sessionSpan.setAttribute(traceTypes.ATTR_AGENT_LABEL, agent.id);
 
     this.agent = agent;
     this._updateAgentState('initializing');
@@ -384,32 +385,42 @@ export class AgentSession<
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
-    // TODO(AJS-129): add lock to agent activity core lifecycle
-    this.nextActivity = new AgentActivity(agent, this);
+    // Ref: Python agent_session.py line 1033 - Run activity operations within root span context
+    const runWithContext = async () => {
+      // TODO(AJS-129): add lock to agent activity core lifecycle
+      this.nextActivity = new AgentActivity(agent, this);
 
-    const previousActivity = this.activity;
+      const previousActivity = this.activity;
 
-    if (this.activity) {
-      await this.activity.drain();
-      await this.activity.close();
+      if (this.activity) {
+        await this.activity.drain();
+        await this.activity.close();
+      }
+
+      this.activity = this.nextActivity;
+      this.nextActivity = undefined;
+
+      this._chatCtx.insert(
+        new AgentHandoffItem({
+          oldAgentId: previousActivity?.agent.id,
+          newAgentId: agent.id,
+        }),
+      );
+      this.logger.debug({ previousActivity, agent }, 'Agent handoff inserted into chat context');
+
+      await this.activity.start();
+
+      if (this._input.audio) {
+        this.activity.attachAudioInput(this._input.audio.stream);
+      }
+    };
+
+    // Run within session span context if available
+    if (this.rootSpanContext) {
+      return otelContext.with(this.rootSpanContext, runWithContext);
     }
 
-    this.activity = this.nextActivity;
-    this.nextActivity = undefined;
-
-    this._chatCtx.insert(
-      new AgentHandoffItem({
-        oldAgentId: previousActivity?.agent.id,
-        newAgentId: agent.id,
-      }),
-    );
-    this.logger.debug({ previousActivity, agent }, 'Agent handoff inserted into chat context');
-
-    await this.activity.start();
-
-    if (this._input.audio) {
-      this.activity.attachAudioInput(this._input.audio.stream);
-    }
+    return runWithContext();
   }
 
   get chatCtx(): ChatContext {
@@ -568,6 +579,21 @@ export class AgentSession<
     error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
     drain: boolean = false,
   ): Promise<void> {
+    // Ref: Python agent_session.py lines 751-753 - Attach root span context for cleanup operations
+    if (this.rootSpanContext) {
+      return otelContext.with(this.rootSpanContext, async () => {
+        await this.closeImplInner(reason, error, drain);
+      });
+    }
+
+    return this.closeImplInner(reason, error, drain);
+  }
+
+  private async closeImplInner(
+    reason: CloseReason,
+    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
+    drain: boolean = false,
+  ): Promise<void> {
     if (!this.started) {
       return;
     }
@@ -603,6 +629,7 @@ export class AgentSession<
 
     // Ref: Python agent_session.py lines 813-815 - End session span
     if (this.sessionSpan) {
+      console.log('[TRACE] Ending agent_session span:', this.sessionSpan.spanContext().spanId);
       this.sessionSpan.end();
       this.sessionSpan = undefined;
     }
