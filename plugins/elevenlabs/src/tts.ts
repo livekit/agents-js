@@ -10,11 +10,11 @@ import {
   tts,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { URL } from 'node:url';
 import { type RawData, WebSocket } from 'ws';
 import type { TTSEncoding, TTSModels } from './models.js';
 
 const DEFAULT_INACTIVITY_TIMEOUT = 300;
+const AUTHORIZATION_HEADER = 'xi-api-key';
 
 type Voice = {
   id: string;
@@ -43,7 +43,6 @@ const DEFAULT_VOICE: Voice = {
 };
 
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1/';
-const AUTHORIZATION_HEADER = 'xi-api-key';
 
 export interface TTSOptions {
   apiKey?: string;
@@ -72,8 +71,423 @@ const defaultTTSOptionsBase = {
   syncAlignment: true,
 };
 
+// ============================================================================
+// WebSocket Connection Manager - Manages persistent connection with multi-stream support
+// ============================================================================
+
+interface DeferredPromise<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: any) => void;
+}
+
+interface StreamContext {
+  contextId: string;
+  audioQueue: AsyncIterableQueue<Int8Array>;
+  eos: DeferredPromise<void>;
+  timeoutTimer: NodeJS.Timeout | null;
+  timeoutSeconds: number;
+}
+
+interface SynthesizeContent {
+  type: 'synthesize';
+  contextId: string;
+  text: string;
+  flush: boolean;
+}
+
+interface CloseContext {
+  type: 'close';
+  contextId: string;
+}
+
+type QueueMessage = SynthesizeContent | CloseContext;
+
+/**
+ * Manages a single persistent WebSocket connection for multi-stream TTS.
+ * Allows multiple synthesize requests to share one connection via context IDs.
+ */
+class WebSocketManager {
+  private ws: WebSocket | null = null;
+  private opts: TTSOptions;
+  private logger = log();
+  private inputQueue = new AsyncIterableQueue<QueueMessage>();
+  private contextData = new Map<string, StreamContext>();
+  private activeContexts = new Set<string>();
+  private sendTask: Promise<void> | null = null;
+  private recvTask: Promise<void> | null = null;
+  private keepaliveInterval: NodeJS.Timeout | null = null;
+  private closed = false;
+  private isCurrent = true;
+
+  constructor(opts: TTSOptions) {
+    this.opts = opts;
+  }
+
+  async connect(): Promise<void> {
+    if (this.ws || this.closed) {
+      return;
+    }
+
+    const url = this.buildMultiStreamUrl();
+    const headers = {
+      [AUTHORIZATION_HEADER]: this.opts.apiKey!,
+    };
+
+    this.ws = new WebSocket(url, { headers });
+
+    // Wait for connection to open
+    await new Promise((resolve, reject) => {
+      if (!this.ws) {
+        reject(new Error('WebSocket not initialized'));
+        return;
+      }
+      this.ws.once('open', resolve);
+      this.ws.once('error', (error) => reject(error));
+      this.ws.once('close', (code) => reject(`WebSocket returned ${code}`));
+    });
+
+    // Start keepalive ping
+    this.keepaliveInterval = setInterval(() => {
+      try {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.ping();
+        }
+      } catch {
+        if (this.keepaliveInterval) {
+          clearInterval(this.keepaliveInterval);
+          this.keepaliveInterval = null;
+        }
+      }
+    }, 5000);
+
+    // Start send and recv loops
+    this.sendTask = this.sendLoop();
+    this.recvTask = this.recvLoop();
+  }
+
+  registerContext(contextId: string, timeoutSeconds: number = 30): void {
+    if (!this.contextData.has(contextId)) {
+      const eos: DeferredPromise<void> = {} as DeferredPromise<void>;
+      eos.promise = new Promise<void>((resolve, reject) => {
+        eos.resolve = resolve;
+        eos.reject = reject;
+      });
+
+      this.contextData.set(contextId, {
+        contextId,
+        audioQueue: new AsyncIterableQueue<Int8Array>(),
+        eos: eos,
+        timeoutTimer: null,
+        timeoutSeconds,
+      });
+    }
+  }
+
+  sendContent(contextId: string, text: string, flush: boolean = false): void {
+    if (this.closed || !this.ws || this.ws.readyState !== 1) {
+      throw new Error('WebSocket connection is closed');
+    }
+
+    this.inputQueue.put({
+      type: 'synthesize',
+      contextId,
+      text,
+      flush,
+    });
+  }
+
+  closeContext(contextId: string): void {
+    if (this.closed || !this.ws || this.ws.readyState !== 1) {
+      throw new Error('WebSocket connection is closed');
+    }
+
+    this.inputQueue.put({
+      type: 'close',
+      contextId,
+    });
+  }
+
+  getContextAudioQueue(contextId: string): AsyncIterableQueue<Int8Array> | null {
+    return this.contextData.get(contextId)?.audioQueue ?? null;
+  }
+
+  getContextEOSPromise(contextId: string): Promise<void> | null {
+    return this.contextData.get(contextId)?.eos.promise ?? null;
+  }
+
+  markNonCurrent(): void {
+    this.isCurrent = false;
+  }
+
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
+  private cleanupContext(contextId: string): void {
+    const ctx = this.contextData.get(contextId);
+    if (ctx) {
+      if (ctx.timeoutTimer) {
+        clearTimeout(ctx.timeoutTimer);
+      }
+      ctx.audioQueue.close();
+    }
+    this.contextData.delete(contextId);
+    this.activeContexts.delete(contextId);
+  }
+
+  private startTimeoutTimer(contextId: string): void {
+    const ctx = this.contextData.get(contextId);
+    if (!ctx || ctx.timeoutTimer) {
+      return;
+    }
+
+    ctx.timeoutTimer = setTimeout(() => {
+      this.logger.error(
+        { contextId },
+        `TTS: Context timed out after ${ctx.timeoutSeconds} seconds`,
+      );
+      ctx.eos.reject(new Error(`TTS timed out after ${ctx.timeoutSeconds} seconds`));
+      this.cleanupContext(contextId);
+    }, ctx.timeoutSeconds * 1000);
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+
+    this.closed = true;
+    this.inputQueue.close();
+
+    // Clear all timeout timers
+    for (const ctx of this.contextData.values()) {
+      if (ctx.timeoutTimer) {
+        clearTimeout(ctx.timeoutTimer);
+      }
+    }
+
+    this.contextData.clear();
+    this.activeContexts.clear();
+
+    if (this.keepaliveInterval) {
+      clearInterval(this.keepaliveInterval);
+      this.keepaliveInterval = null;
+    }
+
+    if (this.ws) {
+      this.ws.removeAllListeners();
+      this.ws.close();
+      this.ws = null;
+    }
+
+    if (this.sendTask) {
+      try {
+        await this.sendTask;
+      } catch {
+        // Expected when queue closes
+      }
+    }
+
+    if (this.recvTask) {
+      try {
+        await this.recvTask;
+      } catch {
+        // Expected when connection closes
+      }
+    }
+  }
+
+  private buildMultiStreamUrl(): string {
+    const baseURL = this.opts.baseURL
+      .replace('https://', 'wss://')
+      .replace('http://', 'ws://')
+      .replace(/\/$/, '');
+
+    const voiceId = this.opts.voice.id;
+    let urlStr = `${baseURL}/text-to-speech/${voiceId}/multi-stream-input?`;
+
+    const params: string[] = [];
+    params.push(`model_id=${this.opts.modelID}`);
+    params.push(`output_format=${this.opts.encoding}`);
+    params.push(`enable_ssml_parsing=${this.opts.enableSsmlParsing}`);
+    params.push(`sync_alignment=${this.opts.syncAlignment}`);
+    params.push(`inactivity_timeout=${this.opts.inactivityTimeout}`);
+
+    if (this.opts.streamingLatency !== undefined) {
+      params.push(`optimize_streaming_latency=${this.opts.streamingLatency}`);
+    }
+
+    if (this.opts.autoMode !== undefined) {
+      params.push(`auto_mode=${this.opts.autoMode}`);
+    }
+
+    if (this.opts.languageCode) {
+      params.push(`language_code=${this.opts.languageCode}`);
+    }
+
+    urlStr += params.join('&');
+    return urlStr;
+  }
+
+  private async sendLoop(): Promise<void> {
+    try {
+      for await (const msg of this.inputQueue) {
+        if (!this.ws || this.ws.readyState !== 1) {
+          break;
+        }
+
+        if (msg.type === 'synthesize') {
+          const isNewContext = !this.activeContexts.has(msg.contextId);
+
+          // If not current and new context, ignore (connection is draining)
+          if (!this.isCurrent && isNewContext) {
+            continue;
+          }
+
+          if (isNewContext) {
+            const voiceSettings = this.opts.voice.settings || {};
+            const initPkt = {
+              text: ' ',
+              voice_settings: voiceSettings,
+              context_id: msg.contextId,
+              ...(this.opts.chunkLengthSchedule && {
+                generation_config: {
+                  chunk_length_schedule: this.opts.chunkLengthSchedule,
+                },
+              }),
+            };
+
+            this.ws.send(JSON.stringify(initPkt));
+            this.activeContexts.add(msg.contextId);
+          }
+
+          const pkt: { text: string; context_id: string; flush?: boolean } = {
+            text: msg.text,
+            context_id: msg.contextId,
+          };
+          if (msg.flush) {
+            pkt.flush = true;
+          }
+
+          // Start timeout timer for this context
+          this.startTimeoutTimer(msg.contextId);
+
+          this.ws.send(JSON.stringify(pkt));
+        } else if (msg.type === 'close') {
+          if (this.activeContexts.has(msg.contextId)) {
+            const closePkt = {
+              context_id: msg.contextId,
+              close_context: true,
+            };
+            this.ws.send(JSON.stringify(closePkt));
+            this.activeContexts.delete(msg.contextId);
+          }
+        } else {
+          this.logger.error(`TTS: Unknown msg type: ${msg}`);
+        }
+      }
+    } catch (error) {
+      this.logger.error({ error }, 'TTS: Error in send loop');
+    } finally {
+      if (!this.closed) {
+        await this.close();
+      }
+    }
+  }
+
+  private async recvLoop(): Promise<void> {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        if (!this.ws) {
+          reject(new Error('WebSocket not available'));
+          return;
+        }
+
+        this.ws.on('message', (msg: RawData) => {
+          try {
+            const data = JSON.parse(msg.toString()) as Record<string, unknown>;
+            const contextId = (data.contextId || data.context_id) as string | undefined;
+
+            if (!contextId || !this.contextData.has(contextId)) {
+              return;
+            }
+
+            const context = this.contextData.get(contextId)!;
+
+            this.logger.debug({ data }, 'TTS: Incoming message');
+
+            if (data.error) {
+              this.logger.error({ contextId, error: data.error }, 'TTS: ElevenLabs error');
+              this.cleanupContext(contextId);
+              return;
+            }
+
+            if (data.audio) {
+              const audioBuffer = Buffer.from(data.audio as string, 'base64');
+              const audioArray = new Int8Array(audioBuffer);
+              context.audioQueue.put(audioArray);
+
+              // Cancel timeout when audio is received
+              if (context.timeoutTimer) {
+                clearTimeout(context.timeoutTimer);
+                context.timeoutTimer = null;
+              }
+            }
+
+            if (data.isFinal) {
+              context.eos.resolve();
+              this.cleanupContext(contextId);
+
+              if (!this.isCurrent && this.activeContexts.size === 0) {
+                this.logger.debug('TTS: No active contexts, shutting down');
+                resolve();
+              }
+            }
+
+            if (this.closed) {
+              resolve();
+            }
+          } catch (parseError) {
+            this.logger.warn({ parseError }, 'TTS: Failed to parse message');
+          }
+        });
+
+        this.ws.once('close', (code, reason) => {
+          if (!this.closed) {
+            this.logger.error(`TTS: WebSocket closed unexpectedly with code ${code}: ${reason}`);
+            reject(new Error('WebSocket closed'));
+          } else {
+            resolve();
+          }
+        });
+
+        this.ws.once('error', (error) => {
+          this.logger.error({ error }, 'TTS: WebSocket error');
+          reject(error);
+        });
+      });
+    } catch (error) {
+      this.logger.error({ error }, 'TTS: Recv loop error');
+      for (const context of this.contextData.values()) {
+        context.eos.reject(error);
+      }
+    } finally {
+      if (!this.closed) {
+        await this.close();
+      }
+    }
+  }
+}
+
+// ============================================================================
+// TTS Implementation
+// ============================================================================
+
 export class TTS extends tts.TTS {
   #opts: TTSOptions;
+  #connection: WebSocketManager | null = null;
+  #connectionLock: Promise<void> | null = null;
   label = 'elevenlabs.TTS';
 
   constructor(opts: Partial<TTSOptions> = {}) {
@@ -136,6 +550,38 @@ export class TTS extends tts.TTS {
       });
   }
 
+  async getCurrentConnection(): Promise<WebSocketManager> {
+    // Wait for any ongoing connection attempt
+    if (this.#connectionLock) {
+      await this.#connectionLock;
+      if (this.#connection && !this.#connection.isClosed) {
+        return this.#connection;
+      }
+    }
+
+    // Create new lock for this connection attempt
+    const newConnectionLock = (async () => {
+      // Mark old connection as non-current if it exists
+      if (this.#connection && !this.#connection.isClosed) {
+        this.#connection.markNonCurrent();
+      }
+
+      // Create and connect new manager
+      const manager = new WebSocketManager(this.#opts);
+      await manager.connect();
+      this.#connection = manager;
+    })();
+
+    this.#connectionLock = newConnectionLock;
+    try {
+      await newConnectionLock;
+    } finally {
+      this.#connectionLock = null;
+    }
+
+    return this.#connection!;
+  }
+
   synthesize(): tts.ChunkedStream {
     throw new Error('Chunked responses are not supported on ElevenLabs TTS');
   }
@@ -143,144 +589,93 @@ export class TTS extends tts.TTS {
   stream(): tts.SynthesizeStream {
     return new SynthesizeStream(this, this.#opts);
   }
+
+  async aclose(): Promise<void> {
+    if (this.#connection) {
+      await this.#connection.close();
+      this.#connection = null;
+    }
+  }
 }
 
 export class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
   #logger = log();
+  #tts: TTS;
+  #contextId: string;
+  #connection: WebSocketManager | null = null;
   label = 'elevenlabs.SynthesizeStream';
-  readonly streamURL: URL;
 
   constructor(tts: TTS, opts: TTSOptions) {
     super(tts);
+    this.#tts = tts;
     this.#opts = opts;
-    this.closed = false;
-
-    // add trailing slash to URL if needed
-    const baseURL = opts.baseURL + (opts.baseURL.endsWith('/') ? '' : '/');
-
-    this.streamURL = new URL(`text-to-speech/${opts.voice.id}/stream-input`, baseURL);
-    const params = {
-      model_id: opts.modelID,
-      output_format: opts.encoding,
-      enable_ssml_parsing: `${opts.enableSsmlParsing}`,
-      sync_alignment: `${opts.syncAlignment}`,
-      ...(opts.autoMode !== undefined && { auto_mode: `${opts.autoMode}` }),
-      ...(opts.languageCode && { language_code: opts.languageCode }),
-      ...(opts.inactivityTimeout && { inactivity_timeout: `${opts.inactivityTimeout}` }),
-      ...(opts.streamingLatency && { optimize_streaming_latency: `${opts.streamingLatency}` }),
-    };
-    Object.entries(params).forEach(([k, v]) => this.streamURL.searchParams.append(k, v));
-    this.streamURL.protocol = this.streamURL.protocol.replace('http', 'ws');
+    this.#contextId = shortuuid();
   }
 
   protected async run() {
-    const segments = new AsyncIterableQueue<tokenize.WordStream | tokenize.SentenceStream>();
+    try {
+      // Get persistent connection
+      this.#connection = await this.#tts.getCurrentConnection();
+      this.#connection.registerContext(this.#contextId);
 
-    const tokenizeInput = async () => {
-      let stream: tokenize.WordStream | tokenize.SentenceStream | null = null;
-      for await (const text of this.input) {
-        if (this.abortController.signal.aborted) {
-          break;
-        }
-        if (text === SynthesizeStream.FLUSH_SENTINEL) {
-          stream?.endInput();
-          stream = null;
-        } else {
-          if (!stream) {
-            stream = this.#opts.wordTokenizer.stream();
-            segments.put(stream);
+      const segments = new AsyncIterableQueue<tokenize.WordStream | tokenize.SentenceStream>();
+
+      const tokenizeInput = async () => {
+        let stream: tokenize.WordStream | tokenize.SentenceStream | null = null;
+        for await (const text of this.input) {
+          if (this.abortController.signal.aborted) {
+            break;
           }
-          stream.pushText(text);
+          if (text === SynthesizeStream.FLUSH_SENTINEL) {
+            stream?.endInput();
+            stream = null;
+          } else {
+            if (!stream) {
+              stream = this.#opts.wordTokenizer.stream();
+              segments.put(stream);
+            }
+            stream.pushText(text);
+          }
         }
-      }
-      segments.close();
-    };
+        segments.close();
+      };
 
-    const runStream = async () => {
-      for await (const stream of segments) {
-        if (this.abortController.signal.aborted) {
-          break;
+      const runStream = async () => {
+        for await (const stream of segments) {
+          if (this.abortController.signal.aborted) {
+            break;
+          }
+          await this.runSynthesis(stream);
+          this.queue.put(SynthesizeStream.END_OF_STREAM);
         }
-        await this.#runWS(stream);
-        this.queue.put(SynthesizeStream.END_OF_STREAM);
-      }
-    };
+      };
 
-    await Promise.all([tokenizeInput(), runStream()]);
-  }
-
-  async #runWS(stream: tokenize.WordStream | tokenize.SentenceStream, maxRetry = 3) {
-    let retries = 0;
-    let ws: WebSocket;
-    while (true) {
-      ws = new WebSocket(this.streamURL, {
-        headers: { [AUTHORIZATION_HEADER]: this.#opts.apiKey },
-      });
-
-      ws.on('error', (error) => {
-        this.abortController.abort();
-        this.#logger.error({ error }, 'Error connecting to ElevenLabs');
-      });
-
-      try {
-        await new Promise((resolve, reject) => {
-          ws.on('open', resolve);
-          ws.on('error', (error) => reject(error));
-          ws.on('close', (code) => reject(`WebSocket returned ${code}`));
-        });
-        break;
-      } catch (e) {
-        if (retries >= maxRetry) {
-          throw new Error(`failed to connect to ElevenLabs after ${retries} attempts: ${e}`);
+      await Promise.all([tokenizeInput(), runStream()]);
+    } finally {
+      if (this.#connection) {
+        try {
+          this.#connection.closeContext(this.#contextId);
+        } catch {
+          // Connection may be closed
         }
-
-        const delay = Math.min(retries * 5, 5);
-        retries++;
-
-        this.#logger.warn(
-          `failed to connect to ElevenLabs, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, delay * 1000));
       }
     }
+  }
 
-    const requestId = shortuuid();
-    const segmentId = shortuuid();
+  private async runSynthesis(stream: tokenize.WordStream | tokenize.SentenceStream): Promise<void> {
+    if (!this.#connection) {
+      throw new Error('Connection not established');
+    }
 
-    // simple helper to make sure what we send to ws.send
-    const wsSend = (data: {
-      // (SynthesizeContent from python)
-      text: string;
-      // setting flush somehow never finishes the current speech generation
-      // https://github.com/livekit/agents-js/pull/820#issuecomment-3517138706
-      // flush?: boolean;
-      // initialization
-      voice_settings?: VoiceSettings;
-      generation_config?: {
-        chunk_length_schedule: number[];
-      };
-    }) => {
-      ws.send(JSON.stringify(data));
-    };
-
-    wsSend({
-      text: ' ',
-      voice_settings: this.#opts.voice.settings,
-      ...(this.#opts.chunkLengthSchedule && {
-        generation_config: {
-          chunk_length_schedule: this.#opts.chunkLengthSchedule,
-        },
-      }),
-    });
-    let eosSent = false;
+    const bstream = new AudioByteStream(sampleRateFromFormat(this.#opts.encoding), 1);
 
     const sendTask = async () => {
       // Determine if we should flush on each chunk (sentence)
-      /*const flushOnChunk =
+      const flushOnChunk =
         this.#opts.wordTokenizer instanceof tokenize.SentenceTokenizer &&
         this.#opts.autoMode !== undefined &&
-        this.#opts.autoMode;*/
+        this.#opts.autoMode;
 
       let xmlContent: string[] = [];
       for await (const data of stream) {
@@ -299,88 +694,63 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }
         }
 
-        wsSend({
-          text: text + ' ', // must always end with a space
-          // ...(flushOnChunk && { flush: true }),
-        });
+        this.#connection!.sendContent(this.#contextId, text + ' ', flushOnChunk);
       }
 
       if (xmlContent.length) {
-        this.#logger.warn('ElevenLabs stream ended with incomplete XML content');
+        this.#logger.warn('TTS: Stream ended with incomplete XML content');
       }
 
-      // no more tokens, mark eos with flush
-      // setting flush somehow never finishes the current speech generation
-      // wsSend({ text: '', flush: true });
-      wsSend({ text: '' });
-      eosSent = true;
+      // Signal end of stream with flush
+      this.#connection!.sendContent(this.#contextId, '', true);
+      this.#connection!.closeContext(this.#contextId);
     };
 
     let lastFrame: AudioFrame | undefined;
     const sendLastFrame = (segmentId: string, final: boolean) => {
       if (lastFrame) {
-        this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+        this.queue.put({
+          requestId: this.#contextId,
+          segmentId,
+          frame: lastFrame,
+          final,
+        });
         lastFrame = undefined;
       }
     };
 
     const listenTask = async () => {
-      let finalReceived = false;
-      const bstream = new AudioByteStream(sampleRateFromFormat(this.#opts.encoding), 1);
-      while (!this.closed && !this.abortController.signal.aborted) {
-        try {
-          await new Promise<RawData>((resolve, reject) => {
-            ws.removeAllListeners();
-            ws.on('message', (data) => resolve(data));
-            ws.on('close', (code, reason) => {
-              if (!eosSent) {
-                this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-              }
-              if (!finalReceived) {
-                reject(new Error('WebSocket closed'));
-              }
-            });
-          }).then((msg) => {
-            const json = JSON.parse(msg.toString());
-            // remove the "audio" field from the json object when printing
-            if ('audio' in json && json.audio !== null) {
-              const data = Buffer.from(json.audio, 'base64');
-              for (const frame of bstream.write(
-                data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
-              )) {
-                sendLastFrame(segmentId, false);
-                lastFrame = frame;
-              }
-            } else if (json.isFinal) {
-              finalReceived = true;
-              for (const frame of bstream.flush()) {
-                sendLastFrame(segmentId, false);
-                lastFrame = frame;
-              }
-              sendLastFrame(segmentId, true);
-              this.queue.put(SynthesizeStream.END_OF_STREAM);
-
-              if (segmentId === requestId || this.abortController.signal.aborted) {
-                ws.close();
-                return;
-              }
-            }
-          });
-        } catch (err) {
-          // skip log error for normal websocket close
-          if (err instanceof Error && !err.message.includes('WebSocket closed')) {
-            if (err.message.includes('Queue is closed')) {
-              this.#logger.warn(
-                { err },
-                'Queue closed during transcript processing (expected during disconnect)',
-              );
-            } else {
-              this.#logger.error({ err }, 'Error in listenTask from ElevenLabs WebSocket');
-            }
-          }
-          break;
-        }
+      const audioQueue = this.#connection!.getContextAudioQueue(this.#contextId);
+      if (!audioQueue) {
+        return;
       }
+
+      const eosPromise = this.#connection!.getContextEOSPromise(this.#contextId);
+      if (!eosPromise) {
+        return;
+      }
+
+      // Process audio as it arrives, until EOS
+      const processAudio = async () => {
+        for await (const buffer of audioQueue) {
+          for (const frame of bstream.write(buffer)) {
+            sendLastFrame(this.#contextId, false);
+            lastFrame = frame;
+          }
+        }
+      };
+
+      // Race between audio processing and EOS
+      await Promise.race([processAudio(), eosPromise]);
+
+      // Flush remaining frames
+      for (const frame of bstream.flush()) {
+        sendLastFrame(this.#contextId, false);
+        lastFrame = frame;
+      }
+
+      sendLastFrame(this.#contextId, true);
+      this.queue.put(SynthesizeStream.END_OF_STREAM);
     };
 
     await Promise.all([sendTask(), listenTask()]);
