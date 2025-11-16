@@ -1201,6 +1201,7 @@ export class AgentActivity implements RecognitionHooks {
           audioSource,
           modelSettings,
           replyAbortController,
+          this.agentSession.options.ttsTextTransforms || null,
         );
         tasks.push(ttsTask);
 
@@ -1314,6 +1315,7 @@ export class AgentActivity implements RecognitionHooks {
         ttsTextInput,
         modelSettings,
         replyAbortController,
+        this.agentSession.options.ttsTextTransforms || null,
       );
       tasks.push(ttsTask);
     }
@@ -1700,6 +1702,7 @@ export class AgentActivity implements RecognitionHooks {
                 ttsTextInput,
                 modelSettings,
                 abortController,
+                this.agentSession.options.ttsTextTransforms || null,
               );
               tasks.push(ttsTask);
               realtimeAudioResult = ttsStream;

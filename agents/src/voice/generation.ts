@@ -27,6 +27,7 @@ import type { AgentSession } from './agent_session.js';
 import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { type TextTransformSpec, applyTextTransforms } from './transcription/index.js';
 
 /** @internal */
 export class _LLMGenerationData {
@@ -474,6 +475,7 @@ export function performTTSInference(
   text: ReadableStream<string>,
   modelSettings: ModelSettings,
   controller: AbortController,
+  textTransforms?: readonly TextTransformSpec[] | null,
 ): [Task<void>, ReadableStream<AudioFrame>] {
   const audioStream = new IdentityTransform<AudioFrame>();
   const outputWriter = audioStream.writable.getWriter();
@@ -484,7 +486,13 @@ export function performTTSInference(
     let ttsStream: ReadableStream<AudioFrame> | null = null;
 
     try {
-      ttsStream = await node(text, modelSettings);
+      // Apply text transforms
+      let transformedText = text;
+      if (textTransforms && textTransforms.length > 0) {
+        transformedText = await applyTextTransforms(text, textTransforms);
+      }
+
+      ttsStream = await node(transformedText, modelSettings);
       if (ttsStream === null) {
         await outputWriter.close();
         return;
