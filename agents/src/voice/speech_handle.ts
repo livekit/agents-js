@@ -165,6 +165,9 @@ export class SpeechHandle {
 
   /** @internal */
   _authorizeGeneration(): void {
+    if (this.interruptFut.done) {
+      return;
+    }
     const fut = new Future<void>();
     this.generations.push(fut);
     this.authorizedEvent.set();
