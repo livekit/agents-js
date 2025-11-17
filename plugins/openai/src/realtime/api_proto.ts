@@ -190,7 +190,7 @@ export interface SessionResource {
   id: string;
   object: 'realtime.session';
   model: string;
-  modalities: ['text', 'audio'] | ['text']; // default: ["text", "audio"]
+  modalities: Modality[]; // default: ["text", "audio"]
   instructions: string;
   voice: Voice; // default: "alloy"
   input_audio_format: AudioFormat; // default: "pcm16"
@@ -267,7 +267,7 @@ export interface SessionUpdateEvent extends BaseClientEvent {
   type: 'session.update';
   session: Partial<{
     model: Model;
-    modalities: ['text', 'audio'] | ['text'];
+    modalities: Modality[];
     instructions: string;
     voice: Voice;
     input_audio_format: AudioFormat;
@@ -350,7 +350,7 @@ export interface ConversationItemDeleteEvent extends BaseClientEvent {
 export interface ResponseCreateEvent extends BaseClientEvent {
   type: 'response.create';
   response?: Partial<{
-    modalities: ['text', 'audio'] | ['text'];
+    modalities: Modality[];
     instructions: string;
     voice: Voice;
     output_audio_format: AudioFormat;
@@ -511,6 +511,7 @@ export interface ResponseContentPartDoneEvent extends BaseServerEvent {
 export interface ResponseTextDeltaEvent extends BaseServerEvent {
   type: 'response.text.delta';
   response_id: string;
+  item_id: string;
   output_index: number;
   content_index: number;
   delta: string;
@@ -519,6 +520,7 @@ export interface ResponseTextDeltaEvent extends BaseServerEvent {
 export interface ResponseTextDoneEvent extends BaseServerEvent {
   type: 'response.text.done';
   response_id: string;
+  item_id: string;
   output_index: number;
   content_index: number;
   text: string;

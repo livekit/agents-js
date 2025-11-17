@@ -10,7 +10,8 @@ import {
   WorkerMessage,
   WorkerStatus,
 } from '@livekit/protocol';
-import { AccessToken, ParticipantInfo, RoomServiceClient } from 'livekit-server-sdk';
+import type { ParticipantInfo } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import { WebSocket } from 'ws';
@@ -79,7 +80,7 @@ const defaultRequestFunc = async (ctx: JobRequest) => {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const defaultCpuLoad = async (worker: Worker): Promise<number> => {
+const defaultCpuLoad = async (worker: AgentServer): Promise<number> => {
   return new Promise((resolve) => {
     const cpus1 = os.cpus();
 
@@ -141,17 +142,17 @@ export class WorkerPermissions {
  *
  * This class is mostly useful in conjunction with {@link cli.runApp}.
  */
-export class WorkerOptions {
+export class ServerOptions {
   agent: string;
   requestFunc: (job: JobRequest) => Promise<void>;
-  loadFunc: (worker: Worker) => Promise<number>;
+  loadFunc: (worker: AgentServer) => Promise<number>;
   loadThreshold: number;
   numIdleProcesses: number;
   shutdownProcessTimeout: number;
   initializeProcessTimeout: number;
   permissions: WorkerPermissions;
   agentName: string;
-  workerType: JobType;
+  serverType: JobType;
   maxRetry: number;
   wsURL: string;
   apiKey?: string;
@@ -175,7 +176,7 @@ export class WorkerOptions {
     initializeProcessTimeout = 10 * 1000,
     permissions = new WorkerPermissions(),
     agentName = '',
-    workerType = JobType.JT_ROOM,
+    serverType = JobType.JT_ROOM,
     maxRetry = MAX_RECONNECT_ATTEMPTS,
     wsURL = 'ws://localhost:7880',
     apiKey = undefined,
@@ -195,7 +196,7 @@ export class WorkerOptions {
     agent: string;
     requestFunc?: (job: JobRequest) => Promise<void>;
     /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
-    loadFunc?: (worker: Worker) => Promise<number>;
+    loadFunc?: (worker: AgentServer) => Promise<number>;
     /** When the load exceeds this threshold, the worker will be marked as unavailable. */
     loadThreshold?: number;
     numIdleProcesses?: number;
@@ -203,7 +204,7 @@ export class WorkerOptions {
     initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;
     agentName?: string;
-    workerType?: JobType;
+    serverType?: JobType;
     maxRetry?: number;
     wsURL?: string;
     apiKey?: string;
@@ -228,7 +229,7 @@ export class WorkerOptions {
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
     this.agentName = agentName;
-    this.workerType = workerType;
+    this.serverType = serverType;
     this.maxRetry = maxRetry;
     this.wsURL = wsURL;
     this.apiKey = apiKey;
@@ -261,8 +262,8 @@ class PendingAssignment {
  * you don't have access to a command line, such as a headless program, or one that uses Agents
  * behind a wrapper.
  */
-export class Worker {
-  #opts: WorkerOptions;
+export class AgentServer {
+  #opts: ServerOptions;
   #procPool: ProcPool;
 
   #id = 'unregistered';
@@ -279,23 +280,23 @@ export class Worker {
   #logger = log().child({ version });
   #inferenceExecutor?: InferenceProcExecutor;
 
-  /** @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
-  constructor(opts: WorkerOptions) {
+  /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
+  constructor(opts: ServerOptions) {
     opts.wsURL = opts.wsURL || process.env.LIVEKIT_URL || '';
     opts.apiKey = opts.apiKey || process.env.LIVEKIT_API_KEY || '';
     opts.apiSecret = opts.apiSecret || process.env.LIVEKIT_API_SECRET || '';
 
     if (opts.wsURL === '')
       throw new MissingCredentialsError(
-        'URL is required: Set LIVEKIT_URL, run with --url, or pass wsURL in WorkerOptions',
+        'URL is required: Set LIVEKIT_URL, run with --url, or pass wsURL in ServerOptions',
       );
     if (opts.apiKey === '')
       throw new MissingCredentialsError(
-        'API Key is required: Set LIVEKIT_API_KEY, run with --api-key, or pass apiKey in WorkerOptions',
+        'API Key is required: Set LIVEKIT_API_KEY, run with --api-key, or pass apiKey in ServerOptions',
       );
     if (opts.apiSecret === '')
       throw new MissingCredentialsError(
-        'API Secret is required: Set LIVEKIT_API_SECRET, run with --api-secret, or pass apiSecret in WorkerOptions',
+        'API Secret is required: Set LIVEKIT_API_SECRET, run with --api-secret, or pass apiSecret in ServerOptions',
       );
 
     if (opts.workerToken) {
@@ -340,7 +341,7 @@ export class Worker {
     this.#opts = opts;
     this.#httpServer = new HTTPServer(opts.host, opts.port, () => ({
       agent_name: opts.agentName,
-      worker_type: JobType[opts.workerType],
+      worker_type: JobType[opts.serverType],
       active_jobs: this.activeJobs.length,
       sdk_version: version,
       project_type: PROJECT_TYPE,
@@ -610,7 +611,7 @@ export class Worker {
         message: {
           case: 'register',
           value: {
-            type: this.#opts.workerType,
+            type: this.#opts.serverType,
             agentName: this.#opts.agentName,
             allowedPermissions: new ParticipantPermission({
               canPublish: this.#opts.permissions.canPublish,
@@ -788,3 +789,13 @@ export class Worker {
     await this.#close.await;
   }
 }
+
+/**
+ * @deprecated Use {@link AgentServer} instead. This alias is provided for backward compatibility.
+ */
+export const Worker = AgentServer;
+
+/**
+ * @deprecated Use {@link ServerOptions} instead. This alias is provided for backward compatibility.
+ */
+export const WorkerOptions = ServerOptions;

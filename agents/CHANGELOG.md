@@ -1,5 +1,53 @@
 # @livekit/agents
 
+## 1.0.18
+
+### Patch Changes
+
+- bump openai to 6.x - [#813](https://github.com/livekit/agents-js/pull/813) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Emit away events for User - [#801](https://github.com/livekit/agents-js/pull/801) ([@paulheinrichs-jb](https://github.com/paulheinrichs-jb))
+
+- Support openai half-duplex mode (audio in -> text out -> custom TTS model) - [#814](https://github.com/livekit/agents-js/pull/814) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Support strict tool schema for openai-competible model - [#816](https://github.com/livekit/agents-js/pull/816) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.17
+
+### Patch Changes
+
+- handle APIError in STT & TTS retry mechanism and prevent ERR_UNHANDLED_ERROR - [#804](https://github.com/livekit/agents-js/pull/804) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.16
+
+### Patch Changes
+
+- Add preemptive generation - [#798](https://github.com/livekit/agents-js/pull/798) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Rename Worker to AgentServer - [#713](https://github.com/livekit/agents-js/pull/713) ([@Shubhrakanti](https://github.com/Shubhrakanti))
+
+## 1.0.15
+
+### Patch Changes
+
+- Fix race condition causing "Writer is not bound to a WritableStream" error in Silero VAD - [#786](https://github.com/livekit/agents-js/pull/786) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Support Zod V4 tool schema and backward competible to V3 - [#792](https://github.com/livekit/agents-js/pull/792) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.14
+
+### Patch Changes
+
+- Fix ffmpeg dependency cannot found issue - [#793](https://github.com/livekit/agents-js/pull/793) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.13
+
+### Patch Changes
+
+- Add utility to play local audio file to livekit - [#788](https://github.com/livekit/agents-js/pull/788) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add BackgroundAudio support - [#789](https://github.com/livekit/agents-js/pull/789) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.12
 
 ### Patch Changes

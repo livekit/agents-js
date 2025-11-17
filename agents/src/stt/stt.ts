@@ -38,6 +38,12 @@ export enum SpeechEventType {
   END_OF_SPEECH = 3,
   /** Usage event, emitted periodically to indicate usage metrics. */
   RECOGNITION_USAGE = 4,
+  /**
+   * Preflight transcript, emitted before final transcript when STT has high confidence
+   * but hasn't fully committed yet. Includes all pre-committed transcripts including
+   * final transcript from the previous STT run.
+   */
+  PREFLIGHT_TRANSCRIPT = 5,
 }
 
 /** SpeechData contains metadata about this {@link SpeechEvent}. */
@@ -198,7 +204,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
               options: { retryable: false },
             });
           } else {
-            this.emitError({ error, recoverable: true });
+            // Don't emit error event for recoverable errors during retry loop
+            // to avoid ERR_UNHANDLED_ERROR or premature session termination
             this.logger.warn(
               { tts: this.#stt.label, attempt: i + 1, error },
               `failed to recognize speech, retrying in ${retryInterval}s`,

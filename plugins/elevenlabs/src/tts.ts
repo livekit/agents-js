@@ -53,7 +53,7 @@ export interface TTSOptions {
   baseURL: string;
   encoding: TTSEncoding;
   streamingLatency?: number;
-  wordTokenizer: tokenize.WordTokenizer;
+  wordTokenizer: tokenize.WordTokenizer | tokenize.SentenceTokenizer;
   chunkLengthSchedule?: number[];
   enableSsmlParsing: boolean;
   inactivityTimeout: number;
@@ -61,13 +61,12 @@ export interface TTSOptions {
   autoMode?: boolean;
 }
 
-const defaultTTSOptions: TTSOptions = {
+const defaultTTSOptionsBase = {
   apiKey: process.env.ELEVEN_API_KEY,
   voice: DEFAULT_VOICE,
   modelID: 'eleven_turbo_v2_5',
   baseURL: API_BASE_URL_V1,
-  encoding: 'pcm_22050',
-  wordTokenizer: new tokenize.basic.WordTokenizer(false),
+  encoding: 'pcm_22050' as TTSEncoding,
   enableSsmlParsing: false,
   inactivityTimeout: DEFAULT_INACTIVITY_TIMEOUT,
   syncAlignment: true,
@@ -78,13 +77,33 @@ export class TTS extends tts.TTS {
   label = 'elevenlabs.TTS';
 
   constructor(opts: Partial<TTSOptions> = {}) {
-    super(sampleRateFromFormat(opts.encoding || defaultTTSOptions.encoding), 1, {
+    super(sampleRateFromFormat(opts.encoding || defaultTTSOptionsBase.encoding), 1, {
       streaming: true,
     });
 
+    // Set autoMode to true by default if not provided is Python behavior,
+    // but to make it non-breaking, we keep false as default in typescript
+    const autoMode = opts.autoMode !== undefined ? opts.autoMode : false;
+
+    // Set default tokenizer based on autoMode if not provided
+    let wordTokenizer = opts.wordTokenizer;
+    if (!wordTokenizer) {
+      wordTokenizer = autoMode
+        ? new tokenize.basic.SentenceTokenizer()
+        : new tokenize.basic.WordTokenizer(false);
+    } else if (autoMode && !(wordTokenizer instanceof tokenize.SentenceTokenizer)) {
+      // Warn if autoMode is enabled but a WordTokenizer was provided
+      log().warn(
+        'autoMode is enabled, it expects full sentences or phrases. ' +
+          'Please provide a SentenceTokenizer instead of a WordTokenizer.',
+      );
+    }
+
     this.#opts = {
-      ...defaultTTSOptions,
+      ...defaultTTSOptionsBase,
       ...opts,
+      autoMode,
+      wordTokenizer,
     };
 
     if (this.#opts.apiKey === undefined) {
@@ -156,10 +175,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   protected async run() {
-    const segments = new AsyncIterableQueue<tokenize.WordStream>();
+    const segments = new AsyncIterableQueue<tokenize.WordStream | tokenize.SentenceStream>();
 
     const tokenizeInput = async () => {
-      let stream: tokenize.WordStream | null = null;
+      let stream: tokenize.WordStream | tokenize.SentenceStream | null = null;
       for await (const text of this.input) {
         if (this.abortController.signal.aborted) {
           break;
@@ -191,7 +210,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     await Promise.all([tokenizeInput(), runStream()]);
   }
 
-  async #runWS(stream: tokenize.WordStream, maxRetry = 3) {
+  async #runWS(stream: tokenize.WordStream | tokenize.SentenceStream, maxRetry = 3) {
     let retries = 0;
     let ws: WebSocket;
     while (true) {
@@ -229,20 +248,40 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const requestId = shortuuid();
     const segmentId = shortuuid();
 
-    ws.send(
-      JSON.stringify({
-        text: ' ',
-        voice_settings: this.#opts.voice.settings,
-        ...(this.#opts.chunkLengthSchedule && {
-          generation_config: {
-            chunk_length_schedule: this.#opts.chunkLengthSchedule,
-          },
-        }),
+    // simple helper to make sure what we send to ws.send
+    const wsSend = (data: {
+      // (SynthesizeContent from python)
+      text: string;
+      // setting flush somehow never finishes the current speech generation
+      // https://github.com/livekit/agents-js/pull/820#issuecomment-3517138706
+      // flush?: boolean;
+      // initialization
+      voice_settings?: VoiceSettings;
+      generation_config?: {
+        chunk_length_schedule: number[];
+      };
+    }) => {
+      ws.send(JSON.stringify(data));
+    };
+
+    wsSend({
+      text: ' ',
+      voice_settings: this.#opts.voice.settings,
+      ...(this.#opts.chunkLengthSchedule && {
+        generation_config: {
+          chunk_length_schedule: this.#opts.chunkLengthSchedule,
+        },
       }),
-    );
+    });
     let eosSent = false;
 
     const sendTask = async () => {
+      // Determine if we should flush on each chunk (sentence)
+      /*const flushOnChunk =
+        this.#opts.wordTokenizer instanceof tokenize.SentenceTokenizer &&
+        this.#opts.autoMode !== undefined &&
+        this.#opts.autoMode;*/
+
       let xmlContent: string[] = [];
       for await (const data of stream) {
         if (this.abortController.signal.aborted) {
@@ -260,15 +299,20 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }
         }
 
-        ws.send(JSON.stringify({ text: text + ' ' })); //  must always end with a space
+        wsSend({
+          text: text + ' ', // must always end with a space
+          // ...(flushOnChunk && { flush: true }),
+        });
       }
 
       if (xmlContent.length) {
         this.#logger.warn('ElevenLabs stream ended with incomplete XML content');
       }
 
-      // no more tokens, mark eos
-      ws.send(JSON.stringify({ text: '' }));
+      // no more tokens, mark eos with flush
+      // setting flush somehow never finishes the current speech generation
+      // wsSend({ text: '', flush: true });
+      wsSend({ text: '' });
       eosSent = true;
     };
 

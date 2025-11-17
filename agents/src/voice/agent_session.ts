@@ -14,7 +14,7 @@ import {
   type TTSModelString,
 } from '../inference/index.js';
 import { getJobContext } from '../job.js';
-import { ChatContext, ChatMessage } from '../llm/chat_context.js';
+import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
@@ -26,6 +26,7 @@ import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import {
+  type AgentEvent,
   AgentSessionEventTypes,
   type AgentState,
   type AgentStateChangedEvent,
@@ -57,6 +58,8 @@ export interface VoiceOptions {
   minEndpointingDelay: number;
   maxEndpointingDelay: number;
   maxToolSteps: number;
+  preemptiveGeneration: boolean;
+  userAwayTimeout?: number | null;
 }
 
 const defaultVoiceOptions: VoiceOptions = {
@@ -67,6 +70,8 @@ const defaultVoiceOptions: VoiceOptions = {
   minEndpointingDelay: 500,
   maxEndpointingDelay: 6000,
   maxToolSteps: 3,
+  preemptiveGeneration: false,
+  userAwayTimeout: 15.0,
 } as const;
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
@@ -121,6 +126,10 @@ export class AgentSession<
   private _output: AgentOutput;
 
   private closingTask: Promise<void> | null = null;
+  private userAwayTimer: NodeJS.Timeout | null = null;
+
+  /** @internal */
+  _recordedEvents: AgentEvent[] = [];
 
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
@@ -165,6 +174,17 @@ export class AgentSession<
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
     this.options = { ...defaultVoiceOptions, ...voiceOptions };
+
+    this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed.bind(this));
+  }
+
+  emit<K extends keyof AgentSessionCallbacks>(
+    event: K,
+    ...args: Parameters<AgentSessionCallbacks[K]>
+  ): boolean {
+    const eventData = args[0] as AgentEvent;
+    this._recordedEvents.push(eventData);
+    return super.emit(event, ...args);
   }
 
   get input(): AgentInput {
@@ -192,15 +212,20 @@ export class AgentSession<
   }
 
   async start({
+    // TODO(brian): PR2 - Add setupCloudTracer() call if on LiveKit Cloud with recording enabled
+    // TODO(brian): PR3 - Add span: this._sessionSpan = tracer.startSpan('agent_session'), store as instance property
+    // TODO(brian): PR4 - Add setupCloudLogger() call in setupCloudTracer() to setup OTEL logging with Pino bridge
     agent,
     room,
     inputOptions,
     outputOptions,
+    record = true,
   }: {
     agent: Agent;
     room: Room;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
+    record?: boolean;
   }): Promise<void> {
     if (this.started) {
       return;
@@ -240,6 +265,17 @@ export class AgentSession<
       this.logger.debug('Auto-connecting to room via job context');
       tasks.push(ctx.connect());
     }
+
+    if (record) {
+      if (ctx._primaryAgentSession === undefined) {
+        ctx._primaryAgentSession = this;
+      } else {
+        throw new Error(
+          'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use session.start(record=False).',
+        );
+      }
+    }
+
     // TODO(AJS-265): add shutdown callback to job context
     tasks.push(this.updateActivity(this.agent));
 
@@ -334,6 +370,8 @@ export class AgentSession<
     // TODO(AJS-129): add lock to agent activity core lifecycle
     this.nextActivity = new AgentActivity(agent, this);
 
+    const previousActivity = this.activity;
+
     if (this.activity) {
       await this.activity.drain();
       await this.activity.close();
@@ -341,6 +379,14 @@ export class AgentSession<
 
     this.activity = this.nextActivity;
     this.nextActivity = undefined;
+
+    this._chatCtx.insert(
+      new AgentHandoffItem({
+        oldAgentId: previousActivity?.agent.id,
+        newAgentId: agent.id,
+      }),
+    );
+    this.logger.debug({ previousActivity, agent }, 'Agent handoff inserted into chat context');
 
     await this.activity.start();
 
@@ -412,8 +458,18 @@ export class AgentSession<
       return;
     }
 
+    // TODO(brian): PR3 - Add span: if state === 'speaking' && !this._agentSpeakingSpan, create tracer.startSpan('agent_speaking') with participant attributes
+    // TODO(brian): PR3 - Add span: if state !== 'speaking' && this._agentSpeakingSpan, end and clear this._agentSpeakingSpan
     const oldState = this._agentState;
     this._agentState = state;
+
+    // Handle user away timer based on state changes
+    if (state === 'listening' && this.userState === 'listening') {
+      this._setUserAwayTimer();
+    } else {
+      this._cancelUserAwayTimer();
+    }
+
     this.emit(
       AgentSessionEventTypes.AgentStateChanged,
       createAgentStateChangedEvent(oldState, state),
@@ -421,13 +477,23 @@ export class AgentSession<
   }
 
   /** @internal */
-  _updateUserState(state: UserState) {
+  _updateUserState(state: UserState, _lastSpeakingTime?: number) {
     if (this.userState === state) {
       return;
     }
 
+    // TODO(brian): PR3 - Add span: if state === 'speaking' && !this._userSpeakingSpan, create tracer.startSpan('user_speaking') with participant attributes
+    // TODO(brian): PR3 - Add span: if state !== 'speaking' && this._userSpeakingSpan, end and clear this._userSpeakingSpan
     const oldState = this.userState;
     this.userState = state;
+
+    // Handle user away timer based on state changes
+    if (state === 'listening' && this._agentState === 'listening') {
+      this._setUserAwayTimer();
+    } else {
+      this._cancelUserAwayTimer();
+    }
+
     this.emit(
       AgentSessionEventTypes.UserStateChanged,
       createUserStateChangedEvent(oldState, state),
@@ -449,6 +515,37 @@ export class AgentSession<
 
   private onTextOutputChanged(): void {}
 
+  private _setUserAwayTimer(): void {
+    this._cancelUserAwayTimer();
+
+    if (this.options.userAwayTimeout === null || this.options.userAwayTimeout === undefined) {
+      return;
+    }
+
+    if (this.roomIO && !this.roomIO.isParticipantAvailable) {
+      return;
+    }
+
+    this.userAwayTimer = setTimeout(() => {
+      this.logger.debug('User away timeout triggered');
+      this._updateUserState('away');
+    }, this.options.userAwayTimeout * 1000);
+  }
+
+  private _cancelUserAwayTimer(): void {
+    if (this.userAwayTimer !== null) {
+      clearTimeout(this.userAwayTimer);
+      this.userAwayTimer = null;
+    }
+  }
+
+  private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {
+    if (this.userState === 'away' && ev.isFinal) {
+      this.logger.debug('User returned from away state due to speech input');
+      this._updateUserState('listening');
+    }
+  }
+
   private async closeImpl(
     reason: CloseReason,
     error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
@@ -457,6 +554,8 @@ export class AgentSession<
     if (!this.started) {
       return;
     }
+
+    this._cancelUserAwayTimer();
 
     if (this.activity) {
       if (!drain) {

@@ -12,8 +12,8 @@ import {
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
-import * as google from '@livekit/agents-plugin-google';
 import * as livekit from '@livekit/agents-plugin-livekit';
+import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -74,10 +74,13 @@ export default defineAgent({
       description:
         'Called when the user wants to get a number value, None if user want a random value',
       parameters: z.object({
-        value: z.number().nullable().describe('The number value'),
+        value: z
+          .number()
+          .nullable() // .optional() is not supported in strict mode
+          .describe('The number value, do not pass this parameter if you want a random value'),
       }),
       execute: async ({ value }) => {
-        if (value === null) {
+        if (value === undefined || value === null) {
           value = Math.floor(Math.random() * 100);
         }
         return `The number value is ${value}.`;
@@ -137,7 +140,8 @@ export default defineAgent({
       vad,
       stt: new deepgram.STT(),
       tts: new elevenlabs.TTS(),
-      llm: new google.LLM(),
+      // strictToolSchema = true requires tool schema to use `.nullable()` instead of `.optional()` in the schema.
+      llm: new openai.LLM({ strictToolSchema: true }),
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
       userData: { number: 0 },

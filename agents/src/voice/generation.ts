@@ -4,7 +4,6 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
-import { ZodObject } from 'zod';
 import {
   type ChatContext,
   ChatMessage,
@@ -19,6 +18,7 @@ import {
   isFunctionTool,
   isToolError,
 } from '../llm/tool_context.js';
+import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { Future, Task, shortuuid, toError } from '../utils.js';
@@ -377,6 +377,7 @@ export function updateInstructions(options: {
   }
 }
 
+// TODO(brian): PR3 - Add @tracer.startActiveSpan('llm_node') decorator/wrapper
 export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
@@ -467,6 +468,7 @@ export function performLLMInference(
   ];
 }
 
+// TODO(brian): PR3 - Add @tracer.startActiveSpan('tts_node') decorator/wrapper
 export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string>,
@@ -650,6 +652,7 @@ export function performAudioForwarding(
   ];
 }
 
+// TODO(brian): PR3 - Add @tracer.startActiveSpan('function_tool') wrapper for each tool execution
 export function performToolExecutions({
   session,
   speechHandle,
@@ -732,8 +735,13 @@ export function performToolExecutions({
       try {
         const jsonArgs = JSON.parse(toolCall.args);
 
-        if (tool.parameters instanceof ZodObject) {
-          parsedArgs = tool.parameters.parse(jsonArgs);
+        if (isZodSchema(tool.parameters)) {
+          const result = await parseZodSchema<object>(tool.parameters, jsonArgs);
+          if (result.success) {
+            parsedArgs = result.data;
+          } else {
+            throw result.error;
+          }
         } else {
           parsedArgs = jsonArgs;
         }

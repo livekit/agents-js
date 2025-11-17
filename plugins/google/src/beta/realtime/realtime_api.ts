@@ -322,6 +322,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       turnDetection: serverTurnDetection,
       userTranscription: inputAudioTranscription !== null,
       autoToolReplyGeneration: true,
+      audioOutput: options.modalities?.includes(Modality.AUDIO) ?? true,
     });
 
     // Environment variable fallbacks
@@ -638,8 +639,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.hasReceivedAudioInput = true;
 
     for (const f of this.resampleAudio(frame)) {
-      for (const nf of this.bstream.write(f.data.buffer)) {
-        const realtimeInput: LiveClientRealtimeInput = {
+      for (const nf of this.bstream.write(f.data.buffer as ArrayBuffer)) {
+        const realtimeInput: types.LiveClientRealtimeInput = {
           mediaChunks: [
             {
               mimeType: 'audio/pcm',

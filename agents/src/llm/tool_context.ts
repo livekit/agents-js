@@ -2,9 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { JSONSchema7 } from 'json-schema';
-import { ZodObject, ZodType, z } from 'zod';
+import { z } from 'zod';
 import type { Agent } from '../voice/agent.js';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
+import { isZodObjectSchema, isZodSchema } from './zod-utils.js';
 
 // heavily inspired by Vercel AI's `tool()`:
 // https://github.com/vercel/ai/blob/3b0983b/packages/ai/core/tool/tool.ts
@@ -23,9 +24,38 @@ export type JSONObject = {
   [key: string]: JSONValue;
 };
 
-// TODO(AJS-111): support Zod cross-version compatibility, raw JSON schema, both strict and non-strict versions
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type ToolInputSchema<T extends JSONObject> = ZodObject<any, any, any, T, T> | JSONSchema7;
+// Supports both Zod v3 and v4 schemas, as well as raw JSON schema
+// Adapted from Vercel AI SDK's FlexibleSchema approach
+// Source: https://github.com/vercel/ai/blob/main/packages/provider-utils/src/schema.ts#L67-L70
+//
+// Vercel uses StandardSchemaV1 from @standard-schema/spec package.
+// We use a simpler approach by directly checking for schema properties:
+// - Zod v3: Has `_output` property
+// - Zod v4: Implements Standard Schema spec with `~standard` property
+// - JSON Schema: Plain object fallback
+export type ToolInputSchema<T = JSONObject> =
+  | {
+      // Zod v3 schema - has _output property for type inference
+      _output: T;
+    }
+  | {
+      // Zod v4 schema (Standard Schema) - has ~standard property
+      '~standard': {
+        types?: { output: T };
+      };
+    }
+  | JSONSchema7;
+
+/**
+ * Infer the output type from a ToolInputSchema.
+ * Adapted from Vercel AI SDK's InferSchema type.
+ * Source: https://github.com/vercel/ai/blob/main/packages/provider-utils/src/schema.ts#L72-L79
+ */
+export type InferToolInput<T> = T extends { _output: infer O }
+  ? O
+  : T extends { '~standard': { types?: { output: infer O } } }
+    ? O
+    : any; // eslint-disable-line @typescript-eslint/no-explicit-any -- Fallback type for JSON Schema objects without type inference
 
 export type ToolType = 'function' | 'provider-defined';
 
@@ -153,18 +183,59 @@ export interface FunctionTool<
 
 // TODO(AJS-112): support provider-defined tools in the future)
 export type ToolContext<UserData = UnknownUserData> = {
-  [name: string]: FunctionTool<any, UserData, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic tool registry needs to accept any parameter/result types
+  [name: string]: FunctionTool<any, UserData, any>;
 };
 
+export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean {
+  const toolNames = new Set(Object.keys(ctx1));
+  const toolNames2 = new Set(Object.keys(ctx2));
+
+  if (toolNames.size !== toolNames2.size) {
+    return false;
+  }
+
+  for (const name of toolNames) {
+    if (!toolNames2.has(name)) {
+      return false;
+    }
+
+    const tool1 = ctx1[name];
+    const tool2 = ctx2[name];
+
+    if (!tool1 || !tool2) {
+      return false;
+    }
+
+    if (tool1.description !== tool2.description) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export function isSameToolChoice(choice1: ToolChoice | null, choice2: ToolChoice | null): boolean {
+  if (choice1 === choice2) {
+    return true;
+  }
+  if (choice1 === null || choice2 === null) {
+    return false;
+  }
+  if (typeof choice1 === 'string' && typeof choice2 === 'string') {
+    return choice1 === choice2;
+  }
+  if (typeof choice1 === 'object' && typeof choice2 === 'object') {
+    return choice1.type === choice2.type && choice1.function.name === choice2.function.name;
+  }
+  return false;
+}
+
 /**
- * Create a function tool.
- *
- * @param description - The description of the tool.
- * @param parameters - The schema of the input that the tool expects. If not provided, defaults to z.object({}).
- * @param execute - The function that is called with the arguments from the tool call and produces a result.
+ * Create a function tool with inferred parameters from the schema.
  */
 export function tool<
-  Parameters extends JSONObject = Record<string, never>,
+  Schema extends ToolInputSchema<any>, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
   UserData = UnknownUserData,
   Result = unknown,
 >({
@@ -173,9 +244,21 @@ export function tool<
   execute,
 }: {
   description: string;
-  parameters?: ToolInputSchema<Parameters>;
-  execute: ToolExecuteFunction<Parameters, UserData, Result>;
-}): FunctionTool<Parameters, UserData, Result>;
+  parameters: Schema;
+  execute: ToolExecuteFunction<InferToolInput<Schema>, UserData, Result>;
+}): FunctionTool<InferToolInput<Schema>, UserData, Result>;
+
+/**
+ * Create a function tool without parameters.
+ */
+export function tool<UserData = UnknownUserData, Result = unknown>({
+  description,
+  execute,
+}: {
+  description: string;
+  parameters?: never;
+  execute: ToolExecuteFunction<Record<string, never>, UserData, Result>;
+}): FunctionTool<Record<string, never>, UserData, Result>;
 
 /**
  * Create a provider-defined tool.
@@ -197,12 +280,13 @@ export function tool(tool: any): any {
     // Default parameters to z.object({}) if not provided
     const parameters = tool.parameters ?? z.object({});
 
-    // if parameters is not zod object, throw an error
-    if (parameters instanceof ZodType && parameters._def.typeName !== 'ZodObject') {
+    // if parameters is a Zod schema, ensure it's an object schema
+    if (isZodSchema(parameters) && !isZodObjectSchema(parameters)) {
       throw new Error('Tool parameters must be a Zod object schema (z.object(...))');
     }
 
-    if (!(parameters instanceof ZodObject) && !(typeof parameters === 'object')) {
+    // Ensure parameters is either a Zod schema or a plain object (JSON schema)
+    if (!isZodSchema(parameters) && !(typeof parameters === 'object')) {
       throw new Error('Tool parameters must be a Zod object schema or a raw JSON schema');
     }
 

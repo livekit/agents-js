@@ -22,6 +22,7 @@ import {
   type ToolContext,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
+import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
   EOUMetrics,
@@ -43,6 +44,7 @@ import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
 import {
   AudioRecognition,
   type EndOfTurnInfo,
+  type PreemptiveGenerationInfo,
   type RecognitionHooks,
   type _TurnDetector,
 } from './audio_recognition.js';
@@ -71,6 +73,16 @@ import { SpeechHandle } from './speech_handle.js';
 // equivalent to Python's contextvars
 const speechHandleStorage = new AsyncLocalStorage<SpeechHandle>();
 
+interface PreemptiveGeneration {
+  speechHandle: SpeechHandle;
+  userMessage: ChatMessage;
+  info: PreemptiveGenerationInfo;
+  chatCtx: ChatContext;
+  tools: ToolContext;
+  toolChoice: ToolChoice | null;
+  createdAt: number;
+}
+
 export class AgentActivity implements RecognitionHooks {
   private static readonly REPLY_TASK_CANCEL_TIMEOUT = 5000;
   private started = false;
@@ -87,6 +99,7 @@ export class AgentActivity implements RecognitionHooks {
   private audioStream = new DeferredReadableStream<AudioFrame>();
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
+  private _preemptiveGeneration?: PreemptiveGeneration;
 
   agent: Agent;
   agentSession: AgentSession;
@@ -189,6 +202,8 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async start(): Promise<void> {
+    // TODO(brian): PR3 - Add span: startSpan = tracer.startSpan('start_agent_activity', { attributes: { 'lk.agent_label': this.agent.label } })
+    // TODO(brian): PR3 - Wrap prewarm calls with trace.useSpan(startSpan, endOnExit: false)
     const unlock = await this.lock.lock();
     try {
       this.agent._agentActivity = this;
@@ -221,6 +236,14 @@ export class AgentActivity implements RecognitionHooks {
           await this.realtimeSession.updateTools(this.tools);
         } catch (error) {
           this.logger.error(error, 'failed to update the tools');
+        }
+
+        if (!this.llm.capabilities.audioOutput && !this.tts && this.agentSession.output.audio) {
+          this.logger.error(
+            'audio output is enabled but RealtimeModel has no audio modality ' +
+              'and no TTS is set. Either enable audio modality in the RealtimeModel ' +
+              'or set a TTS model.',
+          );
         }
       } else if (this.llm instanceof LLM) {
         try {
@@ -268,6 +291,7 @@ export class AgentActivity implements RecognitionHooks {
       this.started = true;
 
       this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
+      // TODO(brian): PR3 - Wrap onEnter with tracer.startActiveSpan('on_enter', { attributes: { 'lk.agent_label': this.agent.label }, context: startSpan context })
       this.createSpeechTask({
         task: Task.from(() => this.agent.onEnter()),
         name: 'AgentActivity_onEnter',
@@ -589,8 +613,12 @@ export class AgentActivity implements RecognitionHooks {
     this.agentSession._updateUserState('speaking');
   }
 
-  onEndOfSpeech(_ev: VADEvent): void {
-    this.agentSession._updateUserState('listening');
+  onEndOfSpeech(ev: VADEvent): void {
+    let speechEndTime = Date.now();
+    if (ev) {
+      speechEndTime = speechEndTime - ev.silenceDuration;
+    }
+    this.agentSession._updateUserState('listening', speechEndTime);
   }
 
   onVADInferenceDone(ev: VADEvent): void {
@@ -608,11 +636,21 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
+    // Refactored interruption word count check:
+    // - Always apply minInterruptionWords filtering when STT is available and minInterruptionWords > 0
+    // - Apply check to all STT results: empty string, undefined, or any length
+    // - This ensures consistent behavior across all interruption scenarios
     if (this.stt && this.agentSession.options.minInterruptionWords > 0 && this.audioRecognition) {
       const text = this.audioRecognition.currentTranscript;
-
       // TODO(shubhra): better word splitting for multi-language
-      if (text && splitWords(text, true).length < this.agentSession.options.minInterruptionWords) {
+
+      // Normalize text: convert undefined/null to empty string for consistent word counting
+      const normalizedText = text ?? '';
+      const wordCount = splitWords(normalizedText, true).length;
+
+      // Only allow interruption if word count meets or exceeds minInterruptionWords
+      // This applies to all cases: empty strings, partial speech, and full speech
+      if (wordCount < this.agentSession.options.minInterruptionWords) {
         return;
       }
     }
@@ -664,6 +702,55 @@ export class AgentActivity implements RecognitionHooks {
     );
   }
 
+  onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
+    if (
+      !this.agentSession.options.preemptiveGeneration ||
+      this.draining ||
+      (this._currentSpeech !== undefined && !this._currentSpeech.interrupted) ||
+      !(this.llm instanceof LLM)
+    ) {
+      return;
+    }
+
+    this.cancelPreemptiveGeneration();
+
+    this.logger.info(
+      {
+        newTranscript: info.newTranscript,
+        transcriptConfidence: info.transcriptConfidence,
+      },
+      'starting preemptive generation',
+    );
+
+    const userMessage = ChatMessage.create({
+      role: 'user',
+      content: info.newTranscript,
+    });
+    const chatCtx = this.agent.chatCtx.copy();
+    const speechHandle = this.generateReply({
+      userMessage,
+      chatCtx,
+      scheduleSpeech: false,
+    });
+
+    this._preemptiveGeneration = {
+      speechHandle,
+      userMessage,
+      info,
+      chatCtx: chatCtx.copy(),
+      tools: { ...this.tools },
+      toolChoice: this.toolChoice,
+      createdAt: Date.now(),
+    };
+  }
+
+  private cancelPreemptiveGeneration(): void {
+    if (this._preemptiveGeneration !== undefined) {
+      this._preemptiveGeneration.speechHandle._cancel();
+      this._preemptiveGeneration = undefined;
+    }
+  }
+
   private createSpeechTask(options: {
     task: Task<void>;
     ownedSpeechHandle?: SpeechHandle;
@@ -694,24 +781,37 @@ export class AgentActivity implements RecognitionHooks {
 
   async onEndOfTurn(info: EndOfTurnInfo): Promise<boolean> {
     if (this.draining) {
+      this.cancelPreemptiveGeneration();
       this.logger.warn({ user_input: info.newTranscript }, 'skipping user input, task is draining');
       // copied from python:
       // TODO(shubhra): should we "forward" this new turn to the next agent/activity?
       return true;
     }
 
+    // Refactored interruption word count check for consistency with onVADInferenceDone:
+    // - Always apply minInterruptionWords filtering when STT is available and minInterruptionWords > 0
+    // - Use consistent word splitting logic with splitWords (matching onVADInferenceDone pattern)
     if (
       this.stt &&
       this.turnDetection !== 'manual' &&
       this._currentSpeech &&
       this._currentSpeech.allowInterruptions &&
       !this._currentSpeech.interrupted &&
-      this.agentSession.options.minInterruptionWords > 0 &&
-      info.newTranscript.split(' ').length < this.agentSession.options.minInterruptionWords
+      this.agentSession.options.minInterruptionWords > 0
     ) {
-      // avoid interruption if the new_transcript is too short
-      this.logger.info('skipping user input, new_transcript is too short');
-      return false;
+      const wordCount = splitWords(info.newTranscript, true).length;
+      if (wordCount < this.agentSession.options.minInterruptionWords) {
+        // avoid interruption if the new_transcript contains fewer words than minInterruptionWords
+        this.cancelPreemptiveGeneration();
+        this.logger.info(
+          {
+            wordCount,
+            minInterruptionWords: this.agentSession.options.minInterruptionWords,
+          },
+          'skipping user input, word count below minimum interruption threshold',
+        );
+        return false;
+      }
     }
 
     const oldTask = this._userTurnCompletedTask;
@@ -775,6 +875,7 @@ export class AgentActivity implements RecognitionHooks {
     instructions?: string;
     toolChoice?: ToolChoice | null;
     allowInterruptions?: boolean;
+    scheduleSpeech?: boolean;
   }): SpeechHandle {
     const {
       userMessage,
@@ -782,6 +883,7 @@ export class AgentActivity implements RecognitionHooks {
       instructions: defaultInstructions,
       toolChoice: defaultToolChoice,
       allowInterruptions: defaultAllowInterruptions,
+      scheduleSpeech = true,
     } = options;
 
     let instructions = defaultInstructions;
@@ -871,7 +973,9 @@ export class AgentActivity implements RecognitionHooks {
       task.finally(() => this.onPipelineReplyDone());
     }
 
-    this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+    if (scheduleSpeech) {
+      this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+    }
     return handle;
   }
 
@@ -977,9 +1081,40 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    // Ensure the new message is passed to generateReply
-    // This preserves the original message id, making it easier for users to track responses
-    const speechHandle = this.generateReply({ userMessage, chatCtx });
+    let speechHandle: SpeechHandle | undefined;
+    if (this._preemptiveGeneration !== undefined) {
+      const preemptive = this._preemptiveGeneration;
+      // make sure the onUserTurnCompleted didn't change some request parameters
+      // otherwise invalidate the preemptive generation
+      if (
+        preemptive.info.newTranscript === userMessage?.textContent &&
+        preemptive.chatCtx.isEquivalent(chatCtx) &&
+        isSameToolContext(preemptive.tools, this.tools) &&
+        isSameToolChoice(preemptive.toolChoice, this.toolChoice)
+      ) {
+        speechHandle = preemptive.speechHandle;
+        this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+        this.logger.debug(
+          {
+            preemptiveLeadTime: Date.now() - preemptive.createdAt,
+          },
+          'using preemptive generation',
+        );
+      } else {
+        this.logger.warn(
+          'preemptive generation enabled but chat context or tools have changed after `onUserTurnCompleted`',
+        );
+        preemptive.speechHandle._cancel();
+      }
+
+      this._preemptiveGeneration = undefined;
+    }
+
+    if (speechHandle === undefined) {
+      // Ensure the new message is passed to generateReply
+      // This preserves the original message id, making it easier for users to track responses
+      speechHandle = this.generateReply({ userMessage, chatCtx });
+    }
 
     const eouMetrics: EOUMetrics = {
       type: 'eou_metrics',
@@ -987,6 +1122,7 @@ export class AgentActivity implements RecognitionHooks {
       endOfUtteranceDelayMs: info.endOfUtteranceDelay,
       transcriptionDelayMs: info.transcriptionDelay,
       onUserTurnCompletedDelayMs: callbackDuration,
+      lastSpeakingTimeMs: info.stoppedSpeakingAt ?? 0,
       speechId: speechHandle.id,
     };
 
@@ -1118,6 +1254,7 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  // TODO(brian): PR3 - Wrap entire pipelineReplyTask() method with tracer.startActiveSpan('agent_turn')
   private async pipelineReplyTask(
     speechHandle: SpeechHandle,
     chatCtx: ChatContext,
@@ -1139,10 +1276,9 @@ export class AgentActivity implements RecognitionHooks {
 
     chatCtx = chatCtx.copy();
 
+    // Insert new message into temporary chat context for LLM inference
     if (newMessage) {
       chatCtx.insert(newMessage);
-      this.agent._chatCtx.insert(newMessage);
-      this.agentSession._conversationItemAdded(newMessage);
     }
 
     if (instructions) {
@@ -1157,7 +1293,6 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    this.agentSession._updateAgentState('thinking');
     const tasks: Array<Task<void>> = [];
     const [llmTask, llmGenData] = performLLMInference(
       // preserve  `this` context in llmNode
@@ -1184,6 +1319,12 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForScheduled()]);
+
+    // Add new message to actual chat context if the speech is scheduled
+    if (newMessage && speechHandle.scheduled) {
+      this.agent._chatCtx.insert(newMessage);
+      this.agentSession._conversationItemAdded(newMessage);
+    }
 
     if (speechHandle.interrupted) {
       replyAbortController.abort();
@@ -1504,7 +1645,7 @@ export class AgentActivity implements RecognitionHooks {
 
     const readMessages = async (
       abortController: AbortController,
-      outputs: Array<[string, _TextOut | null, _AudioOut | null]>,
+      outputs: Array<[string, _TextOut | null, _AudioOut | null, ('text' | 'audio')[] | undefined]>,
     ) => {
       replyAbortController.signal.addEventListener('abort', () => abortController.abort(), {
         once: true,
@@ -1519,7 +1660,25 @@ export class AgentActivity implements RecognitionHooks {
             );
             break;
           }
-          const trNodeResult = await this.agent.transcriptionNode(msg.textStream, modelSettings);
+
+          const msgModalities = msg.modalities ? await msg.modalities : undefined;
+          let ttsTextInput: ReadableStream<string> | null = null;
+          let trTextInput: ReadableStream<string>;
+
+          if (msgModalities && !msgModalities.includes('audio') && this.tts) {
+            if (this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput) {
+              this.logger.warn(
+                'text response received from realtime API, falling back to use a TTS model.',
+              );
+            }
+            const [_ttsTextInput, _trTextInput] = msg.textStream.tee();
+            ttsTextInput = _ttsTextInput;
+            trTextInput = _trTextInput;
+          } else {
+            trTextInput = msg.textStream;
+          }
+
+          const trNodeResult = await this.agent.transcriptionNode(trTextInput, modelSettings);
           let textOut: _TextOut | null = null;
           if (trNodeResult) {
             const [textForwardTask, _textOut] = performTextForwarding(
@@ -1530,30 +1689,51 @@ export class AgentActivity implements RecognitionHooks {
             forwardTasks.push(textForwardTask);
             textOut = _textOut;
           }
+
           let audioOut: _AudioOut | null = null;
           if (audioOutput) {
-            const realtimeAudio = await this.agent.realtimeAudioOutputNode(
-              msg.audioStream,
-              modelSettings,
-            );
-            if (realtimeAudio) {
+            let realtimeAudioResult: ReadableStream<AudioFrame> | null = null;
+
+            if (ttsTextInput) {
+              const [ttsTask, ttsStream] = performTTSInference(
+                (...args) => this.agent.ttsNode(...args),
+                ttsTextInput,
+                modelSettings,
+                abortController,
+              );
+              tasks.push(ttsTask);
+              realtimeAudioResult = ttsStream;
+            } else if (msgModalities && msgModalities.includes('audio')) {
+              realtimeAudioResult = await this.agent.realtimeAudioOutputNode(
+                msg.audioStream,
+                modelSettings,
+              );
+            } else if (this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput) {
+              this.logger.error(
+                'Text message received from Realtime API with audio modality. ' +
+                  'This usually happens when text chat context is synced to the API. ' +
+                  'Try to add a TTS model as fallback or use text modality with TTS instead.',
+              );
+            } else {
+              this.logger.warn(
+                'audio output is enabled but neither tts nor realtime audio is available',
+              );
+            }
+
+            if (realtimeAudioResult) {
               const [forwardTask, _audioOut] = performAudioForwarding(
-                realtimeAudio,
+                realtimeAudioResult,
                 audioOutput,
                 abortController,
               );
               forwardTasks.push(forwardTask);
               audioOut = _audioOut;
               audioOut.firstFrameFut.await.finally(onFirstFrame);
-            } else {
-              this.logger.warn(
-                'audio output is enabled but neither tts nor realtime audio is available',
-              );
             }
           } else if (textOut) {
             textOut.firstTextFut.await.finally(onFirstFrame);
           }
-          outputs.push([msg.messageId, textOut, audioOut]);
+          outputs.push([msg.messageId, textOut, audioOut, msgModalities]);
         }
         await waitFor(forwardTasks);
       } catch (error) {
@@ -1563,7 +1743,9 @@ export class AgentActivity implements RecognitionHooks {
       }
     };
 
-    const messageOutputs: Array<[string, _TextOut | null, _AudioOut | null]> = [];
+    const messageOutputs: Array<
+      [string, _TextOut | null, _AudioOut | null, ('text' | 'audio')[] | undefined]
+    > = [];
     const tasks = [
       Task.from(
         (controller) => readMessages(controller, messageOutputs),
@@ -1642,7 +1824,7 @@ export class AgentActivity implements RecognitionHooks {
 
       if (messageOutputs.length > 0) {
         // there should be only one message
-        const [msgId, textOut, audioOut] = messageOutputs[0]!;
+        const [msgId, textOut, audioOut, msgModalities] = messageOutputs[0]!;
         let forwardedText = textOut?.text || '';
 
         if (audioOutput) {
@@ -1667,6 +1849,8 @@ export class AgentActivity implements RecognitionHooks {
           this.realtimeSession.truncate({
             messageId: msgId,
             audioEndMs: Math.floor(playbackPosition),
+            modalities: msgModalities,
+            audioTranscript: forwardedText,
           });
         }
 
@@ -1697,7 +1881,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (messageOutputs.length > 0) {
       // there should be only one message
-      const [msgId, textOut, _] = messageOutputs[0]!;
+      const [msgId, textOut, _, __] = messageOutputs[0]!;
       const message = ChatMessage.create({
         role: 'assistant',
         content: textOut?.text || '',
@@ -1912,11 +2096,14 @@ export class AgentActivity implements RecognitionHooks {
     this.wakeupMainTask();
   }
 
+  // TODO(brian): PR3 - Wrap entire drain() method with tracer.startActiveSpan('drain_agent_activity', { attributes: { 'lk.agent_label': this.agent.label } })
   async drain(): Promise<void> {
     const unlock = await this.lock.lock();
     try {
       if (this._draining) return;
 
+      this.cancelPreemptiveGeneration();
+      // TODO(brian): PR3 - Wrap onExit with tracer.startActiveSpan('on_exit', { attributes: { 'lk.agent_label': this.agent.label } })
       this.createSpeechTask({
         task: Task.from(() => this.agent.onExit()),
         name: 'AgentActivity_onExit',
@@ -1937,6 +2124,7 @@ export class AgentActivity implements RecognitionHooks {
         this.logger.warn('task closing without draining');
       }
 
+      this.cancelPreemptiveGeneration();
       // Unregister event handlers to prevent duplicate metrics
       if (this.llm instanceof LLM) {
         this.llm.off('metrics_collected', this.onMetricsCollected);

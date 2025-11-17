@@ -249,7 +249,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             ws.on('message', (data) => resolve(data));
             ws.on('close', (code, reason) => {
               if (!closing) {
-                this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+                this.#logger.debug(`WebSocket closed with code ${code}: ${reason}`);
               }
 
               clearTTSChunkTimeout();
@@ -277,7 +277,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               // can continue to process the stream without been blocked by the stuck node
               clearTTSChunkTimeout();
               timeout = setTimeout(() => {
-                this.#logger.error(
+                // cartesia chunk timeout quite often, so we make it a debug log
+                this.#logger.debug(
                   `Cartesia WebSocket STT chunk stream timeout after ${this.#opts.chunkTimeout}ms`,
                 );
                 ws.close();

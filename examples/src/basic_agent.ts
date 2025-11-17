@@ -53,6 +53,10 @@ export default defineAgent({
       turnDetection: new livekit.turnDetector.MultilingualModel(),
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
+      voiceOptions: {
+        // allow the LLM to generate a response while waiting for the end of turn
+        preemptiveGeneration: true,
+      },
     });
 
     const usageCollector = new metrics.UsageCollector();

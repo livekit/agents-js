@@ -4,7 +4,12 @@
 import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../../log.js';
-import { ChatContext, FunctionCall, FunctionCallOutput } from '../chat_context.js';
+import {
+  AgentHandoffItem,
+  ChatContext,
+  FunctionCall,
+  FunctionCallOutput,
+} from '../chat_context.js';
 import { serializeImage } from '../utils.js';
 import { toChatCtx } from './openai.js';
 
@@ -576,6 +581,55 @@ describe('toChatCtx', () => {
         tool_call_id: 'call_output_test',
         content: 'Function executed successfully',
       },
+    ]);
+  });
+
+  it('should filter out agent handoff items', async () => {
+    const ctx = ChatContext.empty();
+
+    ctx.addMessage({ role: 'user', content: 'Hello' });
+
+    // Insert an agent handoff item
+    const handoff = new AgentHandoffItem({
+      oldAgentId: 'agent_1',
+      newAgentId: 'agent_2',
+    });
+    ctx.insert(handoff);
+
+    ctx.addMessage({ role: 'assistant', content: 'Hi there!' });
+
+    const result = await toChatCtx(ctx);
+
+    // Agent handoff should be filtered out, only messages should remain
+    expect(result).toEqual([
+      { role: 'user', content: 'Hello' },
+      { role: 'assistant', content: 'Hi there!' },
+    ]);
+  });
+
+  it('should handle multiple agent handoffs without errors', async () => {
+    const ctx = ChatContext.empty();
+
+    ctx.addMessage({ role: 'user', content: 'Start' });
+
+    // Multiple handoffs
+    ctx.insert(new AgentHandoffItem({ oldAgentId: undefined, newAgentId: 'agent_1' }));
+    ctx.addMessage({ role: 'assistant', content: 'Response from agent 1' });
+
+    ctx.insert(new AgentHandoffItem({ oldAgentId: 'agent_1', newAgentId: 'agent_2' }));
+    ctx.addMessage({ role: 'assistant', content: 'Response from agent 2' });
+
+    ctx.insert(new AgentHandoffItem({ oldAgentId: 'agent_2', newAgentId: 'agent_3' }));
+    ctx.addMessage({ role: 'assistant', content: 'Response from agent 3' });
+
+    const result = await toChatCtx(ctx);
+
+    // All handoffs should be filtered out
+    expect(result).toEqual([
+      { role: 'user', content: 'Start' },
+      { role: 'assistant', content: 'Response from agent 1' },
+      { role: 'assistant', content: 'Response from agent 2' },
+      { role: 'assistant', content: 'Response from agent 3' },
     ]);
   });
 });
