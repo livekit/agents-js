@@ -7,12 +7,15 @@ import {
   APITimeoutError,
   type AudioBuffer,
   AudioByteStream,
+  Future,
+  Task,
   log,
   mergeFrames,
   stt,
+  waitForAbort,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { WebSocket } from 'ws';
+import { type RawData, WebSocket } from 'ws';
 import type { STTAudioFormat, STTCommitStrategy, STTLanguages, STTModels } from './models.js';
 
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1';
@@ -263,11 +266,12 @@ export class SpeechStream extends stt.SpeechStream {
       });
 
       try {
-        await new Promise((resolve, reject) => {
-          ws.once('open', resolve);
-          ws.once('error', (error) => reject(error));
-          ws.once('close', (code) => reject(`WebSocket returned ${code}`));
-        });
+        const connFut = new Future<void>();
+        ws.once('open', () => connFut.resolve());
+        ws.once('error', (error) => connFut.reject(error));
+        ws.once('close', (code) => connFut.reject(new Error(`WebSocket returned ${code}`)));
+
+        await connFut.await;
 
         // on success reset retries
         retries = 0;
@@ -295,6 +299,7 @@ export class SpeechStream extends stt.SpeechStream {
 
   async #runWS(ws: WebSocket) {
     let closing = false;
+    const abortController = new AbortController();
 
     const keepalive = setInterval(() => {
       try {
@@ -307,7 +312,7 @@ export class SpeechStream extends stt.SpeechStream {
       }
     }, 5000);
 
-    const sendTask = async () => {
+    const sendTask = Task.from(async (controller) => {
       const samples100Ms = Math.floor(this.#opts.sampleRate / 10);
       const stream = new AudioByteStream(
         this.#opts.sampleRate,
@@ -316,7 +321,16 @@ export class SpeechStream extends stt.SpeechStream {
       );
 
       let frame_count = 0;
-      for await (const data of this.input) {
+      while (!controller.signal.aborted) {
+        const result = await Promise.race([this.input.next(), waitForAbort(controller.signal)]);
+
+        if (result === undefined) break; // aborted
+        if (result.done) {
+          controller.abort();
+          break;
+        }
+
+        const data = result.value;
         let frames: AudioFrame[];
         if (data === SpeechStream.FLUSH_SENTINEL) {
           frames = stream.flush();
@@ -377,23 +391,26 @@ export class SpeechStream extends stt.SpeechStream {
 
       this.#logger.info(`STT: Send task complete, sent ${frame_count} total frames`);
       closing = true;
-    };
+    }, abortController);
 
-    const wsMonitor = new Promise<void>((resolve, reject) =>
-      ws.once('close', (code, reason) => {
-        console.log('code', code, reason);
-        if (!closing) {
-          this.#logger.error(`STT: WebSocket closed unexpectedly with code ${code}: ${reason}`);
-          reject(new Error('WebSocket closed'));
-        } else {
-          this.#logger.error(`STT: WebSocket closed normally ${code}: ${reason}`);
-          resolve();
-        }
-      }),
-    );
+    const wsMonitor = Task.from(async (controller) => {
+      const connectionClosed = new Promise<void>((resolve, reject) =>
+        ws.once('close', (code, reason) => {
+          if (!closing) {
+            this.#logger.error(`STT: WebSocket closed unexpectedly with code ${code}: ${reason}`);
+            reject(new Error('WebSocket closed'));
+          } else {
+            this.#logger.error(`STT: WebSocket closed normally ${code}: ${reason}`);
+            resolve();
+          }
+        }),
+      );
 
-    const listenTask = async () => {
-      await new Promise<void>((resolve, reject) => {
+      await Promise.race([connectionClosed, waitForAbort(controller.signal)]);
+    }, abortController);
+
+    const listenTask = Task.from(async (controller) => {
+      const listenMessage = new Promise<void>((resolve, reject) => {
         ws.on('message', (msg) => {
           try {
             const json = JSON.parse(msg.toString());
@@ -408,12 +425,18 @@ export class SpeechStream extends stt.SpeechStream {
           }
         });
       });
-    };
 
-    await Promise.all([sendTask(), listenTask(), wsMonitor]);
-    closing = true;
-    ws.close();
-    clearInterval(keepalive);
+      await Promise.race([listenMessage, waitForAbort(controller.signal)]);
+    }, abortController);
+
+    try {
+      await Promise.all([sendTask.result, listenTask.result, wsMonitor]);
+    } finally {
+      closing = true;
+      abortController.abort();
+      ws.close();
+      clearInterval(keepalive);
+    }
   }
 
   #processStreamEvent(data: any) {
