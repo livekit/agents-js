@@ -362,7 +362,6 @@ export class AudioRecognition {
         let endpointingDelay = this.minEndpointingDelay;
 
         if (turnDetector) {
-          // Ref: Python audio_recognition.py line 493 - Wrap EOU detection with span
           await tracer.startActiveSpan(
             async (span) => {
               this.logger.debug('Running turn detector model');
@@ -390,7 +389,6 @@ export class AudioRecognition {
                 }
               }
 
-              // Ref: Python audio_recognition.py lines 513-527 - Set EOU detection attributes
               span.setAttribute(
                 traceTypes.ATTR_CHAT_CTX,
                 JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),

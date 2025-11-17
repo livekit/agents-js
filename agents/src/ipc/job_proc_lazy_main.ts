@@ -99,7 +99,6 @@ const startJob = (
     }, 10000);
 
     // Run the job function within the AsyncLocalStorage context
-    // Ref: Python job.py line 739 - Wrap entrypoint with 'job_entrypoint' span
     await runWithJobContextAsync(ctx, async () => {
       const { tracer, traceTypes } = await import('../telemetry/index.js');
       return tracer.startActiveSpan(

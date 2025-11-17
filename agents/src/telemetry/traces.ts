@@ -258,10 +258,8 @@ export async function setupCloudTracer(options: {
     // Metadata processor is already configured in the constructor above
     setTracerProvider(tracerProvider);
 
-    // Ref: Python telemetry/traces.py lines 164-176 - Setup logger provider and log export
     const loggerProvider = new LoggerProvider({ resource });
 
-    // Ref: Python line 165 - Set global logger provider
     logs.setGlobalLoggerProvider(loggerProvider);
 
     const logExporter = new OTLPLogExporter({

@@ -521,7 +521,6 @@ export class AgentSession<
         // (Ref: Python agent_session.py line 1161-1164)
       }
     } else if (this.agentSpeakingSpan !== undefined) {
-      // Ref: Python agent_session.py line 1166-1169 - End span when agent stops speaking
       // TODO(brian): PR4 - Set ATTR_END_TIME attribute if available
       this.agentSpeakingSpan.end();
       this.agentSpeakingSpan = undefined;
@@ -549,7 +548,6 @@ export class AgentSession<
       return;
     }
 
-    // Ref: Python agent_session.py line 1189 - Create 'user_speaking' span when user starts speaking
     if (state === 'speaking' && this.userSpeakingSpan === undefined) {
       this.userSpeakingSpan = tracer.startSpan({
         name: 'user_speaking',
@@ -559,7 +557,6 @@ export class AgentSession<
       // TODO(brian): PR4 - Set participant attributes if roomIO.linkedParticipant is available
       // (Ref: Python agent_session.py line 1192-1195)
     } else if (this.userSpeakingSpan !== undefined) {
-      // Ref: Python agent_session.py line 1198-1202 - End span when user stops speaking
       // TODO(brian): PR4 - Set ATTR_END_TIME attribute with lastSpeakingTime if available
       this.userSpeakingSpan.end();
       this.userSpeakingSpan = undefined;

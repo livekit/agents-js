@@ -419,7 +419,6 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     Promise.resolve().then(() => this.mainTask().then(() => this.queue.close()));
   }
 
-  // Ref: Python tts.py line 241 - ChunkedStream TTS instrumentation
   private _mainTaskImpl = async (span: Span) => {
     this.#ttsRequestSpan = span;
     span.setAttributes({
@@ -527,7 +526,6 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       streamed: false,
     };
 
-    // Ref: Python tts.py lines 293-294 - Set TTS metrics on span
     if (this.#ttsRequestSpan) {
       this.#ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
       this.#ttsRequestSpan.end();
