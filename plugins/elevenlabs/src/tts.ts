@@ -4,12 +4,17 @@
 import {
   AsyncIterableQueue,
   AudioByteStream,
+  Future,
+  Task,
   log,
   shortuuid,
+  stream,
   tokenize,
   tts,
+  waitForAbort,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
+import type { ReadableStream } from 'node:stream/web';
 import { type RawData, WebSocket } from 'ws';
 import type { TTSEncoding, TTSModels } from './models.js';
 
@@ -44,7 +49,7 @@ const DEFAULT_VOICE: Voice = {
 
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1/';
 
-interface TimedWord {
+interface TimedString {
   text: string;
   startTime: number;
   endTime: number;
@@ -92,7 +97,7 @@ function toTimedWords(
   startTimesMs: number[],
   durationsMs: number[],
   flush: boolean = false,
-): [TimedWord[], string] {
+): [TimedString[], string] {
   if (!text || startTimesMs.length === 0 || durationsMs.length === 0) {
     return [[], ''];
   }
@@ -109,7 +114,7 @@ function toTimedWords(
 
   // Split text into words
   const words = splitWords(text, false);
-  const timedWords: TimedWord[] = [];
+  const timedWords: TimedString[] = [];
 
   if (words.length === 0) {
     return [[], text];
@@ -162,17 +167,11 @@ function toTimedWords(
 // WebSocket Connection Manager - Manages persistent connection with multi-stream support
 // ============================================================================
 
-interface DeferredPromise<T> {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-  reject: (reason?: unknown) => void;
-}
-
 interface StreamContext {
   contextId: string;
-  audioQueue: AsyncIterableQueue<Int8Array>;
-  transcriptQueue: AsyncIterableQueue<TimedWord[]>;
-  eos: DeferredPromise<void>;
+  audioChannel: stream.StreamChannel<Int8Array>;
+  transcriptChannel: stream.StreamChannel<TimedString[]>;
+  eos: Future<void>;
   timeoutTimer: NodeJS.Timeout | null;
   timeoutSeconds: number;
   textBuffer: string;
@@ -202,11 +201,11 @@ class WebSocketManager {
   private ws: WebSocket | null = null;
   private opts: TTSOptions;
   private logger = log();
-  private inputQueue = new AsyncIterableQueue<QueueMessage>();
+  private inputChannel = stream.createStreamChannel<QueueMessage>();
   private contextData = new Map<string, StreamContext>();
   private activeContexts = new Set<string>();
-  private sendTask: Promise<void> | null = null;
-  private recvTask: Promise<void> | null = null;
+  private sendTask: Task<void> | null = null;
+  private recvTask: Task<void> | null = null;
   private keepaliveInterval: NodeJS.Timeout | null = null;
   private closed = false;
   private isCurrent = true;
@@ -228,15 +227,17 @@ class WebSocketManager {
     this.ws = new WebSocket(url, { headers });
 
     // Wait for connection to open
-    await new Promise((resolve, reject) => {
-      if (!this.ws) {
-        reject(new Error('WebSocket not initialized'));
-        return;
-      }
-      this.ws.once('open', resolve);
-      this.ws.once('error', (error) => reject(error));
-      this.ws.once('close', (code) => reject(`WebSocket returned ${code}`));
-    });
+    const connFut = new Future();
+
+    if (!this.ws) {
+      throw new Error('WebSocket not initialized');
+    }
+
+    this.ws.once('open', () => connFut.resolve());
+    this.ws.once('error', (error) => connFut.reject(error));
+    this.ws.once('close', (code) => connFut.reject(new Error(`WebSocket returned ${code}`)));
+
+    await connFut.await;
 
     // Start keepalive ping
     this.keepaliveInterval = setInterval(() => {
@@ -253,23 +254,24 @@ class WebSocketManager {
     }, 5000);
 
     // Start send and recv loops
-    this.sendTask = this.sendLoop();
-    this.recvTask = this.recvLoop();
+    const abortController = new AbortController();
+    this.sendTask = Task.from(
+      async (controller) => await this.sendLoop(controller),
+      abortController,
+    );
+    this.recvTask = Task.from(
+      async (controller) => await this.recvLoop(controller),
+      abortController,
+    );
   }
 
   registerContext(contextId: string, timeoutSeconds: number = 30): void {
     if (!this.contextData.has(contextId)) {
-      const eos: DeferredPromise<void> = {} as DeferredPromise<void>;
-      eos.promise = new Promise<void>((resolve, reject) => {
-        eos.resolve = resolve;
-        eos.reject = reject;
-      });
-
       this.contextData.set(contextId, {
         contextId,
-        audioQueue: new AsyncIterableQueue<Int8Array>(),
-        transcriptQueue: new AsyncIterableQueue<TimedWord[]>(),
-        eos: eos,
+        audioChannel: stream.createStreamChannel<Int8Array>(),
+        transcriptChannel: stream.createStreamChannel<TimedString[]>(),
+        eos: new Future<void>(),
         timeoutTimer: null,
         timeoutSeconds,
         textBuffer: '',
@@ -284,7 +286,7 @@ class WebSocketManager {
       throw new Error('WebSocket connection is closed');
     }
 
-    this.inputQueue.put({
+    this.inputChannel.write({
       type: 'synthesize',
       contextId,
       text,
@@ -297,22 +299,22 @@ class WebSocketManager {
       throw new Error('WebSocket connection is closed');
     }
 
-    this.inputQueue.put({
+    this.inputChannel.write({
       type: 'close',
       contextId,
     });
   }
 
-  getContextAudioQueue(contextId: string): AsyncIterableQueue<Int8Array> | null {
-    return this.contextData.get(contextId)?.audioQueue ?? null;
+  getContextAudioStream(contextId: string): ReadableStream<Int8Array> | null {
+    return this.contextData.get(contextId)?.audioChannel.stream() ?? null;
   }
 
-  getContextTranscriptQueue(contextId: string): AsyncIterableQueue<TimedWord[]> | null {
-    return this.contextData.get(contextId)?.transcriptQueue ?? null;
+  getContextTranscriptStream(contextId: string): ReadableStream<TimedString[]> | null {
+    return this.contextData.get(contextId)?.transcriptChannel.stream() ?? null;
   }
 
   getContextEOSPromise(contextId: string): Promise<void> | null {
-    return this.contextData.get(contextId)?.eos.promise ?? null;
+    return this.contextData.get(contextId)?.eos.await ?? null;
   }
 
   markNonCurrent(): void {
@@ -329,8 +331,8 @@ class WebSocketManager {
       if (ctx.timeoutTimer) {
         clearTimeout(ctx.timeoutTimer);
       }
-      ctx.audioQueue.close();
-      ctx.transcriptQueue.close();
+      ctx.audioChannel.close();
+      ctx.transcriptChannel.close();
     }
     this.contextData.delete(contextId);
     this.activeContexts.delete(contextId);
@@ -358,7 +360,7 @@ class WebSocketManager {
     }
 
     this.closed = true;
-    this.inputQueue.close();
+    await this.inputChannel.close();
 
     // Clear all timeout timers
     for (const ctx of this.contextData.values()) {
@@ -383,7 +385,8 @@ class WebSocketManager {
 
     if (this.sendTask) {
       try {
-        await this.sendTask;
+        this.sendTask.cancel();
+        await this.sendTask.result;
       } catch {
         // Expected when queue closes
       }
@@ -391,7 +394,8 @@ class WebSocketManager {
 
     if (this.recvTask) {
       try {
-        await this.recvTask;
+        this.recvTask.cancel();
+        await this.recvTask.result;
       } catch {
         // Expected when connection closes
       }
@@ -430,9 +434,20 @@ class WebSocketManager {
     return urlStr;
   }
 
-  private async sendLoop(): Promise<void> {
+  private async sendLoop(controller: AbortController): Promise<void> {
+    const reader = this.inputChannel.stream().getReader();
     try {
-      for await (const msg of this.inputQueue) {
+      while (!controller.signal.aborted) {
+        const result = await Promise.race([reader.read(), waitForAbort(controller.signal)]);
+
+        if (result === undefined) return; // aborted
+        if (result.done) {
+          controller.abort();
+          break;
+        }
+
+        const msg = result.value;
+
         if (!this.ws || this.ws.readyState !== 1) {
           break;
         }
@@ -490,21 +505,26 @@ class WebSocketManager {
     } catch (error) {
       this.logger.error({ error }, 'TTS: Error in send loop');
     } finally {
+      reader.releaseLock();
       if (!this.closed) {
         await this.close();
       }
     }
   }
 
-  private async recvLoop(): Promise<void> {
+  private async recvLoop(controller: AbortController): Promise<void> {
     try {
-      await new Promise<void>((resolve, reject) => {
+      const listenMessage = new Promise<void>((resolve, reject) => {
         if (!this.ws) {
           reject(new Error('WebSocket not available'));
           return;
         }
 
         this.ws.on('message', (msg: RawData) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+
           try {
             const data = JSON.parse(msg.toString()) as Record<string, unknown>;
             const contextId = (data.contextId || data.context_id) as string | undefined;
@@ -580,7 +600,7 @@ class WebSocketManager {
                 );
 
                 if (timedWords.length > 0) {
-                  context.transcriptQueue.put(timedWords);
+                  context.transcriptChannel.write(timedWords);
                 }
 
                 // Update buffers with remaining text
@@ -593,7 +613,7 @@ class WebSocketManager {
             if (data.audio) {
               const audioBuffer = Buffer.from(data.audio as string, 'base64');
               const audioArray = new Int8Array(audioBuffer);
-              context.audioQueue.put(audioArray);
+              context.audioChannel.write(audioArray);
 
               // Cancel timeout when audio is received
               if (context.timeoutTimer) {
@@ -612,7 +632,7 @@ class WebSocketManager {
                   true,
                 );
                 if (timedWords.length > 0) {
-                  context.transcriptQueue.put(timedWords);
+                  context.transcriptChannel.write(timedWords);
                 }
               }
 
@@ -647,10 +667,12 @@ class WebSocketManager {
           reject(error);
         });
       });
+
+      await Promise.race([listenMessage, waitForAbort(controller.signal)]);
     } catch (error) {
       this.logger.error({ error }, 'TTS: Recv loop error');
       for (const context of this.contextData.values()) {
-        context.eos.reject(error);
+        context.eos.reject(error as Error);
       }
     } finally {
       if (!this.closed) {
@@ -858,11 +880,18 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         this.#opts.autoMode;
 
       let xmlContent: string[] = [];
-      for await (const data of stream) {
-        if (this.abortController.signal.aborted) {
+      while (!this.abortController.signal.aborted) {
+        const result = await Promise.race([
+          stream.next(),
+          waitForAbort(this.abortController.signal),
+        ]);
+
+        if (result === undefined) break; // aborted
+        if (result.done) {
           break;
         }
-        let text = data.token;
+
+        let text = result.value.token;
 
         if ((this.#opts.enableSsmlParsing && text.startsWith('<phoneme')) || xmlContent.length) {
           xmlContent.push(text);
@@ -903,13 +932,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     const listenTask = async () => {
-      const audioQueue = this.#connection!.getContextAudioQueue(this.#contextId);
-      if (!audioQueue) {
+      const audioStream = this.#connection!.getContextAudioStream(this.#contextId);
+      if (!audioStream) {
         return;
       }
 
-      const transcriptQueue = this.#connection!.getContextTranscriptQueue(this.#contextId);
-      if (!transcriptQueue) {
+      const transcriptStream = this.#connection!.getContextTranscriptStream(this.#contextId);
+      if (!transcriptStream) {
         return;
       }
 
@@ -920,23 +949,51 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       // Process audio and transcript as they arrive, until EOS
       const processAudio = async () => {
-        for await (const buffer of audioQueue) {
-          for (const frame of bstream.write(buffer)) {
-            sendLastFrame(this.#contextId, false);
-            lastFrame = frame;
+        const reader = audioStream.getReader();
+        try {
+          while (!this.abortController.signal.aborted) {
+            const result = await Promise.race([
+              reader.read(),
+              waitForAbort(this.abortController.signal),
+            ]);
+            if (result === undefined) return; // aborted
+            if (result.done) {
+              break;
+            }
+
+            for (const frame of bstream.write(result.value)) {
+              sendLastFrame(this.#contextId, false);
+              lastFrame = frame;
+            }
           }
+        } finally {
+          reader.releaseLock();
         }
       };
 
       const processTranscript = async () => {
-        for await (const timedWords of transcriptQueue) {
-          // Concatenate timed words into deltaText
-          // In a more sophisticated implementation, we could track timing
-          // and associate words with specific frames
-          const deltaText = timedWords.map((w) => w.text).join('');
-          if (deltaText) {
-            lastDeltaText = deltaText;
+        const reader = transcriptStream.getReader();
+        try {
+          while (!this.abortController.signal.aborted) {
+            const result = await Promise.race([
+              reader.read(),
+              waitForAbort(this.abortController.signal),
+            ]);
+            if (result === undefined) return; // aborted
+            if (result.done) {
+              break;
+            }
+
+            // Concatenate timed words into deltaText
+            // In a more sophisticated implementation, we could track timing
+            // and associate words with specific frames
+            const deltaText = result.value.map((w) => w.text).join('');
+            if (deltaText) {
+              lastDeltaText = deltaText;
+            }
           }
+        } finally {
+          reader.releaseLock();
         }
       };
 
@@ -949,7 +1006,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           // Wait for EOS to be signaled
           await eosPromise;
 
-          // Ensure both queues are fully drained after EOS
+          // Ensure both streams are fully drained after EOS
           await Promise.all([audioTask, transcriptTask]);
           resolve();
         } catch (err) {
