@@ -18,17 +18,6 @@ export type Language = 'en' | 'de' | string;
 export type TextTransform = (text: ReadableStream<string>) => ReadableStream<string>;
 
 /**
- * Configuration for language-specific transforms
- */
-export interface LanguageTransformConfig {
-  /**
-   * The language code for language-specific transforms
-   * Defaults to 'en' (English)
-   */
-  language?: Language;
-}
-
-/**
  * Built-in language-agnostic transform names
  */
 export type LanguageAgnosticTransformName =
@@ -135,17 +124,36 @@ export function getRecommendedTTSTransforms(language: Language = 'en'): BuiltInT
 /**
  * Apply a sequence of text transforms to a text stream
  *
+ * Transforms can be specified either as built-in transform names (strings)
+ * or as custom transform functions. Built-in transforms are looked up across
+ * all registered transforms (language-agnostic and all language-specific).
+ *
  * @param text - Input text stream
  * @param transforms - Array of transform names or custom transform functions
- * @param config - Configuration for language-specific transforms
  * @returns Transformed text stream
+ *
+ * @example
+ * ```typescript
+ * // Use built-in transforms (names)
+ * const text = new ReadableStream(...);
+ * const transformed = await applyTextTransforms(text, [
+ *   'filter_markdown',
+ *   'format_numbers',  // English
+ *   'format_euro_amounts',  // German
+ * ]);
+ *
+ * // Mix built-in and custom transforms
+ * const customTransform: TextTransform = (stream) => ...;
+ * const transformed = await applyTextTransforms(text, [
+ *   'filter_markdown',
+ *   customTransform,
+ * ]);
+ * ```
  */
 export async function applyTextTransforms(
   text: ReadableStream<string>,
   transforms: readonly TextTransformSpec[],
-  config: LanguageTransformConfig = {},
 ): Promise<ReadableStream<string>> {
-  const { language = 'en' } = config;
   let result = text;
 
   for (const transform of transforms) {
@@ -153,12 +161,12 @@ export async function applyTextTransforms(
       // Custom transform function
       result = transform(result);
     } else {
-      // Built-in transform name
-      const transformFn = getBuiltInTransform(transform, language);
+      // Built-in transform name - search across all registries
+      const transformFn = getBuiltInTransform(transform);
       if (!transformFn) {
         throw new Error(
           `Invalid transform: ${transform}. ` +
-            `Available transforms: ${Array.from(getAvailableTransforms(language)).join(', ')}`,
+            `Available transforms: ${Array.from(getAllAvailableTransforms()).join(', ')}`,
         );
       }
       result = transformFn(result);
@@ -170,25 +178,66 @@ export async function applyTextTransforms(
 
 /**
  * Get a built-in transform function by name
+ *
+ * Searches across all registered transforms:
+ * 1. First checks language-agnostic transforms
+ * 2. Then searches through all language-specific transform registries
+ *
+ * @param name - The built-in transform name
+ * @returns The transform function, or null if not found
  */
-function getBuiltInTransform(name: BuiltInTransformName, language: Language): TextTransform | null {
+function getBuiltInTransform(name: BuiltInTransformName): TextTransform | null {
   // Check language-agnostic transforms first
   const agnostic = languageAgnosticTransforms.get(name as LanguageAgnosticTransformName);
   if (agnostic) {
     return agnostic;
   }
 
-  // Check language-specific transforms
-  const langTransforms = languageSpecificTransforms.get(language);
-  if (langTransforms) {
-    return langTransforms.get(name) || null;
+  // Check all language-specific transform registries
+  for (const langTransforms of languageSpecificTransforms.values()) {
+    const transform = langTransforms.get(name);
+    if (transform) {
+      return transform;
+    }
   }
 
   return null;
 }
 
 /**
+ * Get all available transform names across all languages
+ *
+ * Returns a set containing all registered transform names, including
+ * language-agnostic and all language-specific transforms.
+ *
+ * @returns Set of all available transform names
+ */
+export function getAllAvailableTransforms(): Set<string> {
+  const available = new Set<string>();
+
+  // Add language-agnostic transforms
+  for (const name of languageAgnosticTransforms.keys()) {
+    available.add(name);
+  }
+
+  // Add all language-specific transforms
+  for (const langTransforms of languageSpecificTransforms.values()) {
+    for (const name of langTransforms.keys()) {
+      available.add(name);
+    }
+  }
+
+  return available;
+}
+
+/**
  * Get all available transform names for a given language
+ *
+ * Returns a set containing language-agnostic transforms plus transforms
+ * specific to the requested language.
+ *
+ * @param language - The language code (e.g., 'en', 'de')
+ * @returns Set of available transform names for the language
  */
 export function getAvailableTransforms(language: Language = 'en'): Set<string> {
   const available = new Set<string>();
