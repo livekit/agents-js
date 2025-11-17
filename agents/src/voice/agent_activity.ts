@@ -1673,6 +1673,37 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
   ): Promise<void> {
+    return tracer.startActiveSpan(
+      async (span) =>
+        this._realtimeGenerationTaskImpl({
+          speechHandle,
+          ev,
+          modelSettings,
+          replyAbortController,
+          span,
+        }),
+      {
+        name: 'agent_turn',
+        context: this.agentSession.rootSpanContext,
+      },
+    );
+  }
+
+  private async _realtimeGenerationTaskImpl({
+    speechHandle,
+    ev,
+    modelSettings,
+    replyAbortController,
+    span,
+  }: {
+    speechHandle: SpeechHandle;
+    ev: GenerationCreatedEvent;
+    modelSettings: ModelSettings;
+    replyAbortController: AbortController;
+    span: Span;
+  }): Promise<void> {
+    span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
+
     speechHandleStorage.enterWith(speechHandle);
 
     if (!this.realtimeSession) {
