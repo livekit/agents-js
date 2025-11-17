@@ -11,13 +11,18 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
+import { logs } from '@opentelemetry/api-logs';
+import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
 import { Resource } from '@opentelemetry/resources';
+import { BatchLogRecordProcessor, LoggerProvider } from '@opentelemetry/sdk-logs';
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import { AccessToken } from 'livekit-server-sdk';
+import { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
+import { enablePinoOTELInstrumentation } from './pino_bridge.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -162,10 +167,6 @@ class MetadataSpanProcessor implements SpanProcessor {
   }
 }
 
-// TODO(brian): PR4 - Add MetadataLogProcessor for structured logging
-
-// TODO(brian): PR4 - Add ExtraDetailsProcessor for structured logging
-
 /**
  * Set the tracer provider for the livekit-agents framework.
  * This should be called before agent session start if using custom tracer providers.
@@ -257,7 +258,23 @@ export async function setupCloudTracer(options: {
     // Metadata processor is already configured in the constructor above
     setTracerProvider(tracerProvider);
 
-    // TODO(brian): PR4 - Add logger provider setup here for structured logging
+    // Ref: Python telemetry/traces.py lines 164-176 - Setup logger provider and log export
+    const loggerProvider = new LoggerProvider({ resource });
+
+    // Ref: Python line 165 - Set global logger provider
+    logs.setGlobalLoggerProvider(loggerProvider);
+
+    const logExporter = new OTLPLogExporter({
+      url: `https://${cloudHostname}/observability/logs/otlp/v0`,
+      headers,
+      compression: CompressionAlgorithm.GZIP,
+    });
+
+    loggerProvider.addLogRecordProcessor(new MetadataLogProcessor(metadata));
+    loggerProvider.addLogRecordProcessor(new ExtraDetailsProcessor());
+    loggerProvider.addLogRecordProcessor(new BatchLogRecordProcessor(logExporter));
+
+    enablePinoOTELInstrumentation();
   } catch (error) {
     console.error('Failed to setup cloud tracer:', error);
     throw error;

@@ -397,6 +397,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   abstract label: string;
   #text: string;
   #tts: TTS;
+  #ttsRequestSpan?: Span;
   private _connOptions: APIConnectOptions;
   private logger = log();
 
@@ -418,11 +419,28 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     Promise.resolve().then(() => this.mainTask().then(() => this.queue.close()));
   }
 
-  private async mainTask() {
-    // TODO(brian): PR4 - Add ChunkedStream TTS instrumentation (Ref: Python tts.py line 241, streaming variant complete)
+  // Ref: Python tts.py line 241 - ChunkedStream TTS instrumentation
+  private _mainTaskImpl = async (span: Span) => {
+    this.#ttsRequestSpan = span;
+    span.setAttributes({
+      [traceTypes.ATTR_TTS_STREAMING]: false,
+      [traceTypes.ATTR_TTS_LABEL]: this.#tts.label,
+    });
+
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
-        return await this.run();
+        return await tracer.startActiveSpan(
+          async (attemptSpan) => {
+            attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
+            try {
+              return await this.run();
+            } catch (error) {
+              recordException(attemptSpan, toError(error));
+              throw error;
+            }
+          },
+          { name: 'tts_request_run' },
+        );
       } catch (error) {
         if (error instanceof APIError) {
           const retryInterval = this._connOptions._intervalForRetry(i);
@@ -454,6 +472,13 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
         }
       }
     }
+  };
+
+  private async mainTask() {
+    return tracer.startActiveSpan(async (span) => this._mainTaskImpl(span), {
+      name: 'tts_request',
+      endOnExit: false,
+    });
   }
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
@@ -501,6 +526,14 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       label: this.#tts.label,
       streamed: false,
     };
+
+    // Ref: Python tts.py lines 293-294 - Set TTS metrics on span
+    if (this.#ttsRequestSpan) {
+      this.#ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
+      this.#ttsRequestSpan.end();
+      this.#ttsRequestSpan = undefined;
+    }
+
     this.#tts.emit('metrics_collected', metrics);
   }
 

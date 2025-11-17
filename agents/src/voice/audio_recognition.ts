@@ -60,7 +60,6 @@ export interface AudioRecognitionOptions {
   rootSpanContext?: Context;
 }
 
-// TODO(brian): PR4 - Add 'eou_detection' span (Ref: Python audio_recognition.py line 493)
 export class AudioRecognition {
   private hooks: RecognitionHooks;
   private stt?: STTNode;
@@ -363,31 +362,49 @@ export class AudioRecognition {
         let endpointingDelay = this.minEndpointingDelay;
 
         if (turnDetector) {
-          this.logger.debug('Running turn detector model');
-          if (!turnDetector.supportsLanguage(this.lastLanguage)) {
-            this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
-          } else {
-            const endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
-            this.logger.debug(
-              { endOfTurnProbability, language: this.lastLanguage },
-              'end of turn probability',
-            );
+          // Ref: Python audio_recognition.py line 493 - Wrap EOU detection with span
+          await tracer.startActiveSpan(
+            async (span) => {
+              this.logger.debug('Running turn detector model');
 
-            const unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
-            this.logger.debug(
-              {
-                unlikelyThreshold,
-                endOfTurnProbability,
-                language: this.lastLanguage,
-                transcript: this.audioTranscript,
-              },
-              'EOU Detection',
-            );
+              let endOfTurnProbability = 0.0;
+              let unlikelyThreshold: number | undefined;
 
-            if (unlikelyThreshold && endOfTurnProbability < unlikelyThreshold) {
-              endpointingDelay = this.maxEndpointingDelay;
-            }
-          }
+              if (!turnDetector.supportsLanguage(this.lastLanguage)) {
+                this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
+              } else {
+                try {
+                  endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
+                  unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
+
+                  this.logger.debug(
+                    { endOfTurnProbability, unlikelyThreshold, language: this.lastLanguage },
+                    'end of turn probability',
+                  );
+
+                  if (unlikelyThreshold && endOfTurnProbability < unlikelyThreshold) {
+                    endpointingDelay = this.maxEndpointingDelay;
+                  }
+                } catch (error) {
+                  this.logger.error(error, 'Error predicting end of turn');
+                }
+              }
+
+              // Ref: Python audio_recognition.py lines 513-527 - Set EOU detection attributes
+              span.setAttribute(
+                traceTypes.ATTR_CHAT_CTX,
+                JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
+              );
+              span.setAttribute(traceTypes.ATTR_EOU_PROBABILITY, endOfTurnProbability);
+              span.setAttribute(traceTypes.ATTR_EOU_UNLIKELY_THRESHOLD, unlikelyThreshold ?? 0);
+              span.setAttribute(traceTypes.ATTR_EOU_DELAY, endpointingDelay);
+              span.setAttribute(traceTypes.ATTR_EOU_LANGUAGE, this.lastLanguage ?? '');
+            },
+            {
+              name: 'eou_detection',
+              context: this.rootSpanContext,
+            },
+          );
         }
 
         let extraSleep = endpointingDelay;

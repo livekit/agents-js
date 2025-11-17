@@ -99,7 +99,19 @@ const startJob = (
     }, 10000);
 
     // Run the job function within the AsyncLocalStorage context
-    await runWithJobContextAsync(ctx, () => func(ctx)).finally(() => {
+    // Ref: Python job.py line 739 - Wrap entrypoint with 'job_entrypoint' span
+    await runWithJobContextAsync(ctx, async () => {
+      const { tracer, traceTypes } = await import('../telemetry/index.js');
+      return tracer.startActiveSpan(
+        async (span) => {
+          span.setAttribute(traceTypes.ATTR_JOB_ID, info.job.id);
+          span.setAttribute(traceTypes.ATTR_AGENT_NAME, info.job.agentName);
+          span.setAttribute(traceTypes.ATTR_ROOM_NAME, info.job.room?.name ?? '');
+          return func(ctx);
+        },
+        { name: 'job_entrypoint' },
+      );
+    }).finally(() => {
       clearTimeout(unconnectedTimeout);
     });
 
