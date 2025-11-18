@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.19
+
+### Patch Changes
+
+- Added SessionReport and onSessionEnd callback - [#811](https://github.com/livekit/agents-js/pull/811) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.18
 
 ### Patch Changes
