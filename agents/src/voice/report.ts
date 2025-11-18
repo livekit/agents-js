@@ -5,6 +5,8 @@ import type { ChatContext } from '../llm/chat_context.js';
 import type { VoiceOptions } from './agent_session.js';
 import type { AgentEvent } from './events.js';
 
+export { uploadSessionReport } from './upload_report.js';
+
 export interface SessionReport {
   jobId: string;
   roomId: string;
@@ -14,6 +16,10 @@ export interface SessionReport {
   chatHistory: ChatContext;
   enableUserDataTraining: boolean;
   timestamp: number;
+  // TODO(brian): PR6 - Add audio recording support (Ref: Python voice/report.py lines 21-24)
+  // audioRecordingPath?: string;
+  // audioRecordingStartedAt?: number;
+  // duration?: number;
 }
 
 export interface SessionReportOptions {
@@ -25,6 +31,10 @@ export interface SessionReportOptions {
   chatHistory: ChatContext;
   enableUserDataTraining?: boolean;
   timestamp?: number;
+  // TODO(brian): PR6 - Add audio recording support
+  // audioRecordingPath?: string;
+  // audioRecordingStartedAt?: number;
+  // duration?: number;
 }
 
 export function createSessionReport(opts: SessionReportOptions): SessionReport {
@@ -37,14 +47,10 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
     chatHistory: opts.chatHistory,
     enableUserDataTraining: opts.enableUserDataTraining ?? false,
     timestamp: opts.timestamp ?? Date.now(),
+    // TODO(brian): PR6 - Add audio recording fields when RecorderIO is implemented
   };
 }
 
-// TODO(brian): PR5 - Add uploadSessionReport() function that creates multipart form with:
-//   - header: protobuf MetricsRecordingHeader (room_id, duration, start_time)
-//   - chat_history: JSON serialized chat history (use sessionReportToJSON)
-//   - audio: audio recording file if available (ogg format)
-//   - Uploads to LiveKit Cloud observability endpoint with JWT auth
 export function sessionReportToJSON(report: SessionReport): Record<string, unknown> {
   const events: Record<string, unknown>[] = [];
 

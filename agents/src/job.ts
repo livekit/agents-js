@@ -9,6 +9,7 @@ import type {
   Room,
   RtcConfiguration,
 } from '@livekit/rtc-node';
+import {} from "@livekit/protocol"
 import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Logger } from 'pino';
@@ -259,6 +260,7 @@ export class JobContext {
     });
   }
 
+  // Ref: Python job.py lines 160-199 - Generate and upload session report on session end
   async _onSessionEnd(): Promise<void> {
     const session = this._primaryAgentSession;
     if (!session) {
@@ -267,16 +269,39 @@ export class JobContext {
 
     const report = this.makeSessionReport(session);
 
-    // TODO(brian): Implement CLI/console
+    // TODO(brian): PR6 - Save to local file if console recording is enabled (Python lines 170-184)
 
-    // TODO(brian): PR5 - Call uploadSessionReport() if report.enableUserDataTraining is true
-    // TODO(brian): PR5 - Upload includes: multipart form with header (protobuf), chat_history (JSON), and audio recording (if available)
+    // Ref: Python lines 186-199 - Upload session report if recording enabled
+    if (report.enableUserDataTraining) {
+      try {
+        const { uploadSessionReport } = await import('./voice/upload_report.js');
+        const parsedUrl = new URL(this.#info.url);
+        const cloudHostname = parsedUrl.hostname;
 
-    this.#logger.debug('Session ended, report generated', {
-      jobId: report.jobId,
-      roomId: report.roomId,
-      eventsCount: report.events.length,
-    });
+        if (!cloudHostname) {
+          throw new Error(`invalid cloud hostname: ${this.#info.url}`);
+        }
+
+        this.#logger.debug('Uploading session report to LiveKit Cloud');
+
+        await uploadSessionReport({
+          roomId: this.#info.job.room?.sid || '',
+          jobId: this.#info.job.id,
+          cloudHostname,
+          report,
+        });
+
+        this.#logger.info('Session report uploaded successfully');
+      } catch (error) {
+        this.#logger.error({ error }, 'failed to upload session report to LiveKit Cloud');
+      }
+    } else {
+      this.#logger.debug('Session ended, report generated (upload disabled)', {
+        jobId: report.jobId,
+        roomId: report.roomId,
+        eventsCount: report.events.length,
+      });
+    }
   }
 
   /**
