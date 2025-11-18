@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-google
 
+## 1.0.19
+
+### Patch Changes
+
+- Fix Google Realtime API missing modalities field on MessageGeneration. This resolves the "Text message received from Realtime API with audio modality" error introduced in version 1.0.18. - [#847](https://github.com/livekit/agents-js/pull/847) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`16020f1c15d33f51cb184298e049b6e037f60b87`](https://github.com/livekit/agents-js/commit/16020f1c15d33f51cb184298e049b6e037f60b87)]:
+  - @livekit/agents@1.0.19
+
 ## 1.0.18
 
 ### Patch Changes
