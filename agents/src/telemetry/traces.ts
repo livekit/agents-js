@@ -4,19 +4,21 @@
 import {
   type Attributes,
   type Context,
+  DiagConsoleLogger,
+  DiagLogLevel,
   type Span,
   type SpanOptions,
   type Tracer,
   type TracerProvider,
+  diag,
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
 import { SeverityNumber, logs } from '@opentelemetry/api-logs';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
 import { Resource } from '@opentelemetry/resources';
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
-import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { NodeTracerProvider, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import NodeFormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
@@ -211,6 +213,10 @@ export async function setupCloudTracer(options: {
 }): Promise<void> {
   const { roomId, jobId, cloudHostname } = options;
 
+  // Enable OTEL diagnostic logging FIRST (before creating any exporters)
+  diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.VERBOSE);
+  console.log('🔍 OTEL diagnostic logging enabled at VERBOSE level (will show HTTP details)');
+
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
 
@@ -243,17 +249,65 @@ export async function setupCloudTracer(options: {
     });
 
     // Configure OTLP exporter to send traces to LiveKit Cloud
-    const spanExporter = new OTLPTraceExporter({
-      url: `https://${cloudHostname}/observability/traces/otlp/v0`,
+    const traceUrl = `https://${cloudHostname}/observability/traces/otlp/v0`;
+    console.log(`📤 Creating OTLP trace exporter for: ${traceUrl}`);
+    console.log(`📤 Auth header: ${headers.Authorization.substring(0, 20)}...`);
+
+    // Test HTTP endpoint manually first
+    try {
+      console.log(`🔍 Testing trace endpoint with fetch...`);
+      const testResponse = await fetch(traceUrl, {
+        method: 'POST',
+        headers: {
+          ...headers,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ test: 'ping' }),
+      });
+      console.log(`🔍 Test response: ${testResponse.status} ${testResponse.statusText}`);
+    } catch (testError) {
+      console.error(`❌ Test fetch failed:`, testError);
+    }
+
+    const baseExporter = new OTLPTraceExporter({
+      url: traceUrl,
       headers,
-      compression: CompressionAlgorithm.GZIP,
+      // Try without compression first to debug
+      // compression: CompressionAlgorithm.GZIP,
     });
+
+    // Wrap exporter to log export calls with detailed result
+    const spanExporter = {
+      export: (spans: ReadableSpan[], resultCallback: (result: any) => void) => {
+        console.log(`🚀 Exporter.export() called with ${spans.length} spans`);
+        console.log(`   Span names: ${spans.map((s) => s.name).join(', ')}`);
+
+        const startTime = Date.now();
+        baseExporter.export(spans, (result) => {
+          const duration = Date.now() - startTime;
+          console.log(`📬 Export completed in ${duration}ms`);
+          console.log(`   Result code: ${result.code}`);
+          if (result.error) {
+            console.error(`   ❌ Export error:`, result.error);
+          } else {
+            console.log(`   ✅ Export successful`);
+          }
+          resultCallback(result);
+        });
+      },
+      shutdown: () => baseExporter.shutdown(),
+    } as any;
+
+    console.log(`✅ OTLP trace exporter created (wrapped with logging)`);
 
     const tracerProvider = new NodeTracerProvider({
       resource,
-      spanProcessors: [new MetadataSpanProcessor(metadata), new BatchSpanProcessor(spanExporter)],
+      // Use SimpleSpanProcessor for immediate export during debugging/testing
+      spanProcessors: [new MetadataSpanProcessor(metadata), new SimpleSpanProcessor(spanExporter)],
     });
     tracerProvider.register();
+
+    console.log(`✅ TracerProvider registered globally`);
 
     // Metadata processor is already configured in the constructor above
     setTracerProvider(tracerProvider);
@@ -411,7 +465,14 @@ export async function uploadSessionReport(options: {
 
     logger.debug('finished uploading session report');
   } catch (error) {
-    logger.error({ error }, 'failed to upload session report');
+    logger.error(
+      {
+        err: error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      },
+      'failed to upload session report',
+    );
     throw error;
   }
 }

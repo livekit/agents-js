@@ -51,5 +51,9 @@
     "patchedDependencies": {
       "@changesets/assemble-release-plan": "patches/@changesets__assemble-release-plan.patch"
     }
+  },
+  "dependencies": {
+    "@opentelemetry/exporter-logs-otlp-proto": "^0.208.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.208.0"
   }
 }
