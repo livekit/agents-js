@@ -136,6 +136,10 @@ export class JobContext {
     return this.#info.workerId;
   }
 
+  get url(): string {
+    return this.#info.url;
+  }
+
   /** @returns The room the agent was called into */
   get room(): Room {
     return this.#room;

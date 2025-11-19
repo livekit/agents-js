@@ -11,18 +11,14 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
-import { logs } from '@opentelemetry/api-logs';
-import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
 import { Resource } from '@opentelemetry/resources';
-import { BatchLogRecordProcessor, LoggerProvider } from '@opentelemetry/sdk-logs';
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import { AccessToken } from 'livekit-server-sdk';
-import { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
-import { enablePinoOTELInstrumentation } from './pino_bridge.js';
+import { initializeLogger } from '../log.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -258,21 +254,18 @@ export async function setupCloudTracer(options: {
     // Metadata processor is already configured in the constructor above
     setTracerProvider(tracerProvider);
 
-    const loggerProvider = new LoggerProvider({ resource });
+    // Configure Pino to send logs directly to LiveKit Cloud via pino-opentelemetry-transport
+    // This is the working solution for Node.js (parity with Python behavior, different implementation)
+    const logsEndpoint = `https://${cloudHostname}/observability/logs/otlp/v0`;
 
-    logs.setGlobalLoggerProvider(loggerProvider);
-
-    const logExporter = new OTLPLogExporter({
-      url: `https://${cloudHostname}/observability/logs/otlp/v0`,
-      headers,
-      compression: CompressionAlgorithm.GZIP,
+    initializeLogger({
+      pretty: false,
+      otlpLogsEndpoint: logsEndpoint,
+      otlpHeaders: headers,
+      otlpResourceAttributes: metadata as Record<string, string>,
     });
 
-    loggerProvider.addLogRecordProcessor(new MetadataLogProcessor(metadata));
-    loggerProvider.addLogRecordProcessor(new ExtraDetailsProcessor());
-    loggerProvider.addLogRecordProcessor(new BatchLogRecordProcessor(logExporter));
-
-    enablePinoOTELInstrumentation();
+    console.log('✅ Cloud tracer and logger configured');
   } catch (error) {
     console.error('Failed to setup cloud tracer:', error);
     throw error;

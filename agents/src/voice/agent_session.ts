@@ -22,7 +22,7 @@ import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
-import { traceTypes, tracer } from '../telemetry/index.js';
+import { setupCloudTracer, traceTypes, tracer } from '../telemetry/index.js';
 import type { TTS, TTSError } from '../tts/tts.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
@@ -140,6 +140,9 @@ export class AgentSession<
 
   /** @internal */
   _recordedEvents: AgentEvent[] = [];
+
+  /** @internal */
+  _enableRecording = false;
 
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
@@ -319,6 +322,43 @@ export class AgentSession<
       return;
     }
 
+    /**
+     * 
+def is_cloud(url: str) -> bool:
+    hostname = urlparse(url).hostname
+    if hostname is None:
+        return False
+    return hostname.endswith(".livekit.cloud") or hostname.endswith(".livekit.run")
+
+     */
+    const isCloud = (url: URL) => {
+      const hostname = url.hostname;
+      return hostname.endsWith('.livekit.cloud') || hostname.endsWith('.livekit.run');
+    };
+
+    try {
+      const ctx = getJobContext();
+      const url = new URL(ctx.url);
+
+      if (record !== undefined) {
+        this._enableRecording = record;
+      }
+
+      if (isCloud(url) && this._enableRecording) {
+        this.logger.debug(
+          { hostname: url.hostname },
+          'Configuring session recording (cloud tracer)',
+        );
+        await setupCloudTracer({
+          roomId: ctx.job.room!.sid,
+          jobId: ctx.job.id,
+          cloudHostname: url.hostname,
+        });
+      }
+    } catch (e) {
+      this.logger.warn(`Failed to configure cloud tracer: ${e}`);
+    }
+
     this.sessionSpan = tracer.startSpan({ name: 'agent_session' });
 
     // Set the session span as the active span in the context
@@ -377,6 +417,7 @@ export class AgentSession<
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
+
     return this.activity.interrupt();
   }
 
