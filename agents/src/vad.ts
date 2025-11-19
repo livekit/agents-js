@@ -80,6 +80,10 @@ export abstract class VAD extends (EventEmitter as new () => TypedEmitter<VADCal
    * Returns a {@link VADStream} that can be used to push audio frames and receive VAD events.
    */
   abstract stream(): VADStream;
+
+  async close(): Promise<void> {
+    return;
+  }
 }
 
 export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
