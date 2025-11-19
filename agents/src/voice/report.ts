@@ -5,8 +5,6 @@ import type { ChatContext } from '../llm/chat_context.js';
 import type { VoiceOptions } from './agent_session.js';
 import type { AgentEvent } from './events.js';
 
-export { uploadSessionReport } from './upload_report.js';
-
 export interface SessionReport {
   jobId: string;
   roomId: string;
@@ -14,7 +12,7 @@ export interface SessionReport {
   options: VoiceOptions;
   events: AgentEvent[];
   chatHistory: ChatContext;
-  enableUserDataTraining: boolean;
+  enableRecording: boolean;
   timestamp: number;
   // TODO(brian): PR6 - Add audio recording support (Ref: Python voice/report.py lines 21-24)
   // audioRecordingPath?: string;
@@ -29,7 +27,7 @@ export interface SessionReportOptions {
   options: VoiceOptions;
   events: AgentEvent[];
   chatHistory: ChatContext;
-  enableUserDataTraining?: boolean;
+  enableRecording?: boolean;
   timestamp?: number;
   // TODO(brian): PR6 - Add audio recording support
   // audioRecordingPath?: string;
@@ -45,7 +43,7 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
     options: opts.options,
     events: opts.events,
     chatHistory: opts.chatHistory,
-    enableUserDataTraining: opts.enableUserDataTraining ?? false,
+    enableRecording: opts.enableRecording ?? false,
     timestamp: opts.timestamp ?? Date.now(),
     // TODO(brian): PR6 - Add audio recording fields when RecorderIO is implemented
   };
@@ -77,7 +75,7 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
       max_tool_steps: report.options.maxToolSteps,
     },
     chat_history: report.chatHistory.toJSON({ excludeTimestamp: false }),
-    enable_user_data_training: report.enableUserDataTraining,
+    enable_recording: report.enableRecording,
     timestamp: report.timestamp,
   };
 }

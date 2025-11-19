@@ -40,13 +40,15 @@
     "@opentelemetry/api-logs": "^0.54.0",
     "@opentelemetry/core": "^1.28.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.54.0",
-    "@opentelemetry/instrumentation-pino": "^0.43.0",
+    "@opentelemetry/instrumentation-pino": "^0.55.0",
     "@opentelemetry/resources": "^1.28.0",
     "@opentelemetry/sdk-logs": "^0.54.0",
     "@opentelemetry/sdk-trace-base": "^1.28.0",
     "@opentelemetry/sdk-trace-node": "^1.28.0",
     "@opentelemetry/semantic-conventions": "^1.28.0",
     "livekit-server-sdk": "^2.14.1",
+    "pino": "^8.19.0",
+    "pino-opentelemetry-transport": "^1.1.0",
     "ws": "^8.18.0"
   },
   "peerDependencies": {

@@ -14,6 +14,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Logger } from 'pino';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
+import { uploadSessionReport } from './telemetry/traces.js';
 import type { AgentSession } from './voice/agent_session.js';
 import { type SessionReport, createSessionReport } from './voice/report.js';
 
@@ -258,7 +259,7 @@ export class JobContext {
       room: this.job.room?.name || '',
       options: targetSession.options,
       events: targetSession._recordedEvents,
-      enableUserDataTraining: true,
+      enableRecording: true,
       chatHistory: targetSession.history.copy(),
     });
   }
@@ -275,9 +276,8 @@ export class JobContext {
     // TODO(brian): PR6 - Save to local file if console recording is enabled (Python lines 170-184)
 
     // Ref: Python lines 186-199 - Upload session report if recording enabled
-    if (report.enableUserDataTraining) {
+    if (report.enableRecording) {
       try {
-        const { uploadSessionReport } = await import('./voice/upload_report.js');
         const parsedUrl = new URL(this.#info.url);
         const cloudHostname = parsedUrl.hostname;
 

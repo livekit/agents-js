@@ -6,5 +6,11 @@
 
 export { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
 export * as traceTypes from './trace_types.js';
-export { setTracerProvider, setupCloudTracer, tracer, type StartSpanOptions } from './traces.js';
+export {
+  setTracerProvider,
+  setupCloudTracer,
+  tracer,
+  uploadSessionReport,
+  type StartSpanOptions,
+} from './traces.js';
 export { recordException, recordRealtimeMetrics } from './utils.js';

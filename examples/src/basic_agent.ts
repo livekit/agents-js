@@ -72,6 +72,7 @@ export default defineAgent({
       inputOptions: {
         noiseCancellation: BackgroundVoiceCancellation(),
       },
+      record: true,
     });
 
     session.say('Hello, how can I help you today?');
