@@ -9,7 +9,6 @@ import type {
   Room,
   RtcConfiguration,
 } from '@livekit/rtc-node';
-import {} from "@livekit/protocol"
 import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Logger } from 'pino';
