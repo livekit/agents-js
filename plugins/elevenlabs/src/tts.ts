@@ -825,11 +825,19 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       const tokenizeInput = async () => {
         let stream: tokenize.WordStream | tokenize.SentenceStream | null = null;
-        for await (const text of this.input) {
-          if (this.abortController.signal.aborted) {
+
+        while (!this.abortController.signal.aborted) {
+          const result = await Promise.race([
+            this.input.next(),
+            waitForAbort(this.abortController.signal),
+          ]);
+
+          if (result === undefined) break; // aborted
+          if (result.done) {
             break;
           }
-          if (text === SynthesizeStream.FLUSH_SENTINEL) {
+
+          if (result.value === SynthesizeStream.FLUSH_SENTINEL) {
             stream?.endInput();
             stream = null;
           } else {
@@ -837,19 +845,26 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               stream = this.#opts.wordTokenizer.stream();
               segments.put(stream);
             }
-            stream.pushText(text);
+            stream.pushText(result.value);
           }
         }
+
         segments.close();
       };
 
       const runStream = async () => {
-        for await (const stream of segments) {
-          if (this.abortController.signal.aborted) {
+        while (!this.abortController.signal.aborted) {
+          const result = await Promise.race([
+            segments.next(),
+            waitForAbort(this.abortController.signal),
+          ]);
+
+          if (result === undefined) break; // aborted
+          if (result.done) {
             break;
           }
-          await this.runSynthesis(stream);
-          this.queue.put(SynthesizeStream.END_OF_STREAM);
+
+          await this.runSynthesis(result.value);
         }
       };
 
