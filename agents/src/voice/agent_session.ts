@@ -4,7 +4,7 @@
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
-import { context as otelContext, trace } from '@opentelemetry/api';
+import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import {
@@ -336,11 +336,16 @@ export class AgentSession<
       await ctx.initRecording();
     }
 
-    this.sessionSpan = tracer.startSpan({ name: 'agent_session' });
+    // Create agent_session as a ROOT span (new trace) to match Python behavior
+    // This creates a separate trace for better cloud dashboard organization
+    this.sessionSpan = tracer.startSpan({
+      name: 'agent_session',
+      context: ROOT_CONTEXT,
+    });
 
     // Set the session span as the active span in the context
     // This ensures all child spans (agent_turn, user_turn, etc.) are parented to it
-    this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
+    this.rootSpanContext = trace.setSpan(ROOT_CONTEXT, this.sessionSpan);
 
     await this._startImpl({
       agent,

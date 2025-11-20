@@ -4,7 +4,7 @@
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
-import { context as otelContext, trace } from '@opentelemetry/api';
+import { ROOT_CONTEXT, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
@@ -206,10 +206,11 @@ export class AgentActivity implements RecognitionHooks {
   async start(): Promise<void> {
     const unlock = await this.lock.lock();
     try {
+      // Create start_agent_activity as a ROOT span (new trace) to match Python behavior
       const startSpan = tracer.startSpan({
         name: 'start_agent_activity',
         attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
-        context: this.agentSession.rootSpanContext,
+        context: ROOT_CONTEXT,
       });
 
       this.agent._agentActivity = this;
@@ -299,12 +300,10 @@ export class AgentActivity implements RecognitionHooks {
 
       this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
 
+      // Create on_enter as a child of start_agent_activity in the new trace
       const onEnterTask = tracer.startActiveSpan(async () => this.agent.onEnter(), {
         name: 'on_enter',
-        context: trace.setSpan(
-          this.agentSession.rootSpanContext || otelContext.active(),
-          startSpan,
-        ),
+        context: trace.setSpan(ROOT_CONTEXT, startSpan),
         attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
       });
 
@@ -2191,9 +2190,10 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async drain(): Promise<void> {
+    // Create drain_agent_activity as a ROOT span (new trace) to match Python behavior
     return tracer.startActiveSpan(async (span) => this._drainImpl(span), {
       name: 'drain_agent_activity',
-      context: this.agentSession.rootSpanContext,
+      context: ROOT_CONTEXT,
     });
   }
 
