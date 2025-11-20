@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "description": "LiveKit Agents - Node.js",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

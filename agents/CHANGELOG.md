@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.20
+
+### Patch Changes
+
+- fix resource cleanup - [#849](https://github.com/livekit/agents-js/pull/849) ([@simllll](https://github.com/simllll))
+
+- fix await supportslangauge - [#850](https://github.com/livekit/agents-js/pull/850) ([@simllll](https://github.com/simllll))
+
 ## 1.0.19
 
 ### Patch Changes
