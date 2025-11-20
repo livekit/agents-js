@@ -267,9 +267,11 @@ export class SpeechStream extends stt.SpeechStream {
             waitForAbort(this.abortController.signal),
           ]);
 
-          if (!result) {
-            return;
+          if (result === undefined) return; // aborted
+          if (result.done) {
+            break;
           }
+
           const data = result.value;
 
           let frames: AudioFrame[];
