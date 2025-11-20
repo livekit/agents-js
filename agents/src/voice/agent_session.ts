@@ -141,6 +141,9 @@ export class AgentSession<
   /** @internal */
   _recordedEvents: AgentEvent[] = [];
 
+  /** @internal */
+  _enableRecording = false;
+
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
 
@@ -317,6 +320,20 @@ export class AgentSession<
   }): Promise<void> {
     if (this.started) {
       return;
+    }
+
+    const ctx = getJobContext();
+
+    record = record ?? ctx.info.job.enableRecording;
+    this._enableRecording = record;
+
+    this.logger.info(
+      { record, enableRecording: ctx.info.job.enableRecording },
+      'Configuring session recording',
+    );
+
+    if (this._enableRecording) {
+      await ctx.initRecording();
     }
 
     this.sessionSpan = tracer.startSpan({ name: 'agent_session' });
