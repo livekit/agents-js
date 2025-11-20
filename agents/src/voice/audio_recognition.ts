@@ -358,7 +358,7 @@ export class AudioRecognition {
 
         if (turnDetector) {
           this.logger.debug('Running turn detector model');
-          if (!turnDetector.supportsLanguage(this.lastLanguage)) {
+          if (!(await turnDetector.supportsLanguage(this.lastLanguage))) {
             this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
           } else {
             const endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
