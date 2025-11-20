@@ -5,15 +5,7 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../src/log.js';
-import {
-  Event,
-  TASK_TIMEOUT_ERROR,
-  Task,
-  TaskResult,
-  delay,
-  isPending,
-  resampleStream,
-} from '../src/utils.js';
+import { Event, Task, TaskResult, delay, isPending, resampleStream } from '../src/utils.js';
 
 describe('utils', () => {
   // initialize logger
@@ -442,7 +434,8 @@ describe('utils', () => {
         await task.cancelAndWait(200);
         expect.fail('Task should have timed out');
       } catch (error: unknown) {
-        expect(error).toBe(TASK_TIMEOUT_ERROR);
+        expect(error).instanceof(Error);
+        expect((error as Error).message).toBe('Task cancellation timed out');
       }
     });
 
