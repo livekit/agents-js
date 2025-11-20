@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
+import type { Span } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
@@ -34,6 +35,7 @@ import type {
 } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
+import { traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
 import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
@@ -70,7 +72,6 @@ import {
 } from './generation.js';
 import { SpeechHandle } from './speech_handle.js';
 
-// equivalent to Python's contextvars
 const speechHandleStorage = new AsyncLocalStorage<SpeechHandle>();
 
 interface PreemptiveGeneration {
@@ -202,8 +203,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async start(): Promise<void> {
-    // TODO(brian): PR3 - Add span: startSpan = tracer.startSpan('start_agent_activity', { attributes: { 'lk.agent_label': this.agent.label } })
-    // TODO(brian): PR3 - Wrap prewarm calls with trace.useSpan(startSpan, endOnExit: false)
+    // TODO(brian): PR4 - Add 'start_agent_activity' span (Ref: Python agent_activity.py line 425)
     const unlock = await this.lock.lock();
     try {
       this.agent._agentActivity = this;
@@ -286,12 +286,13 @@ export class AgentActivity implements RecognitionHooks {
         turnDetectionMode: this.turnDetectionMode,
         minEndpointingDelay: this.agentSession.options.minEndpointingDelay,
         maxEndpointingDelay: this.agentSession.options.maxEndpointingDelay,
+        rootSpanContext: this.agentSession.rootSpanContext,
       });
       this.audioRecognition.start();
       this.started = true;
 
       this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
-      // TODO(brian): PR3 - Wrap onEnter with tracer.startActiveSpan('on_enter', { attributes: { 'lk.agent_label': this.agent.label }, context: startSpan context })
+      // TODO(brian): PR4 - Add 'on_enter' span (Ref: Python agent_activity.py line 446)
       this.createSpeechTask({
         task: Task.from(() => this.agent.onEnter()),
         name: 'AgentActivity_onEnter',
@@ -577,7 +578,6 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (this.draining) {
-      // copied from python:
       // TODO(shubhra): should we "forward" this new turn to the next agent?
       this.logger.warn('skipping new realtime generation, the agent is draining');
       return;
@@ -783,7 +783,6 @@ export class AgentActivity implements RecognitionHooks {
     if (this.draining) {
       this.cancelPreemptiveGeneration();
       this.logger.warn({ user_input: info.newTranscript }, 'skipping user input, task is draining');
-      // copied from python:
       // TODO(shubhra): should we "forward" this new turn to the next agent/activity?
       return true;
     }
@@ -1254,17 +1253,35 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  // TODO(brian): PR3 - Wrap entire pipelineReplyTask() method with tracer.startActiveSpan('agent_turn')
-  private async pipelineReplyTask(
-    speechHandle: SpeechHandle,
-    chatCtx: ChatContext,
-    toolCtx: ToolContext,
-    modelSettings: ModelSettings,
-    replyAbortController: AbortController,
-    instructions?: string,
-    newMessage?: ChatMessage,
-    toolsMessages?: ChatItem[],
-  ): Promise<void> {
+  private _pipelineReplyTaskImpl = async ({
+    speechHandle,
+    chatCtx,
+    toolCtx,
+    modelSettings,
+    replyAbortController,
+    instructions,
+    newMessage,
+    toolsMessages,
+    span,
+  }: {
+    speechHandle: SpeechHandle;
+    chatCtx: ChatContext;
+    toolCtx: ToolContext;
+    modelSettings: ModelSettings;
+    replyAbortController: AbortController;
+    instructions?: string;
+    newMessage?: ChatMessage;
+    toolsMessages?: ChatItem[];
+    span: Span;
+  }): Promise<void> => {
+    span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
+    if (instructions) {
+      span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, instructions);
+    }
+    if (newMessage) {
+      span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.textContent || '');
+    }
+
     speechHandleStorage.enterWith(speechHandle);
 
     const audioOutput = this.agentSession.output.audioEnabled
@@ -1602,7 +1619,36 @@ export class AgentActivity implements RecognitionHooks {
       }
       this.agent._chatCtx.insert(toolMessages);
     }
-  }
+  };
+
+  private pipelineReplyTask = async (
+    speechHandle: SpeechHandle,
+    chatCtx: ChatContext,
+    toolCtx: ToolContext,
+    modelSettings: ModelSettings,
+    replyAbortController: AbortController,
+    instructions?: string,
+    newMessage?: ChatMessage,
+    toolsMessages?: ChatItem[],
+  ): Promise<void> =>
+    tracer.startActiveSpan(
+      async (span) =>
+        this._pipelineReplyTaskImpl({
+          speechHandle,
+          chatCtx,
+          toolCtx,
+          modelSettings,
+          replyAbortController,
+          instructions,
+          newMessage,
+          toolsMessages,
+          span,
+        }),
+      {
+        name: 'agent_turn',
+        context: this.agentSession.rootSpanContext,
+      },
+    );
 
   private async realtimeGenerationTask(
     speechHandle: SpeechHandle,
@@ -2096,14 +2142,14 @@ export class AgentActivity implements RecognitionHooks {
     this.wakeupMainTask();
   }
 
-  // TODO(brian): PR3 - Wrap entire drain() method with tracer.startActiveSpan('drain_agent_activity', { attributes: { 'lk.agent_label': this.agent.label } })
+  // TODO(brian): PR4 - Add 'drain_agent_activity' span (Ref: Python agent_activity.py line 577)
   async drain(): Promise<void> {
     const unlock = await this.lock.lock();
     try {
       if (this._draining) return;
 
       this.cancelPreemptiveGeneration();
-      // TODO(brian): PR3 - Wrap onExit with tracer.startActiveSpan('on_exit', { attributes: { 'lk.agent_label': this.agent.label } })
+      // TODO(brian): PR4 - Add 'on_exit' span (Ref: Python agent_activity.py line 584)
       this.createSpeechTask({
         task: Task.from(() => this.agent.onExit()),
         name: 'AgentActivity_onExit',
