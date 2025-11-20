@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { MetricsRecordingHeader } from '@livekit/protocol';
 import {
   type Attributes,
   type Context,
@@ -18,7 +19,7 @@ import { SeverityNumber, logs } from '@opentelemetry/api-logs';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { Resource } from '@opentelemetry/resources';
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
-import { NodeTracerProvider, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-node';
+import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import NodeFormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
@@ -302,8 +303,8 @@ export async function setupCloudTracer(options: {
 
     const tracerProvider = new NodeTracerProvider({
       resource,
-      // Use SimpleSpanProcessor for immediate export during debugging/testing
-      spanProcessors: [new MetadataSpanProcessor(metadata), new SimpleSpanProcessor(spanExporter)],
+      // Use BatchSpanProcessor for production (sends spans in batches, preserves hierarchy)
+      spanProcessors: [new MetadataSpanProcessor(metadata), new BatchSpanProcessor(spanExporter)],
     });
     tracerProvider.register();
 
@@ -328,6 +329,72 @@ export async function setupCloudTracer(options: {
     console.error('Failed to setup cloud tracer:', error);
     throw error;
   }
+}
+
+/**
+ * Convert chat item to protobuf-compatible dict (matching Python's _to_proto_chat_item)
+ * Ref: Python telemetry/traces.py lines 181-253 (_to_proto_chat_item)
+ */
+function _toChatItemProtoDict(item: any): Record<string, any> {
+  if (item.type === 'message') {
+    const msg: Record<string, any> = {
+      id: item.id,
+      role: item.role, // 'system', 'user', 'assistant', 'developer'
+      content: Array.isArray(item.content) ? item.content : [item.content],
+      interrupted: item.interrupted || false,
+    };
+
+    if (item.transcriptConfidence !== undefined) {
+      msg.transcriptConfidence = item.transcriptConfidence;
+    }
+
+    if (item.extra && Object.keys(item.extra).length > 0) {
+      msg.extra = item.extra;
+    }
+
+    // Metrics (if available)
+    const metrics = item.metrics || {};
+    if (Object.keys(metrics).length > 0) {
+      msg.metrics = metrics;
+    }
+
+    msg.createdAt = item.createdAt || Date.now();
+    return { message: msg };
+  } else if (item.type === 'function_call') {
+    return {
+      functionCall: {
+        id: item.id,
+        callId: item.callId,
+        name: item.name,
+        arguments: item.args || item.arguments || '{}',
+        createdAt: item.createdAt || Date.now(),
+      },
+    };
+  } else if (item.type === 'function_call_output') {
+    return {
+      functionCallOutput: {
+        id: item.id,
+        name: item.name,
+        callId: item.callId,
+        output: item.output || '',
+        isError: item.isError || false,
+        createdAt: item.createdAt || Date.now(),
+      },
+    };
+  } else if (item.type === 'agent_handoff') {
+    const handoff: Record<string, any> = {
+      id: item.id,
+      newAgentId: item.newAgentId,
+      createdAt: item.createdAt || Date.now(),
+    };
+    if (item.oldAgentId) {
+      handoff.oldAgentId = item.oldAgentId;
+    }
+    return { agentHandoff: handoff };
+  }
+
+  // Fallback: return empty object
+  return {};
 }
 
 /**
@@ -370,9 +437,9 @@ export async function uploadSessionReport(options: {
     },
   } as any);
 
-  // Ref: Python lines 329-344 - Log each chat item
+  // Ref: Python lines 314-329 - Log each chat item using proto dict format
   for (const item of report.chatHistory.items) {
-    const itemLog = item.toJSON(false); // exclude_timestamp=false
+    const itemLog = _toChatItemProtoDict(item); // Match Python's _to_proto_chat_item
     let severityNumber = SeverityNumber.UNSPECIFIED;
     let severityText = 'unspecified';
 
@@ -409,21 +476,21 @@ export async function uploadSessionReport(options: {
   const jwt = await token.toJwt();
 
   // Ref: Python lines 354-359 - Create protobuf header
-  // TODO(brian): PR6 - Use protobuf MetricsRecordingHeader instead of JSON when proto support added
-  const header = {
-    room_id: roomId,
-    // TODO(brian): PR6 - Add duration and start_time when audio recording is implemented
-    duration: 0,
-    start_time: 0,
-  };
+  const headerMsg = new MetricsRecordingHeader({
+    roomId: roomId,
+    duration: BigInt(0), // TODO: Use report.duration when audio recording is implemented
+    // startTime: Timestamp.fromDate(new Date(report.audioRecordingStartedAt || 0)),
+  });
+
+  const headerBytes = headerMsg.toBinary();
 
   // Ref: Python lines 361-366 - Create multipart form
   const form = new NodeFormData();
 
-  // Header part (using JSON instead of protobuf for TypeScript)
-  form.append('header', JSON.stringify(header), {
-    filename: 'header.json',
-    contentType: 'application/json',
+  // Header part (protobuf binary, matching Python)
+  form.append('header', Buffer.from(headerBytes), {
+    filename: 'header.binpb',
+    contentType: 'application/protobuf',
   });
 
   // Ref: Python lines 368-372 - Chat history part

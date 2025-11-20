@@ -242,6 +242,11 @@ const startJob = (
     await join.await;
 
     logger.debug('Job process shutdown');
+    logger.flush();
+    // Give the transport a moment to flush logs before exiting
+    // This is critical for pino-opentelemetry-transport which runs in a worker
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
     process.exit(0);
   }
 })();
