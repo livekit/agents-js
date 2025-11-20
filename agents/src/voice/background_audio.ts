@@ -148,6 +148,8 @@ export class BackgroundAudioPlayer {
   private ambientHandle?: PlayHandle;
   private thinkingHandle?: PlayHandle;
 
+  private closed = true;
+
   // TODO (Brian): add lock
 
   #logger = log();
@@ -285,13 +287,23 @@ export class BackgroundAudioPlayer {
     this.agentSession = agentSession;
     this.trackPublishOptions = trackPublishOptions;
 
+    this.closed = false;
+
     await this.publishTrack();
 
     // TODO (Brian): check job context is not fake
 
     // Start audio mixer task
     this.mixerTask = Task.from(async () => {
-      await this.runMixerTask();
+      try {
+        await this.runMixerTask();
+      } catch (err) {
+        if (this.closed) {
+          // expected (AudioSource is closed)
+          return;
+        }
+        throw err;
+      }
     });
 
     this.room.on('reconnected', this.onReconnected);
@@ -312,6 +324,7 @@ export class BackgroundAudioPlayer {
    * Close and cleanup the background audio system
    */
   async close(): Promise<void> {
+    this.closed = true;
     await cancelAndWait(this.playTasks, TASK_TIMEOUT_MS);
 
     if (this.republishTask) {
@@ -319,12 +332,12 @@ export class BackgroundAudioPlayer {
     }
 
     // Cancel audio mixer task and close audio mixer
+    await this.audioMixer.aclose();
+    await this.audioSource.close();
+
     if (this.mixerTask) {
       await this.mixerTask.cancelAndWait(TASK_TIMEOUT_MS);
     }
-
-    await this.audioMixer.aclose();
-    await this.audioSource.close();
 
     this.agentSession?.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
     this.room?.off('reconnected', this.onReconnected);
