@@ -135,6 +135,10 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
    * transcriptions
    */
   abstract stream(): SpeechStream;
+
+  async close(): Promise<void> {
+    return;
+  }
 }
 
 /**

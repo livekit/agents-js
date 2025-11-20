@@ -94,6 +94,10 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
    * Returns a {@link SynthesizeStream} that can be used to push text and receive audio data
    */
   abstract stream(): SynthesizeStream;
+
+  async close(): Promise<void> {
+    return;
+  }
 }
 
 /**
