@@ -385,8 +385,6 @@ export class AudioEnergyFilter {
   }
 }
 
-export const TASK_TIMEOUT_ERROR = new Error('Task cancellation timed out');
-
 export enum TaskResult {
   Timeout = 'timeout',
   Completed = 'completed',
@@ -481,34 +479,30 @@ export class Task<T> {
   async cancelAndWait(timeout?: number) {
     this.cancel();
 
-    try {
-      // Race between task completion and timeout
-      const promises = [
-        this.result
-          .then(() => TaskResult.Completed)
-          .catch((error) => {
-            if (error.name === 'AbortError') {
-              return TaskResult.Aborted;
-            }
-            throw error;
-          }),
-      ];
+    // Race between task completion and timeout
+    const promises = [
+      this.result
+        .then(() => TaskResult.Completed)
+        .catch((error) => {
+          if (error.name === 'AbortError') {
+            return TaskResult.Aborted;
+          }
+          throw error;
+        }),
+    ];
 
-      if (timeout) {
-        promises.push(delay(timeout).then(() => TaskResult.Timeout));
-      }
-
-      const result = await Promise.race(promises);
-
-      // Check what happened
-      if (result === TaskResult.Timeout) {
-        throw TASK_TIMEOUT_ERROR;
-      }
-
-      return result;
-    } catch (error) {
-      throw error;
+    if (timeout) {
+      promises.push(delay(timeout).then(() => TaskResult.Timeout));
     }
+
+    const result = await Promise.race(promises);
+
+    // Check what happened
+    if (result === TaskResult.Timeout) {
+      throw new Error('Task cancellation timed out');
+    }
+
+    return result;
   }
 
   /**
