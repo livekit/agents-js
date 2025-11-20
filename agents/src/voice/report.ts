@@ -12,7 +12,7 @@ export interface SessionReport {
   options: VoiceOptions;
   events: AgentEvent[];
   chatHistory: ChatContext;
-  enableUserDataTraining: boolean;
+  enableRecording: boolean;
   timestamp: number;
 }
 
@@ -35,7 +35,7 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
     options: opts.options,
     events: opts.events,
     chatHistory: opts.chatHistory,
-    enableUserDataTraining: opts.enableUserDataTraining ?? false,
+    enableRecording: opts.enableUserDataTraining ?? false,
     timestamp: opts.timestamp ?? Date.now(),
   };
 }
@@ -71,7 +71,7 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
       max_tool_steps: report.options.maxToolSteps,
     },
     chat_history: report.chatHistory.toJSON({ excludeTimestamp: false }),
-    enable_user_data_training: report.enableUserDataTraining,
+    enable_user_data_training: report.enableRecording,
     timestamp: report.timestamp,
   };
 }
