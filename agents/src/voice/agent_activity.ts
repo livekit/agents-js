@@ -4,6 +4,7 @@
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
+import { ROOT_CONTEXT, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
@@ -203,9 +204,15 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async start(): Promise<void> {
-    // TODO(brian): PR4 - Add 'start_agent_activity' span (Ref: Python agent_activity.py line 425)
     const unlock = await this.lock.lock();
     try {
+      // Create start_agent_activity as a ROOT span (new trace) to match Python behavior
+      const startSpan = tracer.startSpan({
+        name: 'start_agent_activity',
+        attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
+        context: ROOT_CONTEXT,
+      });
+
       this.agent._agentActivity = this;
 
       if (this.llm instanceof RealtimeModel) {
@@ -292,11 +299,20 @@ export class AgentActivity implements RecognitionHooks {
       this.started = true;
 
       this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
-      // TODO(brian): PR4 - Add 'on_enter' span (Ref: Python agent_activity.py line 446)
+
+      // Create on_enter as a child of start_agent_activity in the new trace
+      const onEnterTask = tracer.startActiveSpan(async () => this.agent.onEnter(), {
+        name: 'on_enter',
+        context: trace.setSpan(ROOT_CONTEXT, startSpan),
+        attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
+      });
+
       this.createSpeechTask({
-        task: Task.from(() => this.agent.onEnter()),
+        task: Task.from(() => onEnterTask),
         name: 'AgentActivity_onEnter',
       });
+
+      startSpan.end();
     } finally {
       unlock();
     }
@@ -1656,6 +1672,37 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
   ): Promise<void> {
+    return tracer.startActiveSpan(
+      async (span) =>
+        this._realtimeGenerationTaskImpl({
+          speechHandle,
+          ev,
+          modelSettings,
+          replyAbortController,
+          span,
+        }),
+      {
+        name: 'agent_turn',
+        context: this.agentSession.rootSpanContext,
+      },
+    );
+  }
+
+  private async _realtimeGenerationTaskImpl({
+    speechHandle,
+    ev,
+    modelSettings,
+    replyAbortController,
+    span,
+  }: {
+    speechHandle: SpeechHandle;
+    ev: GenerationCreatedEvent;
+    modelSettings: ModelSettings;
+    replyAbortController: AbortController;
+    span: Span;
+  }): Promise<void> {
+    span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
+
     speechHandleStorage.enterWith(speechHandle);
 
     if (!this.realtimeSession) {
@@ -2142,16 +2189,30 @@ export class AgentActivity implements RecognitionHooks {
     this.wakeupMainTask();
   }
 
-  // TODO(brian): PR4 - Add 'drain_agent_activity' span (Ref: Python agent_activity.py line 577)
   async drain(): Promise<void> {
+    // Create drain_agent_activity as a ROOT span (new trace) to match Python behavior
+    return tracer.startActiveSpan(async (span) => this._drainImpl(span), {
+      name: 'drain_agent_activity',
+      context: ROOT_CONTEXT,
+    });
+  }
+
+  private async _drainImpl(span: Span): Promise<void> {
+    span.setAttribute(traceTypes.ATTR_AGENT_LABEL, this.agent.id);
+
     const unlock = await this.lock.lock();
     try {
       if (this._draining) return;
 
       this.cancelPreemptiveGeneration();
-      // TODO(brian): PR4 - Add 'on_exit' span (Ref: Python agent_activity.py line 584)
+
+      const onExitTask = tracer.startActiveSpan(async () => this.agent.onExit(), {
+        name: 'on_exit',
+        attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
+      });
+
       this.createSpeechTask({
-        task: Task.from(() => this.agent.onExit()),
+        task: Task.from(() => onExitTask),
         name: 'AgentActivity_onExit',
       });
 

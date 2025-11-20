@@ -4,7 +4,7 @@
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
-import { context as otelContext, trace } from '@opentelemetry/api';
+import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import {
@@ -140,6 +140,9 @@ export class AgentSession<
 
   /** @internal */
   _recordedEvents: AgentEvent[] = [];
+
+  /** @internal */
+  _enableRecording = false;
 
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
@@ -319,11 +322,30 @@ export class AgentSession<
       return;
     }
 
-    this.sessionSpan = tracer.startSpan({ name: 'agent_session' });
+    const ctx = getJobContext();
+
+    record = record ?? ctx.info.job.enableRecording;
+    this._enableRecording = record;
+
+    this.logger.info(
+      { record, enableRecording: ctx.info.job.enableRecording },
+      'Configuring session recording',
+    );
+
+    if (this._enableRecording) {
+      await ctx.initRecording();
+    }
+
+    // Create agent_session as a ROOT span (new trace) to match Python behavior
+    // This creates a separate trace for better cloud dashboard organization
+    this.sessionSpan = tracer.startSpan({
+      name: 'agent_session',
+      context: ROOT_CONTEXT,
+    });
 
     // Set the session span as the active span in the context
     // This ensures all child spans (agent_turn, user_turn, etc.) are parented to it
-    this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
+    this.rootSpanContext = trace.setSpan(ROOT_CONTEXT, this.sessionSpan);
 
     await this._startImpl({
       agent,
@@ -521,7 +543,6 @@ export class AgentSession<
         // (Ref: Python agent_session.py line 1161-1164)
       }
     } else if (this.agentSpeakingSpan !== undefined) {
-      // Ref: Python agent_session.py line 1166-1169 - End span when agent stops speaking
       // TODO(brian): PR4 - Set ATTR_END_TIME attribute if available
       this.agentSpeakingSpan.end();
       this.agentSpeakingSpan = undefined;
@@ -549,7 +570,6 @@ export class AgentSession<
       return;
     }
 
-    // Ref: Python agent_session.py line 1189 - Create 'user_speaking' span when user starts speaking
     if (state === 'speaking' && this.userSpeakingSpan === undefined) {
       this.userSpeakingSpan = tracer.startSpan({
         name: 'user_speaking',
@@ -559,7 +579,6 @@ export class AgentSession<
       // TODO(brian): PR4 - Set participant attributes if roomIO.linkedParticipant is available
       // (Ref: Python agent_session.py line 1192-1195)
     } else if (this.userSpeakingSpan !== undefined) {
-      // Ref: Python agent_session.py line 1198-1202 - End span when user stops speaking
       // TODO(brian): PR4 - Set ATTR_END_TIME attribute with lastSpeakingTime if available
       this.userSpeakingSpan.end();
       this.userSpeakingSpan = undefined;
