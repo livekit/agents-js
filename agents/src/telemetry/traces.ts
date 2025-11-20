@@ -99,19 +99,15 @@ class DynamicTracer {
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
     const opts: SpanOptions = { attributes: options.attributes };
 
-    return new Promise((resolve, reject) => {
-      this.tracer.startActiveSpan(options.name, opts, ctx, async (span) => {
-        try {
-          const result = await fn(span);
-          resolve(result);
-        } catch (error) {
-          reject(error);
-        } finally {
-          if (endOnExit) {
-            span.end();
-          }
+    // Directly return the tracer's startActiveSpan result - it handles async correctly
+    return await this.tracer.startActiveSpan(options.name, opts, ctx, async (span) => {
+      try {
+        return await fn(span);
+      } finally {
+        if (endOnExit) {
+          span.end();
         }
-      });
+      }
     });
   }
 
