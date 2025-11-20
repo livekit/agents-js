@@ -848,14 +848,7 @@ export class AgentActivity implements RecognitionHooks {
         const speechHandle = heapItem[2];
         this._currentSpeech = speechHandle;
         speechHandle._authorizeGeneration();
-        try {
-          await Promise.race([
-            speechHandle._waitForGeneration(),
-            new Promise((_, reject) => setTimeout(() => reject('timeout after 30 seconds'), 30000)),
-          ]);
-        } catch (err) {
-          console.error('wait for generation failed', err, speechHandle);
-        }
+        await speechHandle._waitForGeneration();
         this._currentSpeech = undefined;
       }
 
