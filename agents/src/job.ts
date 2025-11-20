@@ -14,7 +14,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Logger } from 'pino';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
-import { setupCloudTracer } from './telemetry/index.js';
+import { setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
 import { isCloud } from './utils.js';
 import type { AgentSession } from './voice/agent_session.js';
 import { type SessionReport, createSessionReport } from './voice/report.js';
@@ -252,7 +252,6 @@ export class JobContext {
     }
 
     // TODO(brian): implement and check recorder io
-    // TODO(brian): PR5 - Ensure chat history serialization includes all required fields (use sessionReportToJSON helper)
 
     return createSessionReport({
       jobId: this.job.id,
@@ -275,14 +274,36 @@ export class JobContext {
 
     // TODO(brian): Implement CLI/console
 
-    // TODO(brian): PR5 - Call uploadSessionReport() if report.enableUserDataTraining is true
-    // TODO(brian): PR5 - Upload includes: multipart form with header (protobuf), chat_history (JSON), and audio recording (if available)
+    // Upload session report to LiveKit Cloud if enabled
+    const url = new URL(this.#info.url);
 
-    this.#logger.debug('Session ended, report generated', {
-      jobId: report.jobId,
-      roomId: report.roomId,
-      eventsCount: report.events.length,
-    });
+    if (report.enableRecording && isCloud(url)) {
+      try {
+        await uploadSessionReport({
+          agentName: this.job.agentName,
+          cloudHostname: url.hostname,
+          report,
+        });
+        this.#logger.info(
+          {
+            jobId: report.jobId,
+            roomId: report.roomId,
+          },
+          'Session report uploaded to LiveKit Cloud',
+        );
+      } catch (error) {
+        this.#logger.error({ error }, 'Failed to upload session report');
+      }
+    }
+
+    this.#logger.debug(
+      {
+        jobId: report.jobId,
+        roomId: report.roomId,
+        eventsCount: report.events.length,
+      },
+      'Session ended, report generated',
+    );
   }
 
   /**
