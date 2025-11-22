@@ -194,3 +194,7 @@ examples/src/test_*.ts
 # Ignore all markdown files except root README
 *.md
 !README.md
+!.changeset/*.md
+!**/README.md
+!CONTRIBUTING.md
+!.CODE_OF_CONDUCT.md
