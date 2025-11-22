@@ -115,7 +115,8 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
  * exports its own child SynthesizeStream class, which inherits this class's methods.
  */
 export abstract class SynthesizeStream
-  implements AsyncIterableIterator<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM> {
+  implements AsyncIterableIterator<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>
+{
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
   static readonly END_OF_STREAM = Symbol('END_OF_STREAM');
   protected input = new AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
