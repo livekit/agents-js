@@ -209,7 +209,16 @@ export abstract class SynthesizeStream
     });
   }
 
-  // TODO(AJS-37) Remove when refactoring TTS to use streams
+  // NOTE(AJS-37): The implementation below uses an AsyncIterableQueue (`this.input`)
+  // bridged from a DeferredReadableStream (`this.deferredInputStream`) rather than
+  // consuming the stream directly.
+  //
+  // A full refactor to native Web Streams was considered but is currently deferred.
+  // The primary reason is to maintain architectural parity with the Python SDK,
+  // which is a key design goal for the project. This ensures a consistent developer
+  // experience across both platforms.
+  //
+  // For more context, see the discussion in GitHub issue # 844.
   protected async pumpInput() {
     const reader = this.deferredInputStream.stream.getReader();
     try {
