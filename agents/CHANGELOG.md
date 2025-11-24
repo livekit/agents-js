@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.21
+
+### Patch Changes
+
+- create a new error object on timeout to have a correct stacktrace - [#853](https://github.com/livekit/agents-js/pull/853) ([@simllll](https://github.com/simllll))
+
+- Fix memory leak of inference gateway STT provider - [#858](https://github.com/livekit/agents-js/pull/858) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.20
 
 ### Patch Changes
