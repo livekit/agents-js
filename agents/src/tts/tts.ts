@@ -307,12 +307,11 @@ export abstract class SynthesizeStream
     }
     this.#metricsText += text;
 
-    if (this.input.closed) {
-      throw new Error('Input is closed');
+    if (this.input.closed || this.closed) {
+      // Stream was aborted/closed, silently skip
+      return;
     }
-    if (this.closed) {
-      throw new Error('Stream is closed');
-    }
+
     this.input.put(text);
   }
 
@@ -322,24 +321,24 @@ export abstract class SynthesizeStream
       this.#metricsPendingTexts.push(this.#metricsText);
       this.#metricsText = '';
     }
-    if (this.input.closed) {
-      throw new Error('Input is closed');
+
+    if (this.input.closed || this.closed) {
+      // Stream was aborted/closed, silently skip
+      return;
     }
-    if (this.closed) {
-      throw new Error('Stream is closed');
-    }
+
     this.input.put(SynthesizeStream.FLUSH_SENTINEL);
   }
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
     this.flush();
-    if (this.input.closed) {
-      throw new Error('Input is closed');
+
+    if (this.input.closed || this.closed) {
+      // Stream was aborted/closed, silently skip
+      return;
     }
-    if (this.closed) {
-      throw new Error('Stream is closed');
-    }
+
     this.input.close();
   }
 

@@ -277,6 +277,9 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     };
 
     const sendClientEvent = async (event: TtsClientEvent) => {
+      // Don't send events to a closed WebSocket or aborted controller
+      if (this.abortController.signal.aborted || closing) return;
+
       const validatedEvent = await ttsClientEventSchema.parseAsync(event);
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         this.#logger.warn('Trying to send client TTS event to a closed WebSocket');
@@ -321,7 +324,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
       return new Promise<void>((resolve, reject) => {
         this.abortController.signal.addEventListener('abort', () => {
           resourceCleanup();
-          reject(new Error('WebSocket connection aborted'));
+          resolve(); // Abort is triggered by close(), which is a normal shutdown, not an error
         });
 
         ws.on('message', async (data) => {
@@ -420,8 +423,6 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         createWsListenerTask(ws),
         createRecvTask(),
       ]);
-    } catch (e) {
-      this.#logger.error({ error: e }, 'Error in SynthesizeStream');
     } finally {
       resourceCleanup();
     }
