@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-openai
 
+## 1.0.21
+
+### Patch Changes
+
+- Add OVHcloud AI Endpoints provider - [#854](https://github.com/livekit/agents-js/pull/854) ([@eliasto](https://github.com/eliasto))
+
+- Updated dependencies [[`a6d39c6d9201447dab154ea2232bf29c2cc3d681`](https://github.com/livekit/agents-js/commit/a6d39c6d9201447dab154ea2232bf29c2cc3d681), [`4fb96ba83de19360d7d2922eec5dac52ba9a0833`](https://github.com/livekit/agents-js/commit/4fb96ba83de19360d7d2922eec5dac52ba9a0833)]:
+  - @livekit/agents@1.0.21
+
 ## 1.0.20
 
 ### Patch Changes
