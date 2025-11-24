@@ -21,6 +21,7 @@ import { BatchLogRecordProcessor, LoggerProvider } from '@opentelemetry/sdk-logs
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
+import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import type { SessionReport } from '../voice/report.js';
 import { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
@@ -481,8 +482,6 @@ export async function uploadSessionReport(options: {
   token.addObservabilityGrant({ write: true });
   const jwt = await token.toJwt();
 
-  // Create multipart form data with explicit header control (like Python's aiohttp.MultipartWriter)
-  const FormData = (await import('form-data')).default;
   const formData = new FormData();
 
   // Add header (protobuf MetricsRecordingHeader)

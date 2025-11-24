@@ -136,9 +136,6 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: ^1.28.0
         version: 1.38.0
-      '@types/form-data':
-        specifier: ^2.5.2
-        version: 2.5.2
       '@types/pidusage':
         specifier: ^2.0.5
         version: 2.0.5
@@ -2174,10 +2171,6 @@ packages:
 
   '@types/fluent-ffmpeg@2.1.28':
     resolution: {integrity: sha512-5ovxsDwBcPfJ+eYs1I/ZpcYCnkce7pvH9AHSvrZllAp1ZPpTRDZAFjF3TRFbukxSgIYTTNYePbS0rKUmaxVbXw==}
-
-  '@types/form-data@2.5.2':
-    resolution: {integrity: sha512-tfmcyHn1Pp9YHAO5r40+UuZUPAZbUEgqTel3EuEKpmF9hPkXgR4l41853raliXnb4gwyPNoQOfvgGGlHN5WSog==}
-    deprecated: This is a stub types definition. form-data provides its own type definitions, so you do not need this installed.
 
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
@@ -6204,10 +6197,6 @@ snapshots:
   '@types/fluent-ffmpeg@2.1.28':
     dependencies:
       '@types/node': 22.15.30
-
-  '@types/form-data@2.5.2':
-    dependencies:
-      form-data: 4.0.5
 
   '@types/json-schema@7.0.15': {}
 
