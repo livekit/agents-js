@@ -1,5 +1,35 @@
 # @livekit/agents-plugin-livekit
 
+## 1.0.21
+
+### Patch Changes
+
+- Updated dependencies [[`a6d39c6d9201447dab154ea2232bf29c2cc3d681`](https://github.com/livekit/agents-js/commit/a6d39c6d9201447dab154ea2232bf29c2cc3d681), [`4fb96ba83de19360d7d2922eec5dac52ba9a0833`](https://github.com/livekit/agents-js/commit/4fb96ba83de19360d7d2922eec5dac52ba9a0833)]:
+  - @livekit/agents@1.0.21
+
+## 1.0.20
+
+### Patch Changes
+
+- Updated dependencies [[`b0f5cce8fcb718eba1a347ed5e66a03a8fd6e281`](https://github.com/livekit/agents-js/commit/b0f5cce8fcb718eba1a347ed5e66a03a8fd6e281), [`01f9ad3b8af8cc485e9f405ec5772c1469e624a3`](https://github.com/livekit/agents-js/commit/01f9ad3b8af8cc485e9f405ec5772c1469e624a3)]:
+  - @livekit/agents@1.0.20
+
+## 1.0.19
+
+### Patch Changes
+
+- Updated dependencies [[`16020f1c15d33f51cb184298e049b6e037f60b87`](https://github.com/livekit/agents-js/commit/16020f1c15d33f51cb184298e049b6e037f60b87)]:
+  - @livekit/agents@1.0.19
+
+## 1.0.18
+
+### Patch Changes
+
+- Update turn-detector to 0.4.0 - [#818](https://github.com/livekit/agents-js/pull/818) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`b10503d62b9b64dfe24f5c79a7e3ef6cc337393d`](https://github.com/livekit/agents-js/commit/b10503d62b9b64dfe24f5c79a7e3ef6cc337393d), [`2335196b0f19404d7094bcdcf2fe1c8bdedfd0d5`](https://github.com/livekit/agents-js/commit/2335196b0f19404d7094bcdcf2fe1c8bdedfd0d5), [`9a58cd39076ae3bb33403c9a512a804ff2cee51e`](https://github.com/livekit/agents-js/commit/9a58cd39076ae3bb33403c9a512a804ff2cee51e), [`21b25dc45cb2271de751ed93a22bff84e1c455a9`](https://github.com/livekit/agents-js/commit/21b25dc45cb2271de751ed93a22bff84e1c455a9)]:
+  - @livekit/agents@1.0.18
+
 ## 1.0.17
 
 ### Patch Changes

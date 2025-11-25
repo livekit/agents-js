@@ -12,11 +12,11 @@ export interface GoogleFormatData {
 export async function toChatCtx(
   chatCtx: ChatContext,
   injectDummyUserMessage: boolean = true,
-): Promise<[Record<string, any>[], GoogleFormatData]> {
-  const turns: Record<string, any>[] = [];
+): Promise<[Record<string, unknown>[], GoogleFormatData]> {
+  const turns: Record<string, unknown>[] = [];
   const systemMessages: string[] = [];
   let currentRole: string | null = null;
-  let parts: Record<string, any>[] = [];
+  let parts: Record<string, unknown>[] = [];
 
   // Flatten all grouped tool calls to get individual messages
   const itemGroups = groupToolCalls(chatCtx);
@@ -104,7 +104,7 @@ export async function toChatCtx(
   ];
 }
 
-async function toImagePart(image: ImageContent): Promise<Record<string, any>> {
+async function toImagePart(image: ImageContent): Promise<Record<string, unknown>> {
   const cacheKey = 'serialized_image';
   if (!image._cache[cacheKey]) {
     image._cache[cacheKey] = await serializeImage(image);

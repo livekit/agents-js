@@ -14,6 +14,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Logger } from 'pino';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
+import type { AgentSession } from './voice/agent_session.js';
+import { type SessionReport, createSessionReport } from './voice/report.js';
 
 // AsyncLocalStorage for job context, similar to Python's contextvars
 const jobContextStorage = new AsyncLocalStorage<JobContext>();
@@ -79,6 +81,8 @@ export class FunctionExistsError extends Error {
 }
 
 /** The job and environment context as seen by the agent, accessible by the entrypoint function. */
+// TODO(brian): PR3 - Add @tracer.startActiveSpan('job_entrypoint') wrapper in entrypoint
+// TODO(brian): PR5 - Add uploadSessionReport() call in cleanup/session end
 export class JobContext {
   #proc: JobProcess;
   #info: RunningJobInfo;
@@ -96,6 +100,9 @@ export class JobContext {
   } = {};
   #logger: Logger;
   #inferenceExecutor: InferenceExecutor;
+
+  /** @internal */
+  _primaryAgentSession?: AgentSession;
 
   private connected: boolean = false;
 
@@ -230,6 +237,47 @@ export class JobContext {
       });
     }
     this.connected = true;
+  }
+
+  makeSessionReport(session?: AgentSession): SessionReport {
+    const targetSession = session || this._primaryAgentSession;
+
+    if (!targetSession) {
+      throw new Error('Cannot prepare report, no AgentSession was found');
+    }
+
+    // TODO(brian): implement and check recorder io
+    // TODO(brian): PR5 - Ensure chat history serialization includes all required fields (use sessionReportToJSON helper)
+
+    return createSessionReport({
+      jobId: this.job.id,
+      roomId: this.job.room?.sid || '',
+      room: this.job.room?.name || '',
+      options: targetSession.options,
+      events: targetSession._recordedEvents,
+      enableUserDataTraining: true,
+      chatHistory: targetSession.history.copy(),
+    });
+  }
+
+  async _onSessionEnd(): Promise<void> {
+    const session = this._primaryAgentSession;
+    if (!session) {
+      return;
+    }
+
+    const report = this.makeSessionReport(session);
+
+    // TODO(brian): Implement CLI/console
+
+    // TODO(brian): PR5 - Call uploadSessionReport() if report.enableUserDataTraining is true
+    // TODO(brian): PR5 - Upload includes: multipart form with header (protobuf), chat_history (JSON), and audio recording (if available)
+
+    this.#logger.debug('Session ended, report generated', {
+      jobId: report.jobId,
+      roomId: report.roomId,
+      eventsCount: report.events.length,
+    });
   }
 
   /**

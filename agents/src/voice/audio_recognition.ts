@@ -57,6 +57,8 @@ export interface AudioRecognitionOptions {
   maxEndpointingDelay: number;
 }
 
+// TODO(brian): PR3 - Add span: private _userTurnSpan?: Span, create lazily in _ensureUserTurnSpan() method (tracer.startSpan('user_turn') with participant attributes)
+// TODO(brian): PR3 - Add span: 'eou_detection' span when running EOU detection (in runEOUDetection method)
 export class AudioRecognition {
   private hooks: RecognitionHooks;
   private stt?: STTNode;
@@ -356,7 +358,7 @@ export class AudioRecognition {
 
         if (turnDetector) {
           this.logger.debug('Running turn detector model');
-          if (!turnDetector.supportsLanguage(this.lastLanguage)) {
+          if (!(await turnDetector.supportsLanguage(this.lastLanguage))) {
             this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
           } else {
             const endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);

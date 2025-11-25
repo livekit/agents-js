@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-neuphonic",
-  "version": "1.0.17",
+  "version": "1.0.21",
   "description": "Neuphonic plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

@@ -78,9 +78,10 @@ async function toChatItem(item: ChatItem) {
       tool_call_id: item.callId,
       content: item.output,
     };
-  } else {
-    throw new Error(`Unsupported item type: ${item['type']}`);
   }
+  // Skip other item types (e.g., agent_handoff)
+  // These should be filtered by groupToolCalls, but this is a safety net
+  throw new Error(`Unsupported item type: ${item['type']}`);
 }
 
 async function toImageContent(content: ImageContent) {

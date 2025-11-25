@@ -202,6 +202,8 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async start(): Promise<void> {
+    // TODO(brian): PR3 - Add span: startSpan = tracer.startSpan('start_agent_activity', { attributes: { 'lk.agent_label': this.agent.label } })
+    // TODO(brian): PR3 - Wrap prewarm calls with trace.useSpan(startSpan, endOnExit: false)
     const unlock = await this.lock.lock();
     try {
       this.agent._agentActivity = this;
@@ -234,6 +236,14 @@ export class AgentActivity implements RecognitionHooks {
           await this.realtimeSession.updateTools(this.tools);
         } catch (error) {
           this.logger.error(error, 'failed to update the tools');
+        }
+
+        if (!this.llm.capabilities.audioOutput && !this.tts && this.agentSession.output.audio) {
+          this.logger.error(
+            'audio output is enabled but RealtimeModel has no audio modality ' +
+              'and no TTS is set. Either enable audio modality in the RealtimeModel ' +
+              'or set a TTS model.',
+          );
         }
       } else if (this.llm instanceof LLM) {
         try {
@@ -281,6 +291,7 @@ export class AgentActivity implements RecognitionHooks {
       this.started = true;
 
       this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
+      // TODO(brian): PR3 - Wrap onEnter with tracer.startActiveSpan('on_enter', { attributes: { 'lk.agent_label': this.agent.label }, context: startSpan context })
       this.createSpeechTask({
         task: Task.from(() => this.agent.onEnter()),
         name: 'AgentActivity_onEnter',
@@ -1243,6 +1254,7 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  // TODO(brian): PR3 - Wrap entire pipelineReplyTask() method with tracer.startActiveSpan('agent_turn')
   private async pipelineReplyTask(
     speechHandle: SpeechHandle,
     chatCtx: ChatContext,
@@ -1633,7 +1645,7 @@ export class AgentActivity implements RecognitionHooks {
 
     const readMessages = async (
       abortController: AbortController,
-      outputs: Array<[string, _TextOut | null, _AudioOut | null]>,
+      outputs: Array<[string, _TextOut | null, _AudioOut | null, ('text' | 'audio')[] | undefined]>,
     ) => {
       replyAbortController.signal.addEventListener('abort', () => abortController.abort(), {
         once: true,
@@ -1648,7 +1660,25 @@ export class AgentActivity implements RecognitionHooks {
             );
             break;
           }
-          const trNodeResult = await this.agent.transcriptionNode(msg.textStream, modelSettings);
+
+          const msgModalities = msg.modalities ? await msg.modalities : undefined;
+          let ttsTextInput: ReadableStream<string> | null = null;
+          let trTextInput: ReadableStream<string>;
+
+          if (msgModalities && !msgModalities.includes('audio') && this.tts) {
+            if (this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput) {
+              this.logger.warn(
+                'text response received from realtime API, falling back to use a TTS model.',
+              );
+            }
+            const [_ttsTextInput, _trTextInput] = msg.textStream.tee();
+            ttsTextInput = _ttsTextInput;
+            trTextInput = _trTextInput;
+          } else {
+            trTextInput = msg.textStream;
+          }
+
+          const trNodeResult = await this.agent.transcriptionNode(trTextInput, modelSettings);
           let textOut: _TextOut | null = null;
           if (trNodeResult) {
             const [textForwardTask, _textOut] = performTextForwarding(
@@ -1659,30 +1689,51 @@ export class AgentActivity implements RecognitionHooks {
             forwardTasks.push(textForwardTask);
             textOut = _textOut;
           }
+
           let audioOut: _AudioOut | null = null;
           if (audioOutput) {
-            const realtimeAudio = await this.agent.realtimeAudioOutputNode(
-              msg.audioStream,
-              modelSettings,
-            );
-            if (realtimeAudio) {
+            let realtimeAudioResult: ReadableStream<AudioFrame> | null = null;
+
+            if (ttsTextInput) {
+              const [ttsTask, ttsStream] = performTTSInference(
+                (...args) => this.agent.ttsNode(...args),
+                ttsTextInput,
+                modelSettings,
+                abortController,
+              );
+              tasks.push(ttsTask);
+              realtimeAudioResult = ttsStream;
+            } else if (msgModalities && msgModalities.includes('audio')) {
+              realtimeAudioResult = await this.agent.realtimeAudioOutputNode(
+                msg.audioStream,
+                modelSettings,
+              );
+            } else if (this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput) {
+              this.logger.error(
+                'Text message received from Realtime API with audio modality. ' +
+                  'This usually happens when text chat context is synced to the API. ' +
+                  'Try to add a TTS model as fallback or use text modality with TTS instead.',
+              );
+            } else {
+              this.logger.warn(
+                'audio output is enabled but neither tts nor realtime audio is available',
+              );
+            }
+
+            if (realtimeAudioResult) {
               const [forwardTask, _audioOut] = performAudioForwarding(
-                realtimeAudio,
+                realtimeAudioResult,
                 audioOutput,
                 abortController,
               );
               forwardTasks.push(forwardTask);
               audioOut = _audioOut;
               audioOut.firstFrameFut.await.finally(onFirstFrame);
-            } else {
-              this.logger.warn(
-                'audio output is enabled but neither tts nor realtime audio is available',
-              );
             }
           } else if (textOut) {
             textOut.firstTextFut.await.finally(onFirstFrame);
           }
-          outputs.push([msg.messageId, textOut, audioOut]);
+          outputs.push([msg.messageId, textOut, audioOut, msgModalities]);
         }
         await waitFor(forwardTasks);
       } catch (error) {
@@ -1692,7 +1743,9 @@ export class AgentActivity implements RecognitionHooks {
       }
     };
 
-    const messageOutputs: Array<[string, _TextOut | null, _AudioOut | null]> = [];
+    const messageOutputs: Array<
+      [string, _TextOut | null, _AudioOut | null, ('text' | 'audio')[] | undefined]
+    > = [];
     const tasks = [
       Task.from(
         (controller) => readMessages(controller, messageOutputs),
@@ -1771,7 +1824,7 @@ export class AgentActivity implements RecognitionHooks {
 
       if (messageOutputs.length > 0) {
         // there should be only one message
-        const [msgId, textOut, audioOut] = messageOutputs[0]!;
+        const [msgId, textOut, audioOut, msgModalities] = messageOutputs[0]!;
         let forwardedText = textOut?.text || '';
 
         if (audioOutput) {
@@ -1796,6 +1849,8 @@ export class AgentActivity implements RecognitionHooks {
           this.realtimeSession.truncate({
             messageId: msgId,
             audioEndMs: Math.floor(playbackPosition),
+            modalities: msgModalities,
+            audioTranscript: forwardedText,
           });
         }
 
@@ -1826,7 +1881,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (messageOutputs.length > 0) {
       // there should be only one message
-      const [msgId, textOut, _] = messageOutputs[0]!;
+      const [msgId, textOut, _, __] = messageOutputs[0]!;
       const message = ChatMessage.create({
         role: 'assistant',
         content: textOut?.text || '',
@@ -2041,12 +2096,14 @@ export class AgentActivity implements RecognitionHooks {
     this.wakeupMainTask();
   }
 
+  // TODO(brian): PR3 - Wrap entire drain() method with tracer.startActiveSpan('drain_agent_activity', { attributes: { 'lk.agent_label': this.agent.label } })
   async drain(): Promise<void> {
     const unlock = await this.lock.lock();
     try {
       if (this._draining) return;
 
       this.cancelPreemptiveGeneration();
+      // TODO(brian): PR3 - Wrap onExit with tracer.startActiveSpan('on_exit', { attributes: { 'lk.agent_label': this.agent.label } })
       this.createSpeechTask({
         task: Task.from(() => this.agent.onExit()),
         name: 'AgentActivity_onExit',
@@ -2084,12 +2141,15 @@ export class AgentActivity implements RecognitionHooks {
       }
       if (this.stt instanceof STT) {
         this.stt.off('metrics_collected', this.onMetricsCollected);
+        await this.stt.close();
       }
       if (this.tts instanceof TTS) {
         this.tts.off('metrics_collected', this.onMetricsCollected);
+        await this.tts.close();
       }
       if (this.vad instanceof VAD) {
         this.vad.off('metrics_collected', this.onMetricsCollected);
+        await this.vad.close();
       }
 
       this.detachAudioInput();

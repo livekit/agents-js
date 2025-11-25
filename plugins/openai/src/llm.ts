@@ -30,17 +30,20 @@ export interface LLMOptions {
   maxCompletionTokens?: number;
   serviceTier?: string;
   store?: boolean;
+  strictToolSchema?: boolean;
 }
 
 const defaultLLMOptions: LLMOptions = {
   model: 'gpt-4.1',
   apiKey: process.env.OPENAI_API_KEY,
   parallelToolCalls: true,
+  strictToolSchema: false,
 };
 
 const defaultAzureLLMOptions: LLMOptions = {
   model: 'gpt-4.1',
   apiKey: process.env.AZURE_API_KEY,
+  strictToolSchema: false,
 };
 
 export class LLM extends llm.LLM {
@@ -432,6 +435,28 @@ export class LLM extends llm.LLM {
     return new LLM(opts);
   }
 
+  /**
+   * Create a new instance of OVHcloud AI Endpoints LLM.
+   *
+   * @remarks
+   * `apiKey` must be set to your OVHcloud AI Endpoints API key, either using the argument or by setting the
+   * `OVHCLOUD_API_KEY` environment variable.
+   */
+  static withOVHcloud(opts: Partial<LLMOptions> = {}): LLM {
+    opts.apiKey = opts.apiKey || process.env.OVHCLOUD_API_KEY;
+    if (opts.apiKey === undefined) {
+      throw new Error(
+        'OVHcloud AI Endpoints API key is required, whether as an argument or as $OVHCLOUD_API_KEY',
+      );
+    }
+
+    return new LLM({
+      model: 'gpt-oss-120b',
+      baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',
+      ...opts,
+    });
+  }
+
   chat({
     chatCtx,
     toolCtx,
@@ -445,9 +470,9 @@ export class LLM extends llm.LLM {
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
-    extraKwargs?: Record<string, any>;
+    extraKwargs?: Record<string, unknown>;
   }): LLMStream {
-    const extras: Record<string, any> = { ...extraKwargs }; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const extras: Record<string, unknown> = { ...extraKwargs };
 
     if (this.#opts.metadata) {
       extras.metadata = this.#opts.metadata;
@@ -492,6 +517,7 @@ export class LLM extends llm.LLM {
       toolCtx,
       connOptions,
       modelOptions: extras,
+      strictToolSchema: this.#opts.strictToolSchema || false,
       gatewayOptions: undefined, // OpenAI plugin doesn't use gateway authentication
     });
   }

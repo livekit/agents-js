@@ -94,6 +94,10 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
    * Returns a {@link SynthesizeStream} that can be used to push text and receive audio data
    */
   abstract stream(): SynthesizeStream;
+
+  async close(): Promise<void> {
+    return;
+  }
 }
 
 /**
@@ -157,8 +161,10 @@ export abstract class SynthesizeStream
   }
 
   private async mainTask() {
+    // TODO(brian): PR3 - Add span wrapping: tracer.startActiveSpan('tts_request', ..., { endOnExit: false })
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
+        // TODO(brian): PR3 - Add span for retry attempts: tracer.startActiveSpan('tts_request_run', ...)
         return await this.run();
       } catch (error) {
         if (error instanceof APIError) {
@@ -203,7 +209,16 @@ export abstract class SynthesizeStream
     });
   }
 
-  // TODO(AJS-37) Remove when refactoring TTS to use streams
+  // NOTE(AJS-37): The implementation below uses an AsyncIterableQueue (`this.input`)
+  // bridged from a DeferredReadableStream (`this.deferredInputStream`) rather than
+  // consuming the stream directly.
+  //
+  // A full refactor to native Web Streams was considered but is currently deferred.
+  // The primary reason is to maintain architectural parity with the Python SDK,
+  // which is a key design goal for the project. This ensures a consistent developer
+  // experience across both platforms.
+  //
+  // For more context, see the discussion in GitHub issue # 844.
   protected async pumpInput() {
     const reader = this.deferredInputStream.stream.getReader();
     try {
@@ -292,12 +307,11 @@ export abstract class SynthesizeStream
     }
     this.#metricsText += text;
 
-    if (this.input.closed) {
-      throw new Error('Input is closed');
+    if (this.input.closed || this.closed) {
+      // Stream was aborted/closed, silently skip
+      return;
     }
-    if (this.closed) {
-      throw new Error('Stream is closed');
-    }
+
     this.input.put(text);
   }
 
@@ -307,24 +321,24 @@ export abstract class SynthesizeStream
       this.#metricsPendingTexts.push(this.#metricsText);
       this.#metricsText = '';
     }
-    if (this.input.closed) {
-      throw new Error('Input is closed');
+
+    if (this.input.closed || this.closed) {
+      // Stream was aborted/closed, silently skip
+      return;
     }
-    if (this.closed) {
-      throw new Error('Stream is closed');
-    }
+
     this.input.put(SynthesizeStream.FLUSH_SENTINEL);
   }
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
     this.flush();
-    if (this.input.closed) {
-      throw new Error('Input is closed');
+
+    if (this.input.closed || this.closed) {
+      // Stream was aborted/closed, silently skip
+      return;
     }
-    if (this.closed) {
-      throw new Error('Stream is closed');
-    }
+
     this.input.close();
   }
 
@@ -385,8 +399,10 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   }
 
   private async mainTask() {
+    // TODO(brian): PR3 - Add span wrapping: tracer.startActiveSpan('tts_request', ..., { endOnExit: false })
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
+        // TODO(brian): PR3 - Add span for retry attempts: tracer.startActiveSpan('tts_request_run', ...)
         return await this.run();
       } catch (error) {
         if (error instanceof APIError) {

@@ -15,6 +15,23 @@ import { TransformStream, type TransformStreamDefaultController } from 'node:str
 import { v4 as uuidv4 } from 'uuid';
 import { log } from './log.js';
 
+/**
+ * Recursively expands all nested properties of a type,
+ * resolving aliases so as to inspect the real shape in IDE.
+ */
+// eslint-disable-next-line @typescript-eslint/ban-types
+export type Expand<T> = T extends Function
+  ? T
+  : T extends object
+    ? T extends Array<infer U>
+      ? Array<Expand<U>>
+      : T extends Map<infer K, infer V>
+        ? Map<Expand<K>, Expand<V>>
+        : T extends Set<infer M>
+          ? Set<Expand<M>>
+          : { [K in keyof T]: Expand<T[K]> }
+    : T;
+
 /** Union of a single and a list of {@link AudioFrame}s */
 export type AudioBuffer = AudioFrame[] | AudioFrame;
 
@@ -368,8 +385,6 @@ export class AudioEnergyFilter {
   }
 }
 
-export const TASK_TIMEOUT_ERROR = new Error('Task cancellation timed out');
-
 export enum TaskResult {
   Timeout = 'timeout',
   Completed = 'completed',
@@ -464,34 +479,30 @@ export class Task<T> {
   async cancelAndWait(timeout?: number) {
     this.cancel();
 
-    try {
-      // Race between task completion and timeout
-      const promises = [
-        this.result
-          .then(() => TaskResult.Completed)
-          .catch((error) => {
-            if (error.name === 'AbortError') {
-              return TaskResult.Aborted;
-            }
-            throw error;
-          }),
-      ];
+    // Race between task completion and timeout
+    const promises = [
+      this.result
+        .then(() => TaskResult.Completed)
+        .catch((error) => {
+          if (error.name === 'AbortError') {
+            return TaskResult.Aborted;
+          }
+          throw error;
+        }),
+    ];
 
-      if (timeout) {
-        promises.push(delay(timeout).then(() => TaskResult.Timeout));
-      }
-
-      const result = await Promise.race(promises);
-
-      // Check what happened
-      if (result === TaskResult.Timeout) {
-        throw TASK_TIMEOUT_ERROR;
-      }
-
-      return result;
-    } catch (error) {
-      throw error;
+    if (timeout) {
+      promises.push(delay(timeout).then(() => TaskResult.Timeout));
     }
+
+    const result = await Promise.race(promises);
+
+    // Check what happened
+    if (result === TaskResult.Timeout) {
+      throw new Error('Task cancellation timed out');
+    }
+
+    return result;
   }
 
   /**

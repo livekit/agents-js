@@ -10,9 +10,6 @@ import {
   llm,
   voice,
 } from '@livekit/agents';
-import * as deepgram from '@livekit/agents-plugin-deepgram';
-import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
-import * as google from '@livekit/agents-plugin-google';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
@@ -76,11 +73,11 @@ export default defineAgent({
       parameters: z.object({
         value: z
           .number()
-          .optional()
+          .nullable() // .optional() is not supported in strict mode
           .describe('The number value, do not pass this parameter if you want a random value'),
       }),
       execute: async ({ value }) => {
-        if (value === undefined) {
+        if (value === undefined || value === null) {
           value = Math.floor(Math.random() * 100);
         }
         return `The number value is ${value}.`;
@@ -138,13 +135,14 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT(),
-      tts: new elevenlabs.TTS(),
-      llm: new google.LLM(),
-      // to use realtime model, replace the stt, llm, tts and vad with the following
-      // llm: new openai.realtime.RealtimeModel(),
+      stt: 'assemblyai/universal-streaming:en',
+      llm: 'openai/gpt-4.1-mini',
+      tts: 'cartesia/sonic-2:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      turnDetection: new livekit.turnDetector.MultilingualModel(),
       userData: { number: 0 },
-      turnDetection: new livekit.turnDetector.EnglishModel(),
+      voiceOptions: {
+        preemptiveGeneration: true,
+      },
     });
 
     await session.start({
