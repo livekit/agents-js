@@ -4,10 +4,7 @@
 
 export { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
 export {
-  OTLPHttpLogExporter,
-  SeverityNumber,
   SimpleOTLPHttpLogExporter,
-  type OTLPHttpLogExporterConfig,
   type SimpleLogRecord,
   type SimpleOTLPHttpLogExporterConfig,
 } from './otel_http_exporter.js';

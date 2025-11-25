@@ -12,7 +12,7 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
-import { logs } from '@opentelemetry/api-logs';
+import { SeverityNumber, logs } from '@opentelemetry/api-logs';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
@@ -26,11 +26,7 @@ import { AccessToken } from 'livekit-server-sdk';
 import type { ChatContent, ChatItem } from '../llm/index.js';
 import type { SessionReport } from '../voice/report.js';
 import { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
-import {
-  SeverityNumber,
-  type SimpleLogRecord,
-  SimpleOTLPHttpLogExporter,
-} from './otel_http_exporter.js';
+import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { enablePinoOTELInstrumentation } from './pino_bridge.js';
 
 export interface StartSpanOptions {
@@ -286,11 +282,7 @@ export async function setupCloudTracer(options: {
 
 /**
  * Convert ChatItem to proto-compatible dictionary format.
- * Matches Python's _to_proto_chat_item implementation.
- *
  * TODO: Use actual agent_session proto types once @livekit/protocol v1.43.1+ is published
- *
- * @internal
  */
 function chatItemToProto(item: ChatItem): Record<string, any> {
   const itemDict: Record<string, any> = {};
@@ -414,10 +406,7 @@ function toRFC3339(valueMs: number | Date): string {
 
 /**
  * Upload session report to LiveKit Cloud observability.
- * Matches Python's _upload_session_report implementation.
- *
  * @param options - Configuration with agentName, cloudHostname, and report
- * @internal
  */
 export async function uploadSessionReport(options: {
   agentName: string;
@@ -484,6 +473,7 @@ export async function uploadSessionReport(options: {
       severityText = 'error';
     }
 
+    console.log('itemProto', JSON.stringify(itemProto, null, 2));
     logRecords.push({
       body: 'chat item',
       timestampMs: itemTimestamp, // Adjusted for monotonic ordering
