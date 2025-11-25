@@ -253,7 +253,13 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   protected async monitorMetrics() {
     for await (const event of this.queue) {
-      this.output.put(event);
+      if (!this.output.closed) {
+        try {
+          this.output.put(event);
+        } catch (e) {
+          // ignore if output is closed
+        }
+      }
       if (event.type !== SpeechEventType.RECOGNITION_USAGE) continue;
       const metrics: STTMetrics = {
         type: 'stt_metrics',
@@ -266,7 +272,9 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
       };
       this.#stt.emit('metrics_collected', metrics);
     }
-    this.output.close();
+    if (!this.output.closed) {
+      this.output.close();
+    }
   }
 
   protected abstract run(): Promise<void>;
@@ -332,9 +340,9 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   /** Close both the input and output of the STT stream */
   close() {
-    this.input.close();
-    this.queue.close();
-    this.output.close();
+    if (!this.input.closed) this.input.close();
+    if (!this.queue.closed) this.queue.close();
+    if (!this.output.closed) this.output.close();
     this.closed = true;
   }
 

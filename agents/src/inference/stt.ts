@@ -394,52 +394,62 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   }
 
   private processTranscript(data: Record<string, any>, isFinal: boolean) {
+    // Check if queue is closed to avoid race condition during disconnect
+    if (this.queue.closed) return;
+
     const requestId = data.request_id ?? this.requestId;
     const text = data.transcript ?? '';
     const language = data.language ?? this.opts.language ?? 'en';
 
     if (!text && !isFinal) return;
 
-    // We'll have a more accurate way of detecting when speech started when we have VAD
-    if (!this.speaking) {
-      this.speaking = true;
-      this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
-    }
+    try {
+      // We'll have a more accurate way of detecting when speech started when we have VAD
+      if (!this.speaking) {
+        this.speaking = true;
+        this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
+      }
 
-    const speechData: SpeechData = {
-      language,
-      startTime: data.start ?? 0,
-      endTime: data.duration ?? 0,
-      confidence: data.confidence ?? 1.0,
-      text,
-    };
+      const speechData: SpeechData = {
+        language,
+        startTime: data.start ?? 0,
+        endTime: data.duration ?? 0,
+        confidence: data.confidence ?? 1.0,
+        text,
+      };
 
-    if (isFinal) {
-      if (this.speechDuration > 0) {
+      if (isFinal) {
+        if (this.speechDuration > 0) {
+          this.queue.put({
+            type: SpeechEventType.RECOGNITION_USAGE,
+            requestId,
+            recognitionUsage: { audioDuration: this.speechDuration },
+          });
+          this.speechDuration = 0;
+        }
+
         this.queue.put({
-          type: SpeechEventType.RECOGNITION_USAGE,
+          type: SpeechEventType.FINAL_TRANSCRIPT,
           requestId,
-          recognitionUsage: { audioDuration: this.speechDuration },
+          alternatives: [speechData],
         });
-        this.speechDuration = 0;
-      }
 
-      this.queue.put({
-        type: SpeechEventType.FINAL_TRANSCRIPT,
-        requestId,
-        alternatives: [speechData],
-      });
-
-      if (this.speaking) {
-        this.speaking = false;
-        this.queue.put({ type: SpeechEventType.END_OF_SPEECH });
+        if (this.speaking) {
+          this.speaking = false;
+          this.queue.put({ type: SpeechEventType.END_OF_SPEECH });
+        }
+      } else {
+        this.queue.put({
+          type: SpeechEventType.INTERIM_TRANSCRIPT,
+          requestId,
+          alternatives: [speechData],
+        });
       }
-    } else {
-      this.queue.put({
-        type: SpeechEventType.INTERIM_TRANSCRIPT,
-        requestId,
-        alternatives: [speechData],
-      });
+    } catch (e) {
+      // Silently ignore if queue was closed
+      if (e instanceof Error && !e.message.includes('Queue is closed')) {
+        this.#logger.error({ err: e }, 'Error putting transcript to queue');
+      }
     }
   }
 }

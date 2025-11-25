@@ -279,7 +279,13 @@ export class SpeechStream extends stt.SpeechStream {
                 // It's also possible we receive a transcript without a SpeechStarted event.
                 if (this.#speaking) return;
                 this.#speaking = true;
-                this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
+                if (!this.queue.closed) {
+                  try {
+                    this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
+                  } catch (e) {
+                    // ignore
+                  }
+                }
                 break;
               }
               // see this page:
