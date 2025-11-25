@@ -12,7 +12,7 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
-import { SeverityNumber, logs } from '@opentelemetry/api-logs';
+import { logs } from '@opentelemetry/api-logs';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
@@ -23,8 +23,14 @@ import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
+import type { ChatContent, ChatItem } from '../llm/index.js';
 import type { SessionReport } from '../voice/report.js';
 import { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
+import {
+  OTLPHttpLogExporter,
+  type OTLPLogRecord,
+  OTLPSeverityNumber,
+} from './otel_http_exporter.js';
 import { enablePinoOTELInstrumentation } from './pino_bridge.js';
 
 export interface StartSpanOptions {
@@ -286,7 +292,7 @@ export async function setupCloudTracer(options: {
  *
  * @internal
  */
-function chatItemToProto(item: any): Record<string, any> {
+function chatItemToProto(item: ChatItem): Record<string, any> {
   const itemDict: Record<string, any> = {};
 
   if (item.type === 'message') {
@@ -300,52 +306,59 @@ function chatItemToProto(item: any): Record<string, any> {
     const msg: Record<string, any> = {
       id: item.id,
       role: roleMap[item.role] || item.role.toUpperCase(),
-      content: item.content.map((c: string) => ({ text: c })),
-      interrupted: item.interrupted,
-      extra: item.extra || {},
+      content: item.content.map((c: ChatContent) => ({ text: c })),
       createdAt: toRFC3339(item.createdAt),
     };
 
-    if (item.transcriptConfidence !== undefined && item.transcriptConfidence !== null) {
-      msg.transcriptConfidence = item.transcriptConfidence;
+    if (item.interrupted) {
+      msg.interrupted = item.interrupted;
     }
 
-    // Add metrics if available
-    const metrics = item.metrics || {};
-    if (Object.keys(metrics).length > 0) {
-      msg.metrics = {};
-      if (metrics.started_speaking_at) {
-        msg.metrics.startedSpeakingAt = toRFC3339(metrics.started_speaking_at);
-      }
-      if (metrics.stopped_speaking_at) {
-        msg.metrics.stoppedSpeakingAt = toRFC3339(metrics.stopped_speaking_at);
-      }
-      if (metrics.transcription_delay !== undefined) {
-        msg.metrics.transcriptionDelay = metrics.transcription_delay;
-      }
-      if (metrics.end_of_turn_delay !== undefined) {
-        msg.metrics.endOfTurnDelay = metrics.end_of_turn_delay;
-      }
-      if (metrics.on_user_turn_completed_delay !== undefined) {
-        msg.metrics.onUserTurnCompletedDelay = metrics.on_user_turn_completed_delay;
-      }
-      if (metrics.llm_node_ttft !== undefined) {
-        msg.metrics.llmNodeTtft = metrics.llm_node_ttft;
-      }
-      if (metrics.tts_node_ttfb !== undefined) {
-        msg.metrics.ttsNodeTtfb = metrics.tts_node_ttfb;
-      }
-      if (metrics.e2e_latency !== undefined) {
-        msg.metrics.e2eLatency = metrics.e2e_latency;
-      }
-    }
+    // TODO(brian): Add extra and transcriptConfidence to ChatMessage
+    // if (item.extra && Object.keys(item.extra).length > 0) {
+    //   msg.extra = item.extra;
+    // }
+
+    // if (item.transcriptConfidence !== undefined && item.transcriptConfidence !== null) {
+    //   msg.transcriptConfidence = item.transcriptConfidence;
+    // }
+
+    // TODO(brian): Add metrics to ChatMessage
+    // const metrics = item.metrics || {};
+    // if (Object.keys(metrics).length > 0) {
+    //   msg.metrics = {};
+    //   if (metrics.started_speaking_at) {
+    //     msg.metrics.startedSpeakingAt = toRFC3339(metrics.started_speaking_at);
+    //   }
+    //   if (metrics.stopped_speaking_at) {
+    //     msg.metrics.stoppedSpeakingAt = toRFC3339(metrics.stopped_speaking_at);
+    //   }
+    //   if (metrics.transcription_delay !== undefined) {
+    //     msg.metrics.transcriptionDelay = metrics.transcription_delay;
+    //   }
+    //   if (metrics.end_of_turn_delay !== undefined) {
+    //     msg.metrics.endOfTurnDelay = metrics.end_of_turn_delay;
+    //   }
+    //   if (metrics.on_user_turn_completed_delay !== undefined) {
+    //     msg.metrics.onUserTurnCompletedDelay = metrics.on_user_turn_completed_delay;
+    //   }
+    //   if (metrics.llm_node_ttft !== undefined) {
+    //     msg.metrics.llmNodeTtft = metrics.llm_node_ttft;
+    //   }
+    //   if (metrics.tts_node_ttfb !== undefined) {
+    //     msg.metrics.ttsNodeTtfb = metrics.tts_node_ttfb;
+    //   }
+    //   if (metrics.e2e_latency !== undefined) {
+    //     msg.metrics.e2eLatency = metrics.e2e_latency;
+    //   }
+    // }
 
     itemDict.message = msg;
   } else if (item.type === 'function_call') {
     itemDict.functionCall = {
       id: item.id,
       callId: item.callId,
-      arguments: item.arguments,
+      arguments: item.args,
       name: item.name,
       createdAt: toRFC3339(item.createdAt),
     };
@@ -359,15 +372,17 @@ function chatItemToProto(item: any): Record<string, any> {
       createdAt: toRFC3339(item.createdAt),
     };
   } else if (item.type === 'agent_handoff') {
-    itemDict.agentHandoff = {
+    const handoff: Record<string, any> = {
       id: item.id,
-      oldAgentId: item.oldAgentId,
       newAgentId: item.newAgentId,
       createdAt: toRFC3339(item.createdAt),
     };
+    if (item.oldAgentId !== undefined && item.oldAgentId !== null && item.oldAgentId !== '') {
+      handoff.oldAgentId = item.oldAgentId;
+    }
+    itemDict.agentHandoff = handoff;
   }
 
-  // Patch arguments & output to make them indexable (parse JSON strings)
   try {
     if (item.type === 'function_call' && typeof itemDict.functionCall?.arguments === 'string') {
       itemDict.functionCall.arguments = JSON.parse(itemDict.functionCall.arguments);
@@ -386,14 +401,14 @@ function chatItemToProto(item: any): Record<string, any> {
 
 /**
  * Convert timestamp to RFC3339 format matching Python's _to_rfc3339.
+ * Note: TypeScript createdAt is in milliseconds (Date.now()), not seconds like Python.
  * @internal
  */
-function toRFC3339(value: number | Date): string {
-  const dt = value instanceof Date ? value : new Date(value * 1000);
-  // Truncate to milliseconds
-  const ms = Math.floor(dt.getMilliseconds() / 1000) * 1000;
-  const truncated = new Date(dt);
-  truncated.setMilliseconds(ms);
+function toRFC3339(valueMs: number | Date): string {
+  // valueMs is already in milliseconds (from Date.now())
+  const dt = valueMs instanceof Date ? valueMs : new Date(valueMs);
+  // Truncate sub-millisecond precision
+  const truncated = new Date(Math.floor(dt.getTime()));
   return truncated.toISOString();
 }
 
@@ -411,63 +426,74 @@ export async function uploadSessionReport(options: {
 }): Promise<void> {
   const { agentName, cloudHostname, report } = options;
 
-  // Get OTEL logger for chat_history
-  const chatLogger = logs.getLoggerProvider().getLogger('chat_history');
-
-  // Helper to emit logs
-  const emitLog = (
-    body: string,
-    timestamp: number,
-    attributes: Record<string, any>,
-    severityNumber = 0, // UNSPECIFIED
-    severityText = 'unspecified',
-  ) => {
-    // Add room/job metadata to attributes
-    const fullAttributes = {
-      ...attributes,
+  // Create OTLP HTTP exporter for chat history logs
+  // Uses raw HTTP JSON format which is required by LiveKit Cloud
+  const logExporter = new OTLPHttpLogExporter({
+    cloudHostname,
+    resourceAttributes: {
+      room_id: report.roomId,
+      job_id: report.jobId,
+    },
+    scopeName: 'chat_history',
+    scopeAttributes: {
       room_id: report.roomId,
       job_id: report.jobId,
       room: report.room,
-    };
-
-    chatLogger.emit({
-      body,
-      timestamp: timestamp * 1000000, // Convert to nanoseconds
-      attributes: fullAttributes,
-      severityNumber,
-      severityText,
-      context: otelContext.active(),
-    });
-  };
-
-  // Log session report
-  emitLog('session report', Math.floor((report.timestamp || Date.now()) * 1000), {
-    'session.options': report.options,
-    'session.report_timestamp': report.timestamp,
-    agent_name: agentName,
+    },
   });
 
-  // Log each chat item
+  // Build log records for session report and chat items
+  const logRecords: OTLPLogRecord[] = [];
+
+  const commonAttrs = {
+    room_id: report.roomId,
+    job_id: report.jobId,
+    'logger.name': 'chat_history',
+  };
+
+  logRecords.push({
+    body: 'session report',
+    timestampMs: report.startedAt || report.timestamp || 0,
+    attributes: {
+      ...commonAttrs,
+      'session.options': report.options || {},
+      'session.report_timestamp': report.timestamp,
+      agent_name: agentName,
+    },
+  });
+
+  // Track last timestamp to ensure monotonic ordering when items have identical timestamps
+  // This fixes the issue where function_call and function_call_output with same timestamp
+  // get reordered by the dashboard
+  let lastTimestamp = 0;
   for (const item of report.chatHistory.items) {
-    const itemLog = chatItemToProto(item);
-    let severityNumber = SeverityNumber.UNSPECIFIED;
+    // Ensure monotonically increasing timestamps for proper ordering
+    // Add 0.001ms (1 microsecond) offset when timestamps collide
+    let itemTimestamp = item.createdAt;
+    if (itemTimestamp <= lastTimestamp) {
+      itemTimestamp = lastTimestamp + 0.001; // Add 1 microsecond
+    }
+    lastTimestamp = itemTimestamp;
+
+    const itemProto = chatItemToProto(item);
+    let severityNumber = OTLPSeverityNumber.UNSPECIFIED;
     let severityText = 'unspecified';
 
     if (item.type === 'function_call_output' && item.isError) {
-      severityNumber = SeverityNumber.ERROR;
+      severityNumber = OTLPSeverityNumber.ERROR;
       severityText = 'error';
     }
 
-    emitLog(
-      'chat item',
-      Math.floor(item.createdAt * 1000),
-      { 'chat.item': itemLog },
+    logRecords.push({
+      body: 'chat item',
+      timestampMs: itemTimestamp, // Adjusted for monotonic ordering
+      attributes: { 'chat.item': itemProto, ...commonAttrs },
       severityNumber,
       severityText,
-    );
+    });
   }
+  await logExporter.export(logRecords);
 
-  // Create JWT token for upload
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
 
@@ -475,10 +501,7 @@ export async function uploadSessionReport(options: {
     throw new Error('LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set for session upload');
   }
 
-  const token = new AccessToken(apiKey, apiSecret, {
-    identity: 'livekit-agents-telemetry',
-    ttl: '6h',
-  });
+  const token = new AccessToken(apiKey, apiSecret, { ttl: '6h' });
   token.addObservabilityGrant({ write: true });
   const jwt = await token.toJwt();
 
