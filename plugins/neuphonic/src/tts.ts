@@ -237,7 +237,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           });
         } catch (err) {
           if (err instanceof Error && !err.message.includes('WebSocket closed prematurely')) {
-            this.#logger.error({ err }, 'Error in recvTask from Neuphonic WebSocket');
+            if (err.message.includes('Queue is closed')) {
+              this.#logger.warn(
+                { err },
+                'Queue closed during transcript processing (expected during disconnect)',
+              );
+            } else {
+              this.#logger.error({ err }, 'Error in recvTask from Neuphonic WebSocket');
+            }
           }
           break;
         }
