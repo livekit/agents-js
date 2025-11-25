@@ -27,9 +27,9 @@ import type { ChatContent, ChatItem } from '../llm/index.js';
 import type { SessionReport } from '../voice/report.js';
 import { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
 import {
-  OTLPHttpLogExporter,
-  type OTLPLogRecord,
-  OTLPSeverityNumber,
+  SeverityNumber,
+  type SimpleLogRecord,
+  SimpleOTLPHttpLogExporter,
 } from './otel_http_exporter.js';
 import { enablePinoOTELInstrumentation } from './pino_bridge.js';
 
@@ -428,7 +428,7 @@ export async function uploadSessionReport(options: {
 
   // Create OTLP HTTP exporter for chat history logs
   // Uses raw HTTP JSON format which is required by LiveKit Cloud
-  const logExporter = new OTLPHttpLogExporter({
+  const logExporter = new SimpleOTLPHttpLogExporter({
     cloudHostname,
     resourceAttributes: {
       room_id: report.roomId,
@@ -443,7 +443,7 @@ export async function uploadSessionReport(options: {
   });
 
   // Build log records for session report and chat items
-  const logRecords: OTLPLogRecord[] = [];
+  const logRecords: SimpleLogRecord[] = [];
 
   const commonAttrs = {
     room_id: report.roomId,
@@ -476,11 +476,11 @@ export async function uploadSessionReport(options: {
     lastTimestamp = itemTimestamp;
 
     const itemProto = chatItemToProto(item);
-    let severityNumber = OTLPSeverityNumber.UNSPECIFIED;
+    let severityNumber = SeverityNumber.UNSPECIFIED;
     let severityText = 'unspecified';
 
     if (item.type === 'function_call_output' && item.isError) {
-      severityNumber = OTLPSeverityNumber.ERROR;
+      severityNumber = SeverityNumber.ERROR;
       severityText = 'error';
     }
 
