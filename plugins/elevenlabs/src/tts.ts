@@ -300,8 +300,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             const json = JSON.parse(msg.toString());
             // remove the "audio" field from the json object when printing
             if ('audio' in json && json.audio !== null) {
-              const data = new Int8Array(Buffer.from(json.audio, 'base64'));
-              for (const frame of bstream.write(data)) {
+              const data = Buffer.from(json.audio, 'base64');
+              for (const frame of bstream.write(
+                data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+              )) {
                 sendLastFrame(segmentId, false);
                 lastFrame = frame;
               }
@@ -323,7 +325,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         } catch (err) {
           // skip log error for normal websocket close
           if (err instanceof Error && !err.message.includes('WebSocket closed')) {
-            this.#logger.error({ err }, 'Error in listenTask from ElevenLabs WebSocket');
+            if (err.message.includes('Queue is closed')) {
+              this.#logger.warn(
+                { err },
+                'Queue closed during transcript processing (expected during disconnect)',
+              );
+            } else {
+              this.#logger.error({ err }, 'Error in listenTask from ElevenLabs WebSocket');
+            }
           }
           break;
         }

@@ -257,7 +257,12 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         try {
           this.output.put(event);
         } catch (e) {
-          // ignore if output is closed
+          if (e instanceof Error && e.message.includes('Queue is closed')) {
+            this.logger.warn(
+              { err: e },
+              'Queue closed during transcript processing (expected during disconnect)',
+            );
+          }
         }
       }
       if (event.type !== SpeechEventType.RECOGNITION_USAGE) continue;

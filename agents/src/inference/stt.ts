@@ -446,8 +446,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         });
       }
     } catch (e) {
-      // Silently ignore if queue was closed
-      if (e instanceof Error && !e.message.includes('Queue is closed')) {
+      if (e instanceof Error && e.message.includes('Queue is closed')) {
+        // Expected behavior on disconnect, log as warning
+        this.#logger.warn(
+          { err: e },
+          'Queue closed during transcript processing (expected during disconnect)',
+        );
+      } else {
         this.#logger.error({ err: e }, 'Error putting transcript to queue');
       }
     }

@@ -342,7 +342,14 @@ export class SpeechStream extends stt.SpeechStream {
             }
           });
         } catch (error) {
-          this.#logger.child({ error }).warn('unrecoverable error, exiting');
+          if (error instanceof Error && error.message.includes('Queue is closed')) {
+            this.#logger.warn(
+              { err: error },
+              'Queue closed during transcript processing (expected during disconnect)',
+            );
+          } else {
+            this.#logger.child({ error }).warn('unrecoverable error, exiting');
+          }
           break;
         }
       }
