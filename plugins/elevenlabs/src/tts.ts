@@ -785,8 +785,8 @@ export class TTS extends tts.TTS {
     return this.#connection!;
   }
 
-  synthesize(): tts.ChunkedStream {
-    throw new Error('Chunked responses are not supported on ElevenLabs TTS');
+  synthesize(text: string): tts.ChunkedStream {
+    return new ChunkedStream(this, this.#opts, text);
   }
 
   stream(): tts.SynthesizeStream {
@@ -1054,6 +1054,119 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     await Promise.all([sendTask(), listenTask()]);
   }
+}
+
+/**
+ * ChunkedStream - Synthesize using the HTTP chunked API endpoint
+ * This is a non-streaming approach that sends the full text and receives audio in chunks
+ */
+export class ChunkedStream extends tts.ChunkedStream {
+  #opts: TTSOptions;
+  #text: string;
+  #logger = log();
+  label = 'elevenlabs.ChunkedStream';
+
+  constructor(tts: TTS, opts: TTSOptions, text: string) {
+    super(text, tts);
+    this.#opts = opts;
+    this.#text = text;
+  }
+
+  protected async run() {
+    const requestId = shortuuid();
+    const bstream = new AudioByteStream(sampleRateFromFormat(this.#opts.encoding), 1);
+
+    const voiceSettings = this.#opts.voice.settings || undefined;
+
+    try {
+      const url = buildSynthesizeUrl(this.#opts);
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          [AUTHORIZATION_HEADER]: this.#opts.apiKey!,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: this.#text,
+          model_id: this.#opts.modelID,
+          voice_settings: voiceSettings,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`ElevenLabs API error ${response.status}: ${errorText}`);
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.startsWith('audio/')) {
+        const content = await response.text();
+        throw new Error(`ElevenLabs returned non-audio data: ${content}`);
+      }
+
+      if (!response.body) {
+        throw new Error('Response body is null');
+      }
+
+      const reader = response.body.getReader();
+      let lastFrame: AudioFrame | undefined;
+
+      const sendLastFrame = (final: boolean) => {
+        if (lastFrame) {
+          this.queue.put({
+            requestId,
+            segmentId: requestId,
+            frame: lastFrame,
+            final,
+          });
+          lastFrame = undefined;
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        // Convert Uint8Array to Int8Array for AudioByteStream
+        const int8Data = new Int8Array(value.buffer, value.byteOffset, value.byteLength);
+        for (const frame of bstream.write(int8Data)) {
+          sendLastFrame(false);
+          lastFrame = frame;
+        }
+      }
+
+      // Flush remaining frames
+      for (const frame of bstream.flush()) {
+        sendLastFrame(false);
+        lastFrame = frame;
+      }
+
+      sendLastFrame(true);
+    } catch (error) {
+      this.#logger.error({ error }, 'Error in ElevenLabs ChunkedStream');
+      throw error;
+    }
+  }
+}
+
+/**
+ * Build the URL for the HTTP synthesize endpoint
+ */
+function buildSynthesizeUrl(opts: TTSOptions): string {
+  const baseURL = opts.baseURL.replace(/\/$/, '');
+  const voiceId = opts.voice.id;
+  const params: string[] = [];
+
+  params.push(`model_id=${opts.modelID}`);
+  params.push(`output_format=${opts.encoding}`);
+
+  if (opts.streamingLatency !== undefined) {
+    params.push(`optimize_streaming_latency=${opts.streamingLatency}`);
+  }
+
+  return `${baseURL}/text-to-speech/${voiceId}/stream?${params.join('&')}`;
 }
 
 const sampleRateFromFormat = (encoding: TTSEncoding): number => {
