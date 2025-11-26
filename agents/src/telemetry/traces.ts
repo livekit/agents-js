@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { MetricsRecordingHeader } from '@livekit/protocol';
 import {
   type Attributes,
   type Context,
@@ -11,7 +12,7 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
-import { logs } from '@opentelemetry/api-logs';
+import { SeverityNumber, logs } from '@opentelemetry/api-logs';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
@@ -20,7 +21,9 @@ import { BatchLogRecordProcessor, LoggerProvider } from '@opentelemetry/sdk-logs
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
+import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
+import type { SessionReport } from '../voice/report.js';
 import { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
 import { enablePinoOTELInstrumentation } from './pino_bridge.js';
 
@@ -273,4 +276,279 @@ export async function setupCloudTracer(options: {
     console.error('Failed to setup cloud tracer:', error);
     throw error;
   }
+}
+
+/**
+ * Convert ChatItem to proto-compatible dictionary format.
+ * Matches Python's _to_proto_chat_item implementation.
+ *
+ * TODO: Use actual agent_session proto types once @livekit/protocol v1.43.1+ is published
+ *
+ * @internal
+ */
+function chatItemToProto(item: any): Record<string, any> {
+  const itemDict: Record<string, any> = {};
+
+  if (item.type === 'message') {
+    const roleMap: Record<string, string> = {
+      developer: 'DEVELOPER',
+      system: 'SYSTEM',
+      user: 'USER',
+      assistant: 'ASSISTANT',
+    };
+
+    const msg: Record<string, any> = {
+      id: item.id,
+      role: roleMap[item.role] || item.role.toUpperCase(),
+      content: item.content.map((c: string) => ({ text: c })),
+      interrupted: item.interrupted,
+      extra: item.extra || {},
+      createdAt: toRFC3339(item.createdAt),
+    };
+
+    if (item.transcriptConfidence !== undefined && item.transcriptConfidence !== null) {
+      msg.transcriptConfidence = item.transcriptConfidence;
+    }
+
+    // Add metrics if available
+    const metrics = item.metrics || {};
+    if (Object.keys(metrics).length > 0) {
+      msg.metrics = {};
+      if (metrics.started_speaking_at) {
+        msg.metrics.startedSpeakingAt = toRFC3339(metrics.started_speaking_at);
+      }
+      if (metrics.stopped_speaking_at) {
+        msg.metrics.stoppedSpeakingAt = toRFC3339(metrics.stopped_speaking_at);
+      }
+      if (metrics.transcription_delay !== undefined) {
+        msg.metrics.transcriptionDelay = metrics.transcription_delay;
+      }
+      if (metrics.end_of_turn_delay !== undefined) {
+        msg.metrics.endOfTurnDelay = metrics.end_of_turn_delay;
+      }
+      if (metrics.on_user_turn_completed_delay !== undefined) {
+        msg.metrics.onUserTurnCompletedDelay = metrics.on_user_turn_completed_delay;
+      }
+      if (metrics.llm_node_ttft !== undefined) {
+        msg.metrics.llmNodeTtft = metrics.llm_node_ttft;
+      }
+      if (metrics.tts_node_ttfb !== undefined) {
+        msg.metrics.ttsNodeTtfb = metrics.tts_node_ttfb;
+      }
+      if (metrics.e2e_latency !== undefined) {
+        msg.metrics.e2eLatency = metrics.e2e_latency;
+      }
+    }
+
+    itemDict.message = msg;
+  } else if (item.type === 'function_call') {
+    itemDict.functionCall = {
+      id: item.id,
+      callId: item.callId,
+      arguments: item.arguments,
+      name: item.name,
+      createdAt: toRFC3339(item.createdAt),
+    };
+  } else if (item.type === 'function_call_output') {
+    itemDict.functionCallOutput = {
+      id: item.id,
+      name: item.name,
+      callId: item.callId,
+      output: item.output,
+      isError: item.isError,
+      createdAt: toRFC3339(item.createdAt),
+    };
+  } else if (item.type === 'agent_handoff') {
+    itemDict.agentHandoff = {
+      id: item.id,
+      oldAgentId: item.oldAgentId,
+      newAgentId: item.newAgentId,
+      createdAt: toRFC3339(item.createdAt),
+    };
+  }
+
+  // Patch arguments & output to make them indexable (parse JSON strings)
+  try {
+    if (item.type === 'function_call' && typeof itemDict.functionCall?.arguments === 'string') {
+      itemDict.functionCall.arguments = JSON.parse(itemDict.functionCall.arguments);
+    } else if (
+      item.type === 'function_call_output' &&
+      typeof itemDict.functionCallOutput?.output === 'string'
+    ) {
+      itemDict.functionCallOutput.output = JSON.parse(itemDict.functionCallOutput.output);
+    }
+  } catch {
+    // ignore parsing errors
+  }
+
+  return itemDict;
+}
+
+/**
+ * Convert timestamp to RFC3339 format matching Python's _to_rfc3339.
+ * @internal
+ */
+function toRFC3339(value: number | Date): string {
+  const dt = value instanceof Date ? value : new Date(value * 1000);
+  // Truncate to milliseconds
+  const ms = Math.floor(dt.getMilliseconds() / 1000) * 1000;
+  const truncated = new Date(dt);
+  truncated.setMilliseconds(ms);
+  return truncated.toISOString();
+}
+
+/**
+ * Upload session report to LiveKit Cloud observability.
+ * Matches Python's _upload_session_report implementation.
+ *
+ * @param options - Configuration with agentName, cloudHostname, and report
+ * @internal
+ */
+export async function uploadSessionReport(options: {
+  agentName: string;
+  cloudHostname: string;
+  report: SessionReport;
+}): Promise<void> {
+  const { agentName, cloudHostname, report } = options;
+
+  // Get OTEL logger for chat_history
+  const chatLogger = logs.getLoggerProvider().getLogger('chat_history');
+
+  // Helper to emit logs
+  const emitLog = (
+    body: string,
+    timestamp: number,
+    attributes: Record<string, any>,
+    severityNumber = 0, // UNSPECIFIED
+    severityText = 'unspecified',
+  ) => {
+    // Add room/job metadata to attributes
+    const fullAttributes = {
+      ...attributes,
+      room_id: report.roomId,
+      job_id: report.jobId,
+      room: report.room,
+    };
+
+    chatLogger.emit({
+      body,
+      timestamp: timestamp * 1000000, // Convert to nanoseconds
+      attributes: fullAttributes,
+      severityNumber,
+      severityText,
+      context: otelContext.active(),
+    });
+  };
+
+  // Log session report
+  emitLog('session report', Math.floor((report.timestamp || Date.now()) * 1000), {
+    'session.options': report.options,
+    'session.report_timestamp': report.timestamp,
+    agent_name: agentName,
+  });
+
+  // Log each chat item
+  for (const item of report.chatHistory.items) {
+    const itemLog = chatItemToProto(item);
+    let severityNumber = SeverityNumber.UNSPECIFIED;
+    let severityText = 'unspecified';
+
+    if (item.type === 'function_call_output' && item.isError) {
+      severityNumber = SeverityNumber.ERROR;
+      severityText = 'error';
+    }
+
+    emitLog(
+      'chat item',
+      Math.floor(item.createdAt * 1000),
+      { 'chat.item': itemLog },
+      severityNumber,
+      severityText,
+    );
+  }
+
+  // Create JWT token for upload
+  const apiKey = process.env.LIVEKIT_API_KEY;
+  const apiSecret = process.env.LIVEKIT_API_SECRET;
+
+  if (!apiKey || !apiSecret) {
+    throw new Error('LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set for session upload');
+  }
+
+  const token = new AccessToken(apiKey, apiSecret, {
+    identity: 'livekit-agents-telemetry',
+    ttl: '6h',
+  });
+  token.addObservabilityGrant({ write: true });
+  const jwt = await token.toJwt();
+
+  const formData = new FormData();
+
+  // Add header (protobuf MetricsRecordingHeader)
+  const headerMsg = new MetricsRecordingHeader({
+    roomId: report.roomId,
+    duration: BigInt(0), // TODO: Calculate actual duration from report
+    startTime: {
+      seconds: BigInt(Math.floor(report.timestamp / 1000)),
+      nanos: Math.floor((report.timestamp % 1000) * 1e6),
+    },
+  });
+
+  const headerBytes = Buffer.from(headerMsg.toBinary());
+  formData.append('header', headerBytes, {
+    filename: 'header.binpb',
+    contentType: 'application/protobuf',
+    knownLength: headerBytes.length,
+    header: {
+      'Content-Type': 'application/protobuf',
+      'Content-Length': headerBytes.length.toString(),
+    },
+  });
+
+  // Add chat_history JSON
+  const chatHistoryJson = JSON.stringify(report.chatHistory.toJSON({ excludeTimestamp: false }));
+  const chatHistoryBuffer = Buffer.from(chatHistoryJson, 'utf-8');
+  formData.append('chat_history', chatHistoryBuffer, {
+    filename: 'chat_history.json',
+    contentType: 'application/json',
+    knownLength: chatHistoryBuffer.length,
+    header: {
+      'Content-Type': 'application/json',
+      'Content-Length': chatHistoryBuffer.length.toString(),
+    },
+  });
+
+  // TODO(brian): Add audio recording file when recorder IO is implemented
+
+  // Upload to LiveKit Cloud using form-data's submit method
+  // This properly streams the multipart form with all headers including Content-Length
+  return new Promise<void>((resolve, reject) => {
+    formData.submit(
+      {
+        protocol: 'https:',
+        host: cloudHostname,
+        path: '/observability/recordings/v0',
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+        },
+      },
+      (err, res) => {
+        if (err) {
+          reject(new Error(`Failed to upload session report: ${err.message}`));
+          return;
+        }
+
+        if (res.statusCode && res.statusCode >= 400) {
+          reject(
+            new Error(`Failed to upload session report: ${res.statusCode} ${res.statusMessage}`),
+          );
+          return;
+        }
+
+        res.resume(); // Drain the response
+        res.on('end', () => resolve());
+      },
+    );
+  });
 }
