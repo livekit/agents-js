@@ -16,7 +16,13 @@ import {
   type TTSModelString,
 } from '../inference/index.js';
 import { getJobContext } from '../job.js';
-import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
+import {
+  AgentHandoffItem,
+  ChatContext,
+  ChatMessage,
+  FunctionCall,
+  FunctionCallOutput,
+} from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
@@ -143,6 +149,9 @@ export class AgentSession<
 
   /** @internal */
   _enableRecording = false;
+
+  /** @internal - Timestamp when the session started (milliseconds) */
+  _startedAt?: number;
 
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
@@ -301,6 +310,7 @@ export class AgentSession<
     );
 
     this.started = true;
+    this._startedAt = Date.now();
     this._updateAgentState('listening');
   }
 
@@ -522,6 +532,11 @@ export class AgentSession<
   _conversationItemAdded(item: ChatMessage): void {
     this._chatCtx.insert(item);
     this.emit(AgentSessionEventTypes.ConversationItemAdded, createConversationItemAddedEvent(item));
+  }
+
+  /** @internal */
+  _toolItemsAdded(items: (FunctionCall | FunctionCallOutput)[]): void {
+    this._chatCtx.insert(items);
   }
 
   /** @internal */

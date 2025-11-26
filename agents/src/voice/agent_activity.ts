@@ -12,6 +12,7 @@ import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
 import {
   type ChatItem,
   type FunctionCall,
+  type FunctionCallOutput,
   type GenerationCreatedEvent,
   type InputSpeechStartedEvent,
   type InputSpeechStoppedEvent,
@@ -1439,6 +1440,8 @@ export class AgentActivity implements RecognitionHooks {
         msg.createdAt = replyStartedAt;
       }
       this.agent._chatCtx.insert(toolsMessages);
+      // Also add to session history (matches Python agent_session.py _tool_items_added)
+      this.agentSession._toolItemsAdded(toolsMessages as (FunctionCall | FunctionCallOutput)[]);
     }
 
     if (speechHandle.interrupted) {
@@ -1634,6 +1637,7 @@ export class AgentActivity implements RecognitionHooks {
         msg.createdAt = replyStartedAt;
       }
       this.agent._chatCtx.insert(toolMessages);
+      this.agentSession._toolItemsAdded(toolMessages as (FunctionCall | FunctionCallOutput)[]);
     }
   };
 
@@ -1879,6 +1883,8 @@ export class AgentActivity implements RecognitionHooks {
 
     const onToolExecutionStarted = (f: FunctionCall) => {
       speechHandle._itemAdded([f]);
+      this.agent._chatCtx.items.push(f);
+      this.agentSession._toolItemsAdded([f]);
     };
 
     const onToolExecutionCompleted = (out: ToolExecutionOutput) => {
@@ -2072,6 +2078,11 @@ export class AgentActivity implements RecognitionHooks {
       }
       const chatCtx = this.realtimeSession.chatCtx.copy();
       chatCtx.items.push(...functionToolsExecutedEvent.functionCallOutputs);
+
+      this.agentSession._toolItemsAdded(
+        functionToolsExecutedEvent.functionCallOutputs as FunctionCallOutput[],
+      );
+
       try {
         await this.realtimeSession.updateChatCtx(chatCtx);
       } catch (error) {

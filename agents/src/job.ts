@@ -260,6 +260,7 @@ export class JobContext {
       events: targetSession._recordedEvents,
       enableUserDataTraining: true,
       chatHistory: targetSession.history.copy(),
+      startedAt: targetSession._startedAt,
     });
   }
 
