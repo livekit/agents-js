@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
+import type { Span } from '@opentelemetry/api';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
 import {
   type ChatContext,
@@ -21,6 +22,7 @@ import {
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
+import { traceTypes, tracer } from '../telemetry/index.js';
 import { Future, Task, shortuuid, toError } from '../utils.js';
 import { type Agent, type ModelSettings, asyncLocalStorage, isStopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
@@ -377,7 +379,6 @@ export function updateInstructions(options: {
   }
 }
 
-// TODO(brian): PR3 - Add @tracer.startActiveSpan('llm_node') decorator/wrapper
 export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
@@ -392,7 +393,13 @@ export function performLLMInference(
   const toolCallWriter = toolCallStream.writable.getWriter();
   const data = new _LLMGenerationData(textStream.readable, toolCallStream.readable);
 
-  const inferenceTask = async (signal: AbortSignal) => {
+  const _performLLMInferenceImpl = async (signal: AbortSignal, span: Span) => {
+    span.setAttribute(
+      traceTypes.ATTR_CHAT_CTX,
+      JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
+    );
+    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(Object.keys(toolCtx)));
+
     let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk> | null = null;
     let llmStream: ReadableStream<string | ChatChunk> | null = null;
 
@@ -448,6 +455,8 @@ export function performLLMInference(
         // No need to check if chunk is of type other than ChatChunk or string like in
         // Python since chunk is defined in the type ChatChunk | string in TypeScript
       }
+
+      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         // Abort signal was triggered, handle gracefully
@@ -462,13 +471,17 @@ export function performLLMInference(
     }
   };
 
+  const inferenceTask = async (signal: AbortSignal) =>
+    tracer.startActiveSpan(async (span) => _performLLMInferenceImpl(signal, span), {
+      name: 'llm_node',
+    });
+
   return [
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performLLMInference'),
     data,
   ];
 }
 
-// TODO(brian): PR3 - Add @tracer.startActiveSpan('tts_node') decorator/wrapper
 export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string>,
@@ -479,7 +492,7 @@ export function performTTSInference(
   const outputWriter = audioStream.writable.getWriter();
   const audioOutputStream = audioStream.readable;
 
-  const inferenceTask = async (signal: AbortSignal) => {
+  const _performTTSInferenceImpl = async (signal: AbortSignal) => {
     let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
 
@@ -513,6 +526,9 @@ export function performTTSInference(
       await outputWriter.close();
     }
   };
+
+  const inferenceTask = async (signal: AbortSignal) =>
+    tracer.startActiveSpan(async () => _performTTSInferenceImpl(signal), { name: 'tts_node' });
 
   return [
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performTTSInference'),
@@ -652,7 +668,7 @@ export function performAudioForwarding(
   ];
 }
 
-// TODO(brian): PR3 - Add @tracer.startActiveSpan('function_tool') wrapper for each tool execution
+// function_tool span is already implemented in tracableToolExecution below (line ~796)
 export function performToolExecutions({
   session,
   speechHandle,
@@ -788,8 +804,9 @@ export function performToolExecutions({
         });
       });
 
-      const tracableToolExecution = async (toolExecTask: Promise<unknown>) => {
-        // TODO(brian): add tracing
+      const _tracableToolExecutionImpl = async (toolExecTask: Promise<unknown>, span: Span) => {
+        span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
+        span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
 
         // await for task to complete, if task is aborted, set exception
         let toolOutput: ToolExecutionOutput | undefined;
@@ -800,6 +817,17 @@ export function performToolExecutions({
             exception: isAborted ? new Error('tool call was aborted') : undefined,
             output: isAborted ? undefined : result,
           });
+
+          if (toolOutput.toolCallOutput) {
+            span.setAttribute(
+              traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
+              toolOutput.toolCallOutput.output,
+            );
+            span.setAttribute(
+              traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR,
+              toolOutput.toolCallOutput.isError,
+            );
+          }
         } catch (rawError) {
           logger.error(
             {
@@ -813,11 +841,24 @@ export function performToolExecutions({
             toolCall,
             exception: toError(rawError),
           });
+
+          if (toolOutput.toolCallOutput) {
+            span.setAttribute(
+              traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
+              toolOutput.toolCallOutput.output,
+            );
+            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, true);
+          }
         } finally {
           if (!toolOutput) throw new Error('toolOutput is undefined');
           toolCompleted(toolOutput);
         }
       };
+
+      const tracableToolExecution = (toolExecTask: Promise<unknown>) =>
+        tracer.startActiveSpan(async (span) => _tracableToolExecutionImpl(toolExecTask, span), {
+          name: 'function_tool',
+        });
 
       // wait, not cancelling all tool calling tasks
       tasks.push(tracableToolExecution(toolExecution));

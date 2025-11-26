@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import type { Span } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
+import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { AsyncIterableQueue, delay, mergeFrames, startSoon, toError } from '../utils.js';
 
@@ -134,6 +136,7 @@ export abstract class SynthesizeStream
   #monitorMetricsTask?: Promise<void>;
   private _connOptions: APIConnectOptions;
   protected abortController = new AbortController();
+  #ttsRequestSpan?: Span;
 
   private deferredInputStream: DeferredReadableStream<
     string | typeof SynthesizeStream.FLUSH_SENTINEL
@@ -160,12 +163,27 @@ export abstract class SynthesizeStream
     startSoon(() => this.mainTask().then(() => this.queue.close()));
   }
 
-  private async mainTask() {
-    // TODO(brian): PR3 - Add span wrapping: tracer.startActiveSpan('tts_request', ..., { endOnExit: false })
+  private _mainTaskImpl = async (span: Span) => {
+    this.#ttsRequestSpan = span;
+    span.setAttributes({
+      [traceTypes.ATTR_TTS_STREAMING]: true,
+      [traceTypes.ATTR_TTS_LABEL]: this.#tts.label,
+    });
+
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
-        // TODO(brian): PR3 - Add span for retry attempts: tracer.startActiveSpan('tts_request_run', ...)
-        return await this.run();
+        return await tracer.startActiveSpan(
+          async (attemptSpan) => {
+            attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
+            try {
+              return await this.run();
+            } catch (error) {
+              recordException(attemptSpan, toError(error));
+              throw error;
+            }
+          },
+          { name: 'tts_request_run' },
+        );
       } catch (error) {
         if (error instanceof APIError) {
           const retryInterval = this._connOptions._intervalForRetry(i);
@@ -197,7 +215,13 @@ export abstract class SynthesizeStream
         }
       }
     }
-  }
+  };
+
+  private mainTask = async () =>
+    tracer.startActiveSpan(async (span) => this._mainTaskImpl(span), {
+      name: 'tts_request',
+      endOnExit: false,
+    });
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
     this.#tts.emit('error', {
@@ -265,6 +289,9 @@ export abstract class SynthesizeStream
           label: this.#tts.label,
           streamed: false,
         };
+        if (this.#ttsRequestSpan) {
+          this.#ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
+        }
         this.#tts.emit('metrics_collected', metrics);
       }
     };
@@ -288,6 +315,11 @@ export abstract class SynthesizeStream
 
     if (requestId) {
       emit();
+    }
+
+    if (this.#ttsRequestSpan) {
+      this.#ttsRequestSpan.end();
+      this.#ttsRequestSpan = undefined;
     }
   }
 
@@ -399,10 +431,9 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   }
 
   private async mainTask() {
-    // TODO(brian): PR3 - Add span wrapping: tracer.startActiveSpan('tts_request', ..., { endOnExit: false })
+    // TODO(brian): PR4 - Add ChunkedStream TTS instrumentation (Ref: Python tts.py line 241, streaming variant complete)
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
-        // TODO(brian): PR3 - Add span for retry attempts: tracer.startActiveSpan('tts_request_run', ...)
         return await this.run();
       } catch (error) {
         if (error instanceof APIError) {

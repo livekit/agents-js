@@ -258,7 +258,6 @@ export async function setupCloudTracer(options: {
     setTracerProvider(tracerProvider);
 
     // TODO(brian): PR4 - Add logger provider setup here for structured logging
-    // Similar to Python's setup: LoggerProvider, OTLPLogExporter, BatchLogRecordProcessor
   } catch (error) {
     console.error('Failed to setup cloud tracer:', error);
     throw error;

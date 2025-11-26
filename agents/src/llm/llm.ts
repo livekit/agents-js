@@ -2,10 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import type { Span } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
+import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
@@ -104,6 +106,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   #llm: LLM;
   #chatCtx: ChatContext;
   #toolCtx?: ToolContext;
+  #llmRequestSpan?: Span;
 
   constructor(
     llm: LLM,
@@ -135,12 +138,24 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     startSoon(() => this.mainTask().then(() => this.queue.close()));
   }
 
-  private async mainTask() {
-    // TODO(brian): PR3 - Add span wrapping: tracer.startActiveSpan('llm_request', ..., { endOnExit: false })
+  private _mainTaskImpl = async (span: Span) => {
+    this.#llmRequestSpan = span;
+    span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.#llm.model);
+
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
-        // TODO(brian): PR3 - Add span for retry attempts: tracer.startActiveSpan('llm_request_run', ...)
-        return await this.run();
+        return await tracer.startActiveSpan(
+          async (attemptSpan) => {
+            attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
+            try {
+              return await this.run();
+            } catch (error) {
+              recordException(attemptSpan, toError(error));
+              throw error;
+            }
+          },
+          { name: 'llm_request_run' },
+        );
       } catch (error) {
         if (error instanceof APIError) {
           const retryInterval = this._connOptions._intervalForRetry(i);
@@ -171,7 +186,13 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         }
       }
     }
-  }
+  };
+
+  private mainTask = async () =>
+    tracer.startActiveSpan(async (span) => this._mainTaskImpl(span), {
+      name: 'llm_request',
+      endOnExit: false,
+    });
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
     this.#llm.emit('error', {
@@ -188,6 +209,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     let ttft: bigint = BigInt(-1);
     let requestId = '';
     let usage: CompletionUsage | undefined;
+    let completionStartTime: string | undefined;
 
     for await (const ev of this.queue) {
       if (this.abortController.signal.aborted) {
@@ -197,6 +219,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       requestId = ev.id;
       if (ttft === BigInt(-1)) {
         ttft = process.hrtime.bigint() - startTime;
+        completionStartTime = new Date().toISOString();
       }
       if (ev.usage) {
         usage = ev.usage;
@@ -225,6 +248,26 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         return (usage?.completionTokens || 0) / (durationMs / 1000);
       })(),
     };
+
+    if (this.#llmRequestSpan) {
+      this.#llmRequestSpan.setAttribute(traceTypes.ATTR_LLM_METRICS, JSON.stringify(metrics));
+
+      this.#llmRequestSpan.setAttributes({
+        [traceTypes.ATTR_GEN_AI_USAGE_INPUT_TOKENS]: metrics.promptTokens,
+        [traceTypes.ATTR_GEN_AI_USAGE_OUTPUT_TOKENS]: metrics.completionTokens,
+      });
+
+      if (completionStartTime) {
+        this.#llmRequestSpan.setAttribute(
+          traceTypes.ATTR_LANGFUSE_COMPLETION_START_TIME,
+          completionStartTime,
+        );
+      }
+
+      // End the span now that metrics are collected
+      this.#llmRequestSpan.end();
+    }
+
     this.#llm.emit('metrics_collected', metrics);
   }
 
