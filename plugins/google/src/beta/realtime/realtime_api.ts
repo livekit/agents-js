@@ -1176,14 +1176,20 @@ export class RealtimeSession extends llm.RealtimeSession {
     };
 
     // Close audio stream if audio output is not supported by the model
-    if (!this.options.responseModalities.includes(Modality.AUDIO)) {
+    if (!this._realtimeModel.capabilities.audioOutput) {
       this.currentGeneration.audioChannel.close();
     }
+
+    // Determine modalities based on the model's audio_output capability
+    const modalities: ('text' | 'audio')[] = this._realtimeModel.capabilities.audioOutput
+      ? ['audio', 'text']
+      : ['text'];
 
     this.currentGeneration.messageChannel.write({
       messageId: responseId,
       textStream: this.currentGeneration.textChannel.stream(),
       audioStream: this.currentGeneration.audioChannel.stream(),
+      modalities: Promise.resolve(modalities),
     });
 
     const generationEvent: llm.GenerationCreatedEvent = {
