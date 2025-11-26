@@ -11,13 +11,18 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
+import { logs } from '@opentelemetry/api-logs';
+import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
 import { Resource } from '@opentelemetry/resources';
+import { BatchLogRecordProcessor, LoggerProvider } from '@opentelemetry/sdk-logs';
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import { AccessToken } from 'livekit-server-sdk';
+import { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
+import { enablePinoOTELInstrumentation } from './pino_bridge.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -94,19 +99,15 @@ class DynamicTracer {
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
     const opts: SpanOptions = { attributes: options.attributes };
 
-    return new Promise((resolve, reject) => {
-      this.tracer.startActiveSpan(options.name, opts, ctx, async (span) => {
-        try {
-          const result = await fn(span);
-          resolve(result);
-        } catch (error) {
-          reject(error);
-        } finally {
-          if (endOnExit) {
-            span.end();
-          }
+    // Directly return the tracer's startActiveSpan result - it handles async correctly
+    return await this.tracer.startActiveSpan(options.name, opts, ctx, async (span) => {
+      try {
+        return await fn(span);
+      } finally {
+        if (endOnExit) {
+          span.end();
         }
-      });
+      }
     });
   }
 
@@ -161,10 +162,6 @@ class MetadataSpanProcessor implements SpanProcessor {
     return Promise.resolve();
   }
 }
-
-// TODO(brian): PR4 - Add MetadataLogProcessor for structured logging
-
-// TODO(brian): PR4 - Add ExtraDetailsProcessor for structured logging
 
 /**
  * Set the tracer provider for the livekit-agents framework.
@@ -257,7 +254,21 @@ export async function setupCloudTracer(options: {
     // Metadata processor is already configured in the constructor above
     setTracerProvider(tracerProvider);
 
-    // TODO(brian): PR4 - Add logger provider setup here for structured logging
+    const loggerProvider = new LoggerProvider({ resource });
+
+    logs.setGlobalLoggerProvider(loggerProvider);
+
+    const logExporter = new OTLPLogExporter({
+      url: `https://${cloudHostname}/observability/logs/otlp/v0`,
+      headers,
+      compression: CompressionAlgorithm.GZIP,
+    });
+
+    loggerProvider.addLogRecordProcessor(new MetadataLogProcessor(metadata));
+    loggerProvider.addLogRecordProcessor(new ExtraDetailsProcessor());
+    loggerProvider.addLogRecordProcessor(new BatchLogRecordProcessor(logExporter));
+
+    enablePinoOTELInstrumentation();
   } catch (error) {
     console.error('Failed to setup cloud tracer:', error);
     throw error;

@@ -4,6 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
+import { context as otelContext } from '@opentelemetry/api';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
 import {
   type ChatContext,
@@ -471,9 +472,13 @@ export function performLLMInference(
     }
   };
 
+  // Capture the current context (agent_turn) to ensure llm_node is properly parented
+  const currentContext = otelContext.active();
+
   const inferenceTask = async (signal: AbortSignal) =>
     tracer.startActiveSpan(async (span) => _performLLMInferenceImpl(signal, span), {
       name: 'llm_node',
+      context: currentContext,
     });
 
   return [
@@ -527,8 +532,14 @@ export function performTTSInference(
     }
   };
 
+  // Capture the current context (agent_turn) to ensure tts_node is properly parented
+  const currentContext = otelContext.active();
+
   const inferenceTask = async (signal: AbortSignal) =>
-    tracer.startActiveSpan(async () => _performTTSInferenceImpl(signal), { name: 'tts_node' });
+    tracer.startActiveSpan(async () => _performTTSInferenceImpl(signal), {
+      name: 'tts_node',
+      context: currentContext,
+    });
 
   return [
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performTTSInference'),

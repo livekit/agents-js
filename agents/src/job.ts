@@ -14,6 +14,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Logger } from 'pino';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
+import { setupCloudTracer } from './telemetry/index.js';
+import { isCloud } from './utils.js';
 import type { AgentSession } from './voice/agent_session.js';
 import { type SessionReport, createSessionReport } from './voice/report.js';
 
@@ -81,8 +83,6 @@ export class FunctionExistsError extends Error {
 }
 
 /** The job and environment context as seen by the agent, accessible by the entrypoint function. */
-// TODO(brian): PR4 - Add 'job_entrypoint' span (Ref: Python job.py line 739)
-// TODO(brian): PR5 - Add uploadSessionReport() call in cleanup/session end
 export class JobContext {
   #proc: JobProcess;
   #info: RunningJobInfo;
@@ -140,6 +140,10 @@ export class JobContext {
   /** @returns The room the agent was called into */
   get room(): Room {
     return this.#room;
+  }
+
+  get info(): RunningJobInfo {
+    return this.#info;
   }
 
   /** @returns The agent's participant if connected to the room, otherwise `undefined` */
@@ -315,6 +319,20 @@ export class JobContext {
     }
 
     this.#participantEntrypoints.push(callback);
+  }
+
+  async initRecording() {
+    const url = new URL(this.#info.url);
+    if (!isCloud(url)) {
+      return;
+    }
+
+    this.#logger.debug({ hostname: url.hostname }, 'Configuring session recording (cloud tracer)');
+    await setupCloudTracer({
+      roomId: this.job.room!.sid,
+      jobId: this.job.id,
+      cloudHostname: url.hostname,
+    });
   }
 }
 
