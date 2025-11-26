@@ -32,6 +32,7 @@ type VoiceSettings = {
   stability: number; // 0..1
   similarity_boost: number; // 0..1
   style?: number; // 0..1
+  speed?: number; // 0.8..1.2
   use_speaker_boost: boolean;
 };
 
