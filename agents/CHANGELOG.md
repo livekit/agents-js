@@ -1,5 +1,35 @@
 # @livekit/agents
 
+## 1.0.22
+
+### Patch Changes
+
+- Fix race condition where STT/TTS processing could throw "Queue is closed" error when a participant disconnects. These events are now logged as warnings instead of errors. - [#861](https://github.com/livekit/agents-js/pull/861) ([@Devesh36](https://github.com/Devesh36))
+
+- Fix TTS with proper error handling logics from expected shutdown / interruptions - [#859](https://github.com/livekit/agents-js/pull/859) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.21
+
+### Patch Changes
+
+- create a new error object on timeout to have a correct stacktrace - [#853](https://github.com/livekit/agents-js/pull/853) ([@simllll](https://github.com/simllll))
+
+- Fix memory leak of inference gateway STT provider - [#858](https://github.com/livekit/agents-js/pull/858) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.20
+
+### Patch Changes
+
+- fix resource cleanup - [#849](https://github.com/livekit/agents-js/pull/849) ([@simllll](https://github.com/simllll))
+
+- fix await supportslangauge - [#850](https://github.com/livekit/agents-js/pull/850) ([@simllll](https://github.com/simllll))
+
+## 1.0.19
+
+### Patch Changes
+
+- Added SessionReport and onSessionEnd callback - [#811](https://github.com/livekit/agents-js/pull/811) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.18
 
 ### Patch Changes

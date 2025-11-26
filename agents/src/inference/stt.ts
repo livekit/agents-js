@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type AudioFrame } from '@livekit/rtc-node';
 import type { WebSocket } from 'ws';
-import { type RawData } from 'ws';
 import { APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { log } from '../log.js';
+import { createStreamChannel } from '../stream/stream_channel.js';
 import {
   STT as BaseSTT,
   SpeechStream as BaseSpeechStream,
@@ -198,6 +198,39 @@ export class STT<TModel extends STTModels> extends BaseSTT {
 
     return stream;
   }
+
+  async connectWs(timeout: number): Promise<WebSocket> {
+    const params = {
+      settings: {
+        sample_rate: String(this.opts.sampleRate),
+        encoding: this.opts.encoding,
+        extra: this.opts.modelOptions,
+      },
+    } as Record<string, unknown>;
+
+    if (this.opts.model && this.opts.model !== 'auto') {
+      params.model = this.opts.model;
+    }
+
+    if (this.opts.language) {
+      (params.settings as Record<string, unknown>).language = this.opts.language;
+    }
+
+    let baseURL = this.opts.baseURL;
+    if (baseURL.startsWith('http://') || baseURL.startsWith('https://')) {
+      baseURL = baseURL.replace('http', 'ws');
+    }
+
+    const token = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
+    const url = `${baseURL}/stt`;
+    const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
+
+    const socket = await connectWs(url, headers, timeout);
+    const msg = { ...params, type: 'session.create' };
+    socket.send(JSON.stringify(msg));
+
+    return socket;
+  }
 }
 
 export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
@@ -206,6 +239,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private speaking = false;
   private speechDuration = 0;
   private reconnectEvent = new Event();
+  private stt: STT<TModel>;
+  private connOptions: APIConnectOptions;
 
   #logger = log();
 
@@ -216,6 +251,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   ) {
     super(sttImpl, opts.sampleRate, connOptions);
     this.opts = opts;
+    this.stt = sttImpl;
+    this.connOptions = connOptions;
   }
 
   get label(): string {
@@ -224,222 +261,265 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
   updateOptions(opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language'>>): void {
     this.opts = { ...this.opts, ...opts };
+    this.reconnectEvent.set();
   }
 
   protected async run(): Promise<void> {
-    let ws: WebSocket | null = null;
-    let closingWs = false;
-
-    this.reconnectEvent.set();
-
-    const connect = async () => {
-      const params = {
-        settings: {
-          sample_rate: String(this.opts.sampleRate),
-          encoding: this.opts.encoding,
-          extra: this.opts.modelOptions,
-        },
-      } as Record<string, unknown>;
-
-      if (this.opts.model && this.opts.model !== 'auto') {
-        params.model = this.opts.model;
-      }
-
-      if (this.opts.language) {
-        (params.settings as Record<string, unknown>).language = this.opts.language;
-      }
-
-      let baseURL = this.opts.baseURL;
-      if (baseURL.startsWith('http://') || baseURL.startsWith('https://')) {
-        baseURL = baseURL.replace('http', 'ws');
-      }
-
-      const token = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
-      const url = `${baseURL}/stt`;
-      const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
-
-      const socket = await connectWs(url, headers, 10000);
-      const msg = { ...params, type: 'session.create' };
-      socket.send(JSON.stringify(msg));
-
-      return socket;
-    };
-
-    const send = async (socket: WebSocket, signal: AbortSignal) => {
-      const audioStream = new AudioByteStream(
-        this.opts.sampleRate,
-        1,
-        Math.floor(this.opts.sampleRate / 20), // 50ms
-      );
-
-      for await (const ev of this.input) {
-        if (signal.aborted) break;
-        let frames: AudioFrame[];
-
-        if (ev === SpeechStream.FLUSH_SENTINEL) {
-          frames = audioStream.flush();
-        } else {
-          const frame = ev as AudioFrame;
-          frames = audioStream.write(new Int16Array(frame.data).buffer);
-        }
-
-        for (const frame of frames) {
-          this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
-          const base64 = Buffer.from(frame.data.buffer).toString('base64');
-          const msg = { type: 'input_audio', audio: base64 };
-          socket.send(JSON.stringify(msg));
-        }
-      }
-
-      closingWs = true;
-      socket.send(JSON.stringify({ type: 'session.finalize' }));
-    };
-
-    const recv = async (socket: WebSocket, signal: AbortSignal) => {
-      while (!this.closed && !signal.aborted) {
-        const dataPromise = new Promise<string>((resolve, reject) => {
-          const messageHandler = (d: RawData) => {
-            resolve(d.toString());
-            removeListeners();
-          };
-          const errorHandler = (e: Error) => {
-            reject(e);
-            removeListeners();
-          };
-          const closeHandler = (code: number) => {
-            if (closingWs) {
-              resolve('');
-            } else {
-              reject(
-                new APIStatusError({
-                  message: 'LiveKit STT connection closed unexpectedly',
-                  options: { statusCode: code },
-                }),
-              );
-            }
-            removeListeners();
-          };
-          const removeListeners = () => {
-            socket.removeListener('message', messageHandler);
-            socket.removeListener('error', errorHandler);
-            socket.removeListener('close', closeHandler);
-          };
-          socket.once('message', messageHandler);
-          socket.once('error', errorHandler);
-          socket.once('close', closeHandler);
-        });
-
-        const data = await Promise.race([dataPromise, waitForAbort(signal)]);
-
-        if (!data || signal.aborted) return;
-
-        const json = JSON.parse(data);
-        const type = json.type as string | undefined;
-
-        switch (type) {
-          case 'session.created':
-          case 'session.finalized':
-          case 'session.closed':
-            break;
-          case 'interim_transcript':
-            this.processTranscript(json, false);
-            break;
-          case 'final_transcript':
-            this.processTranscript(json, true);
-            break;
-          case 'error':
-            this.#logger.error('received error from LiveKit STT: %o', json);
-            throw new APIError(`LiveKit STT returned error: ${JSON.stringify(json)}`);
-          default:
-            this.#logger.warn('received unexpected message from LiveKit STT: %o', json);
-            break;
-        }
-      }
-    };
-
     while (true) {
+      // Create fresh resources for each connection attempt
+      let ws: WebSocket | null = null;
+      let closing = false;
+      let finalReceived = false;
+
+      type SttServerEvent = Record<string, any>;
+      const eventChannel = createStreamChannel<SttServerEvent>();
+
+      const resourceCleanup = () => {
+        if (closing) return;
+        closing = true;
+        eventChannel.close();
+        ws?.removeAllListeners();
+        ws?.close();
+      };
+
+      const createWsListener = async (ws: WebSocket, signal: AbortSignal) => {
+        return new Promise<void>((resolve, reject) => {
+          const onAbort = () => {
+            resourceCleanup();
+            reject(new Error('WebSocket connection aborted'));
+          };
+
+          signal.addEventListener('abort', onAbort, { once: true });
+
+          ws.on('message', (data) => {
+            const json = JSON.parse(data.toString()) as SttServerEvent;
+            eventChannel.write(json);
+          });
+
+          ws.on('error', (e) => {
+            this.#logger.error({ error: e }, 'WebSocket error');
+            resourceCleanup();
+            reject(e);
+          });
+
+          ws.on('close', (code: number) => {
+            resourceCleanup();
+
+            if (!closing) return this.#logger.error('WebSocket closed unexpectedly');
+            if (finalReceived) return resolve();
+
+            reject(
+              new APIStatusError({
+                message: 'LiveKit STT connection closed unexpectedly',
+                options: { statusCode: code },
+              }),
+            );
+          });
+        });
+      };
+
+      const send = async (socket: WebSocket, signal: AbortSignal) => {
+        const audioStream = new AudioByteStream(
+          this.opts.sampleRate,
+          1,
+          Math.floor(this.opts.sampleRate / 20), // 50ms
+        );
+
+        // Create abort promise once to avoid memory leak
+        const abortPromise = new Promise<never>((_, reject) => {
+          if (signal.aborted) {
+            return reject(new Error('Send aborted'));
+          }
+          const onAbort = () => reject(new Error('Send aborted'));
+          signal.addEventListener('abort', onAbort, { once: true });
+        });
+
+        // Manual iteration to support cancellation
+        const iterator = this.input[Symbol.asyncIterator]();
+        try {
+          while (true) {
+            const result = await Promise.race([iterator.next(), abortPromise]);
+
+            if (result.done) break;
+            const ev = result.value;
+
+            let frames: AudioFrame[];
+            if (ev === SpeechStream.FLUSH_SENTINEL) {
+              frames = audioStream.flush();
+            } else {
+              const frame = ev as AudioFrame;
+              frames = audioStream.write(new Int16Array(frame.data).buffer);
+            }
+
+            for (const frame of frames) {
+              this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
+              const base64 = Buffer.from(frame.data.buffer).toString('base64');
+              const msg = { type: 'input_audio', audio: base64 };
+              socket.send(JSON.stringify(msg));
+            }
+          }
+
+          closing = true;
+          socket.send(JSON.stringify({ type: 'session.finalize' }));
+        } catch (e) {
+          if ((e as Error).message === 'Send aborted') {
+            // Expected abort, don't log
+            return;
+          }
+          throw e;
+        }
+      };
+
+      const recv = async (signal: AbortSignal) => {
+        const serverEventStream = eventChannel.stream();
+        const reader = serverEventStream.getReader();
+
+        try {
+          while (!this.closed && !signal.aborted) {
+            const result = await reader.read();
+            if (signal.aborted) return;
+            if (result.done) return;
+
+            const json = result.value;
+            const type = json.type as string | undefined;
+
+            switch (type) {
+              case 'session.created':
+              case 'session.finalized':
+                break;
+              case 'session.closed':
+                finalReceived = true;
+                resourceCleanup();
+                break;
+              case 'interim_transcript':
+                this.processTranscript(json, false);
+                break;
+              case 'final_transcript':
+                this.processTranscript(json, true);
+                break;
+              case 'error':
+                this.#logger.error({ error: json }, 'Received error from LiveKit STT');
+                resourceCleanup();
+                throw new APIError(`LiveKit STT returned error: ${JSON.stringify(json)}`);
+              default:
+                this.#logger.warn(
+                  { message: json },
+                  'Received unexpected message from LiveKit STT',
+                );
+                break;
+            }
+          }
+        } finally {
+          reader.releaseLock();
+          try {
+            await serverEventStream.cancel();
+          } catch (e) {
+            this.#logger.debug('Error cancelling serverEventStream (may already be cancelled):', e);
+          }
+        }
+      };
+
       try {
-        ws = await connect();
+        ws = await this.stt.connectWs(this.connOptions.timeoutMs);
 
-        const sendTask = Task.from(async ({ signal }) => {
-          await send(ws!, signal);
-        });
-
-        const recvTask = Task.from(async ({ signal }) => {
-          await recv(ws!, signal);
-        });
-
-        const tasks = [sendTask, recvTask];
-        const waitReconnectTask = Task.from(async ({ signal }) => {
-          await Promise.race([this.reconnectEvent.wait(), waitForAbort(signal)]);
-        });
+        // Wrap tasks for proper cancellation support using Task signals
+        const controller = new AbortController();
+        const sendTask = Task.from(({ signal }) => send(ws!, signal), controller);
+        const wsListenerTask = Task.from(({ signal }) => createWsListener(ws!, signal), controller);
+        const recvTask = Task.from(({ signal }) => recv(signal), controller);
+        const waitReconnectTask = Task.from(
+          ({ signal }) => Promise.race([this.reconnectEvent.wait(), waitForAbort(signal)]),
+          controller,
+        );
 
         try {
           await Promise.race([
-            Promise.all(tasks.map((task) => task.result)),
+            Promise.all([sendTask.result, wsListenerTask.result, recvTask.result]),
             waitReconnectTask.result,
           ]);
 
+          // If reconnect didn't trigger, tasks finished - exit loop
           if (!waitReconnectTask.done) break;
+
+          // Reconnect triggered - clear event and continue loop
           this.reconnectEvent.clear();
         } finally {
-          await cancelAndWait([sendTask, recvTask, waitReconnectTask], DEFAULT_CANCEL_TIMEOUT);
+          // Cancel all tasks to ensure cleanup
+          await cancelAndWait(
+            [sendTask, wsListenerTask, recvTask, waitReconnectTask],
+            DEFAULT_CANCEL_TIMEOUT,
+          );
+          resourceCleanup();
         }
       } finally {
-        try {
-          if (ws) ws.close();
-        } catch {}
+        // Ensure cleanup even if connectWs throws
+        resourceCleanup();
       }
     }
   }
 
   private processTranscript(data: Record<string, any>, isFinal: boolean) {
+    // Check if queue is closed to avoid race condition during disconnect
+    if (this.queue.closed) return;
+
     const requestId = data.request_id ?? this.requestId;
     const text = data.transcript ?? '';
     const language = data.language ?? this.opts.language ?? 'en';
 
     if (!text && !isFinal) return;
 
-    // We'll have a more accurate way of detecting when speech started when we have VAD
-    if (!this.speaking) {
-      this.speaking = true;
-      this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
-    }
+    try {
+      // We'll have a more accurate way of detecting when speech started when we have VAD
+      if (!this.speaking) {
+        this.speaking = true;
+        this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
+      }
 
-    const speechData: SpeechData = {
-      language,
-      startTime: data.start ?? 0,
-      endTime: data.duration ?? 0,
-      confidence: data.confidence ?? 1.0,
-      text,
-    };
+      const speechData: SpeechData = {
+        language,
+        startTime: data.start ?? 0,
+        endTime: data.duration ?? 0,
+        confidence: data.confidence ?? 1.0,
+        text,
+      };
 
-    if (isFinal) {
-      if (this.speechDuration > 0) {
+      if (isFinal) {
+        if (this.speechDuration > 0) {
+          this.queue.put({
+            type: SpeechEventType.RECOGNITION_USAGE,
+            requestId,
+            recognitionUsage: { audioDuration: this.speechDuration },
+          });
+          this.speechDuration = 0;
+        }
+
         this.queue.put({
-          type: SpeechEventType.RECOGNITION_USAGE,
+          type: SpeechEventType.FINAL_TRANSCRIPT,
           requestId,
-          recognitionUsage: { audioDuration: this.speechDuration },
+          alternatives: [speechData],
         });
-        this.speechDuration = 0;
-      }
 
-      this.queue.put({
-        type: SpeechEventType.FINAL_TRANSCRIPT,
-        requestId,
-        alternatives: [speechData],
-      });
-
-      if (this.speaking) {
-        this.speaking = false;
-        this.queue.put({ type: SpeechEventType.END_OF_SPEECH });
+        if (this.speaking) {
+          this.speaking = false;
+          this.queue.put({ type: SpeechEventType.END_OF_SPEECH });
+        }
+      } else {
+        this.queue.put({
+          type: SpeechEventType.INTERIM_TRANSCRIPT,
+          requestId,
+          alternatives: [speechData],
+        });
       }
-    } else {
-      this.queue.put({
-        type: SpeechEventType.INTERIM_TRANSCRIPT,
-        requestId,
-        alternatives: [speechData],
-      });
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('Queue is closed')) {
+        // Expected behavior on disconnect, log as warning
+        this.#logger.warn(
+          { err: e },
+          'Queue closed during transcript processing (expected during disconnect)',
+        );
+      } else {
+        this.#logger.error({ err: e }, 'Error putting transcript to queue');
+      }
     }
   }
 }

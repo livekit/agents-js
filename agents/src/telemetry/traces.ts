@@ -473,7 +473,6 @@ export async function uploadSessionReport(options: {
       severityText = 'error';
     }
 
-    console.log('itemProto', JSON.stringify(itemProto, null, 2));
     logRecords.push({
       body: 'chat item',
       timestampMs: itemTimestamp, // Adjusted for monotonic ordering
