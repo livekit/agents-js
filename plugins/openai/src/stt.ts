@@ -80,6 +80,37 @@ export class STT extends stt.STT {
     });
   }
 
+  /**
+   * Create a new instance of OVHcloud AI Endpoints STT.
+   *
+   * @remarks
+   * `apiKey` must be set to your OVHcloud AI Endpoints API key, either using the argument or by setting the
+   * `OVHCLOUD_API_KEY` environment variable.
+   */
+  static withOVHcloud(
+    opts: Partial<{
+      model: string;
+      apiKey?: string;
+      baseURL?: string;
+      client: OpenAI;
+      language: string;
+      detectLanguage: boolean;
+    }> = {},
+  ): STT {
+    opts.apiKey = opts.apiKey || process.env.OVHCLOUD_API_KEY;
+    if (opts.apiKey === undefined) {
+      throw new Error(
+        'OVHcloud AI Endpoints API key is required, whether as an argument or as $OVHCLOUD_API_KEY',
+      );
+    }
+
+    return new STT({
+      model: 'whisper-large-v3-turbo',
+      baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',
+      ...opts,
+    });
+  }
+
   #sanitizeOptions(language?: string): STTOptions {
     if (language) {
       return { ...this.#opts, language };

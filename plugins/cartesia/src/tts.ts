@@ -305,7 +305,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         } catch (err) {
           // skip log error for normal websocket close
           if (err instanceof Error && !err.message.includes('WebSocket closed')) {
-            this.#logger.error({ err }, 'Error in recvTask from Cartesia WebSocket');
+            if (err.message.includes('Queue is closed')) {
+              this.#logger.warn(
+                { err },
+                'Queue closed during transcript processing (expected during disconnect)',
+              );
+            } else {
+              this.#logger.error({ err }, 'Error in recvTask from Cartesia WebSocket');
+            }
           }
           clearTTSChunkTimeout();
           break;

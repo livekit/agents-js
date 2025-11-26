@@ -2187,12 +2187,15 @@ export class AgentActivity implements RecognitionHooks {
       }
       if (this.stt instanceof STT) {
         this.stt.off('metrics_collected', this.onMetricsCollected);
+        await this.stt.close();
       }
       if (this.tts instanceof TTS) {
         this.tts.off('metrics_collected', this.onMetricsCollected);
+        await this.tts.close();
       }
       if (this.vad instanceof VAD) {
         this.vad.off('metrics_collected', this.onMetricsCollected);
+        await this.vad.close();
       }
 
       this.detachAudioInput();

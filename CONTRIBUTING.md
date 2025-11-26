@@ -33,7 +33,7 @@ There are many ways you can contribute code to the project:
 Our continuous integration requires a few additional code quality steps for your pull request to
 be approved:
 
-- Base your work off of the `next` branch instead of `main`. `next` is the most up-to-date branch.
+- Base your work off of the `main` branch which is the most up-to-date branch.
 
 - When creating a new file, make sure to add SPDX headers for [REUSE-3.2](https://reuse.software)
   compliance. If you don't know what that means, just copy the three first lines from any other
