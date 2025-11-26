@@ -83,7 +83,6 @@ export class FunctionExistsError extends Error {
 }
 
 /** The job and environment context as seen by the agent, accessible by the entrypoint function. */
-// TODO(brian): PR5 - Add uploadSessionReport() call in cleanup/session end
 export class JobContext {
   #proc: JobProcess;
   #info: RunningJobInfo;

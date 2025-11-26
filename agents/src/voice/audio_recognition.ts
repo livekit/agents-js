@@ -369,7 +369,7 @@ export class AudioRecognition {
               let endOfTurnProbability = 0.0;
               let unlikelyThreshold: number | undefined;
 
-              if (!turnDetector.supportsLanguage(this.lastLanguage)) {
+              if (!(await turnDetector.supportsLanguage(this.lastLanguage))) {
                 this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
               } else {
                 try {
