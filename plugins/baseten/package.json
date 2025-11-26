@@ -1,0 +1,48 @@
+{
+    "name": "@livekit/agents-plugin-baseten",
+    "version": "1.0.0",
+    "description": "Baseten plugin for LiveKit Node Agents",
+    "private": true,
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "type": "module",
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc --watch",
+        "clean": "rm -rf dist",
+        "typecheck": "tsc --noEmit",
+        "lint": "eslint \"src/**/*.ts\"",
+        "lint:fix": "eslint --fix \"src/**/*.ts\"",
+        "test:llm-cli": "tsx test/test-baseten-llm-cli.ts",
+        "test:tts-cli": "tsx test/test-baseten-tts-cli.ts",
+        "test:stt-cli": "tsx test/test-stt.ts"
+    },
+    "keywords": [
+        "livekit",
+        "agents",
+        "baseten",
+        "llm",
+        "stt",
+        "tts",
+        "voice-ai"
+    ],
+    "dependencies": {
+        "@livekit/agents": "^1.0.17",
+        "@livekit/agents-plugin-openai": "^1.0.0",
+        "@livekit/rtc-node": "^0.13.12",
+        "dotenv": "^17.2.3",
+        "node-record-lpcm16": "^1.0.1",
+        "openai": "^4.0.0",
+        "ws": "^8.14.2"
+    },
+    "devDependencies": {
+        "@types/node": "^22.18.11",
+        "@types/ws": "^8.5.8",
+        "tsx": "^4.7.0",
+        "typescript": "^5.9.3"
+    },
+    "peerDependencies": {
+        "@livekit/agents": "^1.0.17",
+        "@livekit/rtc-node": "^0.13.12"
+    }
+}
