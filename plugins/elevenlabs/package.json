@@ -44,7 +44,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "ws": "^8.16.0"
+    "ws": "^8.18.3"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
