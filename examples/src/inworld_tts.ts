@@ -41,7 +41,7 @@ export default defineAgent({
       maxBufferDelayMs: 3000,
     });
 
-    // List available voices (non-blocking)
+    // List available voices
     tts
       .listVoices()
       .then((voices: inworld.Voice[]) => {
@@ -79,7 +79,7 @@ export default defineAgent({
       },
     });
 
-    // timestamp handling for inworld TTS
+    // timestamp handling (if enabled)
     session.tts!.on('alignment' as any, (data: any) => {
       if (data.wordAlignment) {
         const { words, starts, ends } = data.wordAlignment;

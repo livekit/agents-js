@@ -192,7 +192,6 @@ class WSConnectionPool {
   #attemptConnection(): Promise<WebSocket> {
     return new Promise((resolve, reject) => {
       const wsUrl = new URL('tts/v1/voice:streamBidirectional', this.#url);
-      // Ensure protocol is wss
       if (wsUrl.protocol === 'https:') wsUrl.protocol = 'wss:';
       else if (wsUrl.protocol === 'http:') wsUrl.protocol = 'ws:';
 
@@ -224,7 +223,6 @@ class WSConnectionPool {
           const json = JSON.parse(data.toString()) as InworldMessage;
           const result = json.result;
           if (result) {
-            // Try to find contextId in result or top level
             const contextId = result.contextId || json.contextId;
             if (contextId && this.#listeners.has(contextId)) {
               this.#listeners.get(contextId)!(json);
@@ -288,7 +286,7 @@ export class TTS extends tts.TTS {
   }
 
   /**
-   * List all available voices.
+   * List all available voices in the workspace associated with the API key.
    * @param language - Optional ISO 639-1 language code to filter voices (e.g., 'en', 'es', 'fr')
    */
   async listVoices(language?: string): Promise<Voice[]> {
@@ -327,10 +325,6 @@ export class TTS extends tts.TTS {
     this.#opts = { ...this.#opts, ...opts };
     if (opts.apiKey) {
       this.#authorization = `Basic ${opts.apiKey}`;
-      // If API key changes, we might need to reset the pool or create a new one?
-      // For now, assume WS url doesn't change or we just create new pool if needed.
-      // But existing pool has hardcoded auth in constructor.
-      // Re-creating pool is safer.
       this.#pool.close();
       this.#pool = new WSConnectionPool(this.#opts.wsURL, this.#authorization);
     }
@@ -482,21 +476,15 @@ class SynthesizeStream extends tts.SynthesizeStream {
       if (!result) return;
 
       if (result.contextCreated) {
-        // context created
       } else if (result.contextClosed) {
         resolveProcessing();
       } else if (result.audioChunk) {
         if (result.audioChunk.timestampInfo) {
-          // Log word timestamps if available
           const tsInfo = result.audioChunk.timestampInfo;
           if (tsInfo.wordAlignment) {
             const words = tsInfo.wordAlignment.words || [];
             const starts = tsInfo.wordAlignment.wordStartTimeSeconds || [];
             const ends = tsInfo.wordAlignment.wordEndTimeSeconds || [];
-
-            for (let i = 0; i < words.length; i++) {
-              // console.log(`[Inworld TTS] Word: "${words[i]}", Start: ${starts[i]}, End: ${ends[i]}`);
-            }
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (this.#tts as any).emit('alignment', {
@@ -521,7 +509,6 @@ class SynthesizeStream extends tts.SynthesizeStream {
         }
 
         if (result.audioChunk.audioContent) {
-          // Some servers may return either nested audioContent or top-level
           const b64Content = result.audioChunk.audioContent || result.audioContent;
           if (b64Content) {
             const audio = Buffer.from(b64Content, 'base64');
