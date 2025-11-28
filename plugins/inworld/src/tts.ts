@@ -1,19 +1,13 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  AudioByteStream,
-  log,
-  shortuuid,
-  tts,
-  tokenize,
-} from '@livekit/agents';
+import { AudioByteStream, log, shortuuid, tokenize, tts } from '@livekit/agents';
 import { type RawData, WebSocket } from 'ws';
 
 const DEFAULT_BIT_RATE = 64000;
 const DEFAULT_ENCODING = 'LINEAR16';
 const DEFAULT_MODEL = 'inworld-tts-1';
-const DEFAULT_SAMPLE_RATE = 24000; 
+const DEFAULT_SAMPLE_RATE = 24000;
 const DEFAULT_URL = 'https://api.inworld.ai/';
 const DEFAULT_WS_URL = 'wss://api.inworld.ai/';
 const DEFAULT_VOICE = 'Ashley';
@@ -236,7 +230,7 @@ class WSConnectionPool {
               this.#listeners.get(contextId)!(json);
             }
           } else if (json.error) {
-             this.#logger.warn({ error: json.error }, 'Inworld received error message');
+            this.#logger.warn({ error: json.error }, 'Inworld received error message');
           }
         } catch (e) {
           this.#logger.warn({ error: e }, 'Failed to parse Inworld WebSocket message');
@@ -332,18 +326,18 @@ export class TTS extends tts.TTS {
   updateOptions(opts: Partial<TTSOptions>) {
     this.#opts = { ...this.#opts, ...opts };
     if (opts.apiKey) {
-        this.#authorization = `Basic ${opts.apiKey}`;
-        // If API key changes, we might need to reset the pool or create a new one?
-        // For now, assume WS url doesn't change or we just create new pool if needed.
-        // But existing pool has hardcoded auth in constructor.
-        // Re-creating pool is safer.
-        this.#pool.close();
-        this.#pool = new WSConnectionPool(this.#opts.wsURL, this.#authorization);
+      this.#authorization = `Basic ${opts.apiKey}`;
+      // If API key changes, we might need to reset the pool or create a new one?
+      // For now, assume WS url doesn't change or we just create new pool if needed.
+      // But existing pool has hardcoded auth in constructor.
+      // Re-creating pool is safer.
+      this.#pool.close();
+      this.#pool = new WSConnectionPool(this.#opts.wsURL, this.#authorization);
     }
   }
 
   async close() {
-      this.#pool.close();
+    this.#pool.close();
   }
 }
 
@@ -378,7 +372,7 @@ class ChunkedStream extends tts.ChunkedStream {
     };
 
     const url = new URL('tts/v1/voice:stream', this.#opts.baseURL);
-    
+
     const response = await fetch(url.toString(), {
       method: 'POST',
       headers: {
@@ -399,7 +393,7 @@ class ChunkedStream extends tts.ChunkedStream {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    
+
     const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
 
@@ -412,40 +406,40 @@ class ChunkedStream extends tts.ChunkedStream {
       buffer = lines.pop() || '';
 
       for (const line of lines) {
-            if (line.trim()) {
-              try {
-                const data = JSON.parse(line);
-                if (data.result) {
-                   if (data.result.audioContent) {
-                     const audio = Buffer.from(data.result.audioContent, 'base64');
-                     
-                     let pcmData = audio;
-                     if (audio.length > 44 && audio.subarray(0, 4).toString() === 'RIFF') {
-                         // This is a WAV header, skip 44 bytes
-                         pcmData = audio.subarray(44);
-                     }
-                     
-                     for (const frame of bstream.write(
-                       pcmData.buffer.slice(pcmData.byteOffset, pcmData.byteOffset + pcmData.byteLength),
-                     )) {
-                       this.queue.put({
-                         requestId,
-                         segmentId: requestId,
-                         frame,
-                         final: false,
-                       });
-                     }
-                   }
-                } else if (data.error) {
-                   throw new Error(data.error.message);
+        if (line.trim()) {
+          try {
+            const data = JSON.parse(line);
+            if (data.result) {
+              if (data.result.audioContent) {
+                const audio = Buffer.from(data.result.audioContent, 'base64');
+
+                let pcmData = audio;
+                if (audio.length > 44 && audio.subarray(0, 4).toString() === 'RIFF') {
+                  // This is a WAV header, skip 44 bytes
+                  pcmData = audio.subarray(44);
                 }
-              } catch (e) {
-                log().warn({ error: e, line }, 'Failed to parse Inworld chunk');
+
+                for (const frame of bstream.write(
+                  pcmData.buffer.slice(pcmData.byteOffset, pcmData.byteOffset + pcmData.byteLength),
+                )) {
+                  this.queue.put({
+                    requestId,
+                    segmentId: requestId,
+                    frame,
+                    final: false,
+                  });
+                }
               }
+            } else if (data.error) {
+              throw new Error(data.error.message);
             }
+          } catch (e) {
+            log().warn({ error: e, line }, 'Failed to parse Inworld chunk');
+          }
+        }
       }
     }
-    
+
     // Flush remaining frames
     for (const frame of bstream.flush()) {
       this.queue.put({
@@ -479,8 +473,8 @@ class SynthesizeStream extends tts.SynthesizeStream {
     let resolveProcessing: () => void;
     let rejectProcessing: (err: Error) => void;
     const processing = new Promise<void>((resolve, reject) => {
-        resolveProcessing = resolve;
-        rejectProcessing = reject;
+      resolveProcessing = resolve;
+      rejectProcessing = reject;
     });
 
     const handleMessage = (msg: InworldMessage) => {
@@ -488,87 +482,89 @@ class SynthesizeStream extends tts.SynthesizeStream {
       if (!result) return;
 
       if (result.contextCreated) {
-          // context created
+        // context created
       } else if (result.contextClosed) {
-          resolveProcessing();
+        resolveProcessing();
       } else if (result.audioChunk) {
-          if (result.audioChunk.timestampInfo) {
-              // Log word timestamps if available
-              const tsInfo = result.audioChunk.timestampInfo;
-              if (tsInfo.wordAlignment) {
-                  const words = tsInfo.wordAlignment.words || [];
-                  const starts = tsInfo.wordAlignment.wordStartTimeSeconds || [];
-                  const ends = tsInfo.wordAlignment.wordEndTimeSeconds || [];
-                  
-                  for (let i = 0; i < words.length; i++) {
-                      // console.log(`[Inworld TTS] Word: "${words[i]}", Start: ${starts[i]}, End: ${ends[i]}`);
-                  }
-                  
-                  (this.#tts as any).emit('alignment', {
-                      requestId: this.#contextId,
-                      segmentId: this.#contextId,
-                      wordAlignment: { words, starts, ends }
-                  });
-              }
-              
-              if (tsInfo.characterAlignment) {
-                  const chars = tsInfo.characterAlignment.characters || [];
-                  const starts = tsInfo.characterAlignment.characterStartTimeSeconds || [];
-                  const ends = tsInfo.characterAlignment.characterEndTimeSeconds || [];
-                  
-                  (this.#tts as any).emit('alignment', {
-                      requestId: this.#contextId,
-                      segmentId: this.#contextId,
-                      characterAlignment: { chars, starts, ends }
-                  });
-              }
+        if (result.audioChunk.timestampInfo) {
+          // Log word timestamps if available
+          const tsInfo = result.audioChunk.timestampInfo;
+          if (tsInfo.wordAlignment) {
+            const words = tsInfo.wordAlignment.words || [];
+            const starts = tsInfo.wordAlignment.wordStartTimeSeconds || [];
+            const ends = tsInfo.wordAlignment.wordEndTimeSeconds || [];
+
+            for (let i = 0; i < words.length; i++) {
+              // console.log(`[Inworld TTS] Word: "${words[i]}", Start: ${starts[i]}, End: ${ends[i]}`);
+            }
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (this.#tts as any).emit('alignment', {
+              requestId: this.#contextId,
+              segmentId: this.#contextId,
+              wordAlignment: { words, starts, ends },
+            });
           }
 
-          if (result.audioChunk.audioContent) {
-              // Some servers may return either nested audioContent or top-level
-              const b64Content = result.audioChunk.audioContent || result.audioContent;
-              if (b64Content) {
-                  const audio = Buffer.from(b64Content, 'base64');
-                  let pcmData = audio;
-                  if (audio.length > 44 && audio.subarray(0, 4).toString() === 'RIFF') {
-                       // This is a WAV header, skip 44 bytes
-                       pcmData = audio.subarray(44);
-                  }
-                  for (const frame of bstream.write(
-                    pcmData.buffer.slice(pcmData.byteOffset, pcmData.byteOffset + pcmData.byteLength),
-                  )) {
-                      this.queue.put({
-                          requestId: this.#contextId,
-                          segmentId: this.#contextId,
-                          frame,
-                          final: false,
-                      });
-                  }
-              }
+          if (tsInfo.characterAlignment) {
+            const chars = tsInfo.characterAlignment.characters || [];
+            const starts = tsInfo.characterAlignment.characterStartTimeSeconds || [];
+            const ends = tsInfo.characterAlignment.characterEndTimeSeconds || [];
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (this.#tts as any).emit('alignment', {
+              requestId: this.#contextId,
+              segmentId: this.#contextId,
+              characterAlignment: { chars, starts, ends },
+            });
           }
+        }
+
+        if (result.audioChunk.audioContent) {
+          // Some servers may return either nested audioContent or top-level
+          const b64Content = result.audioChunk.audioContent || result.audioContent;
+          if (b64Content) {
+            const audio = Buffer.from(b64Content, 'base64');
+            let pcmData = audio;
+            if (audio.length > 44 && audio.subarray(0, 4).toString() === 'RIFF') {
+              // This is a WAV header, skip 44 bytes
+              pcmData = audio.subarray(44);
+            }
+            for (const frame of bstream.write(
+              pcmData.buffer.slice(pcmData.byteOffset, pcmData.byteOffset + pcmData.byteLength),
+            )) {
+              this.queue.put({
+                requestId: this.#contextId,
+                segmentId: this.#contextId,
+                frame,
+                final: false,
+              });
+            }
+          }
+        }
       } else if (result.status && result.status.code !== 0) {
-          const error = new Error(`Inworld stream error: ${result.status.message}`);
-          rejectProcessing(error);
+        const error = new Error(`Inworld stream error: ${result.status.message}`);
+        rejectProcessing(error);
       }
     };
 
     this.#tts.pool.registerListener(this.#contextId, handleMessage);
 
     const sendLoop = async () => {
-        for await (const ev of tokenizerStream) {
-            await this.#sendText(ws, ev.token);
-        }
+      for await (const ev of tokenizerStream) {
+        await this.#sendText(ws, ev.token);
+      }
     };
     const sendPromise = sendLoop();
 
     try {
       await this.#createContext(ws);
-      
+
       for await (const text of this.input) {
         if (text === tts.SynthesizeStream.FLUSH_SENTINEL) {
-            tokenizerStream.flush();
+          tokenizerStream.flush();
         } else {
-            tokenizerStream.pushText(text);
+          tokenizerStream.pushText(text);
         }
       }
       tokenizerStream.endInput();
@@ -577,20 +573,19 @@ class SynthesizeStream extends tts.SynthesizeStream {
       await this.#flushContext(ws);
       await this.#closeContext(ws);
       await processing;
-      
+
       // Flush remaining frames
       for (const frame of bstream.flush()) {
-          this.queue.put({
-              requestId: this.#contextId,
-              segmentId: this.#contextId,
-              frame,
-              final: false,
-          });
+        this.queue.put({
+          requestId: this.#contextId,
+          segmentId: this.#contextId,
+          frame,
+          final: false,
+        });
       }
-
     } catch (e) {
-        log().error({ error: e }, 'Error in SynthesizeStream run');
-        throw e;
+      log().error({ error: e }, 'Error in SynthesizeStream run');
+      throw e;
     } finally {
       this.#tts.pool.unregisterListener(this.#contextId);
     }

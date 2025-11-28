@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Plugin } from '@livekit/agents';
-import { TTS } from './tts.js';
+import './tts.js';
 
 export * from './tts.js';
 
@@ -17,4 +17,3 @@ class InworldPlugin extends Plugin {
 }
 
 Plugin.registerPlugin(new InworldPlugin());
-
