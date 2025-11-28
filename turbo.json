@@ -47,7 +47,8 @@
     "ANAM_AVATAR_ID",
     "RIME_API_KEY",
     "LK_OPENAI_DEBUG",
-    "OVHCLOUD_API_KEY"
+    "OVHCLOUD_API_KEY",
+    "INWORLD_API_KEY"
   ],
   "pipeline": {
     "build": {
