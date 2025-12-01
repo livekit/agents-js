@@ -24,10 +24,10 @@ import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import type { ChatContent, ChatItem } from '../llm/index.js';
+import { enableOtelLogging } from '../log.js';
 import type { SessionReport } from '../voice/report.js';
 import { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
-import { enablePinoOTELInstrumentation } from './pino_bridge.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -273,7 +273,7 @@ export async function setupCloudTracer(options: {
     loggerProvider.addLogRecordProcessor(new ExtraDetailsProcessor());
     loggerProvider.addLogRecordProcessor(new BatchLogRecordProcessor(logExporter));
 
-    enablePinoOTELInstrumentation();
+    enableOtelLogging();
   } catch (error) {
     console.error('Failed to setup cloud tracer:', error);
     throw error;
