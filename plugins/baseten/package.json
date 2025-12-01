@@ -6,16 +6,21 @@
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
     "type": "module",
+    "author": "LiveKit",
+    "repository": "git@github.com:livekit/agents-js.git",
+    "license": "Apache-2.0",
+    "files": [
+      "dist",
+      "src",
+      "README.md"
+    ],
     "scripts": {
         "build": "tsc",
         "dev": "tsc --watch",
         "clean": "rm -rf dist",
         "typecheck": "tsc --noEmit",
         "lint": "eslint \"src/**/*.ts\"",
-        "lint:fix": "eslint --fix \"src/**/*.ts\"",
-        "test:llm-cli": "tsx test/test-baseten-llm-cli.ts",
-        "test:tts-cli": "tsx test/test-baseten-tts-cli.ts",
-        "test:stt-cli": "tsx test/test-stt.ts"
+        "lint:fix": "eslint --fix \"src/**/*.ts\""
     },
     "keywords": [
         "livekit",
@@ -27,11 +32,11 @@
         "voice-ai"
     ],
     "dependencies": {
-        "@livekit/agents": "^1.0.17",
+        "@livekit/agents": "workspace:*",
         "@livekit/agents-plugin-openai": "^1.0.0",
         "@livekit/rtc-node": "^0.13.12",
+        "@livekit/agents-plugins-test": "workspace:*",
         "dotenv": "^17.2.3",
-        "node-record-lpcm16": "^1.0.1",
         "openai": "^4.0.0",
         "ws": "^8.14.2"
     },
@@ -42,7 +47,7 @@
         "typescript": "^5.9.3"
     },
     "peerDependencies": {
-        "@livekit/agents": "^1.0.17",
+        "@livekit/agents": "workspace:*",
         "@livekit/rtc-node": "^0.13.12"
     }
 }
