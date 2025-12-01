@@ -314,7 +314,6 @@ export class AgentSession<
     this._updateAgentState('listening');
   }
 
-  // TODO(brian): PR4 - Add setupCloudLogger() call in setupCloudTracer() to setup OTEL logging with Pino bridge
   async start({
     agent,
     room,

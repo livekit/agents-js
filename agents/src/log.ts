@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { Logger } from 'pino';
-import { pino } from 'pino';
+import { Writable } from 'node:stream';
+import type { DestinationStream, Logger } from 'pino';
+import { multistream, pino } from 'pino';
+import { build as pinoPretty } from 'pino-pretty';
 import { type PinoLogObject, emitToOtel } from './telemetry/pino_otel_transport.js';
 
 /** @internal */
@@ -32,23 +34,33 @@ export const log = () => {
 export const initializeLogger = ({ pretty, level }: LoggerOptions) => {
   loggerOptions = { pretty, level };
   logger = pino(
-    pretty
-      ? {
-          level: level || 'info',
-          transport: {
-            target: 'pino-pretty',
-            options: {
-              colorize: true,
-            },
-          },
-        }
-      : { level: level || 'info' },
+    { level: level || 'info' },
+    pretty ? pinoPretty({ colorize: true }) : process.stdout,
   );
 };
 
 /**
- * Enable OTEL logging by reconfiguring the logger with a formatter hook.
- * Uses Pino's formatters.log to intercept structured log objects and emit to OTEL.
+ * Custom Pino destination that parses JSON logs and emits to OTEL.
+ * This receives the FULL serialized log including msg, level, time, etc.
+ */
+class OtelDestination extends Writable {
+  _write(chunk: Buffer, _encoding: string, callback: (error?: Error | null) => void): void {
+    try {
+      const line = chunk.toString().trim();
+      if (line) {
+        const logObj = JSON.parse(line) as PinoLogObject;
+        emitToOtel(logObj);
+      }
+    } catch {
+      // Ignore parse errors (e.g., non-JSON lines)
+    }
+    callback();
+  }
+}
+
+/**
+ * Enable OTEL logging by reconfiguring the logger with multistream.
+ * Uses a custom destination that receives full JSON logs (with msg, level, time).
  *
  * @internal
  */
@@ -61,32 +73,11 @@ export const enableOtelLogging = () => {
 
   const { pretty, level } = loggerOptions;
 
-  // Recreate logger with OTEL formatter hook
-  logger = pino(
-    pretty
-      ? {
-          level: level || 'info',
-          transport: {
-            target: 'pino-pretty',
-            options: {
-              colorize: true,
-            },
-          },
-          formatters: {
-            log(obj: Record<string, unknown>) {
-              emitToOtel(obj as PinoLogObject);
-              return obj;
-            },
-          },
-        }
-      : {
-          level: level || 'info',
-          formatters: {
-            log(obj: Record<string, unknown>) {
-              emitToOtel(obj as PinoLogObject);
-              return obj;
-            },
-          },
-        },
-  );
+  const logLevel = level || 'info';
+  const streams: { stream: DestinationStream; level: string }[] = [
+    { stream: pretty ? pinoPretty({ colorize: true }) : process.stdout, level: logLevel },
+    { stream: new OtelDestination(), level: 'debug' },
+  ];
+
+  logger = pino({ level: logLevel }, multistream(streams));
 };

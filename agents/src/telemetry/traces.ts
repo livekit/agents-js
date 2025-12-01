@@ -12,12 +12,10 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
-import { SeverityNumber, logs } from '@opentelemetry/api-logs';
-import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
+import { SeverityNumber } from '@opentelemetry/api-logs';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
 import { Resource } from '@opentelemetry/resources';
-import { BatchLogRecordProcessor, LoggerProvider } from '@opentelemetry/sdk-logs';
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
@@ -26,8 +24,8 @@ import { AccessToken } from 'livekit-server-sdk';
 import type { ChatContent, ChatItem } from '../llm/index.js';
 import { enableOtelLogging } from '../log.js';
 import type { SessionReport } from '../voice/report.js';
-import { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
+import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -256,28 +254,30 @@ export async function setupCloudTracer(options: {
     });
     tracerProvider.register();
 
-    // Metadata processor is already configured in the constructor above
     setTracerProvider(tracerProvider);
 
-    const loggerProvider = new LoggerProvider({ resource });
-
-    logs.setGlobalLoggerProvider(loggerProvider);
-
-    const logExporter = new OTLPLogExporter({
-      url: `https://${cloudHostname}/observability/logs/otlp/v0`,
-      headers,
-      compression: CompressionAlgorithm.GZIP,
+    // Initialize standalone Pino cloud exporter (no OTEL SDK dependency)
+    initPinoCloudExporter({
+      cloudHostname,
+      roomId,
+      jobId,
     });
-
-    loggerProvider.addLogRecordProcessor(new MetadataLogProcessor(metadata));
-    loggerProvider.addLogRecordProcessor(new ExtraDetailsProcessor());
-    loggerProvider.addLogRecordProcessor(new BatchLogRecordProcessor(logExporter));
 
     enableOtelLogging();
   } catch (error) {
     console.error('Failed to setup cloud tracer:', error);
     throw error;
   }
+}
+
+/**
+ * Flush all pending Pino logs to ensure they are exported.
+ * Call this before session/job ends to ensure all logs are sent.
+ *
+ * @internal
+ */
+export async function flushOtelLogs(): Promise<void> {
+  await flushPinoLogs();
 }
 
 /**
