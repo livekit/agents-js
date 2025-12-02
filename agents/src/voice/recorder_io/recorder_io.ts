@@ -13,7 +13,7 @@ import { TransformStream } from 'node:stream/web';
 import { log } from '../../log.js';
 import { isStreamReaderReleaseError } from '../../stream/deferred_stream.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
-import { Future, Task, cancelAndWait, delay, waitForAbort } from '../../utils.js';
+import { Future, Task, cancelAndWait, delay } from '../../utils.js';
 import type { AgentSession } from '../agent_session.js';
 import { AudioInput, AudioOutput, type PlaybackFinishedEvent } from '../io.js';
 
@@ -50,6 +50,12 @@ export class RecorderIO {
   private closeFuture: Future<void> = new Future();
   private lock: Mutex = new Mutex();
   private started: boolean = false;
+
+  // FFmpeg streaming state
+  private pcmStream?: PassThrough;
+  private ffmpegPromise?: Promise<void>;
+  private inResampler?: AudioResampler;
+  private outResampler?: AudioResampler;
 
   private logger = log();
 
@@ -99,14 +105,11 @@ export class RecorderIO {
     try {
       if (!this.started) return;
 
-      // Signal channels to close
       await this.inChan.close();
       await this.outChan.close();
-
-      await cancelAndWait([this.encodeTask!, this.forwardTask!]);
-
-      // Wait for encoder to finish
       await this.closeFuture.await;
+      await cancelAndWait([this.forwardTask!, this.encodeTask!]);
+
       this.started = false;
     } finally {
       unlock();
@@ -176,22 +179,15 @@ export class RecorderIO {
   }
 
   /**
-   * Encode task: read from channels, mix to stereo, encode with FFmpeg
+   * Start FFmpeg process for streaming encoding
    */
-  private async encode(signal: AbortSignal): Promise<void> {
-    if (!this._outputPath) return;
+  private startFFmpeg(): void {
+    if (this.pcmStream) return;
 
-    const INV_INT16 = 1.0 / 32768.0;
+    this.pcmStream = new PassThrough();
 
-    let inResampler: AudioResampler | undefined;
-    let outResampler: AudioResampler | undefined;
-    let ffmpegCommand: ReturnType<typeof ffmpeg> | undefined;
-
-    // Stream to pipe to FFmpeg
-    const pcmStream = new PassThrough();
-
-    const ffmpegPromise = new Promise<void>((resolve, reject) => {
-      ffmpegCommand = ffmpeg(pcmStream)
+    this.ffmpegPromise = new Promise<void>((resolve, reject) => {
+      ffmpeg(this.pcmStream!)
         .inputFormat('s16le')
         .inputOptions([`-ar ${this.sampleRate}`, '-ac 2'])
         .audioCodec('libopus')
@@ -204,162 +200,164 @@ export class RecorderIO {
           resolve();
         })
         .on('error', (err) => {
-          // Don't log SIGKILL errors on abort - those are expected
-          if (!signal.aborted) {
+          // Ignore errors from intentional stream closure
+          if (err.message?.includes('Output stream closed')) {
+            resolve();
+          } else {
             this.logger.error({ err }, 'FFmpeg encoding error');
+            reject(err);
           }
-          reject(err);
-        });
-
-      ffmpegCommand.run();
+        })
+        .run();
     });
+  }
+
+  /**
+   * Resample and mix frames to mono Float32
+   */
+  private resampleAndMix(opts: ResampleAndMixOptions): {
+    samples: Float32Array;
+    resampler: AudioResampler | undefined;
+  } {
+    const INV_INT16 = 1.0 / 32768.0;
+    const { frames, flush = false } = opts;
+    let { resampler } = opts;
+
+    if (frames.length === 0 && !flush) {
+      return { samples: new Float32Array(0), resampler };
+    }
+
+    if (!resampler && frames.length > 0) {
+      const firstFrame = frames[0]!;
+      resampler = new AudioResampler(firstFrame.sampleRate, this.sampleRate, firstFrame.channels);
+    }
+
+    const resampledFrames: AudioFrame[] = [];
+    for (const frame of frames) {
+      if (resampler) {
+        resampledFrames.push(...resampler.push(frame));
+      }
+    }
+
+    if (flush && resampler) {
+      resampledFrames.push(...resampler.flush());
+    }
+
+    const totalSamples = resampledFrames.reduce((acc, frame) => acc + frame.samplesPerChannel, 0);
+    const samples = new Float32Array(totalSamples);
+
+    let pos = 0;
+    for (const frame of resampledFrames) {
+      const data = frame.data;
+      const numChannels = frame.channels;
+      for (let i = 0; i < frame.samplesPerChannel; i++) {
+        let sum = 0;
+        for (let ch = 0; ch < numChannels; ch++) {
+          sum += data[i * numChannels + ch]!;
+        }
+        samples[pos++] = (sum / numChannels) * INV_INT16;
+      }
+    }
+
+    return { samples, resampler };
+  }
+
+  /**
+   * Write PCM chunk to FFmpeg stream
+   */
+  private writePCM(leftSamples: Float32Array, rightSamples: Float32Array): void {
+    if (!this.pcmStream) {
+      this.startFFmpeg();
+    }
+
+    // Handle length mismatch by prepending silence
+    if (leftSamples.length !== rightSamples.length) {
+      const diff = Math.abs(leftSamples.length - rightSamples.length);
+      if (leftSamples.length < rightSamples.length) {
+        this.logger.warn(
+          `Input is shorter by ${diff} samples; silence has been prepended to align the input channel.`,
+        );
+        const padded = new Float32Array(rightSamples.length);
+        padded.set(leftSamples, diff);
+        leftSamples = padded;
+      } else {
+        const padded = new Float32Array(leftSamples.length);
+        padded.set(rightSamples, diff);
+        rightSamples = padded;
+      }
+    }
+
+    const maxLen = Math.max(leftSamples.length, rightSamples.length);
+    if (maxLen <= 0) return;
+
+    // Interleave stereo samples and convert back to Int16
+    const stereoData = new Int16Array(maxLen * 2);
+    for (let i = 0; i < maxLen; i++) {
+      stereoData[i * 2] = Math.max(
+        -32768,
+        Math.min(32767, Math.round((leftSamples[i] ?? 0) * 32768)),
+      );
+      stereoData[i * 2 + 1] = Math.max(
+        -32768,
+        Math.min(32767, Math.round((rightSamples[i] ?? 0) * 32768)),
+      );
+    }
+
+    this.pcmStream!.write(Buffer.from(stereoData.buffer));
+  }
+
+  /**
+   * Encode task: read from channels, mix to stereo, stream to FFmpeg
+   */
+  private async encode(signal: AbortSignal): Promise<void> {
+    if (!this._outputPath) return;
 
     const inReader = this.inChan.stream().getReader();
     const outReader = this.outChan.stream().getReader();
 
-    const onAbort = () => {
-      inReader.cancel().catch(() => {});
-      outReader.cancel().catch(() => {});
-      ffmpegCommand?.kill('SIGKILL');
-    };
-
-    signal.addEventListener('abort', onAbort, { once: true });
-
-    const abortPromise = waitForAbort(signal);
-
-    /**
-     * Resample and mix frames to mono Float32
-     */
-    const resampleAndMix = (
-      opts: ResampleAndMixOptions,
-    ): { samples: Float32Array; resampler: AudioResampler | undefined } => {
-      const { frames, flush = false } = opts;
-      let { resampler } = opts;
-
-      if (frames.length === 0 && !flush) {
-        return { samples: new Float32Array(0), resampler };
-      }
-
-      if (!resampler && frames.length > 0) {
-        const firstFrame = frames[0]!;
-        resampler = new AudioResampler(firstFrame.sampleRate, this.sampleRate, firstFrame.channels);
-      }
-
-      const resampledFrames: AudioFrame[] = [];
-      for (const frame of frames) {
-        if (resampler) {
-          resampledFrames.push(...resampler.push(frame));
-        }
-      }
-
-      if (flush && resampler) {
-        resampledFrames.push(...resampler.flush());
-      }
-
-      const totalSamples = resampledFrames.reduce((acc, frame) => acc + frame.samplesPerChannel, 0);
-      const samples = new Float32Array(totalSamples);
-
-      let pos = 0;
-      for (const frame of resampledFrames) {
-        const data = frame.data;
-        const numChannels = frame.channels;
-        for (let i = 0; i < frame.samplesPerChannel; i++) {
-          let sum = 0;
-          for (let ch = 0; ch < numChannels; ch++) {
-            sum += data[i * numChannels + ch]!;
-          }
-          samples[pos++] = (sum / numChannels) * INV_INT16;
-        }
-      }
-
-      return { samples, resampler };
-    };
-
     try {
-      while (!signal.aborted) {
-        const result = await Promise.race([
-          Promise.all([inReader.read(), outReader.read()]),
-          abortPromise,
-        ]);
+      while (true) {
+        const [inResult, outResult] = await Promise.all([inReader.read(), outReader.read()]);
 
-        // Check if the task was aborted
-        if (result === undefined) {
-          break;
-        }
-
-        const [inResult, outResult] = result;
-        if (signal.aborted || inResult.done || outResult.done) {
+        if (inResult.done || outResult.done) {
           break;
         }
 
         const inputBuf = inResult.value;
         const outputBuf = outResult.value;
 
-        const inMixed = resampleAndMix({ frames: inputBuf, resampler: inResampler });
-        inResampler = inMixed.resampler;
+        this.logger.debug(
+          `encode: inputBuf=${inputBuf.length} frames, outputBuf=${outputBuf.length} frames`,
+        );
 
-        const outMixed = resampleAndMix({
+        const inMixed = this.resampleAndMix({ frames: inputBuf, resampler: this.inResampler });
+        this.inResampler = inMixed.resampler;
+
+        const outMixed = this.resampleAndMix({
           frames: outputBuf,
-          resampler: outResampler,
+          resampler: this.outResampler,
           flush: outputBuf.length > 0,
         });
-        outResampler = outMixed.resampler;
+        this.outResampler = outMixed.resampler;
 
-        let leftSamples = inMixed.samples;
-        let rightSamples = outMixed.samples;
+        this.logger.debug(
+          `encode: leftSamples=${inMixed.samples.length}, rightSamples=${outMixed.samples.length}`,
+        );
 
-        // Handle length mismatch by prepending silence
-        if (leftSamples.length !== rightSamples.length) {
-          const diff = Math.abs(leftSamples.length - rightSamples.length);
-          if (leftSamples.length < rightSamples.length) {
-            this.logger.warn(
-              `Input is shorter by ${diff} samples; silence has been prepended to align the input channel.`,
-            );
-            const padded = new Float32Array(rightSamples.length);
-            padded.set(leftSamples, diff);
-            leftSamples = padded;
-          } else {
-            const padded = new Float32Array(leftSamples.length);
-            padded.set(rightSamples, diff);
-            rightSamples = padded;
-          }
-        }
+        // Stream PCM data directly to FFmpeg
+        this.writePCM(inMixed.samples, outMixed.samples);
+      }
 
-        const maxLen = Math.max(leftSamples.length, rightSamples.length);
-        if (maxLen <= 0) continue;
-
-        // Interleave stereo samples and convert back to Int16
-        const stereoData = new Int16Array(maxLen * 2);
-        for (let i = 0; i < maxLen; i++) {
-          stereoData[i * 2] = Math.max(
-            -32768,
-            Math.min(32767, Math.round((leftSamples[i] ?? 0) * 32768)),
-          );
-          stereoData[i * 2 + 1] = Math.max(
-            -32768,
-            Math.min(32767, Math.round((rightSamples[i] ?? 0) * 32768)),
-          );
-        }
-
-        pcmStream.write(Buffer.from(stereoData.buffer));
+      // Close FFmpeg stream and wait for encoding to complete
+      if (this.pcmStream) {
+        this.pcmStream.end();
+        await this.ffmpegPromise;
       }
     } catch (err) {
-      // Don't log abort errors
-      if (!signal.aborted) {
-        this.logger.error({ err }, 'Error in encode task');
-      }
+      this.logger.error({ err }, 'Error in encode task');
     } finally {
-      signal.removeEventListener('abort', onAbort);
-
       inReader.releaseLock();
       outReader.releaseLock();
-      pcmStream.end();
-
-      try {
-        await ffmpegPromise;
-      } catch {
-        // Error already logged (or expected on abort)
-      }
 
       if (!this.closeFuture.done) {
         this.closeFuture.resolve();
@@ -523,9 +521,15 @@ class RecorderAudioOutput extends AudioOutput {
 
   onPlaybackFinished(options: PlaybackFinishedEvent): void {
     const finishTime = Date.now();
+    const logger = log();
+    logger.debug(
+      `RecorderAudioOutput.onPlaybackFinished: accFrames=${this.accFrames.length}, recording=${this.recorderIO.recording}, playbackPosition=${options.playbackPosition}`,
+    );
+
     super.onPlaybackFinished(options);
 
     if (!this.recorderIO.recording) {
+      logger.debug('RecorderAudioOutput.onPlaybackFinished: not recording, returning');
       return;
     }
 
@@ -535,6 +539,7 @@ class RecorderAudioOutput extends AudioOutput {
     }
 
     if (this.accFrames.length === 0) {
+      logger.debug('RecorderAudioOutput.onPlaybackFinished: no frames, returning');
       this.resetPauseState();
       return;
     }
@@ -619,6 +624,11 @@ class RecorderAudioOutput extends AudioOutput {
     }
 
     if (buf.length > 0) {
+      const logger = log();
+      const totalSamples = buf.reduce((sum, f) => sum + f.samplesPerChannel, 0);
+      logger.debug(
+        `RecorderAudioOutput.onPlaybackFinished: writing ${buf.length} frames (${totalSamples} samples) to channel`,
+      );
       this.writeFn(buf);
     }
 
