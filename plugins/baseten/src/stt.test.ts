@@ -9,4 +9,3 @@ import { STT } from './stt.js';
 describe('Baseten', async () => {
   await stt(new STT(), await VAD.load(), { streaming: true });
 });
-
