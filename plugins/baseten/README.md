@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # LiveKit Agents Baseten Plugin
 
 Node.js/TypeScript plugin for LiveKit Agents with Baseten-hosted models (LLM, STT, TTS).

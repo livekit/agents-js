@@ -9,4 +9,3 @@ import { TTS } from './tts.js';
 describe('Baseten', async () => {
   await tts(new TTS(), new STT(), { streaming: false });
 });
-
