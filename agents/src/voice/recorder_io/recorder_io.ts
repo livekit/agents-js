@@ -13,7 +13,7 @@ export interface RecorderOptions {
   sampleRate?: number;
 }
 
-class RecorderIO {
+export class RecorderIO {
   private inRecord?: RecorderAudioInput;
   private outRecord?: RecorderAudioOutput;
 
