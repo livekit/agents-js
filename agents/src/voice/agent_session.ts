@@ -16,13 +16,8 @@ import {
   type TTSModelString,
 } from '../inference/index.js';
 import { getJobContext } from '../job.js';
-import {
-  AgentHandoffItem,
-  ChatContext,
-  ChatMessage,
-  FunctionCall,
-  FunctionCallOutput,
-} from '../llm/chat_context.js';
+import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
+import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
