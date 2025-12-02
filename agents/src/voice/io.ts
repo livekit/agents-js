@@ -28,6 +28,7 @@ export type TTSNode = (
   text: ReadableStream<string>,
   modelSettings: ModelSettings,
 ) => Promise<ReadableStream<AudioFrame> | null>;
+
 export abstract class AudioInput {
   protected deferredStream: DeferredReadableStream<AudioFrame> =
     new DeferredReadableStream<AudioFrame>();
@@ -126,6 +127,24 @@ export abstract class AudioOutput extends EventEmitter {
   onDetached(): void {
     if (this.nextInChain) {
       this.nextInChain.onDetached();
+    }
+  }
+
+  /**
+   * Pause the audio playback
+   */
+  pause(): void {
+    if (this.nextInChain) {
+      this.nextInChain.pause();
+    }
+  }
+
+  /**
+   * Resume the audio playback
+   */
+  resume(): void {
+    if (this.nextInChain) {
+      this.nextInChain.resume();
     }
   }
 }

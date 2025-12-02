@@ -1,16 +1,36 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { Mutex } from '@livekit/mutex';
-import type { AudioFrame } from '@livekit/rtc-node';
-import { type StreamChannel, createStreamChannel } from 'agents/src/stream/stream_channel.js';
-import { Future, Task } from 'agents/src/utils.js';
+import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
+import ffmpeg from 'fluent-ffmpeg';
+import fs from 'node:fs';
+import path from 'node:path';
+import { PassThrough } from 'node:stream';
+import type { ReadableStream } from 'node:stream/web';
+import { TransformStream } from 'node:stream/web';
+import { log } from '../../log.js';
+import { isStreamReaderReleaseError } from '../../stream/deferred_stream.js';
+import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
+import { Future, Task, cancelAndWait, delay, waitForAbort } from '../../utils.js';
 import type { AgentSession } from '../agent_session.js';
-import { AudioInput, AudioOutput } from '../io.js';
+import { AudioInput, AudioOutput, type PlaybackFinishedEvent } from '../io.js';
 
-const WRITE_INTERNAL_MS = 2500;
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+
+const WRITE_INTERVAL_MS = 2500;
 const DEFAULT_SAMPLE_RATE = 48000;
 
 export interface RecorderOptions {
   agentSession: AgentSession;
   sampleRate?: number;
+}
+
+interface ResampleAndMixOptions {
+  frames: AudioFrame[];
+  resampler: AudioResampler | undefined;
+  flush?: boolean;
 }
 
 export class RecorderIO {
@@ -25,10 +45,13 @@ export class RecorderIO {
 
   private _outputPath?: string;
   private forwardTask?: Task<void>;
+  private encodeTask?: Task<void>;
 
   private closeFuture: Future<void> = new Future();
   private lock: Mutex = new Mutex();
   private started: boolean = false;
+
+  private logger = log();
 
   constructor(opts: RecorderOptions) {
     const { agentSession, sampleRate = DEFAULT_SAMPLE_RATE } = opts;
@@ -53,20 +76,57 @@ export class RecorderIO {
       this.started = true;
       this.closeFuture = new Future();
 
+      // Ensure output directory exists
+      const dir = path.dirname(outputPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
       this.forwardTask = Task.from(({ signal }) => this.forward(signal));
+      this.encodeTask = Task.from(
+        ({ signal }) => this.encode(signal),
+        undefined,
+        'recorder_io_encode_task',
+      );
     } finally {
       unlock();
     }
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    const unlock = await this.lock.lock();
+
+    try {
+      if (!this.started) return;
+
+      // Signal channels to close
+      await this.inChan.close();
+      await this.outChan.close();
+
+      await cancelAndWait([this.encodeTask!, this.forwardTask!]);
+
+      // Wait for encoder to finish
+      await this.closeFuture.await;
+      this.started = false;
+    } finally {
+      unlock();
+    }
+  }
 
   recordInput(audioInput: AudioInput): RecorderAudioInput {
-    throw new Error('Not implemented');
+    this.inRecord = new RecorderAudioInput(this, audioInput);
+    return this.inRecord;
   }
 
   recordOutput(audioOutput: AudioOutput): RecorderAudioOutput {
-    throw new Error('Not implemented');
+    this.outRecord = new RecorderAudioOutput(this, audioOutput, (buf) => this.writeCb(buf));
+    return this.outRecord;
+  }
+
+  private writeCb(buf: AudioFrame[]): void {
+    const inputBuf = this.inRecord!.takeBuf();
+    this.inChan.write(inputBuf);
+    this.outChan.write(buf);
   }
 
   get recording(): boolean {
@@ -78,14 +138,565 @@ export class RecorderIO {
   }
 
   get recordingStartedAt(): number | undefined {
-    throw new Error('Not implemented');
+    const inTime = this.inRecord?.startedWallTime;
+    const outTime = this.outRecord?.startedWallTime;
+
+    if (inTime === undefined) return outTime;
+    if (outTime === undefined) return inTime;
+
+    return Math.min(inTime, outTime);
   }
 
-  private async forward(signal: AbortSignal): Promise<void> {}
+  /**
+   * Forward task: periodically flush input buffer to encoder
+   */
+  private async forward(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      try {
+        await delay(WRITE_INTERVAL_MS, { signal });
+      } catch {
+        // Aborted
+        break;
+      }
+
+      if (this.outRecord!.hasPendingData) {
+        // If the output is currently playing audio, wait for it to stay in sync
+        continue;
+      }
+
+      // Flush input buffer
+      const inputBuf = this.inRecord!.takeBuf();
+      this.inChan
+        .write(inputBuf)
+        .catch((err) => this.logger.error({ err }, 'Error writing RecorderIO input buffer'));
+      this.outChan
+        .write([])
+        .catch((err) => this.logger.error({ err }, 'Error writing RecorderIO output buffer'));
+    }
+  }
+
+  /**
+   * Encode task: read from channels, mix to stereo, encode with FFmpeg
+   */
+  private async encode(signal: AbortSignal): Promise<void> {
+    if (!this._outputPath) return;
+
+    const INV_INT16 = 1.0 / 32768.0;
+
+    let inResampler: AudioResampler | undefined;
+    let outResampler: AudioResampler | undefined;
+    let ffmpegCommand: ReturnType<typeof ffmpeg> | undefined;
+
+    // Stream to pipe to FFmpeg
+    const pcmStream = new PassThrough();
+
+    const ffmpegPromise = new Promise<void>((resolve, reject) => {
+      ffmpegCommand = ffmpeg(pcmStream)
+        .inputFormat('s16le')
+        .inputOptions([`-ar ${this.sampleRate}`, '-ac 2'])
+        .audioCodec('libopus')
+        .audioChannels(2)
+        .audioFrequency(this.sampleRate)
+        .format('ogg')
+        .output(this._outputPath!)
+        .on('end', () => {
+          this.logger.debug('FFmpeg encoding finished');
+          resolve();
+        })
+        .on('error', (err) => {
+          // Don't log SIGKILL errors on abort - those are expected
+          if (!signal.aborted) {
+            this.logger.error({ err }, 'FFmpeg encoding error');
+          }
+          reject(err);
+        });
+
+      ffmpegCommand.run();
+    });
+
+    const inReader = this.inChan.stream().getReader();
+    const outReader = this.outChan.stream().getReader();
+
+    const onAbort = () => {
+      inReader.cancel().catch(() => {});
+      outReader.cancel().catch(() => {});
+      ffmpegCommand?.kill('SIGKILL');
+    };
+
+    signal.addEventListener('abort', onAbort, { once: true });
+
+    const abortPromise = waitForAbort(signal);
+
+    /**
+     * Resample and mix frames to mono Float32
+     */
+    const resampleAndMix = (
+      opts: ResampleAndMixOptions,
+    ): { samples: Float32Array; resampler: AudioResampler | undefined } => {
+      const { frames, flush = false } = opts;
+      let { resampler } = opts;
+
+      if (frames.length === 0 && !flush) {
+        return { samples: new Float32Array(0), resampler };
+      }
+
+      if (!resampler && frames.length > 0) {
+        const firstFrame = frames[0]!;
+        resampler = new AudioResampler(firstFrame.sampleRate, this.sampleRate, firstFrame.channels);
+      }
+
+      const resampledFrames: AudioFrame[] = [];
+      for (const frame of frames) {
+        if (resampler) {
+          resampledFrames.push(...resampler.push(frame));
+        }
+      }
+
+      if (flush && resampler) {
+        resampledFrames.push(...resampler.flush());
+      }
+
+      const totalSamples = resampledFrames.reduce((acc, frame) => acc + frame.samplesPerChannel, 0);
+      const samples = new Float32Array(totalSamples);
+
+      let pos = 0;
+      for (const frame of resampledFrames) {
+        const data = frame.data;
+        const numChannels = frame.channels;
+        for (let i = 0; i < frame.samplesPerChannel; i++) {
+          let sum = 0;
+          for (let ch = 0; ch < numChannels; ch++) {
+            sum += data[i * numChannels + ch]!;
+          }
+          samples[pos++] = (sum / numChannels) * INV_INT16;
+        }
+      }
+
+      return { samples, resampler };
+    };
+
+    try {
+      while (!signal.aborted) {
+        const result = await Promise.race([
+          Promise.all([inReader.read(), outReader.read()]),
+          abortPromise,
+        ]);
+
+        // Check if the task was aborted
+        if (result === undefined) {
+          break;
+        }
+
+        const [inResult, outResult] = result;
+        if (signal.aborted || inResult.done || outResult.done) {
+          break;
+        }
+
+        const inputBuf = inResult.value;
+        const outputBuf = outResult.value;
+
+        const inMixed = resampleAndMix({ frames: inputBuf, resampler: inResampler });
+        inResampler = inMixed.resampler;
+
+        const outMixed = resampleAndMix({
+          frames: outputBuf,
+          resampler: outResampler,
+          flush: outputBuf.length > 0,
+        });
+        outResampler = outMixed.resampler;
+
+        let leftSamples = inMixed.samples;
+        let rightSamples = outMixed.samples;
+
+        // Handle length mismatch by prepending silence
+        if (leftSamples.length !== rightSamples.length) {
+          const diff = Math.abs(leftSamples.length - rightSamples.length);
+          if (leftSamples.length < rightSamples.length) {
+            this.logger.warn(
+              `Input is shorter by ${diff} samples; silence has been prepended to align the input channel.`,
+            );
+            const padded = new Float32Array(rightSamples.length);
+            padded.set(leftSamples, diff);
+            leftSamples = padded;
+          } else {
+            const padded = new Float32Array(leftSamples.length);
+            padded.set(rightSamples, diff);
+            rightSamples = padded;
+          }
+        }
+
+        const maxLen = Math.max(leftSamples.length, rightSamples.length);
+        if (maxLen <= 0) continue;
+
+        // Interleave stereo samples and convert back to Int16
+        const stereoData = new Int16Array(maxLen * 2);
+        for (let i = 0; i < maxLen; i++) {
+          stereoData[i * 2] = Math.max(
+            -32768,
+            Math.min(32767, Math.round((leftSamples[i] ?? 0) * 32768)),
+          );
+          stereoData[i * 2 + 1] = Math.max(
+            -32768,
+            Math.min(32767, Math.round((rightSamples[i] ?? 0) * 32768)),
+          );
+        }
+
+        pcmStream.write(Buffer.from(stereoData.buffer));
+      }
+    } catch (err) {
+      // Don't log abort errors
+      if (!signal.aborted) {
+        this.logger.error({ err }, 'Error in encode task');
+      }
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+
+      inReader.releaseLock();
+      outReader.releaseLock();
+      pcmStream.end();
+
+      try {
+        await ffmpegPromise;
+      } catch {
+        // Error already logged (or expected on abort)
+      }
+
+      if (!this.closeFuture.done) {
+        this.closeFuture.resolve();
+      }
+    }
+  }
 }
 
-class RecorderAudioInput extends AudioInput {}
+class RecorderAudioInput extends AudioInput {
+  private source: AudioInput;
+  private recorderIO: RecorderIO;
+  private accFrames: AudioFrame[] = [];
+  private _startedWallTime?: number;
+
+  constructor(recorderIO: RecorderIO, source: AudioInput) {
+    super();
+    this.recorderIO = recorderIO;
+    this.source = source;
+
+    // Set up the intercepting stream
+    this.deferredStream.setSource(this.createInterceptingStream());
+  }
+
+  /**
+   * Wall-clock time when the first frame was captured
+   */
+  get startedWallTime(): number | undefined {
+    return this._startedWallTime;
+  }
+
+  /**
+   * Take accumulated frames and clear the buffer
+   */
+  takeBuf(): AudioFrame[] {
+    const frames = this.accFrames;
+    this.accFrames = [];
+    return frames;
+  }
+
+  /**
+   * Creates a stream that intercepts frames from the source,
+   * accumulates them when recording, and passes them through unchanged.
+   */
+  private createInterceptingStream(): ReadableStream<AudioFrame> {
+    const sourceStream = this.source.stream;
+    const reader = sourceStream.getReader();
+
+    const transform = new TransformStream<AudioFrame, AudioFrame>({
+      transform: (frame, controller) => {
+        // Accumulate frames when recording is active
+        if (this.recorderIO.recording) {
+          if (this._startedWallTime === undefined) {
+            this._startedWallTime = Date.now();
+          }
+          this.accFrames.push(frame);
+        }
+
+        controller.enqueue(frame);
+      },
+    });
+
+    const pump = async () => {
+      const writer = transform.writable.getWriter();
+      let sourceError: unknown;
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await writer.write(value);
+        }
+      } catch (e) {
+        if (isStreamReaderReleaseError(e)) return;
+        sourceError = e;
+      } finally {
+        if (sourceError) {
+          writer.abort(sourceError);
+          return;
+        }
+
+        writer.releaseLock();
+
+        try {
+          await transform.writable.close();
+        } catch {
+          // ignore "WritableStream is closed" errors
+        }
+      }
+    };
+
+    pump();
+
+    return transform.readable;
+  }
+
+  onAttached(): void {
+    this.source.onAttached();
+  }
+
+  onDetached(): void {
+    this.source.onDetached();
+  }
+}
 
 class RecorderAudioOutput extends AudioOutput {
-  clearBuffer(): void {}
+  private recorderIO: RecorderIO;
+  private writeFn: (buf: AudioFrame[]) => void;
+  private accFrames: AudioFrame[] = [];
+  private _startedWallTime?: number;
+
+  // Pause tracking
+  private currentPauseStart?: number;
+  private pauseWallTimes: Array<[number, number]> = []; // [start, end] pairs
+
+  constructor(
+    recorderIO: RecorderIO,
+    audioOutput: AudioOutput,
+    writeFn: (buf: AudioFrame[]) => void,
+  ) {
+    super(audioOutput.sampleRate, audioOutput);
+    this.recorderIO = recorderIO;
+    this.writeFn = writeFn;
+  }
+
+  get startedWallTime(): number | undefined {
+    return this._startedWallTime;
+  }
+
+  get hasPendingData(): boolean {
+    return this.accFrames.length > 0;
+  }
+
+  pause(): void {
+    if (this.currentPauseStart === undefined && this.recorderIO.recording) {
+      this.currentPauseStart = Date.now();
+    }
+
+    if (this.nextInChain) {
+      this.nextInChain.pause();
+    }
+  }
+
+  /**
+   * Resume playback and record the pause interval
+   */
+  resume(): void {
+    if (this.currentPauseStart !== undefined && this.recorderIO.recording) {
+      this.pauseWallTimes.push([this.currentPauseStart, Date.now()]);
+      this.currentPauseStart = undefined;
+    }
+
+    if (this.nextInChain) {
+      this.nextInChain.resume();
+    }
+  }
+
+  private resetPauseState(): void {
+    this.currentPauseStart = undefined;
+    this.pauseWallTimes = [];
+  }
+
+  onPlaybackFinished(options: PlaybackFinishedEvent): void {
+    const finishTime = Date.now();
+    super.onPlaybackFinished(options);
+
+    if (!this.recorderIO.recording) {
+      return;
+    }
+
+    if (this.currentPauseStart !== undefined) {
+      this.pauseWallTimes.push([this.currentPauseStart, finishTime]);
+      this.currentPauseStart = undefined;
+    }
+
+    if (this.accFrames.length === 0) {
+      this.resetPauseState();
+      return;
+    }
+
+    const playbackPosition = options.playbackPosition;
+
+    const pauseEvents: Array<[number, number]> = [];
+
+    if (this.pauseWallTimes.length > 0) {
+      const totalPauseDuration = this.pauseWallTimes.reduce(
+        (sum, [start, end]) => sum + (end - start),
+        0,
+      );
+      // Convert playbackPosition from seconds to milliseconds for wall time calculations
+      const playbackStartTime = finishTime - playbackPosition * 1000 - totalPauseDuration;
+
+      let accumulatedPause = 0;
+      for (const [pauseStart, pauseEnd] of this.pauseWallTimes) {
+        let position = (pauseStart - playbackStartTime - accumulatedPause) / 1000; // Convert to seconds
+        const duration = (pauseEnd - pauseStart) / 1000; // Convert to seconds
+        position = Math.max(0, Math.min(position, playbackPosition));
+        pauseEvents.push([position, duration]);
+        accumulatedPause += pauseEnd - pauseStart;
+      }
+    }
+
+    const buf: AudioFrame[] = [];
+    let accDur = 0;
+    const sampleRate = this.accFrames[0]!.sampleRate;
+    const numChannels = this.accFrames[0]!.channels;
+
+    let pauseIdx = 0;
+    let shouldBreak = false;
+
+    for (const frame of this.accFrames) {
+      let currentFrame = frame;
+      const frameDuration = frame.samplesPerChannel / frame.sampleRate;
+
+      if (frameDuration + accDur > playbackPosition) {
+        const [left] = splitFrame(currentFrame, playbackPosition - accDur);
+        currentFrame = left;
+        shouldBreak = true;
+      }
+
+      // Process any pauses before this frame starts
+      while (pauseIdx < pauseEvents.length && pauseEvents[pauseIdx]![0] <= accDur) {
+        const [, pauseDur] = pauseEvents[pauseIdx]!;
+        buf.push(createSilenceFrame(pauseDur, sampleRate, numChannels));
+        pauseIdx++;
+      }
+
+      // Process any pauses within this frame
+      const currentFrameDuration = currentFrame.samplesPerChannel / currentFrame.sampleRate;
+      while (
+        pauseIdx < pauseEvents.length &&
+        pauseEvents[pauseIdx]![0] < accDur + currentFrameDuration
+      ) {
+        const [pausePos, pauseDur] = pauseEvents[pauseIdx]!;
+        const [left, right] = splitFrame(currentFrame, pausePos - accDur);
+        buf.push(left);
+        accDur += left.samplesPerChannel / left.sampleRate;
+        buf.push(createSilenceFrame(pauseDur, sampleRate, numChannels));
+        currentFrame = right;
+        pauseIdx++;
+      }
+
+      buf.push(currentFrame);
+      accDur += currentFrame.samplesPerChannel / currentFrame.sampleRate;
+
+      if (shouldBreak) {
+        break;
+      }
+    }
+
+    // Process remaining pauses
+    while (pauseIdx < pauseEvents.length) {
+      const [pausePos, pauseDur] = pauseEvents[pauseIdx]!;
+      if (pausePos <= playbackPosition) {
+        buf.push(createSilenceFrame(pauseDur, sampleRate, numChannels));
+      }
+      pauseIdx++;
+    }
+
+    if (buf.length > 0) {
+      this.writeFn(buf);
+    }
+
+    this.accFrames = [];
+    this.resetPauseState();
+  }
+
+  async captureFrame(frame: AudioFrame): Promise<void> {
+    await super.captureFrame(frame);
+
+    if (this.recorderIO.recording) {
+      if (this._startedWallTime === undefined) {
+        this._startedWallTime = Date.now();
+      }
+      this.accFrames.push(frame);
+    }
+
+    if (this.nextInChain) {
+      await this.nextInChain.captureFrame(frame);
+    }
+  }
+
+  flush(): void {
+    super.flush();
+
+    if (this.nextInChain) {
+      this.nextInChain.flush();
+    }
+  }
+
+  clearBuffer(): void {
+    if (this.nextInChain) {
+      this.nextInChain.clearBuffer();
+    }
+  }
+}
+
+// Helper functions
+
+/**
+ * Create a silent audio frame with the given duration
+ */
+function createSilenceFrame(duration: number, sampleRate: number, numChannels: number): AudioFrame {
+  const samples = Math.floor(duration * sampleRate);
+  const data = new Int16Array(samples * numChannels); // Zero-filled by default
+  return new AudioFrame(data, sampleRate, numChannels, samples);
+}
+
+/**
+ * Split an audio frame at the given position (in seconds)
+ * Returns [left, right] frames
+ */
+function splitFrame(frame: AudioFrame, position: number): [AudioFrame, AudioFrame] {
+  if (position <= 0) {
+    const emptyFrame = new AudioFrame(new Int16Array(0), frame.sampleRate, frame.channels, 0);
+    return [emptyFrame, frame];
+  }
+
+  const frameDuration = frame.samplesPerChannel / frame.sampleRate;
+  if (position >= frameDuration) {
+    const emptyFrame = new AudioFrame(new Int16Array(0), frame.sampleRate, frame.channels, 0);
+    return [frame, emptyFrame];
+  }
+
+  const samplesNeeded = Math.floor(position * frame.sampleRate);
+  const bytesPerSample = frame.channels;
+
+  const leftData = frame.data.slice(0, samplesNeeded * bytesPerSample);
+  const rightData = frame.data.slice(samplesNeeded * bytesPerSample);
+
+  const leftFrame = new AudioFrame(leftData, frame.sampleRate, frame.channels, samplesNeeded);
+
+  const rightFrame = new AudioFrame(
+    rightData,
+    frame.sampleRate,
+    frame.channels,
+    frame.samplesPerChannel - samplesNeeded,
+  );
+
+  return [leftFrame, rightFrame];
 }
