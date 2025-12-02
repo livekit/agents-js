@@ -55,7 +55,7 @@ export class STT extends stt.STT {
   }
 
   // eslint-disable-next-line
-    async _recognize(_: AudioBuffer): Promise<stt.SpeechEvent> {
+  async _recognize(_: AudioBuffer): Promise<stt.SpeechEvent> {
     throw new Error('Recognize is not supported on Baseten STT');
   }
 
