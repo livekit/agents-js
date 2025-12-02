@@ -14,7 +14,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Logger } from 'pino';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
-import { setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
+import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
 import { isCloud } from './utils.js';
 import type { AgentSession } from './voice/agent_session.js';
 import { type SessionReport, createSessionReport } from './voice/report.js';
@@ -304,6 +304,12 @@ export class JobContext {
       },
       'Session ended, report generated',
     );
+
+    try {
+      await flushOtelLogs();
+    } catch (error) {
+      this.#logger.error({ error }, 'Failed to flush OTEL logs');
+    }
   }
 
   /**
