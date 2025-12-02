@@ -192,7 +192,8 @@ export class AgentSession<
     this._chatCtx = ChatContext.empty();
     this.options = { ...defaultVoiceOptions, ...voiceOptions };
 
-    this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed.bind(this));
+    this._onUserInputTranscribed = this._onUserInputTranscribed.bind(this);
+    this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
   }
 
   emit<K extends keyof AgentSessionCallbacks>(
@@ -679,6 +680,7 @@ export class AgentSession<
     }
 
     this._cancelUserAwayTimer();
+    this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
 
     if (this.activity) {
       if (!drain) {
