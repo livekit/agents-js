@@ -198,3 +198,7 @@ examples/src/test_*.ts
 !**/README.md
 !CONTRIBUTING.md
 !.CODE_OF_CONDUCT.md
+
+# OpenTelemetry trace test output
+.traces/
+*.traces.json

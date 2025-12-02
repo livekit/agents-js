@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-neuphonic
 
+## 1.0.22
+
+### Patch Changes
+
+- Fix race condition where STT/TTS processing could throw "Queue is closed" error when a participant disconnects. These events are now logged as warnings instead of errors. - [#861](https://github.com/livekit/agents-js/pull/861) ([@Devesh36](https://github.com/Devesh36))
+
+- Updated dependencies [[`aed026cfb2109ae6df5624f855b51e1023f87934`](https://github.com/livekit/agents-js/commit/aed026cfb2109ae6df5624f855b51e1023f87934), [`b4f2392f720498f355e1f535eb14b9c79229244b`](https://github.com/livekit/agents-js/commit/b4f2392f720498f355e1f535eb14b9c79229244b)]:
+  - @livekit/agents@1.0.22
+
 ## 1.0.21
 
 ### Patch Changes

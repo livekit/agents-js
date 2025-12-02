@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
+import type { Context, Span } from '@opentelemetry/api';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
 import { type ChatContext } from '../llm/chat_context.js';
@@ -10,6 +11,7 @@ import { DeferredReadableStream, isStreamReaderReleaseError } from '../stream/de
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { traceTypes, tracer } from '../telemetry/index.js';
 import { Task, delay } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
@@ -55,10 +57,9 @@ export interface AudioRecognitionOptions {
   turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
   minEndpointingDelay: number;
   maxEndpointingDelay: number;
+  rootSpanContext?: Context;
 }
 
-// TODO(brian): PR3 - Add span: private _userTurnSpan?: Span, create lazily in _ensureUserTurnSpan() method (tracer.startSpan('user_turn') with participant attributes)
-// TODO(brian): PR3 - Add span: 'eou_detection' span when running EOU detection (in runEOUDetection method)
 export class AudioRecognition {
   private hooks: RecognitionHooks;
   private stt?: STTNode;
@@ -68,6 +69,7 @@ export class AudioRecognition {
   private minEndpointingDelay: number;
   private maxEndpointingDelay: number;
   private lastLanguage?: string;
+  private rootSpanContext?: Context;
 
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
@@ -81,6 +83,8 @@ export class AudioRecognition {
   private userTurnCommitted = false;
   private speaking = false;
   private sampleRate?: number;
+
+  private userTurnSpan?: Span;
 
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
@@ -102,6 +106,7 @@ export class AudioRecognition {
     this.minEndpointingDelay = opts.minEndpointingDelay;
     this.maxEndpointingDelay = opts.maxEndpointingDelay;
     this.lastLanguage = undefined;
+    this.rootSpanContext = opts.rootSpanContext;
 
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
@@ -357,31 +362,47 @@ export class AudioRecognition {
         let endpointingDelay = this.minEndpointingDelay;
 
         if (turnDetector) {
-          this.logger.debug('Running turn detector model');
-          if (!(await turnDetector.supportsLanguage(this.lastLanguage))) {
-            this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
-          } else {
-            const endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
-            this.logger.debug(
-              { endOfTurnProbability, language: this.lastLanguage },
-              'end of turn probability',
-            );
+          await tracer.startActiveSpan(
+            async (span) => {
+              this.logger.debug('Running turn detector model');
 
-            const unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
-            this.logger.debug(
-              {
-                unlikelyThreshold,
-                endOfTurnProbability,
-                language: this.lastLanguage,
-                transcript: this.audioTranscript,
-              },
-              'EOU Detection',
-            );
+              let endOfTurnProbability = 0.0;
+              let unlikelyThreshold: number | undefined;
 
-            if (unlikelyThreshold && endOfTurnProbability < unlikelyThreshold) {
-              endpointingDelay = this.maxEndpointingDelay;
-            }
-          }
+              if (!(await turnDetector.supportsLanguage(this.lastLanguage))) {
+                this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
+              } else {
+                try {
+                  endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
+                  unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
+
+                  this.logger.debug(
+                    { endOfTurnProbability, unlikelyThreshold, language: this.lastLanguage },
+                    'end of turn probability',
+                  );
+
+                  if (unlikelyThreshold && endOfTurnProbability < unlikelyThreshold) {
+                    endpointingDelay = this.maxEndpointingDelay;
+                  }
+                } catch (error) {
+                  this.logger.error(error, 'Error predicting end of turn');
+                }
+              }
+
+              span.setAttribute(
+                traceTypes.ATTR_CHAT_CTX,
+                JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
+              );
+              span.setAttribute(traceTypes.ATTR_EOU_PROBABILITY, endOfTurnProbability);
+              span.setAttribute(traceTypes.ATTR_EOU_UNLIKELY_THRESHOLD, unlikelyThreshold ?? 0);
+              span.setAttribute(traceTypes.ATTR_EOU_DELAY, endpointingDelay);
+              span.setAttribute(traceTypes.ATTR_EOU_LANGUAGE, this.lastLanguage ?? '');
+            },
+            {
+              name: 'eou_detection',
+              context: this.rootSpanContext,
+            },
+          );
         }
 
         let extraSleep = endpointingDelay;
@@ -430,6 +451,13 @@ export class AudioRecognition {
         });
 
         if (committed) {
+          this._endUserTurnSpan({
+            transcript: this.audioTranscript,
+            confidence: confidenceAvg,
+            transcriptionDelay: transcriptionDelay ?? 0,
+            endOfUtteranceDelay: endOfUtteranceDelay ?? 0,
+          });
+
           // clear the transcript if the user turn was committed
           this.audioTranscript = '';
           this.finalTranscriptConfidence = [];
@@ -536,6 +564,13 @@ export class AudioRecognition {
             this.logger.debug('VAD task: START_OF_SPEECH');
             this.hooks.onStartOfSpeech(ev);
             this.speaking = true;
+
+            if (!this.userTurnSpan) {
+              this.userTurnSpan = tracer.startSpan({
+                name: 'user_turn',
+                context: this.rootSpanContext,
+              });
+            }
 
             // Capture sample rate from the first VAD event if not already set
             if (ev.frames.length > 0 && ev.frames[0]) {
@@ -650,6 +685,29 @@ export class AudioRecognition {
     await this.sttTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
     await this.bounceEOUTask?.cancelAndWait();
+  }
+
+  private _endUserTurnSpan({
+    transcript,
+    confidence,
+    transcriptionDelay,
+    endOfUtteranceDelay,
+  }: {
+    transcript: string;
+    confidence: number;
+    transcriptionDelay: number;
+    endOfUtteranceDelay: number;
+  }): void {
+    if (this.userTurnSpan) {
+      this.userTurnSpan.setAttributes({
+        [traceTypes.ATTR_USER_TRANSCRIPT]: transcript,
+        [traceTypes.ATTR_TRANSCRIPT_CONFIDENCE]: confidence,
+        [traceTypes.ATTR_TRANSCRIPTION_DELAY]: transcriptionDelay,
+        [traceTypes.ATTR_END_OF_TURN_DELAY]: endOfUtteranceDelay,
+      });
+      this.userTurnSpan.end();
+      this.userTurnSpan = undefined;
+    }
   }
 
   private get vadBaseTurnDetection() {

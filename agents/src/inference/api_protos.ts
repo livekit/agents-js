@@ -50,8 +50,8 @@ export const ttsSessionClosedEventSchema = z.object({
 
 export const ttsErrorEventSchema = z.object({
   type: z.literal('error'),
-  message: z.string(),
-  session_id: z.string(),
+  message: z.string().optional(),
+  session_id: z.string().optional(),
 });
 
 export const ttsClientEventSchema = z.discriminatedUnion('type', [

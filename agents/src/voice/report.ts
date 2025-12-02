@@ -12,7 +12,10 @@ export interface SessionReport {
   options: VoiceOptions;
   events: AgentEvent[];
   chatHistory: ChatContext;
-  enableUserDataTraining: boolean;
+  enableRecording: boolean;
+  /** Timestamp when the session started (milliseconds) */
+  startedAt: number;
+  /** Timestamp when the session report was created (milliseconds), typically at the end of the session */
   timestamp: number;
 }
 
@@ -24,6 +27,9 @@ export interface SessionReportOptions {
   events: AgentEvent[];
   chatHistory: ChatContext;
   enableUserDataTraining?: boolean;
+  /** Timestamp when the session started (milliseconds) */
+  startedAt?: number;
+  /** Timestamp when the session report was created (milliseconds) */
   timestamp?: number;
 }
 
@@ -35,7 +41,8 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
     options: opts.options,
     events: opts.events,
     chatHistory: opts.chatHistory,
-    enableUserDataTraining: opts.enableUserDataTraining ?? false,
+    enableRecording: opts.enableUserDataTraining ?? false,
+    startedAt: opts.startedAt ?? Date.now(),
     timestamp: opts.timestamp ?? Date.now(),
   };
 }
@@ -71,7 +78,7 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
       max_tool_steps: report.options.maxToolSteps,
     },
     chat_history: report.chatHistory.toJSON({ excludeTimestamp: false }),
-    enable_user_data_training: report.enableUserDataTraining,
+    enable_user_data_training: report.enableRecording,
     timestamp: report.timestamp,
   };
 }

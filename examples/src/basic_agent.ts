@@ -15,6 +15,7 @@ import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
 
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
@@ -27,6 +28,9 @@ export default defineAgent({
       tools: {
         getWeather: llm.tool({
           description: 'Get the weather for a given location.',
+          parameters: z.object({
+            location: z.string().describe('The location to get the weather for'),
+          }),
           execute: async ({ location }) => {
             return `The weather in ${location} is sunny.`;
           },

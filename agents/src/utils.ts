@@ -839,3 +839,8 @@ export async function waitForAbort(signal: AbortSignal) {
   signal.addEventListener('abort', handler, { once: true });
   return await abortFuture.await;
 }
+
+export const isCloud = (url: URL) => {
+  const hostname = url.hostname;
+  return hostname.endsWith('.livekit.cloud') || hostname.endsWith('.livekit.run');
+};

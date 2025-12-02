@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import type { Context, Span } from '@opentelemetry/api';
+import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import {
@@ -14,12 +16,19 @@ import {
   type TTSModelString,
 } from '../inference/index.js';
 import { getJobContext } from '../job.js';
-import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
+import {
+  AgentHandoffItem,
+  ChatContext,
+  ChatMessage,
+  FunctionCall,
+  FunctionCallOutput,
+} from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
+import { traceTypes, tracer } from '../telemetry/index.js';
 import type { TTS, TTSError } from '../tts/tts.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
@@ -128,8 +137,21 @@ export class AgentSession<
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
 
+  private sessionSpan?: Span;
+  private userSpeakingSpan?: Span;
+  private agentSpeakingSpan?: Span;
+
+  /** @internal */
+  rootSpanContext?: Context;
+
   /** @internal */
   _recordedEvents: AgentEvent[] = [];
+
+  /** @internal */
+  _enableRecording = false;
+
+  /** @internal - Timestamp when the session started (milliseconds) */
+  _startedAt?: number;
 
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
@@ -211,25 +233,22 @@ export class AgentSession<
     this._userData = value;
   }
 
-  async start({
-    // TODO(brian): PR2 - Add setupCloudTracer() call if on LiveKit Cloud with recording enabled
-    // TODO(brian): PR3 - Add span: this._sessionSpan = tracer.startSpan('agent_session'), store as instance property
-    // TODO(brian): PR4 - Add setupCloudLogger() call in setupCloudTracer() to setup OTEL logging with Pino bridge
+  private async _startImpl({
     agent,
     room,
     inputOptions,
     outputOptions,
-    record = true,
+    record,
+    span,
   }: {
     agent: Agent;
     room: Room;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
-    record?: boolean;
+    record: boolean;
+    span: Span;
   }): Promise<void> {
-    if (this.started) {
-      return;
-    }
+    span.setAttribute(traceTypes.ATTR_AGENT_LABEL, agent.id);
 
     this.agent = agent;
     this._updateAgentState('initializing');
@@ -291,7 +310,61 @@ export class AgentSession<
     );
 
     this.started = true;
+    this._startedAt = Date.now();
     this._updateAgentState('listening');
+  }
+
+  // TODO(brian): PR4 - Add setupCloudLogger() call in setupCloudTracer() to setup OTEL logging with Pino bridge
+  async start({
+    agent,
+    room,
+    inputOptions,
+    outputOptions,
+    record = true,
+  }: {
+    agent: Agent;
+    room: Room;
+    inputOptions?: Partial<RoomInputOptions>;
+    outputOptions?: Partial<RoomOutputOptions>;
+    record?: boolean;
+  }): Promise<void> {
+    if (this.started) {
+      return;
+    }
+
+    const ctx = getJobContext();
+
+    record = record ?? ctx.info.job.enableRecording;
+    this._enableRecording = record;
+
+    this.logger.info(
+      { record, enableRecording: ctx.info.job.enableRecording },
+      'Configuring session recording',
+    );
+
+    if (this._enableRecording) {
+      await ctx.initRecording();
+    }
+
+    // Create agent_session as a ROOT span (new trace) to match Python behavior
+    // This creates a separate trace for better cloud dashboard organization
+    this.sessionSpan = tracer.startSpan({
+      name: 'agent_session',
+      context: ROOT_CONTEXT,
+    });
+
+    // Set the session span as the active span in the context
+    // This ensures all child spans (agent_turn, user_turn, etc.) are parented to it
+    this.rootSpanContext = trace.setSpan(ROOT_CONTEXT, this.sessionSpan);
+
+    await this._startImpl({
+      agent,
+      room,
+      inputOptions,
+      outputOptions,
+      record,
+      span: this.sessionSpan,
+    });
   }
 
   updateAgent(agent: Agent): void {
@@ -367,32 +440,41 @@ export class AgentSession<
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
-    // TODO(AJS-129): add lock to agent activity core lifecycle
-    this.nextActivity = new AgentActivity(agent, this);
+    const runWithContext = async () => {
+      // TODO(AJS-129): add lock to agent activity core lifecycle
+      this.nextActivity = new AgentActivity(agent, this);
 
-    const previousActivity = this.activity;
+      const previousActivity = this.activity;
 
-    if (this.activity) {
-      await this.activity.drain();
-      await this.activity.close();
+      if (this.activity) {
+        await this.activity.drain();
+        await this.activity.close();
+      }
+
+      this.activity = this.nextActivity;
+      this.nextActivity = undefined;
+
+      this._chatCtx.insert(
+        new AgentHandoffItem({
+          oldAgentId: previousActivity?.agent.id,
+          newAgentId: agent.id,
+        }),
+      );
+      this.logger.debug({ previousActivity, agent }, 'Agent handoff inserted into chat context');
+
+      await this.activity.start();
+
+      if (this._input.audio) {
+        this.activity.attachAudioInput(this._input.audio.stream);
+      }
+    };
+
+    // Run within session span context if available
+    if (this.rootSpanContext) {
+      return otelContext.with(this.rootSpanContext, runWithContext);
     }
 
-    this.activity = this.nextActivity;
-    this.nextActivity = undefined;
-
-    this._chatCtx.insert(
-      new AgentHandoffItem({
-        oldAgentId: previousActivity?.agent.id,
-        newAgentId: agent.id,
-      }),
-    );
-    this.logger.debug({ previousActivity, agent }, 'Agent handoff inserted into chat context');
-
-    await this.activity.start();
-
-    if (this._input.audio) {
-      this.activity.attachAudioInput(this._input.audio.stream);
-    }
+    return runWithContext();
   }
 
   get chatCtx(): ChatContext {
@@ -453,13 +535,34 @@ export class AgentSession<
   }
 
   /** @internal */
+  _toolItemsAdded(items: (FunctionCall | FunctionCallOutput)[]): void {
+    this._chatCtx.insert(items);
+  }
+
+  /** @internal */
   _updateAgentState(state: AgentState) {
     if (this._agentState === state) {
       return;
     }
 
-    // TODO(brian): PR3 - Add span: if state === 'speaking' && !this._agentSpeakingSpan, create tracer.startSpan('agent_speaking') with participant attributes
-    // TODO(brian): PR3 - Add span: if state !== 'speaking' && this._agentSpeakingSpan, end and clear this._agentSpeakingSpan
+    if (state === 'speaking') {
+      // TODO(brian): PR4 - Track error counts
+
+      if (this.agentSpeakingSpan === undefined) {
+        this.agentSpeakingSpan = tracer.startSpan({
+          name: 'agent_speaking',
+          context: this.rootSpanContext,
+        });
+
+        // TODO(brian): PR4 - Set participant attributes if roomIO.room.localParticipant is available
+        // (Ref: Python agent_session.py line 1161-1164)
+      }
+    } else if (this.agentSpeakingSpan !== undefined) {
+      // TODO(brian): PR4 - Set ATTR_END_TIME attribute if available
+      this.agentSpeakingSpan.end();
+      this.agentSpeakingSpan = undefined;
+    }
+
     const oldState = this._agentState;
     this._agentState = state;
 
@@ -482,8 +585,20 @@ export class AgentSession<
       return;
     }
 
-    // TODO(brian): PR3 - Add span: if state === 'speaking' && !this._userSpeakingSpan, create tracer.startSpan('user_speaking') with participant attributes
-    // TODO(brian): PR3 - Add span: if state !== 'speaking' && this._userSpeakingSpan, end and clear this._userSpeakingSpan
+    if (state === 'speaking' && this.userSpeakingSpan === undefined) {
+      this.userSpeakingSpan = tracer.startSpan({
+        name: 'user_speaking',
+        context: this.rootSpanContext,
+      });
+
+      // TODO(brian): PR4 - Set participant attributes if roomIO.linkedParticipant is available
+      // (Ref: Python agent_session.py line 1192-1195)
+    } else if (this.userSpeakingSpan !== undefined) {
+      // TODO(brian): PR4 - Set ATTR_END_TIME attribute with lastSpeakingTime if available
+      this.userSpeakingSpan.end();
+      this.userSpeakingSpan = undefined;
+    }
+
     const oldState = this.userState;
     this.userState = state;
 
@@ -551,6 +666,20 @@ export class AgentSession<
     error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
     drain: boolean = false,
   ): Promise<void> {
+    if (this.rootSpanContext) {
+      return otelContext.with(this.rootSpanContext, async () => {
+        await this.closeImplInner(reason, error, drain);
+      });
+    }
+
+    return this.closeImplInner(reason, error, drain);
+  }
+
+  private async closeImplInner(
+    reason: CloseReason,
+    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
+    drain: boolean = false,
+  ): Promise<void> {
     if (!this.started) {
       return;
     }
@@ -562,7 +691,6 @@ export class AgentSession<
         try {
           this.activity.interrupt();
         } catch (error) {
-          // uninterruptible speech [copied from python]
           // TODO(shubhra): force interrupt or wait for it to finish?
           // it might be an audio played from the error callback
         }
@@ -584,12 +712,28 @@ export class AgentSession<
     await this.activity?.close();
     this.activity = undefined;
 
+    if (this.sessionSpan) {
+      this.sessionSpan.end();
+      this.sessionSpan = undefined;
+    }
+
+    if (this.userSpeakingSpan) {
+      this.userSpeakingSpan.end();
+      this.userSpeakingSpan = undefined;
+    }
+
+    if (this.agentSpeakingSpan) {
+      this.agentSpeakingSpan.end();
+      this.agentSpeakingSpan = undefined;
+    }
+
     this.started = false;
 
     this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
 
     this.userState = 'listening';
     this._agentState = 'initializing';
+    this.rootSpanContext = undefined;
 
     this.logger.info({ reason, error }, 'AgentSession closed');
   }
