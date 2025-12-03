@@ -89,11 +89,7 @@ export class RecorderIO {
       }
 
       this.forwardTask = Task.from(({ signal }) => this.forward(signal));
-      this.encodeTask = Task.from(
-        ({ signal }) => this.encode(signal),
-        undefined,
-        'recorder_io_encode_task',
-      );
+      this.encodeTask = Task.from(() => this.encode(), undefined, 'recorder_io_encode_task');
     } finally {
       unlock();
     }
@@ -309,7 +305,7 @@ export class RecorderIO {
   /**
    * Encode task: read from channels, mix to stereo, stream to FFmpeg
    */
-  private async encode(signal: AbortSignal): Promise<void> {
+  private async encode(): Promise<void> {
     if (!this._outputPath) return;
 
     const inReader = this.inChan.stream().getReader();

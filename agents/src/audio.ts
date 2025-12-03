@@ -132,8 +132,24 @@ export function audioFramesFromFile(
     .audioFrequency(sampleRate);
 
   let commandRunning = true;
+  let channelClosed = false;
+
+  // Handle FFmpeg command-level errors (e.g., kill signals)
+  command.on('error', (err: Error) => {
+    // Ignore errors from intentional kills
+    if (err.message.includes('SIGKILL')) return;
+    if (!channelClosed) {
+      logger.error(err);
+    }
+    commandRunning = false;
+    channelClosed = true;
+    channel.close();
+  });
 
   const onClose = () => {
+    if (channelClosed) return;
+    channelClosed = true;
+
     logger.debug('Audio file playback aborted');
 
     channel.close();
@@ -147,6 +163,8 @@ export function audioFramesFromFile(
   options.abortSignal?.addEventListener('abort', onClose, { once: true });
 
   outputStream.on('data', (chunk: Buffer) => {
+    if (channelClosed) return;
+
     const arrayBuffer = chunk.buffer.slice(
       chunk.byteOffset,
       chunk.byteOffset + chunk.byteLength,
@@ -154,11 +172,15 @@ export function audioFramesFromFile(
 
     const frames = audioStream.write(arrayBuffer);
     for (const frame of frames) {
+      if (channelClosed) return;
       channel.write(frame);
     }
   });
 
   outputStream.on('end', () => {
+    if (channelClosed) return;
+    channelClosed = true;
+
     const frames = audioStream.flush();
     for (const frame of frames) {
       channel.write(frame);
@@ -168,7 +190,9 @@ export function audioFramesFromFile(
   });
 
   outputStream.on('error', (err: Error) => {
-    logger.error(err);
+    if (!channelClosed) {
+      logger.error(err);
+    }
     commandRunning = false;
     onClose();
   });
