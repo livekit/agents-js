@@ -23,7 +23,7 @@ const WRITE_INTERVAL_MS = 2500;
 const DEFAULT_SAMPLE_RATE = 48000;
 
 export interface RecorderOptions {
-  agentSession: AgentSession;
+  agentSession?: AgentSession;
   sampleRate?: number;
 }
 
@@ -40,7 +40,7 @@ export class RecorderIO {
   private inChan: StreamChannel<AudioFrame[]> = createStreamChannel<AudioFrame[]>();
   private outChan: StreamChannel<AudioFrame[]> = createStreamChannel<AudioFrame[]>();
 
-  private session: AgentSession;
+  private session?: AgentSession;
   private sampleRate: number;
 
   private _outputPath?: string;
