@@ -726,10 +726,9 @@ export class AgentSession<
       this.activity.detachAudioInput();
     }
 
-    // Close recorder before detaching inputs/outputs
+    // Close recorder before detaching inputs/outputs (keep reference for session report)
     if (this._recorderIO) {
       await this._recorderIO.close();
-      this._recorderIO = undefined;
     }
 
     // detach the inputs and outputs

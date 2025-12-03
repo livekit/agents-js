@@ -373,7 +373,8 @@ export class ParticipantAudioOutput extends AudioOutput {
 
     if (interrupted) {
       // Calculate actual played duration accounting for queued audio
-      pushedDuration = Math.max(this.pushedDurationMs - this.audioSource.queuedDuration, 0);
+      // Note: queuedDuration is in milliseconds, pushedDurationMs is in seconds (misleading name)
+      pushedDuration = Math.max(this.pushedDurationMs - this.audioSource.queuedDuration / 1000, 0);
       this.audioSource.clearQueue();
     }
 

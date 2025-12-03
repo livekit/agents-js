@@ -107,6 +107,9 @@ export class RecorderIO {
       await cancelAndWait([this.forwardTask!, this.encodeTask!]);
 
       this.started = false;
+
+      const stats = fs.statSync(this._outputPath!);
+      this.logger.info({ path: this._outputPath, size: stats.size }, 'Recording saved');
     } finally {
       unlock();
     }
@@ -196,8 +199,13 @@ export class RecorderIO {
           resolve();
         })
         .on('error', (err) => {
-          // Ignore errors from intentional stream closure
-          if (err.message?.includes('Output stream closed')) {
+          // Ignore errors from intentional stream closure or SIGINT during shutdown
+          if (
+            err.message?.includes('Output stream closed') ||
+            err.message?.includes('received signal 2') ||
+            err.message?.includes('SIGKILL') ||
+            err.message?.includes('SIGINT')
+          ) {
             resolve();
           } else {
             this.logger.error({ err }, 'FFmpeg encoding error');
@@ -662,8 +670,6 @@ class RecorderAudioOutput extends AudioOutput {
   }
 }
 
-// Helper functions
-
 /**
  * Create a silent audio frame with the given duration
  */
@@ -689,11 +695,14 @@ function splitFrame(frame: AudioFrame, position: number): [AudioFrame, AudioFram
     return [frame, emptyFrame];
   }
 
+  // samplesNeeded is samples per channel (i.e., sample count in time)
   const samplesNeeded = Math.floor(position * frame.sampleRate);
-  const bytesPerSample = frame.channels;
+  // Int16Array: each element is one sample, interleaved by channel
+  // So total elements = samplesPerChannel * channels
+  const numChannels = frame.channels;
 
-  const leftData = frame.data.slice(0, samplesNeeded * bytesPerSample);
-  const rightData = frame.data.slice(samplesNeeded * bytesPerSample);
+  const leftData = frame.data.slice(0, samplesNeeded * numChannels);
+  const rightData = frame.data.slice(samplesNeeded * numChannels);
 
   const leftFrame = new AudioFrame(leftData, frame.sampleRate, frame.channels, samplesNeeded);
 
