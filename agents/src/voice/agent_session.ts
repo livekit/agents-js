@@ -302,6 +302,14 @@ export class AgentSession<
         );
       }
 
+      this.logger.info(
+        {
+          input: this.input.audio,
+          output: this.output.audio,
+          enableRecording: this._enableRecording,
+        },
+        'Recording audio input and output',
+      );
       if (this.input.audio && this.output.audio && this._enableRecording) {
         this._recorderIO = new RecorderIO({ agentSession: this });
         this.input.audio = this._recorderIO.recordInput(this.input.audio);
@@ -352,6 +360,21 @@ export class AgentSession<
     }
 
     let ctx: JobContext | undefined = undefined;
+    try {
+      ctx = getJobContext();
+
+      if (record === undefined) {
+        record = ctx.job.enableRecording;
+      }
+
+      this._enableRecording = record;
+
+      if (this._enableRecording) {
+        ctx.initRecording();
+      }
+    } catch (error) {
+      // JobContext is not available in evals
+    }
 
     this.sessionSpan = tracer.startSpan({
       name: 'agent_session',
