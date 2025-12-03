@@ -15,14 +15,9 @@ import {
   type STTModelString,
   type TTSModelString,
 } from '../inference/index.js';
-import { JobContext, getJobContext } from '../job.js';
-import {
-  AgentHandoffItem,
-  ChatContext,
-  ChatMessage,
-  FunctionCall,
-  FunctionCallOutput,
-} from '../llm/chat_context.js';
+import { type JobContext, getJobContext } from '../job.js';
+import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
+import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
@@ -201,7 +196,8 @@ export class AgentSession<
     this._chatCtx = ChatContext.empty();
     this.options = { ...defaultVoiceOptions, ...voiceOptions };
 
-    this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed.bind(this));
+    this._onUserInputTranscribed = this._onUserInputTranscribed.bind(this);
+    this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
   }
 
   emit<K extends keyof AgentSessionCallbacks>(
@@ -710,6 +706,7 @@ export class AgentSession<
     }
 
     this._cancelUserAwayTimer();
+    this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
 
     if (this.activity) {
       if (!drain) {
