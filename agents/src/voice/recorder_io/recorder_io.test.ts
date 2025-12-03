@@ -14,20 +14,14 @@ import type { AgentSession } from '../agent_session.js';
 import { AudioInput, AudioOutput } from '../io.js';
 import { RecorderIO } from './recorder_io.js';
 
-// Initialize logger for tests
 initializeLogger({ pretty: false, level: 'silent' });
 
-// Test constants
 const TEST_SAMPLE_RATE = 48000;
 const TEST_CHANNELS = 1;
 
-// Frequencies for distinct left/right channel identification
-const LEFT_CHANNEL_FREQ = 440; // A4 note - for input/user audio
-const RIGHT_CHANNEL_FREQ = 880; // A5 note (octave higher) - for output/agent audio
+const LEFT_CHANNEL_FREQ = 440;
+const RIGHT_CHANNEL_FREQ = 880;
 
-/**
- * Create a test audio frame with sine wave data
- */
 function createTestFrame(
   durationMs: number,
   sampleRate: number = TEST_SAMPLE_RATE,
@@ -215,12 +209,10 @@ describe('RecorderIO', () => {
 
     const outputPath = path.join(tempDir, 'test.ogg');
 
-    // Double start
     await recorderIO.start(outputPath);
     await recorderIO.start(outputPath);
     expect(recorderIO.recording).toBe(true);
 
-    // Double close
     await recorderIO.close();
     await recorderIO.close();
     expect(recorderIO.recording).toBe(false);
@@ -240,7 +232,6 @@ describe('RecorderIO', () => {
     const frame = createOutputFrame(100);
     await recordedOutput.captureFrame(frame);
 
-    // Inner output should have received the frame (decorator pattern)
     expect(innerOutput.capturedFrames.length).toBe(1);
 
     await recorderIO.close();
@@ -249,7 +240,6 @@ describe('RecorderIO', () => {
   it('should produce stereo OGG with distinct left/right channels (440Hz vs 880Hz)', async () => {
     const recorderIO = new RecorderIO({ agentSession: mockSession });
 
-    // Create 500ms of input at 440Hz (left channel - user audio)
     const inputFrames = Array.from({ length: 5 }, () => createInputFrame(100));
     const mockInput = new MockAudioInput([...inputFrames]);
     const mockOutput = new MockAudioOutput();
@@ -260,7 +250,6 @@ describe('RecorderIO', () => {
     const outputPath = path.join(tempDir, 'stereo_test.ogg');
     await recorderIO.start(outputPath);
 
-    // Consume all input frames
     const reader = recordedInput.stream.getReader();
     while (true) {
       const { done } = await reader.read();
@@ -268,12 +257,10 @@ describe('RecorderIO', () => {
     }
     reader.releaseLock();
 
-    // Capture 500ms of output at 880Hz (right channel - agent audio)
     for (let i = 0; i < 5; i++) {
       await recordedOutput.captureFrame(createOutputFrame(100));
     }
 
-    // Trigger playback finished
     recordedOutput.onPlaybackFinished({
       playbackPosition: 0.5,
       interrupted: false,
@@ -282,10 +269,9 @@ describe('RecorderIO', () => {
     await delay(200);
     await recorderIO.close();
 
-    // Verify file exists and has correct format
     expect(fs.existsSync(outputPath)).toBe(true);
     const audioInfo = await getAudioInfo(outputPath);
-    expect(audioInfo.channels).toBe(2); // Stereo
+    expect(audioInfo.channels).toBe(2);
     expect(audioInfo.duration).toBeGreaterThan(0.4);
     expect(audioInfo.duration).toBeLessThan(1.0);
   });
@@ -293,7 +279,6 @@ describe('RecorderIO', () => {
   it('should handle 2-second recording with streaming FFmpeg encoding', async () => {
     const recorderIO = new RecorderIO({ agentSession: mockSession });
 
-    // Create 2 seconds of input (20 x 100ms frames)
     const inputFrames = Array.from({ length: 20 }, () => createInputFrame(100));
     const mockInput = new MockAudioInput([...inputFrames]);
     const mockOutput = new MockAudioOutput();
@@ -304,7 +289,6 @@ describe('RecorderIO', () => {
     const outputPath = path.join(tempDir, 'long_recording.ogg');
     await recorderIO.start(outputPath);
 
-    // Consume all input frames
     const reader = recordedInput.stream.getReader();
     while (true) {
       const { done } = await reader.read();
@@ -312,7 +296,6 @@ describe('RecorderIO', () => {
     }
     reader.releaseLock();
 
-    // Capture 2 seconds of output
     for (let i = 0; i < 20; i++) {
       await recordedOutput.captureFrame(createOutputFrame(100));
     }
@@ -325,7 +308,6 @@ describe('RecorderIO', () => {
     await delay(500);
     await recorderIO.close();
 
-    // Verify file
     expect(fs.existsSync(outputPath)).toBe(true);
     const audioInfo = await getAudioInfo(outputPath);
     expect(audioInfo.channels).toBe(2);
@@ -337,7 +319,7 @@ describe('RecorderIO', () => {
     const recorderIO = new RecorderIO({ agentSession: mockSession });
 
     const inputFrames = [createInputFrame(100)];
-    const mockInput = new MockAudioInput([...inputFrames], 50); // 50ms delay
+    const mockInput = new MockAudioInput([...inputFrames], 50);
     const mockOutput = new MockAudioOutput();
 
     const recordedInput = recorderIO.recordInput(mockInput);
@@ -346,20 +328,16 @@ describe('RecorderIO', () => {
     const outputPath = path.join(tempDir, 'test.ogg');
     await recorderIO.start(outputPath);
 
-    // Initially undefined
     expect(recorderIO.recordingStartedAt).toBeUndefined();
 
-    // Capture output frame first (should be earlier due to input delay)
     const outputStartBefore = Date.now();
     await recordedOutput.captureFrame(createOutputFrame(100));
     const outputStartAfter = Date.now();
 
-    // Then read input frame (later due to delay)
     const reader = recordedInput.stream.getReader();
     await reader.read();
     reader.releaseLock();
 
-    // recordingStartedAt should be the earlier time (output)
     expect(recorderIO.recordingStartedAt).toBeDefined();
     expect(recorderIO.recordingStartedAt).toBeGreaterThanOrEqual(outputStartBefore);
     expect(recorderIO.recordingStartedAt).toBeLessThanOrEqual(outputStartAfter);
@@ -378,20 +356,17 @@ describe('RecorderIO', () => {
     const outputPath = path.join(tempDir, 'test.ogg');
     await recorderIO.start(outputPath);
 
-    // Capture 500ms of audio
     for (let i = 0; i < 5; i++) {
       await recordedOutput.captureFrame(createTestFrame(100));
     }
 
     expect(recordedOutput.hasPendingData).toBe(true);
 
-    // But only 300ms was actually played (interrupted)
     recordedOutput.onPlaybackFinished({
       playbackPosition: 0.3,
       interrupted: true,
     });
 
-    // Buffer should be cleared after onPlaybackFinished
     expect(recordedOutput.hasPendingData).toBe(false);
 
     await recorderIO.close();
@@ -405,13 +380,10 @@ describe('RecorderIO', () => {
     recorderIO.recordInput(mockInput);
     const recordedOutput = recorderIO.recordOutput(mockOutput);
 
-    // Don't start recording - just capture frames
     await recordedOutput.captureFrame(createTestFrame(100));
 
-    // No pending data since not recording
     expect(recordedOutput.hasPendingData).toBe(false);
 
-    // Should not throw
     recordedOutput.onPlaybackFinished({
       playbackPosition: 0.1,
       interrupted: false,
