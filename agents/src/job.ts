@@ -305,6 +305,9 @@ export class JobContext {
       'Session ended, report generated',
     );
 
+    // Explicitly clear the recorded events to avoid leaking memory
+    session._recordedEvents = [];
+
     try {
       await flushOtelLogs();
     } catch (error) {

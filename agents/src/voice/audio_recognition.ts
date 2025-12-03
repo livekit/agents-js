@@ -681,6 +681,7 @@ export class AudioRecognition {
 
   async close() {
     this.detachInputAudioStream();
+    this.silenceAudioWriter.releaseLock();
     await this.commitUserTurnTask?.cancelAndWait();
     await this.sttTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
