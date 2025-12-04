@@ -107,8 +107,6 @@ export class RecorderIO {
       await cancelAndWait([this.forwardTask!, this.encodeTask!]);
 
       this.started = false;
-
-      const stats = fs.statSync(this._outputPath!);
     } finally {
       unlock();
     }
@@ -511,7 +509,6 @@ class RecorderAudioOutput extends AudioOutput {
 
   onPlaybackFinished(options: PlaybackFinishedEvent): void {
     const finishTime = Date.now();
-    const logger = log();
 
     super.onPlaybackFinished(options);
 
