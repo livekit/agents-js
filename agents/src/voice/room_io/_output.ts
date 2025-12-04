@@ -321,7 +321,9 @@ export class ParticipantAudioOutput extends AudioOutput {
   private audioSource: AudioSource;
   private publication?: LocalTrackPublication;
   private flushTask?: Task<void>;
-  private pushedDurationMs: number = 0;
+
+  /** Duration of audio pushed to the source, in seconds */
+  private pushedDuration: number = 0;
   private startedFuture: Future<void> = new Future();
   private interruptedFuture: Future<void> = new Future();
 
@@ -346,7 +348,7 @@ export class ParticipantAudioOutput extends AudioOutput {
     super.captureFrame(frame);
 
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
-    this.pushedDurationMs += frame.samplesPerChannel / frame.sampleRate;
+    this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
     await this.audioSource.captureFrame(frame);
   }
 
@@ -369,16 +371,16 @@ export class ParticipantAudioOutput extends AudioOutput {
       this.interruptedFuture.await.then(() => true),
     ]);
 
-    let pushedDuration = this.pushedDurationMs;
+    let pushedDuration = this.pushedDuration;
 
     if (interrupted) {
       // Calculate actual played duration accounting for queued audio
-      // Note: queuedDuration is in milliseconds, pushedDurationMs is in seconds (misleading name)
-      pushedDuration = Math.max(this.pushedDurationMs - this.audioSource.queuedDuration / 1000, 0);
+      // Note: queuedDuration is in milliseconds, pushedDuration is in seconds
+      pushedDuration = Math.max(this.pushedDuration - this.audioSource.queuedDuration / 1000, 0);
       this.audioSource.clearQueue();
     }
 
-    this.pushedDurationMs = 0;
+    this.pushedDuration = 0;
     this.interruptedFuture = new Future();
     this.onPlaybackFinished({
       playbackPosition: pushedDuration,
@@ -392,7 +394,7 @@ export class ParticipantAudioOutput extends AudioOutput {
   flush(): void {
     super.flush();
 
-    if (!this.pushedDurationMs) {
+    if (!this.pushedDuration) {
       return;
     }
 
@@ -405,7 +407,7 @@ export class ParticipantAudioOutput extends AudioOutput {
   }
 
   clearBuffer(): void {
-    if (!this.pushedDurationMs) {
+    if (!this.pushedDuration) {
       return;
     }
 
