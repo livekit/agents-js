@@ -306,6 +306,7 @@ export class AgentSession<
         },
         'Recording audio input and output',
       );
+
       if (this.input.audio && this.output.audio && this._enableRecording) {
         this._recorderIO = new RecorderIO({ agentSession: this });
         this.input.audio = this._recorderIO.recordInput(this.input.audio);

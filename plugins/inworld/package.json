@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-inworld",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "description": "Inworld plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -49,4 +49,3 @@
     "@livekit/rtc-node": "^0.13.12"
   }
 }
-
