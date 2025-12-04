@@ -61,6 +61,14 @@ export default defineAgent({
         // allow the LLM to generate a response while waiting for the end of turn
         preemptiveGeneration: true,
       },
+      connOptions: {
+        // Example of overriding the default connection options for the LLM
+        llmConnOptions: {
+          maxRetry: 1,
+          retryIntervalMs: 2000,
+          timeoutMs: 60000,
+        },
+      },
     });
 
     const usageCollector = new metrics.UsageCollector();

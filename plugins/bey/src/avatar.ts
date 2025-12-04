@@ -7,6 +7,7 @@ import {
   APIStatusError,
   DEFAULT_API_CONNECT_OPTIONS,
   getJobContext,
+  intervalForRetry,
   voice,
 } from '@livekit/agents';
 import type { Room } from '@livekit/rtc-node';
@@ -232,7 +233,7 @@ export class AvatarSession {
 
         if (i < this.connOptions.maxRetry - 1) {
           await new Promise((resolve) =>
-            setTimeout(resolve, this.connOptions._intervalForRetry(i)),
+            setTimeout(resolve, intervalForRetry(this.connOptions, i)),
           );
         }
       }

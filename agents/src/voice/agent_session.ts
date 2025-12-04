@@ -25,6 +25,12 @@ import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import type { TTS, TTSError } from '../tts/tts.js';
+import {
+  DEFAULT_API_CONNECT_OPTIONS,
+  DEFAULT_SESSION_CONNECT_OPTIONS,
+  type ResolvedSessionConnectOptions,
+  type SessionConnectOptions,
+} from '../types.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
@@ -100,6 +106,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   tts?: TTS | TTSModelString;
   userData?: UserData;
   voiceOptions?: Partial<VoiceOptions>;
+  connOptions?: SessionConnectOptions;
 };
 
 export class AgentSession<
@@ -132,6 +139,13 @@ export class AgentSession<
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
 
+  // Connection options for STT, LLM, and TTS
+  private _connOptions: ResolvedSessionConnectOptions;
+
+  // Unrecoverable error counts, reset after agent speaking
+  private llmErrorCounts = 0;
+  private ttsErrorCounts = 0;
+
   private sessionSpan?: Span;
   private userSpeakingSpan?: Span;
   private agentSpeakingSpan?: Span;
@@ -159,7 +173,18 @@ export class AgentSession<
       turnDetection,
       userData,
       voiceOptions = defaultVoiceOptions,
+      connOptions,
     } = opts;
+
+    // Merge user-provided connOptions with defaults
+    this._connOptions = {
+      sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
+      llmConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.llmConnOptions },
+      ttsConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.ttsConnOptions },
+      maxUnrecoverableErrors:
+        connOptions?.maxUnrecoverableErrors ??
+        DEFAULT_SESSION_CONNECT_OPTIONS.maxUnrecoverableErrors,
+    };
 
     this.vad = vad;
 
@@ -223,6 +248,11 @@ export class AgentSession<
 
   get history(): ChatContext {
     return this._chatCtx;
+  }
+
+  /** Connection options for STT, LLM, and TTS. */
+  get connOptions(): ResolvedSessionConnectOptions {
+    return this._connOptions;
   }
 
   set userData(value: UserData) {
@@ -514,6 +544,19 @@ export class AgentSession<
       return;
     }
 
+    // Track error counts per type to implement max_unrecoverable_errors logic
+    if (error.type === 'llm_error') {
+      this.llmErrorCounts += 1;
+      if (this.llmErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
+        return;
+      }
+    } else if (error.type === 'tts_error') {
+      this.ttsErrorCounts += 1;
+      if (this.ttsErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
+        return;
+      }
+    }
+
     this.logger.error(error, 'AgentSession is closing due to unrecoverable error');
 
     this.closingTask = (async () => {
@@ -541,7 +584,9 @@ export class AgentSession<
     }
 
     if (state === 'speaking') {
-      // TODO(brian): PR4 - Track error counts
+      // Reset error counts when agent starts speaking
+      this.llmErrorCounts = 0;
+      this.ttsErrorCounts = 0;
 
       if (this.agentSpeakingSpan === undefined) {
         this.agentSpeakingSpan = tracer.startSpan({
@@ -730,6 +775,8 @@ export class AgentSession<
     this.userState = 'listening';
     this._agentState = 'initializing';
     this.rootSpanContext = undefined;
+    this.llmErrorCounts = 0;
+    this.ttsErrorCounts = 0;
 
     this.logger.info({ reason, error }, 'AgentSession closed');
   }

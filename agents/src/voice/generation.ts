@@ -24,7 +24,7 @@ import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
-import { Future, Task, shortuuid, toError } from '../utils.js';
+import { Future, Task, shortuuid, toError, waitForAbort } from '../utils.js';
 import { type Agent, type ModelSettings, asyncLocalStorage, isStopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
@@ -411,17 +411,19 @@ export function performLLMInference(
         return;
       }
 
+      const abortPromise = waitForAbort(signal);
+
       // TODO(brian): add support for dynamic tools
 
       llmStreamReader = llmStream.getReader();
       while (true) {
-        if (signal.aborted) {
-          break;
-        }
-        const { done, value: chunk } = await llmStreamReader.read();
-        if (done) {
-          break;
-        }
+        if (signal.aborted) break;
+
+        const result = await Promise.race([llmStreamReader.read(), abortPromise]);
+        if (result === undefined) break;
+
+        const { done, value: chunk } = result;
+        if (done) break;
 
         if (typeof chunk === 'string') {
           data.generatedText += chunk;
