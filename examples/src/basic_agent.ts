@@ -62,7 +62,7 @@ export default defineAgent({
         preemptiveGeneration: true,
       },
       connOptions: {
-        // Example of overriding the default connection options for the LLM
+        // Example of overriding the default connection options for the LLM/TTS/STT
         llmConnOptions: {
           maxRetry: 1,
           retryIntervalMs: 2000,
