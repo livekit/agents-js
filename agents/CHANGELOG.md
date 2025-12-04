@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.24
+
+### Patch Changes
+
+- Unset record flag by default in agent session - [#878](https://github.com/livekit/agents-js/pull/878) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.23
 
 ### Patch Changes
