@@ -109,7 +109,6 @@ export class RecorderIO {
       this.started = false;
 
       const stats = fs.statSync(this._outputPath!);
-      this.logger.info({ path: this._outputPath, size: stats.size }, 'Recording saved');
     } finally {
       unlock();
     }
@@ -325,10 +324,6 @@ export class RecorderIO {
         const inputBuf = inResult.value;
         const outputBuf = outResult.value;
 
-        this.logger.debug(
-          `encode: inputBuf=${inputBuf.length} frames, outputBuf=${outputBuf.length} frames`,
-        );
-
         const inMixed = this.resampleAndMix({ frames: inputBuf, resampler: this.inResampler });
         this.inResampler = inMixed.resampler;
 
@@ -338,10 +333,6 @@ export class RecorderIO {
           flush: outputBuf.length > 0,
         });
         this.outResampler = outMixed.resampler;
-
-        this.logger.debug(
-          `encode: leftSamples=${inMixed.samples.length}, rightSamples=${outMixed.samples.length}`,
-        );
 
         // Stream PCM data directly to FFmpeg
         this.writePCM(inMixed.samples, outMixed.samples);
@@ -521,14 +512,10 @@ class RecorderAudioOutput extends AudioOutput {
   onPlaybackFinished(options: PlaybackFinishedEvent): void {
     const finishTime = Date.now();
     const logger = log();
-    logger.debug(
-      `RecorderAudioOutput.onPlaybackFinished: accFrames=${this.accFrames.length}, recording=${this.recorderIO.recording}, playbackPosition=${options.playbackPosition}`,
-    );
 
     super.onPlaybackFinished(options);
 
     if (!this.recorderIO.recording) {
-      logger.debug('RecorderAudioOutput.onPlaybackFinished: not recording, returning');
       return;
     }
 
@@ -538,7 +525,6 @@ class RecorderAudioOutput extends AudioOutput {
     }
 
     if (this.accFrames.length === 0) {
-      logger.debug('RecorderAudioOutput.onPlaybackFinished: no frames, returning');
       this.resetPauseState();
       return;
     }
@@ -623,11 +609,6 @@ class RecorderAudioOutput extends AudioOutput {
     }
 
     if (buf.length > 0) {
-      const logger = log();
-      const totalSamples = buf.reduce((sum, f) => sum + f.samplesPerChannel, 0);
-      logger.debug(
-        `RecorderAudioOutput.onPlaybackFinished: writing ${buf.length} frames (${totalSamples} samples) to channel`,
-      );
       this.writeFn(buf);
     }
 

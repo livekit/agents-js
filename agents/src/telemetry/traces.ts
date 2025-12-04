@@ -532,8 +532,6 @@ export async function uploadSessionReport(options: {
     },
   });
 
-  console.log('report.audioRecordingPath', report.audioRecordingPath);
-  console.log('report.audioRecordingStartedAt', report.audioRecordingStartedAt);
   // Add audio recording file if available
   if (report.audioRecordingPath && report.audioRecordingStartedAt) {
     let audioBytes: Buffer;
