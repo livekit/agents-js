@@ -417,6 +417,10 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   detachAudioInput(): void {
+    if (!this.audioStream.isSourceSet) {
+      // No-op if audio input was never attached
+      return;
+    }
     this.audioStream.detachSource();
   }
 
