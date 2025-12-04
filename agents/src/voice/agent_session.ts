@@ -330,7 +330,7 @@ export class AgentSession<
     const ctx = getJobContext();
 
     this.logger.info(
-      { record, enableRecording: ctx?.info.job.enableRecording },
+      { record, enableRecording: ctx.info.job.enableRecording },
       'Configuring session recording',
     );
 
