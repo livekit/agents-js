@@ -315,7 +315,7 @@ export class AgentSession<
     room,
     inputOptions,
     outputOptions,
-    record = true,
+    record,
   }: {
     agent: Agent;
     room: Room;
@@ -329,13 +329,13 @@ export class AgentSession<
 
     const ctx = getJobContext();
 
-    record = record ?? ctx.info.job.enableRecording;
-    this._enableRecording = record;
-
     this.logger.info(
-      { record, enableRecording: ctx.info.job.enableRecording },
+      { record, enableRecording: ctx?.info.job.enableRecording },
       'Configuring session recording',
     );
+
+    record = record ?? ctx.info.job.enableRecording;
+    this._enableRecording = record;
 
     if (this._enableRecording) {
       await ctx.initRecording();
