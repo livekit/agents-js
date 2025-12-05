@@ -1,5 +1,15 @@
 # @livekit/agents
 
+## 1.0.25
+
+### Patch Changes
+
+- Rename pushedDurationMs to pushedDuration (was actually in seconds) - [#876](https://github.com/livekit/agents-js/pull/876) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add traces for `session.say` and `session.generateReply` - [#882](https://github.com/livekit/agents-js/pull/882) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add RecorderIO for stereo audio recording - [#876](https://github.com/livekit/agents-js/pull/876) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.24
 
 ### Patch Changes
