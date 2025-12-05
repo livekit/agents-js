@@ -522,11 +522,11 @@ describe('DeferredReadableStream', () => {
     expect(() => deferred.setSource(source2)).toThrow('Stream source already set');
   });
 
-  it('should throw error when trying to detach source before setting it', async () => {
+  it('should safely detach source before setting it (no-op)', async () => {
     const deferred = new DeferredReadableStream<string>();
 
-    // Attempting to detach source before setting it should throw
-    await expect(deferred.detachSource()).rejects.toThrow('Source not set');
+    // Attempting to detach source before setting it should be a no-op, not throw
+    await expect(deferred.detachSource()).resolves.toBeUndefined();
   });
 
   it('read returns undefined as soon as reader is cancelled', async () => {
