@@ -65,6 +65,7 @@ export interface TTSOptions {
 export class TTS extends tts.TTS {
   #opts: TTSOptions;
   #client: GoogleGenAI;
+  #abortController = new AbortController();
   label = 'google.gemini.TTS';
 
   /**
@@ -164,6 +165,14 @@ export class TTS extends tts.TTS {
   get client(): GoogleGenAI {
     return this.#client;
   }
+
+  get signal(): AbortSignal {
+    return this.#abortController.signal;
+  }
+
+  async close(): Promise<void> {
+    this.#abortController.abort();
+  }
 }
 
 export class ChunkedStream extends tts.ChunkedStream {
@@ -205,7 +214,10 @@ export class ChunkedStream extends tts.ChunkedStream {
     const responseStream = await this.#tts.client.models.generateContentStream({
       model: this.#tts.opts.model,
       contents,
-      config,
+      config: {
+        ...config,
+        abortSignal: this.#tts.signal,
+      },
     });
 
     try {
@@ -213,6 +225,9 @@ export class ChunkedStream extends tts.ChunkedStream {
         await this.#processResponse(response, bstream, requestId);
       }
     } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
       if (isAPIError(error)) throw error;
 
       const err = error as {
