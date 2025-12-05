@@ -11,7 +11,7 @@ import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { recordException, traceTypes, tracer } from '../telemetry/index.js';
-import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
 import { AsyncIterableQueue, delay, mergeFrames, startSoon, toError } from '../utils.js';
 
 /** SynthesizedAudio is a packet of speech synthesis as returned by the TTS. */
@@ -94,8 +94,10 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
 
   /**
    * Returns a {@link SynthesizeStream} that can be used to push text and receive audio data
+   *
+   * @param options - Optional configuration including connection options
    */
-  abstract stream(): SynthesizeStream;
+  abstract stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream;
 
   async close(): Promise<void> {
     return;
@@ -186,7 +188,7 @@ export abstract class SynthesizeStream
         );
       } catch (error) {
         if (error instanceof APIError) {
-          const retryInterval = this._connOptions._intervalForRetry(i);
+          const retryInterval = intervalForRetry(this._connOptions, i);
 
           if (this._connOptions.maxRetry === 0 || !error.retryable) {
             this.emitError({ error, recoverable: false });
@@ -454,7 +456,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
         );
       } catch (error) {
         if (error instanceof APIError) {
-          const retryInterval = this._connOptions._intervalForRetry(i);
+          const retryInterval = intervalForRetry(this._connOptions, i);
 
           if (this._connOptions.maxRetry === 0 || !error.retryable) {
             this.emitError({ error, recoverable: false });

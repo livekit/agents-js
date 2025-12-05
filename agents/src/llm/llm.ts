@@ -8,7 +8,7 @@ import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import { recordException, traceTypes, tracer } from '../telemetry/index.js';
-import type { APIConnectOptions } from '../types.js';
+import { type APIConnectOptions, intervalForRetry } from '../types.js';
 import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
 import type { ToolChoice, ToolContext } from './tool_context.js';
@@ -158,7 +158,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         );
       } catch (error) {
         if (error instanceof APIError) {
-          const retryInterval = this._connOptions._intervalForRetry(i);
+          const retryInterval = intervalForRetry(this._connOptions, i);
 
           if (this._connOptions.maxRetry === 0 || !error.retryable) {
             this.emitError({ error, recoverable: false });

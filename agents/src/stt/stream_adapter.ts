@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { log } from '../log.js';
+import type { APIConnectOptions } from '../types.js';
 import type { VAD, VADStream } from '../vad.js';
 import { VADEventType } from '../vad.js';
 import type { SpeechEvent } from './stt.js';
@@ -28,8 +29,8 @@ export class StreamAdapter extends STT {
     return this.#stt.recognize(frame);
   }
 
-  stream(): StreamAdapterWrapper {
-    return new StreamAdapterWrapper(this.#stt, this.#vad);
+  stream(options?: { connOptions?: APIConnectOptions }): StreamAdapterWrapper {
+    return new StreamAdapterWrapper(this.#stt, this.#vad, options?.connOptions);
   }
 }
 
@@ -38,8 +39,8 @@ export class StreamAdapterWrapper extends SpeechStream {
   #vadStream: VADStream;
   label: string;
 
-  constructor(stt: STT, vad: VAD) {
-    super(stt);
+  constructor(stt: STT, vad: VAD, connOptions?: APIConnectOptions) {
+    super(stt, undefined, connOptions);
     this.#stt = stt;
     this.#vadStream = vad.stream();
     this.label = `stt.StreamAdapterWrapper<${this.#stt.label}>`;

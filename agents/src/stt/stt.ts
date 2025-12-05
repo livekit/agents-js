@@ -10,7 +10,7 @@ import { calculateAudioDurationSeconds } from '../audio.js';
 import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
-import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
 import type { AudioBuffer } from '../utils.js';
 import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
 
@@ -133,8 +133,10 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
   /**
    * Returns a {@link SpeechStream} that can be used to push audio frames and receive
    * transcriptions
+   *
+   * @param options - Optional configuration including connection options
    */
-  abstract stream(): SpeechStream;
+  abstract stream(options?: { connOptions?: APIConnectOptions }): SpeechStream;
 
   async close(): Promise<void> {
     return;
@@ -196,7 +198,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         return await this.run();
       } catch (error) {
         if (error instanceof APIError) {
-          const retryInterval = this._connOptions._intervalForRetry(i);
+          const retryInterval = intervalForRetry(this._connOptions, i);
 
           if (this._connOptions.maxRetry === 0 || !error.retryable) {
             this.emitError({ error, recoverable: false });

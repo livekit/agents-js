@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { SentenceStream, SentenceTokenizer } from '../tokenize/index.js';
+import type { APIConnectOptions } from '../types.js';
 import { Task } from '../utils.js';
 import type { ChunkedStream } from './tts.js';
 import { SynthesizeStream, TTS } from './tts.js';
@@ -27,8 +28,8 @@ export class StreamAdapter extends TTS {
     return this.#tts.synthesize(text);
   }
 
-  stream(): StreamAdapterWrapper {
-    return new StreamAdapterWrapper(this.#tts, this.#sentenceTokenizer);
+  stream(options?: { connOptions?: APIConnectOptions }): StreamAdapterWrapper {
+    return new StreamAdapterWrapper(this.#tts, this.#sentenceTokenizer, options?.connOptions);
   }
 }
 
@@ -37,8 +38,8 @@ export class StreamAdapterWrapper extends SynthesizeStream {
   #sentenceStream: SentenceStream;
   label: string;
 
-  constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer) {
-    super(tts);
+  constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer, connOptions?: APIConnectOptions) {
+    super(tts, connOptions);
     this.#tts = tts;
     this.#sentenceStream = sentenceTokenizer.stream();
     this.label = `tts.StreamAdapterWrapper<${this.#tts.label}>`;
