@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Tests run for all PRs including community contributions from forks.
-# Forked PRs require manual approval before running (configured in repo settings).
+# Note: Current tests don't require secrets. If plugin tests are re-enabled,
+# consider using workflow_run pattern for privileged operations.
 
 name: Test
 on:
@@ -11,26 +12,15 @@ on:
     branches: [next, main, 0.x]
   pull_request:
     branches: [next, main, 0.x]
-  # Allow forked PRs to run tests (requires manual approval)
-  pull_request_target:
-    branches: [next, main, 0.x]
 
 jobs:
   build:
     name: Test
-    # Run for pushes, internal PRs, and forked PRs (via pull_request_target)
-    # Avoid duplicate runs: skip pull_request for forks (pull_request_target handles those)
-    if: |
-      github.event_name == 'push' ||
-      github.event_name == 'pull_request_target' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           lfs: true
-          # For pull_request_target, checkout the PR head commit instead of base
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || '' }}
       - uses: pnpm/action-setup@v4
       - name: Setup node
         uses: actions/setup-node@v4
@@ -52,7 +42,7 @@ jobs:
             plugins: 
               - 'plugins/**'
       - name: Test agents
-        if: steps.filter.outputs.agents-or-tests == 'true' || github.event_name == 'push' || github.event_name == 'pull_request_target'
+        if: steps.filter.outputs.agents-or-tests == 'true' || github.event_name == 'push'
         run: pnpm test agents
       # TODO (AJS-83) Re-enable once plugins are refactored with abort controllers
       # - name: Test all plugins
