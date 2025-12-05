@@ -2,6 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+# Tests run for all PRs including community contributions from forks.
+# Note: Current tests don't require secrets. If plugin tests are re-enabled,
+# we would need to use workflow_run pattern for privileged operations.
+
 name: Test
 on:
   push:
@@ -12,8 +16,6 @@ on:
 jobs:
   build:
     name: Test
-    # Don't run tests for PRs on forks
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +42,7 @@ jobs:
             plugins: 
               - 'plugins/**'
       - name: Test agents
-        if: steps.filter.outputs.agents-or-tests == 'true' || github.event_name != 'pull_request'
+        if: steps.filter.outputs.agents-or-tests == 'true' || github.event_name == 'push'
         run: pnpm test agents
       # TODO (AJS-83) Re-enable once plugins are refactored with abort controllers
       # - name: Test all plugins
