@@ -37,6 +37,7 @@ export interface STTOptions {
   dictation: boolean;
   diarize: boolean;
   numerals: boolean;
+  mipOptOut: boolean;
 }
 
 const defaultSTTOptions: STTOptions = {
@@ -58,6 +59,7 @@ const defaultSTTOptions: STTOptions = {
   dictation: false,
   diarize: false,
   numerals: false,
+  mipOptOut: false,
 };
 
 export class STT extends stt.STT {
@@ -173,6 +175,7 @@ export class SpeechStream extends stt.SpeechStream {
         keyterm: this.#opts.keyterm,
         profanity_filter: this.#opts.profanityFilter,
         language: this.#opts.language,
+        mip_opt_out: this.#opts.mipOptOut,
       };
       Object.entries(params).forEach(([k, v]) => {
         if (v !== undefined) {
