@@ -397,7 +397,17 @@ export class AgentSession<
       throw new Error('AgentSession is not running');
     }
 
-    return this.activity.say(text, options);
+    const doSay = (activity: AgentActivity) => {
+      return activity.say(text, options);
+    };
+
+    // attach to the session span if called outside of the AgentSession
+    const activeSpan = trace.getActiveSpan();
+    if (!activeSpan && this.rootSpanContext) {
+      return otelContext.with(this.rootSpanContext, () => doSay(this.activity!));
+    }
+
+    return doSay(this.activity);
   }
 
   interrupt() {
@@ -424,14 +434,25 @@ export class AgentSession<
         })
       : undefined;
 
-    if (this.activity.draining) {
-      if (!this.nextActivity) {
-        throw new Error('AgentSession is closing, cannot use generateReply()');
+    const doGenerateReply = (activity: AgentActivity, nextActivity?: AgentActivity) => {
+      if (activity.draining) {
+        if (!nextActivity) {
+          throw new Error('AgentSession is closing, cannot use generateReply()');
+        }
+        return nextActivity.generateReply({ userMessage, ...options });
       }
-      return this.nextActivity.generateReply({ userMessage, ...options });
+      return activity.generateReply({ userMessage, ...options });
+    };
+
+    // attach to the session span if called outside of the AgentSession
+    const activeSpan = trace.getActiveSpan();
+    if (!activeSpan && this.rootSpanContext) {
+      return otelContext.with(this.rootSpanContext, () =>
+        doGenerateReply(this.activity!, this.nextActivity),
+      );
     }
 
-    return this.activity.generateReply({ userMessage, ...options });
+    return doGenerateReply(this.activity!, this.nextActivity);
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
