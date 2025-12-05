@@ -11,6 +11,8 @@ import type {
 } from '@livekit/rtc-node';
 import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type { Logger } from 'pino';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
@@ -104,6 +106,9 @@ export class JobContext {
   /** @internal */
   _primaryAgentSession?: AgentSession;
 
+  /** @internal */
+  _sessionDirectory: string;
+
   private connected: boolean = false;
 
   constructor(
@@ -123,6 +128,7 @@ export class JobContext {
     this.#room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
     this.#logger = log().child({ info: this.#info });
     this.#inferenceExecutor = inferenceExecutor;
+    this._sessionDirectory = path.join(os.tmpdir(), 'livekit-agents', `job-${this.#info.job.id}`);
   }
 
   get proc(): JobProcess {
@@ -154,6 +160,13 @@ export class JobContext {
   /** @returns The global inference executor */
   get inferenceExecutor(): InferenceExecutor {
     return this.#inferenceExecutor;
+  }
+
+  /**
+   * @returns The session directory for storing recordings and session data.
+   */
+  get sessionDirectory(): string {
+    return this._sessionDirectory;
   }
 
   /** Adds a promise to be awaited when {@link JobContext.shutdown | shutdown} is called. */
@@ -250,7 +263,11 @@ export class JobContext {
       throw new Error('Cannot prepare report, no AgentSession was found');
     }
 
-    // TODO(brian): implement and check recorder io
+    const recorderIO = targetSession._recorderIO;
+
+    if (recorderIO && recorderIO.recording) {
+      throw new Error('Cannot create the AgentSession report, the RecorderIO is still recording');
+    }
 
     return createSessionReport({
       jobId: this.job.id,
@@ -258,9 +275,11 @@ export class JobContext {
       room: this.job.room?.name || '',
       options: targetSession.options,
       events: targetSession._recordedEvents,
-      enableUserDataTraining: true,
+      enableRecording: targetSession._enableRecording,
       chatHistory: targetSession.history.copy(),
       startedAt: targetSession._startedAt,
+      audioRecordingPath: recorderIO?.outputPath,
+      audioRecordingStartedAt: recorderIO?.recordingStartedAt,
     });
   }
 

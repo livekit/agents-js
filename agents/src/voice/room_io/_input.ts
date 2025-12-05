@@ -156,6 +156,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.room.off(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
     this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
     this.closeStream();
-    this.deferredStream.stream.cancel();
+    // Ignore errors - stream may be locked by RecorderIO or already cancelled
+    await this.deferredStream.stream.cancel().catch(() => {});
   }
 }

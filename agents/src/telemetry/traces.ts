@@ -21,6 +21,7 @@ import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
+import fs from 'node:fs/promises';
 import type { ChatContent, ChatItem } from '../llm/index.js';
 import { enableOtelLogging } from '../log.js';
 import type { SessionReport } from '../voice/report.js';
@@ -497,12 +498,13 @@ export async function uploadSessionReport(options: {
   const formData = new FormData();
 
   // Add header (protobuf MetricsRecordingHeader)
+  const audioStartTime = report.audioRecordingStartedAt ?? 0;
   const headerMsg = new MetricsRecordingHeader({
     roomId: report.roomId,
     duration: BigInt(0), // TODO: Calculate actual duration from report
     startTime: {
-      seconds: BigInt(Math.floor(report.timestamp / 1000)),
-      nanos: Math.floor((report.timestamp % 1000) * 1e6),
+      seconds: BigInt(Math.floor(audioStartTime / 1000)),
+      nanos: Math.floor((audioStartTime % 1000) * 1e6),
     },
   });
 
@@ -530,7 +532,27 @@ export async function uploadSessionReport(options: {
     },
   });
 
-  // TODO(brian): Add audio recording file when recorder IO is implemented
+  // Add audio recording file if available
+  if (report.audioRecordingPath && report.audioRecordingStartedAt) {
+    let audioBytes: Buffer;
+    try {
+      audioBytes = await fs.readFile(report.audioRecordingPath);
+    } catch {
+      audioBytes = Buffer.alloc(0);
+    }
+
+    if (audioBytes.length > 0) {
+      formData.append('audio', audioBytes, {
+        filename: 'recording.ogg',
+        contentType: 'audio/ogg',
+        knownLength: audioBytes.length,
+        header: {
+          'Content-Type': 'audio/ogg',
+          'Content-Length': audioBytes.length.toString(),
+        },
+      });
+    }
+  }
 
   // Upload to LiveKit Cloud using form-data's submit method
   // This properly streams the multipart form with all headers including Content-Length

@@ -15,7 +15,7 @@ import {
   type STTModelString,
   type TTSModelString,
 } from '../inference/index.js';
-import { getJobContext } from '../job.js';
+import { type JobContext, getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
@@ -50,6 +50,7 @@ import {
   createUserStateChangedEvent,
 } from './events.js';
 import { AgentInput, AgentOutput } from './io.js';
+import { RecorderIO } from './recorder_io/index.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
@@ -135,6 +136,9 @@ export class AgentSession<
   private sessionSpan?: Span;
   private userSpeakingSpan?: Span;
   private agentSpeakingSpan?: Span;
+
+  /** @internal */
+  _recorderIO?: RecorderIO;
 
   /** @internal */
   rootSpanContext?: Context;
@@ -234,14 +238,12 @@ export class AgentSession<
     room,
     inputOptions,
     outputOptions,
-    record,
     span,
   }: {
     agent: Agent;
     room: Room;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
-    record: boolean;
     span: Span;
   }): Promise<void> {
     span.setAttribute(traceTypes.ATTR_AGENT_LABEL, agent.id);
@@ -275,19 +277,46 @@ export class AgentSession<
     });
     this.roomIO.start();
 
-    const ctx = getJobContext();
-    if (ctx && ctx.room === room && !room.isConnected) {
-      this.logger.debug('Auto-connecting to room via job context');
-      tasks.push(ctx.connect());
+    let ctx: JobContext | undefined = undefined;
+    try {
+      ctx = getJobContext();
+    } catch (error) {
+      // JobContext is not available in evals
     }
 
-    if (record) {
+    if (ctx) {
+      if (ctx.room === room && !room.isConnected) {
+        this.logger.debug('Auto-connecting to room via job context');
+        tasks.push(ctx.connect());
+      }
+
       if (ctx._primaryAgentSession === undefined) {
         ctx._primaryAgentSession = this;
-      } else {
+      } else if (this._enableRecording) {
         throw new Error(
-          'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use session.start(record=False).',
+          'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
         );
+      }
+
+      this.logger.info(
+        {
+          input: this.input.audio,
+          output: this.output.audio,
+          enableRecording: this._enableRecording,
+        },
+        'Recording audio input and output',
+      );
+
+      if (this.input.audio && this.output.audio && this._enableRecording) {
+        this._recorderIO = new RecorderIO({ agentSession: this });
+        this.input.audio = this._recorderIO.recordInput(this.input.audio);
+        this.output.audio = this._recorderIO.recordOutput(this.output.audio);
+
+        // Start recording to session directory
+        const sessionDir = ctx.sessionDirectory;
+        if (sessionDir) {
+          tasks.push(this._recorderIO.start(`${sessionDir}/audio.ogg`));
+        }
       }
     }
 
@@ -327,29 +356,28 @@ export class AgentSession<
       return;
     }
 
-    const ctx = getJobContext();
+    let ctx: JobContext | undefined = undefined;
+    try {
+      ctx = getJobContext();
 
-    this.logger.info(
-      { record, enableRecording: ctx.info.job.enableRecording },
-      'Configuring session recording',
-    );
+      if (record === undefined) {
+        record = ctx.job.enableRecording;
+      }
 
-    record = record ?? ctx.info.job.enableRecording;
-    this._enableRecording = record;
+      this._enableRecording = record;
 
-    if (this._enableRecording) {
-      await ctx.initRecording();
+      if (this._enableRecording) {
+        ctx.initRecording();
+      }
+    } catch (error) {
+      // JobContext is not available in evals
     }
 
-    // Create agent_session as a ROOT span (new trace) to match Python behavior
-    // This creates a separate trace for better cloud dashboard organization
     this.sessionSpan = tracer.startSpan({
       name: 'agent_session',
       context: ROOT_CONTEXT,
     });
 
-    // Set the session span as the active span in the context
-    // This ensures all child spans (agent_turn, user_turn, etc.) are parented to it
     this.rootSpanContext = trace.setSpan(ROOT_CONTEXT, this.sessionSpan);
 
     await this._startImpl({
@@ -357,7 +385,6 @@ export class AgentSession<
       room,
       inputOptions,
       outputOptions,
-      record,
       span: this.sessionSpan,
     });
   }
@@ -716,6 +743,11 @@ export class AgentSession<
       // wait any uninterruptible speech to finish
       await this.activity.currentSpeech?.waitForPlayout();
       this.activity.detachAudioInput();
+    }
+
+    // Close recorder before detaching inputs/outputs (keep reference for session report)
+    if (this._recorderIO) {
+      await this._recorderIO.close();
     }
 
     // detach the inputs and outputs
