@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-openai
 
+## 1.0.25
+
+### Patch Changes
+
+- Implemented close() in openai TTS - [#883](https://github.com/livekit/agents-js/pull/883) ([@KrishnaShuk](https://github.com/KrishnaShuk))
+
+- Updated dependencies [[`6b94d1a1b50d3a4e96443b21979ddad415ac7b6e`](https://github.com/livekit/agents-js/commit/6b94d1a1b50d3a4e96443b21979ddad415ac7b6e), [`c7ea84ec3ee9cd132b8e3a7bd7cca3040ae420dc`](https://github.com/livekit/agents-js/commit/c7ea84ec3ee9cd132b8e3a7bd7cca3040ae420dc), [`6b94d1a1b50d3a4e96443b21979ddad415ac7b6e`](https://github.com/livekit/agents-js/commit/6b94d1a1b50d3a4e96443b21979ddad415ac7b6e)]:
+  - @livekit/agents@1.0.25
+
 ## 1.0.24
 
 ### Patch Changes
