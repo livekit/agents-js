@@ -62,6 +62,7 @@ const defaultTTSOptions: TTSOptions = {
 
 export class TTS extends tts.TTS {
   private opts: TTSOptions;
+  private abortController = new AbortController();
   label = 'rime.TTS';
 
   /**
@@ -102,11 +103,15 @@ export class TTS extends tts.TTS {
    * @returns A chunked stream of synthesized audio
    */
   synthesize(text: string): ChunkedStream {
-    return new ChunkedStream(this, text, this.opts);
+    return new ChunkedStream(this, text, this.opts, this.abortController.signal);
   }
 
   stream(): tts.SynthesizeStream {
     throw new Error('Streaming is not supported on RimeTTS');
+  }
+
+  async close(): Promise<void> {
+    this.abortController.abort();
   }
 }
 
@@ -114,6 +119,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   label = 'rime-tts.ChunkedStream';
   private opts: TTSOptions;
   private text: string;
+  private signal: AbortSignal;
 
   /**
    * Create a new ChunkedStream instance.
@@ -121,52 +127,63 @@ export class ChunkedStream extends tts.ChunkedStream {
    * @param tts - The parent TTS instance
    * @param text - Text to synthesize
    * @param opts - TTS configuration options
+   * @param signal - AbortSignal for cancellation
    */
-  constructor(tts: TTS, text: string, opts: TTSOptions) {
+  constructor(tts: TTS, text: string, opts: TTSOptions, signal: AbortSignal) {
     super(text, tts);
     this.text = text;
     this.opts = opts;
+    this.signal = signal;
   }
 
   protected async run() {
-    const requestId = shortuuid();
-    const response = await fetch(`${this.opts.baseURL}`, {
-      method: 'POST',
-      headers: {
-        Accept: 'audio/pcm',
-        Authorization: `Bearer ${this.opts.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        ...Object.fromEntries(
-          Object.entries(this.opts).filter(([k]) => !['apiKey', 'baseURL'].includes(k)),
-        ),
-        text: this.text,
-      }),
-    });
+    try {
+      const requestId = shortuuid();
+      const response = await fetch(`${this.opts.baseURL}`, {
+        method: 'POST',
+        headers: {
+          Accept: 'audio/pcm',
+          Authorization: `Bearer ${this.opts.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...Object.fromEntries(
+            Object.entries(this.opts).filter(([k]) => !['apiKey', 'baseURL'].includes(k)),
+          ),
+          text: this.text,
+        }),
+        signal: this.signal,
+      });
 
-    if (!response.ok) {
-      throw new Error(`Rime AI TTS request failed: ${response.status} ${response.statusText}`);
-    }
-
-    const buffer = await response.arrayBuffer();
-    const sampleRate = getSampleRate(this.opts);
-    const audioByteStream = new AudioByteStream(sampleRate, RIME_TTS_CHANNELS);
-    const frames = audioByteStream.write(buffer);
-    let lastFrame: AudioFrame | undefined;
-    const sendLastFrame = (segmentId: string, final: boolean) => {
-      if (lastFrame) {
-        this.queue.put({ requestId, segmentId, frame: lastFrame, final });
-        lastFrame = undefined;
+      if (!response.ok) {
+        throw new Error(`Rime AI TTS request failed: ${response.status} ${response.statusText}`);
       }
-    };
 
-    for (const frame of frames) {
-      sendLastFrame(requestId, false);
-      lastFrame = frame;
+      const buffer = await response.arrayBuffer();
+      const sampleRate = getSampleRate(this.opts);
+      const audioByteStream = new AudioByteStream(sampleRate, RIME_TTS_CHANNELS);
+      const frames = audioByteStream.write(buffer);
+      let lastFrame: AudioFrame | undefined;
+      const sendLastFrame = (segmentId: string, final: boolean) => {
+        if (lastFrame) {
+          this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+          lastFrame = undefined;
+        }
+      };
+
+      for (const frame of frames) {
+        sendLastFrame(requestId, false);
+        lastFrame = frame;
+      }
+      sendLastFrame(requestId, true);
+
+      this.queue.close();
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        this.queue.close();
+        return;
+      }
+      throw error;
     }
-    sendLastFrame(requestId, true);
-
-    this.queue.close();
   }
 }
