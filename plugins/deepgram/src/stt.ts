@@ -37,6 +37,13 @@ export interface STTOptions {
   dictation: boolean;
   diarize: boolean;
   numerals: boolean;
+  /**
+   * Enable eager end-of-turn detection for preemptive generation.
+   * When set to a value between 0.3-0.9, Deepgram will emit EagerEndOfTurn events
+   * when it detects a pause in speech, allowing the agent to start generating responses
+   * preemptively.
+   */
+  eagerEotThreshold?: number;
 }
 
 const defaultSTTOptions: STTOptions = {
@@ -173,6 +180,7 @@ export class SpeechStream extends stt.SpeechStream {
         keyterm: this.#opts.keyterm,
         profanity_filter: this.#opts.profanityFilter,
         language: this.#opts.language,
+        eager_eot_threshold: this.#opts.eagerEotThreshold,
       };
       Object.entries(params).forEach(([k, v]) => {
         if (v !== undefined) {
@@ -366,6 +374,29 @@ export class SpeechStream extends stt.SpeechStream {
                 if (isEndpoint && this.#speaking) {
                   this.#speaking = false;
                   this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+                }
+
+                break;
+              }
+              case 'EagerEndOfTurn': {
+                // Deepgram has detected a pause in speech, but the user is technically
+                // still speaking. Send a preflight event to enable preemptive generation.
+                const metadata = json['metadata'];
+                const requestId = metadata['request_id'];
+                this.#requestId = requestId;
+
+                const alternatives = liveTranscriptionToSpeechData(this.#opts.language!, json);
+
+                if (alternatives[0] && alternatives[0].text) {
+                  this.#logger.debug(
+                    { transcript: alternatives[0].text, confidence: alternatives[0].confidence },
+                    'received eager end-of-turn event',
+                  );
+
+                  this.queue.put({
+                    type: stt.SpeechEventType.PREFLIGHT_TRANSCRIPT,
+                    alternatives: [alternatives[0], ...alternatives.slice(1)],
+                  });
                 }
 
                 break;

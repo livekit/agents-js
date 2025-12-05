@@ -550,7 +550,6 @@ export class ChatContext {
   async toProviderFormat(format: ProviderFormat, injectDummyUserMessage: boolean = true) {
     return await toChatCtx(format, this, injectDummyUserMessage);
   }
-
   /**
    * Internal helper used by `truncate` & `addMessage` to find the correct
    * insertion index for a timestamp so the list remains sorted.
