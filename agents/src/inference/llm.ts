@@ -149,7 +149,6 @@ export class LLM extends llm.LLM {
     this.client = new OpenAI({
       baseURL: this.opts.baseURL,
       apiKey: '', // leave a temporary empty string to avoid OpenAI complain about missing key
-      timeout: 15000,
     });
   }
 
