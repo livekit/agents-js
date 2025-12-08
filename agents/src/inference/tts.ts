@@ -297,14 +297,17 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
 
     const createInputTask = async () => {
       for await (const data of this.input) {
-        if (this.abortController.signal.aborted) break;
+        if (this.abortController.signal.aborted || closing) break;
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
           sendTokenizerStream.flush();
           continue;
         }
         sendTokenizerStream.pushText(data);
       }
-      sendTokenizerStream.endInput();
+      // Only call endInput if the stream hasn't been closed by cleanup
+      if (!closing) {
+        sendTokenizerStream.endInput();
+      }
     };
 
     const createSentenceStreamTask = async () => {

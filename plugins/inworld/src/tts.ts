@@ -333,10 +333,6 @@ export class TTS extends tts.TTS {
     this.#opts = { ...this.#opts, ...opts };
     if (opts.apiKey) {
         this.#authorization = `Basic ${opts.apiKey}`;
-        // If API key changes, we might need to reset the pool or create a new one?
-        // For now, assume WS url doesn't change or we just create new pool if needed.
-        // But existing pool has hardcoded auth in constructor.
-        // Re-creating pool is safer.
         this.#pool.close();
         this.#pool = new WSConnectionPool(this.#opts.wsURL, this.#authorization);
     }
@@ -555,9 +551,9 @@ class SynthesizeStream extends tts.SynthesizeStream {
     this.#tts.pool.registerListener(this.#contextId, handleMessage);
 
     const sendLoop = async () => {
-        for await (const ev of tokenizerStream) {
-            await this.#sendText(ws, ev.token + ' ');
-        }
+      for await (const ev of tokenizerStream) {
+        await this.#sendText(ws, ev.token);
+      }
     };
     const sendPromise = sendLoop();
 

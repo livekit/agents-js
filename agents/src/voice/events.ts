@@ -5,9 +5,10 @@ import type {
   ChatMessage,
   FunctionCall,
   FunctionCallOutput,
+  LLM,
+  RealtimeModel,
   RealtimeModelError,
 } from '../llm/index.js';
-import type { LLM, RealtimeModel } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import type { AgentMetrics } from '../metrics/base.js';
 import type { STT } from '../stt/index.js';
@@ -37,6 +38,8 @@ export enum CloseReason {
   PARTICIPANT_DISCONNECTED = 'participant_disconnected',
   USER_INITIATED = 'user_initiated',
 }
+
+export type ShutdownReason = CloseReason | string;
 
 export type SpeechSource = 'say' | 'generate_reply' | 'tool_response';
 
@@ -231,12 +234,12 @@ export const createErrorEvent = (
 export type CloseEvent = {
   type: 'close';
   error: RealtimeModelError | STTError | TTSError | LLMError | null;
-  reason: CloseReason;
+  reason: ShutdownReason;
   createdAt: number;
 };
 
 export const createCloseEvent = (
-  reason: CloseReason,
+  reason: ShutdownReason,
   error: RealtimeModelError | STTError | TTSError | LLMError | null = null,
   createdAt: number = Date.now(),
 ): CloseEvent => ({

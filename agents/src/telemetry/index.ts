@@ -8,9 +8,17 @@ export {
   type SimpleLogRecord,
   type SimpleOTLPHttpLogExporterConfig,
 } from './otel_http_exporter.js';
-export { enablePinoOTELInstrumentation } from './pino_bridge.js';
+export {
+  emitToOtel,
+  flushPinoLogs,
+  initPinoCloudExporter,
+  PinoCloudExporter,
+  type PinoCloudExporterConfig,
+  type PinoLogObject,
+} from './pino_otel_transport.js';
 export * as traceTypes from './trace_types.js';
 export {
+  flushOtelLogs,
   setTracerProvider,
   setupCloudTracer,
   tracer,

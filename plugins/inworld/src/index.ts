@@ -17,4 +17,3 @@ class InworldPlugin extends Plugin {
 }
 
 Plugin.registerPlugin(new InworldPlugin());
-

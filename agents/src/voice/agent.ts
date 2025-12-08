@@ -268,7 +268,8 @@ export class Agent<UserData = any> {
         wrapped_stt = new STTStreamAdapter(wrapped_stt, agent.vad);
       }
 
-      const stream = wrapped_stt.stream();
+      const connOptions = activity.agentSession.connOptions.sttConnOptions;
+      const stream = wrapped_stt.stream({ connOptions });
       stream.updateInputStream(audio);
 
       return new ReadableStream({
@@ -304,11 +305,13 @@ export class Agent<UserData = any> {
 
       // TODO(brian): make parallelToolCalls configurable
       const { toolChoice } = modelSettings;
+      const connOptions = activity.agentSession.connOptions.llmConnOptions;
 
       const stream = activity.llm.chat({
         chatCtx,
         toolCtx,
         toolChoice,
+        connOptions,
         parallelToolCalls: true,
       });
       return new ReadableStream({
@@ -340,7 +343,8 @@ export class Agent<UserData = any> {
         wrapped_tts = new TTSStreamAdapter(wrapped_tts, new BasicSentenceTokenizer());
       }
 
-      const stream = wrapped_tts.stream();
+      const connOptions = activity.agentSession.connOptions.ttsConnOptions;
+      const stream = wrapped_tts.stream({ connOptions });
       stream.updateInputStream(text);
 
       return new ReadableStream({

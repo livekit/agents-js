@@ -12,22 +12,21 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
-import { SeverityNumber, logs } from '@opentelemetry/api-logs';
-import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
+import { SeverityNumber } from '@opentelemetry/api-logs';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
 import { Resource } from '@opentelemetry/resources';
-import { BatchLogRecordProcessor, LoggerProvider } from '@opentelemetry/sdk-logs';
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
+import fs from 'node:fs/promises';
 import type { ChatContent, ChatItem } from '../llm/index.js';
+import { enableOtelLogging } from '../log.js';
 import type { SessionReport } from '../voice/report.js';
-import { ExtraDetailsProcessor, MetadataLogProcessor } from './logging.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
-import { enablePinoOTELInstrumentation } from './pino_bridge.js';
+import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -256,28 +255,30 @@ export async function setupCloudTracer(options: {
     });
     tracerProvider.register();
 
-    // Metadata processor is already configured in the constructor above
     setTracerProvider(tracerProvider);
 
-    const loggerProvider = new LoggerProvider({ resource });
-
-    logs.setGlobalLoggerProvider(loggerProvider);
-
-    const logExporter = new OTLPLogExporter({
-      url: `https://${cloudHostname}/observability/logs/otlp/v0`,
-      headers,
-      compression: CompressionAlgorithm.GZIP,
+    // Initialize standalone Pino cloud exporter (no OTEL SDK dependency)
+    initPinoCloudExporter({
+      cloudHostname,
+      roomId,
+      jobId,
     });
 
-    loggerProvider.addLogRecordProcessor(new MetadataLogProcessor(metadata));
-    loggerProvider.addLogRecordProcessor(new ExtraDetailsProcessor());
-    loggerProvider.addLogRecordProcessor(new BatchLogRecordProcessor(logExporter));
-
-    enablePinoOTELInstrumentation();
+    enableOtelLogging();
   } catch (error) {
     console.error('Failed to setup cloud tracer:', error);
     throw error;
   }
+}
+
+/**
+ * Flush all pending Pino logs to ensure they are exported.
+ * Call this before session/job ends to ensure all logs are sent.
+ *
+ * @internal
+ */
+export async function flushOtelLogs(): Promise<void> {
+  await flushPinoLogs();
 }
 
 /**
@@ -497,12 +498,13 @@ export async function uploadSessionReport(options: {
   const formData = new FormData();
 
   // Add header (protobuf MetricsRecordingHeader)
+  const audioStartTime = report.audioRecordingStartedAt ?? 0;
   const headerMsg = new MetricsRecordingHeader({
     roomId: report.roomId,
     duration: BigInt(0), // TODO: Calculate actual duration from report
     startTime: {
-      seconds: BigInt(Math.floor(report.timestamp / 1000)),
-      nanos: Math.floor((report.timestamp % 1000) * 1e6),
+      seconds: BigInt(Math.floor(audioStartTime / 1000)),
+      nanos: Math.floor((audioStartTime % 1000) * 1e6),
     },
   });
 
@@ -530,7 +532,27 @@ export async function uploadSessionReport(options: {
     },
   });
 
-  // TODO(brian): Add audio recording file when recorder IO is implemented
+  // Add audio recording file if available
+  if (report.audioRecordingPath && report.audioRecordingStartedAt) {
+    let audioBytes: Buffer;
+    try {
+      audioBytes = await fs.readFile(report.audioRecordingPath);
+    } catch {
+      audioBytes = Buffer.alloc(0);
+    }
+
+    if (audioBytes.length > 0) {
+      formData.append('audio', audioBytes, {
+        filename: 'recording.ogg',
+        contentType: 'audio/ogg',
+        knownLength: audioBytes.length,
+        header: {
+          'Content-Type': 'audio/ogg',
+          'Content-Length': audioBytes.length.toString(),
+        },
+      });
+    }
+  }
 
   // Upload to LiveKit Cloud using form-data's submit method
   // This properly streams the multipart form with all headers including Content-Length

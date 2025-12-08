@@ -1,5 +1,23 @@
 # @livekit/agents
 
+## 1.0.24
+
+### Patch Changes
+
+- Unset record flag by default in agent session - [#878](https://github.com/livekit/agents-js/pull/878) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.23
+
+### Patch Changes
+
+- Support transcripts & traces upload to livekit cloud observability - [#863](https://github.com/livekit/agents-js/pull/863) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Fixed memory leaks in AgentActivity and AgentSession - [#875](https://github.com/livekit/agents-js/pull/875) ([@jessebond2](https://github.com/jessebond2))
+
+- Support otel traces upload to livekit cloud observability - [#867](https://github.com/livekit/agents-js/pull/867) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Support logging integration to livekit cloud observability - [#873](https://github.com/livekit/agents-js/pull/873) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.22
 
 ### Patch Changes
