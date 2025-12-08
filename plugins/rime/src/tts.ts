@@ -143,6 +143,7 @@ export class ChunkedStream extends tts.ChunkedStream {
         ),
         text: this.text,
       }),
+      signal: this.abortSignal,
     });
 
     if (!response.ok) {

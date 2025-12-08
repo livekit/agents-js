@@ -188,6 +188,7 @@ export class ChunkedStream extends tts.ChunkedStream {
           },
         },
       },
+      abortSignal: this.abortSignal,
     };
 
     let inputText = this.inputText;
@@ -213,6 +214,9 @@ export class ChunkedStream extends tts.ChunkedStream {
         await this.#processResponse(response, bstream, requestId);
       }
     } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
       if (isAPIError(error)) throw error;
 
       const err = error as {

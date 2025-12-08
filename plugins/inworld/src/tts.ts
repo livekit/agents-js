@@ -367,14 +367,23 @@ class ChunkedStream extends tts.ChunkedStream {
 
     const url = new URL('tts/v1/voice:stream', this.#opts.baseURL);
 
-    const response = await fetch(url.toString(), {
-      method: 'POST',
-      headers: {
-        Authorization: this.#tts.authorization,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(bodyParams),
-    });
+    let response: Response;
+    try {
+      response = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          Authorization: this.#tts.authorization,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(bodyParams),
+        signal: this.abortSignal,
+      });
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        return;
+      }
+      throw e;
+    }
 
     if (!response.ok) {
       throw new Error(`Inworld API error: ${response.status} ${response.statusText}`);

@@ -96,6 +96,7 @@ export class ChunkedStream extends tts.ChunkedStream {
             [AUTHORIZATION_HEADER]: `Token ${this.opts.apiKey!}`,
             'Content-Type': 'application/json',
           },
+          signal: this.abortSignal,
         },
         (res) => {
           if (res.statusCode !== 200) {

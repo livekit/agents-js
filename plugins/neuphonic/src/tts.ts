@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, log, shortuuid, tts } from '@livekit/agents';
+import { AudioByteStream, Future, log, shortuuid, tts } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
 import { WebSocket } from 'ws';
@@ -80,6 +80,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     };
 
     let buffer = '';
+    const doneFut = new Future<void>();
 
     const req = request(
       {
@@ -92,6 +93,7 @@ export class ChunkedStream extends tts.ChunkedStream {
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
         },
+        signal: this.abortSignal,
       },
       (res) => {
         res.on('data', (chunk) => {
@@ -129,12 +131,17 @@ export class ChunkedStream extends tts.ChunkedStream {
             });
           }
           this.queue.close();
+          doneFut.resolve();
         });
+        res.on('error', (err) => doneFut.reject(err));
       },
     );
 
+    req.on('error', (err) => doneFut.reject(err));
     req.write(JSON.stringify(json));
     req.end();
+
+    await doneFut.await;
   }
 }
 

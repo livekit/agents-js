@@ -150,11 +150,12 @@ export abstract class SynthesizeStream
     this._connOptions = connOptions;
     this.deferredInputStream = new DeferredReadableStream();
     this.pumpInput();
+
     this.abortController.signal.addEventListener('abort', () => {
       this.deferredInputStream.detachSource();
       // TODO (AJS-36) clean this up when we refactor with streams
-      this.input.close();
-      this.output.close();
+      if (!this.input.closed) this.input.close();
+      if (!this.output.closed) this.output.close();
       this.closed = true;
     });
 
@@ -380,6 +381,10 @@ export abstract class SynthesizeStream
     return this.output.next();
   }
 
+  get abortSignal(): AbortSignal {
+    return this.abortController.signal;
+  }
+
   /** Close both the input and output of the TTS stream */
   close() {
     this.abortController.abort();
@@ -414,6 +419,8 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   #ttsRequestSpan?: Span;
   private _connOptions: APIConnectOptions;
   private logger = log();
+
+  protected abortController = new AbortController();
 
   constructor(
     text: string,
@@ -562,10 +569,15 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     return this.output.next();
   }
 
+  get abortSignal(): AbortSignal {
+    return this.abortController.signal;
+  }
+
   /** Close both the input and output of the TTS stream */
   close() {
-    this.queue.close();
-    this.output.close();
+    if (!this.queue.closed) this.queue.close();
+    if (!this.output.closed) this.output.close();
+    if (!this.abortController.signal.aborted) this.abortController.abort();
     this.closed = true;
   }
 

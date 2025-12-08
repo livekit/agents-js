@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, log, shortuuid, tokenize, tts } from '@livekit/agents';
+import { AudioByteStream, Future, log, shortuuid, tokenize, tts } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
 import { WebSocket } from 'ws';
@@ -76,6 +76,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     const json = toResembleOptions(this.#opts);
 
     json.data = this.#text;
+    const doneFut = new Future<void>();
 
     const req = request(
       {
@@ -88,6 +89,7 @@ export class ChunkedStream extends tts.ChunkedStream {
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
+        signal: this.abortSignal,
       },
       (res) => {
         let data = '';
@@ -132,21 +134,27 @@ export class ChunkedStream extends tts.ChunkedStream {
             }
 
             this.queue.close();
+            doneFut.resolve();
           } catch (error) {
             this.#logger.error('Error processing Resemble API response:', error);
             this.queue.close();
+            doneFut.reject(error instanceof Error ? error : new Error(String(error)));
           }
         });
 
         res.on('error', (error) => {
           this.#logger.error('Resemble API error:', error);
           this.queue.close();
+          doneFut.reject(error);
         });
       },
     );
 
+    req.on('error', (err) => doneFut.reject(err));
     req.write(JSON.stringify(json));
     req.end();
+
+    await doneFut.await;
   }
 }
 
