@@ -39,7 +39,7 @@ export enum CloseReason {
   USER_INITIATED = 'user_initiated',
 }
 
-export type ShutdownReason = CloseReason | `custom_${string}`;
+export type ShutdownReason = CloseReason | string;
 
 export type SpeechSource = 'say' | 'generate_reply' | 'tool_response';
 

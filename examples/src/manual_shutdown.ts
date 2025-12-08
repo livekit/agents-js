@@ -52,7 +52,7 @@ export default defineAgent({
             });
             await ctx.waitForPlayout();
 
-            session.shutdown({ reason: `custom_${reason}` });
+            session.shutdown({ reason });
           },
         }),
       },
