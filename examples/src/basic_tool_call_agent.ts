@@ -10,8 +10,10 @@ import {
   llm,
   voice,
 } from '@livekit/agents';
+import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
+import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -148,6 +150,9 @@ export default defineAgent({
     await session.start({
       agent: routerAgent,
       room: ctx.room,
+      inputOptions: {
+        noiseCancellation: BackgroundVoiceCancellation(),
+      },
     });
   },
 });

@@ -113,9 +113,9 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
   }
 
   /** Receives an audio buffer and returns transcription in the form of a {@link SpeechEvent} */
-  async recognize(frame: AudioBuffer): Promise<SpeechEvent> {
+  async recognize(frame: AudioBuffer, abortSignal?: AbortSignal): Promise<SpeechEvent> {
     const startTime = process.hrtime.bigint();
-    const event = await this._recognize(frame);
+    const event = await this._recognize(frame, abortSignal);
     const durationMs = Number((process.hrtime.bigint() - startTime) / BigInt(1000000));
     this.emit('metrics_collected', {
       type: 'stt_metrics',
@@ -128,7 +128,11 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
     });
     return event;
   }
-  protected abstract _recognize(frame: AudioBuffer): Promise<SpeechEvent>;
+
+  protected abstract _recognize(
+    frame: AudioBuffer,
+    abortSignal?: AbortSignal,
+  ): Promise<SpeechEvent>;
 
   /**
    * Returns a {@link SpeechStream} that can be used to push audio frames and receive
@@ -172,6 +176,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
   private _connOptions: APIConnectOptions;
+
+  protected abortController = new AbortController();
 
   constructor(
     stt: STT,
@@ -290,6 +296,10 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   protected abstract run(): Promise<void>;
 
+  get abortSignal(): AbortSignal {
+    return this.abortController.signal;
+  }
+
   updateInputStream(audioStream: ReadableStream<AudioFrame>) {
     this.deferredInputStream.setSource(audioStream);
   }
@@ -354,6 +364,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     if (!this.input.closed) this.input.close();
     if (!this.queue.closed) this.queue.close();
     if (!this.output.closed) this.output.close();
+    if (!this.abortController.signal.aborted) this.abortController.abort();
     this.closed = true;
   }
 

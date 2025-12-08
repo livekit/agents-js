@@ -141,25 +141,31 @@ export class STT extends stt.STT {
     return Buffer.concat([header, Buffer.from(frame.data.buffer)]);
   }
 
-  async _recognize(buffer: AudioBuffer, language?: string): Promise<stt.SpeechEvent> {
-    const config = this.#sanitizeOptions(language);
+  async _recognize(buffer: AudioBuffer, abortSignal?: AbortSignal): Promise<stt.SpeechEvent> {
+    const config = this.#sanitizeOptions();
     buffer = mergeFrames(buffer);
-    const file = new File([this.#createWav(buffer)], 'audio.wav', { type: 'audio/wav' });
+    const wavBuffer = this.#createWav(buffer);
+    const file = new File([new Uint8Array(wavBuffer)], 'audio.wav', { type: 'audio/wav' });
 
-    const resp = await this.#client.audio.transcriptions.create({
-      file,
-      model: this.#opts.model,
-      language: config.language,
-      prompt: config.prompt,
-      response_format: 'json',
-    });
+    const resp = await this.#client.audio.transcriptions.create(
+      {
+        file,
+        model: this.#opts.model,
+        language: config.language,
+        prompt: config.prompt,
+        response_format: 'json',
+      },
+      {
+        signal: abortSignal,
+      },
+    );
 
     return {
       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
       alternatives: [
         {
           text: resp.text || '',
-          language: language || '',
+          language: config.language || '',
           startTime: 0,
           endTime: 0,
           confidence: 0,
@@ -169,7 +175,5 @@ export class STT extends stt.STT {
   }
 
   /** This method throws an error; streaming is unsupported on OpenAI STT. */
-  stream(): stt.SpeechStream {
-    throw new Error('Streaming is not supported on OpenAI STT');
-  }
+  stream(): stt.SpeechStream {}
 }

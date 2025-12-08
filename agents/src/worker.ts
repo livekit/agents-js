@@ -729,7 +729,7 @@ export class AgentServer {
 
     const req = new JobRequest(msg.job!, onReject, onAccept);
     this.#logger
-      .child({ job: msg.job, resuming: msg.resuming, agentName: this.#opts.agentName })
+      .child({ jobId: msg.job?.id, resuming: msg.resuming, agentName: this.#opts.agentName })
       .info('received job request');
 
     const jobRequestTask = async () => {
