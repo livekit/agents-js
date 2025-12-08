@@ -556,7 +556,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
 
     const sendLoop = async () => {
         for await (const ev of tokenizerStream) {
-            await this.#sendText(ws, ev.token);
+            await this.#sendText(ws, ev.token + ' ');
         }
     };
     const sendPromise = sendLoop();
