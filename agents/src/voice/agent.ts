@@ -260,12 +260,13 @@ export class Agent<UserData = any> {
       let wrapped_stt = activity.stt;
 
       if (!wrapped_stt.capabilities.streaming) {
-        if (!activity.vad) {
+        const vad = agent.vad || activity.vad;
+        if (!vad) {
           throw new Error(
             'STT does not support streaming, add a VAD to the AgentTask/VoiceAgent to enable streaming',
           );
         }
-        wrapped_stt = new STTStreamAdapter(wrapped_stt, activity.vad);
+        wrapped_stt = new STTStreamAdapter(wrapped_stt, vad);
       }
 
       const connOptions = activity.agentSession.connOptions.sttConnOptions;
