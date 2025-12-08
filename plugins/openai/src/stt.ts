@@ -175,5 +175,7 @@ export class STT extends stt.STT {
   }
 
   /** This method throws an error; streaming is unsupported on OpenAI STT. */
-  stream(): stt.SpeechStream {}
+  stream(): stt.SpeechStream {
+    throw new Error('Streaming is not supported on OpenAI STT');
+  }
 }
