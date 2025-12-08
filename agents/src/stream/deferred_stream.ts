@@ -9,7 +9,10 @@ import type {
 import { IdentityTransform } from './identity_transform.js';
 
 /**
- * Check if error is related to stream cleanup operations
+ * Check if error is related to stream cleanup operations.
+ *
+ * These errors are expected when calling reader.read() after releaseLock()
+ * or when writing to already closed streams during cleanup:
  *
  * Invalid state: Releasing reader
  * Invalid state: The reader is not attached to a stream
