@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, log, shortuuid, tokenize, tts } from '@livekit/agents';
+import {
+  type APIConnectOptions,
+  AudioByteStream,
+  log,
+  shortuuid,
+  tokenize,
+  tts,
+} from '@livekit/agents';
 import { type RawData, WebSocket } from 'ws';
 
 const DEFAULT_BIT_RATE = 64000;
@@ -313,8 +320,12 @@ export class TTS extends tts.TTS {
     return data.voices;
   }
 
-  synthesize(text: string): tts.ChunkedStream {
-    return new ChunkedStream(this, text, this.#opts);
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): tts.ChunkedStream {
+    return new ChunkedStream(this, text, this.#opts, connOptions, abortSignal);
   }
 
   stream(): tts.SynthesizeStream {
@@ -340,8 +351,14 @@ class ChunkedStream extends tts.ChunkedStream {
   #tts: TTS;
   label = 'inworld.ChunkedStream';
 
-  constructor(ttsInstance: TTS, text: string, opts: TTSOptions) {
-    super(text, ttsInstance);
+  constructor(
+    ttsInstance: TTS,
+    text: string,
+    opts: TTSOptions,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ) {
+    super(text, ttsInstance, connOptions, abortSignal);
     this.#tts = ttsInstance;
     this.#opts = opts;
   }

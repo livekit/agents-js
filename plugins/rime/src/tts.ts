@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, shortuuid, tts } from '@livekit/agents';
+import { type APIConnectOptions, AudioByteStream, shortuuid, tts } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { DefaultLanguages, TTSModels } from './models.js';
 
@@ -101,8 +101,12 @@ export class TTS extends tts.TTS {
    * @param text - Text to synthesize
    * @returns A chunked stream of synthesized audio
    */
-  synthesize(text: string): ChunkedStream {
-    return new ChunkedStream(this, text, this.opts);
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): ChunkedStream {
+    return new ChunkedStream(this, text, this.opts, connOptions, abortSignal);
   }
 
   stream(): tts.SynthesizeStream {
@@ -121,9 +125,17 @@ export class ChunkedStream extends tts.ChunkedStream {
    * @param tts - The parent TTS instance
    * @param text - Text to synthesize
    * @param opts - TTS configuration options
+   * @param connOptions - API connection options
+   * @param abortSignal - Abort signal for cancellation
    */
-  constructor(tts: TTS, text: string, opts: TTSOptions) {
-    super(text, tts);
+  constructor(
+    tts: TTS,
+    text: string,
+    opts: TTSOptions,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ) {
+    super(text, tts, connOptions, abortSignal);
     this.text = text;
     this.opts = opts;
   }
