@@ -27,7 +27,6 @@ export class STT extends stt.STT {
   #opts: STTOptions;
   #client: OpenAI;
   label = 'openai.STT';
-  private abortController = new AbortController();
 
   /**
    * Create a new instance of OpenAI STT.
@@ -147,18 +146,13 @@ export class STT extends stt.STT {
     buffer = mergeFrames(buffer);
     const file = new File([this.#createWav(buffer)], 'audio.wav', { type: 'audio/wav' });
 
-    const resp = await this.#client.audio.transcriptions.create(
-      {
-        file,
-        model: this.#opts.model,
-        language: config.language,
-        prompt: config.prompt,
-        response_format: 'json',
-      },
-      {
-        signal: this.abortController.signal,
-      },
-    );
+    const resp = await this.#client.audio.transcriptions.create({
+      file,
+      model: this.#opts.model,
+      language: config.language,
+      prompt: config.prompt,
+      response_format: 'json',
+    });
 
     return {
       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
@@ -177,9 +171,5 @@ export class STT extends stt.STT {
   /** This method throws an error; streaming is unsupported on OpenAI STT. */
   stream(): stt.SpeechStream {
     throw new Error('Streaming is not supported on OpenAI STT');
-  }
-
-  async close(): Promise<void> {
-    this.abortController.abort();
   }
 }
