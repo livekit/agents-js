@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-resemble
 
+## 1.0.26
+
+### Patch Changes
+
+- Improve TTS resource cleanup - [#893](https://github.com/livekit/agents-js/pull/893) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`78a0d217b783c9467e68c24752d01b9c806b9280`](https://github.com/livekit/agents-js/commit/78a0d217b783c9467e68c24752d01b9c806b9280), [`78a0d217b783c9467e68c24752d01b9c806b9280`](https://github.com/livekit/agents-js/commit/78a0d217b783c9467e68c24752d01b9c806b9280)]:
+  - @livekit/agents@1.0.26
+
 ## 1.0.25
 
 ### Patch Changes
