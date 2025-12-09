@@ -238,7 +238,6 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
 export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeStream {
   private opts: InferenceTTSOptions<TModel>;
   private tts: TTS<TModel>;
-  private connOptions: APIConnectOptions;
 
   #logger = log();
 
@@ -246,7 +245,6 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     super(tts, connOptions);
     this.opts = opts;
     this.tts = tts;
-    this.connOptions = connOptions;
   }
 
   get label() {

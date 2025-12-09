@@ -1,7 +1,15 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, log, shortuuid, tokenize, tts } from '@livekit/agents';
+import {
+  type APIConnectOptions,
+  AudioByteStream,
+  Future,
+  log,
+  shortuuid,
+  tokenize,
+  tts,
+} from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
 import { WebSocket } from 'ws';
@@ -49,8 +57,12 @@ export class TTS extends tts.TTS {
     }
   }
 
-  synthesize(text: string): tts.ChunkedStream {
-    return new ChunkedStream(this, text, this.#opts);
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): tts.ChunkedStream {
+    return new ChunkedStream(this, text, this.#opts, connOptions, abortSignal);
   }
 
   stream(): tts.SynthesizeStream {
@@ -64,8 +76,14 @@ export class ChunkedStream extends tts.ChunkedStream {
   #opts: TTSOptions;
   #text: string;
 
-  constructor(tts: TTS, text: string, opts: TTSOptions) {
-    super(text, tts);
+  constructor(
+    tts: TTS,
+    text: string,
+    opts: TTSOptions,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ) {
+    super(text, tts, connOptions, abortSignal);
     this.#text = text;
     this.#opts = opts;
   }
@@ -76,6 +94,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     const json = toResembleOptions(this.#opts);
 
     json.data = this.#text;
+    const doneFut = new Future<void>();
 
     const req = request(
       {
@@ -88,6 +107,7 @@ export class ChunkedStream extends tts.ChunkedStream {
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
+        signal: this.abortSignal,
       },
       (res) => {
         let data = '';
@@ -132,21 +152,35 @@ export class ChunkedStream extends tts.ChunkedStream {
             }
 
             this.queue.close();
+            doneFut.resolve();
           } catch (error) {
             this.#logger.error('Error processing Resemble API response:', error);
             this.queue.close();
+            doneFut.resolve();
           }
         });
 
-        res.on('error', (error) => {
-          this.#logger.error('Resemble API error:', error);
+        res.on('close', () => {
           this.queue.close();
+          doneFut.resolve();
+        });
+
+        res.on('error', (err) => {
+          if (err.message === 'aborted') return;
+          this.#logger.error({ err }, 'Resemble TTS response error');
         });
       },
     );
 
+    req.on('error', (err) => {
+      if (err.name === 'AbortError') return;
+      this.#logger.error({ err }, 'Resemble TTS request error');
+    });
+    req.on('close', () => doneFut.resolve());
     req.write(JSON.stringify(json));
     req.end();
+
+    await doneFut.await;
   }
 }
 

@@ -313,6 +313,7 @@ export class AgentSession<
       ctx = getJobContext();
     } catch (error) {
       // JobContext is not available in evals
+      this.logger.warn('JobContext is not available');
     }
 
     if (ctx) {
@@ -393,6 +394,7 @@ export class AgentSession<
       }
     } catch (error) {
       // JobContext is not available in evals
+      this.logger.warn('JobContext is not available');
     }
 
     this.sessionSpan = tracer.startSpan({

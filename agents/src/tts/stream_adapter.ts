@@ -22,10 +22,17 @@ export class StreamAdapter extends TTS {
     this.#tts.on('metrics_collected', (metrics) => {
       this.emit('metrics_collected', metrics);
     });
+    this.#tts.on('error', (error) => {
+      this.emit('error', error);
+    });
   }
 
-  synthesize(text: string): ChunkedStream {
-    return this.#tts.synthesize(text);
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): ChunkedStream {
+    return this.#tts.synthesize(text, connOptions, abortSignal);
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): StreamAdapterWrapper {
@@ -85,7 +92,7 @@ export class StreamAdapterWrapper extends SynthesizeStream {
       prevTask: Task<void> | undefined,
       controller: AbortController,
     ) => {
-      const audioStream = this.#tts.synthesize(token);
+      const audioStream = this.#tts.synthesize(token, this.connOptions, this.abortSignal);
 
       // wait for previous audio transcription to complete before starting
       // to queuing audio frames of the current token

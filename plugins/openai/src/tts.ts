@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, shortuuid, tts } from '@livekit/agents';
+import { type APIConnectOptions, AudioByteStream, shortuuid, tts } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { OpenAI } from 'openai';
 import type { TTSModels, TTSVoices } from './models.js';
@@ -59,7 +59,11 @@ export class TTS extends tts.TTS {
     this.#opts = { ...this.#opts, ...opts };
   }
 
-  synthesize(text: string): ChunkedStream {
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): ChunkedStream {
     return new ChunkedStream(
       this,
       text,
@@ -72,8 +76,10 @@ export class TTS extends tts.TTS {
           response_format: 'pcm',
           speed: this.#opts.speed,
         },
-        { signal: this.abortController.signal },
+        { signal: abortSignal },
       ),
+      connOptions,
+      abortSignal,
     );
   }
 
@@ -91,8 +97,14 @@ export class ChunkedStream extends tts.ChunkedStream {
   private stream: Promise<any>;
 
   // set Promise<T> to any because OpenAI returns an annoying Response type
-  constructor(tts: TTS, text: string, stream: Promise<any>) {
-    super(text, tts);
+  constructor(
+    tts: TTS,
+    text: string,
+    stream: Promise<any>,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ) {
+    super(text, tts, connOptions, abortSignal);
     this.stream = stream;
   }
 

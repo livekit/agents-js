@@ -4,6 +4,7 @@
 import type * as types from '@google/genai';
 import { GoogleGenAI } from '@google/genai';
 import {
+  type APIConnectOptions,
   APIConnectionError,
   APIStatusError,
   AudioByteStream,
@@ -138,8 +139,12 @@ export class TTS extends tts.TTS {
     this.#client = new GoogleGenAI(clientOptions);
   }
 
-  synthesize(text: string): ChunkedStream {
-    return new ChunkedStream(text, this);
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): ChunkedStream {
+    return new ChunkedStream(text, this, connOptions, abortSignal);
   }
 
   /**
@@ -170,8 +175,13 @@ export class ChunkedStream extends tts.ChunkedStream {
   #tts: TTS;
   label = 'google.gemini.ChunkedStream';
 
-  constructor(inputText: string, tts: TTS) {
-    super(inputText, tts);
+  constructor(
+    inputText: string,
+    tts: TTS,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ) {
+    super(inputText, tts, connOptions, abortSignal);
     this.#tts = tts;
   }
 
@@ -188,6 +198,7 @@ export class ChunkedStream extends tts.ChunkedStream {
           },
         },
       },
+      abortSignal: this.abortSignal,
     };
 
     let inputText = this.inputText;
@@ -213,6 +224,9 @@ export class ChunkedStream extends tts.ChunkedStream {
         await this.#processResponse(response, bstream, requestId);
       }
     } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
       if (isAPIError(error)) throw error;
 
       const err = error as {

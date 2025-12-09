@@ -1,7 +1,15 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, log, shortuuid, tokenize, tts } from '@livekit/agents';
+import {
+  type APIConnectOptions,
+  AudioByteStream,
+  Future,
+  log,
+  shortuuid,
+  tokenize,
+  tts,
+} from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
 import { type RawData, WebSocket } from 'ws';
@@ -88,8 +96,12 @@ export class TTS extends tts.TTS {
     }
   }
 
-  synthesize(text: string): tts.ChunkedStream {
-    return new ChunkedStream(this, text, this.#opts);
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): tts.ChunkedStream {
+    return new ChunkedStream(this, text, this.#opts, connOptions, abortSignal);
   }
 
   stream(): SynthesizeStream {
@@ -99,12 +111,18 @@ export class TTS extends tts.TTS {
 
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'cartesia.ChunkedStream';
+  #logger = log();
   #opts: TTSOptions;
   #text: string;
 
-  // set Promise<T> to any because OpenAI returns an annoying Response type
-  constructor(tts: TTS, text: string, opts: TTSOptions) {
-    super(text, tts);
+  constructor(
+    tts: TTS,
+    text: string,
+    opts: TTSOptions,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ) {
+    super(text, tts, connOptions, abortSignal);
     this.#text = text;
     this.#opts = opts;
   }
@@ -116,6 +134,8 @@ export class ChunkedStream extends tts.ChunkedStream {
     json.transcript = this.#text;
 
     const baseUrl = new URL(this.#opts.baseUrl);
+    const doneFut = new Future<void>();
+
     const req = request(
       {
         hostname: baseUrl.hostname,
@@ -126,6 +146,7 @@ export class ChunkedStream extends tts.ChunkedStream {
           [AUTHORIZATION_HEADER]: this.#opts.apiKey!,
           [VERSION_HEADER]: VERSION,
         },
+        signal: this.abortSignal,
       },
       (res) => {
         res.on('data', (chunk) => {
@@ -148,12 +169,24 @@ export class ChunkedStream extends tts.ChunkedStream {
             });
           }
           this.queue.close();
+          doneFut.resolve();
+        });
+        res.on('error', (err) => {
+          if (err.message === 'aborted') return;
+          this.#logger.error({ err }, 'Cartesia TTS response error');
         });
       },
     );
 
+    req.on('error', (err) => {
+      if (err.name === 'AbortError') return;
+      this.#logger.error({ err }, 'Cartesia TTS request error');
+    });
+    req.on('close', () => doneFut.resolve());
     req.write(JSON.stringify(json));
     req.end();
+
+    await doneFut.await;
   }
 }
 

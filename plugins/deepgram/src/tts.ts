@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, shortuuid, tokenize, tts } from '@livekit/agents';
+import {
+  type APIConnectOptions,
+  AudioByteStream,
+  log,
+  shortuuid,
+  tokenize,
+  tts,
+} from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
 import { type RawData, WebSocket } from 'ws';
@@ -56,8 +63,12 @@ export class TTS extends tts.TTS {
     }
   }
 
-  synthesize(text: string): tts.ChunkedStream {
-    return new ChunkedStream(this, text, this.opts);
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): tts.ChunkedStream {
+    return new ChunkedStream(this, text, this.opts, connOptions, abortSignal);
   }
 
   stream(): tts.SynthesizeStream {
@@ -67,11 +78,18 @@ export class TTS extends tts.TTS {
 
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'deepgram.ChunkedStream';
+  #logger = log();
   private opts: TTSOptions;
   private text: string;
 
-  constructor(tts: TTS, text: string, opts: TTSOptions) {
-    super(text, tts);
+  constructor(
+    tts: TTS,
+    text: string,
+    opts: TTSOptions,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ) {
+    super(text, tts, connOptions, abortSignal);
     this.text = text;
     this.opts = opts;
   }
@@ -96,6 +114,7 @@ export class ChunkedStream extends tts.ChunkedStream {
             [AUTHORIZATION_HEADER]: `Token ${this.opts.apiKey!}`,
             'Content-Type': 'application/json',
           },
+          signal: this.abortSignal,
         },
         (res) => {
           if (res.statusCode !== 200) {
@@ -119,7 +138,8 @@ export class ChunkedStream extends tts.ChunkedStream {
           });
 
           res.on('error', (err) => {
-            reject(err);
+            if (err.message === 'aborted') return;
+            this.#logger.error({ err }, 'Deepgram TTS response error');
           });
 
           res.on('close', () => {
@@ -142,9 +162,11 @@ export class ChunkedStream extends tts.ChunkedStream {
       );
 
       req.on('error', (err) => {
-        reject(err);
+        if (err.name === 'AbortError') return;
+        this.#logger.error({ err }, 'Deepgram TTS request error');
       });
 
+      req.on('close', () => resolve());
       req.write(JSON.stringify(json));
       req.end();
     });
