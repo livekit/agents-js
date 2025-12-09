@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-bey
 
+## 1.0.15
+
+### Patch Changes
+
+- Add Session Connection Options and Fix Blocking Speech from High-latency LLM Generation - [#880](https://github.com/livekit/agents-js/pull/880) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`6b94d1a1b50d3a4e96443b21979ddad415ac7b6e`](https://github.com/livekit/agents-js/commit/6b94d1a1b50d3a4e96443b21979ddad415ac7b6e), [`e590012fda5a32e86c183d06d9ff5a5810ad688a`](https://github.com/livekit/agents-js/commit/e590012fda5a32e86c183d06d9ff5a5810ad688a), [`40aa678d7cbd63b97215ced99e700b286c971ff0`](https://github.com/livekit/agents-js/commit/40aa678d7cbd63b97215ced99e700b286c971ff0), [`3a0872e730179fe1dbcc3a446d92480611270992`](https://github.com/livekit/agents-js/commit/3a0872e730179fe1dbcc3a446d92480611270992), [`c7ea84ec3ee9cd132b8e3a7bd7cca3040ae420dc`](https://github.com/livekit/agents-js/commit/c7ea84ec3ee9cd132b8e3a7bd7cca3040ae420dc), [`a21eb72d7ca452489353ef42f8e2922d2b6047a2`](https://github.com/livekit/agents-js/commit/a21eb72d7ca452489353ef42f8e2922d2b6047a2), [`6b94d1a1b50d3a4e96443b21979ddad415ac7b6e`](https://github.com/livekit/agents-js/commit/6b94d1a1b50d3a4e96443b21979ddad415ac7b6e)]:
+  - @livekit/agents@1.0.25
+
 ## 1.0.14
 
 ### Patch Changes

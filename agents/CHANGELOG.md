@@ -1,5 +1,23 @@
 # @livekit/agents
 
+## 1.0.25
+
+### Patch Changes
+
+- Rename pushedDurationMs to pushedDuration (was actually in seconds) - [#876](https://github.com/livekit/agents-js/pull/876) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Fix improper resource cleanup inside AgentActivity by not close global STT / TTS / VAD components - [#891](https://github.com/livekit/agents-js/pull/891) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add Session Connection Options and Fix Blocking Speech from High-latency LLM Generation - [#880](https://github.com/livekit/agents-js/pull/880) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add session shutdown API - [#866](https://github.com/livekit/agents-js/pull/866) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add traces for `session.say` and `session.generateReply` - [#882](https://github.com/livekit/agents-js/pull/882) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Fix error spam during stream cleanup. Gracefully handle edge cases when detaching audio streams that were never initialized. - [#884](https://github.com/livekit/agents-js/pull/884) ([@Hormold](https://github.com/Hormold))
+
+- Add RecorderIO for stereo audio recording - [#876](https://github.com/livekit/agents-js/pull/876) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.24
 
 ### Patch Changes
