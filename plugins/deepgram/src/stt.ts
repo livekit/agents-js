@@ -260,6 +260,8 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
+      // waitForAbort internally sets up an abort listener on the abort signal
+      // we need to put it outside loop to avoid constant re-registration of the listener
       const abortPromise = waitForAbort(this.abortSignal);
 
       try {

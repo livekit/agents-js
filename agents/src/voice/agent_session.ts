@@ -46,6 +46,7 @@ import {
   type ErrorEvent,
   type FunctionToolsExecutedEvent,
   type MetricsCollectedEvent,
+  type ShutdownReason,
   type SpeechCreatedEvent,
   type UserInputTranscribedEvent,
   type UserState,
@@ -563,13 +564,22 @@ export class AgentSession<
     await this.closeImpl(CloseReason.USER_INITIATED);
   }
 
+  shutdown(options?: { drain?: boolean; reason?: ShutdownReason }): void {
+    const { drain = true, reason = CloseReason.USER_INITIATED } = options ?? {};
+
+    this._closeSoon({
+      reason,
+      drain,
+    });
+  }
+
   /** @internal */
   _closeSoon({
     reason,
     drain = false,
     error = null,
   }: {
-    reason: CloseReason;
+    reason: ShutdownReason;
     drain?: boolean;
     error?: RealtimeModelError | STTError | TTSError | LLMError | null;
   }): void {
@@ -743,7 +753,7 @@ export class AgentSession<
   }
 
   private async closeImpl(
-    reason: CloseReason,
+    reason: ShutdownReason,
     error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
     drain: boolean = false,
   ): Promise<void> {
@@ -757,7 +767,7 @@ export class AgentSession<
   }
 
   private async closeImplInner(
-    reason: CloseReason,
+    reason: ShutdownReason,
     error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
     drain: boolean = false,
   ): Promise<void> {
@@ -780,7 +790,11 @@ export class AgentSession<
       await this.activity.drain();
       // wait any uninterruptible speech to finish
       await this.activity.currentSpeech?.waitForPlayout();
-      this.activity.detachAudioInput();
+      try {
+        this.activity.detachAudioInput();
+      } catch (error) {
+        // Ignore detach errors during cleanup - source may not have been set
+      }
     }
 
     // Close recorder before detaching inputs/outputs (keep reference for session report)
