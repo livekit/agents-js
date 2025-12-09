@@ -150,11 +150,12 @@ export class ChunkedStream extends tts.ChunkedStream {
           this.queue.close();
           doneFut.resolve();
         });
-        res.on('error', (err) => doneFut.reject(err));
+        res.on('error', () => {});
       },
     );
 
-    req.on('error', (err) => doneFut.reject(err));
+    req.on('error', () => {});
+    req.on('close', () => doneFut.resolve());
     req.write(JSON.stringify(json));
     req.end();
 

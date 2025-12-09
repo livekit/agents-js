@@ -156,19 +156,21 @@ export class ChunkedStream extends tts.ChunkedStream {
           } catch (error) {
             this.#logger.error('Error processing Resemble API response:', error);
             this.queue.close();
-            doneFut.reject(error instanceof Error ? error : new Error(String(error)));
+            doneFut.resolve();
           }
         });
 
-        res.on('error', (error) => {
-          this.#logger.error('Resemble API error:', error);
+        res.on('close', () => {
           this.queue.close();
-          doneFut.reject(error);
+          doneFut.resolve();
         });
+
+        res.on('error', () => {});
       },
     );
 
-    req.on('error', (err) => doneFut.reject(err));
+    req.on('error', () => {});
+    req.on('close', () => doneFut.resolve());
     req.write(JSON.stringify(json));
     req.end();
 

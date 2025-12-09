@@ -130,6 +130,7 @@ export class ChunkedStream extends tts.ChunkedStream {
           });
 
           res.on('error', (err) => {
+            if (err.message === 'aborted') return; // Ignore abort errors
             reject(err);
           });
 
@@ -152,10 +153,8 @@ export class ChunkedStream extends tts.ChunkedStream {
         },
       );
 
-      req.on('error', (err) => {
-        reject(err);
-      });
-
+      req.on('error', () => {});
+      req.on('close', () => resolve());
       req.write(JSON.stringify(json));
       req.end();
     });
