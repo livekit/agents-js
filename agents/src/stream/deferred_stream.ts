@@ -9,15 +9,22 @@ import type {
 import { IdentityTransform } from './identity_transform.js';
 
 /**
- * Check if error is related to reader.read after release lock
+ * Check if error is related to stream cleanup operations.
+ *
+ * These errors are expected when calling reader.read() after releaseLock()
+ * or when writing to already closed streams during cleanup:
  *
  * Invalid state: Releasing reader
  * Invalid state: The reader is not attached to a stream
+ * Invalid state: Controller is already closed
+ * Invalid state: WritableStream is closed
  */
 export function isStreamReaderReleaseError(e: unknown) {
   const allowedMessages = [
     'Invalid state: Releasing reader',
     'Invalid state: The reader is not attached to a stream',
+    'Controller is already closed',
+    'WritableStream is closed',
   ];
 
   if (e instanceof TypeError) {
@@ -66,18 +73,27 @@ export class DeferredReadableStream<T> {
         await this.writer.write(value);
       }
     } catch (e) {
-      // skip source detach related errors
+      // skip stream cleanup related errors
       if (isStreamReaderReleaseError(e)) return;
+
       sourceError = e;
     } finally {
       // any other error from source will be propagated to the consumer
       if (sourceError) {
-        this.writer.abort(sourceError);
+        try {
+          this.writer.abort(sourceError);
+        } catch (e) {
+          // ignore if writer is already closed
+        }
         return;
       }
 
       // release lock so this.stream.getReader().read() will terminate with done: true
-      this.writer.releaseLock();
+      try {
+        this.writer.releaseLock();
+      } catch (e) {
+        // ignore if writer lock is already released
+      }
 
       // we only close the writable stream after done
       try {
@@ -98,7 +114,8 @@ export class DeferredReadableStream<T> {
    */
   async detachSource() {
     if (!this.isSourceSet) {
-      throw new Error('Source not set');
+      // No-op if source was never set - this is a common case during cleanup
+      return;
     }
 
     // release lock will make any pending read() throw TypeError

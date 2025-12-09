@@ -788,7 +788,11 @@ export class AgentSession<
       await this.activity.drain();
       // wait any uninterruptible speech to finish
       await this.activity.currentSpeech?.waitForPlayout();
-      this.activity.detachAudioInput();
+      try {
+        this.activity.detachAudioInput();
+      } catch (error) {
+        // Ignore detach errors during cleanup - source may not have been set
+      }
     }
 
     // Close recorder before detaching inputs/outputs (keep reference for session report)
