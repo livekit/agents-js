@@ -278,7 +278,7 @@ export class TTS extends tts.TTS {
 
     this.#opts = mergedOpts as TTSOptions;
     if (!this.#opts.tokenizer) {
-      this.#opts.tokenizer = new tokenize.basic.SentenceTokenizer();
+      this.#opts.tokenizer = new tokenize.basic.SentenceTokenizer({ retainFormat: true });
     }
     this.#authorization = `Basic ${mergedOpts.apiKey}`;
     this.#pool = new WSConnectionPool(this.#opts.wsURL, this.#authorization);
