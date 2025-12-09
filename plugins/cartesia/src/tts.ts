@@ -111,6 +111,7 @@ export class TTS extends tts.TTS {
 
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'cartesia.ChunkedStream';
+  #logger = log();
   #opts: TTSOptions;
   #text: string;
 
@@ -169,12 +170,20 @@ export class ChunkedStream extends tts.ChunkedStream {
           }
           this.queue.close();
           doneFut.resolve();
+
+          console.log('signal aborted', this.abortSignal.aborted);
         });
-        res.on('error', () => {});
+        res.on('error', (err) => {
+          if (err.message === 'aborted') return;
+          this.#logger.error({ err }, 'Cartesia TTS response error');
+        });
       },
     );
 
-    req.on('error', () => {});
+    req.on('error', (err) => {
+      if (err.name === 'AbortError') return;
+      this.#logger.error({ err }, 'Cartesia TTS request error');
+    });
     req.on('close', () => doneFut.resolve());
     req.write(JSON.stringify(json));
     req.end();

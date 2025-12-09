@@ -73,6 +73,7 @@ export class TTS extends tts.TTS {
 
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'neuphonic.ChunkedStream';
+  #logger = log();
   #opts: TTSOptions;
   #text: string;
 
@@ -150,11 +151,17 @@ export class ChunkedStream extends tts.ChunkedStream {
           this.queue.close();
           doneFut.resolve();
         });
-        res.on('error', () => {});
+        res.on('error', (err) => {
+          if (err.message === 'aborted') return;
+          this.#logger.error({ err }, 'Neuphonic TTS response error');
+        });
       },
     );
 
-    req.on('error', () => {});
+    req.on('error', (err) => {
+      if (err.name === 'AbortError') return;
+      this.#logger.error({ err }, 'Neuphonic TTS request error');
+    });
     req.on('close', () => doneFut.resolve());
     req.write(JSON.stringify(json));
     req.end();

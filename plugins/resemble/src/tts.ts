@@ -165,11 +165,17 @@ export class ChunkedStream extends tts.ChunkedStream {
           doneFut.resolve();
         });
 
-        res.on('error', () => {});
+        res.on('error', (err) => {
+          if (err.message === 'aborted') return;
+          this.#logger.error({ err }, 'Resemble TTS response error');
+        });
       },
     );
 
-    req.on('error', () => {});
+    req.on('error', (err) => {
+      if (err.name === 'AbortError') return;
+      this.#logger.error({ err }, 'Resemble TTS request error');
+    });
     req.on('close', () => doneFut.resolve());
     req.write(JSON.stringify(json));
     req.end();
