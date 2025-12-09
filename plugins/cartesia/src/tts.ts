@@ -170,8 +170,6 @@ export class ChunkedStream extends tts.ChunkedStream {
           }
           this.queue.close();
           doneFut.resolve();
-
-          console.log('signal aborted', this.abortSignal.aborted);
         });
         res.on('error', (err) => {
           if (err.message === 'aborted') return;
