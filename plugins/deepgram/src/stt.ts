@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  type APIConnectOptions,
   type AudioBuffer,
   AudioByteStream,
   AudioEnergyFilter,
@@ -115,8 +116,8 @@ export class STT extends stt.STT {
     this.#opts = { ...this.#opts, ...opts };
   }
 
-  stream(): SpeechStream {
-    return new SpeechStream(this, this.#opts, this.abortController);
+  stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
+    return new SpeechStream(this, this.#opts, options?.connOptions);
   }
 
   async close() {
@@ -134,12 +135,8 @@ export class SpeechStream extends stt.SpeechStream {
   #audioDurationCollector: PeriodicCollector<number>;
   label = 'deepgram.SpeechStream';
 
-  constructor(
-    stt: STT,
-    opts: STTOptions,
-    private abortController: AbortController,
-  ) {
-    super(stt, opts.sampleRate);
+  constructor(stt: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
+    super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
     this.closed = false;
     this.#audioEnergyFilter = new AudioEnergyFilter();
@@ -263,12 +260,13 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
+      // waitForAbort internally sets up an abort listener on the abort signal
+      // we need to put it outside loop to avoid constant re-registration of the listener
+      const abortPromise = waitForAbort(this.abortSignal);
+
       try {
         while (!this.closed) {
-          const result = await Promise.race([
-            this.input.next(),
-            waitForAbort(this.abortController.signal),
-          ]);
+          const result = await Promise.race([this.input.next(), abortPromise]);
 
           if (result === undefined) return; // aborted
           if (result.done) {
@@ -306,6 +304,16 @@ export class SpeechStream extends stt.SpeechStream {
     };
 
     const listenTask = Task.from(async (controller) => {
+      const putMessage = (message: stt.SpeechEvent) => {
+        if (!this.queue.closed) {
+          try {
+            this.queue.put(message);
+          } catch (e) {
+            // ignore
+          }
+        }
+      };
+
       const listenMessage = new Promise<void>((resolve, reject) => {
         ws.on('message', (msg) => {
           try {
@@ -318,13 +326,7 @@ export class SpeechStream extends stt.SpeechStream {
                 // It's also possible we receive a transcript without a SpeechStarted event.
                 if (this.#speaking) return;
                 this.#speaking = true;
-                if (!this.queue.closed) {
-                  try {
-                    this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
-                  } catch (e) {
-                    // ignore
-                  }
-                }
+                putMessage({ type: stt.SpeechEventType.START_OF_SPEECH });
                 break;
               }
               // see this page:
@@ -345,18 +347,18 @@ export class SpeechStream extends stt.SpeechStream {
                 if (alternatives[0] && alternatives[0].text) {
                   if (!this.#speaking) {
                     this.#speaking = true;
-                    this.queue.put({
+                    putMessage({
                       type: stt.SpeechEventType.START_OF_SPEECH,
                     });
                   }
 
                   if (isFinal) {
-                    this.queue.put({
+                    putMessage({
                       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
                       alternatives: [alternatives[0], ...alternatives.slice(1)],
                     });
                   } else {
-                    this.queue.put({
+                    putMessage({
                       type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
                       alternatives: [alternatives[0], ...alternatives.slice(1)],
                     });
@@ -368,7 +370,7 @@ export class SpeechStream extends stt.SpeechStream {
                 // a non-empty transcript (deepgram doesn't have a SpeechEnded event)
                 if (isEndpoint && this.#speaking) {
                   this.#speaking = false;
-                  this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+                  putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
                 }
 
                 break;

@@ -260,28 +260,41 @@ export class Agent<UserData = any> {
       let wrapped_stt = activity.stt;
 
       if (!wrapped_stt.capabilities.streaming) {
-        if (!agent.vad) {
+        const vad = agent.vad || activity.vad;
+        if (!vad) {
           throw new Error(
             'STT does not support streaming, add a VAD to the AgentTask/VoiceAgent to enable streaming',
           );
         }
-        wrapped_stt = new STTStreamAdapter(wrapped_stt, agent.vad);
+        wrapped_stt = new STTStreamAdapter(wrapped_stt, vad);
       }
 
       const connOptions = activity.agentSession.connOptions.sttConnOptions;
       const stream = wrapped_stt.stream({ connOptions });
       stream.updateInputStream(audio);
 
+      let cleaned = false;
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        stream.detachInputStream();
+        stream.close();
+      };
+
       return new ReadableStream({
         async start(controller) {
-          for await (const event of stream) {
-            controller.enqueue(event);
+          try {
+            for await (const event of stream) {
+              controller.enqueue(event);
+            }
+            controller.close();
+          } finally {
+            // Always clean up the STT stream, whether it ends naturally or is cancelled
+            cleanup();
           }
-          controller.close();
         },
         cancel() {
-          stream.detachInputStream();
-          stream.close();
+          cleanup();
         },
       });
     },
@@ -314,15 +327,27 @@ export class Agent<UserData = any> {
         connOptions,
         parallelToolCalls: true,
       });
+
+      let cleaned = false;
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        stream.close();
+      };
+
       return new ReadableStream({
         async start(controller) {
-          for await (const chunk of stream) {
-            controller.enqueue(chunk);
+          try {
+            for await (const chunk of stream) {
+              controller.enqueue(chunk);
+            }
+            controller.close();
+          } finally {
+            cleanup();
           }
-          controller.close();
         },
         cancel() {
-          stream.close();
+          cleanup();
         },
       });
     },
@@ -347,18 +372,29 @@ export class Agent<UserData = any> {
       const stream = wrapped_tts.stream({ connOptions });
       stream.updateInputStream(text);
 
+      let cleaned = false;
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        stream.close();
+      };
+
       return new ReadableStream({
         async start(controller) {
-          for await (const chunk of stream) {
-            if (chunk === SynthesizeStream.END_OF_STREAM) {
-              break;
+          try {
+            for await (const chunk of stream) {
+              if (chunk === SynthesizeStream.END_OF_STREAM) {
+                break;
+              }
+              controller.enqueue(chunk.frame);
             }
-            controller.enqueue(chunk.frame);
+            controller.close();
+          } finally {
+            cleanup();
           }
-          controller.close();
         },
         cancel() {
-          stream.close();
+          cleanup();
         },
       });
     },

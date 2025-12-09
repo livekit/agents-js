@@ -189,7 +189,7 @@ const startJob = (
     let logger = log().child({ pid: proc.pid });
 
     process.on('unhandledRejection', (reason) => {
-      logger.error(reason);
+      logger.debug({ error: reason }, 'Unhandled promise rejection');
     });
 
     logger.debug('initializing job runner');

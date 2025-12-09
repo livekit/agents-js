@@ -422,8 +422,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       try {
         ws = await this.stt.connectWs(this.connOptions.timeoutMs);
 
-        // Wrap tasks for proper cancellation support using Task signals
-        const controller = new AbortController();
+        const controller = this.abortController; // Use base class abortController for proper cancellation
         const sendTask = Task.from(({ signal }) => send(ws!, signal), controller);
         const wsListenerTask = Task.from(({ signal }) => createWsListener(ws!, signal), controller);
         const recvTask = Task.from(({ signal }) => recv(signal), controller);
