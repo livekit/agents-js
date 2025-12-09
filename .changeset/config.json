@@ -8,7 +8,25 @@
   ],
   "commit": false,
   "ignore": ["livekit-agents-examples"],
-  "linked": [],
+  "fixed": [
+    [
+      "@livekit/agents",
+      "@livekit/agents-plugin-anam",
+      "@livekit/agents-plugin-bey",
+      "@livekit/agents-plugin-cartesia",
+      "@livekit/agents-plugin-deepgram",
+      "@livekit/agents-plugin-elevenlabs",
+      "@livekit/agents-plugin-google",
+      "@livekit/agents-plugin-inworld",
+      "@livekit/agents-plugin-livekit",
+      "@livekit/agents-plugin-neuphonic",
+      "@livekit/agents-plugin-openai",
+      "@livekit/agents-plugin-resemble",
+      "@livekit/agents-plugin-rime",
+      "@livekit/agents-plugin-silero",
+      "@livekit/agents-plugins-test"
+    ]
+  ],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
