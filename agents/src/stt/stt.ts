@@ -296,7 +296,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   protected abstract run(): Promise<void>;
 
-  get abortSignal(): AbortSignal {
+  protected get abortSignal(): AbortSignal {
     return this.abortController.signal;
   }
 
