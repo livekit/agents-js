@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.26
+
+### Patch Changes
+
+- Fix improper resource cleanup inside AgentActivity by not close global STT / TTS / VAD components - [#893](https://github.com/livekit/agents-js/pull/893) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Improve TTS resource cleanup - [#893](https://github.com/livekit/agents-js/pull/893) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.25
 
 ### Patch Changes
