@@ -51,7 +51,7 @@ export class DataStreamAudioOutput extends AudioOutput {
   #logger = log();
 
   constructor(opts: DataStreamAudioOutputOptions) {
-    super(opts.sampleRate, undefined);
+    super(opts.sampleRate, undefined, { pause: false });
 
     const { room, destinationIdentity, sampleRate, waitRemoteTrack } = opts;
     this.room = room;
