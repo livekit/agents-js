@@ -328,7 +328,6 @@ export class ParticipantAudioOutput extends AudioOutput {
   private interruptedFuture: Future<void> = new Future();
 
   constructor(room: Room, options: AudioOutputOptions) {
-    // Ref: Python room_io/_output.py - lines 30-34
     super(options.sampleRate, undefined, { pause: true });
     this.room = room;
     this.options = options;
