@@ -35,8 +35,8 @@ export interface RecognitionHooks {
   onStartOfSpeech: (ev: VADEvent) => void;
   onVADInferenceDone: (ev: VADEvent) => void;
   onEndOfSpeech: (ev: VADEvent) => void;
-  onInterimTranscript: (ev: SpeechEvent) => void;
-  onFinalTranscript: (ev: SpeechEvent) => void;
+  onInterimTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
+  onFinalTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
   onPreemptiveGeneration: (info: PreemptiveGenerationInfo) => void;
 
@@ -161,7 +161,7 @@ export class AudioRecognition {
 
     switch (ev.type) {
       case SpeechEventType.FINAL_TRANSCRIPT:
-        this.hooks.onFinalTranscript(ev);
+        this.hooks.onFinalTranscript(ev, this.vad ? this.speaking : undefined);
         const transcript = ev.alternatives?.[0]?.text;
         const confidence = ev.alternatives?.[0]?.confidence ?? 0;
         this.lastLanguage = ev.alternatives?.[0]?.language;
@@ -220,7 +220,7 @@ export class AudioRecognition {
         }
         break;
       case SpeechEventType.PREFLIGHT_TRANSCRIPT:
-        this.hooks.onInterimTranscript(ev);
+        this.hooks.onInterimTranscript(ev, this.vad ? this.speaking : undefined);
         const preflightTranscript = ev.alternatives?.[0]?.text ?? '';
         const preflightConfidence = ev.alternatives?.[0]?.confidence ?? 0;
         const preflightLanguage = ev.alternatives?.[0]?.language;
@@ -279,7 +279,7 @@ export class AudioRecognition {
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
         this.logger.debug({ transcript: ev.alternatives?.[0]?.text }, 'interim transcript');
-        this.hooks.onInterimTranscript(ev);
+        this.hooks.onInterimTranscript(ev, this.vad ? this.speaking : undefined);
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
         break;
       case SpeechEventType.START_OF_SPEECH:

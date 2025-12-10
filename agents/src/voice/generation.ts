@@ -618,6 +618,7 @@ async function forwardAudio(
   let resampler: AudioResampler | null = null;
 
   try {
+    audioOuput.resume();
     while (true) {
       if (signal?.aborted) {
         break;

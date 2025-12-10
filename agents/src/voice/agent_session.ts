@@ -37,6 +37,7 @@ import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import {
   type AgentEvent,
+  type AgentFalseInterruptionEvent,
   AgentSessionEventTypes,
   type AgentState,
   type AgentStateChangedEvent,
@@ -72,6 +73,8 @@ export interface VoiceOptions {
   maxToolSteps: number;
   preemptiveGeneration: boolean;
   userAwayTimeout?: number | null;
+  falseInterruptionTimeout?: number | null;
+  resumeFalseInterruption: boolean;
 }
 
 const defaultVoiceOptions: VoiceOptions = {
@@ -84,6 +87,8 @@ const defaultVoiceOptions: VoiceOptions = {
   maxToolSteps: 3,
   preemptiveGeneration: false,
   userAwayTimeout: 15.0,
+  falseInterruptionTimeout: 2.0,
+  resumeFalseInterruption: true,
 } as const;
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
@@ -96,6 +101,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.FunctionToolsExecuted]: (ev: FunctionToolsExecutedEvent) => void;
   [AgentSessionEventTypes.MetricsCollected]: (ev: MetricsCollectedEvent) => void;
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
+  [AgentSessionEventTypes.AgentFalseInterruption]: (ev: AgentFalseInterruptionEvent) => void;
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
 };
@@ -356,6 +362,15 @@ export class AgentSession<
     this.logger.debug(
       `using transcript io: \`AgentSession\` -> ${this.output.transcription ? '`' + this.output.transcription.constructor.name + '`' : '(none)'}`,
     );
+
+    if (this.options.resumeFalseInterruption && this.output.audio && !this.output.audio.canPause) {
+      this.logger.warn(
+        {
+          audioOutput: this.output.audio.constructor.name,
+        },
+        'resumeFalseInterruption is enabled but audio output does not support pause, it will be ignored',
+      );
+    }
 
     this.started = true;
     this._startedAt = Date.now();
