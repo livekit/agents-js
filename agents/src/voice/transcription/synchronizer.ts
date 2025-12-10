@@ -362,7 +362,9 @@ class SyncedAudioOutput extends AudioOutput {
     public synchronizer: TranscriptionSynchronizer,
     private nextInChainAudio: AudioOutput,
   ) {
-    super(nextInChainAudio.sampleRate, nextInChainAudio);
+    // SyncedAudioOutput relies on the next output in chain for pause support
+    // Ref: Python transcription/synchronizer.py - lines 502-507
+    super(nextInChainAudio.sampleRate, nextInChainAudio, { pause: true });
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {

@@ -51,7 +51,9 @@ export class DataStreamAudioOutput extends AudioOutput {
   #logger = log();
 
   constructor(opts: DataStreamAudioOutputOptions) {
-    super(opts.sampleRate, undefined);
+    // DataStream audio output does not support pause/resume
+    // Ref: Python avatar/_datastream_io.py - lines 39-44
+    super(opts.sampleRate, undefined, { pause: false });
 
     const { room, destinationIdentity, sampleRate, waitRemoteTrack } = opts;
     this.room = room;

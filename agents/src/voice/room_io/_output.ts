@@ -328,7 +328,9 @@ export class ParticipantAudioOutput extends AudioOutput {
   private interruptedFuture: Future<void> = new Future();
 
   constructor(room: Room, options: AudioOutputOptions) {
-    super(options.sampleRate);
+    // RoomIO audio output does not support pause/resume yet in TypeScript
+    // Ref: Python room_io/_output.py - lines 31-34 (Python has pause=True with implementation at lines 127-134)
+    super(options.sampleRate, undefined, { pause: false });
     this.room = room;
     this.options = options;
     this.audioSource = new AudioSource(options.sampleRate, options.numChannels);

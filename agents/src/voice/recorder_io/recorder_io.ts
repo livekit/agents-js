@@ -465,7 +465,9 @@ class RecorderAudioOutput extends AudioOutput {
     audioOutput: AudioOutput,
     writeFn: (buf: AudioFrame[]) => void,
   ) {
-    super(audioOutput.sampleRate, audioOutput);
+    // RecorderIO supports pause/resume for tracking pause intervals in recordings
+    // Ref: Python recorder_io.py - lines 295-300
+    super(audioOutput.sampleRate, audioOutput, { pause: true });
     this.recorderIO = recorderIO;
     this.writeFn = writeFn;
   }
