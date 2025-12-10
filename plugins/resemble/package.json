@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-resemble",
-  "version": "1.0.26",
+  "version": "1.0.27",
   "description": "Resemble plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

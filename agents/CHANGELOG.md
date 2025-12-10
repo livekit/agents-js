@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.27
+
+### Patch Changes
+
+- Sync all package versions - [#900](https://github.com/livekit/agents-js/pull/900) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.26
 
 ### Patch Changes
