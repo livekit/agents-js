@@ -42,7 +42,7 @@ interface RealtimeOptions {
   temperature: number;
   toolChoice?: llm.ToolChoice;
   inputAudioTranscription?: api_proto.InputAudioTranscription | null;
-  // TODO(shubhra): add inputAudioNoiseReduction
+  inputAudioNoiseReduction?: api_proto.InputAudioNoiseReduction | null;
   turnDetection?: api_proto.TurnDetectionType | null;
   maxResponseOutputTokens?: number | 'inf';
   speed?: number;
@@ -102,6 +102,7 @@ const DEFAULT_TURN_DETECTION: api_proto.TurnDetectionType = {
 const DEFAULT_INPUT_AUDIO_TRANSCRIPTION: api_proto.InputAudioTranscription = {
   model: 'gpt-4o-mini-transcribe',
 };
+const DEFAULT_INPUT_AUDIO_NOISE_REDUCTION: api_proto.InputAudioNoiseReduction | null = null;
 const DEFAULT_TOOL_CHOICE: llm.ToolChoice = 'auto';
 const DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS: number | 'inf' = 'inf';
 
@@ -124,6 +125,7 @@ const DEFAULT_REALTIME_MODEL_OPTIONS = {
   voice: 'marin',
   temperature: DEFAULT_TEMPERATURE,
   inputAudioTranscription: DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
+  inputAudioNoiseReduction: DEFAULT_INPUT_AUDIO_NOISE_REDUCTION,
   turnDetection: DEFAULT_TURN_DETECTION,
   toolChoice: DEFAULT_TOOL_CHOICE,
   maxResponseOutputTokens: DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS,
@@ -149,7 +151,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       baseURL?: string;
       modalities?: Modality[];
       inputAudioTranscription?: api_proto.InputAudioTranscription | null;
-      // TODO(shubhra): add inputAudioNoiseReduction
+      inputAudioNoiseReduction?: api_proto.InputAudioNoiseReduction | null;
       turnDetection?: api_proto.TurnDetectionType | null;
       speed?: number;
       // TODO(shubhra): add openai tracing options
@@ -243,6 +245,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     turnDetection = AZURE_DEFAULT_TURN_DETECTION,
     temperature = 0.8,
     speed,
+    inputAudioNoiseReduction = DEFAULT_INPUT_AUDIO_NOISE_REDUCTION,
   }: {
     azureDeployment: string;
     azureEndpoint?: string;
@@ -252,7 +255,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     baseURL?: string;
     voice?: string;
     inputAudioTranscription?: api_proto.InputAudioTranscription;
-    // TODO(shubhra): add inputAudioNoiseReduction
+    inputAudioNoiseReduction?: api_proto.InputAudioNoiseReduction | null;
     turnDetection?: api_proto.TurnDetectionType;
     temperature?: number;
     speed?: number;
@@ -284,6 +287,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     return new RealtimeModel({
       voice,
       inputAudioTranscription,
+      inputAudioNoiseReduction,
       turnDetection,
       temperature,
       speed,
@@ -417,7 +421,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         modalities: modalities,
         turn_detection: this.oaiRealtimeModel._options.turnDetection,
         input_audio_transcription: this.oaiRealtimeModel._options.inputAudioTranscription,
-        // TODO(shubhra): add inputAudioNoiseReduction
+        input_audio_noise_reduction: this.oaiRealtimeModel._options.inputAudioNoiseReduction,
         temperature: this.oaiRealtimeModel._options.temperature,
         tool_choice: toOaiToolChoice(this.oaiRealtimeModel._options.toolChoice),
         max_response_output_tokens:
