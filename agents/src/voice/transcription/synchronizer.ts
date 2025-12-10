@@ -362,7 +362,6 @@ class SyncedAudioOutput extends AudioOutput {
     public synchronizer: TranscriptionSynchronizer,
     private nextInChainAudio: AudioOutput,
   ) {
-    // Ref: Python transcription/synchronizer.py - lines 502-507
     super(nextInChainAudio.sampleRate, nextInChainAudio, { pause: true });
   }
 
