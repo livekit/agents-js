@@ -23,7 +23,7 @@ const defaultTTSOptions: Partial<BasetenTTSOptions> = {
 export class TTS extends tts.TTS {
   private opts: BasetenTTSOptions;
   label = 'baseten.TTS';
-
+  private abortController = new AbortController();
   constructor(opts: Partial<BasetenTTSOptions> = {}) {
     /**
      * Baseten audio is 24kHz mono.
@@ -76,15 +76,12 @@ export class TTS extends tts.TTS {
     return new ChunkedStream(this, text, this.opts, connOptions, abortSignal);
   }
 
-  /**
-   * Create a new streaming session for text-to-speech synthesis.
-   *
-   * Note: For Baseten, `synthesize()` is the recommended method as it already
-   * streams audio chunks as they're generated. The `stream()` method is provided
-   * for compatibility with the LiveKit TTS interface but works similarly.
-   */
   stream(): tts.SynthesizeStream {
-    return new SynthesizeStream(this, this.opts);
+    throw new Error('Streaming is not supported on Baseten TTS');
+  }
+
+  async close(): Promise<void> {
+    this.abortController.abort();
   }
 }
 
@@ -201,85 +198,5 @@ export class ChunkedStream extends tts.ChunkedStream {
       reader.releaseLock();
       this.queue.close();
     }
-  }
-}
-
-/**
- * Streaming implementation for real-time TTS synthesis.
- * This class extends `tts.SynthesizeStream` to provide streaming audio synthesis.
- *
- * For Baseten, text streaming isn't needed (we have all text upfront), but we provide
- * this for compatibility with the LiveKit TTS interface. It internally uses the same
- * streaming audio approach as ChunkedStream.
- */
-export class SynthesizeStream extends tts.SynthesizeStream {
-  label = 'baseten.SynthesizeStream';
-  private readonly basetenTTS: TTS;
-  private readonly opts: BasetenTTSOptions;
-  private pendingStreams: Promise<void>[] = [];
-  private isFlushed = false;
-
-  constructor(tts: TTS, opts: BasetenTTSOptions) {
-    super(tts);
-    this.basetenTTS = tts;
-    this.opts = opts;
-  }
-
-  /**
-   * This method is called by the base class when iteration starts.
-   * It waits for all pending text synthesis operations to complete.
-   */
-  protected async run(): Promise<void> {
-    // Wait for flush to be called
-    while (!this.isFlushed) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-
-    // Wait for all pending streams to complete
-    await Promise.all(this.pendingStreams);
-  }
-
-  /**
-   * Push text to be synthesized. The text will be sent to the Baseten model
-   * and audio chunks will be streamed back as they are generated.
-   */
-  async pushText(text: string): Promise<void> {
-    if (!text.trim()) {
-      return;
-    }
-
-    // Create a promise for this synthesis operation
-    const streamPromise = (async () => {
-      try {
-        // Use the existing ChunkedStream implementation which already streams audio properly
-        const chunkedStream = new ChunkedStream(this.basetenTTS, text, this.opts);
-
-        // Forward all audio events from the ChunkedStream to our queue
-        for await (const event of chunkedStream) {
-          if (!this.isFlushed) {
-            this.queue.put(event);
-          }
-        }
-      } catch (error) {
-        // Only throw if we haven't been flushed yet
-        if (!this.isFlushed) {
-          throw error;
-        }
-      }
-    })();
-
-    this.pendingStreams.push(streamPromise);
-  }
-
-  /**
-   * Flush any remaining audio data and close the stream.
-   */
-  async flush(): Promise<void> {
-    this.isFlushed = true;
-
-    // Wait for all pending streams to complete
-    await Promise.all(this.pendingStreams);
-
-    this.queue.close();
   }
 }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type AudioBuffer, AudioByteStream, log, stt } from '@livekit/agents';
+import { type AudioBuffer, AudioByteStream, Task, log, stt, waitForAbort } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
 import type { BasetenSttOptions } from './types.js';
@@ -196,8 +196,8 @@ export class SpeechStream extends stt.SpeechStream {
       }
     };
 
-    const listenTask = async () => {
-      return new Promise<void>((resolve, reject) => {
+    const listenTask = Task.from(async (controller) => {
+      const listenMessage = new Promise<void>((resolve, reject) => {
         ws.on('message', (data) => {
           try {
             let jsonString: string;
@@ -287,9 +287,11 @@ export class SpeechStream extends stt.SpeechStream {
           }
         });
       });
-    };
 
-    await Promise.all([sendTask(), listenTask()]);
+      await Promise.race([listenMessage, waitForAbort(controller.signal)]);
+    }, this.abortController);
+
+    await Promise.all([sendTask(), listenTask.result]);
     closing = true;
     ws.close();
   }
