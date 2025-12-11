@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type APIConnectOptions, AudioByteStream, shortuuid, tts } from '@livekit/agents';
+import {
+  type APIConnectOptions,
+  AudioByteStream,
+  shortuuid,
+  tts,
+  waitForAbort,
+} from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { BasetenTTSOptions } from './types.js';
 
@@ -164,9 +170,16 @@ export class ChunkedStream extends tts.ChunkedStream {
         }
       };
 
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read();
+      // waitForAbort internally sets up an abort listener on the abort signal
+      // we need to put it outside loop to avoid constant re-registration of the listener
+      const abortPromise = waitForAbort(this.abortSignal);
+
+      while (!this.abortSignal.aborted) {
+        const result = await Promise.race([reader.read(), abortPromise]);
+
+        if (result === undefined) break; // aborted
+
+        const { done, value } = result;
 
         if (done) {
           break;
