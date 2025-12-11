@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, shortuuid, tts } from '@livekit/agents';
+import { type APIConnectOptions, AudioByteStream, shortuuid, tts } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { BasetenTTSOptions } from './types.js';
 
@@ -62,8 +62,12 @@ export class TTS extends tts.TTS {
    * LiveKit's playback pipeline.  If you need to cancel synthesis you can
    * call {@link ChunkedStream.stop} on the returned object.
    */
-  synthesize(text: string): ChunkedStream {
-    return new ChunkedStream(this, text, this.opts);
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): ChunkedStream {
+    return new ChunkedStream(this, text, this.opts, connOptions, abortSignal);
   }
 
   /**
@@ -91,8 +95,14 @@ export class ChunkedStream extends tts.ChunkedStream {
   label = 'baseten.ChunkedStream';
   private readonly opts: BasetenTTSOptions;
 
-  constructor(tts: TTS, text: string, opts: BasetenTTSOptions) {
-    super(text, tts);
+  constructor(
+    tts: TTS,
+    text: string,
+    opts: BasetenTTSOptions,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ) {
+    super(text, tts, connOptions, abortSignal);
     this.opts = opts;
   }
 
@@ -123,6 +133,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
+      signal: this.abortSignal,
     });
 
     if (!response.ok) {
