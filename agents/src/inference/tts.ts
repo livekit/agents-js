@@ -404,9 +404,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         } catch {
           // ignore
         }
-        // Ensure this ws is not reused (python removes conn on cancellation/exception)
         this.tts.pool.remove(ws);
-        // Mirror python's `input_sent_event.set()` in finally: unblock recv if it was waiting.
         inputSentEvent.set();
         completionFuture.resolve();
       };
@@ -437,7 +435,6 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
       const reader = serverEventStream.getReader();
 
       try {
-        // Mirror python: don't start receiving until we've sent at least one token (or flush)
         await inputSentEvent.wait();
 
         while (!this.closed && !signal.aborted) {
@@ -500,7 +497,6 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
       await this.tts.pool.withConnection(
         async (ws: WebSocket) => {
           try {
-            // Match python: run tasks concurrently and cancel them on exit.
             // IMPORTANT: don't cancel the stream's controller on normal completion,
             // otherwise the pool will remove+close the ws and every run becomes a pool miss.
             const runController = new AbortController();
