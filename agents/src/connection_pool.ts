@@ -6,9 +6,6 @@ import { waitForAbort } from './utils.js';
 
 /**
  * Helper class to manage persistent connections like websockets.
- *
- * Handles connection pooling and reconnection after max duration.
- * Can be used with `withConnection` for safe connection handling similar to Python's async context manager.
  */
 export interface ConnectionPoolOptions<T> {
   /**
