@@ -172,7 +172,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     this.pool = new ConnectionPool<WebSocket>({
       connectCb: (timeout) => this.connectWs(timeout),
       closeCb: (ws) => this.closeWs(ws),
-      maxSessionDuration: 300_000, // 5 minutes (matches Python)
+      maxSessionDuration: 300_000,
       markRefreshedOnGet: true,
       connectTimeout: 10_000, // 10 seconds default
     });

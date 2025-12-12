@@ -527,7 +527,10 @@ export class AgentSession<
           newAgentId: agent.id,
         }),
       );
-      this.logger.debug({ previousActivity, agent }, 'Agent handoff inserted into chat context');
+      this.logger.debug(
+        { previousAgentId: previousActivity?.agent.id, newAgentId: agent.id },
+        'Agent handoff inserted into chat context',
+      );
 
       await this.activity.start();
 
