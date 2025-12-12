@@ -5,6 +5,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { ConnectionPool } from './connection_pool.js';
 
 describe('ConnectionPool', () => {
+  const makeConnectCb = () => {
+    let n = 0;
+    return vi.fn(async (_timeout: number): Promise<string> => `conn_${++n}`);
+  };
+
   describe('basic operations', () => {
     it('should create and return a connection', async () => {
       const connections: string[] = [];
@@ -33,9 +38,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should create new connection when none available', async () => {
-      const connectCb = vi.fn(async (timeout: number): Promise<string> => {
-        return `conn_${Date.now()}`;
-      });
+      const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (conn: string) => {
         // Mock close
       });
@@ -53,9 +56,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should remove connection from pool', async () => {
-      const connectCb = vi.fn(async (timeout: number): Promise<string> => {
-        return `conn_${Date.now()}`;
-      });
+      const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (conn: string) => {
         // Mock close
       });
@@ -78,9 +79,7 @@ describe('ConnectionPool', () => {
 
   describe('maxSessionDuration', () => {
     it('should expire connections after maxSessionDuration', async () => {
-      const connectCb = vi.fn(async (timeout: number): Promise<string> => {
-        return `conn_${Date.now()}`;
-      });
+      const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (conn: string) => {
         // Mock close
       });
@@ -104,9 +103,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should refresh connection timestamp when markRefreshedOnGet is true', async () => {
-      const connectCb = vi.fn(async (timeout: number): Promise<string> => {
-        return `conn_${Date.now()}`;
-      });
+      const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (conn: string) => {
         // Mock close
       });
@@ -141,9 +138,7 @@ describe('ConnectionPool', () => {
 
   describe('withConnection', () => {
     it('should return connection to pool on success', async () => {
-      const connectCb = vi.fn(async (timeout: number): Promise<string> => {
-        return `conn_${Date.now()}`;
-      });
+      const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (conn: string) => {
         // Mock close
       });
@@ -166,9 +161,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should remove connection from pool on error', async () => {
-      const connectCb = vi.fn(async (timeout: number): Promise<string> => {
-        return `conn_${Date.now()}`;
-      });
+      const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (conn: string) => {
         // Mock close
       });
@@ -196,9 +189,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should handle abort signal', async () => {
-      const connectCb = vi.fn(async (timeout: number): Promise<string> => {
-        return `conn_${Date.now()}`;
-      });
+      const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (conn: string) => {
         // Mock close
       });
@@ -234,9 +225,10 @@ describe('ConnectionPool', () => {
 
   describe('prewarm', () => {
     it('should create connection in background', async () => {
-      const connectCb = vi.fn(async (timeout: number): Promise<string> => {
+      let n = 0;
+      const connectCb = vi.fn(async (_timeout: number): Promise<string> => {
         await new Promise((resolve) => setTimeout(resolve, 50));
-        return `conn_${Date.now()}`;
+        return `conn_${++n}`;
       });
       const closeCb = vi.fn(async (conn: string) => {
         // Mock close
@@ -258,9 +250,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should not prewarm if connections already exist', async () => {
-      const connectCb = vi.fn(async (timeout: number): Promise<string> => {
-        return `conn_${Date.now()}`;
-      });
+      const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (conn: string) => {
         // Mock close
       });
@@ -284,9 +274,7 @@ describe('ConnectionPool', () => {
 
   describe('close', () => {
     it('should close all connections', async () => {
-      const connectCb = vi.fn(async (timeout: number): Promise<string> => {
-        return `conn_${Date.now()}`;
-      });
+      const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (conn: string) => {
         // Mock close
       });
@@ -296,9 +284,10 @@ describe('ConnectionPool', () => {
         closeCb,
       });
 
+      // Create two distinct connections by checking out both before returning either.
       const conn1 = await pool.get();
-      pool.put(conn1);
       const conn2 = await pool.get();
+      pool.put(conn1);
       pool.put(conn2);
 
       await pool.close();
@@ -307,9 +296,7 @@ describe('ConnectionPool', () => {
     });
 
     it('should invalidate all connections', async () => {
-      const connectCb = vi.fn(async (timeout: number): Promise<string> => {
-        return `conn_${Date.now()}`;
-      });
+      const connectCb = makeConnectCb();
       const closeCb = vi.fn(async (conn: string) => {
         // Mock close
       });
@@ -319,9 +306,10 @@ describe('ConnectionPool', () => {
         closeCb,
       });
 
+      // Create two distinct connections by checking out both before returning either.
       const conn1 = await pool.get();
-      pool.put(conn1);
       const conn2 = await pool.get();
+      pool.put(conn1);
       pool.put(conn2);
 
       pool.invalidate();

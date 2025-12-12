@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
+import { waitForAbort } from './utils.js';
 
 /**
  * Helper class to manage persistent connections like websockets.
@@ -110,6 +111,12 @@ export class ConnectionPool<T> {
     }
   }
 
+  private _abortError(): Error {
+    const error = new Error('The operation was aborted.');
+    error.name = 'AbortError';
+    return error;
+  }
+
   /**
    * Get an available connection or create a new one if needed.
    *
@@ -137,8 +144,13 @@ export class ConnectionPool<T> {
           return conn;
         }
 
-        // Connection expired; mark it for resetting
-        this.remove(conn);
+        // Connection expired; close it now so callers observing get() see it closed promptly.
+        // (Also makes tests deterministic: closeCb should have been called by the time get() resolves.)
+        if (this.connections.has(conn)) {
+          this.connections.delete(conn);
+        }
+        this.toClose.delete(conn);
+        await this._maybeCloseConnection(conn);
       }
 
       return await this._connect(timeout ?? this.connectTimeout);
@@ -254,36 +266,28 @@ export class ConnectionPool<T> {
   ): Promise<R> {
     // Check if already aborted before getting connection
     if (options?.signal?.aborted) {
-      const error = new Error('The operation was aborted.');
-      error.name = 'AbortError';
-      throw error;
+      throw this._abortError();
     }
 
     const conn = await this.get(options?.timeout);
 
-    // Set up abort handler
-    const abortHandler = () => {
-      this.remove(conn);
-    };
-
-    if (options?.signal) {
-      options.signal.addEventListener('abort', abortHandler, { once: true });
-    }
+    const signal = options?.signal;
 
     try {
-      const result = await fn(conn);
-      // Remove abort handler if still attached
-      if (options?.signal) {
-        options.signal.removeEventListener('abort', abortHandler);
-      }
+      const fnPromise = fn(conn);
+      const result = signal
+        ? await Promise.race([
+            fnPromise.then((value) => ({ type: 'result' as const, value })),
+            waitForAbort(signal).then(() => ({ type: 'abort' as const })),
+          ]).then((r) => {
+            if (r.type === 'abort') throw this._abortError();
+            return r.value;
+          })
+        : await fnPromise;
       // Return connection to pool on success
       this.put(conn);
       return result;
     } catch (error) {
-      // Remove abort handler if still attached
-      if (options?.signal) {
-        options.signal.removeEventListener('abort', abortHandler);
-      }
       // Remove connection from pool on error (don't return it)
       this.remove(conn);
       throw error;
