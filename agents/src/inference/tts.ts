@@ -229,6 +229,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     if (this.opts.model) params.model = this.opts.model;
     if (this.opts.language) params.language = this.opts.language;
 
+    this.#logger.debug({ url }, 'inference.TTS creating new websocket connection (pool miss)');
     const socket = await connectWs(url, headers, timeout);
     socket.send(JSON.stringify(params));
     return socket;
