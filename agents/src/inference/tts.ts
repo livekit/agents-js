@@ -5,13 +5,14 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
 import { APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
+import { ConnectionPool } from '../connection_pool.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import { basic as tokenizeBasic } from '../tokenize/index.js';
 import type { ChunkedStream } from '../tts/index.js';
 import { SynthesizeStream as BaseSynthesizeStream, TTS as BaseTTS } from '../tts/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { shortuuid } from '../utils.js';
+import { Event, Future, Task, cancelAndWait, shortuuid } from '../utils.js';
 import {
   type TtsClientEvent,
   type TtsServerEvent,
@@ -95,6 +96,7 @@ export interface InferenceTTSOptions<TModel extends TTSModels> {
 export class TTS<TModel extends TTSModels> extends BaseTTS {
   private opts: InferenceTTSOptions<TModel>;
   private streams: Set<SynthesizeStream<TModel>> = new Set();
+  pool: ConnectionPool<WebSocket>;
 
   #logger = log();
 
@@ -165,6 +167,15 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       apiSecret: lkApiSecret,
       modelOptions,
     };
+
+    // Initialize connection pool
+    this.pool = new ConnectionPool<WebSocket>({
+      connectCb: (timeout) => this.connectWs(timeout),
+      closeCb: (ws) => this.closeWs(ws),
+      maxSessionDuration: 300_000, // 5 minutes (matches Python)
+      markRefreshedOnGet: true,
+      connectTimeout: 10_000, // 10 seconds default
+    });
   }
 
   get label() {
@@ -227,11 +238,16 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     await ws.close();
   }
 
+  prewarm(): void {
+    this.pool.prewarm();
+  }
+
   async close() {
     for (const stream of this.streams) {
       await stream.close();
     }
     this.streams.clear();
+    await this.pool.close();
   }
 }
 
@@ -256,30 +272,31 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
   }
 
   protected async run(): Promise<void> {
-    let ws: WebSocket | null = null;
     let closing = false;
-    let finalReceived = false;
     let lastFrame: AudioFrame | undefined;
 
     const sendTokenizerStream = new tokenizeBasic.SentenceTokenizer().stream();
     const eventChannel = createStreamChannel<TtsServerEvent>();
     const requestId = shortuuid('tts_request_');
+    const inputSentEvent = new Event();
 
-    const resourceCleanup = () => {
+    // Signal for protocol-driven completion (when 'done' message is received)
+    const completionFuture = new Future<void>();
+
+    const resourceCleanup = async () => {
       if (closing) return;
       closing = true;
       sendTokenizerStream.close();
-      eventChannel.close();
-      ws?.removeAllListeners();
-      ws?.close();
+      // close() returns a promise; don't leak it
+      await eventChannel.close();
     };
 
-    const sendClientEvent = async (event: TtsClientEvent) => {
+    const sendClientEvent = async (event: TtsClientEvent, ws: WebSocket, signal: AbortSignal) => {
       // Don't send events to a closed WebSocket or aborted controller
-      if (this.abortController.signal.aborted || closing) return;
+      if (signal.aborted || closing) return;
 
       const validatedEvent = await ttsClientEventSchema.parseAsync(event);
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
+      if (ws.readyState !== WebSocket.OPEN) {
         this.#logger.warn('Trying to send client TTS event to a closed WebSocket');
         return;
       }
@@ -293,9 +310,9 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
       }
     };
 
-    const createInputTask = async () => {
+    const createInputTask = async (signal: AbortSignal) => {
       for await (const data of this.input) {
-        if (this.abortController.signal.aborted || closing) break;
+        if (signal.aborted || closing) break;
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
           sendTokenizerStream.flush();
           continue;
@@ -308,55 +325,110 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
       }
     };
 
-    const createSentenceStreamTask = async () => {
+    const createSentenceStreamTask = async (ws: WebSocket, signal: AbortSignal) => {
       for await (const ev of sendTokenizerStream) {
-        if (this.abortController.signal.aborted) break;
+        if (signal.aborted || closing) break;
 
-        sendClientEvent({
-          type: 'input_transcript',
-          transcript: ev.token + ' ',
-        });
+        await sendClientEvent(
+          {
+            type: 'input_transcript',
+            transcript: ev.token + ' ',
+          },
+          ws,
+          signal,
+        );
+        inputSentEvent.set();
       }
 
-      sendClientEvent({ type: 'session.flush' });
+      await sendClientEvent({ type: 'session.flush' }, ws, signal);
+      // needed in case empty input is sent
+      inputSentEvent.set();
     };
 
-    const createWsListenerTask = async (ws: WebSocket) => {
-      return new Promise<void>((resolve, reject) => {
-        this.abortController.signal.addEventListener('abort', () => {
-          resourceCleanup();
-          resolve(); // Abort is triggered by close(), which is a normal shutdown, not an error
-        });
-
-        ws.on('message', async (data) => {
+    // Handles WebSocket message routing and error handling
+    // Completes based on protocol messages, NOT on ws.close()
+    const createWsListenerTask = async (ws: WebSocket, signal: AbortSignal) => {
+      const onMessage = (data: Buffer) => {
+        try {
           const eventJson = JSON.parse(data.toString()) as Record<string, unknown>;
           const validatedEvent = ttsServerEventSchema.parse(eventJson);
-          eventChannel.write(validatedEvent);
-        });
+          // writer.write returns a promise; avoid unhandled rejections if stream is closed
+          void eventChannel.write(validatedEvent).catch((error) => {
+            this.#logger.debug(
+              { error },
+              'Failed writing TTS event to stream channel (likely closed)',
+            );
+          });
+        } catch (e) {
+          this.#logger.error({ error: e }, 'Error parsing WebSocket message');
+        }
+      };
 
-        ws.on('error', (e) => {
-          this.#logger.error({ error: e }, 'WebSocket error');
-          resourceCleanup();
-          reject(e);
-        });
+      const onError = (e: Error) => {
+        this.#logger.error({ error: e }, 'WebSocket error');
+        void resourceCleanup();
+        try {
+          // If the ws is misbehaving, hard-stop it immediately to avoid buffering.
+          ws.terminate?.();
+        } catch {
+          // ignore
+        }
+        // Ensure this ws is not reused
+        this.tts.pool.remove(ws);
+        completionFuture.reject(e);
+      };
 
-        ws.on('close', () => {
-          resourceCleanup();
-
-          if (!closing) return this.#logger.error('WebSocket closed unexpectedly');
-          if (finalReceived) return resolve();
-
-          reject(
+      const onClose = () => {
+        // WebSocket closed unexpectedly (not by us)
+        if (!closing) {
+          this.#logger.error('WebSocket closed unexpectedly');
+          void resourceCleanup();
+          // Ensure this ws is not reused
+          this.tts.pool.remove(ws);
+          completionFuture.reject(
             new APIStatusError({
               message: 'Gateway connection closed unexpectedly',
               options: { requestId },
             }),
           );
-        });
-      });
+        }
+      };
+
+      const onAbort = () => {
+        void resourceCleanup();
+        try {
+          // On interruption/abort, close the websocket immediately so the server stops streaming
+          // and the ws library doesn't buffer unread frames in memory.
+          ws.terminate?.();
+        } catch {
+          // ignore
+        }
+        // Ensure this ws is not reused (python removes conn on cancellation/exception)
+        this.tts.pool.remove(ws);
+        // Mirror python's `input_sent_event.set()` in finally: unblock recv if it was waiting.
+        inputSentEvent.set();
+        completionFuture.resolve();
+      };
+
+      // Attach listeners
+      ws.on('message', onMessage);
+      ws.on('error', onError);
+      ws.on('close', onClose);
+      signal.addEventListener('abort', onAbort);
+
+      try {
+        // Wait for protocol-driven completion or error
+        await completionFuture.await;
+      } finally {
+        // IMPORTANT: Remove listeners so connection can be reused
+        ws.off('message', onMessage);
+        ws.off('error', onError);
+        ws.off('close', onClose);
+        signal.removeEventListener('abort', onAbort);
+      }
     };
 
-    const createRecvTask = async () => {
+    const createRecvTask = async (signal: AbortSignal) => {
       let currentSessionId: string | null = null;
 
       const bstream = new AudioByteStream(this.opts.sampleRate, NUM_CHANNELS);
@@ -364,9 +436,12 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
       const reader = serverEventStream.getReader();
 
       try {
-        while (!this.closed && !this.abortController.signal.aborted) {
+        // Mirror python: don't start receiving until we've sent at least one token (or flush)
+        await inputSentEvent.wait();
+
+        while (!this.closed && !signal.aborted) {
           const result = await reader.read();
-          if (this.abortController.signal.aborted) return;
+          if (signal.aborted) return;
           if (result.done) return;
 
           const serverEvent = result.value;
@@ -382,24 +457,29 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               }
               break;
             case 'done':
-              finalReceived = true;
               for (const frame of bstream.flush()) {
                 sendLastFrame(currentSessionId!, false);
                 lastFrame = frame;
               }
               sendLastFrame(currentSessionId!, true);
               this.queue.put(SynthesizeStream.END_OF_STREAM);
-              break;
+              await resourceCleanup();
+              completionFuture.resolve();
+              return;
             case 'session.closed':
-              resourceCleanup();
-              break;
+              await resourceCleanup();
+              completionFuture.resolve();
+              return;
             case 'error':
               this.#logger.error(
                 { serverEvent },
                 'Received error message from LiveKit TTS WebSocket',
               );
-              resourceCleanup();
-              throw new APIError(`LiveKit TTS returned error: ${serverEvent.message}`);
+              await resourceCleanup();
+              completionFuture.reject(
+                new APIError(`LiveKit TTS returned error: ${serverEvent.message}`),
+              );
+              return;
             default:
               this.#logger.warn('Unexpected message %s', serverEvent);
               break;
@@ -416,16 +496,101 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     };
 
     try {
-      ws = await this.tts.connectWs(this.connOptions.timeoutMs);
+      await this.tts.pool.withConnection(
+        async (ws: WebSocket) => {
+          try {
+            // Match python: run tasks concurrently and cancel them on exit.
+            // IMPORTANT: don't cancel the stream's controller on normal completion,
+            // otherwise the pool will remove+close the ws and every run becomes a pool miss.
+            const runController = new AbortController();
+            const onStreamAbort = () => runController.abort(this.abortController.signal.reason);
+            this.abortController.signal.addEventListener('abort', onStreamAbort, { once: true });
 
-      await Promise.all([
-        createInputTask(),
-        createSentenceStreamTask(),
-        createWsListenerTask(ws),
-        createRecvTask(),
-      ]);
+            const combineSignals = (a: AbortSignal, b: AbortSignal): AbortSignal => {
+              const c = new AbortController();
+              const abortFrom = (s: AbortSignal) => {
+                if (c.signal.aborted) return;
+                c.abort(s.reason);
+              };
+              if (a.aborted) {
+                abortFrom(a);
+              } else {
+                a.addEventListener('abort', () => abortFrom(a), { once: true });
+              }
+              if (b.aborted) {
+                abortFrom(b);
+              } else {
+                b.addEventListener('abort', () => abortFrom(b), { once: true });
+              }
+              return c.signal;
+            };
+
+            const tasks = [
+              Task.from(
+                async (controller) => {
+                  const combined = combineSignals(runController.signal, controller.signal);
+                  await createInputTask(combined);
+                },
+                undefined,
+                'inference-tts-input',
+              ),
+              Task.from(
+                async (controller) => {
+                  const combined = combineSignals(runController.signal, controller.signal);
+                  await createSentenceStreamTask(ws, combined);
+                },
+                undefined,
+                'inference-tts-sentence',
+              ),
+              Task.from(
+                async (controller) => {
+                  const combined = combineSignals(runController.signal, controller.signal);
+                  await createWsListenerTask(ws, combined);
+                },
+                undefined,
+                'inference-tts-ws-listener',
+              ),
+              Task.from(
+                async (controller) => {
+                  const combined = combineSignals(runController.signal, controller.signal);
+                  await createRecvTask(combined);
+                },
+                undefined,
+                'inference-tts-recv',
+              ),
+            ];
+
+            try {
+              await Promise.all(tasks.map((t) => t.result));
+            } finally {
+              // Mirror python finally: unblock recv and cancel all tasks.
+              inputSentEvent.set();
+              await resourceCleanup();
+              await cancelAndWait(tasks, 5000);
+              this.abortController.signal.removeEventListener('abort', onStreamAbort);
+            }
+          } catch (e) {
+            // If aborted, don't throw - let cleanup handle it
+            if (e instanceof Error && e.name === 'AbortError') {
+              return;
+            }
+            throw e;
+          }
+        },
+        {
+          timeout: this.connOptions.timeoutMs,
+        },
+      );
+    } catch (e) {
+      // Handle connection errors
+      if (e instanceof Error && e.name === 'AbortError') {
+        // Abort is expected during normal shutdown
+        return;
+      }
+      throw e;
     } finally {
-      resourceCleanup();
+      // Ensure cleanup always runs (and don't leak the promise)
+      await resourceCleanup();
     }
   }
 }
