@@ -64,6 +64,3 @@ export type KokoroVoices =
   | 'pf_dora'
   | 'pm_alex'
   | 'pm_santa';
-
-export type ChatModels =
-  | 'qwen3';
