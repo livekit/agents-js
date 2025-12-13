@@ -328,7 +328,7 @@ export class ParticipantAudioOutput extends AudioOutput {
   private interruptedFuture: Future<void> = new Future();
 
   constructor(room: Room, options: AudioOutputOptions) {
-    super(options.sampleRate);
+    super(options.sampleRate, undefined, { pause: true });
     this.room = room;
     this.options = options;
     this.audioSource = new AudioSource(options.sampleRate, options.numChannels);

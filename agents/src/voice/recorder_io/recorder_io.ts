@@ -465,7 +465,7 @@ class RecorderAudioOutput extends AudioOutput {
     audioOutput: AudioOutput,
     writeFn: (buf: AudioFrame[]) => void,
   ) {
-    super(audioOutput.sampleRate, audioOutput);
+    super(audioOutput.sampleRate, audioOutput, { pause: true });
     this.recorderIO = recorderIO;
     this.writeFn = writeFn;
   }
