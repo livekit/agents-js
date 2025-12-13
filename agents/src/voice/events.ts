@@ -25,6 +25,7 @@ export enum AgentSessionEventTypes {
   FunctionToolsExecuted = 'function_tools_executed',
   MetricsCollected = 'metrics_collected',
   SpeechCreated = 'speech_created',
+  AgentFalseInterruption = 'agent_false_interruption',
   Error = 'error',
   Close = 'close',
 }
@@ -108,6 +109,25 @@ export const createUserInputTranscribedEvent = ({
   isFinal,
   speakerId,
   language,
+  createdAt,
+});
+
+export type AgentFalseInterruptionEvent = {
+  type: 'agent_false_interruption';
+  /** Whether the false interruption was resumed automatically. */
+  resumed: boolean;
+  createdAt: number;
+};
+
+export const createAgentFalseInterruptionEvent = ({
+  resumed,
+  createdAt = Date.now(),
+}: {
+  resumed: boolean;
+  createdAt?: number;
+}): AgentFalseInterruptionEvent => ({
+  type: 'agent_false_interruption',
+  resumed,
   createdAt,
 });
 
@@ -253,6 +273,7 @@ export type AgentEvent =
   | UserInputTranscribedEvent
   | UserStateChangedEvent
   | AgentStateChangedEvent
+  | AgentFalseInterruptionEvent
   | MetricsCollectedEvent
   | ConversationItemAddedEvent
   | FunctionToolsExecutedEvent

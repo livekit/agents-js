@@ -54,6 +54,7 @@ import {
 } from './audio_recognition.js';
 import {
   AgentSessionEventTypes,
+  createAgentFalseInterruptionEvent,
   createErrorEvent,
   createFunctionToolsExecutedEvent,
   createMetricsCollectedEvent,
@@ -103,6 +104,11 @@ export class AgentActivity implements RecognitionHooks {
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
   private _preemptiveGeneration?: PreemptiveGeneration;
+
+  // for false interruption handling
+  private pausedSpeech?: SpeechHandle;
+  private falseInterruptionTimer?: ReturnType<typeof setTimeout>;
+  private interruptPausedSpeechTask?: Promise<void>;
 
   agent: Agent;
   agentSession: AgentSession;
@@ -628,6 +634,12 @@ export class AgentActivity implements RecognitionHooks {
 
   onStartOfSpeech(_ev: VADEvent): void {
     this.agentSession._updateUserState('speaking');
+
+    if (this.falseInterruptionTimer) {
+      // cancel the timer when user starts speaking but leave the paused state unchanged
+      clearTimeout(this.falseInterruptionTimer);
+      this.falseInterruptionTimer = undefined;
+    }
   }
 
   onEndOfSpeech(ev: VADEvent): void {
@@ -636,6 +648,12 @@ export class AgentActivity implements RecognitionHooks {
       speechEndTime = speechEndTime - ev.silenceDuration;
     }
     this.agentSession._updateUserState('listening', speechEndTime);
+
+    const timeout = this.agentSession.options.falseInterruptionTimeout;
+    if (this.pausedSpeech && timeout !== undefined && timeout !== null) {
+      // schedule a resume timer when user stops speaking
+      this.startFalseInterruptionTimer(timeout);
+    }
   }
 
   onVADInferenceDone(ev: VADEvent): void {
@@ -672,20 +690,10 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    this.realtimeSession?.startUserActivity();
-
-    if (
-      this._currentSpeech &&
-      !this._currentSpeech.interrupted &&
-      this._currentSpeech.allowInterruptions
-    ) {
-      this.logger.info({ 'speech id': this._currentSpeech.id }, 'speech interrupted by VAD');
-      this.realtimeSession?.interrupt();
-      this._currentSpeech.interrupt();
-    }
+    this.interruptByAudioActivity();
   }
 
-  onInterimTranscript(ev: SpeechEvent): void {
+  onInterimTranscript(ev: SpeechEvent, speaking: boolean | undefined): void {
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
       // skip stt transcription if userTranscription is enabled on the realtime model
       return;
@@ -700,9 +708,20 @@ export class AgentActivity implements RecognitionHooks {
         // TODO(AJS-106): add multi participant support
       }),
     );
+
+    const text = ev.alternatives?.[0]?.text;
+    if (text && this.turnDetection !== 'manual' && this.turnDetection !== 'realtime_llm') {
+      this.interruptByAudioActivity();
+
+      const timeout = this.agentSession.options.falseInterruptionTimeout;
+      if (speaking === false && this.pausedSpeech && timeout !== undefined && timeout !== null) {
+        // schedule a resume timer if interrupted after endOfSpeech
+        this.startFalseInterruptionTimer(timeout);
+      }
+    }
   }
 
-  onFinalTranscript(ev: SpeechEvent): void {
+  onFinalTranscript(ev: SpeechEvent, speaking: boolean | undefined): void {
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
       // skip stt transcription if userTranscription is enabled on the realtime model
       return;
@@ -717,6 +736,25 @@ export class AgentActivity implements RecognitionHooks {
         // TODO(AJS-106): add multi participant support
       }),
     );
+
+    // agent speech might not be interrupted if VAD failed and a final transcript is received
+    // we call interruptByAudioActivity (idempotent) to pause the speech, if possible
+    // which will also be immediately interrupted
+    if (
+      this.audioRecognition &&
+      this.turnDetection !== 'manual' &&
+      this.turnDetection !== 'realtime_llm'
+    ) {
+      this.interruptByAudioActivity();
+
+      const timeout = this.agentSession.options.falseInterruptionTimeout;
+      if (speaking === false && this.pausedSpeech && timeout !== undefined && timeout !== null) {
+        // schedule a resume timer if interrupted after end_of_speech
+        this.startFalseInterruptionTimer(timeout);
+      }
+    }
+
+    this.interruptPausedSpeechTask = this.interruptPausedSpeech(this.interruptPausedSpeechTask);
   }
 
   onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
@@ -1058,6 +1096,8 @@ export class AgentActivity implements RecognitionHooks {
         );
         return;
       }
+
+      await this.interruptPausedSpeech(this.interruptPausedSpeechTask);
 
       this.logger.info(
         { 'speech id': this._currentSpeech.id },
@@ -2235,6 +2275,115 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  private interruptByAudioActivity(): void {
+    const opt = this.agentSession.options;
+    const usePause =
+      opt.resumeFalseInterruption &&
+      opt.falseInterruptionTimeout !== undefined &&
+      opt.falseInterruptionTimeout !== null;
+
+    if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
+      // ignore if realtime model has turn detection enabled
+      return;
+    }
+
+    if (this.stt && opt.minInterruptionWords > 0 && this.audioRecognition) {
+      const text = this.audioRecognition.currentTranscript;
+      // TODO: better word splitting for multi-language
+      if (splitWords(text, true).length < opt.minInterruptionWords) {
+        return;
+      }
+    }
+
+    this.realtimeSession?.startUserActivity();
+
+    if (
+      this._currentSpeech &&
+      !this._currentSpeech.interrupted &&
+      this._currentSpeech.allowInterruptions
+    ) {
+      this.pausedSpeech = this._currentSpeech;
+
+      // reset the false interruption timer
+      if (this.falseInterruptionTimer) {
+        clearTimeout(this.falseInterruptionTimer);
+        this.falseInterruptionTimer = undefined;
+      }
+
+      if (usePause && this.agentSession.output.audio && this.agentSession.output.audio.canPause) {
+        this.agentSession.output.audio.pause();
+        this.agentSession._updateAgentState('listening');
+      } else {
+        this.realtimeSession?.interrupt();
+        this._currentSpeech.interrupt();
+      }
+    }
+  }
+
+  private startFalseInterruptionTimer(timeout: number): void {
+    if (this.falseInterruptionTimer) {
+      clearTimeout(this.falseInterruptionTimer);
+    }
+
+    const onFalseInterruption = (): void => {
+      if (
+        !this.pausedSpeech ||
+        (this._currentSpeech && this._currentSpeech !== this.pausedSpeech)
+      ) {
+        // already new speech is scheduled, do nothing
+        this.pausedSpeech = undefined;
+        return;
+      }
+
+      let resumed = false;
+      if (
+        this.agentSession.options.resumeFalseInterruption &&
+        this.agentSession.output.audio &&
+        this.agentSession.output.audio.canPause &&
+        !this.pausedSpeech.done()
+      ) {
+        this.agentSession._updateAgentState('speaking');
+        this.agentSession.output.audio.resume();
+        resumed = true;
+        this.logger.debug({ timeout }, 'resumed false interrupted speech');
+      }
+
+      this.agentSession.emit(
+        AgentSessionEventTypes.AgentFalseInterruption,
+        createAgentFalseInterruptionEvent({ resumed }),
+      );
+
+      this.pausedSpeech = undefined;
+      this.falseInterruptionTimer = undefined;
+    };
+
+    this.falseInterruptionTimer = setTimeout(onFalseInterruption, timeout * 1000);
+  }
+
+  private async interruptPausedSpeech(oldTask?: Promise<void>): Promise<void> {
+    if (oldTask) {
+      await oldTask;
+    }
+
+    if (this.falseInterruptionTimer) {
+      clearTimeout(this.falseInterruptionTimer);
+      this.falseInterruptionTimer = undefined;
+    }
+
+    if (!this.pausedSpeech) {
+      return;
+    }
+
+    if (!this.pausedSpeech.interrupted && this.pausedSpeech.allowInterruptions) {
+      await this.pausedSpeech.interrupt(); // ensure the speech is done
+    }
+    this.pausedSpeech = undefined;
+
+    if (this.agentSession.options.resumeFalseInterruption && this.agentSession.output.audio) {
+      this.agentSession.output.audio.resume();
+    }
+  }
+
   async close(): Promise<void> {
     const unlock = await this.lock.lock();
     try {
@@ -2270,6 +2419,10 @@ export class AgentActivity implements RecognitionHooks {
       this.detachAudioInput();
       await this.realtimeSession?.close();
       await this.audioRecognition?.close();
+
+      await this.interruptPausedSpeech(this.interruptPausedSpeechTask);
+      this.interruptPausedSpeechTask = undefined;
+
       await this._mainTask?.cancelAndWait();
     } finally {
       unlock();
