@@ -7,8 +7,10 @@ import {
   APIStatusError,
   APITimeoutError,
   AudioByteStream,
+  Future,
   log,
   shortuuid,
+  stream,
   tokenize,
   tts,
   type voice,
@@ -122,10 +124,6 @@ interface StreamData {
     resolve: (value: void) => void;
     reject: (error: Error) => void;
   };
-  timeoutTimer?: ReturnType<typeof setTimeout>;
-  completionTimer?: ReturnType<typeof setTimeout>;
-  audioReceived: boolean;
-  contextClosed: boolean;
   textBuffer: string;
   startTimesMs: number[];
   durationsMs: number[];
@@ -286,59 +284,16 @@ class Connection {
     const url = multiStreamUrl(this.#opts);
     const headers = { [AUTHORIZATION_HEADER]: this.#opts.apiKey };
 
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        location: 'tts.ts:Connection.connect',
-        message: 'Connecting to WebSocket',
-        data: { url: url.replace(/xi-api-key=[^&]+/, 'xi-api-key=***') },
-        timestamp: Date.now(),
-        sessionId: 'debug-session',
-        hypothesisId: 'H1',
-      }),
-    }).catch(() => {});
-    // #endregion
-
     return new Promise((resolve, reject) => {
       this.#ws = new WebSocket(url, { headers });
 
       this.#ws.on('open', () => {
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            location: 'tts.ts:Connection.connect',
-            message: 'WebSocket connected successfully',
-            data: {},
-            timestamp: Date.now(),
-            sessionId: 'debug-session',
-            hypothesisId: 'H1',
-          }),
-        }).catch(() => {});
-        // #endregion
         this.#sendTask = this.#sendLoop();
         this.#recvTask = this.#recvLoop();
         resolve();
       });
 
       this.#ws.on('error', (error) => {
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            location: 'tts.ts:Connection.connect',
-            message: 'WebSocket error',
-            data: { error: error.message },
-            timestamp: Date.now(),
-            sessionId: 'debug-session',
-            hypothesisId: 'H1',
-          }),
-        }).catch(() => {});
-        // #endregion
         this.#logger.error({ error }, 'WebSocket connection error');
         reject(new APIConnectionError({ message: `WebSocket error: ${error.message}` }));
       });
@@ -350,25 +305,9 @@ class Connection {
     waiter: { resolve: (value: void) => void; reject: (error: Error) => void },
   ): void {
     const contextId = stream.contextId;
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        location: 'tts.ts:Connection.registerStream',
-        message: 'Registering stream',
-        data: { contextId },
-        timestamp: Date.now(),
-        sessionId: 'debug-session',
-        hypothesisId: 'H2',
-      }),
-    }).catch(() => {});
-    // #endregion
     this.#contextData.set(contextId, {
       stream,
       waiter,
-      audioReceived: false,
-      contextClosed: false,
       textBuffer: '',
       startTimesMs: [],
       durationsMs: [],
@@ -379,20 +318,6 @@ class Connection {
     if (this.#closed || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) {
       throw new APIConnectionError({ message: 'WebSocket connection is closed' });
     }
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        location: 'tts.ts:Connection.sendContent',
-        message: 'Sending content',
-        data: { contextId: content.contextId, textLen: content.text.length, flush: content.flush },
-        timestamp: Date.now(),
-        sessionId: 'debug-session',
-        hypothesisId: 'H4',
-      }),
-    }).catch(() => {});
-    // #endregion
     this.#inputQueue.push(content);
     this.#inputQueueResolver?.();
   }
@@ -454,7 +379,8 @@ class Connection {
                 }));
             }
 
-            this.#ws.send(JSON.stringify(initPkt));
+            const initPktStr = JSON.stringify(initPkt);
+            this.#ws.send(initPktStr);
             this.#activeContexts.add(content.contextId);
           }
 
@@ -466,30 +392,11 @@ class Connection {
             pkt.flush = true;
           }
 
-          // Start timeout timer for this context
-          this.#startTimeoutTimer(content.contextId);
-
-          this.#ws.send(JSON.stringify(pkt));
+          const pktStr = JSON.stringify(pkt);
+          this.#ws.send(pktStr);
         } else {
           // CloseContext
           const closeMsg = msg as CloseContext;
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              location: 'tts.ts:Connection.sendLoop',
-              message: 'Processing closeContext',
-              data: {
-                contextId: closeMsg.contextId,
-                isActive: this.#activeContexts.has(closeMsg.contextId),
-              },
-              timestamp: Date.now(),
-              sessionId: 'debug-session',
-              hypothesisId: 'H9-closeContext',
-            }),
-          }).catch(() => {});
-          // #endregion
           if (this.#activeContexts.has(closeMsg.contextId)) {
             const closePkt = {
               context_id: closeMsg.contextId,
@@ -497,28 +404,6 @@ class Connection {
             };
             const closePktStr = JSON.stringify(closePkt);
             this.#ws.send(closePktStr);
-
-            // Mark context as closed and potentially start completion timer
-            const ctx = this.#contextData.get(closeMsg.contextId);
-            if (ctx) {
-              ctx.contextClosed = true;
-              this.#maybeStartCompletionTimer(closeMsg.contextId);
-            }
-
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                location: 'tts.ts:Connection.sendLoop',
-                message: 'Sent close_context packet',
-                data: { contextId: closeMsg.contextId, packet: closePktStr },
-                timestamp: Date.now(),
-                sessionId: 'debug-session',
-                hypothesisId: 'H9-closeContext',
-              }),
-            }).catch(() => {});
-            // #endregion
           }
         }
       }
@@ -533,268 +418,172 @@ class Connection {
 
   async #recvLoop(): Promise<void> {
     try {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: 'tts.ts:Connection.recvLoop',
-          message: 'recvLoop started',
-          data: {},
-          timestamp: Date.now(),
-          sessionId: 'debug-session',
-          hypothesisId: 'H10-recvLoop',
-        }),
-      }).catch(() => {});
-      // #endregion
-      while (!this.#closed && this.#ws && this.#ws.readyState === WebSocket.OPEN) {
-        const data = await new Promise<Record<string, unknown> | null>((resolve, reject) => {
-          if (!this.#ws) {
-            resolve(null);
-            return;
-          }
+      // Use StreamChannel for efficient message queuing with persistent listeners
+      const messageChannel = stream.createStreamChannel<Record<string, unknown>>();
+      const errorFuture = new Future<Error>();
 
-          const onMessage = (rawData: Buffer) => {
-            cleanup();
-            try {
-              resolve(JSON.parse(rawData.toString()));
-            } catch (e) {
-              reject(e);
-            }
-          };
-
-          const onClose = () => {
-            cleanup();
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                location: 'tts.ts:Connection.recvLoop.onClose',
-                message: 'WebSocket closed in recv loop',
-                data: { closed: this.#closed, contextDataSize: this.#contextData.size },
-                timestamp: Date.now(),
-                sessionId: 'debug-session',
-                hypothesisId: 'H11-wsClose',
-              }),
-            }).catch(() => {});
-            // #endregion
-            if (!this.#closed && this.#contextData.size > 0) {
-              this.#logger.warn('websocket closed unexpectedly');
-            }
-            resolve(null);
-          };
-
-          const onError = (error: Error) => {
-            cleanup();
-            reject(error);
-          };
-
-          const cleanup = () => {
-            this.#ws?.off('message', onMessage);
-            this.#ws?.off('close', onClose);
-            this.#ws?.off('error', onError);
-          };
-
-          this.#ws.once('message', onMessage);
-          this.#ws.once('close', onClose);
-          this.#ws.once('error', onError);
-        });
-
-        if (!data) break;
-
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            location: 'tts.ts:Connection.recvLoop',
-            message: 'Received WS message',
-            data: {
-              contextId: data.contextId,
-              hasAudio: !!data.audio,
-              isFinal: !!data.isFinal,
-              hasError: !!data.error,
-              keys: Object.keys(data),
-            },
-            timestamp: Date.now(),
-            sessionId: 'debug-session',
-            hypothesisId: 'H8-wsMessage',
-          }),
-        }).catch(() => {});
-        // #endregion
-
-        const contextId = data.contextId as string | undefined;
-        const ctx = contextId ? this.#contextData.get(contextId) : undefined;
-
-        if (data.error) {
-          this.#logger.error(
-            { context_id: contextId, error: data.error, data },
-            'elevenlabs tts returned error',
-          );
-          if (contextId) {
-            if (ctx) {
-              ctx.waiter.reject(new APIError(data.error as string));
-            }
-            this.#cleanupContext(contextId);
-          }
-          continue;
+      const onMessage = (rawData: Buffer) => {
+        try {
+          const parsed = JSON.parse(rawData.toString());
+          messageChannel.write(parsed);
+        } catch (e) {
+          this.#logger.warn({ error: e }, 'failed to parse WebSocket message');
         }
+      };
 
-        if (!ctx) {
-          this.#logger.warn({ data }, 'unexpected message received from elevenlabs tts');
-          continue;
+      const onClose = () => {
+        if (!this.#closed && this.#contextData.size > 0) {
+          this.#logger.warn('websocket closed unexpectedly');
         }
+        messageChannel.close();
+      };
 
-        const stream = ctx.stream;
+      const onError = (error: Error) => {
+        errorFuture.resolve(error);
+        messageChannel.close();
+      };
 
-        // Process alignment data
-        const alignment =
-          this.#opts.preferredAlignment === 'normalized'
-            ? (data.normalizedAlignment as Record<string, unknown>)
-            : (data.alignment as Record<string, unknown>);
+      // Set up persistent listeners
+      if (!this.#ws) return;
+      this.#ws.on('message', onMessage);
+      this.#ws.on('close', onClose);
+      this.#ws.on('error', onError);
 
-        if (alignment && stream) {
-          const chars = alignment.chars as string[] | undefined;
-          const starts = (alignment.charStartTimesMs || alignment.charsStartTimesMs) as
-            | number[]
-            | undefined;
-          const durs = (alignment.charDurationsMs || alignment.charsDurationsMs) as
-            | number[]
-            | undefined;
+      const cleanup = () => {
+        this.#ws?.off('message', onMessage);
+        this.#ws?.off('close', onClose);
+        this.#ws?.off('error', onError);
+      };
 
-          if (
-            chars &&
-            starts &&
-            durs &&
-            chars.length === durs.length &&
-            starts.length === durs.length
-          ) {
-            ctx.textBuffer += chars.join('');
+      const reader = messageChannel.stream().getReader();
+      try {
+        while (!this.#closed) {
+          const result = await reader.read();
+          if (result.done || this.#closed) break;
 
-            // Handle chars with multiple characters
-            for (let i = 0; i < chars.length; i++) {
-              const char = chars[i]!;
-              const start = starts[i]!;
-              const dur = durs[i]!;
+          const data = result.value;
+          const contextId = data.contextId as string | undefined;
+          const ctx = contextId ? this.#contextData.get(contextId) : undefined;
 
-              if (char.length > 1) {
-                for (let j = 0; j < char.length - 1; j++) {
-                  ctx.startTimesMs.push(start);
-                  ctx.durationsMs.push(0);
-                }
+          if (data.error) {
+            this.#logger.error(
+              { context_id: contextId, error: data.error, data },
+              'elevenlabs tts returned error',
+            );
+            if (contextId) {
+              if (ctx) {
+                ctx.waiter.reject(new APIError(data.error as string));
               }
-              ctx.startTimesMs.push(start);
-              ctx.durationsMs.push(dur);
+              this.#cleanupContext(contextId);
             }
-
-            const [timedWords, remainingText] = toTimedWords(
-              ctx.textBuffer,
-              ctx.startTimesMs,
-              ctx.durationsMs,
-            );
-
-            if (timedWords.length > 0) {
-              stream.pushTimedTranscript(timedWords);
-            }
-
-            ctx.textBuffer = remainingText;
-            ctx.startTimesMs = ctx.startTimesMs.slice(-remainingText.length);
-            ctx.durationsMs = ctx.durationsMs.slice(-remainingText.length);
-          }
-        }
-
-        if (data.audio) {
-          const audioData = Buffer.from(data.audio as string, 'base64');
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              location: 'tts.ts:Connection.recvLoop',
-              message: 'Received audio data',
-              data: { contextId, audioLen: audioData.length },
-              timestamp: Date.now(),
-              sessionId: 'debug-session',
-              hypothesisId: 'H3',
-            }),
-          }).catch(() => {});
-          // #endregion
-          stream.pushAudio(audioData);
-          if (ctx.timeoutTimer) {
-            clearTimeout(ctx.timeoutTimer);
-            ctx.timeoutTimer = undefined;
+            continue;
           }
 
-          // Track that we've received audio and potentially start completion timer
-          ctx.audioReceived = true;
-          this.#maybeStartCompletionTimer(contextId!);
-        }
+          if (!ctx) {
+            this.#logger.warn({ data }, 'unexpected message received from elevenlabs tts');
+            continue;
+          }
 
-        if (data.isFinal) {
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              location: 'tts.ts:Connection.recvLoop',
-              message: 'Received isFinal',
-              data: { contextId },
-              timestamp: Date.now(),
-              sessionId: 'debug-session',
-              hypothesisId: 'H7-isFinal',
-            }),
-          }).catch(() => {});
-          // #endregion
+          const stream = ctx.stream;
 
-          // Flush remaining alignment data
-          if (ctx.textBuffer) {
-            const [timedWords] = toTimedWords(
-              ctx.textBuffer,
-              ctx.startTimesMs,
-              ctx.durationsMs,
-              true,
-            );
-            if (timedWords.length > 0) {
-              stream.pushTimedTranscript(timedWords);
+          // Process alignment data
+          const alignment =
+            this.#opts.preferredAlignment === 'normalized'
+              ? (data.normalizedAlignment as Record<string, unknown>)
+              : (data.alignment as Record<string, unknown>);
+
+          if (alignment && stream) {
+            const chars = alignment.chars as string[] | undefined;
+            const starts = (alignment.charStartTimesMs || alignment.charsStartTimesMs) as
+              | number[]
+              | undefined;
+            const durs = (alignment.charDurationsMs || alignment.charsDurationsMs) as
+              | number[]
+              | undefined;
+
+            if (
+              chars &&
+              starts &&
+              durs &&
+              chars.length === durs.length &&
+              starts.length === durs.length
+            ) {
+              ctx.textBuffer += chars.join('');
+
+              // Handle chars with multiple characters
+              for (let i = 0; i < chars.length; i++) {
+                const char = chars[i]!;
+                const start = starts[i]!;
+                const dur = durs[i]!;
+
+                if (char.length > 1) {
+                  for (let j = 0; j < char.length - 1; j++) {
+                    ctx.startTimesMs.push(start);
+                    ctx.durationsMs.push(0);
+                  }
+                }
+                ctx.startTimesMs.push(start);
+                ctx.durationsMs.push(dur);
+              }
+
+              const [timedWords, remainingText] = toTimedWords(
+                ctx.textBuffer,
+                ctx.startTimesMs,
+                ctx.durationsMs,
+              );
+
+              if (timedWords.length > 0) {
+                stream.pushTimedTranscript(timedWords);
+              }
+
+              ctx.textBuffer = remainingText;
+              ctx.startTimesMs = ctx.startTimesMs.slice(-remainingText.length);
+              ctx.durationsMs = ctx.durationsMs.slice(-remainingText.length);
             }
           }
 
-          stream.markDone();
-          ctx.waiter.resolve();
-          this.#cleanupContext(contextId!);
+          if (data.audio) {
+            const audioData = Buffer.from(data.audio as string, 'base64');
+            stream.pushAudio(audioData);
+          }
 
-          if (!this.#isCurrent && this.#activeContexts.size === 0) {
-            this.#logger.debug('no active contexts, shutting down connection');
-            break;
+          if (data.isFinal) {
+            // Flush remaining alignment data
+            if (ctx.textBuffer) {
+              const [timedWords] = toTimedWords(
+                ctx.textBuffer,
+                ctx.startTimesMs,
+                ctx.durationsMs,
+                true,
+              );
+              if (timedWords.length > 0) {
+                stream.pushTimedTranscript(timedWords);
+              }
+            }
+
+            stream.markDone();
+            ctx.waiter.resolve();
+            this.#cleanupContext(contextId!);
+
+            if (!this.#isCurrent && this.#activeContexts.size === 0) {
+              this.#logger.debug('no active contexts, shutting down connection');
+              break;
+            }
           }
         }
+
+        // Throw any error that occurred
+        if (errorFuture.done) {
+          throw await errorFuture.await;
+        }
+      } finally {
+        reader.releaseLock();
+        cleanup();
       }
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: 'tts.ts:Connection.recvLoop',
-          message: 'recvLoop exited while loop',
-          data: {
-            closed: this.#closed,
-            wsState: this.#ws?.readyState,
-            activeContexts: this.#activeContexts.size,
-          },
-          timestamp: Date.now(),
-          sessionId: 'debug-session',
-          hypothesisId: 'H10-recvLoop',
-        }),
-      }).catch(() => {});
-      // #endregion
     } catch (e) {
       this.#logger.warn({ error: e }, 'recv loop error');
       for (const ctx of this.#contextData.values()) {
         ctx.waiter.reject(e instanceof Error ? e : new Error(String(e)));
-        if (ctx.timeoutTimer) {
-          clearTimeout(ctx.timeoutTimer);
-        }
       }
       this.#contextData.clear();
     } finally {
@@ -805,72 +594,8 @@ class Connection {
   }
 
   #cleanupContext(contextId: string): void {
-    const ctx = this.#contextData.get(contextId);
-    if (ctx?.timeoutTimer) {
-      clearTimeout(ctx.timeoutTimer);
-    }
-    if (ctx?.completionTimer) {
-      clearTimeout(ctx.completionTimer);
-    }
     this.#contextData.delete(contextId);
     this.#activeContexts.delete(contextId);
-  }
-
-  #startTimeoutTimer(contextId: string): void {
-    const ctx = this.#contextData.get(contextId);
-    if (!ctx || ctx.timeoutTimer) {
-      return;
-    }
-
-    const timeout = 30000; // 30 seconds default timeout
-
-    ctx.timeoutTimer = setTimeout(() => {
-      ctx.waiter.reject(
-        new APITimeoutError({ message: `11labs tts timed out after ${timeout}ms` }),
-      );
-      this.#cleanupContext(contextId);
-    }, timeout);
-  }
-
-  #maybeStartCompletionTimer(contextId: string): void {
-    const ctx = this.#contextData.get(contextId);
-    if (!ctx) {
-      return;
-    }
-
-    // Only start completion timer when we've received audio AND sent close_context
-    if (!ctx.audioReceived || !ctx.contextClosed) {
-      return;
-    }
-
-    // If already have a completion timer, reset it (more audio came)
-    if (ctx.completionTimer) {
-      clearTimeout(ctx.completionTimer);
-    }
-
-    // Auto-complete after 2 seconds if isFinal doesn't arrive
-    const completionTimeout = 2000;
-    ctx.completionTimer = setTimeout(() => {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: 'tts.ts:Connection.completionTimer',
-          message: 'Auto-completing stream (no isFinal received)',
-          data: { contextId },
-          timestamp: Date.now(),
-          sessionId: 'debug-session',
-          hypothesisId: 'H12-autoComplete',
-        }),
-      }).catch(() => {});
-      // #endregion
-
-      // Auto-complete the stream
-      ctx.stream.markDone();
-      ctx.waiter.resolve();
-      this.#cleanupContext(contextId);
-    }, completionTimeout);
   }
 
   async close(): Promise<void> {
@@ -883,12 +608,6 @@ class Connection {
 
     for (const ctx of this.#contextData.values()) {
       ctx.waiter.reject(new APIStatusError({ message: 'connection closed' }));
-      if (ctx.timeoutTimer) {
-        clearTimeout(ctx.timeoutTimer);
-      }
-      if (ctx.completionTimer) {
-        clearTimeout(ctx.completionTimer);
-      }
     }
     this.#contextData.clear();
 
@@ -1222,25 +941,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   protected async run(): Promise<void> {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        location: 'tts.ts:SynthesizeStream.run',
-        message: 'Starting SynthesizeStream',
-        data: {
-          contextId: this.#contextId,
-          sampleRate: this.#opts.sampleRate,
-          encoding: this.#opts.encoding,
-        },
-        timestamp: Date.now(),
-        sessionId: 'debug-session',
-        hypothesisId: 'H6-encoding',
-      }),
-    }).catch(() => {});
-    // #endregion
-
     const requestId = this.#contextId;
     const segmentId = this.#contextId;
     const bstream = new AudioByteStream(this.#opts.sampleRate, 1);
@@ -1249,20 +949,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     try {
       connection = await this.#tts.currentConnection();
     } catch (e) {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: 'tts.ts:SynthesizeStream.run',
-          message: 'Failed to get connection',
-          data: { error: String(e) },
-          timestamp: Date.now(),
-          sessionId: 'debug-session',
-          hypothesisId: 'H1',
-        }),
-      }).catch(() => {});
-      // #endregion
       throw new APIConnectionError({ message: 'could not connect to ElevenLabs' });
     }
 
@@ -1334,7 +1020,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       // Send final empty text to signal end of input
       connection.sendContent({ contextId: this.#contextId, text: '', flush: true });
-      // Note: close_context tells ElevenLabs we're done with this context
       connection.closeContext(this.#contextId);
     };
 
@@ -1376,55 +1061,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     try {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: 'tts.ts:SynthesizeStream.run',
-          message: 'Starting Promise.all tasks',
-          data: { contextId: this.#contextId },
-          timestamp: Date.now(),
-          sessionId: 'debug-session',
-          hypothesisId: 'H5',
-        }),
-      }).catch(() => {});
-      // #endregion
       await Promise.all([inputTask(), sentenceStreamTask(), audioProcessTask(), waiterPromise]);
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: 'tts.ts:SynthesizeStream.run',
-          message: 'Promise.all completed successfully',
-          data: { contextId: this.#contextId },
-          timestamp: Date.now(),
-          sessionId: 'debug-session',
-          hypothesisId: 'H5',
-        }),
-      }).catch(() => {});
-      // #endregion
     } catch (e) {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: 'tts.ts:SynthesizeStream.run',
-          message: 'Promise.all error',
-          data: {
-            contextId: this.#contextId,
-            error: String(e),
-            aborted: this.abortController.signal.aborted,
-          },
-          timestamp: Date.now(),
-          sessionId: 'debug-session',
-          hypothesisId: 'H5',
-        }),
-      }).catch(() => {});
-      // #endregion
-
       // If aborted, this is a normal termination - don't throw
       if (this.abortController.signal.aborted) {
         return;
