@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-cartesia
 
+## 1.0.28
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @livekit/agents@1.0.28
+
 ## 1.0.27
 
 ### Patch Changes
