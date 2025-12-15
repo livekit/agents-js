@@ -22,20 +22,12 @@ import type { TTSEncoding, TTSModels } from './models.js';
 
 type TimedString = voice.TimedString;
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 const DEFAULT_VOICE_ID = 'bIHbv24MWmeRgasZH58o';
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1';
 const AUTHORIZATION_HEADER = 'xi-api-key';
 const WS_INACTIVITY_TIMEOUT = 180;
 // Note: MP3 has lower TTFB but requires decoding. PCM is raw and can be used directly.
 const DEFAULT_ENCODING: TTSEncoding = 'pcm_22050';
-
-// ============================================================================
-// Types and Interfaces
-// ============================================================================
 
 export interface VoiceSettings {
   stability: number; // [0.0 - 1.0]
@@ -131,9 +123,7 @@ interface StreamData {
 
 type ConnectionMessage = SynthesizeContent | CloseContext;
 
-// ============================================================================
 // Helper Functions
-// ============================================================================
 
 function sampleRateFromFormat(encoding: TTSEncoding): number {
   const split = encoding.split('_');
@@ -238,10 +228,6 @@ function toTimedWords(
 
   return [timedWords, text.slice(end)];
 }
-
-// ============================================================================
-// Connection Class (Internal)
-// ============================================================================
 
 class Connection {
   #opts: ResolvedTTSOptions;
@@ -625,10 +611,6 @@ class Connection {
   }
 }
 
-// ============================================================================
-// TTS Class
-// ============================================================================
-
 export class TTS extends tts.TTS {
   #opts: ResolvedTTSOptions;
   #streams = new Set<SynthesizeStream>();
@@ -800,10 +782,6 @@ export class TTS extends tts.TTS {
   }
 }
 
-// ============================================================================
-// ChunkedStream Class
-// ============================================================================
-
 export class ChunkedStream extends tts.ChunkedStream {
   #tts: TTS;
   #opts: ResolvedTTSOptions;
@@ -895,10 +873,6 @@ export class ChunkedStream extends tts.ChunkedStream {
     }
   }
 }
-
-// ============================================================================
-// SynthesizeStream Class
-// ============================================================================
 
 export class SynthesizeStream extends tts.SynthesizeStream {
   #tts: TTS;
