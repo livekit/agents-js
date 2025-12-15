@@ -274,6 +274,19 @@ class Connection {
       this.#ws = new WebSocket(url, { headers });
 
       this.#ws.on('open', () => {
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            location: 'tts.ts:Connection.connect',
+            message: 'NEW WebSocket connection created',
+            data: { voiceId: this.#opts.voiceId },
+            timestamp: Date.now(),
+            sessionId: 'debug-session',
+          }),
+        }).catch(() => {});
+        // #endregion
         this.#sendTask = this.#sendLoop();
         this.#recvTask = this.#recvLoop();
         resolve();
@@ -747,9 +760,35 @@ export class TTS extends tts.TTS {
         this.#currentConnection.isCurrent &&
         !this.#currentConnection.closed
       ) {
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            location: 'tts.ts:TTS.currentConnection',
+            message: 'REUSING existing connection',
+            data: {},
+            timestamp: Date.now(),
+            sessionId: 'debug-session',
+          }),
+        }).catch(() => {});
+        // #endregion
         return this.#currentConnection;
       }
 
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          location: 'tts.ts:TTS.currentConnection',
+          message: 'Creating NEW connection',
+          data: { hadPrevious: !!this.#currentConnection },
+          timestamp: Date.now(),
+          sessionId: 'debug-session',
+        }),
+      }).catch(() => {});
+      // #endregion
       const conn = new Connection({ ...this.#opts });
       await conn.connect();
       this.#currentConnection = conn;
