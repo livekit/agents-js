@@ -1206,6 +1206,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   pushAudio(data: Buffer): void {
+    // Don't push if stream is closed/aborted
+    if (this.closed || this.abortController.signal.aborted) {
+      return;
+    }
     this.#audioQueue.push(data);
   }
 
