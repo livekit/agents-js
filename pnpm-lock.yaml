@@ -356,8 +356,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/agents-plugin-openai':
-        specifier: ^1.0.0
-        version: 1.0.22(@livekit/agents@agents)(@livekit/rtc-node@0.13.13)(zod@3.25.76)
+        specifier: ^1.0.27
+        version: 1.0.27(@livekit/agents@agents)(@livekit/rtc-node@0.13.13)(zod@3.25.76)
       '@livekit/agents-plugins-test':
         specifier: workspace:*
         version: link:../test
@@ -1644,10 +1644,10 @@ packages:
   '@jridgewell/trace-mapping@0.3.25':
     resolution: {integrity: sha512-vNk6aEwybGtawWmy/PzwnGDOjCkLWSD2wqvjGGAgOAwCGWySYXfYoxt00IJkTF+8Lb57DwOb3Aa0o9CApepiYQ==}
 
-  '@livekit/agents-plugin-openai@1.0.22':
-    resolution: {integrity: sha512-8PSM/6SRF4gcWzfbyqwlGar1vMmDjPtz6nr0cblyoW4TmCSqe+EhKuXq7aRMahhDQdgVOijszKA4TBeYzh2gnw==}
+  '@livekit/agents-plugin-openai@1.0.27':
+    resolution: {integrity: sha512-6GJkUzq8kbVCnW3+jkdyhiuykUWyu0TVYBtu4dX4U6e9sOETv6sXThBKqF6PvFUcSpquCQWoH2vvG27aXaUNSw==}
     peerDependencies:
-      '@livekit/agents': 1.0.22
+      '@livekit/agents': 1.0.27
       '@livekit/rtc-node': ^0.13.12
 
   '@livekit/changesets-changelog-github@0.0.4':
@@ -5745,7 +5745,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.4.15
 
-  '@livekit/agents-plugin-openai@1.0.22(@livekit/agents@agents)(@livekit/rtc-node@0.13.13)(zod@3.25.76)':
+  '@livekit/agents-plugin-openai@1.0.27(@livekit/agents@agents)(@livekit/rtc-node@0.13.13)(zod@3.25.76)':
     dependencies:
       '@livekit/agents': link:agents
       '@livekit/mutex': 1.1.1
