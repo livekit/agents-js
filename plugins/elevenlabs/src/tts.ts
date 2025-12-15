@@ -26,7 +26,6 @@ const DEFAULT_VOICE_ID = 'bIHbv24MWmeRgasZH58o';
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1';
 const AUTHORIZATION_HEADER = 'xi-api-key';
 const WS_INACTIVITY_TIMEOUT = 180;
-// Note: MP3 has lower TTFB but requires decoding. PCM is raw and can be used directly.
 const DEFAULT_ENCODING: TTSEncoding = 'pcm_22050';
 
 export interface VoiceSettings {
@@ -404,7 +403,6 @@ class Connection {
 
   async #recvLoop(): Promise<void> {
     try {
-      // Use StreamChannel for efficient message queuing with persistent listeners
       const messageChannel = stream.createStreamChannel<Record<string, unknown>>();
       const errorFuture = new Future<Error>();
 
