@@ -59,6 +59,7 @@ export interface TTSOptions {
   inactivityTimeout: number;
   syncAlignment: boolean;
   autoMode?: boolean;
+  applyTextNormalization?: 'auto' | 'on' | 'off';
 }
 
 const defaultTTSOptionsBase = {
@@ -169,6 +170,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       ...(opts.languageCode && { language_code: opts.languageCode }),
       ...(opts.inactivityTimeout && { inactivity_timeout: `${opts.inactivityTimeout}` }),
       ...(opts.streamingLatency && { optimize_streaming_latency: `${opts.streamingLatency}` }),
+      ...(opts.applyTextNormalization && { apply_text_normalization: `${opts.applyTextNormalization}` }),
     };
     Object.entries(params).forEach(([k, v]) => this.streamURL.searchParams.append(k, v));
     this.streamURL.protocol = this.streamURL.protocol.replace('http', 'ws');
