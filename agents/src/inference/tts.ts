@@ -12,7 +12,7 @@ import { basic as tokenizeBasic } from '../tokenize/index.js';
 import type { ChunkedStream } from '../tts/index.js';
 import { SynthesizeStream as BaseSynthesizeStream, TTS as BaseTTS } from '../tts/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { Event, Future, Task, cancelAndWait, shortuuid } from '../utils.js';
+import { Event, Future, Task, cancelAndWait, combineSignals, shortuuid } from '../utils.js';
 import {
   type TtsClientEvent,
   type TtsServerEvent,
@@ -502,25 +502,6 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
             const runController = new AbortController();
             const onStreamAbort = () => runController.abort(this.abortController.signal.reason);
             this.abortController.signal.addEventListener('abort', onStreamAbort, { once: true });
-
-            const combineSignals = (a: AbortSignal, b: AbortSignal): AbortSignal => {
-              const c = new AbortController();
-              const abortFrom = (s: AbortSignal) => {
-                if (c.signal.aborted) return;
-                c.abort(s.reason);
-              };
-              if (a.aborted) {
-                abortFrom(a);
-              } else {
-                a.addEventListener('abort', () => abortFrom(a), { once: true });
-              }
-              if (b.aborted) {
-                abortFrom(b);
-              } else {
-                b.addEventListener('abort', () => abortFrom(b), { once: true });
-              }
-              return c.signal;
-            };
 
             const tasks = [
               Task.from(
