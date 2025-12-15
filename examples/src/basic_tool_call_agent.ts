@@ -10,6 +10,7 @@ import {
   llm,
   voice,
 } from '@livekit/agents';
+import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
@@ -138,7 +139,7 @@ export default defineAgent({
       vad,
       stt: 'assemblyai/universal-streaming:en',
       llm: 'openai/gpt-4.1-mini',
-      tts: 'cartesia/sonic-2:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      tts: new elevenlabs.TTS(),
       turnDetection: new livekit.turnDetector.MultilingualModel(),
       userData: { number: 0 },
       voiceOptions: {
