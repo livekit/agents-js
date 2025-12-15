@@ -12,7 +12,8 @@
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "baseten:cloud": "tsx --env-file=.env src/baseten_restaurant_agent.ts dev --log-level=debug"
   },
   "devDependencies": {
     "@types/node": "^22.5.5",
@@ -24,6 +25,7 @@
   "dependencies": {
     "@livekit/agents": "workspace:*",
     "@livekit/agents-plugin-anam": "workspace:*",
+    "@livekit/agents-plugin-baseten": "workspace:*",
     "@livekit/agents-plugin-bey": "workspace:*",
     "@livekit/agents-plugin-cartesia": "workspace:*",
     "@livekit/agents-plugin-deepgram": "workspace:*",
