@@ -399,7 +399,7 @@ export class AgentServer {
           if (this.#closed) return;
           if (retries >= this.#opts.maxRetry) {
             throw new WorkerError(
-              `failed to connect to LiveKit server after ${retries} attempts: ${e}`,
+              `failed to connect to LiveKit server (${this.#opts.wsURL}) after ${retries} attempts: ${e}`,
             );
           }
 
@@ -407,7 +407,7 @@ export class AgentServer {
           const delay = Math.min(retries * 2, 10);
 
           this.#logger.warn(
-            `failed to connect to LiveKit server, retrying in ${delay} seconds: ${e} (${retries}/${this.#opts.maxRetry})`,
+            `failed to connect to LiveKit server (${this.#opts.wsURL}), retrying in ${delay} seconds: ${e} (${retries}/${this.#opts.maxRetry})`,
           );
 
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
