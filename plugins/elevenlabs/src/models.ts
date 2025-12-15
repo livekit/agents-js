@@ -13,7 +13,6 @@ export type TTSModels =
   | 'eleven_v3';
 
 export type TTSEncoding =
-  // MP3 encodings - mp3_22050_32 is default, lower TTFB
   | 'mp3_22050_32'
   | 'mp3_44100_32'
   | 'mp3_44100_64'
