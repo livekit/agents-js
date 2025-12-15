@@ -151,14 +151,7 @@ class SegmentSynchronizerImpl {
       return;
     }
 
-    const playbackPosition = _playbackPosition;
-    const epsilonSeconds = 0.05;
-    const nearEnd = playbackPosition >= Math.max(0, this.audioData.pushedDuration - epsilonSeconds);
-
-    // Only mark as fully completed if playback reached (roughly) the end.
-    // This prevents returning the full transcript in cases where the sink reports interrupted=false
-    // but playbackPosition indicates partial playout.
-    if (!interrupted && nearEnd) {
+    if (!interrupted) {
       this.playbackCompleted = true;
     }
   }
