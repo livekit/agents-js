@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   AudioFrame,
+  AudioMixer, // Ref: Python line 14 (from livekit import rtc)
   AudioSource,
   LocalAudioTrack,
   type LocalTrackPublication,
@@ -57,7 +58,7 @@ export interface BackgroundAudioPlayerOptions {
 
   /**
    * Sound to play when the agent is thinking.
-   * TODO (Brian): Implement thinking sound when AudioMixer becomes available
+   * Plays when agent state changes to 'thinking' and stops when it changes to other states.
    */
   thinkingSound?: AudioSourceType | AudioConfig | AudioConfig[];
 
@@ -113,15 +114,16 @@ export class PlayHandle {
  * This class handles playing ambient sounds and manages audio track publishing.
  * It supports:
  * - Continuous ambient sound playback with looping
+ * - Thinking sound playback during agent processing
+ * - Multiple simultaneous audio streams via AudioMixer
  * - Volume control and probability-based sound selection
  * - Integration with LiveKit rooms and agent sessions
- *
- * Note: Thinking sound not yet supported
  *
  * @example
  * ```typescript
  * const player = new BackgroundAudioPlayer({
  *   ambientSound: { source: BuiltinAudioClip.OFFICE_AMBIENCE, volume: 0.8 },
+ *   thinkingSound: { source: BuiltinAudioClip.KEYBOARD_TYPING, volume: 0.6 },
  * });
  *
  * await player.start({ room, agentSession });
@@ -130,9 +132,15 @@ export class PlayHandle {
 export class BackgroundAudioPlayer {
   private ambientSound?: AudioSourceType | AudioConfig | AudioConfig[];
   private thinkingSound?: AudioSourceType | AudioConfig | AudioConfig[];
+  // Ref: Python line 76 (stream_timeout_ms param)
+  private streamTimeoutMs: number;
 
   private playTasks: Task<void>[] = [];
   private audioSource = new AudioSource(48000, 1, AUDIO_SOURCE_BUFFER_MS);
+  // Ref: Python lines 106-108 (self._audio_mixer)
+  private audioMixer: AudioMixer;
+  // Ref: Python line 113 (self._mixer_atask)
+  private mixerTask?: Task<void>;
 
   private room?: Room;
   private agentSession?: AgentSession;
@@ -143,20 +151,27 @@ export class BackgroundAudioPlayer {
   private ambientHandle?: PlayHandle;
   private thinkingHandle?: PlayHandle;
 
+  // TS-specific: tracks closed state for error handling
+  private closed = true;
+
   // TODO (Brian): add lock
 
   #logger = log();
 
+  // Ref: Python lines 69-118 (__init__)
   constructor(options?: BackgroundAudioPlayerOptions) {
-    const { ambientSound, thinkingSound } = options || {};
+    const { ambientSound, thinkingSound, streamTimeoutMs = 200 } = options || {};
 
     this.ambientSound = ambientSound;
     this.thinkingSound = thinkingSound;
+    this.streamTimeoutMs = streamTimeoutMs;
 
-    if (this.thinkingSound) {
-      this.#logger.warn('thinkingSound is not yet supported');
-      // TODO: Implement thinking sound when AudioMixer becomes available
-    }
+    // Ref: Python lines 106-108 (self._audio_mixer = rtc.AudioMixer(...))
+    this.audioMixer = new AudioMixer(48000, 1, {
+      blocksize: 4800, // 100ms at 48kHz
+      capacity: 1,
+      streamTimeoutMs: this.streamTimeoutMs,
+    });
   }
 
   /**
@@ -272,23 +287,51 @@ export class BackgroundAudioPlayer {
    *
    * @param options - Options for starting background audio playback
    */
+  // Ref: Python lines 223-280 (start)
   async start(options: BackgroundAudioStartOptions): Promise<void> {
     const { room, agentSession, trackPublishOptions } = options;
     this.room = room;
     this.agentSession = agentSession;
     this.trackPublishOptions = trackPublishOptions;
 
+    this.closed = false;
+
     await this.publishTrack();
 
     // TODO (Brian): check job context is not fake
 
-    // TODO (Brian): start audio mixer task
+    // Ref: Python line 264 (self._mixer_atask = asyncio.create_task(self._run_mixer_task()))
+    this.mixerTask = Task.from(async () => {
+      try {
+        await this.runMixerTask();
+      } catch (err) {
+        if (this.closed) return; // expected when AudioSource is closed
+        throw err;
+      }
+    });
+
     this.room.on('reconnected', this.onReconnected);
 
+    // Ref: Python lines 267-268 (agent_state_changed listener)
     this.agentSession?.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        location: 'background_audio.ts:start',
+        message: 'listener registered',
+        data: { hasAgentSession: !!this.agentSession, hasThinkingSound: !!this.thinkingSound },
+        timestamp: Date.now(),
+        sessionId: 'debug-session',
+        hypothesisId: 'H2',
+      }),
+    }).catch(() => {});
+    // #endregion
 
     if (!this.ambientSound) return;
 
+    // Ref: Python lines 270-280 (ambient sound handling)
     const normalized = this.normalizeSoundSource(this.ambientSound);
     if (!normalized) return;
 
@@ -300,17 +343,25 @@ export class BackgroundAudioPlayer {
   /**
    * Close and cleanup the background audio system
    */
+  // Ref: Python lines 282-309 (aclose)
   async close(): Promise<void> {
+    this.closed = true;
+
     await cancelAndWait(this.playTasks, TASK_TIMEOUT_MS);
 
     if (this.republishTask) {
       await this.republishTask.cancelAndWait(TASK_TIMEOUT_MS);
     }
 
-    // TODO (Brian): cancel audio mixer task and close audio mixer
-
+    // Ref: Python lines 296-300 (close mixer before audio source)
+    await this.audioMixer.aclose();
     await this.audioSource.close();
 
+    if (this.mixerTask) {
+      await this.mixerTask.cancelAndWait(TASK_TIMEOUT_MS);
+    }
+
+    // Ref: Python lines 302-305
     this.agentSession?.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
     this.room?.off('reconnected', this.onReconnected);
 
@@ -362,22 +413,153 @@ export class BackgroundAudioPlayer {
     await this.publishTrack();
   }
 
+  // Ref: Python lines 385-388 (_run_mixer_task)
+  private async runMixerTask(): Promise<void> {
+    // #region agent log
+    let frameCount = 0;
+    // #endregion
+    for await (const frame of this.audioMixer) {
+      // #region agent log
+      if (frameCount < 5 || frameCount % 100 === 0) {
+        fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            location: 'background_audio.ts:runMixerTask',
+            message: 'mixer produced frame',
+            data: { frameCount, samples: frame.samplesPerChannel },
+            timestamp: Date.now(),
+            sessionId: 'debug-session',
+            hypothesisId: 'H7',
+          }),
+        }).catch(() => {});
+      }
+      frameCount++;
+      // #endregion
+      await this.audioSource.captureFrame(frame);
+    }
+  }
+
+  // Ref: Python lines 318-332 (_agent_state_changed)
   private onAgentStateChanged = (ev: AgentStateChangedEvent): void => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        location: 'background_audio.ts:onAgentStateChanged',
+        message: 'state changed',
+        data: {
+          oldState: ev.oldState,
+          newState: ev.newState,
+          hasThinkingSound: !!this.thinkingSound,
+        },
+        timestamp: Date.now(),
+        sessionId: 'debug-session',
+        hypothesisId: 'H1',
+      }),
+    }).catch(() => {});
+    // #endregion
+    // Ref: Python lines 319-320
     if (!this.thinkingSound) {
       return;
     }
 
     if (ev.newState === 'thinking') {
+      // Ref: Python lines 322-329
       if (this.thinkingHandle && !this.thinkingHandle.done()) {
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            location: 'background_audio.ts:onAgentStateChanged',
+            message: 'thinking handle already active',
+            data: {},
+            timestamp: Date.now(),
+            sessionId: 'debug-session',
+            hypothesisId: 'H1',
+          }),
+        }).catch(() => {});
+        // #endregion
         return;
       }
 
-      // TODO (Brian): play thinking sound and assign to thinkingHandle
+      const normalized = this.normalizeSoundSource(this.thinkingSound);
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          location: 'background_audio.ts:onAgentStateChanged',
+          message: 'normalized thinking sound',
+          data: {
+            normalized: normalized
+              ? { hasSource: !!normalized.source, volume: normalized.volume }
+              : null,
+          },
+          timestamp: Date.now(),
+          sessionId: 'debug-session',
+          hypothesisId: 'H3',
+        }),
+      }).catch(() => {});
+      // #endregion
+      if (normalized) {
+        const { source, volume } = normalized;
+        const selectedSound: AudioConfig = { source, volume, probability: 1.0 };
+        this.thinkingHandle = this.play(selectedSound);
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            location: 'background_audio.ts:onAgentStateChanged',
+            message: 'play called for thinking',
+            data: { volume },
+            timestamp: Date.now(),
+            sessionId: 'debug-session',
+            hypothesisId: 'H4',
+          }),
+        }).catch(() => {});
+        // #endregion
+      }
     } else {
+      // Ref: Python lines 331-332
       this.thinkingHandle?.stop();
     }
   };
 
+  // Ref: Python lines 354-363 (volume adjustment in _gen_wrapper)
+  // Note: Python uses numpy, TS uses typed arrays for equivalent logic
+  private applyVolumeToFrame(frame: AudioFrame, volume: number): AudioFrame {
+    const int16Data = new Int16Array(
+      frame.data.buffer,
+      frame.data.byteOffset,
+      frame.data.byteLength / 2,
+    );
+    const float32Data = new Float32Array(int16Data.length);
+
+    for (let i = 0; i < int16Data.length; i++) {
+      float32Data[i] = int16Data[i]!;
+    }
+
+    // Ref: Python line 356 (data *= 10 ** (np.log10(volume)))
+    const volumeFactor = 10 ** Math.log10(volume);
+    for (let i = 0; i < float32Data.length; i++) {
+      float32Data[i]! *= volumeFactor;
+    }
+
+    // Ref: Python line 357 (np.clip(data, -32768, 32767, out=data))
+    const outputData = new Int16Array(float32Data.length);
+    for (let i = 0; i < float32Data.length; i++) {
+      const clipped = Math.max(-32768, Math.min(32767, float32Data[i]!));
+      outputData[i] = Math.round(clipped);
+    }
+
+    return new AudioFrame(outputData, frame.sampleRate, frame.channels, frame.samplesPerChannel);
+  }
+
+  // Ref: Python lines 335-383 (_play_task)
   private async playTask({
     playHandle,
     sound,
@@ -391,61 +573,98 @@ export class BackgroundAudioPlayer {
     loop: boolean;
     signal: AbortSignal;
   }): Promise<void> {
+    // Ref: Python lines 338-345 (sound path resolution)
     if (isBuiltinAudioClip(sound)) {
       sound = getBuiltinAudioPath(sound);
     }
 
+    let audioStream: AsyncIterable<AudioFrame>;
     if (typeof sound === 'string') {
-      sound = loop
+      // Ref: Python lines 341-345
+      audioStream = loop
         ? loopAudioFramesFromFile(sound, { abortSignal: signal })
         : audioFramesFromFile(sound, { abortSignal: signal });
+    } else {
+      audioStream = sound;
     }
 
-    try {
-      for await (const frame of sound) {
+    const applyVolume = this.applyVolumeToFrame.bind(this);
+
+    // Ref: Python lines 349-368 (_gen_wrapper)
+    // #region agent log
+    let genFrameCount = 0;
+    // #endregion
+    async function* genWrapper(): AsyncGenerator<AudioFrame> {
+      for await (const frame of audioStream) {
+        // Ref: Python lines 350-352 (stopped check)
         if (signal.aborted || playHandle.done()) break;
-
-        let processedFrame: AudioFrame;
-
-        if (volume !== 1.0) {
-          const int16Data = new Int16Array(
-            frame.data.buffer,
-            frame.data.byteOffset,
-            frame.data.byteLength / 2,
-          );
-          const float32Data = new Float32Array(int16Data.length);
-
-          for (let i = 0; i < int16Data.length; i++) {
-            float32Data[i] = int16Data[i]!;
-          }
-
-          const volumeFactor = 10 ** Math.log10(volume);
-          for (let i = 0; i < float32Data.length; i++) {
-            float32Data[i]! *= volumeFactor;
-          }
-
-          const outputData = new Int16Array(float32Data.length);
-          for (let i = 0; i < float32Data.length; i++) {
-            const clipped = Math.max(-32768, Math.min(32767, float32Data[i]!));
-            outputData[i] = Math.round(clipped);
-          }
-
-          processedFrame = new AudioFrame(
-            outputData,
-            frame.sampleRate,
-            frame.channels,
-            frame.samplesPerChannel,
-          );
-        } else {
-          processedFrame = frame;
+        // #region agent log
+        if (genFrameCount < 3 || genFrameCount % 50 === 0) {
+          fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              location: 'background_audio.ts:genWrapper',
+              message: 'yielding frame',
+              data: { genFrameCount, loop, volume },
+              timestamp: Date.now(),
+              sessionId: 'debug-session',
+              hypothesisId: 'H6',
+            }),
+          }).catch(() => {});
         }
-
-        // TODO (Brian): use AudioMixer to add/remove frame streams
-        await this.audioSource.captureFrame(processedFrame);
+        genFrameCount++;
+        // #endregion
+        // Ref: Python lines 354-365 (volume adjustment)
+        yield volume !== 1.0 ? applyVolume(frame, volume) : frame;
       }
-    } finally {
-      // TODO: the waitForPlayout() may be innaccurate by 400ms
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          location: 'background_audio.ts:genWrapper',
+          message: 'generator finished',
+          data: { totalFrames: genFrameCount, loop },
+          timestamp: Date.now(),
+          sessionId: 'debug-session',
+          hypothesisId: 'H6',
+        }),
+      }).catch(() => {});
+      // #endregion
+      // Ref: Python lines 367-368
       playHandle._markPlayoutDone();
+    }
+
+    const gen = genWrapper();
+    try {
+      // Ref: Python line 372
+      this.audioMixer.addStream(gen);
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          location: 'background_audio.ts:playTask',
+          message: 'stream added to mixer',
+          data: { loop, volume },
+          timestamp: Date.now(),
+          sessionId: 'debug-session',
+          hypothesisId: 'H5',
+        }),
+      }).catch(() => {});
+      // #endregion
+      // Ref: Python line 373
+      await playHandle.waitForPlayout();
+    } finally {
+      // Ref: Python lines 375-383
+      this.audioMixer.removeStream(gen);
+      playHandle._markPlayoutDone();
+
+      // Ref: Python lines 379-383 (close generator if stopped)
+      if (playHandle.done()) {
+        await gen.return(undefined);
+      }
     }
   }
 }
