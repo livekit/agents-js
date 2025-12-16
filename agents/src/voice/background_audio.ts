@@ -305,21 +305,6 @@ export class BackgroundAudioPlayer {
     this.room.on('reconnected', this.onReconnected);
 
     this.agentSession?.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        location: 'background_audio.ts:start',
-        message: 'listener registered',
-        data: { hasAgentSession: !!this.agentSession, hasThinkingSound: !!this.thinkingSound },
-        timestamp: Date.now(),
-        sessionId: 'debug-session',
-        hypothesisId: 'H2',
-      }),
-    }).catch(() => {});
-    // #endregion
-
     if (!this.ambientSound) return;
 
     const normalized = this.normalizeSoundSource(this.ambientSound);
@@ -401,111 +386,27 @@ export class BackgroundAudioPlayer {
   }
 
   private async runMixerTask(): Promise<void> {
-    // #region agent log
-    let frameCount = 0;
-    // #endregion
     for await (const frame of this.audioMixer) {
-      // #region agent log
-      if (frameCount < 5 || frameCount % 100 === 0) {
-        fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            location: 'background_audio.ts:runMixerTask',
-            message: 'mixer produced frame',
-            data: { frameCount, samples: frame.samplesPerChannel },
-            timestamp: Date.now(),
-            sessionId: 'debug-session',
-            hypothesisId: 'H7',
-          }),
-        }).catch(() => {});
-      }
-      frameCount++;
-      // #endregion
       await this.audioSource.captureFrame(frame);
     }
   }
 
   private onAgentStateChanged = (ev: AgentStateChangedEvent): void => {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        location: 'background_audio.ts:onAgentStateChanged',
-        message: 'state changed',
-        data: {
-          oldState: ev.oldState,
-          newState: ev.newState,
-          hasThinkingSound: !!this.thinkingSound,
-        },
-        timestamp: Date.now(),
-        sessionId: 'debug-session',
-        hypothesisId: 'H1',
-      }),
-    }).catch(() => {});
-    // #endregion
     if (!this.thinkingSound) {
       return;
     }
 
     if (ev.newState === 'thinking') {
       if (this.thinkingHandle && !this.thinkingHandle.done()) {
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            location: 'background_audio.ts:onAgentStateChanged',
-            message: 'thinking handle already active',
-            data: {},
-            timestamp: Date.now(),
-            sessionId: 'debug-session',
-            hypothesisId: 'H1',
-          }),
-        }).catch(() => {});
-        // #endregion
         return;
       }
 
       const normalized = this.normalizeSoundSource(this.thinkingSound);
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: 'background_audio.ts:onAgentStateChanged',
-          message: 'normalized thinking sound',
-          data: {
-            normalized: normalized
-              ? { hasSource: !!normalized.source, volume: normalized.volume }
-              : null,
-          },
-          timestamp: Date.now(),
-          sessionId: 'debug-session',
-          hypothesisId: 'H3',
-        }),
-      }).catch(() => {});
-      // #endregion
       if (normalized) {
         const { source, volume } = normalized;
         const selectedSound: AudioConfig = { source, volume, probability: 1.0 };
         // Loop thinking sound while in thinking state (same as ambient)
         this.thinkingHandle = this.play(selectedSound, typeof source === 'string');
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            location: 'background_audio.ts:onAgentStateChanged',
-            message: 'play called for thinking',
-            data: { volume },
-            timestamp: Date.now(),
-            sessionId: 'debug-session',
-            hypothesisId: 'H4',
-          }),
-        }).catch(() => {});
-        // #endregion
       }
     } else {
       this.thinkingHandle?.stop();
@@ -566,66 +467,17 @@ export class BackgroundAudioPlayer {
     }
 
     const applyVolume = this.applyVolumeToFrame.bind(this);
-
-    // #region agent log
-    let genFrameCount = 0;
-    // #endregion
     async function* genWrapper(): AsyncGenerator<AudioFrame> {
       for await (const frame of audioStream) {
         if (signal.aborted || playHandle.done()) break;
-        // #region agent log
-        if (genFrameCount < 3 || genFrameCount % 50 === 0) {
-          fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              location: 'background_audio.ts:genWrapper',
-              message: 'yielding frame',
-              data: { genFrameCount, loop, volume },
-              timestamp: Date.now(),
-              sessionId: 'debug-session',
-              hypothesisId: 'H6',
-            }),
-          }).catch(() => {});
-        }
-        genFrameCount++;
-        // #endregion
         yield volume !== 1.0 ? applyVolume(frame, volume) : frame;
       }
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: 'background_audio.ts:genWrapper',
-          message: 'generator finished',
-          data: { totalFrames: genFrameCount, loop },
-          timestamp: Date.now(),
-          sessionId: 'debug-session',
-          hypothesisId: 'H6',
-        }),
-      }).catch(() => {});
-      // #endregion
       playHandle._markPlayoutDone();
     }
 
     const gen = genWrapper();
     try {
       this.audioMixer.addStream(gen);
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: 'background_audio.ts:playTask',
-          message: 'stream added to mixer',
-          data: { loop, volume },
-          timestamp: Date.now(),
-          sessionId: 'debug-session',
-          hypothesisId: 'H5',
-        }),
-      }).catch(() => {});
-      // #endregion
       await playHandle.waitForPlayout();
     } finally {
       this.audioMixer.removeStream(gen);
