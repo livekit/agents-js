@@ -477,8 +477,8 @@ importers:
   plugins/elevenlabs:
     dependencies:
       ws:
-        specifier: ^8.16.0
-        version: 8.17.0
+        specifier: ^8.18.3
+        version: 8.18.3
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
