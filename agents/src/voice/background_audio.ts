@@ -148,7 +148,6 @@ export class BackgroundAudioPlayer {
   private ambientHandle?: PlayHandle;
   private thinkingHandle?: PlayHandle;
 
-  // TS-specific: tracks closed state for error handling
   private closed = true;
 
   // TODO (Brian): add lock
@@ -491,7 +490,8 @@ export class BackgroundAudioPlayer {
       if (normalized) {
         const { source, volume } = normalized;
         const selectedSound: AudioConfig = { source, volume, probability: 1.0 };
-        this.thinkingHandle = this.play(selectedSound);
+        // Loop thinking sound while in thinking state (same as ambient)
+        this.thinkingHandle = this.play(selectedSound, typeof source === 'string');
         // #region agent log
         fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
           method: 'POST',
