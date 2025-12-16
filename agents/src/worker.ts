@@ -403,7 +403,8 @@ export class AgentServer {
           const delay = Math.min(retries * 2, 10);
 
           this.#logger.warn(
-            e, `failed to connect to LiveKit server (${this.#opts.wsURL}), retrying in ${delay} seconds: (${retries}/${this.#opts.maxRetry})`,
+            e,
+            `failed to connect to LiveKit server (${this.#opts.wsURL}), retrying in ${delay} seconds: (${retries}/${this.#opts.maxRetry})`,
           );
 
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
