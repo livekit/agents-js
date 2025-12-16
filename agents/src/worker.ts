@@ -384,7 +384,7 @@ export class AgentServer {
         try {
           await new Promise((resolve, reject) => {
             this.#session!.on('open', resolve);
-            this.#session!.on('error', (error) => reject(error.message));
+            this.#session!.on('error', (error) => reject(error));
             this.#session!.on('close', (code) => reject(`WebSocket returned ${code}`));
           });
 
@@ -392,14 +392,10 @@ export class AgentServer {
           this.#logger.debug('connected to LiveKit server');
           await this.#runWS(this.#session);
         } catch (e: unknown) {
-          if (e instanceof Error || e instanceof ErrorEvent) {
-            e = e.message;
-          }
-
           if (this.#closed) return;
           if (retries >= this.#opts.maxRetry) {
             throw new WorkerError(
-              `failed to connect to LiveKit server after ${retries} attempts: ${e}`,
+              `failed to connect to LiveKit server (${this.#opts.wsURL}) after ${retries} attempts: ${e}`,
             );
           }
 
@@ -407,7 +403,8 @@ export class AgentServer {
           const delay = Math.min(retries * 2, 10);
 
           this.#logger.warn(
-            `failed to connect to LiveKit server, retrying in ${delay} seconds: ${e} (${retries}/${this.#opts.maxRetry})`,
+            e,
+            `failed to connect to LiveKit server (${this.#opts.wsURL}), retrying in ${delay} seconds: (${retries}/${this.#opts.maxRetry})`,
           );
 
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
