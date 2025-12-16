@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   AudioFrame,
-  AudioMixer, // Ref: Python line 14 (from livekit import rtc)
+  AudioMixer,
   AudioSource,
   LocalAudioTrack,
   type LocalTrackPublication,
@@ -132,14 +132,11 @@ export class PlayHandle {
 export class BackgroundAudioPlayer {
   private ambientSound?: AudioSourceType | AudioConfig | AudioConfig[];
   private thinkingSound?: AudioSourceType | AudioConfig | AudioConfig[];
-  // Ref: Python line 76 (stream_timeout_ms param)
   private streamTimeoutMs: number;
 
   private playTasks: Task<void>[] = [];
   private audioSource = new AudioSource(48000, 1, AUDIO_SOURCE_BUFFER_MS);
-  // Ref: Python lines 106-108 (self._audio_mixer)
   private audioMixer: AudioMixer;
-  // Ref: Python line 113 (self._mixer_atask)
   private mixerTask?: Task<void>;
 
   private room?: Room;
@@ -158,7 +155,6 @@ export class BackgroundAudioPlayer {
 
   #logger = log();
 
-  // Ref: Python lines 69-118 (__init__)
   constructor(options?: BackgroundAudioPlayerOptions) {
     const { ambientSound, thinkingSound, streamTimeoutMs = 200 } = options || {};
 
@@ -166,7 +162,6 @@ export class BackgroundAudioPlayer {
     this.thinkingSound = thinkingSound;
     this.streamTimeoutMs = streamTimeoutMs;
 
-    // Ref: Python lines 106-108 (self._audio_mixer = rtc.AudioMixer(...))
     this.audioMixer = new AudioMixer(48000, 1, {
       blocksize: 4800, // 100ms at 48kHz
       capacity: 1,
@@ -287,7 +282,6 @@ export class BackgroundAudioPlayer {
    *
    * @param options - Options for starting background audio playback
    */
-  // Ref: Python lines 223-280 (start)
   async start(options: BackgroundAudioStartOptions): Promise<void> {
     const { room, agentSession, trackPublishOptions } = options;
     this.room = room;
@@ -300,7 +294,6 @@ export class BackgroundAudioPlayer {
 
     // TODO (Brian): check job context is not fake
 
-    // Ref: Python line 264 (self._mixer_atask = asyncio.create_task(self._run_mixer_task()))
     this.mixerTask = Task.from(async () => {
       try {
         await this.runMixerTask();
@@ -312,7 +305,6 @@ export class BackgroundAudioPlayer {
 
     this.room.on('reconnected', this.onReconnected);
 
-    // Ref: Python lines 267-268 (agent_state_changed listener)
     this.agentSession?.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
     // #region agent log
     fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
@@ -331,7 +323,6 @@ export class BackgroundAudioPlayer {
 
     if (!this.ambientSound) return;
 
-    // Ref: Python lines 270-280 (ambient sound handling)
     const normalized = this.normalizeSoundSource(this.ambientSound);
     if (!normalized) return;
 
@@ -343,7 +334,6 @@ export class BackgroundAudioPlayer {
   /**
    * Close and cleanup the background audio system
    */
-  // Ref: Python lines 282-309 (aclose)
   async close(): Promise<void> {
     this.closed = true;
 
@@ -353,7 +343,6 @@ export class BackgroundAudioPlayer {
       await this.republishTask.cancelAndWait(TASK_TIMEOUT_MS);
     }
 
-    // Ref: Python lines 296-300 (close mixer before audio source)
     await this.audioMixer.aclose();
     await this.audioSource.close();
 
@@ -361,7 +350,6 @@ export class BackgroundAudioPlayer {
       await this.mixerTask.cancelAndWait(TASK_TIMEOUT_MS);
     }
 
-    // Ref: Python lines 302-305
     this.agentSession?.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
     this.room?.off('reconnected', this.onReconnected);
 
@@ -413,7 +401,6 @@ export class BackgroundAudioPlayer {
     await this.publishTrack();
   }
 
-  // Ref: Python lines 385-388 (_run_mixer_task)
   private async runMixerTask(): Promise<void> {
     // #region agent log
     let frameCount = 0;
@@ -440,7 +427,6 @@ export class BackgroundAudioPlayer {
     }
   }
 
-  // Ref: Python lines 318-332 (_agent_state_changed)
   private onAgentStateChanged = (ev: AgentStateChangedEvent): void => {
     // #region agent log
     fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
@@ -460,13 +446,11 @@ export class BackgroundAudioPlayer {
       }),
     }).catch(() => {});
     // #endregion
-    // Ref: Python lines 319-320
     if (!this.thinkingSound) {
       return;
     }
 
     if (ev.newState === 'thinking') {
-      // Ref: Python lines 322-329
       if (this.thinkingHandle && !this.thinkingHandle.done()) {
         // #region agent log
         fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
@@ -524,12 +508,10 @@ export class BackgroundAudioPlayer {
         // #endregion
       }
     } else {
-      // Ref: Python lines 331-332
       this.thinkingHandle?.stop();
     }
   };
 
-  // Ref: Python lines 354-363 (volume adjustment in _gen_wrapper)
   // Note: Python uses numpy, TS uses typed arrays for equivalent logic
   private applyVolumeToFrame(frame: AudioFrame, volume: number): AudioFrame {
     const int16Data = new Int16Array(
@@ -543,13 +525,11 @@ export class BackgroundAudioPlayer {
       float32Data[i] = int16Data[i]!;
     }
 
-    // Ref: Python line 356 (data *= 10 ** (np.log10(volume)))
     const volumeFactor = 10 ** Math.log10(volume);
     for (let i = 0; i < float32Data.length; i++) {
       float32Data[i]! *= volumeFactor;
     }
 
-    // Ref: Python line 357 (np.clip(data, -32768, 32767, out=data))
     const outputData = new Int16Array(float32Data.length);
     for (let i = 0; i < float32Data.length; i++) {
       const clipped = Math.max(-32768, Math.min(32767, float32Data[i]!));
@@ -559,7 +539,6 @@ export class BackgroundAudioPlayer {
     return new AudioFrame(outputData, frame.sampleRate, frame.channels, frame.samplesPerChannel);
   }
 
-  // Ref: Python lines 335-383 (_play_task)
   private async playTask({
     playHandle,
     sound,
@@ -573,14 +552,12 @@ export class BackgroundAudioPlayer {
     loop: boolean;
     signal: AbortSignal;
   }): Promise<void> {
-    // Ref: Python lines 338-345 (sound path resolution)
     if (isBuiltinAudioClip(sound)) {
       sound = getBuiltinAudioPath(sound);
     }
 
     let audioStream: AsyncIterable<AudioFrame>;
     if (typeof sound === 'string') {
-      // Ref: Python lines 341-345
       audioStream = loop
         ? loopAudioFramesFromFile(sound, { abortSignal: signal })
         : audioFramesFromFile(sound, { abortSignal: signal });
@@ -590,13 +567,11 @@ export class BackgroundAudioPlayer {
 
     const applyVolume = this.applyVolumeToFrame.bind(this);
 
-    // Ref: Python lines 349-368 (_gen_wrapper)
     // #region agent log
     let genFrameCount = 0;
     // #endregion
     async function* genWrapper(): AsyncGenerator<AudioFrame> {
       for await (const frame of audioStream) {
-        // Ref: Python lines 350-352 (stopped check)
         if (signal.aborted || playHandle.done()) break;
         // #region agent log
         if (genFrameCount < 3 || genFrameCount % 50 === 0) {
@@ -615,7 +590,6 @@ export class BackgroundAudioPlayer {
         }
         genFrameCount++;
         // #endregion
-        // Ref: Python lines 354-365 (volume adjustment)
         yield volume !== 1.0 ? applyVolume(frame, volume) : frame;
       }
       // #region agent log
@@ -632,13 +606,11 @@ export class BackgroundAudioPlayer {
         }),
       }).catch(() => {});
       // #endregion
-      // Ref: Python lines 367-368
       playHandle._markPlayoutDone();
     }
 
     const gen = genWrapper();
     try {
-      // Ref: Python line 372
       this.audioMixer.addStream(gen);
       // #region agent log
       fetch('http://127.0.0.1:7243/ingest/35f1fac8-cdb7-45b3-9fb7-e8fc42ce7342', {
@@ -654,14 +626,11 @@ export class BackgroundAudioPlayer {
         }),
       }).catch(() => {});
       // #endregion
-      // Ref: Python line 373
       await playHandle.waitForPlayout();
     } finally {
-      // Ref: Python lines 375-383
       this.audioMixer.removeStream(gen);
       playHandle._markPlayoutDone();
 
-      // Ref: Python lines 379-383 (close generator if stopped)
       if (playHandle.done()) {
         await gen.return(undefined);
       }
