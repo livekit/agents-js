@@ -193,7 +193,7 @@ const startJob = (
     });
 
     logger.debug('initializing job runner');
-    agent.prewarm(proc);
+    await agent.prewarm(proc);
     logger.debug('job runner initialized');
     process.send({ case: 'initializeResponse' });
 
