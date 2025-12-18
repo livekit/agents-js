@@ -1,5 +1,15 @@
 # @livekit/agents
 
+## 1.0.29
+
+### Patch Changes
+
+- Fix voice interruption transcript spill, add ConnectionPool for inference websockets, and log TTS websocket pool misses. - [#910](https://github.com/livekit/agents-js/pull/910) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Support thinking sound inside background audio player - [#915](https://github.com/livekit/agents-js/pull/915) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Support multi-context WebSocket connection for elevenlabs TTS - [#912](https://github.com/livekit/agents-js/pull/912) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.28
 
 ## 1.0.27
