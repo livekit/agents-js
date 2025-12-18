@@ -28,7 +28,7 @@ export interface LLMOptions {
 }
 
 const defaultLLMOptions: LLMOptions = {
-  model: 'gpt-4.1',
+  model: 'openai/gpt-4o-mini',
   apiKey: process.env.OPENAI_API_KEY,
   parallelToolCalls: true,
   strictToolSchema: false,
