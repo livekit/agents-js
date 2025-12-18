@@ -1,6 +1,6 @@
 {
     "name": "@livekit/agents-plugin-baseten",
-    "version": "1.0.27",
+    "version": "1.0.28",
     "description": "Baseten plugin for LiveKit Node Agents",
     "private": true,
     "main": "dist/index.js",
@@ -10,9 +10,9 @@
     "repository": "git@github.com:livekit/agents-js.git",
     "license": "Apache-2.0",
     "files": [
-      "dist",
-      "src",
-      "README.md"
+        "dist",
+        "src",
+        "README.md"
     ],
     "scripts": {
         "build": "tsc",
@@ -34,7 +34,7 @@
     "dependencies": {
         "@livekit/agents": "workspace:*",
         "@livekit/agents-plugin-openai": "^1.0.27",
-        "@livekit/rtc-node": "^0.13.12",
+        "@livekit/rtc-node": "^0.13.22",
         "@livekit/agents-plugins-test": "workspace:*",
         "dotenv": "^17.2.3",
         "openai": "^4.0.0",
@@ -48,6 +48,6 @@
     },
     "peerDependencies": {
         "@livekit/agents": "workspace:*",
-        "@livekit/rtc-node": "^0.13.12"
+        "@livekit/rtc-node": "^0.13.22"
     }
 }

@@ -38,7 +38,7 @@
     "@livekit/agents-plugin-resemble": "workspace:*",
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/noise-cancellation-node": "^0.1.9",
-    "@livekit/rtc-node": "^0.13.11",
+    "@livekit/rtc-node": "^0.13.22",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/api-logs": "^0.54.0",
     "@opentelemetry/exporter-logs-otlp-http": "^0.54.0",

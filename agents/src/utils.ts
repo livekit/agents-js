@@ -840,6 +840,31 @@ export async function waitForAbort(signal: AbortSignal) {
   return await abortFuture.await;
 }
 
+/**
+ * Combines two abort signals into a single abort signal.
+ * @param a - The first abort signal.
+ * @param b - The second abort signal.
+ * @returns A new abort signal that is aborted when either of the input signals is aborted.
+ */
+export const combineSignals = (a: AbortSignal, b: AbortSignal): AbortSignal => {
+  const c = new AbortController();
+  const abortFrom = (s: AbortSignal) => {
+    if (c.signal.aborted) return;
+    c.abort((s as any).reason);
+  };
+  if (a.aborted) {
+    abortFrom(a);
+  } else {
+    a.addEventListener('abort', () => abortFrom(a), { once: true });
+  }
+  if (b.aborted) {
+    abortFrom(b);
+  } else {
+    b.addEventListener('abort', () => abortFrom(b), { once: true });
+  }
+  return c.signal;
+};
+
 export const isCloud = (url: URL) => {
   const hostname = url.hostname;
   return hostname.endsWith('.livekit.cloud') || hostname.endsWith('.livekit.run');
