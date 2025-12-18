@@ -1449,6 +1449,13 @@ export class AgentActivity implements RecognitionHooks {
         { speech_id: speechHandle.id },
         'Aborting all pipeline reply tasks due to interruption',
       );
+
+      // Stop playout ASAP (don't wait for cancellations), otherwise the segment may finish and we
+      // will correctly (but undesirably) commit a long transcript even though the user said "stop".
+      if (audioOutput) {
+        audioOutput.clearBuffer();
+      }
+
       replyAbortController.abort();
       await Promise.allSettled(
         tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
@@ -1457,7 +1464,6 @@ export class AgentActivity implements RecognitionHooks {
       let forwardedText = textOut?.text || '';
 
       if (audioOutput) {
-        audioOutput.clearBuffer();
         const playbackEv = await audioOutput.waitForPlayout();
         if (audioOut?.firstFrameFut.done) {
           // playback EV is valid only if the first frame was already played
