@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-anam
 
+## 1.0.30
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @livekit/agents@1.0.30
+
 ## 1.0.29
 
 ### Patch Changes
