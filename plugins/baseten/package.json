@@ -34,7 +34,7 @@
     "dependencies": {
         "@livekit/agents": "workspace:*",
         "@livekit/agents-plugin-openai": "^1.0.27",
-        "@livekit/rtc-node": "^0.13.12",
+        "@livekit/rtc-node": "^0.13.22",
         "@livekit/agents-plugins-test": "workspace:*",
         "dotenv": "^17.2.3",
         "openai": "^4.0.0",
@@ -48,6 +48,6 @@
     },
     "peerDependencies": {
         "@livekit/agents": "workspace:*",
-        "@livekit/rtc-node": "^0.13.12"
+        "@livekit/rtc-node": "^0.13.22"
     }
 }
