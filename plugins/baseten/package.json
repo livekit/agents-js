@@ -32,15 +32,15 @@
         "voice-ai"
     ],
     "dependencies": {
-        "@livekit/agents": "workspace:*",
-        "@livekit/agents-plugin-openai": "^1.0.29",
-        "@livekit/rtc-node": "^0.13.22",
-        "@livekit/agents-plugins-test": "workspace:*",
         "dotenv": "^17.2.3",
-        "openai": "^4.0.0",
+        "openai": "^6.8.1",
         "ws": "^8.14.2"
     },
     "devDependencies": {
+        "@livekit/agents": "workspace:*",
+        "@livekit/agents-plugin-silero": "workspace:*",
+        "@livekit/agents-plugins-test": "workspace:*",
+        "@livekit/rtc-node": "^0.13.22",
         "@types/node": "^22.18.11",
         "@types/ws": "^8.5.8",
         "tsx": "^4.7.0",
