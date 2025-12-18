@@ -44,6 +44,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@livekit/mutex": "^1.1.1",
     "ws": "^8.16.0"
   },
   "peerDependencies": {
