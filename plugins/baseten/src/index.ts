@@ -1,14 +1,12 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-/**
- * LiveKit Agents Baseten Plugin
- *
- * Integrates Baseten-hosted models with LiveKit Agents for LLM, STT, and TTS services.
- */
 import { Plugin } from '@livekit/agents';
 
+export { LLM } from './llm.js';
+export { STT } from './stt.js';
+export { TTS, ChunkedStream } from './tts.js';
+export type { BasetenLLMOptions, BasetenSttOptions, BasetenTTSOptions } from './types.js';
 class BasetenPlugin extends Plugin {
   constructor() {
     super({
@@ -20,11 +18,3 @@ class BasetenPlugin extends Plugin {
 }
 
 Plugin.registerPlugin(new BasetenPlugin());
-
-// Export classes following LiveKit plugin pattern
-export { LLM } from './llm.js';
-export { STT } from './stt.js';
-export { TTS } from './tts.js';
-
-// Export all types
-export type { BasetenLLMOptions, BasetenSttOptions, BasetenTTSOptions } from './types.js';
