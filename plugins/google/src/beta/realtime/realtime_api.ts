@@ -102,6 +102,7 @@ interface RealtimeOptions {
   contextWindowCompression?: ContextWindowCompressionConfig;
   apiVersion?: string;
   geminiTools?: LLMTools;
+  thinkingConfig?: types.ThinkingConfig;
 }
 
 /**
@@ -273,6 +274,11 @@ export class RealtimeModel extends llm.RealtimeModel {
        * Gemini-specific tools to use for the session
        */
       geminiTools?: LLMTools;
+
+      /**
+       * The thinking configuration for response generation
+       */
+      thinkingConfig?: types.ThinkingConfig;
     } = {},
   ) {
     const inputAudioTranscription =
@@ -330,6 +336,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       contextWindowCompression: options.contextWindowCompression,
       apiVersion: options.apiVersion,
       geminiTools: options.geminiTools,
+      thinkingConfig: options.thinkingConfig,
     };
   }
 
@@ -1152,6 +1159,12 @@ export class RealtimeSession extends llm.RealtimeSession {
       config.contextWindowCompression = opts.contextWindowCompression;
     }
 
+    if (opts.thinkingConfig !== undefined) {
+      config.generationConfig = {
+        thinkingConfig: opts.thinkingConfig,
+      };
+    }
+
     return config;
   }
 
@@ -1410,9 +1423,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.sessionShouldClose.set();
   }
 
-  async commitAudio() {}
+  async commitAudio() { }
 
-  async clearAudio() {}
+  async clearAudio() { }
 
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
     if (this.inputResampler) {
