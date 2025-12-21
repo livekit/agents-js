@@ -1431,10 +1431,10 @@ export class RealtimeSession extends llm.RealtimeSession {
         cachedTokens: usage?.input_token_details?.cached_tokens ?? 0,
         cachedTokensDetails: usage?.input_token_details?.cached_tokens_details
           ? {
-            audioTokens: usage?.input_token_details?.cached_tokens_details?.audio_tokens ?? 0,
-            textTokens: usage?.input_token_details?.cached_tokens_details?.text_tokens ?? 0,
-            imageTokens: usage?.input_token_details?.cached_tokens_details?.image_tokens ?? 0,
-          }
+              audioTokens: usage?.input_token_details?.cached_tokens_details?.audio_tokens ?? 0,
+              textTokens: usage?.input_token_details?.cached_tokens_details?.text_tokens ?? 0,
+              imageTokens: usage?.input_token_details?.cached_tokens_details?.image_tokens ?? 0,
+            }
           : undefined,
       },
       outputTokenDetails: {
