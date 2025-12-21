@@ -102,7 +102,6 @@ interface RealtimeOptions {
   contextWindowCompression?: ContextWindowCompressionConfig;
   apiVersion?: string;
   geminiTools?: LLMTools;
-  thinkingConfig?: types.ThinkingConfig;
 }
 
 /**
@@ -448,14 +447,13 @@ export class RealtimeSession extends llm.RealtimeSession {
   private async closeActiveSession(): Promise<void> {
     const unlock = await this.sessionLock.lock();
 
-    const session = this.activeSession;
-    this.activeSession = undefined;
-
-    if (session) {
+    if (this.activeSession) {
       try {
-        await session.close();
+        await this.activeSession.close();
       } catch (error) {
         this.#logger.warn({ error }, 'Error closing Gemini session');
+      } finally {
+        this.activeSession = undefined;
       }
     }
 
@@ -465,11 +463,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private markRestartNeeded(): void {
     if (!this.sessionShouldClose.isSet) {
       this.sessionShouldClose.set();
-      // Replace the queue so new messages don't go to the old (closing) session.
-      const oldQueue = this.messageChannel;
       this.messageChannel = new Queue();
-      // Wake up the current sendTask if it's waiting for a message.
-      oldQueue.put({ type: '__internal_wakeup__' } as any);
     }
   }
 
@@ -769,26 +763,14 @@ export class RealtimeSession extends llm.RealtimeSession {
               this.onReceiveMessage(session, message);
             },
             onerror: (error: ErrorEvent) => {
-              this.#logger.error({ error }, 'Gemini Live session error');
-              sessionOpened.set(); // Break the wait if we were waiting for open
+              this.#logger.error('Gemini Live session error:', error);
               if (!this.sessionShouldClose.isSet) {
                 this.markRestartNeeded();
               }
             },
             onclose: (event: CloseEvent) => {
-              if (this.activeSession !== session) {
-                return;
-              }
-
-              this.#logger.debug(
-                { code: event.code, reason: event.reason },
-                'Gemini Live session closed',
-              );
-              sessionOpened.set(); // Break the wait if we were waiting for open
+              this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
               this.markCurrentGenerationDone();
-              if (!this.sessionShouldClose.isSet && !this.#closed) {
-                this.markRestartNeeded();
-              }
             },
           },
           config,
@@ -1144,7 +1126,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       sessionResumption: {
         handle: this.sessionResumptionHandle,
       },
-      thinkingConfig: opts.thinkingConfig ? opts.thinkingConfig : undefined,
     };
 
     // Add generation fields at TOP LEVEL (NO generationConfig!)
