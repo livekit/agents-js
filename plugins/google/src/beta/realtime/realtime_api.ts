@@ -1127,6 +1127,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       sessionResumption: {
         handle: this.sessionResumptionHandle,
       },
+      thinkingConfig: opts.thinkingConfig ? opts.thinkingConfig : undefined,
     };
 
     // Add generation fields at TOP LEVEL (NO generationConfig!)
@@ -1157,12 +1158,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     if (opts.contextWindowCompression !== undefined) {
       config.contextWindowCompression = opts.contextWindowCompression;
-    }
-
-    if (opts.thinkingConfig !== undefined) {
-      config.generationConfig = {
-        thinkingConfig: opts.thinkingConfig,
-      };
     }
 
     return config;
@@ -1423,9 +1418,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.sessionShouldClose.set();
   }
 
-  async commitAudio() { }
+  async commitAudio() {}
 
-  async clearAudio() { }
+  async clearAudio() {}
 
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
     if (this.inputResampler) {

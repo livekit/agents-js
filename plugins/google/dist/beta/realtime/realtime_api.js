@@ -712,7 +712,8 @@ class RealtimeSession extends llm.RealtimeSession {
       outputAudioTranscription: opts.outputAudioTranscription,
       sessionResumption: {
         handle: this.sessionResumptionHandle
-      }
+      },
+      thinkingConfig: opts.thinkingConfig ? opts.thinkingConfig : void 0
     };
     if (opts.temperature !== void 0) {
       config.temperature = opts.temperature;
@@ -737,11 +738,6 @@ class RealtimeSession extends llm.RealtimeSession {
     }
     if (opts.contextWindowCompression !== void 0) {
       config.contextWindowCompression = opts.contextWindowCompression;
-    }
-    if (opts.thinkingConfig !== void 0) {
-      config.generationConfig = {
-        thinkingConfig: opts.thinkingConfig
-      };
     }
     return config;
   }
