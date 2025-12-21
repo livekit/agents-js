@@ -1,1 +1,0 @@
-{"version":3,"sources":["../src/tools.ts"],"sourcesContent":["// SPDX-FileCopyrightText: 2025 LiveKit, Inc.\n//\n// SPDX-License-Identifier: Apache-2.0\nimport type { Tool } from '@google/genai';\n\nexport type LLMTools = Omit<Tool, 'functionDeclarations'>;\n"],"mappings":";;;;;;;;;;;;;;AAAA;AAAA;","names":[]}
