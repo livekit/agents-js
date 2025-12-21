@@ -187,13 +187,13 @@ class RealtimeSession extends import_agents.llm.RealtimeSession {
   }
   async closeActiveSession() {
     const unlock = await this.sessionLock.lock();
-    if (this.activeSession) {
+    const session = this.activeSession;
+    this.activeSession = void 0;
+    if (session) {
       try {
-        await this.activeSession.close();
+        await session.close();
       } catch (error) {
         this.#logger.warn({ error }, "Error closing Gemini session");
-      } finally {
-        this.activeSession = void 0;
       }
     }
     unlock();
@@ -201,7 +201,9 @@ class RealtimeSession extends import_agents.llm.RealtimeSession {
   markRestartNeeded() {
     if (!this.sessionShouldClose.isSet) {
       this.sessionShouldClose.set();
+      const oldQueue = this.messageChannel;
       this.messageChannel = new import_agents.Queue();
+      oldQueue.put({ type: "__internal_wakeup__" });
     }
   }
   getToolResultsForRealtime(ctx, vertexai) {
@@ -435,14 +437,25 @@ class RealtimeSession extends import_agents.llm.RealtimeSession {
               this.onReceiveMessage(session, message);
             },
             onerror: (error) => {
-              this.#logger.error("Gemini Live session error:", error);
+              this.#logger.error({ error }, "Gemini Live session error");
+              sessionOpened.set();
               if (!this.sessionShouldClose.isSet) {
                 this.markRestartNeeded();
               }
             },
             onclose: (event) => {
-              this.#logger.debug("Gemini Live session closed:", event.code, event.reason);
+              if (this.activeSession !== session) {
+                return;
+              }
+              this.#logger.debug(
+                { code: event.code, reason: event.reason },
+                "Gemini Live session closed"
+              );
+              sessionOpened.set();
               this.markCurrentGenerationDone();
+              if (!this.sessionShouldClose.isSet && !this.#closed) {
+                this.markRestartNeeded();
+              }
             }
           },
           config
