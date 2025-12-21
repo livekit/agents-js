@@ -1,0 +1,1 @@
+{"version":3,"sources":["../../src/beta/index.ts"],"sourcesContent":["// SPDX-FileCopyrightText: 2025 LiveKit, Inc.\n//\n// SPDX-License-Identifier: Apache-2.0\n\nexport { TTS, type GeminiTTSModels, type GeminiVoices, type TTSOptions } from './gemini_tts.js';\nexport * as realtime from './realtime/index.js';\n"],"mappings":"AAIA,SAAS,WAAqE;AAC9E,YAAY,cAAc;","names":[]}
