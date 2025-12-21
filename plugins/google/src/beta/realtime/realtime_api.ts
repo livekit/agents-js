@@ -102,6 +102,7 @@ interface RealtimeOptions {
   contextWindowCompression?: ContextWindowCompressionConfig;
   apiVersion?: string;
   geminiTools?: LLMTools;
+  thinkingConfig?: types.ThinkingConfig;
 }
 
 /**
@@ -1126,6 +1127,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       sessionResumption: {
         handle: this.sessionResumptionHandle,
       },
+      thinkingConfig: opts.thinkingConfig ? opts.thinkingConfig : undefined,
     };
 
     // Add generation fields at TOP LEVEL (NO generationConfig!)
