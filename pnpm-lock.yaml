@@ -374,6 +374,9 @@ importers:
       '@livekit/rtc-node':
         specifier: ^0.13.22
         version: 0.13.22
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@22.19.1)
       '@types/node':
         specifier: ^22.18.11
         version: 22.19.1
