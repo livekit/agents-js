@@ -102,6 +102,7 @@ interface RealtimeOptions {
   contextWindowCompression?: ContextWindowCompressionConfig;
   apiVersion?: string;
   geminiTools?: LLMTools;
+  thinkingConfig?: types.ThinkingConfig;
 }
 
 /**
@@ -273,6 +274,11 @@ export class RealtimeModel extends llm.RealtimeModel {
        * Gemini-specific tools to use for the session
        */
       geminiTools?: LLMTools;
+
+      /**
+       * The thinking configuration for response generation
+       */
+      thinkingConfig?: types.ThinkingConfig;
     } = {},
   ) {
     const inputAudioTranscription =
@@ -330,6 +336,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       contextWindowCompression: options.contextWindowCompression,
       apiVersion: options.apiVersion,
       geminiTools: options.geminiTools,
+      thinkingConfig: options.thinkingConfig,
     };
   }
 
@@ -1120,6 +1127,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       sessionResumption: {
         handle: this.sessionResumptionHandle,
       },
+      thinkingConfig: opts.thinkingConfig ? opts.thinkingConfig : undefined,
     };
 
     // Add generation fields at TOP LEVEL (NO generationConfig!)
