@@ -1225,6 +1225,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
+    if (!event.part) {
+      return;
+    }
     if (event.part.type !== 'text') {
       return;
     }
