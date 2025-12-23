@@ -66,3 +66,5 @@ export {
   toJsonSchema,
   type OpenAIFunctionParameters,
 } from './utils.js';
+
+export { FallbackAdapter, type FallbackAdapterOptions } from './fallback_adapter.js';
