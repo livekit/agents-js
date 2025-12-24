@@ -449,6 +449,8 @@ export class LLMStream extends llm.LLMStream {
               callId: part.functionCall.id || shortuuid('function_call_'),
               name: part.functionCall.name!,
               args: JSON.stringify(part.functionCall.args!),
+              // Preserve thought signature for Gemini 3+ thinking mode
+              thoughtSignature: part.thoughtSignature,
             }),
           ],
         },
