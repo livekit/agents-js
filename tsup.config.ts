@@ -24,6 +24,7 @@ const defaultOptions: Options = {
       // require('../path') → require('../path.cjs') in `.cjs` files
       // from './path' → from './path.cjs' in `.cjs` files
       // from '../path' → from '../path.cjs' in `.cjs` files
+      // (0, import_node_child_process.fork)(new URL("./path.js" → (0, import_node_child_process.fork)(new URL("./path.cjs" in `.cjs` files
       name: 'fix-cjs-imports',
       renderChunk(code) {
         if (this.format === 'cjs') {

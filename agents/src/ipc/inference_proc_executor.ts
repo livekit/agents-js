@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ChildProcess } from 'node:child_process';
 import { fork } from 'node:child_process';
+import { extname } from 'node:path';
 import { log } from '../log.js';
 import { shortuuid } from '../utils.js';
 import type { InferenceExecutor } from './inference_executor.js';
@@ -17,6 +18,8 @@ class PendingInference {
     arg;
   }
 }
+
+const currentFileExtension = extname(import.meta.url);
 
 export class InferenceProcExecutor extends SupervisedProc implements InferenceExecutor {
   #runners: { [id: string]: string };
@@ -55,7 +58,7 @@ export class InferenceProcExecutor extends SupervisedProc implements InferenceEx
   }
 
   createProcess(): ChildProcess {
-    return fork(new URL('./inference_proc_lazy_main.js', import.meta.url), [
+    return fork(new URL(`./inference_proc_lazy_main${currentFileExtension}`, import.meta.url), [
       JSON.stringify(this.#runners),
     ]);
   }
