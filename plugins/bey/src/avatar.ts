@@ -120,7 +120,7 @@ export class AvatarSession {
     if (!this.apiKey) {
       throw new BeyException(
         'The api_key must be set either by passing apiKey to the client or ' +
-          'by setting the BEY_API_KEY environment variable',
+        'by setting the BEY_API_KEY environment variable',
       );
     }
 
@@ -154,7 +154,7 @@ export class AvatarSession {
     if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
       throw new BeyException(
         'livekitUrl, livekitApiKey, and livekitApiSecret must be set ' +
-          'by arguments or environment variables',
+        'by arguments or environment variables',
       );
     }
 
@@ -176,6 +176,7 @@ export class AvatarSession {
       identity: this.avatarParticipantIdentity,
       name: this.avatarParticipantName,
     });
+    at.kind = 'agent';
 
     at.addGrant({
       roomJoin: true,
