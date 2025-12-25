@@ -176,6 +176,7 @@ export class AvatarSession {
       identity: this.avatarParticipantIdentity,
       name: this.avatarParticipantName,
     });
+    at.kind = 'agent';
 
     at.addGrant({
       roomJoin: true,
