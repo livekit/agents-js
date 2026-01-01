@@ -934,9 +934,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       unlock();
     }
 
+    // start new generation for serverContent or for standalone toolCalls (functionChannel closed)
     if (
       (!this.currentGeneration || this.currentGeneration._done) &&
-      (response.serverContent || response.toolCall)
+      (response.serverContent ||
+        (response.toolCall && this.currentGeneration?.functionChannel.closed !== false))
     ) {
       this.startNewGeneration();
     }
@@ -1034,7 +1036,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     return obj;
   }
 
-  private markCurrentGenerationDone(): void {
+  private markCurrentGenerationDone(keepFunctionChannelOpen: boolean = false): void {
     if (!this.currentGeneration || this.currentGeneration._done) {
       return;
     }
@@ -1076,7 +1078,9 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     gen.textChannel.close();
     gen.audioChannel.close();
-    gen.functionChannel.close();
+    if (!keepFunctionChannelOpen) {
+      gen.functionChannel.close();
+    }
     gen.messageChannel.close();
     gen._done = true;
   }
@@ -1156,6 +1160,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private startNewGeneration(): void {
+    // close functionChannel of previous generation if still open (no toolCall arrived)
+    if (this.currentGeneration && !this.currentGeneration.functionChannel.closed) {
+      this.currentGeneration.functionChannel.close();
+    }
+
     if (this.currentGeneration && !this.currentGeneration._done) {
       this.#logger.warn('Starting new generation while another is active. Finalizing previous.');
       this.markCurrentGenerationDone();
@@ -1301,7 +1310,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (serverContent.turnComplete) {
-      this.markCurrentGenerationDone();
+      // keep functionChannel open for potential late-arriving toolCalls
+      this.markCurrentGenerationDone(true);
     }
   }
 
@@ -1313,6 +1323,11 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const gen = this.currentGeneration;
 
+    if (gen.functionChannel.closed) {
+      this.#logger.warn('received tool call but functionChannel is already closed.');
+      return;
+    }
+
     for (const fc of toolCall.functionCalls || []) {
       gen.functionChannel.write({
         callId: fc.id || shortuuid('fnc-call-'),
@@ -1321,6 +1336,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       } as llm.FunctionCall);
     }
 
+    gen.functionChannel.close();
     this.markCurrentGenerationDone();
   }
 
