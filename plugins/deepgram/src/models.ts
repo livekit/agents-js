@@ -18,6 +18,8 @@ export type TTSModels =
 
 export type TTSEncoding = 'linear16' | 'mulaw' | 'alaw' | 'mp3' | 'opus' | 'flac' | 'aac';
 
+export type V2Models = "flux-general-en";
+
 export type STTModels =
   | 'nova-general'
   | 'nova-phonecall'
