@@ -37,6 +37,7 @@
     "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/agents-plugin-resemble": "workspace:*",
     "@livekit/agents-plugin-silero": "workspace:*",
+    "@livekit/agents-plugin-xai": "workspace:*",
     "@livekit/noise-cancellation-node": "^0.1.9",
     "@livekit/rtc-node": "^0.13.22",
     "@opentelemetry/api": "^1.9.0",

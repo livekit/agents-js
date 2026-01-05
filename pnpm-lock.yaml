@@ -257,6 +257,9 @@ importers:
       '@livekit/agents-plugin-silero':
         specifier: workspace:*
         version: link:../plugins/silero
+      '@livekit/agents-plugin-xai':
+        specifier: workspace:*
+        version: link:../plugins/xai
       '@livekit/noise-cancellation-node':
         specifier: ^0.1.9
         version: 0.1.9
@@ -792,6 +795,31 @@ importers:
       zod:
         specifier: ^3.25.76
         version: 3.25.76
+
+  plugins/xai:
+    dependencies:
+      openai:
+        specifier: ^6.8.1
+        version: 6.8.1(ws@8.18.3)(zod@4.2.1)
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../openai
+      '@livekit/rtc-node':
+        specifier: ^0.13.22
+        version: 0.13.22
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@22.19.1)
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.4.38)(tsx@4.20.4)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
 
 packages:
 
