@@ -1,6 +1,6 @@
 ---
 "@livekit/agents-plugin-openai": patch
-"@livekit/agents-plugin-xai": minor
+"@livekit/agents-plugin-xai": patch
 ---
 
-add xai plugin and fix openai plugin for xai compatibility
+Add xai plugin and fix openai plugin for xai compatibility
