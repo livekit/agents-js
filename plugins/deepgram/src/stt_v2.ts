@@ -1,19 +1,17 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 import {
   type APIConnectOptions,
   AudioByteStream,
-  calculateAudioDurationSeconds,
   Event,
+  calculateAudioDurationSeconds,
   log,
   stt,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import * as queryString from 'node:querystring';
 import { WebSocket } from 'ws';
-
 import { PeriodicCollector } from './_utils.js';
 import type { V2Models } from './models.js';
 
@@ -448,7 +446,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
     if (this.#opts.keyterms.length > 0) params.keyterm = this.#opts.keyterms;
     if (this.#opts.tags && this.#opts.tags.length > 0) params.tag = this.#opts.tags;
 
-    let baseUrl = this.#opts.endpointUrl.replace(/^http/, 'ws');
+    const baseUrl = this.#opts.endpointUrl.replace(/^http/, 'ws');
     const qs = queryString.stringify(params);
     return `${baseUrl}?${qs}`;
   }
