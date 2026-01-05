@@ -1,0 +1,6 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/api-extractor/v7/api-extractor.schema.json",
+  "extends": "../../api-extractor-shared.json",
+  "mainEntryPointFilePath": "./dist/index.d.ts"
+}
+
