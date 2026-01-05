@@ -2009,7 +2009,13 @@ export class AgentActivity implements RecognitionHooks {
 
     await executeToolsTask.result;
 
-    if (toolOutput.output.length === 0) return;
+    if (toolOutput.output.length === 0) {
+      // return to listening state for thinking-only turns (no audio output, no tools)
+      if (!speechHandle.interrupted) {
+        this.agentSession._updateAgentState('listening');
+      }
+      return;
+    }
 
     // important: no agent ouput should be used after this point
     const { maxToolSteps } = this.agentSession.options;
