@@ -5,18 +5,58 @@ import type * as types from '@google/genai';
 
 /**
  * Supported Google Live API models
+ *
+ * Gemini API deprecations: https://ai.google.dev/gemini-api/docs/deprecations
+ * Gemini API release notes with preview deprecations: https://ai.google.dev/gemini-api/docs/changelog
+ * Live models: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/live-api
+ * VertexAI retirement: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions#retired-models
+ * Additional references:
+ * 1. https://github.com/kazunori279/adk-streaming-test/blob/main/test_report.md
  */
 export type LiveAPIModels =
-  | 'gemini-2.0-flash-exp'
-  // models supported on Gemini API
-  | 'gemini-2.0-flash-live-001'
-  | 'gemini-2.5-flash-preview-native-audio-dialog'
-  | 'gemini-2.5-flash-exp-native-audio-thinking-dialog';
+  // VertexAI models
+  | 'gemini-live-2.5-flash-native-audio' // GA https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/2-5-flash-live-api#live-2.5-flash
+  | 'gemini-live-2.5-flash-preview-native-audio-09-2025' // Public preview https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/2-5-flash-live-api#live-2.5-flash-preview
+  | 'gemini-live-2.5-flash-preview-native-audio' // still works, possibly an alias, but not mentioned in any docs or changelog
+  // Gemini API models
+  | 'gemini-2.5-flash-native-audio-preview-12-2025' // https://ai.google.dev/gemini-api/docs/models#gemini-2.5-flash-live
+  | 'gemini-2.5-flash-native-audio-preview-09-2025' // https://ai.google.dev/gemini-api/docs/models#gemini-2.5-flash-live
+  | 'gemini-2.0-flash-exp'; // still works in Gemini API but not VertexAI
 
 /**
  * Available voice options for Google Realtime API
  */
-export type Voice = 'Puck' | 'Charon' | 'Kore' | 'Fenrir' | 'Aoede' | 'Leda' | 'Orus' | 'Zephyr';
+export type Voice =
+  | 'Achernar'
+  | 'Achird'
+  | 'Algenib'
+  | 'Algieba'
+  | 'Alnilam'
+  | 'Aoede'
+  | 'Autonoe'
+  | 'Callirrhoe'
+  | 'Charon'
+  | 'Despina'
+  | 'Enceladus'
+  | 'Erinome'
+  | 'Fenrir'
+  | 'Gacrux'
+  | 'Iapetus'
+  | 'Kore'
+  | 'Laomedeia'
+  | 'Leda'
+  | 'Orus'
+  | 'Pulcherrima'
+  | 'Puck'
+  | 'Rasalgethi'
+  | 'Sadachbia'
+  | 'Sadaltager'
+  | 'Schedar'
+  | 'Sulafat'
+  | 'Umbriel'
+  | 'Vindemiatrix'
+  | 'Zephyr'
+  | 'Zubenelgenubi';
 
 /**
  * Union type for all possible client events
