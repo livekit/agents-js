@@ -4,6 +4,7 @@
 import { Plugin } from '@livekit/agents';
 
 export * from './stt.js';
+export * from './stt_v2.js';
 export * from './tts.js';
 
 class DeepgramPlugin extends Plugin {
