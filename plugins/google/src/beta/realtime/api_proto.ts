@@ -5,13 +5,6 @@ import type * as types from '@google/genai';
 
 /**
  * Supported Google Live API models
- *
- * Gemini API deprecations: https://ai.google.dev/gemini-api/docs/deprecations
- * Gemini API release notes with preview deprecations: https://ai.google.dev/gemini-api/docs/changelog
- * Live models: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/live-api
- * VertexAI retirement: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions#retired-models
- * Additional references:
- * 1. https://github.com/kazunori279/adk-streaming-test/blob/main/test_report.md
  */
 export type LiveAPIModels =
   // VertexAI models
