@@ -8,10 +8,6 @@ import { z } from 'zod';
 
 export default defineAgent({
   entry: async (ctx: JobContext) => {
-    await ctx.connect();
-    console.log('waiting for participant');
-    await ctx.waitForParticipant();
-
     const agent = new voice.Agent({
       instructions: 'You are a helpful assistant. Keep your responses short and concise.',
       tools: {
