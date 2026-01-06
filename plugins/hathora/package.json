@@ -36,6 +36,7 @@
   "devDependencies": {
     "@livekit/agents": "workspace:*",
     "@livekit/agents-plugin-openai": "workspace:*",
+    "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "^0.13.12",
     "@microsoft/api-extractor": "^7.35.0",
