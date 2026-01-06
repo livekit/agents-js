@@ -5,6 +5,7 @@ import { Plugin } from '@livekit/agents';
 
 export * from './tts.js';
 export * from './stt.js';
+export * from './utils.js';
 
 class HathoraPlugin extends Plugin {
   constructor() {

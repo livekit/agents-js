@@ -7,54 +7,38 @@ import {
   tts,
 } from '@livekit/agents';
 import { URL } from 'node:url';
-import type { KokoroVoices, TTSModels } from './models.js';
+import type { ConfigOption } from './utils.js';
 
-const KOKORO_API_URL = 'https://app-01312daf-6e53-4b9d-a4ad-13039f35adc4.app.hathora.dev/synthesize';
-const CHATTERBOX_API_URL = 'https://app-efbc8fe2-df55-4f96-bbe3-74f6ea9d986b.app.hathora.dev/v1/generate';
+const API_URL = 'https://api.models.hathora.dev/inference/v1/tts';
 const AUTHORIZATION_HEADER = 'Authorization';
 const SAMPLE_RATE = 24000;
 const NUM_CHANNELS = 1;
 
-export type TTSOptions =
-  | KokoroTTSOptions
-  | ChatterboxTTSOptions;
-
-export interface BaseTTSOptions {
-  baseURL: string;
-  apiKey?: string;
-  model: TTSModels;
-}
-
-export interface KokoroTTSOptions extends BaseTTSOptions {
-  model: 'hexgrad_kokoro';
-  voice?: KokoroVoices | string;
+export interface TTSOptions {
+  model: string;
+  voice?: string;
   speed?: number;
+  modelConfig?: ConfigOption[];
+  baseURL?: string;
+  apiKey?: string;
 }
 
-export interface ChatterboxTTSOptions extends BaseTTSOptions {
-  model: 'resembleai_chatterbox';
-  audioPrompt?: Buffer;
-  exaggeration?: number;
-  cfgWeight?: number;
-}
-
-const defaultTTSOptionsBase: TTSOptions = {
-  baseURL: KOKORO_API_URL,
+const defaultTTSOptions: Partial<TTSOptions> = {
+  baseURL: API_URL,
   apiKey: process.env.HATHORA_API_KEY,
-  model: 'hexgrad_kokoro',
 };
 
 export class TTS extends tts.TTS {
   #opts: TTSOptions;
   label = 'hathora.TTS';
 
-  constructor(opts: Partial<TTSOptions> = {}) {
+  constructor(opts: TTSOptions) {
     super(SAMPLE_RATE, 1, {
       streaming: false,
     });
 
     this.#opts = {
-      ...defaultTTSOptionsBase,
+      ...defaultTTSOptions,
       ...opts,
     };
 
@@ -85,12 +69,14 @@ export class ChunkedStream extends tts.ChunkedStream {
     super(text, tts);
     this.#text = text;
 
-    opts.baseURL = opts.model === 'hexgrad_kokoro' ? KOKORO_API_URL : CHATTERBOX_API_URL;
-
     this.#opts = opts;
 
+    if (opts.baseURL === undefined) {
+      this.#opts.baseURL = API_URL;
+    }
+
     // remove trailing slash from baseURL
-    const baseURL = opts.baseURL.replace(/\/$/, '');
+    const baseURL = this.#opts.baseURL!.replace(/\/$/, '');
 
     this.#url = new URL(baseURL);
   }
@@ -100,54 +86,22 @@ export class ChunkedStream extends tts.ChunkedStream {
 
     const headers: HeadersInit = {
       [AUTHORIZATION_HEADER]: `Bearer ${this.#opts.apiKey!}`,
+      'Content-Type': 'application/json',
     };
 
-    if (this.#opts.model === 'hexgrad_kokoro') {
-      headers['Accept'] = 'application/json';
-      headers['Content-Type'] = 'application/json';
+    const body: any = {
+      model: this.#opts.model,
+      text: this.#text,
+    };
+
+    if (this.#opts.voice) {
+      body.voice = this.#opts.voice;
     }
-
-    let body: BodyInit = '';
-
-    if (this.#opts.model === 'hexgrad_kokoro') {
-      const kokoroOpts = toKokoroOptions(this.#text, this.#opts);
-      body = JSON.stringify(kokoroOpts);
-    } else if (this.#opts.model === 'resembleai_chatterbox') {
-      const data = new FormData();
-
-      data.append('text', this.#text);
-
-      if (this.#opts.exaggeration !== undefined) {
-        data.append('exaggeration', this.#opts.exaggeration.toString());
-      }
-
-      if (this.#opts.cfgWeight !== undefined) {
-        data.append('cfg_weight', this.#opts.cfgWeight.toString());
-      }
-
-      if (this.#opts.audioPrompt) {
-        const chunks: BlobPart[] = [];
-        const source = new Uint8Array(this.#opts.audioPrompt);
-        const copy = new ArrayBuffer(source.byteLength);
-        new Uint8Array(copy).set(source);
-        chunks.push(copy);
-
-        // let done = false;
-        // while (!done) {
-        //   const { value, done: readDone } = await reader.read();
-        //   if (value) {
-        //     const source = new Uint8Array(value.data);
-        //     const copy = new ArrayBuffer(source.byteLength);
-        //     new Uint8Array(copy).set(source);
-        //     chunks.push(copy);
-        //   }
-        //   done = readDone;
-        // }
-        const audioBlob = new Blob(chunks, { type: 'audio/wav' });
-        data.append('audio_prompt', audioBlob, 'audio_prompt.raw');
-      }
-
-      body = data;
+    if (this.#opts.speed) {
+      body.speed = this.#opts.speed;
+    }
+    if (this.#opts.modelConfig) {
+      body.model_config = this.#opts.modelConfig;
     }
 
     const response = await fetch(
@@ -155,7 +109,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       {
         method: 'POST',
         headers,
-        body,
+        body: JSON.stringify(body),
       },
     );
 
@@ -178,18 +132,6 @@ export class ChunkedStream extends tts.ChunkedStream {
       });
     }
   }
-}
-
-const toKokoroOptions = (text: string, opts: TTSOptions) => {
-  if (opts.model !== 'hexgrad_kokoro') {
-    throw new Error('Invalid model for Kokoro options');
-  }
-
-  return {
-    text,
-    voice: opts.voice,
-    speed: opts.speed,
-  };
 }
 
 const convertWavToRawPCM = (wavBuffer: ArrayBuffer): ArrayBuffer => {

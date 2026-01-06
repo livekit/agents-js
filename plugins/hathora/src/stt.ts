@@ -1,34 +1,29 @@
-import { type AudioBuffer, mergeFrames, stt } from '@livekit/agents';
-import type { AudioFrame } from '@livekit/rtc-node';
-import type { STTModels } from './models.js';
+import { type AudioBuffer, stt } from '@livekit/agents';
+import { combineAudioFrames, type AudioFrame } from '@livekit/rtc-node';
+import type { ConfigOption } from './utils.js';
 
-const PARAKEET_TDT_API_URL = 'https://app-1c7bebb9-6977-4101-9619-833b251b86d1.app.hathora.dev/v1/transcribe';
+const API_URL = 'https://api.models.hathora.dev/inference/v1/stt';
 const AUTHORIZATION_HEADER = 'Authorization';
 
-export type STTOptions =
-  | ParakeetTDTSTTOptions;
-
-export interface BaseSTTOptions {
-  baseURL: string;
+export interface STTOptions {
+  model: string;
+  language?: string;
+  modelConfig?: ConfigOption[];
+  baseURL?: string;
   apiKey?: string;
-  model: STTModels;
 }
 
-export interface ParakeetTDTSTTOptions extends BaseSTTOptions {
-  model: 'nvidia_parakeet_tdt_v3';
-}
-
-const defaultSTTOptions: STTOptions = {
-  baseURL: PARAKEET_TDT_API_URL,
+const defaultSTTOptions: Partial<STTOptions> = {
+  baseURL: API_URL,
   apiKey: process.env.HATHORA_API_KEY,
-  model: 'nvidia_parakeet_tdt_v3',
 };
 
 export class STT extends stt.STT {
-  #opts: STTOptions;
   label = 'hathora.STT';
+  #opts: STTOptions;
+  #url: URL;
 
-  constructor(opts: Partial<STTOptions> = {}) {
+  constructor(opts: STTOptions) {
     super({ streaming: false, interimResults: false });
 
     this.#opts = {
@@ -36,7 +31,14 @@ export class STT extends stt.STT {
       ...opts
     };
 
-    this.#opts.baseURL = this.#opts.baseURL.replace(/\/$/, '');
+    if (opts.baseURL === undefined) {
+      this.#opts.baseURL = API_URL;
+    }
+
+    // remove trailing slash from baseURL
+    const baseURL = this.#opts.baseURL!.replace(/\/$/, '');
+
+    this.#url = new URL(baseURL);
 
     if (this.#opts.apiKey === undefined) {
       throw new Error('Hathora API key is required, whether as an argument or as $HATHORA_API_KEY');
@@ -65,30 +67,33 @@ export class STT extends stt.STT {
     return Buffer.concat([header, Buffer.from(frame.data.buffer)]);
   }
 
-  async _recognize(buffer: AudioBuffer, language?: string): Promise<stt.SpeechEvent> {
-    buffer = mergeFrames(buffer);
-    const file = new File([this.#createWav(buffer)], 'audio.wav', { type: 'audio/wav' });
-
+  async _recognize(buffer: AudioBuffer, abortSignal?: AbortSignal): Promise<stt.SpeechEvent> {
     const headers: HeadersInit = {
       [AUTHORIZATION_HEADER]: `Bearer ${this.#opts.apiKey!}`,
+      'Content-Type': 'application/json',
     };
 
-    let body: BodyInit = '';
+    let body: any = {
+      model: this.#opts.model,
+    };
 
-    if (this.#opts.model === 'nvidia_parakeet_tdt_v3') {
-      const data = new FormData();
-
-      data.append('file', file);
-
-      body = data;
+    if (this.#opts.language) {
+      body.language = this.#opts.language;
     }
 
+    if (this.#opts.modelConfig) {
+      body.model_config = this.#opts.modelConfig;
+    }
+
+    body.audio = this.#createWav(combineAudioFrames(buffer)).toString('base64');
+
     const response = await fetch(
-      this.#opts.baseURL,
+      this.#url,
       {
         method: 'POST',
         headers,
-        body,
+        body: JSON.stringify(body),
+        signal: abortSignal,
       },
     );
 
@@ -103,7 +108,7 @@ export class STT extends stt.STT {
       alternatives: [
         {
           text: result.text || '',
-          language: language || '',
+          language: this.#opts.language || '',
           startTime: 0,
           endTime: 0,
           confidence: 0,
