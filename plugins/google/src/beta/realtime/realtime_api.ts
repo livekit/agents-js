@@ -1244,7 +1244,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const turn = serverContent.modelTurn;
 
       for (const part of turn.parts || []) {
-        // bypass reasoning/thought output - don't display to UI
+        // bypass reasoning/thought output
         if (part.thought) {
           continue;
         }
