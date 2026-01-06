@@ -1244,6 +1244,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       const turn = serverContent.modelTurn;
 
       for (const part of turn.parts || []) {
+        // bypass reasoning/thought output - don't display to UI
+        if (part.thought) {
+          continue;
+        }
+
         if (part.text) {
           gen.outputText += part.text;
           gen.textChannel.write(part.text);
