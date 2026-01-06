@@ -9,7 +9,7 @@ The Agents Framework is designed for building realtime, programmable
 participants that run on servers. Use it to create conversational, multi-modal
 voice agents that can see, hear, and understand.
 
-This package contains the Hathora plugin, which allows for voice synthesis.
+This package contains the Hathora plugin, which allows for voice synthesis and speech recognition.
 Refer to the [documentation](https://docs.livekit.io/agents/overview/) for
 information on how to use it, or browse the [API
 reference](https://docs.livekit.io/agents-js/modules/plugins_agents_plugin_hathora.html).

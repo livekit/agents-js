@@ -14,12 +14,31 @@ const AUTHORIZATION_HEADER = 'Authorization';
 const SAMPLE_RATE = 24000;
 const NUM_CHANNELS = 1;
 
+/**
+ * @interface TTSOptions - Options for configuring the Hathora TTS service.
+ * @property model - Model to use; find available models [here](https://models.hathora.dev).
+ * @property [voice] - Voice to use for synthesis (if supported by model).
+ * @property [speed] - Speech speed multiplier (if supported by model).
+ * @property [modelConfig] - Some models support additional config, refer to [docs](https://models.hathora.dev)
+ *           for each model to see what is supported.
+ * @property [baseURL] - Base API URL for the Hathora TTS service.
+ * @property [apiKey] - API key for authentication with the Hathora service;
+ *           provision one [here](https://models.hathora.dev/tokens).
+ */
 export interface TTSOptions {
+  /**  Model to use; find available models [here](https://models.hathora.dev).*/
   model: string;
+  /** Voice to use for synthesis (if supported by model). */
   voice?: string;
+  /** Speech speed multiplier (if supported by model). */
   speed?: number;
+  /** Some models support additional config, refer to [docs](https://models.hathora.dev)
+   * for each model to see what is supported. */
   modelConfig?: ConfigOption[];
+  /** Base API URL for the Hathora TTS service. */
   baseURL?: string;
+  /** API key for authentication with the Hathora service;
+   * provision one [here](https://models.hathora.dev/tokens). */
   apiKey?: string;
 }
 
@@ -28,6 +47,11 @@ const defaultTTSOptions: Partial<TTSOptions> = {
   apiKey: process.env.HATHORA_API_KEY,
 };
 
+/**
+ * This service supports several different text-to-speech models hosted by Hathora.
+ *
+ * [Documentation](https://models.hathora.dev)
+ */
 export class TTS extends tts.TTS {
   #opts: TTSOptions;
   label = 'hathora.TTS';

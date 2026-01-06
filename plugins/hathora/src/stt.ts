@@ -5,11 +5,28 @@ import type { ConfigOption } from './utils.js';
 const API_URL = 'https://api.models.hathora.dev/inference/v1/stt';
 const AUTHORIZATION_HEADER = 'Authorization';
 
+/**
+ * @interface STTOptions - Options for configuring the Hathora STT service.
+ * @property model - Model to use; find available models [here](https://models.hathora.dev).
+ * @property [language] - Language code (if supported by model).
+ * @property [modelConfig] - Some models support additional config, refer to [docs](https://models.hathora.dev)
+ *           for each model to see what is supported.
+ * @property [baseURL] - Base API URL for the Hathora STT service.
+ * @property [apiKey] - API key for authentication with the Hathora service;
+ *           provision one [here](https://models.hathora.dev/tokens).
+ */
 export interface STTOptions {
+  /**  Model to use; find available models [here](https://models.hathora.dev).*/
   model: string;
+  /** Language code (if supported by model). */
   language?: string;
+  /** Some models support additional config, refer to [docs](https://models.hathora.dev)
+   * for each model to see what is supported. */
   modelConfig?: ConfigOption[];
+  /** Base API URL for the Hathora TTS service. */
   baseURL?: string;
+  /** API key for authentication with the Hathora service;
+   * provision one [here](https://models.hathora.dev/tokens). */
   apiKey?: string;
 }
 
@@ -18,6 +35,11 @@ const defaultSTTOptions: Partial<STTOptions> = {
   apiKey: process.env.HATHORA_API_KEY,
 };
 
+/**
+ * This service supports several different speech-to-text models hosted by Hathora.
+ *
+ * [Documentation](https://models.hathora.dev)
+ */
 export class STT extends stt.STT {
   label = 'hathora.STT';
   #opts: STTOptions;
