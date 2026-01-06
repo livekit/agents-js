@@ -189,19 +189,35 @@ export class FunctionCall {
 
   createdAt: number;
 
+  /**
+   * Opaque signature for Gemini thinking mode.
+   * When using Gemini 3+ models with thinking enabled, this signature must be
+   * preserved and returned with function responses to maintain thought context.
+   */
+  thoughtSignature?: string;
+
   constructor(params: {
     callId: string;
     name: string;
     args: string;
     id?: string;
     createdAt?: number;
+    thoughtSignature?: string;
   }) {
-    const { callId, name, args, id = shortuuid('item_'), createdAt = Date.now() } = params;
+    const {
+      callId,
+      name,
+      args,
+      id = shortuuid('item_'),
+      createdAt = Date.now(),
+      thoughtSignature,
+    } = params;
     this.id = id;
     this.callId = callId;
     this.args = args;
     this.name = name;
     this.createdAt = createdAt;
+    this.thoughtSignature = thoughtSignature;
   }
 
   static create(params: {
@@ -210,6 +226,7 @@ export class FunctionCall {
     args: string;
     id?: string;
     createdAt?: number;
+    thoughtSignature?: string;
   }) {
     return new FunctionCall(params);
   }
@@ -223,6 +240,10 @@ export class FunctionCall {
       name: this.name,
       args: this.args,
     };
+
+    if (this.thoughtSignature) {
+      result.thoughtSignature = this.thoughtSignature;
+    }
 
     if (!excludeTimestamp) {
       result.createdAt = this.createdAt;
@@ -602,7 +623,12 @@ export class ChatContext {
           return false;
         }
       } else if (a.type === 'function_call' && b.type === 'function_call') {
-        if (a.name !== b.name || a.callId !== b.callId || a.args !== b.args) {
+        if (
+          a.name !== b.name ||
+          a.callId !== b.callId ||
+          a.args !== b.args ||
+          a.thoughtSignature !== b.thoughtSignature
+        ) {
           return false;
         }
       } else if (a.type === 'function_call_output' && b.type === 'function_call_output') {
