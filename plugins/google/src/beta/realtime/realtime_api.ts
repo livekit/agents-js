@@ -300,7 +300,9 @@ export class RealtimeModel extends llm.RealtimeModel {
     const vertexai = options.vertexai ?? false;
 
     // Model selection based on API type
-    const defaultModel = vertexai ? 'gemini-2.0-flash-exp' : 'gemini-2.0-flash-live-001';
+    const defaultModel = vertexai
+      ? 'gemini-live-2.5-flash-native-audio'
+      : 'gemini-2.5-flash-native-audio-preview-12-2025';
 
     this._options = {
       model: options.model || defaultModel,
