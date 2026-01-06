@@ -1,20 +1,10 @@
 import { type AudioBuffer, stt } from '@livekit/agents';
-import { combineAudioFrames, type AudioFrame } from '@livekit/rtc-node';
+import { type AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import type { ConfigOption } from './utils.js';
 
 const API_URL = 'https://api.models.hathora.dev/inference/v1/stt';
 const AUTHORIZATION_HEADER = 'Authorization';
 
-/**
- * @interface STTOptions - Options for configuring the Hathora STT service.
- * @property model - Model to use; find available models [here](https://models.hathora.dev).
- * @property [language] - Language code (if supported by model).
- * @property [modelConfig] - Some models support additional config, refer to [docs](https://models.hathora.dev)
- *           for each model to see what is supported.
- * @property [baseURL] - Base API URL for the Hathora STT service.
- * @property [apiKey] - API key for authentication with the Hathora service;
- *           provision one [here](https://models.hathora.dev/tokens).
- */
 export interface STTOptions {
   /**  Model to use; find available models [here](https://models.hathora.dev).*/
   model: string;
@@ -50,7 +40,7 @@ export class STT extends stt.STT {
 
     this.#opts = {
       ...defaultSTTOptions,
-      ...opts
+      ...opts,
     };
 
     if (opts.baseURL === undefined) {
@@ -95,7 +85,7 @@ export class STT extends stt.STT {
       'Content-Type': 'application/json',
     };
 
-    let body: any = {
+    const body: Record<string, string | number | ConfigOption[]> = {
       model: this.#opts.model,
     };
 
@@ -109,15 +99,12 @@ export class STT extends stt.STT {
 
     body.audio = this.#createWav(combineAudioFrames(buffer)).toString('base64');
 
-    const response = await fetch(
-      this.#url,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: abortSignal,
-      },
-    );
+    const response = await fetch(this.#url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: abortSignal,
+    });
 
     if (!response.ok) {
       throw new Error(`STT request failed: ${response.status} ${response.statusText}`);

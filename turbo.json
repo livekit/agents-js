@@ -51,7 +51,8 @@
     "RIME_API_KEY",
     "LK_OPENAI_DEBUG",
     "OVHCLOUD_API_KEY",
-    "INWORLD_API_KEY"
+    "INWORLD_API_KEY",
+    "HATHORA_API_KEY"
   ],
   "pipeline": {
     "build": {

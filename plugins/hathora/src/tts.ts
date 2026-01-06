@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  AudioByteStream,
-  shortuuid,
-  tts,
-} from '@livekit/agents';
+import { AudioByteStream, shortuuid, tts } from '@livekit/agents';
 import { URL } from 'node:url';
 import type { ConfigOption } from './utils.js';
 
@@ -14,17 +10,6 @@ const AUTHORIZATION_HEADER = 'Authorization';
 const SAMPLE_RATE = 24000;
 const NUM_CHANNELS = 1;
 
-/**
- * @interface TTSOptions - Options for configuring the Hathora TTS service.
- * @property model - Model to use; find available models [here](https://models.hathora.dev).
- * @property [voice] - Voice to use for synthesis (if supported by model).
- * @property [speed] - Speech speed multiplier (if supported by model).
- * @property [modelConfig] - Some models support additional config, refer to [docs](https://models.hathora.dev)
- *           for each model to see what is supported.
- * @property [baseURL] - Base API URL for the Hathora TTS service.
- * @property [apiKey] - API key for authentication with the Hathora service;
- *           provision one [here](https://models.hathora.dev/tokens).
- */
 export interface TTSOptions {
   /**  Model to use; find available models [here](https://models.hathora.dev).*/
   model: string;
@@ -67,9 +52,7 @@ export class TTS extends tts.TTS {
     };
 
     if (this.#opts.apiKey === undefined) {
-      throw new Error(
-        'Hathora API key is required, whether as an argument or as $HATHORA_API_KEY',
-      );
+      throw new Error('Hathora API key is required, whether as an argument or as $HATHORA_API_KEY');
     }
   }
 
@@ -113,7 +96,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       'Content-Type': 'application/json',
     };
 
-    const body: any = {
+    const body: Record<string, string | number | ConfigOption[]> = {
       model: this.#opts.model,
       text: this.#text,
     };
@@ -128,14 +111,11 @@ export class ChunkedStream extends tts.ChunkedStream {
       body.model_config = this.#opts.modelConfig;
     }
 
-    const response = await fetch(
-      this.#url,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-      },
-    );
+    const response = await fetch(this.#url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
 
     if (!response.ok) {
       throw new Error(`TTS request failed: ${response.status} ${response.statusText}`);
@@ -162,12 +142,14 @@ const convertWavToRawPCM = (wavBuffer: ArrayBuffer): ArrayBuffer => {
   const dataView = new DataView(wavBuffer);
 
   // Check the "RIFF" chunk descriptor
-  if (dataView.getUint32(0, false) !== 0x52494646) { // "RIFF"
+  if (dataView.getUint32(0, false) !== 0x52494646) {
+    // "RIFF"
     throw new Error('Invalid WAV file: Missing "RIFF" descriptor');
   }
 
   // Check the "WAVE" format
-  if (dataView.getUint32(8, false) !== 0x57415645) { // "WAVE"
+  if (dataView.getUint32(8, false) !== 0x57415645) {
+    // "WAVE"
     throw new Error('Invalid WAV file: Missing "WAVE" format');
   }
 
@@ -177,14 +159,15 @@ const convertWavToRawPCM = (wavBuffer: ArrayBuffer): ArrayBuffer => {
     const subChunkID = dataView.getUint32(offset, false);
     const subChunkSize = dataView.getUint32(offset + 4, true);
 
-    if (subChunkID === 0x64617461) { // "data"
+    if (subChunkID === 0x64617461) {
+      // "data"
       const dataStart = offset + 8;
       const dataEnd = dataStart + subChunkSize;
       return wavBuffer.slice(dataStart, dataEnd);
     }
 
-    offset += (8 + subChunkSize);
+    offset += 8 + subChunkSize;
   }
 
   throw new Error('Invalid WAV file: Missing "data" sub-chunk');
-}
+};
