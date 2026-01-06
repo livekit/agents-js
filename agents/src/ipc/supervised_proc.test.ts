@@ -96,6 +96,12 @@ describe('IPC send on dead process', () => {
     const child = fork(childScript, [], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
     const exitPromise = new Promise<void>((r) => child.on('exit', r));
 
+    // Suppress EPIPE errors that can occur due to race conditions between
+    // child.connected check and the actual pipe state
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code !== 'EPIPE') throw err;
+    });
+
     let sent = 0;
     let skipped = 0;
 
