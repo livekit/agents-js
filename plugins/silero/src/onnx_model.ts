@@ -22,7 +22,6 @@ export class OnnxModel {
   #contextSize: number;
   #sampleRateNd: BigInt64Array;
   #context: Float32Array;
-  // #state: Float32Array;
   #rnnState: Float32Array;
   #inputBuffer: Float32Array;
 
@@ -73,8 +72,8 @@ export class OnnxModel {
         sr: new Tensor('int64', this.#sampleRateNd),
       })
       .then((result) => {
-        // this.#state = result.output.data as Float32Array,
-        this.#context = this.#inputBuffer.subarray(0, this.#contextSize);
+        this.#rnnState.set(result.stateN!.data as Float32Array);
+        this.#context = this.#inputBuffer.slice(-this.#contextSize);
         return (result.output!.data as Float32Array).at(0)!;
       });
   }
