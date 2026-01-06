@@ -67,4 +67,8 @@ export {
   type OpenAIFunctionParameters,
 } from './utils.js';
 
-export { FallbackAdapter, type FallbackAdapterOptions } from './fallback_adapter.js';
+export {
+  FallbackAdapter,
+  type AvailabilityChangedEvent,
+  type FallbackAdapterOptions,
+} from './fallback_adapter.js';
