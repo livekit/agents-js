@@ -146,6 +146,8 @@ export class RealtimeModel extends llm.RealtimeModel {
     options: {
       model?: string;
       voice?: string;
+      /** @deprecated Unused in GA API (v1). Temperature is no longer supported. */
+      temperature?: number;
       toolChoice?: llm.ToolChoice;
       baseURL?: string;
       modalities?: Modality[];
@@ -239,6 +241,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     entraToken,
     baseURL,
     voice = 'alloy',
+    temperature, // eslint-disable-line @typescript-eslint/no-unused-vars
     inputAudioTranscription = AZURE_DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
     inputAudioNoiseReduction,
     turnDetection = AZURE_DEFAULT_TURN_DETECTION,
@@ -252,6 +255,8 @@ export class RealtimeModel extends llm.RealtimeModel {
     entraToken?: string;
     baseURL?: string;
     voice?: string;
+    /** @deprecated Unused in GA API (v1). Temperature is no longer supported. */
+    temperature?: number;
     inputAudioTranscription?: api_proto.InputAudioTranscription;
     inputAudioNoiseReduction?: api_proto.NoiseReduction;
     turnDetection?: api_proto.TurnDetectionType;
