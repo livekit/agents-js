@@ -67,9 +67,14 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
   }
 
   createProcess(): ChildProcess {
-    return fork(new URL(`./job_proc_lazy_main${currentFileExtension}`, import.meta.url), [
-      this.#agent,
-    ]);
+    const forkUrl = new URL(`./job_proc_lazy_main${currentFileExtension}`, import.meta.url);
+
+    // When running via tsx/ts-node (TypeScript files), we need to inherit the parent's
+    // execArgv so the child process can also execute TypeScript with the same loader
+    const isTypeScript = currentFileExtension === '.ts';
+    const forkOptions = isTypeScript ? { execArgv: process.execArgv } : undefined;
+
+    return fork(forkUrl, [this.#agent], forkOptions);
   }
 
   async mainTask(proc: ChildProcess) {
