@@ -277,6 +277,7 @@ export class RealtimeModel extends llm.RealtimeModel {
 
       /**
        * Thinking configuration for native audio models.
+       * If not set, the model's default thinking behavior is used.
        * Use `\{ thinkingBudget: 0 \}` to disable thinking.
        * Use `\{ thinkingBudget: -1 \}` for automatic/dynamic thinking.
        */
