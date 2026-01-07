@@ -136,6 +136,10 @@ export class RealtimeModel extends llm.RealtimeModel {
   /** @internal */
   _options: RealtimeOptions;
 
+  get model(): string {
+    return this._options.model;
+  }
+
   constructor(
     options: {
       /**
@@ -1207,6 +1211,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       messageStream: this.currentGeneration.messageChannel.stream(),
       functionStream: this.currentGeneration.functionChannel.stream(),
       userInitiated: false,
+      responseId,
     };
 
     if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
@@ -1336,11 +1341,17 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     for (const fc of toolCall.functionCalls || []) {
-      gen.functionChannel.write({
-        callId: fc.id || shortuuid('fnc-call-'),
-        name: fc.name,
-        args: fc.args ? JSON.stringify(fc.args) : '',
-      } as llm.FunctionCall);
+      if (!fc.name) {
+        this.#logger.warn('received function call without name, skipping');
+        continue;
+      }
+      gen.functionChannel.write(
+        llm.FunctionCall.create({
+          callId: fc.id || shortuuid('fnc-call-'),
+          name: fc.name,
+          args: fc.args ? JSON.stringify(fc.args) : '',
+        }),
+      );
     }
 
     gen.functionChannel.close();

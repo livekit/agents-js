@@ -122,16 +122,20 @@ export class SimpleOTLPHttpLogExporter {
         }))
       : [];
 
-    const logRecords = records.map((record) => ({
-      timeUnixNano: String(BigInt(Math.floor(record.timestampMs * 1_000_000))),
-      observedTimeUnixNano: String(BigInt(Date.now()) * BigInt(1_000_000)),
-      severityNumber: record.severityNumber ?? SeverityNumber.UNSPECIFIED,
-      severityText: record.severityText ?? 'unspecified',
-      body: { stringValue: record.body },
-      attributes: this.convertAttributes(record.attributes),
-      traceId: '',
-      spanId: '',
-    }));
+    const logRecords = records.map((record) => {
+      // Ensure timestampMs is a valid number, fallback to current time if NaN/undefined
+      const timestampMs = Number.isFinite(record.timestampMs) ? record.timestampMs : Date.now();
+      return {
+        timeUnixNano: String(BigInt(Math.floor(timestampMs * 1_000_000))),
+        observedTimeUnixNano: String(BigInt(Date.now()) * BigInt(1_000_000)),
+        severityNumber: record.severityNumber ?? SeverityNumber.UNSPECIFIED,
+        severityText: record.severityText ?? 'unspecified',
+        body: { stringValue: record.body },
+        attributes: this.convertAttributes(record.attributes),
+        traceId: '',
+        spanId: '',
+      };
+    });
 
     return {
       resourceLogs: [

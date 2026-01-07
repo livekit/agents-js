@@ -2,4 +2,4 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 export * from './api_proto.js';
-export * from './realtime_model.js';
+export * from './realtime_model_beta_1.js';

@@ -26,6 +26,8 @@ export interface GenerationCreatedEvent {
   messageStream: ReadableStream<MessageGeneration>;
   functionStream: ReadableStream<FunctionCall>;
   userInitiated: boolean;
+  /** Response ID for correlating metrics with spans */
+  responseId?: string;
 }
 
 export interface RealtimeModelError {
@@ -62,6 +64,9 @@ export abstract class RealtimeModel {
   get capabilities() {
     return this._capabilities;
   }
+
+  /** The model name/identifier used by this realtime model */
+  abstract get model(): string;
 
   abstract session(): RealtimeSession;
 

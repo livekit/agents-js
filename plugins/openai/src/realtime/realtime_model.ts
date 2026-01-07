@@ -140,6 +140,10 @@ export class RealtimeModel extends llm.RealtimeModel {
   /* @internal */
   _options: RealtimeOptions;
 
+  get model(): string {
+    return this._options.model;
+  }
+
   constructor(
     options: {
       model?: string;
@@ -1059,6 +1063,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       messageStream: this.currentGeneration.messageChannel.stream(),
       functionStream: this.currentGeneration.functionChannel.stream(),
       userInitiated: false,
+      responseId: event.response.id,
     } as llm.GenerationCreatedEvent;
 
     const clientEventId = event.response.metadata?.client_event_id;
@@ -1349,11 +1354,13 @@ export class RealtimeSession extends llm.RealtimeSession {
       if (!item.call_id || !item.name || !item.arguments) {
         throw new Error('item is not a function call');
       }
-      this.currentGeneration.functionChannel.write({
-        callId: item.call_id,
-        name: item.name,
-        args: item.arguments,
-      } as llm.FunctionCall);
+      this.currentGeneration.functionChannel.write(
+        llm.FunctionCall.create({
+          callId: item.call_id,
+          name: item.name,
+          args: item.arguments,
+        }),
+      );
     } else if (itemType === 'message') {
       const itemGeneration = this.currentGeneration.messages.get(itemId);
       if (!itemGeneration) {
@@ -1521,6 +1528,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       messageStream: this.currentGeneration.messageChannel.stream(),
       functionStream: this.currentGeneration.functionChannel.stream(),
       userInitiated: false,
+      responseId,
     } as llm.GenerationCreatedEvent;
 
     const handle = this.responseCreatedFutures[responseId];
