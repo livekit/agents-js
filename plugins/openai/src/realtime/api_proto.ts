@@ -44,7 +44,7 @@ export type ClientEventType =
   | 'conversation.item.delete'
   | 'response.create'
   | 'response.cancel';
-// Ref: python realtime_model.py 880-946 - GA event names
+
 export type ServerEventType =
   | 'error'
   | 'session.created'
@@ -121,20 +121,17 @@ export type InputAudioTranscription = {
   prompt?: string;
 };
 
-// Ref: python realtime_model.py 119-139 - NoiseReduction type
 export type NoiseReductionType = 'near_field' | 'far_field';
 
 export interface NoiseReduction {
   type: NoiseReductionType;
 }
 
-// Ref: python realtime_model.py 976-1012 - GA audio format
 export interface AudioFormat {
   type: 'audio/pcm';
   rate: number;
 }
 
-// Ref: python realtime_model.py 986-991 - GA audio input config
 export interface RealtimeAudioConfigInput {
   format?: AudioFormat;
   noise_reduction?: NoiseReduction | null;
@@ -142,14 +139,12 @@ export interface RealtimeAudioConfigInput {
   turn_detection?: TurnDetectionType | null;
 }
 
-// Ref: python realtime_model.py 992-996 - GA audio output config
 export interface RealtimeAudioConfigOutput {
   format?: AudioFormat;
   speed?: number;
   voice?: Voice;
 }
 
-// Ref: python realtime_model.py 985-997 - GA audio config
 export interface RealtimeAudioConfig {
   input?: RealtimeAudioConfigInput;
   output?: RealtimeAudioConfigOutput;
@@ -177,7 +172,6 @@ export interface AudioContent {
 }
 
 export type Content = InputTextContent | InputAudioContent | TextContent | AudioContent;
-// Ref: python realtime_model.py 1457-1462 - GA content part types include output_text/output_audio
 export type ContentPart = {
   type: 'text' | 'audio' | 'output_text' | 'output_audio'; // GA: output_text/output_audio
   audio?: AudioBase64Bytes;
@@ -307,7 +301,6 @@ interface BaseClientEvent {
   type: ClientEventType;
 }
 
-// Ref: python realtime_model.py 976-1012 - GA session update event
 export interface SessionUpdateEvent extends BaseClientEvent {
   type: 'session.update';
   session: Partial<{
@@ -335,7 +328,6 @@ export interface SessionUpdateEvent extends BaseClientEvent {
   }>;
 }
 
-// Ref: python realtime_model.py 1000 - GA tracing config
 export interface TracingConfig {
   enabled?: boolean;
 }
@@ -493,7 +485,6 @@ export interface ConversationItemCreatedEvent extends BaseServerEvent {
   item: ItemResource;
 }
 
-// Ref: python realtime_model.py 898-899 - GA conversation.item.added event
 export interface ConversationItemAddedEvent extends BaseServerEvent {
   type: 'conversation.item.added';
   previous_item_id: string;
