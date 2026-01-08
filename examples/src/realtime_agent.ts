@@ -53,7 +53,7 @@ export default defineAgent({
     });
 
     const session = new voice.AgentSession({
-      // llm: new openai.realtime.RealtimeModel(),
+      // llm: new openai.realtime.beta.RealtimeModel(),
       llm: new openai.realtime.RealtimeModel(),
       // enable to allow chaining of tool calls
       voiceOptions: {
