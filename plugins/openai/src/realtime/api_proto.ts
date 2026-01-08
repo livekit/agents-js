@@ -20,7 +20,9 @@ export type Voice =
   | 'sage'
   | 'verse'
   | string;
-export type AudioFormat = 'pcm16'; // TODO: 'g711-ulaw' | 'g711-alaw'
+
+/** @deprecated Use LegacyAudioFormat for Beta API string format or AudioFormat for GA API object format */
+export type LegacyAudioFormat = 'pcm16'; // TODO: 'g711-ulaw' | 'g711-alaw' (Beta format)
 export type Role = 'system' | 'assistant' | 'user' | 'tool';
 export type GenerationFinishedReason = 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
 export type InputTranscriptionModel = 'whisper-1' | string; // Open-ended, for future models
@@ -44,6 +46,7 @@ export type ClientEventType =
   | 'conversation.item.delete'
   | 'response.create'
   | 'response.cancel';
+
 export type ServerEventType =
   | 'error'
   | 'session.created'
@@ -53,7 +56,8 @@ export type ServerEventType =
   | 'input_audio_buffer.cleared'
   | 'input_audio_buffer.speech_started'
   | 'input_audio_buffer.speech_stopped'
-  | 'conversation.item.created'
+  | 'conversation.item.added' // GA: renamed from conversation.item.created
+  | 'conversation.item.created' // Beta: kept for backward compatibility
   | 'conversation.item.input_audio_transcription.completed'
   | 'conversation.item.input_audio_transcription.failed'
   | 'conversation.item.truncated'
@@ -64,12 +68,18 @@ export type ServerEventType =
   | 'response.output_item.done'
   | 'response.content_part.added'
   | 'response.content_part.done'
-  | 'response.text.delta'
-  | 'response.text.done'
-  | 'response.audio_transcript.delta'
-  | 'response.audio_transcript.done'
-  | 'response.audio.delta'
-  | 'response.audio.done'
+  | 'response.output_text.delta' // GA: renamed from response.text.delta
+  | 'response.output_text.done' // GA: renamed from response.text.done
+  | 'response.text.delta' // Beta: kept for backward compatibility
+  | 'response.text.done' // Beta: kept for backward compatibility
+  | 'response.output_audio_transcript.delta' // GA: renamed from response.audio_transcript.delta
+  | 'response.output_audio_transcript.done' // GA: renamed from response.audio_transcript.done
+  | 'response.audio_transcript.delta' // Beta: kept for backward compatibility
+  | 'response.audio_transcript.done' // Beta: kept for backward compatibility
+  | 'response.output_audio.delta' // GA: renamed from response.audio.delta
+  | 'response.output_audio.done' // GA: renamed from response.audio.done
+  | 'response.audio.delta' // Beta: kept for backward compatibility
+  | 'response.audio.done' // Beta: kept for backward compatibility
   | 'response.function_call_arguments.delta'
   | 'response.function_call_arguments.done'
   | 'rate_limits.updated';
@@ -113,6 +123,35 @@ export type InputAudioTranscription = {
   prompt?: string;
 };
 
+export type NoiseReductionType = 'near_field' | 'far_field';
+
+export interface NoiseReduction {
+  type: NoiseReductionType;
+}
+
+export interface AudioFormat {
+  type: 'audio/pcm';
+  rate: number;
+}
+
+export interface RealtimeAudioConfigInput {
+  format?: AudioFormat;
+  noise_reduction?: NoiseReduction | null;
+  transcription?: InputAudioTranscription | null;
+  turn_detection?: TurnDetectionType | null;
+}
+
+export interface RealtimeAudioConfigOutput {
+  format?: AudioFormat;
+  speed?: number;
+  voice?: Voice;
+}
+
+export interface RealtimeAudioConfig {
+  input?: RealtimeAudioConfigInput;
+  output?: RealtimeAudioConfigOutput;
+}
+
 export interface InputTextContent {
   type: 'input_text';
   text: string;
@@ -136,9 +175,10 @@ export interface AudioContent {
 
 export type Content = InputTextContent | InputAudioContent | TextContent | AudioContent;
 export type ContentPart = {
-  type: 'text' | 'audio';
+  type: 'text' | 'audio' | 'output_text' | 'output_audio'; // GA: output_text/output_audio
   audio?: AudioBase64Bytes;
   transcript?: string;
+  text?: string; // GA: text field for output_text
 };
 
 export interface BaseItem {
@@ -193,8 +233,8 @@ export interface SessionResource {
   modalities: Modality[]; // default: ["text", "audio"]
   instructions: string;
   voice: Voice; // default: "alloy"
-  input_audio_format: AudioFormat; // default: "pcm16"
-  output_audio_format: AudioFormat; // default: "pcm16"
+  input_audio_format: LegacyAudioFormat; // default: "pcm16"
+  output_audio_format: LegacyAudioFormat; // default: "pcm16"
   input_audio_transcription: InputAudioTranscription | null;
   turn_detection: TurnDetectionType | null;
   tools: Tool[];
@@ -266,20 +306,32 @@ interface BaseClientEvent {
 export interface SessionUpdateEvent extends BaseClientEvent {
   type: 'session.update';
   session: Partial<{
+    // GA fields
+    type?: 'realtime'; // GA: session type
+    output_modalities?: Modality[]; // GA: renamed from modalities
+    audio?: RealtimeAudioConfig; // GA: nested audio config
+    max_output_tokens?: number | 'inf'; // GA: renamed from max_response_output_tokens
+    tracing?: TracingConfig | null; // GA: tracing config
+    // Common fields
     model: Model;
-    modalities: Modality[];
     instructions: string;
-    voice: Voice;
-    input_audio_format: AudioFormat;
-    output_audio_format: AudioFormat;
-    input_audio_transcription: InputAudioTranscription | null;
-    turn_detection: TurnDetectionType | null;
     tools: Tool[];
     tool_choice: ToolChoice;
+    // Beta fields (kept for backward compatibility)
+    modalities: Modality[];
+    voice: Voice;
+    input_audio_format: LegacyAudioFormat;
+    output_audio_format: LegacyAudioFormat;
+    input_audio_transcription: InputAudioTranscription | null;
+    turn_detection: TurnDetectionType | null;
     temperature: number;
     max_response_output_tokens?: number | 'inf';
     speed?: number;
   }>;
+}
+
+export interface TracingConfig {
+  enabled?: boolean;
 }
 
 export interface InputAudioBufferAppendEvent extends BaseClientEvent {
@@ -353,7 +405,7 @@ export interface ResponseCreateEvent extends BaseClientEvent {
     modalities: Modality[];
     instructions: string;
     voice: Voice;
-    output_audio_format: AudioFormat;
+    output_audio_format: LegacyAudioFormat;
     tools?: Tool[];
     tool_choice: ToolChoice;
     temperature: number;
@@ -431,6 +483,12 @@ export interface InputAudioBufferSpeechStoppedEvent extends BaseServerEvent {
 
 export interface ConversationItemCreatedEvent extends BaseServerEvent {
   type: 'conversation.item.created';
+  previous_item_id: string;
+  item: ItemResource;
+}
+
+export interface ConversationItemAddedEvent extends BaseServerEvent {
+  type: 'conversation.item.added';
   previous_item_id: string;
   item: ItemResource;
 }
@@ -593,6 +651,7 @@ export type ServerEvent =
   | InputAudioBufferSpeechStartedEvent
   | InputAudioBufferSpeechStoppedEvent
   | ConversationItemCreatedEvent
+  | ConversationItemAddedEvent // GA: renamed from conversation.item.created
   | ConversationItemInputAudioTranscriptionCompletedEvent
   | ConversationItemInputAudioTranscriptionFailedEvent
   | ConversationItemTruncatedEvent

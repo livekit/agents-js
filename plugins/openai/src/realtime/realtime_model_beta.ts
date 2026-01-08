@@ -39,13 +39,14 @@ type Modality = 'text' | 'audio';
 interface RealtimeOptions {
   model: api_proto.Model;
   voice: api_proto.Voice;
+  temperature: number;
   toolChoice?: llm.ToolChoice;
   inputAudioTranscription?: api_proto.InputAudioTranscription | null;
-  inputAudioNoiseReduction?: api_proto.NoiseReduction | null;
+  // TODO(shubhra): add inputAudioNoiseReduction
   turnDetection?: api_proto.TurnDetectionType | null;
   maxResponseOutputTokens?: number | 'inf';
   speed?: number;
-  tracing?: api_proto.TracingConfig | null;
+  // TODO(shubhra): add openai tracing options
   apiKey?: string;
   baseURL: string;
   isAzure: boolean;
@@ -89,7 +90,9 @@ class CreateResponseHandle {
   }
 }
 
+// default values got from a "default" session from their API
 const DEFAULT_FIRST_RETRY_INTERVAL_MS = 100;
+const DEFAULT_TEMPERATURE = 0.8;
 const DEFAULT_TURN_DETECTION: api_proto.TurnDetectionType = {
   type: 'semantic_vad',
   eagerness: 'medium',
@@ -119,15 +122,14 @@ const DEFAULT_MAX_SESSION_DURATION = 20 * 60 * 1000; // 20 minutes
 const DEFAULT_REALTIME_MODEL_OPTIONS = {
   model: 'gpt-realtime',
   voice: 'marin',
+  temperature: DEFAULT_TEMPERATURE,
   inputAudioTranscription: DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
-  inputAudioNoiseReduction: undefined as api_proto.NoiseReduction | undefined,
   turnDetection: DEFAULT_TURN_DETECTION,
   toolChoice: DEFAULT_TOOL_CHOICE,
   maxResponseOutputTokens: DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS,
   maxSessionDuration: DEFAULT_MAX_SESSION_DURATION,
   connOptions: DEFAULT_API_CONNECT_OPTIONS,
   modalities: ['text', 'audio'] as Modality[],
-  tracing: undefined as api_proto.TracingConfig | undefined,
 };
 export class RealtimeModel extends llm.RealtimeModel {
   sampleRate = api_proto.SAMPLE_RATE;
@@ -146,16 +148,15 @@ export class RealtimeModel extends llm.RealtimeModel {
     options: {
       model?: string;
       voice?: string;
-      /** @deprecated Unused in GA API (v1). Temperature is no longer supported. */
       temperature?: number;
       toolChoice?: llm.ToolChoice;
       baseURL?: string;
       modalities?: Modality[];
       inputAudioTranscription?: api_proto.InputAudioTranscription | null;
-      inputAudioNoiseReduction?: api_proto.NoiseReduction | null;
+      // TODO(shubhra): add inputAudioNoiseReduction
       turnDetection?: api_proto.TurnDetectionType | null;
       speed?: number;
-      tracing?: api_proto.TracingConfig | null;
+      // TODO(shubhra): add openai tracing options
       azureDeployment?: string;
       apiKey?: string;
       entraToken?: string;
@@ -224,10 +225,11 @@ export class RealtimeModel extends llm.RealtimeModel {
    * @param baseURL - Base URL for the API endpoint. If undefined, constructed from the azure_endpoint.
    * @param voice - Voice setting for audio outputs. Defaults to "alloy".
    * @param inputAudioTranscription - Options for transcribing input audio. Defaults to @see DEFAULT_INPUT_AUDIO_TRANSCRIPTION.
-   * @param inputAudioNoiseReduction - Options for noise reduction. Defaults to undefined.
    * @param turnDetection - Options for server-based voice activity detection (VAD). Defaults to @see DEFAULT_SERVER_VAD_OPTIONS.
+   * @param temperature - Sampling temperature for response generation. Defaults to @see DEFAULT_TEMPERATURE.
    * @param speed - Speed of the audio output. Defaults to 1.0.
-   * @param tracing - Tracing configuration. Defaults to undefined.
+   * @param maxResponseOutputTokens - Maximum number of tokens in the response. Defaults to @see DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS.
+   * @param maxSessionDuration - Maximum duration of the session in milliseconds. Defaults to @see DEFAULT_MAX_SESSION_DURATION.
    *
    * @returns A RealtimeModel instance configured for Azure OpenAI Service.
    *
@@ -241,12 +243,10 @@ export class RealtimeModel extends llm.RealtimeModel {
     entraToken,
     baseURL,
     voice = 'alloy',
-    temperature, // eslint-disable-line @typescript-eslint/no-unused-vars
     inputAudioTranscription = AZURE_DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
-    inputAudioNoiseReduction,
     turnDetection = AZURE_DEFAULT_TURN_DETECTION,
+    temperature = 0.8,
     speed,
-    tracing,
   }: {
     azureDeployment: string;
     azureEndpoint?: string;
@@ -255,13 +255,11 @@ export class RealtimeModel extends llm.RealtimeModel {
     entraToken?: string;
     baseURL?: string;
     voice?: string;
-    /** @deprecated Unused in GA API (v1). Temperature is no longer supported. */
-    temperature?: number;
     inputAudioTranscription?: api_proto.InputAudioTranscription;
-    inputAudioNoiseReduction?: api_proto.NoiseReduction;
+    // TODO(shubhra): add inputAudioNoiseReduction
     turnDetection?: api_proto.TurnDetectionType;
+    temperature?: number;
     speed?: number;
-    tracing?: api_proto.TracingConfig;
   }) {
     apiKey = apiKey || process.env.AZURE_OPENAI_API_KEY;
     if (!apiKey && !entraToken) {
@@ -290,10 +288,9 @@ export class RealtimeModel extends llm.RealtimeModel {
     return new RealtimeModel({
       voice,
       inputAudioTranscription,
-      inputAudioNoiseReduction,
       turnDetection,
+      temperature,
       speed,
-      tracing,
       apiKey,
       azureDeployment,
       apiVersion,
@@ -408,38 +405,32 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private createSessionUpdateEvent(): api_proto.SessionUpdateEvent {
-    const audioFormat: api_proto.AudioFormat = { type: 'audio/pcm', rate: SAMPLE_RATE };
-
-    const modality: Modality = this.oaiRealtimeModel._options.modalities.includes('audio')
-      ? 'audio'
-      : 'text';
+    // OpenAI supports ['text'] or ['text', 'audio'] (audio always includes text transcript)
+    // We normalize to ensure 'text' is always present when using audio
+    const modalities: Modality[] = this.oaiRealtimeModel._options.modalities.includes('audio')
+      ? ['text', 'audio']
+      : ['text'];
 
     return {
       type: 'session.update',
       session: {
-        type: 'realtime',
         model: this.oaiRealtimeModel._options.model,
-        output_modalities: [modality],
-        audio: {
-          input: {
-            format: audioFormat,
-            noise_reduction: this.oaiRealtimeModel._options.inputAudioNoiseReduction,
-            transcription: this.oaiRealtimeModel._options.inputAudioTranscription,
-            turn_detection: this.oaiRealtimeModel._options.turnDetection,
-          },
-          output: {
-            format: audioFormat,
-            speed: this.oaiRealtimeModel._options.speed,
-            voice: this.oaiRealtimeModel._options.voice,
-          },
-        },
-        max_output_tokens:
+        voice: this.oaiRealtimeModel._options.voice,
+        input_audio_format: 'pcm16',
+        output_audio_format: 'pcm16',
+        modalities: modalities,
+        turn_detection: this.oaiRealtimeModel._options.turnDetection,
+        input_audio_transcription: this.oaiRealtimeModel._options.inputAudioTranscription,
+        // TODO(shubhra): add inputAudioNoiseReduction
+        temperature: this.oaiRealtimeModel._options.temperature,
+        tool_choice: toOaiToolChoice(this.oaiRealtimeModel._options.toolChoice),
+        max_response_output_tokens:
           this.oaiRealtimeModel._options.maxResponseOutputTokens === Infinity
             ? 'inf'
             : this.oaiRealtimeModel._options.maxResponseOutputTokens,
-        tool_choice: toOaiToolChoice(this.oaiRealtimeModel._options.toolChoice),
-        tracing: this.oaiRealtimeModel._options.tracing,
+        // TODO(shubhra): add tracing options
         instructions: this.instructions,
+        speed: this.oaiRealtimeModel._options.speed,
       },
     };
   }
@@ -587,7 +578,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     return {
       type: 'session.update',
       session: {
-        type: 'realtime',
         model: this.oaiRealtimeModel._options.model,
         tools: oaiTools,
       },
@@ -600,7 +590,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.sendEvent({
       type: 'session.update',
       session: {
-        type: 'realtime',
         instructions: _instructions,
       },
       event_id: eventId,
@@ -609,9 +598,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   updateOptions({ toolChoice }: { toolChoice?: llm.ToolChoice }): void {
-    const options: api_proto.SessionUpdateEvent['session'] = {
-      type: 'realtime',
-    };
+    const options: api_proto.SessionUpdateEvent['session'] = {};
 
     this.oaiRealtimeModel._options.toolChoice = toolChoice;
     options.tool_choice = toOaiToolChoice(toolChoice);
@@ -741,12 +728,8 @@ export class RealtimeSession extends llm.RealtimeSession {
         throw new Error('Microsoft API key or entraToken is required');
       }
     } else {
-      if (!this.oaiRealtimeModel._options.apiKey) {
-        throw new Error(
-          'OpenAI API key is required but not set. Check OPENAI_API_KEY environment variable.',
-        );
-      }
       headers.Authorization = `Bearer ${this.oaiRealtimeModel._options.apiKey}`;
+      headers['OpenAI-Beta'] = 'realtime=v1';
     }
 
     const url = processBaseURL({
@@ -933,8 +916,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     };
 
     wsConn.onmessage = (message: MessageEvent) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const event: any = JSON.parse(message.data as string);
+      const event: api_proto.ServerEvent = JSON.parse(message.data as string);
 
       this.emit('openai_server_event_received', event);
       if (lkOaiDebug) {
@@ -954,8 +936,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         case 'response.output_item.added':
           this.handleResponseOutputItemAdded(event);
           break;
-        case 'conversation.item.added':
-        case 'conversation.item.created': // Beta: kept for backward compatibility
+        case 'conversation.item.created':
           this.handleConversationItemCreated(event);
           break;
         case 'conversation.item.deleted':
@@ -973,28 +954,22 @@ export class RealtimeSession extends llm.RealtimeSession {
         case 'response.content_part.done':
           this.handleResponseContentPartDone(event);
           break;
-        case 'response.output_text.delta':
-        case 'response.text.delta': // Beta: kept for backward compatibility
+        case 'response.text.delta':
           this.handleResponseTextDelta(event);
           break;
-        case 'response.output_text.done':
-        case 'response.text.done': // Beta: kept for backward compatibility
+        case 'response.text.done':
           this.handleResponseTextDone(event);
           break;
-        case 'response.output_audio_transcript.delta':
-        case 'response.audio_transcript.delta': // Beta: kept for backward compatibility
+        case 'response.audio_transcript.delta':
           this.handleResponseAudioTranscriptDelta(event);
           break;
-        case 'response.output_audio.delta':
-        case 'response.audio.delta': // Beta: kept for backward compatibility
+        case 'response.audio.delta':
           this.handleResponseAudioDelta(event);
           break;
-        case 'response.output_audio_transcript.done':
-        case 'response.audio_transcript.done': // Beta: kept for backward compatibility
+        case 'response.audio_transcript.done':
           this.handleResponseAudioTranscriptDone(event);
           break;
-        case 'response.output_audio.done':
-        case 'response.audio.done': // Beta: kept for backward compatibility
+        case 'response.audio.done':
           this.handleResponseAudioDone(event);
           break;
         case 'response.output_item.done':
@@ -1240,13 +1215,12 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
-    const isTextType = itemType === 'text' || itemType === 'output_text';
-    if (isTextType && this.oaiRealtimeModel.capabilities.audioOutput) {
+    if (itemType === 'text' && this.oaiRealtimeModel.capabilities.audioOutput) {
       this.#logger.warn('Text response received from OpenAI Realtime API in audio modality.');
     }
 
     if (!itemGeneration.modalities.done) {
-      const modalityResult: Modality[] = isTextType ? ['text'] : ['audio', 'text'];
+      const modalityResult: Modality[] = itemType === 'text' ? ['text'] : ['audio', 'text'];
       itemGeneration.modalities.resolve(modalityResult);
     }
 
