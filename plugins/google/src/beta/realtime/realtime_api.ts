@@ -102,6 +102,7 @@ interface RealtimeOptions {
   contextWindowCompression?: ContextWindowCompressionConfig;
   apiVersion?: string;
   geminiTools?: LLMTools;
+  thinkingConfig?: types.ThinkingConfig;
 }
 
 /**
@@ -277,6 +278,14 @@ export class RealtimeModel extends llm.RealtimeModel {
        * Gemini-specific tools to use for the session
        */
       geminiTools?: LLMTools;
+
+      /**
+       * Thinking configuration for native audio models.
+       * If not set, the model's default thinking behavior is used.
+       * Use `\{ thinkingBudget: 0 \}` to disable thinking.
+       * Use `\{ thinkingBudget: -1 \}` for automatic/dynamic thinking.
+       */
+      thinkingConfig?: types.ThinkingConfig;
     } = {},
   ) {
     const inputAudioTranscription =
@@ -336,6 +345,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       contextWindowCompression: options.contextWindowCompression,
       apiVersion: options.apiVersion,
       geminiTools: options.geminiTools,
+      thinkingConfig: options.thinkingConfig,
     };
   }
 
@@ -1105,6 +1115,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     const opts = this.options;
 
     const config: types.LiveConnectConfig = {
+      thinkingConfig: opts.thinkingConfig,
       responseModalities: opts.responseModalities,
       systemInstruction: opts.instructions
         ? {

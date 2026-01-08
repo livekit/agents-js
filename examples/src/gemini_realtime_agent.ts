@@ -101,7 +101,13 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad: ctx.proc.userData.vad! as silero.VAD,
-      llm: new google.beta.realtime.RealtimeModel(),
+      llm: new google.beta.realtime.RealtimeModel({
+        thinkingConfig: {
+          // Making the thoughts false to speed up the realtime response
+          // If you want to keep the thoughts, set includeThoughts to true or leave it undefined
+          includeThoughts: false,
+        },
+      }),
       userData: userdata,
     });
 
