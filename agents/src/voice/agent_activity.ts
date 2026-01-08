@@ -37,7 +37,7 @@ import type {
 } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
-import { traceTypes, tracer } from '../telemetry/index.js';
+import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
 import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
@@ -91,6 +91,7 @@ export class AgentActivity implements RecognitionHooks {
   private started = false;
   private audioRecognition?: AudioRecognition;
   private realtimeSession?: RealtimeSession;
+  private realtimeSpans?: Map<string, Span>; // Maps response_id to OTEL span for metrics recording
   private turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
   private logger = log();
   private _draining = false;
@@ -218,6 +219,7 @@ export class AgentActivity implements RecognitionHooks {
 
       if (this.llm instanceof RealtimeModel) {
         this.realtimeSession = this.llm.session();
+        this.realtimeSpans = new Map<string, Span>();
         this.realtimeSession.on('generation_created', (ev) => this.onGenerationCreated(ev));
         this.realtimeSession.on('input_speech_started', (ev) => this.onInputSpeechStarted(ev));
         this.realtimeSession.on('input_speech_stopped', (ev) => this.onInputSpeechStopped(ev));
@@ -505,6 +507,16 @@ export class AgentActivity implements RecognitionHooks {
     if (speechHandle && (ev.type === 'llm_metrics' || ev.type === 'tts_metrics')) {
       ev.speechId = speechHandle.id;
     }
+
+    // Record realtime metrics on the associated span (if available)
+    if (ev.type === 'realtime_model_metrics' && this.realtimeSpans) {
+      const span = this.realtimeSpans.get(ev.requestId);
+      if (span) {
+        recordRealtimeMetrics(span, ev);
+        this.realtimeSpans.delete(ev.requestId);
+      }
+    }
+
     this.agentSession.emit(
       AgentSessionEventTypes.MetricsCollected,
       createMetricsCollectedEvent({ metrics: ev }),
@@ -1722,6 +1734,12 @@ export class AgentActivity implements RecognitionHooks {
       throw new Error('llm is not a realtime model');
     }
 
+    // Store span for metrics recording when they arrive later
+    span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.llm.model);
+    if (this.realtimeSpans && ev.responseId) {
+      this.realtimeSpans.set(ev.responseId, span);
+    }
+
     this.logger.debug(
       { speech_id: speechHandle.id, stepIndex: speechHandle.numSteps },
       'realtime generation started',
@@ -2280,6 +2298,7 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       this.detachAudioInput();
+      this.realtimeSpans?.clear();
       await this.realtimeSession?.close();
       await this.audioRecognition?.close();
       await this._mainTask?.cancelAndWait();

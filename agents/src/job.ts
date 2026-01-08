@@ -126,7 +126,10 @@ export class JobContext {
     this.#onShutdown = onShutdown;
     this.onParticipantConnected = this.onParticipantConnected.bind(this);
     this.#room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
-    this.#logger = log().child({ info: this.#info });
+    this.#logger = log().child({
+      jobId: this.#info.job.id,
+      roomName: this.#info.job.room?.name,
+    });
     this.#inferenceExecutor = inferenceExecutor;
     this._sessionDirectory = path.join(os.tmpdir(), 'livekit-agents', `job-${this.#info.job.id}`);
   }
