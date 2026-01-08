@@ -20,6 +20,8 @@ export type Voice =
   | 'sage'
   | 'verse'
   | string;
+
+/** @deprecated Use LegacyAudioFormat for Beta API string format or AudioFormat for GA API object format */
 export type LegacyAudioFormat = 'pcm16'; // TODO: 'g711-ulaw' | 'g711-alaw' (Beta format)
 export type Role = 'system' | 'assistant' | 'user' | 'tool';
 export type GenerationFinishedReason = 'stop' | 'max_tokens' | 'content_filter' | 'interrupt';
