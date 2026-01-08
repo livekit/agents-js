@@ -62,6 +62,11 @@ class OtelDestination extends Writable {
  * Enable OTEL logging by reconfiguring the logger with multistream.
  * Uses a custom destination that receives full JSON logs (with msg, level, time).
  *
+ * The base logger level is set to 'debug' so all logs are generated,
+ * while each stream filters to its own level:
+ * - Terminal: user-specified level (default: 'info')
+ * - OTEL/Cloud: always 'debug' to capture all logs for observability
+ *
  * @internal
  */
 export const enableOtelLogging = () => {
@@ -73,11 +78,12 @@ export const enableOtelLogging = () => {
 
   const { pretty, level } = loggerOptions;
 
-  const logLevel = level || 'info';
+  const terminalLevel = level || 'info';
   const streams: { stream: DestinationStream; level: string }[] = [
-    { stream: pretty ? pinoPretty({ colorize: true }) : process.stdout, level: logLevel },
+    { stream: pretty ? pinoPretty({ colorize: true }) : process.stdout, level: terminalLevel },
     { stream: new OtelDestination(), level: 'debug' },
   ];
 
-  logger = pino({ level: logLevel }, multistream(streams));
+  // Base level must be 'debug' to generate all logs; each stream filters independently
+  logger = pino({ level: 'debug' }, multistream(streams));
 };
