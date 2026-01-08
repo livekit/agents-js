@@ -586,6 +586,13 @@ export async function uploadSessionReport(options: {
           res.on('data', (chunk) => {
             body += chunk.toString();
           });
+          res.on('error', (readErr) => {
+            reject(
+              new Error(
+                `Failed to upload session report: ${res.statusCode} ${res.statusMessage} (body read error: ${readErr.message})`,
+              ),
+            );
+          });
           res.on('end', () => {
             reject(
               new Error(
@@ -597,6 +604,7 @@ export async function uploadSessionReport(options: {
         }
 
         res.resume(); // Drain the response
+        res.on('error', (readErr) => reject(new Error(`Response read error: ${readErr.message}`)));
         res.on('end', () => resolve());
       },
     );
