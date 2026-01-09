@@ -1,79 +1,109 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIConnectionError } from '../_exceptions.js';
+import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
-import type { LLMMetrics } from '../metrics/base.js';
-import type { APIConnectOptions } from '../types.js';
+import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import type { ChatContext } from './chat_context.js';
+import type { ChatChunk } from './llm.js';
 import { LLM, LLMStream } from './llm.js';
 import type { ToolChoice, ToolContext } from './tool_context.js';
 
-export interface FallbackAdapterOptions {
-  llms: LLM[];
-  attemptTimeout?: number;
-  maxRetryPerLLM?: number;
-  retryInterval?: number;
-  retryOnChunkSent?: boolean;
-}
+/**
+ * Default connection options for FallbackAdapter.
+ * Uses max_retry=0 since fallback handles retries at a higher level.
+ */
+const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
+  maxRetry: 0,
+  timeoutMs: DEFAULT_API_CONNECT_OPTIONS.timeoutMs,
+  retryIntervalMs: DEFAULT_API_CONNECT_OPTIONS.retryIntervalMs,
+};
 
+/**
+ * Internal status tracking for each LLM instance.
+ */
 interface LLMStatus {
   available: boolean;
-  recoveringPromise?: Promise<void>;
+  recoveringTask: Promise<void> | null;
 }
 
+/**
+ * Event emitted when an LLM's availability changes.
+ */
 export interface AvailabilityChangedEvent {
   llm: LLM;
   available: boolean;
 }
 
-export type FallbackLLMCallbacks = {
-  metrics_collected: (metrics: LLMMetrics) => void;
-  llm_availability_changed: (event: AvailabilityChangedEvent) => void;
-  error: (error: Error) => void;
-};
+/**
+ * Options for creating a FallbackAdapter.
+ */
+export interface FallbackAdapterOptions {
+  /** List of LLM instances to fallback to (in order). */
+  llms: LLM[];
+  /** Timeout for each LLM attempt in seconds. Defaults to 5.0. */
+  attemptTimeout?: number;
+  /** Internal retries per LLM before moving to next. Defaults to 0. */
+  maxRetryPerLLM?: number;
+  /** Interval between retries in seconds. Defaults to 0.5. */
+  retryInterval?: number;
+  /** Whether to retry when LLM fails after chunks are sent. Defaults to false. */
+  retryOnChunkSent?: boolean;
+}
 
+/**
+ * FallbackAdapter is an LLM that can fallback to a different LLM if the current LLM fails.
+ *
+ * @example
+ * ```typescript
+ * const fallbackLLM = new FallbackAdapter({
+ *   llms: [primaryLLM, secondaryLLM, tertiaryLLM],
+ *   attemptTimeout: 5.0,
+ *   maxRetryPerLLM: 1,
+ * });
+ * ```
+ */
 export class FallbackAdapter extends LLM {
-  public llms: LLM[];
-  public options: Required<Omit<FallbackAdapterOptions, 'llms'>>;
-  public status: Map<LLM, LLMStatus>;
+  readonly llms: LLM[];
+  readonly attemptTimeout: number;
+  readonly maxRetryPerLLM: number;
+  readonly retryInterval: number;
+  readonly retryOnChunkSent: boolean;
 
-  private _boundListeners: Map<LLM, (metrics: LLMMetrics) => void>;
+  /** @internal */
+  _status: LLMStatus[];
+
+  private logger = log();
 
   constructor(options: FallbackAdapterOptions) {
     super();
-    if (options.llms.length < 1) {
-      throw new Error('At least one LLM instance must be provided.');
+
+    if (!options.llms || options.llms.length < 1) {
+      throw new Error('at least one LLM instance must be provided.');
     }
 
     this.llms = options.llms;
-    this.options = {
-      attemptTimeout: options.attemptTimeout ?? 5.0,
-      maxRetryPerLLM: options.maxRetryPerLLM ?? 0,
-      retryInterval: options.retryInterval ?? 0.5,
-      retryOnChunkSent: options.retryOnChunkSent ?? false,
-    };
+    this.attemptTimeout = options.attemptTimeout ?? 5.0;
+    this.maxRetryPerLLM = options.maxRetryPerLLM ?? 0;
+    this.retryInterval = options.retryInterval ?? 0.5;
+    this.retryOnChunkSent = options.retryOnChunkSent ?? false;
 
-    this.status = new Map();
-    this._boundListeners = new Map();
+    // Initialize status for each LLM
+    this._status = this.llms.map(() => ({
+      available: true,
+      recoveringTask: null,
+    }));
 
-    this.llms.forEach((llm) => {
-      this.status.set(llm, { available: true });
-
-      const onMetrics = (metrics: LLMMetrics) => {
+    // Forward metrics_collected events from child LLMs
+    for (const llm of this.llms) {
+      llm.on('metrics_collected', (metrics) => {
         this.emit('metrics_collected', metrics);
-      };
-      llm.on('metrics_collected', onMetrics);
-      this._boundListeners.set(llm, onMetrics);
-    });
+      });
+    }
   }
 
   get model(): string {
     return 'FallbackAdapter';
-  }
-
-  get provider(): string {
-    return 'livekit';
   }
 
   label(): string {
@@ -88,82 +118,41 @@ export class FallbackAdapter extends LLM {
     toolChoice?: ToolChoice;
     extraKwargs?: Record<string, unknown>;
   }): LLMStream {
-    const effectiveOpts = {
-      timeoutMs: (this.options.attemptTimeout || 5) * 1000,
-      retryIntervalMs: (this.options.retryInterval || 0.5) * 1000,
-      ...(opts.connOptions || {}),
-      maxRetry: 0,
-    } as APIConnectOptions;
-
     return new FallbackLLMStream(this, {
-      ...opts,
-      connOptions: effectiveOpts,
+      chatCtx: opts.chatCtx,
+      toolCtx: opts.toolCtx,
+      connOptions: opts.connOptions || DEFAULT_FALLBACK_API_CONNECT_OPTIONS,
+      parallelToolCalls: opts.parallelToolCalls,
+      toolChoice: opts.toolChoice,
+      extraKwargs: opts.extraKwargs,
     });
   }
 
-  async aclose(): Promise<void> {
-    this.llms.forEach((llm) => {
-      const listener = this._boundListeners.get(llm);
-      if (listener) {
-        llm.off('metrics_collected', listener);
-      }
-    });
-    this._boundListeners.clear();
-    await super.aclose();
-  }
-
-  markFailed(llm: LLM, chatCtx: ChatContext) {
-    const s = this.status.get(llm);
-
-    if (s && s.available) {
-      s.available = false;
-
-      (this as any).emit('llm_availability_changed', { llm, available: false });
-
-      this.triggerRecovery(llm, chatCtx);
-    }
-  }
-
-  private triggerRecovery(llm: LLM, chatCtx: ChatContext) {
-    const s = this.status.get(llm);
-
-    if (!s || s.recoveringPromise) return;
-
-    s.recoveringPromise = (async () => {
-      const logger = log();
-      try {
-        await new Promise((resolve) => setTimeout(resolve, this.options.retryInterval * 1000));
-
-        logger.debug(`FallbackAdapter: Checking health of ${llm.label()}`);
-
-        const stream = llm.chat({
-          chatCtx: chatCtx,
-          connOptions: {
-            timeoutMs: 5000,
-            maxRetry: 0,
-            retryIntervalMs: 0,
-          },
-        });
-
-        for await (const _ of stream) {
-          break;
-        }
-
-        s.available = true;
-        (this as any).emit('llm_availability_changed', { llm, available: true });
-        logger.info(`FallbackAdapter: Provider ${llm.label()} recovered.`);
-      } catch (e) {
-        logger.warn(`FallbackAdapter: Recovery check failed for ${llm.label()}`);
-      } finally {
-        s.recoveringPromise = undefined;
-      }
-    })();
+  /**
+   * Emit availability changed event.
+   * @internal
+   */
+  _emitAvailabilityChanged(llm: LLM, available: boolean): void {
+    const event: AvailabilityChangedEvent = { llm, available };
+    // Use type assertion for custom event
+    (this as unknown as { emit: (event: string, data: AvailabilityChangedEvent) => void }).emit(
+      'llm_availability_changed',
+      event,
+    );
   }
 }
 
+/**
+ * LLMStream implementation for FallbackAdapter.
+ * Handles fallback logic between multiple LLM providers.
+ */
 class FallbackLLMStream extends LLMStream {
   private adapter: FallbackAdapter;
+  private parallelToolCalls?: boolean;
+  private toolChoice?: ToolChoice;
+  private extraKwargs?: Record<string, unknown>;
   private _currentStream?: LLMStream;
+  private _log = log();
 
   constructor(
     adapter: FallbackAdapter,
@@ -176,88 +165,227 @@ class FallbackLLMStream extends LLMStream {
       extraKwargs?: Record<string, unknown>;
     },
   ) {
-    super(adapter, opts);
+    super(adapter, {
+      chatCtx: opts.chatCtx,
+      toolCtx: opts.toolCtx,
+      connOptions: opts.connOptions,
+    });
     this.adapter = adapter;
+    this.parallelToolCalls = opts.parallelToolCalls;
+    this.toolChoice = opts.toolChoice;
+    this.extraKwargs = opts.extraKwargs;
   }
 
-  get chatCtx(): ChatContext {
+  /**
+   * Override chatCtx to return current stream's context if available.
+   */
+  override get chatCtx(): ChatContext {
     return this._currentStream?.chatCtx ?? super.chatCtx;
   }
 
-  get toolCtx(): ToolContext | undefined {
-    return this._currentStream?.toolCtx ?? super.toolCtx;
-  }
+  /**
+   * Try to generate with a single LLM.
+   * Returns an async generator that yields chunks.
+   */
+  private async *tryGenerate(
+    llm: LLM,
+    checkRecovery: boolean = false,
+  ): AsyncGenerator<ChatChunk, void, unknown> {
+    const connOptions: APIConnectOptions = {
+      ...this.connOptions,
+      maxRetry: this.adapter.maxRetryPerLLM,
+      timeoutMs: this.adapter.attemptTimeout * 1000,
+      retryIntervalMs: this.adapter.retryInterval * 1000,
+    };
 
-  async run(): Promise<void> {
-    const logger = log();
-    const start = Date.now();
+    const stream = llm.chat({
+      chatCtx: super.chatCtx,
+      toolCtx: this.toolCtx,
+      connOptions,
+      parallelToolCalls: this.parallelToolCalls,
+      toolChoice: this.toolChoice,
+      extraKwargs: this.extraKwargs,
+    });
+
+    // Listen for error events - child LLMs emit errors via their LLM instance, not the stream
+    let streamError: Error | undefined;
+    const errorHandler = (ev: { error: Error }) => {
+      streamError = ev.error;
+    };
+    llm.on('error', errorHandler);
 
     try {
-      const allFailed = Array.from(this.adapter.status.values()).every((s) => !s.available);
-      if (allFailed) {
-        logger.error('All LLMs are unavailable, retrying...');
+      let shouldSetCurrent = !checkRecovery;
+      for await (const chunk of stream) {
+        if (shouldSetCurrent) {
+          shouldSetCurrent = false;
+          this._currentStream = stream;
+        }
+        yield chunk;
       }
 
-      let candidates = this.adapter.llms.filter((llm) => this.adapter.status.get(llm)?.available);
-      if (allFailed || candidates.length === 0) {
-        candidates = this.adapter.llms;
+      // If an error was emitted but not thrown through iteration, throw it now
+      if (streamError) {
+        throw streamError;
+      }
+    } catch (error) {
+      if (error instanceof APIError) {
+        if (checkRecovery) {
+          this._log.warn({ llm: llm.label(), error }, 'recovery failed');
+        } else {
+          this._log.warn({ llm: llm.label(), error }, 'failed, switching to next LLM');
+        }
+        throw error;
       }
 
-      for (const llm of candidates) {
+      // Handle timeout errors
+      if (error instanceof Error && error.name === 'AbortError') {
+        if (checkRecovery) {
+          this._log.warn({ llm: llm.label() }, 'recovery timed out');
+        } else {
+          this._log.warn({ llm: llm.label() }, 'timed out, switching to next LLM');
+        }
+        throw error;
+      }
+
+      // Unexpected error
+      if (checkRecovery) {
+        this._log.error({ llm: llm.label(), error }, 'recovery unexpected error');
+      } else {
+        this._log.error({ llm: llm.label(), error }, 'unexpected error, switching to next LLM');
+      }
+      throw error;
+    } finally {
+      llm.off('error', errorHandler);
+    }
+  }
+
+  /**
+   * Start background recovery task for an LLM.
+   */
+  private tryRecovery(llm: LLM, index: number): void {
+    const status = this.adapter._status[index]!;
+
+    // Skip if already recovering
+    if (status.recoveringTask !== null) {
+      return;
+    }
+
+    const recoverTask = async (): Promise<void> => {
+      try {
+        // Try to generate (just iterate to check if it works)
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        for await (const _chunk of this.tryGenerate(llm, true)) {
+          // Just consume the stream to verify it works
+        }
+
+        // Recovery successful
+        status.available = true;
+        this._log.info({ llm: llm.label() }, 'LLM recovered');
+        this.adapter._emitAvailabilityChanged(llm, true);
+      } catch {
+        // Recovery failed, stay unavailable
+      } finally {
+        status.recoveringTask = null;
+      }
+    };
+
+    // Fire and forget
+    status.recoveringTask = recoverTask();
+  }
+
+  /**
+   * Main run method - iterates through LLMs with fallback logic.
+   */
+  protected async run(): Promise<void> {
+    const startTime = Date.now();
+
+    // Check if all LLMs are unavailable
+    const allFailed = this.adapter._status.every((s) => !s.available);
+    if (allFailed) {
+      this._log.error('all LLMs are unavailable, retrying...');
+    }
+
+    for (let i = 0; i < this.adapter.llms.length; i++) {
+      const llm = this.adapter.llms[i]!;
+      const status = this.adapter._status[i]!;
+
+      this._log.debug(
+        { llm: llm.label(), index: i, available: status.available, allFailed },
+        'checking LLM',
+      );
+
+      if (status.available || allFailed) {
         let textSent = '';
         const toolCallsSent: string[] = [];
 
         try {
-          logger.debug({ label: llm.label() }, 'FallbackAdapter: Attempting provider');
+          this._log.info({ llm: llm.label() }, 'FallbackAdapter: Attempting provider');
 
-          const childStream = llm.chat({
-            chatCtx: this.chatCtx,
-            toolCtx: this.toolCtx,
-            connOptions: {
-              ...this.connOptions,
-              timeoutMs: (this.adapter.options.attemptTimeout || 5) * 1000,
-              maxRetry: this.adapter.options.maxRetryPerLLM,
-            },
-          });
-
-          this._currentStream = childStream;
-
-          for await (const chunk of childStream) {
+          let chunkCount = 0;
+          for await (const chunk of this.tryGenerate(llm, false)) {
+            chunkCount++;
+            // Track what's been sent
             if (chunk.delta) {
-              if (chunk.delta.content) textSent += chunk.delta.content;
+              if (chunk.delta.content) {
+                textSent += chunk.delta.content;
+              }
               if (chunk.delta.toolCalls) {
-                chunk.delta.toolCalls.forEach((tc) => {
-                  if (tc.name) toolCallsSent.push(tc.name);
-                });
+                for (const tc of chunk.delta.toolCalls) {
+                  if (tc.name) {
+                    toolCallsSent.push(tc.name);
+                  }
+                }
               }
             }
+
+            // Forward chunk to queue
+            this._log.debug({ llm: llm.label(), chunkCount }, 'run: forwarding chunk to queue');
             this.queue.put(chunk);
           }
 
-          logger.debug({ label: llm.label() }, 'FallbackAdapter: Provider succeeded');
+          // Success!
+          this._log.info(
+            { llm: llm.label(), totalChunks: chunkCount, textLength: textSent.length },
+            'FallbackAdapter: Provider succeeded',
+          );
           return;
         } catch (error) {
-          const hasSentData = textSent.length > 0 || toolCallsSent.length > 0;
-          const logContext = { label: llm.label(), error, textSent, toolCallsSent };
-
-          if (hasSentData && !this.adapter.options.retryOnChunkSent) {
-            logger.error(logContext, 'Provider failed after sending data. Aborting fallback.');
-            throw error;
+          // Mark as unavailable if it was available before
+          if (status.available) {
+            status.available = false;
+            this.adapter._emitAvailabilityChanged(llm, false);
           }
 
-          logger.warn(logContext, 'FallbackAdapter: Provider failed, switching...');
-          this.adapter.markFailed(llm, this.chatCtx);
-        } finally {
-          this._currentStream = undefined;
+          // Check if we sent data before failing
+          if (textSent || toolCallsSent.length > 0) {
+            const extra = { textSent, toolCallsSent };
+
+            if (!this.adapter.retryOnChunkSent) {
+              this._log.error(
+                { llm: llm.label(), ...extra },
+                'failed after sending chunk, skip retrying. Set `retryOnChunkSent` to `true` to enable.',
+              );
+              throw error;
+            }
+
+            this._log.warn(
+              { llm: llm.label(), ...extra },
+              'failed after sending chunk, retrying...',
+            );
+          }
         }
       }
 
-      const duration = (Date.now() - start) / 1000;
-      throw new APIConnectionError({
-        message: `All Fallback LLMs failed after ${duration}s`,
-      });
-    } finally {
-      this.queue.close();
+      // Trigger background recovery for this LLM
+      this.tryRecovery(llm, i);
     }
+
+    // All LLMs failed
+    const duration = (Date.now() - startTime) / 1000;
+    const labels = this.adapter.llms.map((l) => l.label()).join(', ');
+    throw new APIConnectionError({
+      message: `all LLMs failed (${labels}) after ${duration.toFixed(2)}s`,
+    });
   }
 }
