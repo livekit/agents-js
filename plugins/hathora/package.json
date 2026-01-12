@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-hathora",
-  "version": "0.1.0",
+  "version": "1.0.31",
   "description": "Hathora plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
