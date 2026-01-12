@@ -169,7 +169,7 @@ export abstract class SynthesizeStream
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    startSoon(() => this.mainTask().then(() => this.queue.close()));
+    startSoon(() => this.mainTask().finally(() => this.queue.close()));
   }
 
   private _mainTaskImpl = async (span: Span) => {
@@ -448,7 +448,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    Promise.resolve().then(() => this.mainTask().then(() => this.queue.close()));
+    Promise.resolve().then(() => this.mainTask().finally(() => this.queue.close()));
   }
 
   private _mainTaskImpl = async (span: Span) => {

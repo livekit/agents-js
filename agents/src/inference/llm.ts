@@ -386,8 +386,6 @@ export class LLMStream extends llm.LLMStream {
           options: { retryable },
         });
       }
-    } finally {
-      this.queue.close();
     }
   }
 
