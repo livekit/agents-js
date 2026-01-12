@@ -800,6 +800,17 @@ export class RealtimeSession extends llm.RealtimeSession {
         'Reconnecting to OpenAI Realtime API',
       );
 
+      // Clean up pending futures from old connection to prevent memory leaks
+      for (const fut of Object.values(this.itemCreateFutures)) {
+        if (!fut.done) fut.reject(new Error('Session reconnected'));
+      }
+      this.itemCreateFutures = {};
+
+      for (const fut of Object.values(this.itemDeleteFutures)) {
+        if (!fut.done) fut.reject(new Error('Session reconnected'));
+      }
+      this.itemDeleteFutures = {};
+
       const events: api_proto.ClientEvent[] = [];
 
       // options and instructions
@@ -1053,6 +1064,49 @@ export class RealtimeSession extends llm.RealtimeSession {
     super.close();
     this.#closed = true;
     await this.#task;
+
+    // Clean up pending futures to prevent memory leaks
+    for (const handle of Object.values(this.responseCreatedFutures)) {
+      if (!handle.doneFut.done) {
+        handle.doneFut.reject(new Error('Session closed'));
+      }
+    }
+    this.responseCreatedFutures = {};
+
+    for (const fut of Object.values(this.itemCreateFutures)) {
+      if (!fut.done) {
+        fut.reject(new Error('Session closed'));
+      }
+    }
+    this.itemCreateFutures = {};
+
+    for (const fut of Object.values(this.itemDeleteFutures)) {
+      if (!fut.done) {
+        fut.reject(new Error('Session closed'));
+      }
+    }
+    this.itemDeleteFutures = {};
+
+    // Clean up current generation if exists
+    if (this.currentGeneration) {
+      for (const gen of this.currentGeneration.messages.values()) {
+        gen.textChannel.close();
+        gen.audioChannel.close();
+        if (!gen.modalities.done) {
+          gen.modalities.resolve(this.oaiRealtimeModel._options.modalities);
+        }
+      }
+      this.currentGeneration.messages.clear();
+      this.currentGeneration.messageChannel.close();
+      this.currentGeneration.functionChannel.close();
+      if (!this.currentGeneration._doneFut.done) {
+        this.currentGeneration._doneFut.resolve();
+      }
+      this.currentGeneration = undefined;
+    }
+
+    // Clear the message queue
+    this.messageChannel.items.length = 0;
   }
 
   private handleInputAudioBufferSpeechStarted(
