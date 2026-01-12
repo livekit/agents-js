@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.33
+
+### Patch Changes
+
+- Revert "Send all log levels to cloud observability regardless of terminal log level" - [#951](https://github.com/livekit/agents-js/pull/951) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.32
 
 ### Patch Changes
