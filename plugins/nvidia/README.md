@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+
+SPDX-License-Identifier: Apache-2.0
+-->
 # NVIDIA Riva Plugin for LiveKit Agents
 
 This plugin provides NVIDIA Riva Speech-to-Text (STT) and Text-to-Speech (TTS) capabilities for LiveKit Agents.
