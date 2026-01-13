@@ -61,6 +61,7 @@ import { RecorderIO } from './recorder_io/index.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { DEFAULT_TTS_TEXT_TRANSFORMS, type TextTransformSpec } from './transcription/transforms.js';
 
 export interface VoiceOptions {
   allowInterruptions: boolean;
@@ -72,6 +73,7 @@ export interface VoiceOptions {
   maxToolSteps: number;
   preemptiveGeneration: boolean;
   userAwayTimeout?: number | null;
+  ttsTextTransforms?: TextTransformSpec[] | null;
 }
 
 const defaultVoiceOptions: VoiceOptions = {
@@ -84,6 +86,7 @@ const defaultVoiceOptions: VoiceOptions = {
   maxToolSteps: 3,
   preemptiveGeneration: false,
   userAwayTimeout: 15.0,
+  ttsTextTransforms: DEFAULT_TTS_TEXT_TRANSFORMS,
 } as const;
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
