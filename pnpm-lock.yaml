@@ -251,6 +251,9 @@ importers:
       '@livekit/agents-plugin-neuphonic':
         specifier: workspace:*
         version: link:../plugins/neuphonic
+      '@livekit/agents-plugin-nvidia':
+        specifier: workspace:*
+        version: link:../plugins/nvidia
       '@livekit/agents-plugin-openai':
         specifier: workspace:*
         version: link:../plugins/openai
