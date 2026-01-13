@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AgentHandoffItem, ChatItem } from '../../llm/chat_context.js';
-import { Future, Task } from '../../utils.js';
+import type { Task } from '../../utils.js';
+import { Future } from '../../utils.js';
 import type { Agent } from '../agent.js';
 import { type SpeechHandle, isSpeechHandle } from '../speech_handle.js';
 import {
