@@ -10,7 +10,7 @@ participants that run on servers. Use it to create conversational, multi-modal
 voice agents that can see, hear, and understand.
 
 This package contains the OpenAI plugin, which allows for TTS, STT, LLM, as well
-as using the Realtime API. Refer to the
+as using the Realtime API and Responses API. Refer to the
 [documentation](https://docs.livekit.io/agents/overview/) for information on how
 to use it, or browse the [API
 reference](https://docs.livekit.io/agents-js/modules/plugins_agents_plugin_openai.html).
