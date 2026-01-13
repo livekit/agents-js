@@ -13,12 +13,12 @@ import {
 import * as hedra from '@livekit/agents-plugin-hedra';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// import { readFileSync } from 'node:fs';
+// import { dirname, join } from 'node:path';
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = dirname(__filename);
 
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
@@ -42,16 +42,17 @@ export default defineAgent({
       room: ctx.room,
     });
 
-    // Load avatar image from file
-    const avatarImageData = readFileSync(join(__dirname, 'avatar.png'));
-
     const avatar = new hedra.AvatarSession({
-      avatarImage: {
-        data: avatarImageData,
-        mimeType: 'image/png',
-        filename: 'avatar.png',
-      },
+      avatarId: process.env.HEDRA_AVATAR_ID,
       // API key is read from HEDRA_API_KEY environment variable by default
+
+      // Alternatively, use a custom avatar image:
+      // const avatarImageData = readFileSync(join(__dirname, 'avatar.png'));
+      // avatarImage: {
+      //   data: avatarImageData,
+      //   mimeType: 'image/png',
+      //   filename: 'avatar.png',
+      // },
     });
     await avatar.start(session, ctx.room);
 
