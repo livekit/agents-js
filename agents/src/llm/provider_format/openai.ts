@@ -117,3 +117,85 @@ async function toImageContent(content: ImageContent) {
     },
   };
 }
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function toResponsesChatCtx(
+  chatCtx: ChatContext,
+  injectDummyUserMessage: boolean = true,
+) {
+  const itemGroups = groupToolCalls(chatCtx);
+  const messages: Record<string, any>[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+  for (const group of itemGroups) {
+    if (group.isEmpty) continue;
+
+    const message: Record<string, any> = group.message // eslint-disable-line @typescript-eslint/no-explicit-any
+      ? await toResponsesChatItem(group.message)
+      : { role: 'assistant' };
+
+    const toolCalls = group.toolCalls.map((toolCall) => ({
+      type: 'function',
+      id: toolCall.callId,
+      name: toolCall.name,
+      arguments: toolCall.args,
+    }));
+
+    if (toolCalls.length > 0) {
+      message['tool_calls'] = toolCalls;
+    }
+
+    messages.push(message);
+
+    for (const toolOutput of group.toolOutputs) {
+      messages.push(await toResponsesChatItem(toolOutput));
+    }
+  }
+
+  return messages;
+}
+
+async function toResponsesChatItem(item: ChatItem) {
+  if (item.type === 'message') {
+    const listContent: Record<string, any>[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
+    let textContent = '';
+
+    for (const content of item.content) {
+      if (typeof content === 'string') {
+        if (textContent) textContent += '\n';
+        textContent += content;
+      } else if (content.type === 'image_content') {
+        listContent.push(await toImageContent(content));
+      } else {
+        throw new Error(`Unsupported content type: ${content.type}`);
+      }
+    }
+
+    const content =
+      listContent.length == 0
+        ? textContent
+        : textContent.length == 0
+          ? listContent
+          : [...listContent, { type: 'text', text: textContent }];
+
+    return { role: item.role, content };
+  } else if (item.type === 'function_call') {
+    return {
+      role: 'assistant',
+      tool_calls: [
+        {
+          id: item.callId,
+          type: 'function',
+          function: { name: item.name, arguments: item.args },
+        },
+      ],
+    };
+  } else if (item.type === 'function_call_output') {
+    return {
+      role: 'function_call_output',
+      tool_call_id: item.callId,
+      content: item.output,
+    };
+  }
+
+  throw new Error(`Unsupported item type: ${item['type']}`);
+}
