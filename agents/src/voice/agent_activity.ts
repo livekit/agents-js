@@ -1034,7 +1034,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private onPipelineReplyDone(): void {
-    if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done())) {
+    if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done)) {
       this.agentSession._updateAgentState('listening');
     }
   }
@@ -1350,11 +1350,14 @@ export class AgentActivity implements RecognitionHooks {
     );
     tasks.push(llmTask);
 
-    const [ttsTextInput, llmOutput] = llmGenData.textStream.tee();
-
     let ttsTask: Task<void> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
+    let llmOutput: ReadableStream<string>;
+
     if (audioOutput) {
+      // Only tee the stream when we need TTS
+      const [ttsTextInput, textOutput] = llmGenData.textStream.tee();
+      llmOutput = textOutput;
       [ttsTask, ttsStream] = performTTSInference(
         (...args) => this.agent.ttsNode(...args),
         ttsTextInput,
@@ -1362,6 +1365,9 @@ export class AgentActivity implements RecognitionHooks {
         replyAbortController,
       );
       tasks.push(ttsTask);
+    } else {
+      // No TTS needed, use the stream directly
+      llmOutput = llmGenData.textStream;
     }
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForScheduled()]);
@@ -1501,6 +1507,7 @@ export class AgentActivity implements RecognitionHooks {
         });
         chatCtx.insert(message);
         this.agent._chatCtx.insert(message);
+        speechHandle._itemAdded([message]);
         this.agentSession._conversationItemAdded(message);
       }
 
@@ -1528,6 +1535,7 @@ export class AgentActivity implements RecognitionHooks {
       });
       chatCtx.insert(message);
       this.agent._chatCtx.insert(message);
+      speechHandle._itemAdded([message]);
       this.agentSession._conversationItemAdded(message);
       this.logger.info(
         { speech_id: speechHandle.id, message: textOut.text },
@@ -2095,11 +2103,7 @@ export class AgentActivity implements RecognitionHooks {
       // wait all speeches played before updating the tool output and generating the response
       // most realtime models dont support generating multiple responses at the same time
       while (this.currentSpeech || this.speechQueue.size() > 0) {
-        if (
-          this.currentSpeech &&
-          !this.currentSpeech.done() &&
-          this.currentSpeech !== speechHandle
-        ) {
+        if (this.currentSpeech && !this.currentSpeech.done && this.currentSpeech !== speechHandle) {
           await this.currentSpeech.waitForPlayout();
         } else {
           // Don't block the event loop

@@ -61,6 +61,7 @@ import { RecorderIO } from './recorder_io/index.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { RunResult } from './testing/run_result.js';
 
 export interface VoiceOptions {
   allowInterruptions: boolean;
@@ -167,6 +168,9 @@ export class AgentSession<
   /** @internal - Timestamp when the session started (milliseconds) */
   _startedAt?: number;
 
+  /** @internal - Current run state for testing */
+  _globalRunState?: RunResult;
+
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
 
@@ -272,7 +276,7 @@ export class AgentSession<
     span,
   }: {
     agent: Agent;
-    room: Room;
+    room?: Room;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
     span: Span;
@@ -283,41 +287,45 @@ export class AgentSession<
     this._updateAgentState('initializing');
 
     const tasks: Promise<void>[] = [];
-    // Check for existing input/output configuration and warn if needed
-    if (this.input.audio && inputOptions?.audioEnabled !== false) {
-      this.logger.warn('RoomIO audio input is enabled but input.audio is already set, ignoring..');
-    }
 
-    if (this.output.audio && outputOptions?.audioEnabled !== false) {
-      this.logger.warn(
-        'RoomIO audio output is enabled but output.audio is already set, ignoring..',
-      );
-    }
+    if (room && !this.roomIO) {
+      // Check for existing input/output configuration and warn if needed
+      if (this.input.audio && inputOptions?.audioEnabled !== false) {
+        this.logger.warn(
+          'RoomIO audio input is enabled but input.audio is already set, ignoring..',
+        );
+      }
 
-    if (this.output.transcription && outputOptions?.transcriptionEnabled !== false) {
-      this.logger.warn(
-        'RoomIO transcription output is enabled but output.transcription is already set, ignoring..',
-      );
-    }
+      if (this.output.audio && outputOptions?.audioEnabled !== false) {
+        this.logger.warn(
+          'RoomIO audio output is enabled but output.audio is already set, ignoring..',
+        );
+      }
 
-    this.roomIO = new RoomIO({
-      agentSession: this,
-      room,
-      inputOptions,
-      outputOptions,
-    });
-    this.roomIO.start();
+      if (this.output.transcription && outputOptions?.transcriptionEnabled !== false) {
+        this.logger.warn(
+          'RoomIO transcription output is enabled but output.transcription is already set, ignoring..',
+        );
+      }
+
+      this.roomIO = new RoomIO({
+        agentSession: this,
+        room,
+        inputOptions,
+        outputOptions,
+      });
+      this.roomIO.start();
+    }
 
     let ctx: JobContext | undefined = undefined;
     try {
       ctx = getJobContext();
-    } catch (error) {
+    } catch {
       // JobContext is not available in evals
-      this.logger.warn('JobContext is not available');
     }
 
     if (ctx) {
-      if (ctx.room === room && !room.isConnected) {
+      if (room && ctx.room === room && !room.isConnected) {
         this.logger.debug('Auto-connecting to room via job context');
         tasks.push(ctx.connect());
       }
@@ -370,7 +378,7 @@ export class AgentSession<
     record,
   }: {
     agent: Agent;
-    room: Room;
+    room?: Room;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
     record?: boolean;
@@ -504,6 +512,40 @@ export class AgentSession<
     }
 
     return doGenerateReply(this.activity!, this.nextActivity);
+  }
+
+  /**
+   * Run a test with user input and return a result for assertions.
+   *
+   * This method is primarily used for testing agent behavior without
+   * requiring a real room connection.
+   *
+   * @example
+   * ```typescript
+   * const result = await session.run({ userInput: 'Hello' });
+   * result.expect.nextEvent().isMessage({ role: 'assistant' });
+   * result.expect.noMoreEvents();
+   * ```
+   *
+   * @param options - Run options including user input
+   * @returns A RunResult that resolves when the agent finishes responding
+   *
+   * TODO: Add outputType parameter for typed outputs (parity with Python)
+   */
+  run(options: { userInput: string }): RunResult {
+    if (this._globalRunState && !this._globalRunState.done()) {
+      throw new Error('nested runs are not supported');
+    }
+
+    const runState = new RunResult({
+      userInput: options.userInput,
+    });
+    this._globalRunState = runState;
+
+    const handle = this.generateReply({ userInput: options.userInput });
+    runState._watchHandle(handle);
+
+    return runState;
   }
 
   private async updateActivity(agent: Agent): Promise<void> {

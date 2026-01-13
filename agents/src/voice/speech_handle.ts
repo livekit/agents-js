@@ -2,9 +2,24 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatItem } from '../llm/index.js';
-import { Event, Future, shortuuid } from '../utils.js';
 import type { Task } from '../utils.js';
+import { Event, Future, shortuuid } from '../utils.js';
 import { asyncLocalStorage } from './agent.js';
+
+/** Symbol used to identify SpeechHandle instances */
+const SPEECH_HANDLE_SYMBOL = Symbol.for('livekit.agents.SpeechHandle');
+
+/**
+ * Type guard to check if a value is a SpeechHandle.
+ */
+export function isSpeechHandle(value: unknown): value is SpeechHandle {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    SPEECH_HANDLE_SYMBOL in value &&
+    (value as Record<symbol, boolean>)[SPEECH_HANDLE_SYMBOL] === true
+  );
+}
 
 export class SpeechHandle {
   /** Priority for messages that should be played after all other messages in the queue */
@@ -27,6 +42,9 @@ export class SpeechHandle {
 
   private itemAddedCallbacks: Set<(item: ChatItem) => void> = new Set();
   private doneCallbacks: Set<(sh: SpeechHandle) => void> = new Set();
+
+  /** @internal Symbol marker for type identification */
+  readonly [SPEECH_HANDLE_SYMBOL] = true;
 
   constructor(
     private _id: string,
@@ -91,7 +109,7 @@ export class SpeechHandle {
     this._allowInterruptions = value;
   }
 
-  done(): boolean {
+  get done(): boolean {
     return this.doneFut.done;
   }
 
@@ -152,7 +170,7 @@ export class SpeechHandle {
 
   /** @internal */
   _cancel(): SpeechHandle {
-    if (this.done()) {
+    if (this.done) {
       return this;
     }
 
