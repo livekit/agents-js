@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.34
+
+### Patch Changes
+
+- Implemented FallbackAdapter for LLM - [#916](https://github.com/livekit/agents-js/pull/916) ([@KrishnaShuk](https://github.com/KrishnaShuk))
+
+- Fix queue closure in LLMStream, STTStream, TTSStream - [#954](https://github.com/livekit/agents-js/pull/954) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.33
 
 ### Patch Changes

@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-openai
 
+## 1.0.34
+
+### Patch Changes
+
+- resolve memory leaks in openai realtime api - [#955](https://github.com/livekit/agents-js/pull/955) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`0bf2a8ed8f88dc40301912613aabd119bdc40784`](https://github.com/livekit/agents-js/commit/0bf2a8ed8f88dc40301912613aabd119bdc40784), [`b9c7cb2299873ea15a4ab72b5c137102faf840eb`](https://github.com/livekit/agents-js/commit/b9c7cb2299873ea15a4ab72b5c137102faf840eb)]:
+  - @livekit/agents@1.0.34
+
 ## 1.0.33
 
 ### Patch Changes
