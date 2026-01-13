@@ -136,7 +136,7 @@ const startJob = (
       shutdownTasks.push(callback());
     }
     await Promise.all(shutdownTasks).catch((error) =>
-      logger.error('error while shutting down the job', error),
+      logger.error({ error }, 'error while shutting down the job'),
     );
 
     process.send!({ case: 'done' });
