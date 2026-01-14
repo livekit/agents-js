@@ -13,7 +13,7 @@ import {
 } from '@livekit/agents';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
-import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
+import * as aic from '@livekit/plugins-ai-coustics';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -82,7 +82,7 @@ export default defineAgent({
       agent,
       room: ctx.room,
       inputOptions: {
-        noiseCancellation: BackgroundVoiceCancellation(),
+        noiseCancellation: aic.audioEnhancement({ model: 'quailS' }),
       },
     });
 
