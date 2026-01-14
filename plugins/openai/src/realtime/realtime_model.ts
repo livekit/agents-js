@@ -1169,11 +1169,16 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('item.type is not set');
     }
 
+    if (!event.response_id) {
+      throw new Error('response_id is not set');
+    }
+
     const itemType = event.item.type;
+    const responseId = event.response_id;
 
     if (itemType !== 'message') {
-      // non-message items (e.g. function calls) don't need additional handling here
-      // the generation event was already emitted in handleResponseCreated
+      // emit immediately if it's not a message, otherwise wait response.content_part.added
+      this.resolveGeneration(responseId);
       this.textModeRecoveryRetries = 0;
       return;
     }
@@ -1592,6 +1597,30 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
 
     return handle;
+  }
+
+  private resolveGeneration(responseId: string): void {
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
+
+    const generation_ev = {
+      messageStream: this.currentGeneration.messageChannel.stream(),
+      functionStream: this.currentGeneration.functionChannel.stream(),
+      userInitiated: false,
+      responseId,
+    } as llm.GenerationCreatedEvent;
+
+    const handle = this.responseCreatedFutures[responseId];
+    if (handle) {
+      delete this.responseCreatedFutures[responseId];
+      generation_ev.userInitiated = true;
+      if (handle.doneFut.done) {
+        this.#logger.warn({ responseId }, 'response received after timeout');
+      } else {
+        handle.doneFut.resolve(generation_ev);
+      }
+    }
   }
 }
 
