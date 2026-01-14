@@ -269,8 +269,13 @@ describe('toChatCtx', () => {
       args: '{}',
       extra: { google: { thoughtSignature: 'sig-123' } },
     });
+    const toolOutput = FunctionCallOutput.create({
+      callId: 'call_789',
+      output: '{"result": "ok"}',
+      isError: false,
+    });
 
-    ctx.insert(toolCall);
+    ctx.insert([toolCall, toolOutput]);
 
     const result = await toChatCtx(ctx);
 
@@ -285,6 +290,11 @@ describe('toChatCtx', () => {
           extra_content: { google: { thoughtSignature: 'sig-123' } },
         },
       ],
+    });
+    expect(result[1]).toEqual({
+      role: 'tool',
+      tool_call_id: 'call_789',
+      content: '{"result": "ok"}',
     });
   });
 
