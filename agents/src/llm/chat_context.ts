@@ -234,7 +234,8 @@ export class FunctionCall {
       thoughtSignature ??
       (typeof this.extra.google === 'object' && this.extra.google !== null
         ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ((this.extra.google as any).thoughtSignature || (this.extra.google as any).thought_signature)
+          (this.extra.google as any).thoughtSignature ||
+          (this.extra.google as any).thought_signature
         : undefined);
   }
 

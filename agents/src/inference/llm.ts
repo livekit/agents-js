@@ -27,6 +27,7 @@ export type OpenAIModels =
   | 'openai/gpt-4o-mini'
   | 'openai/gpt-oss-120b';
 
+export type GoogleModels =
   | 'google/gemini-2.5-pro'
   | 'google/gemini-2.5-flash'
   | 'google/gemini-2.5-flash-lite'
