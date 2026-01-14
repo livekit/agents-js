@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame } from '@livekit/rtc-node';
+import type { AudioFrame, FrameProcessor } from '@livekit/rtc-node';
 import {
   AudioStream,
   type NoiseCancellationOptions,
@@ -21,7 +21,7 @@ export class ParticipantAudioInputStream extends AudioInput {
   private room: Room;
   private sampleRate: number;
   private numChannels: number;
-  private noiseCancellation?: NoiseCancellationOptions;
+  private noiseCancellation?: NoiseCancellationOptions | FrameProcessor<AudioFrame>;
   private publication: RemoteTrackPublication | null = null;
   private participantIdentity: string | null = null;
   private logger = log();
@@ -34,7 +34,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     room: Room;
     sampleRate: number;
     numChannels: number;
-    noiseCancellation?: NoiseCancellationOptions;
+    noiseCancellation?: NoiseCancellationOptions | FrameProcessor<AudioFrame>;
   }) {
     super();
     this.room = room;
