@@ -555,18 +555,18 @@ function formatEvents(events: RunEvent[], selectedIndex?: number): string[] {
             ? content.filter((c): c is string => typeof c === 'string').join(' ')
             : '';
       const truncated = textContent.length > 50 ? textContent.slice(0, 50) + '...' : textContent;
-      line = `${prefix} [${i}] ChatMessageEvent(role=${role}, content="${truncated}", interrupted=${interrupted})`;
+      line = `${prefix}[${i}] { type: "message", role: "${role}", content: "${truncated}", interrupted: ${interrupted} }`;
     } else if (isFunctionCallEvent(event)) {
       const { name, args } = event.item;
-      line = `${prefix} [${i}] FunctionCallEvent(name=${name}, args=${args})`;
+      line = `${prefix}[${i}] { type: "function_call", name: "${name}", args: ${args} }`;
     } else if (isFunctionCallOutputEvent(event)) {
       const { output, isError } = event.item;
       const truncated = output.length > 50 ? output.slice(0, 50) + '...' : output;
-      line = `${prefix} [${i}] FunctionCallOutputEvent(output="${truncated}", isError=${isError})`;
+      line = `${prefix}[${i}] { type: "function_call_output", output: "${truncated}", isError: ${isError} }`;
     } else if (isAgentHandoffEvent(event)) {
-      line = `${prefix} [${i}] AgentHandoffEvent(oldAgent=${event.oldAgent?.constructor.name}, newAgent=${event.newAgent.constructor.name})`;
+      line = `${prefix}[${i}] { type: "agent_handoff", oldAgent: "${event.oldAgent?.constructor.name}", newAgent: "${event.newAgent.constructor.name}" }`;
     } else {
-      line = `${prefix} [${i}] ${event}`;
+      line = `${prefix}[${i}] ${event}`;
     }
 
     lines.push(line);
