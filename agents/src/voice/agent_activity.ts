@@ -1427,12 +1427,16 @@ export class AgentActivity implements RecognitionHooks {
     //TODO(AJS-272): before executing tools, make sure we generated all the text
     // (this ensure everything is kept ordered)
 
-    const onToolExecutionStarted = (_: FunctionCall) => {
-      // TODO(brian): handle speech_handle item_added
+    const onToolExecutionStarted = (f: FunctionCall) => {
+      speechHandle._itemAdded([f]);
+      this.agent._chatCtx.items.push(f);
+      this.agentSession._toolItemsAdded([f]);
     };
 
-    const onToolExecutionCompleted = (_: ToolExecutionOutput) => {
-      // TODO(brian): handle speech_handle item_added
+    const onToolExecutionCompleted = (out: ToolExecutionOutput) => {
+      if (out.toolCallOutput) {
+        speechHandle._itemAdded([out.toolCallOutput]);
+      }
     };
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
@@ -1620,28 +1624,18 @@ export class AgentActivity implements RecognitionHooks {
     if (shouldGenerateToolReply) {
       chatCtx.insert(toolMessages);
 
-      const handle = SpeechHandle.create({
-        allowInterruptions: speechHandle.allowInterruptions,
-        stepIndex: speechHandle._stepIndex + 1,
-        parent: speechHandle,
-      });
-      this.agentSession.emit(
-        AgentSessionEventTypes.SpeechCreated,
-        createSpeechCreatedEvent({
-          userInitiated: false,
-          source: 'tool_response',
-          speechHandle: handle,
-        }),
-      );
+      // Increment step count on SAME handle (parity with Python agent_activity.py L2081)
+      speechHandle._numSteps += 1;
 
       // Avoid setting tool_choice to "required" or a specific function when
       // passing tool response back to the LLM
       const respondToolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
 
+      // Reuse same speechHandle for tool response (parity with Python agent_activity.py L2122-2140)
       const toolResponseTask = this.createSpeechTask({
         task: Task.from(() =>
           this.pipelineReplyTask(
-            handle,
+            speechHandle,
             chatCtx,
             toolCtx,
             { toolChoice: respondToolChoice },
@@ -1651,13 +1645,13 @@ export class AgentActivity implements RecognitionHooks {
             toolMessages,
           ),
         ),
-        ownedSpeechHandle: handle,
+        ownedSpeechHandle: speechHandle,
         name: 'AgentActivity.pipelineReply',
       });
 
       toolResponseTask.finally(() => this.onPipelineReplyDone());
 
-      this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
+      this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
     } else if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
       for (const msg of toolMessages) {
         msg.createdAt = replyStartedAt;

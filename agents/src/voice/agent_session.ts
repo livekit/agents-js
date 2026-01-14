@@ -505,13 +505,20 @@ export class AgentSession<
 
     // attach to the session span if called outside of the AgentSession
     const activeSpan = trace.getActiveSpan();
+    let handle: SpeechHandle;
     if (!activeSpan && this.rootSpanContext) {
-      return otelContext.with(this.rootSpanContext, () =>
+      handle = otelContext.with(this.rootSpanContext, () =>
         doGenerateReply(this.activity!, this.nextActivity),
       );
+    } else {
+      handle = doGenerateReply(this.activity!, this.nextActivity);
     }
 
-    return doGenerateReply(this.activity!, this.nextActivity);
+    if (this._globalRunState) {
+      this._globalRunState._watchHandle(handle);
+    }
+
+    return handle;
   }
 
   /**
@@ -537,13 +544,9 @@ export class AgentSession<
       throw new Error('nested runs are not supported');
     }
 
-    const runState = new RunResult({
-      userInput: options.userInput,
-    });
+    const runState = new RunResult({ userInput: options.userInput });
     this._globalRunState = runState;
-
-    const handle = this.generateReply({ userInput: options.userInput });
-    runState._watchHandle(handle);
+    this.generateReply({ userInput: options.userInput });
 
     return runState;
   }

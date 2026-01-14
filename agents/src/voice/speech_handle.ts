@@ -33,12 +33,14 @@ export class SpeechHandle {
   private authorizedEvent = new Event();
   private scheduledFut = new Future<void>();
   private doneFut = new Future<void>();
-
   private generations: Future<void>[] = [];
+  private _chatItems: ChatItem[] = [];
+
   /** @internal */
   _tasks: Task<void>[] = [];
-  private _chatItems: ChatItem[] = [];
-  private _numSteps = 1;
+
+  /** @internal */
+  _numSteps = 1;
 
   private itemAddedCallbacks: Set<(item: ChatItem) => void> = new Set();
   private doneCallbacks: Set<(sh: SpeechHandle) => void> = new Set();
