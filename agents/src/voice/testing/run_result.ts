@@ -187,7 +187,7 @@ export class RunResult<T = unknown> {
       this.lastSpeechHandle = handle;
     }
 
-    if ([...this.handles].every((h) => h.done)) {
+    if ([...this.handles].every((h) => (isSpeechHandle(h) ? h.done() : h.done))) {
       this._markDone();
     }
   }

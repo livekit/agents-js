@@ -1034,7 +1034,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private onPipelineReplyDone(): void {
-    if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done)) {
+    if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done())) {
       this.agentSession._updateAgentState('listening');
     }
   }

@@ -111,7 +111,7 @@ export class SpeechHandle {
     this._allowInterruptions = value;
   }
 
-  get done(): boolean {
+  done(): boolean {
     return this.doneFut.done;
   }
 
@@ -172,7 +172,7 @@ export class SpeechHandle {
 
   /** @internal */
   _cancel(): SpeechHandle {
-    if (this.done) {
+    if (this.done()) {
       return this;
     }
 
