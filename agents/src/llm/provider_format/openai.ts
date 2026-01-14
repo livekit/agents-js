@@ -17,11 +17,20 @@ export async function toChatCtx(chatCtx: ChatContext, injectDummyUserMessage: bo
       ? await toChatItem(group.message)
       : { role: 'assistant' };
 
-    const toolCalls = group.toolCalls.map((toolCall) => ({
-      type: 'function',
-      id: toolCall.callId,
-      function: { name: toolCall.name, arguments: toolCall.args },
-    }));
+    const toolCalls = group.toolCalls.map((toolCall) => {
+      const tc: Record<string, any> = {
+        type: 'function',
+        id: toolCall.callId,
+        function: { name: toolCall.name, arguments: toolCall.args },
+      };
+
+      // Include provider-specific extra content (e.g., Google thought signatures)
+      const googleExtra = getGoogleExtra(toolCall);
+      if (googleExtra) {
+        tc.extra_content = { google: googleExtra };
+      }
+      return tc;
+    });
 
     if (toolCalls.length > 0) {
       message['tool_calls'] = toolCalls;
@@ -53,24 +62,34 @@ async function toChatItem(item: ChatItem) {
       }
     }
 
-    const content =
-      listContent.length == 0
-        ? textContent
-        : textContent.length == 0
-          ? listContent
-          : [...listContent, { type: 'text', text: textContent }];
+    let result: Record<string, any> = { role: item.role };
+    if (listContent.length === 0) {
+      result.content = textContent;
+    } else {
+      if (textContent.length > 0) {
+        listContent.push({ type: 'text', text: textContent });
+      }
+      result.content = listContent;
+    }
 
-    return { role: item.role, content };
+    return result;
   } else if (item.type === 'function_call') {
+    // Ref: python livekit-agents/livekit/agents/llm/_provider_format/openai.py L68-84
+    const tc: Record<string, any> = {
+      id: item.callId,
+      type: 'function',
+      function: { name: item.name, arguments: item.args },
+    };
+
+    // Include provider-specific extra content (e.g., Google thought signatures)
+    const googleExtra = getGoogleExtra(item);
+    if (googleExtra) {
+      tc.extra_content = { google: googleExtra };
+    }
+
     return {
       role: 'assistant',
-      tool_calls: [
-        {
-          id: item.callId,
-          type: 'function',
-          function: { name: item.name, arguments: item.args },
-        },
-      ],
+      tool_calls: [tc],
     };
   } else if (item.type === 'function_call_output') {
     return {
@@ -82,6 +101,15 @@ async function toChatItem(item: ChatItem) {
   // Skip other item types (e.g., agent_handoff)
   // These should be filtered by groupToolCalls, but this is a safety net
   throw new Error(`Unsupported item type: ${item['type']}`);
+}
+
+function getGoogleExtra(
+  item: Partial<{ extra?: Record<string, unknown>; thoughtSignature?: string }>,
+): Record<string, unknown> | undefined {
+  const googleExtra =
+    (item.extra?.google as Record<string, unknown> | undefined) ||
+    (item.thoughtSignature ? { thoughtSignature: item.thoughtSignature } : undefined);
+  return googleExtra;
 }
 
 async function toImageContent(content: ImageContent) {

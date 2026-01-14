@@ -133,7 +133,11 @@ export function groupToolCalls(chatCtx: ChatContext) {
 
     if (isAssistantMessage || isFunctionCall) {
       // only assistant messages and function calls can be grouped
-      const groupId = item.id.split('/')[0]!;
+      // For function calls, use group_id if available (for parallel function calls),
+      // otherwise fall back to id-based grouping for backwards compatibility
+      const groupId =
+        item.type === 'function_call' && item.groupId ? item.groupId : item.id.split('/')[0]!;
+
       if (itemGroups[groupId] === undefined) {
         itemGroups[groupId] = ChatItemGroup.create();
 
