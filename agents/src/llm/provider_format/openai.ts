@@ -74,7 +74,6 @@ async function toChatItem(item: ChatItem) {
 
     return result;
   } else if (item.type === 'function_call') {
-    // Ref: python livekit-agents/livekit/agents/llm/_provider_format/openai.py L68-84
     const tc: Record<string, any> = {
       id: item.callId,
       type: 'function',

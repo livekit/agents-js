@@ -189,7 +189,6 @@ export class FunctionCall {
 
   createdAt: number;
 
-  // Ref: python livekit-agents/livekit/agents/llm/chat_context.py L186-189
   extra: Record<string, unknown>;
   /**
    * Optional grouping identifier for parallel tool calls.
