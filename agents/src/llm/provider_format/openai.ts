@@ -62,7 +62,7 @@ async function toChatItem(item: ChatItem) {
       }
     }
 
-    let result: Record<string, any> = { role: item.role };
+    const result: Record<string, any> = { role: item.role };
     if (listContent.length === 0) {
       result.content = textContent;
     } else {
