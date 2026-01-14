@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame, FrameProcessor } from '@livekit/rtc-node';
+import { type AudioFrame, FrameProcessor } from '@livekit/rtc-node';
 import {
   AudioStream,
   type NoiseCancellationOptions,
@@ -21,7 +21,8 @@ export class ParticipantAudioInputStream extends AudioInput {
   private room: Room;
   private sampleRate: number;
   private numChannels: number;
-  private noiseCancellation?: NoiseCancellationOptions | FrameProcessor<AudioFrame>;
+  private noiseCancellation?: NoiseCancellationOptions;
+  private frameProcessor?: FrameProcessor<AudioFrame>;
   private publication: RemoteTrackPublication | null = null;
   private participantIdentity: string | null = null;
   private logger = log();
@@ -40,10 +41,15 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.room = room;
     this.sampleRate = sampleRate;
     this.numChannels = numChannels;
-    this.noiseCancellation = noiseCancellation;
+    if (noiseCancellation instanceof FrameProcessor) {
+      this.frameProcessor = noiseCancellation;
+    } else {
+      this.noiseCancellation = noiseCancellation;
+    }
 
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
     this.room.on(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
+    this.room.on(RoomEvent.TokenRefreshed, this.onTokenRefreshed);
   }
 
   setParticipant(participant: RemoteParticipant | string | null) {
@@ -116,6 +122,9 @@ export class ParticipantAudioInputStream extends AudioInput {
     if (this.deferredStream.isSourceSet) {
       this.deferredStream.detachSource();
     }
+
+    this.frameProcessor?.close();
+
     this.publication = null;
   }
 
@@ -140,14 +149,32 @@ export class ParticipantAudioInputStream extends AudioInput {
         outputRate: this.sampleRate,
       }),
     );
+    this.frameProcessor?.onStreamInfoUpdated({
+      participantIdentity: participant.identity,
+      roomName: this.room.name!,
+      publicationSid: publication.sid!,
+    });
+    this.frameProcessor?.onCredentialsUpdated({
+      token: this.room.token!,
+      url: this.room.serverUrl!,
+    });
     return true;
+  };
+
+  private onTokenRefreshed = () => {
+    if (this.room.token && this.room.serverUrl) {
+      this.frameProcessor?.onCredentialsUpdated({
+        token: this.room.token,
+        url: this.room.serverUrl,
+      });
+    }
   };
 
   private createStream(track: RemoteTrack): ReadableStream<AudioFrame> {
     return new AudioStream(track, {
       sampleRate: this.sampleRate,
       numChannels: this.numChannels,
-      noiseCancellation: this.noiseCancellation,
+      noiseCancellation: this.frameProcessor || this.noiseCancellation,
       // TODO(AJS-269): resolve compatibility issue with node-sdk to remove the forced type casting
     }) as unknown as ReadableStream<AudioFrame>;
   }
@@ -155,6 +182,7 @@ export class ParticipantAudioInputStream extends AudioInput {
   async close() {
     this.room.off(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
     this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
+    this.room.off(RoomEvent.TokenRefreshed, this.onTokenRefreshed);
     this.closeStream();
     // Ignore errors - stream may be locked by RecorderIO or already cancelled
     await this.deferredStream.stream.cancel().catch(() => {});
