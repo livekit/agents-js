@@ -2097,7 +2097,11 @@ export class AgentActivity implements RecognitionHooks {
       // wait all speeches played before updating the tool output and generating the response
       // most realtime models dont support generating multiple responses at the same time
       while (this.currentSpeech || this.speechQueue.size() > 0) {
-        if (this.currentSpeech && !this.currentSpeech.done && this.currentSpeech !== speechHandle) {
+        if (
+          this.currentSpeech &&
+          !this.currentSpeech.done() &&
+          this.currentSpeech !== speechHandle
+        ) {
           await this.currentSpeech.waitForPlayout();
         } else {
           // Don't block the event loop
