@@ -264,6 +264,10 @@ export class AgentSession<
     this._userData = value;
   }
 
+  get turnDetection() {
+    return this.turnHandling;
+  }
+
   private async _startImpl({
     agent,
     room,
