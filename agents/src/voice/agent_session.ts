@@ -109,7 +109,6 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   userData?: UserData;
   voiceOptions?: Partial<VoiceOptions>;
   connOptions?: SessionConnectOptions;
-  maxToolSteps?: number;
 };
 
 export class AgentSession<
@@ -153,8 +152,6 @@ export class AgentSession<
   private userSpeakingSpan?: Span;
   private agentSpeakingSpan?: Span;
 
-  private turnHandling?: TurnDetectionMode;
-
   /** @internal */
   _recorderIO?: RecorderIO;
 
@@ -173,8 +170,16 @@ export class AgentSession<
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
 
-    const { vad, stt, llm, tts, userData, connOptions, voiceOptions, turnDetection } = opts;
-
+    const {
+      vad,
+      stt,
+      llm,
+      tts,
+      turnDetection,
+      userData,
+      voiceOptions = defaultVoiceOptions,
+      connOptions,
+    } = opts;
     // Merge user-provided connOptions with defaults
     this._connOptions = {
       sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
