@@ -178,7 +178,12 @@ export interface AudioContent {
   transcript: string;
 }
 
-export type Content = InputTextContent | InputAudioContent | TextContent | OutputTextContent | AudioContent;
+export type Content =
+  | InputTextContent
+  | InputAudioContent
+  | TextContent
+  | OutputTextContent
+  | AudioContent;
 export type ContentPart = {
   type: 'text' | 'audio' | 'output_text' | 'output_audio'; // GA: output_text/output_audio
   audio?: AudioBase64Bytes;
