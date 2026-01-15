@@ -49,7 +49,7 @@
     "@livekit/agents": "workspace:*",
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugins-test": "workspace:*",
-    "@livekit/rtc-node": "^0.13.22",
+    "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
     "@types/node": "^22.18.11",
     "@types/ws": "^8.5.8",
@@ -63,6 +63,6 @@
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "^0.13.22"
+    "@livekit/rtc-node": "catalog:"
   }
 }

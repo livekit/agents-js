@@ -35,7 +35,7 @@
   },
   "devDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "^0.13.22",
+    "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
     "@types/ws": "^8.5.10",
     "onnxruntime-common": "1.21.0",
@@ -48,6 +48,6 @@
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "^0.13.22"
+    "@livekit/rtc-node": "catalog:"
   }
 }

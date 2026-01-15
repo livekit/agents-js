@@ -37,7 +37,7 @@
     "@livekit/agents": "workspace:*",
     "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/agents-plugins-test": "workspace:*",
-    "@livekit/rtc-node": "^0.13.22",
+    "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
     "@types/ws": "^8.5.10",
     "tsup": "^8.3.5",
@@ -49,6 +49,6 @@
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "^0.13.22"
+    "@livekit/rtc-node": "catalog:"
   }
 }
