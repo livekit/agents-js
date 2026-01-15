@@ -31,7 +31,7 @@ import {
   createOrderedRegular,
 } from './order.js';
 
-interface UserData {
+export interface UserData {
   order: OrderState;
   drinkItems: MenuItem[];
   comboItems: MenuItem[];
@@ -40,7 +40,7 @@ interface UserData {
   sauceItems: MenuItem[];
 }
 
-class DriveThruAgent extends voice.Agent<UserData> {
+export class DriveThruAgent extends voice.Agent<UserData> {
   constructor(userdata: UserData) {
     const instructions =
       COMMON_INSTRUCTIONS +
@@ -356,7 +356,7 @@ The user might say—for example:
   }
 }
 
-async function newUserData(): Promise<UserData> {
+export async function newUserData(): Promise<UserData> {
   const fakeDb = new FakeDB();
   const drinkItems = await fakeDb.listDrinks();
   const comboItems = await fakeDb.listComboMeals();
@@ -402,4 +402,7 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
+// Only run CLI when executed directly, not when imported for testing
+if (process.env.VITEST === undefined) {
+  cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
+}

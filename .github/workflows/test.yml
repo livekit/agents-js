@@ -41,9 +41,16 @@ jobs:
               - 'plugins/test/**'
             plugins: 
               - 'plugins/**'
+            examples:
+              - 'examples/**'
       - name: Test agents
         if: steps.filter.outputs.agents-or-tests == 'true' || github.event_name == 'push'
         run: pnpm test agents
+      - name: Test examples
+        if: steps.filter.outputs.examples == 'true' || github.event_name == 'push'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: pnpm test:examples
       # TODO (AJS-83) Re-enable once plugins are refactored with abort controllers
       # - name: Test all plugins
       #   if: steps.filter.outputs.agents-or-tests == 'true' || github.event_name != 'pull_request'
