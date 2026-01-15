@@ -61,10 +61,7 @@ import { RecorderIO } from './recorder_io/index.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
-import type { TurnHandlingConfig } from './turn/index.js';
-import { migrateLegacyOptions } from './turn/utils.js';
 
-/** @deprecated use {@link AgentSessionOptions.turnHandling} instead */
 export interface VoiceOptions {
   allowInterruptions: boolean;
   discardAudioIfUninterruptible: boolean;
@@ -104,17 +101,14 @@ export type AgentSessionCallbacks = {
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
-  /** @deprecated use {@link AgentSessionOptions.turnHandling} instead */
   turnDetection?: TurnDetectionMode;
   stt?: STT | STTModelString;
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
-  /** @deprecated use {@link AgentSessionOptions.turnHandling} instead */
   voiceOptions?: Partial<VoiceOptions>;
   connOptions?: SessionConnectOptions;
-  turnHandling?: TurnHandlingConfig;
   maxToolSteps?: number;
 };
 
@@ -125,6 +119,7 @@ export class AgentSession<
   stt?: STT;
   llm?: LLM | RealtimeModel;
   tts?: TTS;
+  turnDetection?: TurnDetectionMode;
 
   readonly options: VoiceOptions;
 
@@ -178,8 +173,7 @@ export class AgentSession<
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
 
-    const { vad, stt, llm, tts, userData, connOptions, turnHandling, maxToolSteps } =
-      migrateLegacyOptions(opts);
+    const { vad, stt, llm, tts, userData, connOptions, voiceOptions, turnDetection } = opts;
 
     // Merge user-provided connOptions with defaults
     this._connOptions = {
@@ -211,7 +205,7 @@ export class AgentSession<
       this.tts = tts;
     }
 
-    this.turnDetection = turnHandling?.turnDetection;
+    this.turnDetection = turnDetection;
     this._userData = userData;
 
     // configurable IO
@@ -262,10 +256,6 @@ export class AgentSession<
 
   set userData(value: UserData) {
     this._userData = value;
-  }
-
-  get turnDetection() {
-    return this.turnHandling;
   }
 
   private async _startImpl({
