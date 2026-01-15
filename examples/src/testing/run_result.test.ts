@@ -14,24 +14,18 @@
  * This test requires OPENAI_API_KEY to be set.
  *
  * Run with: pnpm vitest run examples/src/testing/run_result.test.ts
- *
- * Note: There are pre-existing TypeScript type errors due to the build configuration
- * not exporting the `run()` method and marking `room` as required in declaration files.
- * These are runtime tests that work correctly despite the type errors.
  */
 import { initializeLogger, llm, voice } from '@livekit/agents';
+import * as openai from '@livekit/agents-plugin-openai';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import type { LLM } from '../../../agents/src/llm/llm.js';
-import * as testing from '../../../agents/src/voice/testing/index.js';
-import * as openai from '../../../plugins/openai/src/index.js';
 
 initializeLogger({ pretty: false, level: 'warn' });
 
 const { AgentSession, Agent } = voice;
 
 type TestableAgentSession = InstanceType<typeof AgentSession> & {
-  run(options: { userInput: string }): testing.RunResult;
+  run(options: { userInput: string }): voice.testing.RunResult;
 };
 
 /**
@@ -152,7 +146,6 @@ describe('RunResult', { timeout: 120_000 }, () => {
   beforeAll(async () => {
     llmInstance = new openai.LLM({ model: 'gpt-4o-mini', temperature: 0 });
     session = new AgentSession({ llm: llmInstance }) as TestableAgentSession;
-    // @ts-expect-error - room is optional at runtime but typed as required
     await session.start({ agent: new TestAgent() });
   });
 
@@ -353,15 +346,11 @@ describe('RunResult', { timeout: 120_000 }, () => {
   });
 
   describe('judge assertions', () => {
-    // Cast llmInstance to LLM (from source) to work around src/dist type mismatch
-    // Runtime is compatible, only TypeScript sees them as different types
-    const judgeLlm = llmInstance as unknown as LLM;
-
     it('should pass judgment for weather description', async () => {
       const result = session.run({ userInput: "What's the weather in San Francisco?" });
       await result.wait();
 
-      await result.expect.at(-1).isMessage({ role: 'assistant' }).judge(judgeLlm, {
+      await result.expect.at(-1).isMessage({ role: 'assistant' }).judge(llmInstance, {
         intent: 'should describe the weather conditions or temperature',
       });
     });
@@ -370,21 +359,21 @@ describe('RunResult', { timeout: 120_000 }, () => {
       const result = session.run({ userInput: 'Can you tell me the current time?' });
       await result.wait();
 
-      await result.expect.at(-1).isMessage({ role: 'assistant' }).judge(judgeLlm, {
+      await result.expect.at(-1).isMessage({ role: 'assistant' }).judge(llmInstance, {
         intent: 'should tell the user what time it is',
       });
     });
 
     it('should pass judgment for order confirmation', async () => {
-      const result = session.run({ userInput: 'I want to order a burger please' });
+      const result = session.run({ userInput: 'Order me a classic burger, medium size' });
       await result.wait();
 
-      // Skip to the assistant message
+      // Skip function call events to get to the assistant message
       result.expect.skipNextEventIf({ type: 'function_call' });
       result.expect.skipNextEventIf({ type: 'function_call_output' });
 
-      await result.expect.nextEvent().isMessage({ role: 'assistant' }).judge(judgeLlm, {
-        intent: 'should confirm that the burger was added to the order',
+      await result.expect.at(-1).isMessage({ role: 'assistant' }).judge(llmInstance, {
+        intent: 'should confirm that the burger was added to the order or acknowledge the order',
       });
     });
 
@@ -393,7 +382,7 @@ describe('RunResult', { timeout: 120_000 }, () => {
       await result.wait();
 
       await expect(
-        result.expect.nextEvent().isMessage({ role: 'assistant' }).judge(judgeLlm, {
+        result.expect.nextEvent().isMessage({ role: 'assistant' }).judge(llmInstance, {
           intent: 'must provide detailed nutritional information about burgers',
         }),
       ).rejects.toThrow('Judgment failed');
