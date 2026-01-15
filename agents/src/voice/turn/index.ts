@@ -1,4 +1,4 @@
-import type { TurnDetectionMode } from './agent_session.js';
+import type { AgentSessionOptions, TurnDetectionMode } from '../agent_session.js';
 
 /**
  * Configuration for endpointing, which determines when the user's turn is complete.
@@ -88,21 +88,21 @@ export interface TurnHandlingConfig {
    * `realtime_llm → vad → stt → manual`; it automatically falls back if the necessary model
    * is missing.
    */
-  turnDetection?: TurnDetectionMode;
+  turnDetection: TurnDetectionMode | undefined;
   /**
    * Configuration for endpointing.
    */
-  endpointing?: EndpointingConfig;
+  endpointing: EndpointingConfig;
   /**
    * Configuration for interruption handling.
    */
-  interruption?: InterruptionConfig;
+  interruption: InterruptionConfig;
   /**
    * If set, set the user state as "away" after this amount of time after user and agent are
    * silent. Set to `undefined` to disable.
    * @defaultValue 15.0
    */
-  userAwayTimeout?: number;
+  userAwayTimeout: number;
   /**
    * Whether to speculatively begin LLM and TTS requests before an end-of-turn is detected.
    * When `true`, the agent sends inference calls as soon as a user transcript is received rather
@@ -111,5 +111,13 @@ export interface TurnHandlingConfig {
    * revises mid-utterance.
    * @defaultValue false
    */
-  preemptiveGeneration?: boolean;
+  preemptiveGeneration: boolean;
 }
+
+export const defaultTurnHandlingConfig: TurnHandlingConfig = {
+  turnDetection: undefined,
+  interruption: defaultInterruptionConfig,
+  endpointing: defaultEndpointingConfig,
+  userAwayTimeout: 15,
+  preemptiveGeneration: false,
+};
