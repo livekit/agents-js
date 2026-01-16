@@ -1641,7 +1641,7 @@ export function livekitItemToOpenAIItem(item: llm.ChatItem): api_proto.ItemResou
           contentList.push({
             type: role === 'assistant' ? 'output_text' : 'input_text',
             text: c,
-          } as api_proto.InputTextContent);
+          } as api_proto.InputTextContent | api_proto.OutputTextContent);
         } else if (c.type === 'image_content') {
           // not supported for now
           continue;
@@ -1660,7 +1660,7 @@ export function livekitItemToOpenAIItem(item: llm.ChatItem): api_proto.ItemResou
         type: 'message',
         role,
         content: contentList,
-      } as api_proto.UserItem;
+      } as api_proto.UserItem | api_proto.AssistantItem | api_proto.SystemItem;
     default:
       throw new Error(`Unsupported item type: ${(item as any).type}`);
   }
