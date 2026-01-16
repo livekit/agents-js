@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.36
+
+### Patch Changes
+
+- Add connector participant kind to defaults - [#973](https://github.com/livekit/agents-js/pull/973) ([@lukasIO](https://github.com/lukasIO))
+
+- Supports initial set of testing utilities in agent framework - [#965](https://github.com/livekit/agents-js/pull/965) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.35
 
 ### Patch Changes
