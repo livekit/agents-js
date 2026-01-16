@@ -12,8 +12,6 @@ export default defineConfig(({ mode }) => ({
     environment: 'node',
     // Default timeout for unit tests (5s), integration tests override this per-suite
     testTimeout: 5_000,
-    // Longer timeout for hooks (beforeAll/afterAll) used by integration tests
-    hookTimeout: 60_000,
     env: loadEnv(mode, process.cwd(), ''),
   },
 }));

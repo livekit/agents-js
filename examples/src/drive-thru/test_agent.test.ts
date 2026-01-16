@@ -20,7 +20,7 @@
 import { initializeLogger, llm, voice } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DriveThruAgent, newUserData, type UserData } from './drivethru_agent.js';
+import { DriveThruAgent, type UserData, newUserData } from './drivethru_agent.js';
 
 initializeLogger({ pretty: false, level: 'warn' });
 
@@ -58,7 +58,7 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
         userData: userdata,
       }) as TestableAgentSession;
       await session.start({ agent: new DriveThruAgent(userdata) });
-    });
+    }, 30_000);
 
     afterAll(async () => {
       await session?.close();
@@ -121,7 +121,7 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
         userData: userdata,
       }) as TestableAgentSession;
       await session.start({ agent: new DriveThruAgent(userdata) });
-    });
+    }, 30_000);
 
     afterAll(async () => {
       await session?.close();
@@ -185,7 +185,7 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
         userData: userdata,
       }) as TestableAgentSession;
       await session.start({ agent: new DriveThruAgent(userdata) });
-    });
+    }, 30_000);
 
     afterAll(async () => {
       await session?.close();
@@ -197,12 +197,9 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
 
       // LLM may either tell user directly or try to order and get error
       try {
-        await result.expect
-          .nextEvent()
-          .isMessage({ role: 'assistant' })
-          .judge(judgeInstance, {
-            intent: 'should inform the user that the coca cola is unavailable',
-          });
+        await result.expect.nextEvent().isMessage({ role: 'assistant' }).judge(judgeInstance, {
+          intent: 'should inform the user that the coca cola is unavailable',
+        });
       } catch {
         // If the LLM tried to order, it should have failed
         result.expect.nextEvent().isFunctionCall({
@@ -210,12 +207,9 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
           args: { itemId: 'coca_cola', size: 'L' },
         });
         result.expect.nextEvent().isFunctionCallOutput({ isError: true });
-        await result.expect
-          .nextEvent()
-          .isMessage({ role: 'assistant' })
-          .judge(judgeInstance, {
-            intent: 'should inform the user that the coca cola is unavailable',
-          });
+        await result.expect.nextEvent().isMessage({ role: 'assistant' }).judge(judgeInstance, {
+          intent: 'should inform the user that the coca cola is unavailable',
+        });
       }
       result.expect.noMoreEvents();
     });
@@ -236,7 +230,7 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
         userData: userdata,
       }) as TestableAgentSession;
       await session.start({ agent: new DriveThruAgent(userdata) });
-    });
+    }, 30_000);
 
     afterAll(async () => {
       await session?.close();
@@ -246,12 +240,9 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
       const result = session.run({ userInput: 'Can I get a fanta orange?' });
       await result.wait();
 
-      await result.expect
-        .nextEvent()
-        .isMessage({ role: 'assistant' })
-        .judge(judgeInstance, {
-          intent: 'should ask for the drink size',
-        });
+      await result.expect.nextEvent().isMessage({ role: 'assistant' }).judge(judgeInstance, {
+        intent: 'should ask for the drink size',
+      });
       result.expect.noMoreEvents();
     });
 
@@ -265,12 +256,9 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
         args: { itemId: 'fanta_orange', size: 'S' },
       });
       result.expect.nextEvent().isFunctionCallOutput();
-      await result.expect
-        .nextEvent()
-        .isMessage({ role: 'assistant' })
-        .judge(judgeInstance, {
-          intent: 'should confirm that the fanta orange was ordered',
-        });
+      await result.expect.nextEvent().isMessage({ role: 'assistant' }).judge(judgeInstance, {
+        intent: 'should confirm that the fanta orange was ordered',
+      });
       result.expect.noMoreEvents();
     });
   });
@@ -301,12 +289,9 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
         }
         expect(numMayonnaise).toBe(2);
 
-        await result.expect
-          .at(-1)
-          .isMessage({ role: 'assistant' })
-          .judge(judgeInstance, {
-            intent: 'should confirm that two mayonnaise sauces was ordered',
-          });
+        await result.expect.at(-1).isMessage({ role: 'assistant' }).judge(judgeInstance, {
+          intent: 'should confirm that two mayonnaise sauces was ordered',
+        });
       } finally {
         await session.close();
       }
@@ -336,12 +321,9 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
           name: 'orderRegularItem',
           args: { itemId: 'sweet_mcflurry_oreo' },
         });
-        await result.expect
-          .at(-1)
-          .isMessage({ role: 'assistant' })
-          .judge(judgeInstance, {
-            intent: 'should confirm that a ketchup and a McFlurry Oreo was ordered',
-          });
+        await result.expect.at(-1).isMessage({ role: 'assistant' }).judge(judgeInstance, {
+          intent: 'should confirm that a ketchup and a McFlurry Oreo was ordered',
+        });
       } finally {
         await session.close();
       }
@@ -365,7 +347,7 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
         userData: userdata,
       }) as TestableAgentSession;
       await session.start({ agent });
-    });
+    }, 30_000);
 
     afterAll(async () => {
       await session?.close();
@@ -394,13 +376,13 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
       chatCtx.addMessage({
         role: 'assistant',
         content:
-          "Alright, a Big Mac Combo with a Coke. What size would you like for your fries and drink? Medium or large?",
+          'Alright, a Big Mac Combo with a Coke. What size would you like for your fries and drink? Medium or large?',
       });
       chatCtx.addMessage({ role: 'user', content: 'Large. ' });
       chatCtx.addMessage({
         role: 'assistant',
         content:
-          "Got it! A Big Mac Combo with large fries and a Coke. What sauce would you like with that?",
+          'Got it! A Big Mac Combo with large fries and a Coke. What sauce would you like with that?',
       });
 
       await agent.updateChatCtx(chatCtx);
@@ -420,12 +402,9 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
         },
       });
       result.expect.nextEvent().isFunctionCallOutput();
-      await result.expect
-        .nextEvent()
-        .isMessage({ role: 'assistant' })
-        .judge(judgeInstance, {
-          intent: 'must confirm a Big Mac Combo meal was added/ordered',
-        });
+      await result.expect.nextEvent().isMessage({ role: 'assistant' }).judge(judgeInstance, {
+        intent: 'must confirm a Big Mac Combo meal was added/ordered',
+      });
       result.expect.noMoreEvents();
     });
   });
@@ -446,12 +425,9 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
         const result = session.run({ userInput: 'Can I get a double hamburger? No meal' });
         await result.wait();
 
-        await result.expect
-          .nextEvent()
-          .isMessage({ role: 'assistant' })
-          .judge(judgeInstance, {
-            intent: "should say it isn't something they have, or suggest something similar",
-          });
+        await result.expect.nextEvent().isMessage({ role: 'assistant' }).judge(judgeInstance, {
+          intent: "should say it isn't something they have, or suggest something similar",
+        });
         result.expect.noMoreEvents();
       } finally {
         await session.close();
@@ -473,12 +449,9 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
         const result = session.run({ userInput: 'Can I get a redbull?' });
         await result.wait();
 
-        await result.expect
-          .nextEvent()
-          .isMessage({ role: 'assistant' })
-          .judge(judgeInstance, {
-            intent: "should say they don't have a redbull",
-          });
+        await result.expect.nextEvent().isMessage({ role: 'assistant' }).judge(judgeInstance, {
+          intent: "should say they don't have a redbull",
+        });
         result.expect.noMoreEvents();
       } finally {
         await session.close();

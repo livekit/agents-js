@@ -98,7 +98,7 @@ describe('FrontDesk Agent Tests', { timeout: 180_000 }, () => {
         userData: userdata,
       }) as TestableAgentSession;
       await session.start({ agent: new FrontDeskAgent({ timezone: TIMEZONE }) });
-    });
+    }, 30_000);
 
     afterAll(async () => {
       await session?.close();
@@ -171,7 +171,7 @@ describe('FrontDesk Agent Tests', { timeout: 180_000 }, () => {
         userData: userdata,
       }) as TestableAgentSession;
       await session.start({ agent: new FrontDeskAgent({ timezone: TIMEZONE }) });
-    });
+    }, 30_000);
 
     afterAll(async () => {
       await session?.close();
