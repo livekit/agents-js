@@ -180,7 +180,6 @@ export class AgentSession<
       voiceOptions = defaultVoiceOptions,
       connOptions,
     } = opts;
-
     // Merge user-provided connOptions with defaults
     this._connOptions = {
       sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
