@@ -13,7 +13,7 @@
  *
  * This test requires OPENAI_API_KEY to be set.
  *
- * Run with: pnpm vitest run examples/src/testing/run_result.test.ts
+ * Run with: pnpm vitest run run_result
  */
 import { initializeLogger, llm, voice } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
