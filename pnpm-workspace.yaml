@@ -4,4 +4,4 @@ packages:
   - 'examples'
 
 catalog:
-  '@livekit/rtc-node': ^1.0.0-alpha.1
+  '@livekit/rtc-node': ^0.13.24
