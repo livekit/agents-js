@@ -381,6 +381,10 @@ export class RealtimeSession extends llm.RealtimeSession {
   private itemCreateFutures: { [id: string]: Future } = {};
   private itemDeleteFutures: { [id: string]: Future } = {};
 
+  // Track items that have real server-side audio (created in current session, not restored)
+  // Items restored after reconnection are text-only and cannot be truncated
+  private audioCapableItemIds: Set<string> = new Set();
+
   private updateChatCtxLock = new Mutex();
   private updateFuncCtxLock = new Mutex();
 
@@ -673,7 +677,12 @@ export class RealtimeSession extends llm.RealtimeSession {
     modalities?: Modality[];
     audioTranscript?: string;
   }): Promise<void> {
-    if (!_options.modalities || _options.modalities.includes('audio')) {
+    // Check if modalities include audio AND the item has real server-side audio
+    // Items restored after reconnection are text-only and cannot be truncated
+    const hasAudioModality = !_options.modalities || _options.modalities.includes('audio');
+    const hasServerSideAudio = this.audioCapableItemIds.has(_options.messageId);
+
+    if (hasAudioModality && hasServerSideAudio) {
       this.sendEvent({
         type: 'conversation.item.truncate',
         content_index: 0,
@@ -810,6 +819,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         if (!fut.done) fut.reject(new Error('Session reconnected'));
       }
       this.itemDeleteFutures = {};
+
+      // Clear audio-capable item tracking - restored items are text-only on the server
+      this.audioCapableItemIds.clear();
 
       const events: api_proto.ClientEvent[] = [];
 
@@ -1231,6 +1243,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('item_id is not set');
     }
 
+    // Clean up audio-capable tracking for deleted items
+    this.audioCapableItemIds.delete(event.item_id);
+
     try {
       this.remoteChatCtx.delete(event.item_id);
     } catch (error) {
@@ -1297,6 +1312,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!itemGeneration.modalities.done) {
       const modalityResult: Modality[] = isTextType ? ['text'] : ['audio', 'text'];
       itemGeneration.modalities.resolve(modalityResult);
+
+      // Track items with real server-side audio for truncation eligibility
+      if (!isTextType) {
+        this.audioCapableItemIds.add(itemId);
+      }
     }
 
     if (this.currentGeneration._firstTokenTimestamp === undefined) {
@@ -1595,7 +1615,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 }
 
-function livekitItemToOpenAIItem(item: llm.ChatItem): api_proto.ItemResource {
+/** @internal Exported for testing purposes */
+export function livekitItemToOpenAIItem(item: llm.ChatItem): api_proto.ItemResource {
   switch (item.type) {
     case 'function_call':
       return {
@@ -1618,7 +1639,7 @@ function livekitItemToOpenAIItem(item: llm.ChatItem): api_proto.ItemResource {
       for (const c of item.content) {
         if (typeof c === 'string') {
           contentList.push({
-            type: role === 'assistant' ? 'text' : 'input_text',
+            type: role === 'assistant' ? 'output_text' : 'input_text',
             text: c,
           } as api_proto.InputTextContent);
         } else if (c.type === 'image_content') {
