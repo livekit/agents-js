@@ -37,6 +37,8 @@ export interface StartSpanOptions {
   attributes?: Attributes;
   /** Whether to end the span when the function exits (default: true) */
   endOnExit?: boolean;
+  /** Optional start time for the span in milliseconds (Date.now() format) */
+  startTime?: number;
 }
 
 /**
@@ -79,10 +81,12 @@ class DynamicTracer {
    */
   startSpan(options: StartSpanOptions): Span {
     const ctx = options.context || otelContext.active();
+
     const span = this.tracer.startSpan(
       options.name,
       {
         attributes: options.attributes,
+        startTime: options.startTime,
       },
       ctx,
     );

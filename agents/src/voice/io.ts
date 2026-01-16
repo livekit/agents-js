@@ -57,6 +57,7 @@ export abstract class AudioInput {
 }
 
 export abstract class AudioOutput extends EventEmitter {
+  static readonly EVENT_PLAYBACK_STARTED = 'playbackStarted';
   static readonly EVENT_PLAYBACK_FINISHED = 'playbackFinished';
 
   private playbackFinishedFuture: Future<void> = new Future();
@@ -77,7 +78,11 @@ export abstract class AudioOutput extends EventEmitter {
   ) {
     super();
     this.capabilities = capabilities;
+
     if (this.nextInChain) {
+      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_STARTED, (ev: PlaybackStartedEvent) =>
+        this.onPlaybackStarted(ev.createdAt),
+      );
       this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_FINISHED, (ev: PlaybackFinishedEvent) =>
         this.onPlaybackFinished(ev),
       );
@@ -115,6 +120,14 @@ export abstract class AudioOutput extends EventEmitter {
     }
 
     return this.lastPlaybackEvent;
+  }
+
+  /**
+   * Called when playback actually starts (first frame is sent to output).
+   * Developers building audio sinks should call this when the first frame is captured.
+   */
+  onPlaybackStarted(createdAt: number): void {
+    this.emit(AudioOutput.EVENT_PLAYBACK_STARTED, { createdAt } as PlaybackStartedEvent);
   }
 
   /**
@@ -181,6 +194,11 @@ export interface PlaybackFinishedEvent {
   // Transcript synced with playback; may be partial if the audio was interrupted
   // When null, the transcript is not synchronized with the playback
   synchronizedTranscript?: string;
+}
+
+export interface PlaybackStartedEvent {
+  /** The timestamp (Date.now()) when the playback started */
+  createdAt: number;
 }
 
 export abstract class TextOutput {
