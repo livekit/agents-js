@@ -563,26 +563,29 @@ class RecorderAudioOutput extends AudioOutput {
     const finishTime = this.currentPauseStart ?? Date.now();
     const trailingSilenceDuration = Math.max(0, Date.now() - finishTime);
 
-    let playbackPositionInS = options.playbackPosition;
+    // Convert playbackPosition from seconds to ms for internal calculations
+    let playbackPosition = options.playbackPosition * 1000;
 
     if (this._lastSpeechStartTime === undefined) {
       this._logger.warn(
         {
           finishTime,
-          playbackPositionInS,
+          playbackPosition,
           interrupted: options.interrupted,
         },
         'playback finished before speech started',
       );
-      playbackPositionInS = 0;
+      playbackPosition = 0;
     }
 
-    playbackPositionInS = Math.max(
+    // Clamp playbackPosition to actual elapsed time (all in ms)
+    playbackPosition = Math.max(
       0,
-      Math.min((finishTime - (this._lastSpeechStartTime ?? 0)) / 1000, playbackPositionInS),
+      Math.min(finishTime - (this._lastSpeechStartTime ?? 0), playbackPosition),
     );
 
-    super.onPlaybackFinished({ ...options, playbackPosition: playbackPositionInS });
+    // Convert back to seconds for the event
+    super.onPlaybackFinished({ ...options, playbackPosition: playbackPosition / 1000 });
 
     if (!this.recorderIO.recording) {
       return;
@@ -600,28 +603,29 @@ class RecorderAudioOutput extends AudioOutput {
       return;
     }
 
-    const pauseEventsInS: Array<[number, number]> = [];
-    let playbackStartTime = finishTime - playbackPositionInS * 1000;
+    // pauseEvents stores (position, duration) in ms
+    const pauseEvents: Array<[number, number]> = [];
+    let playbackStartTime = finishTime - playbackPosition;
 
     if (this.pauseWallTimes.length > 0) {
       const totalPauseDuration = this.pauseWallTimes.reduce(
         (sum, [start, end]) => sum + (end - start),
         0,
       );
-      playbackStartTime = finishTime - playbackPositionInS * 1000 - totalPauseDuration;
+      playbackStartTime = finishTime - playbackPosition - totalPauseDuration;
 
       let accumulatedPause = 0;
       for (const [pauseStart, pauseEnd] of this.pauseWallTimes) {
-        let positionInS = (pauseStart - playbackStartTime - accumulatedPause) / 1000;
-        const durationInS = (pauseEnd - pauseStart) / 1000;
-        positionInS = Math.max(0, Math.min(positionInS, playbackPositionInS));
-        pauseEventsInS.push([positionInS, durationInS]);
-        accumulatedPause += pauseEnd - pauseStart;
+        let position = pauseStart - playbackStartTime - accumulatedPause;
+        const duration = pauseEnd - pauseStart;
+        position = Math.max(0, Math.min(position, playbackPosition));
+        pauseEvents.push([position, duration]);
+        accumulatedPause += duration;
       }
     }
 
     const buf: AudioFrame[] = [];
-    let accDurInS = 0;
+    let accDur = 0; 
     const sampleRate = this.accFrames[0]!.sampleRate;
     const numChannels = this.accFrames[0]!.channels;
 
@@ -630,38 +634,39 @@ class RecorderAudioOutput extends AudioOutput {
 
     for (const frame of this.accFrames) {
       let currentFrame = frame;
-      const frameDurationInS = frame.samplesPerChannel / frame.sampleRate;
+      const frameDuration = (frame.samplesPerChannel / frame.sampleRate) * 1000;
 
-      if (frameDurationInS + accDurInS > playbackPositionInS) {
-        const [left] = splitFrame(currentFrame, playbackPositionInS - accDurInS);
+      if (frameDuration + accDur > playbackPosition) {
+        const [left] = splitFrame(currentFrame, (playbackPosition - accDur) / 1000);
         currentFrame = left;
         shouldBreak = true;
       }
 
       // Process any pauses before this frame starts
-      while (pauseIdx < pauseEventsInS.length && pauseEventsInS[pauseIdx]![0] <= accDurInS) {
-        const [, pauseDurInS] = pauseEventsInS[pauseIdx]!;
-        buf.push(createSilenceFrame(pauseDurInS, sampleRate, numChannels));
+      while (pauseIdx < pauseEvents.length && pauseEvents[pauseIdx]![0] <= accDur) {
+        const [, pauseDur] = pauseEvents[pauseIdx]!;
+        buf.push(createSilenceFrame(pauseDur / 1000, sampleRate, numChannels));
         pauseIdx++;
       }
 
       // Process any pauses within this frame
-      const currentFrameDurationInS = currentFrame.samplesPerChannel / currentFrame.sampleRate;
+      const currentFrameDuration = (currentFrame.samplesPerChannel / currentFrame.sampleRate) * 1000;
       while (
-        pauseIdx < pauseEventsInS.length &&
-        pauseEventsInS[pauseIdx]![0] < accDurInS + currentFrameDurationInS
+        pauseIdx < pauseEvents.length &&
+        pauseEvents[pauseIdx]![0] < accDur + currentFrameDuration
       ) {
-        const [pausePosInS, pauseDurInS] = pauseEventsInS[pauseIdx]!;
-        const [left, right] = splitFrame(currentFrame, pausePosInS - accDurInS);
+        const [pausePos, pauseDur] = pauseEvents[pauseIdx]!;
+        const [left, right] = splitFrame(currentFrame, (pausePos - accDur) / 1000);
         buf.push(left);
-        accDurInS += left.samplesPerChannel / left.sampleRate;
-        buf.push(createSilenceFrame(pauseDurInS, sampleRate, numChannels));
+        accDur += (left.samplesPerChannel / left.sampleRate) * 1000;
+        buf.push(createSilenceFrame(pauseDur / 1000, sampleRate, numChannels));
+        
         currentFrame = right;
         pauseIdx++;
       }
 
       buf.push(currentFrame);
-      accDurInS += currentFrame.samplesPerChannel / currentFrame.sampleRate;
+      accDur += (currentFrame.samplesPerChannel / currentFrame.sampleRate) * 1000;
 
       if (shouldBreak) {
         break;
@@ -669,10 +674,10 @@ class RecorderAudioOutput extends AudioOutput {
     }
 
     // Process remaining pauses
-    while (pauseIdx < pauseEventsInS.length) {
-      const [pausePosInS, pauseDurInS] = pauseEventsInS[pauseIdx]!;
-      if (pausePosInS <= playbackPositionInS) {
-        buf.push(createSilenceFrame(pauseDurInS, sampleRate, numChannels));
+    while (pauseIdx < pauseEvents.length) {
+      const [pausePos, pauseDur] = pauseEvents[pauseIdx]!;
+      if (pausePos <= playbackPosition) {
+        buf.push(createSilenceFrame(pauseDur / 1000, sampleRate, numChannels));
       }
       pauseIdx++;
     }
