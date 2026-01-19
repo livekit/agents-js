@@ -402,4 +402,5 @@ export default defineAgent({
   },
 });
 
+// eslint-disable-next-line turbo/no-undeclared-env-vars
 cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
