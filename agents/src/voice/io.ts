@@ -30,12 +30,14 @@ export type TTSNode = (
 ) => Promise<ReadableStream<AudioFrame> | null>;
 
 /**
- * A string with timing information for word-level alignment.
+ *A string with optional start and end timestamps for word-level alignment.
  */
 export interface TimedString {
   text: string;
   startTime?: number; // seconds
   endTime?: number; // seconds
+  confidence?: number;
+  startTimeOffset?: number;
 }
 
 export interface AudioOutputCapabilities {

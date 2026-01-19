@@ -11,6 +11,7 @@ import {
   metrics,
   voice,
 } from '@livekit/agents';
+import * as baseten from '@livekit/agents-plugin-baseten';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
@@ -42,7 +43,7 @@ export default defineAgent({
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
       // stt: new inference.STT({ model: 'assemblyai/universal-streaming:en', language: 'en' }),
-      stt: 'assemblyai/universal-streaming:en',
+      stt: new baseten.STT(),
       // A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
       // See all available models at https://docs.livekit.io/agents/models/llm/
       // llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),

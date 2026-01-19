@@ -27,9 +27,11 @@ export class STT extends stt.STT {
   label = 'baseten.STT';
 
   constructor(opts: Partial<BasetenSttOptions> = {}) {
+    // Ref: Python livekit-plugins-baseten/stt.py lines 84-90 - Baseten supports word-level timestamps (via segments)
     super({
       streaming: true,
       interimResults: opts.enablePartialTranscripts ?? defaultSTTOptions.enablePartialTranscripts!,
+      alignedTranscript: 'word',
     });
 
     const apiKey = opts.apiKey ?? process.env.BASETEN_API_KEY;
@@ -150,6 +152,7 @@ export class SpeechStream extends stt.SpeechStream {
         prompt: this.#opts.prompt,
         audio_language: this.#opts.audioLanguage ?? 'en',
         language_detection_only: this.#opts.languageDetectionOnly ?? false,
+        show_word_timestamps: true,
       },
     };
     ws.send(JSON.stringify(metadata));
@@ -233,9 +236,25 @@ export class SpeechStream extends stt.SpeechStream {
               this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
             }
 
-            // Extract timing from segments
-            const startTime = segments.length > 0 ? segments[0].start ?? 0.0 : 0.0;
-            const endTime = segments.length > 0 ? segments[segments.length - 1].end ?? 0.0 : 0.0;
+            const startTime =
+              segments.length > 0
+                ? (segments[0].start ?? 0.0) + this.startTimeOffset
+                : this.startTimeOffset;
+            const endTime =
+              segments.length > 0
+                ? (segments[segments.length - 1].end ?? 0.0) + this.startTimeOffset
+                : this.startTimeOffset;
+
+            // Note: Baseten returns segments (chunks) which we treat as words for aligned transcripts
+            const words = segments.map(
+              (segment: { text?: string; start?: number; end?: number }) => ({
+                text: segment.text ?? '',
+                startTime: (segment.start ?? 0.0) + this.startTimeOffset,
+                endTime: (segment.end ?? 0.0) + this.startTimeOffset,
+                startTimeOffset: this.startTimeOffset,
+                confidence: confidence,
+              }),
+            );
 
             const speechData: stt.SpeechData = {
               language: languageCode!,
@@ -243,6 +262,7 @@ export class SpeechStream extends stt.SpeechStream {
               startTime,
               endTime,
               confidence,
+              words: words.length > 0 ? words : undefined,
             };
 
             // Handle interim vs final transcripts (matching Python implementation)

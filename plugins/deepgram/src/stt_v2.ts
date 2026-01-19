@@ -106,9 +106,11 @@ export class STTv2 extends stt.STT {
    * @throws Error if no API key is provided
    */
   constructor(opts: Partial<STTv2Options> = {}) {
+    // Ref: Python livekit-plugins-deepgram/stt.py lines 139-144 - Deepgram supports word-level timestamps
     super({
       streaming: true,
       interimResults: true,
+      alignedTranscript: 'word',
     });
 
     this.#opts = { ...defaultSTTv2Options, ...opts };
@@ -405,9 +407,8 @@ class SpeechStreamv2 extends stt.SpeechStream {
   }
 
   #sendTranscriptEvent(eventType: stt.SpeechEventType, data: Record<string, unknown>) {
-    // Note: start_time_offset is not yet available in the TypeScript base class
-    // Using 0.0 for now - full parity would require base class changes
-    const alts = parseTranscription(this.#opts.language || 'en', data, 0.0);
+    // Ref: Python livekit-plugins-deepgram/stt.py lines 707-729 - Pass startTimeOffset to apply linear timestamps
+    const alts = parseTranscription(this.#opts.language || 'en', data, this.startTimeOffset);
 
     if (alts.length > 0) {
       this.queue.put({
@@ -437,7 +438,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
       mip_opt_out: String(this.#opts.mipOptOut),
     };
 
-    if (this.#opts.language) params.language = this.#opts.language;
+    // Note: v2 API does NOT include 'language' parameter
     if (this.#opts.eagerEotThreshold)
       params.eager_eot_threshold = this.#opts.eagerEotThreshold.toString();
     if (this.#opts.eotThreshold) params.eot_threshold = this.#opts.eotThreshold.toString();
@@ -465,16 +466,16 @@ function parseTranscription(
   startTimeOffset: number,
 ): stt.SpeechData[] {
   const transcript = data.transcript as string | undefined;
-  const words = (data.words as Array<Record<string, unknown>>) || [];
+  const wordsData = (data.words as Array<Record<string, unknown>>) || [];
 
-  if (!words || words.length === 0) {
+  if (!wordsData || wordsData.length === 0) {
     return [];
   }
 
   let confidence = 0;
-  if (words.length > 0) {
-    const sum = words.reduce((acc: number, w) => acc + ((w.confidence as number) || 0), 0);
-    confidence = sum / words.length;
+  if (wordsData.length > 0) {
+    const sum = wordsData.reduce((acc: number, w) => acc + ((w.confidence as number) || 0), 0);
+    confidence = sum / wordsData.length;
   }
 
   const sd: stt.SpeechData = {
@@ -483,6 +484,16 @@ function parseTranscription(
     endTime: ((data.audio_window_end as number) || 0) + startTimeOffset,
     confidence: confidence,
     text: transcript || '',
+    // Note: Deepgram V2 (Flux) API does not provide word-level timing (start/end).
+    // Words only contain 'word' and 'confidence' fields, so startTime/endTime will be 0.
+    // See: https://developers.deepgram.com/docs/flux/nova-3-migration
+    words: wordsData.map((word) => ({
+      text: (word.word as string) ?? '',
+      startTime: ((word.start as number) ?? 0) + startTimeOffset,
+      endTime: ((word.end as number) ?? 0) + startTimeOffset,
+      confidence: (word.confidence as number) ?? 0.0,
+      startTimeOffset,
+    })),
   };
 
   return [sd];

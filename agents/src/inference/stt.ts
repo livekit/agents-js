@@ -16,6 +16,12 @@ import {
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
+import type { TimedString } from '../voice/io.js';
+import {
+  type SttServerEvent,
+  type SttTranscriptEvent,
+  sttServerEventSchema,
+} from './api_protos.js';
 import { type AnyString, connectWs, createAccessToken } from './utils.js';
 
 export type DeepgramModels =
@@ -122,7 +128,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     apiSecret?: string;
     modelOptions?: STTOptions<TModel>;
   }) {
-    super({ streaming: true, interimResults: true });
+    super({ streaming: true, interimResults: true, alignedTranscript: 'word' });
 
     const {
       model,
@@ -271,7 +277,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let closing = false;
       let finalReceived = false;
 
-      type SttServerEvent = Record<string, any>;
       const eventChannel = createStreamChannel<SttServerEvent>();
 
       const resourceCleanup = () => {
@@ -380,10 +385,19 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             if (signal.aborted) return;
             if (result.done) return;
 
-            const json = result.value;
-            const type = json.type as string | undefined;
+            // Parse and validate with Zod schema
+            const parseResult = await sttServerEventSchema.safeParseAsync(result.value);
+            if (!parseResult.success) {
+              this.#logger.warn(
+                { error: parseResult.error, rawData: result.value },
+                'Failed to parse STT server event',
+              );
+              continue;
+            }
 
-            switch (type) {
+            const event: SttServerEvent = parseResult.data;
+
+            switch (event.type) {
               case 'session.created':
               case 'session.finalized':
                 break;
@@ -392,21 +406,15 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 resourceCleanup();
                 break;
               case 'interim_transcript':
-                this.processTranscript(json, false);
+                this.processTranscript(event, false);
                 break;
               case 'final_transcript':
-                this.processTranscript(json, true);
+                this.processTranscript(event, true);
                 break;
               case 'error':
-                this.#logger.error({ error: json }, 'Received error from LiveKit STT');
+                this.#logger.error({ error: event }, 'Received error from LiveKit STT');
                 resourceCleanup();
-                throw new APIError(`LiveKit STT returned error: ${JSON.stringify(json)}`);
-              default:
-                this.#logger.warn(
-                  { message: json },
-                  'Received unexpected message from LiveKit STT',
-                );
-                break;
+                throw new APIError(`LiveKit STT returned error: ${JSON.stringify(event)}`);
             }
           }
         } finally {
@@ -457,13 +465,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     }
   }
 
-  private processTranscript(data: Record<string, any>, isFinal: boolean) {
+  private processTranscript(data: SttTranscriptEvent, isFinal: boolean) {
     // Check if queue is closed to avoid race condition during disconnect
     if (this.queue.closed) return;
 
-    const requestId = data.request_id ?? this.requestId;
-    const text = data.transcript ?? '';
-    const language = data.language ?? this.opts.language ?? 'en';
+    const requestId = data.session_id || this.requestId;
+    const text = data.transcript;
+    const language = data.language || this.opts.language || 'en';
 
     if (!text && !isFinal) return;
 
@@ -476,10 +484,19 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
       const speechData: SpeechData = {
         language,
-        startTime: data.start ?? 0,
-        endTime: data.duration ?? 0,
-        confidence: data.confidence ?? 1.0,
+        startTime: this.startTimeOffset + data.start,
+        endTime: this.startTimeOffset + data.start + data.duration,
+        confidence: data.confidence,
         text,
+        words: data.words.map(
+          (word): TimedString => ({
+            text: word.word,
+            startTime: word.start + this.startTimeOffset,
+            endTime: word.end + this.startTimeOffset,
+            startTimeOffset: this.startTimeOffset,
+            confidence: word.confidence,
+          }),
+        ),
       };
 
       if (isFinal) {
