@@ -187,12 +187,14 @@ export abstract class AudioOutput extends EventEmitter {
 }
 
 export interface PlaybackFinishedEvent {
-  // How much of the audio was played back
+  /** How much of the audio was played back, in seconds */
   playbackPosition: number;
-  // Interrupted is True if playback was interrupted (clearBuffer() was called)
+  /** True if playback was interrupted (clearBuffer() was called) */
   interrupted: boolean;
-  // Transcript synced with playback; may be partial if the audio was interrupted
-  // When null, the transcript is not synchronized with the playback
+  /**
+   * Transcript synced with playback; may be partial if the audio was interrupted.
+   * When undefined, the transcript is not synchronized with the playback.
+   */
   synchronizedTranscript?: string;
 }
 
