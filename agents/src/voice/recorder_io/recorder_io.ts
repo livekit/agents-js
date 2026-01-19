@@ -728,8 +728,8 @@ class RecorderAudioOutput extends AudioOutput {
 /**
  * Create a silent audio frame with the given duration
  */
-function createSilenceFrame(duration: number, sampleRate: number, numChannels: number): AudioFrame {
-  const samples = Math.floor(duration * sampleRate);
+function createSilenceFrame(durationInS: number, sampleRate: number, numChannels: number): AudioFrame {
+  const samples = Math.floor(durationInS * sampleRate);
   const data = new Int16Array(samples * numChannels); // Zero-filled by default
   return new AudioFrame(data, sampleRate, numChannels, samples);
 }
