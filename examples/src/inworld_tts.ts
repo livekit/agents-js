@@ -81,26 +81,23 @@ export default defineAgent({
 
     // timestamp handling (if enabled)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    session.tts!.on(
-      'alignment',
-      (data: {
-        wordAlignment?: { words: string[]; starts: number[]; ends: number[] };
-        characterAlignment?: { chars: string[]; starts: number[]; ends: number[] };
-      }) => {
-        if (data.wordAlignment) {
-          const { words, starts, ends } = data.wordAlignment;
-          for (let i = 0; i < words.length; i++) {
-            console.log(`[Inworld TTS] Word: "${words[i]}", Start: ${starts[i]}, End: ${ends[i]}`);
-          }
+    session.tts!.on('alignment' as any, (data: {
+      wordAlignment?: { words: string[]; starts: number[]; ends: number[] };
+      characterAlignment?: { chars: string[]; starts: number[]; ends: number[] };
+    }) => {
+      if (data.wordAlignment) {
+        const { words, starts, ends } = data.wordAlignment;
+        for (let i = 0; i < words.length; i++) {
+          console.log(`[Inworld TTS] Word: "${words[i]}", Start: ${starts[i]}, End: ${ends[i]}`);
         }
-        if (data.characterAlignment) {
-          const { chars, starts, ends } = data.characterAlignment;
-          for (let i = 0; i < chars.length; i++) {
-            console.log(`[Inworld TTS] Char: "${chars[i]}", Start: ${starts[i]}, End: ${ends[i]}`);
-          }
+      }
+      if (data.characterAlignment) {
+        const { chars, starts, ends } = data.characterAlignment;
+        for (let i = 0; i < chars.length; i++) {
+          console.log(`[Inworld TTS] Char: "${chars[i]}", Start: ${starts[i]}, End: ${ends[i]}`);
         }
-      },
-    );
+      }
+    });
 
     const usageCollector = new metrics.UsageCollector();
 
