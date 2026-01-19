@@ -277,7 +277,7 @@ export class Agent<UserData = any> {
         activity.agentSession._recorderIO?.recordingStartedAt ?? // Use recording start time if available
         activity.agentSession._startedAt ?? // Fallback to session start time
         Date.now(); // Fallback to current time
-      
+
       stream.startTimeOffset = (Date.now() - audioInputStartedAt) / 1000;
 
       stream.updateInputStream(audio);
