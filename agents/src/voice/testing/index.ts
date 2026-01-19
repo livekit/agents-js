@@ -24,6 +24,7 @@ export {
   AgentHandoffAssert,
   AssertionError,
   EventAssert,
+  EventRangeAssert,
   FunctionCallAssert,
   FunctionCallOutputAssert,
   MessageAssert,
