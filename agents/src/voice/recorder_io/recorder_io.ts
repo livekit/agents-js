@@ -625,7 +625,7 @@ class RecorderAudioOutput extends AudioOutput {
     }
 
     const buf: AudioFrame[] = [];
-    let accDur = 0; 
+    let accDur = 0;
     const sampleRate = this.accFrames[0]!.sampleRate;
     const numChannels = this.accFrames[0]!.channels;
 
@@ -650,7 +650,8 @@ class RecorderAudioOutput extends AudioOutput {
       }
 
       // Process any pauses within this frame
-      const currentFrameDuration = (currentFrame.samplesPerChannel / currentFrame.sampleRate) * 1000;
+      const currentFrameDuration =
+        (currentFrame.samplesPerChannel / currentFrame.sampleRate) * 1000;
       while (
         pauseIdx < pauseEvents.length &&
         pauseEvents[pauseIdx]![0] < accDur + currentFrameDuration
@@ -660,7 +661,7 @@ class RecorderAudioOutput extends AudioOutput {
         buf.push(left);
         accDur += (left.samplesPerChannel / left.sampleRate) * 1000;
         buf.push(createSilenceFrame(pauseDur / 1000, sampleRate, numChannels));
-        
+
         currentFrame = right;
         pauseIdx++;
       }
@@ -733,7 +734,11 @@ class RecorderAudioOutput extends AudioOutput {
 /**
  * Create a silent audio frame with the given duration
  */
-function createSilenceFrame(durationInS: number, sampleRate: number, numChannels: number): AudioFrame {
+function createSilenceFrame(
+  durationInS: number,
+  sampleRate: number,
+  numChannels: number,
+): AudioFrame {
   const samples = Math.floor(durationInS * sampleRate);
   const data = new Int16Array(samples * numChannels); // Zero-filled by default
   return new AudioFrame(data, sampleRate, numChannels, samples);
