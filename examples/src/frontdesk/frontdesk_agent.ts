@@ -27,7 +27,7 @@ import {
   getUniqueHash,
 } from './calendar_api.js';
 
-interface Userdata {
+export interface Userdata {
   cal: Calendar;
 }
 
@@ -247,5 +247,7 @@ export default defineAgent({
   },
 });
 
-// eslint-disable-next-line turbo/no-undeclared-env-vars
-cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
+// Only run CLI when executed directly, not when imported for testing
+if (process.env.VITEST === undefined) {
+  cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
+}

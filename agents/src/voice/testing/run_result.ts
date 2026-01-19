@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AgentHandoffItem, ChatItem } from '../../llm/chat_context.js';
+import { z } from 'zod';
+import type { AgentHandoffItem, ChatItem, ChatRole } from '../../llm/chat_context.js';
+import { ChatContext } from '../../llm/chat_context.js';
+import type { LLM } from '../../llm/llm.js';
+import { tool } from '../../llm/tool_context.js';
 import type { Task } from '../../utils.js';
 import { Future } from '../../utils.js';
 import type { Agent } from '../agent.js';
@@ -22,6 +26,10 @@ import {
   isFunctionCallEvent,
   isFunctionCallOutputEvent,
 } from './types.js';
+
+// Type for agent constructor (used in assertions)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AgentConstructor = new (...args: any[]) => Agent;
 
 // Environment variable for verbose output
 const evalsVerbose = parseInt(process.env.LIVEKIT_EVALS_VERBOSE || '0', 10);
@@ -141,11 +149,11 @@ export class RunResult<T = unknown> {
     let event: RunEvent | undefined;
 
     if (item.type === 'message') {
-      event = { type: 'message', item } as ChatMessageEvent;
+      event = { type: 'message', item };
     } else if (item.type === 'function_call') {
-      event = { type: 'function_call', item } as FunctionCallEvent;
+      event = { type: 'function_call', item };
     } else if (item.type === 'function_call_output') {
-      event = { type: 'function_call_output', item } as FunctionCallOutputEvent;
+      event = { type: 'function_call_output', item };
     }
 
     if (event) {
@@ -223,11 +231,6 @@ export class RunAssert {
   private _events: RunEvent[];
   private _currentIndex = 0;
 
-  // TODO(brian): Add range access for parity with Python __getitem__ slice support.
-  // - Add range(start?, end?) method returning EventRangeAssert
-  // - EventRangeAssert should have containsFunctionCall(), containsMessage() methods
-  // See Python run_result.py lines 247-251 for reference.
-
   constructor(runResult: RunResult) {
     this._events = runResult.events;
   }
@@ -294,6 +297,141 @@ export class RunAssert {
       this._currentIndex++;
     }
     return this;
+  }
+
+  /**
+   * Conditionally skip the next event if it matches the specified criteria.
+   * Returns the event assertion if matched and skipped, or undefined if not matched.
+   *
+   * @example
+   * ```typescript
+   * // Skip optional assistant message before function call
+   * result.expect.skipNextEventIf({ type: 'message', role: 'assistant' });
+   * result.expect.nextEvent().isFunctionCall({ name: 'foo' });
+   * ```
+   */
+  skipNextEventIf(
+    options:
+      | { type: 'message'; role?: ChatRole }
+      | { type: 'function_call'; name?: string; args?: Record<string, unknown> }
+      | { type: 'function_call_output'; output?: string; isError?: boolean }
+      | { type: 'agent_handoff'; newAgentType?: AgentConstructor },
+  ):
+    | MessageAssert
+    | FunctionCallAssert
+    | FunctionCallOutputAssert
+    | AgentHandoffAssert
+    | undefined {
+    if (this._currentIndex >= this._events.length) {
+      return undefined;
+    }
+
+    try {
+      const evAssert = this._currentEvent();
+
+      if (options.type === 'message') {
+        const { role } = options;
+        const result = evAssert.isMessage({ role });
+        this._currentIndex++;
+        return result;
+      } else if (options.type === 'function_call') {
+        const { name, args } = options;
+        const result = evAssert.isFunctionCall({
+          name,
+          args,
+        });
+        this._currentIndex++;
+        return result;
+      } else if (options.type === 'function_call_output') {
+        const { output, isError } = options;
+        const result = evAssert.isFunctionCallOutput({
+          output,
+          isError,
+        });
+        this._currentIndex++;
+        return result;
+      } else if (options.type === 'agent_handoff') {
+        const { newAgentType } = options;
+        const result = evAssert.isAgentHandoff({ newAgentType });
+        this._currentIndex++;
+        return result;
+      }
+    } catch {
+      // Assertion failed, event doesn't match criteria
+      return undefined;
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Get an EventRangeAssert for a range of events.
+   * Similar to Python's slice access: expect[0:3] or expect[:]
+   *
+   * @param start - Start index (inclusive), defaults to 0
+   * @param end - End index (exclusive), defaults to events.length
+   *
+   * @example
+   * ```typescript
+   * // Search all events
+   * result.expect.range().containsFunctionCall({ name: 'foo' });
+   * // Search first 3 events
+   * result.expect.range(0, 3).containsMessage({ role: 'assistant' });
+   * ```
+   */
+  range(start?: number, end?: number): EventRangeAssert {
+    const startIdx = start ?? 0;
+    const endIdx = end ?? this._events.length;
+    const events = this._events.slice(startIdx, endIdx);
+    return new EventRangeAssert(events, this, { start: startIdx, end: endIdx });
+  }
+
+  /**
+   * Assert that a function call matching criteria exists anywhere in the events.
+   *
+   * @example
+   * ```typescript
+   * result.expect.containsFunctionCall({ name: 'order_item' });
+   * ```
+   */
+  containsFunctionCall(options?: FunctionCallAssertOptions): FunctionCallAssert {
+    return this.range().containsFunctionCall(options);
+  }
+
+  /**
+   * Assert that a message matching criteria exists anywhere in the events.
+   *
+   * @example
+   * ```typescript
+   * result.expect.containsMessage({ role: 'assistant' });
+   * ```
+   */
+  containsMessage(options?: MessageAssertOptions): MessageAssert {
+    return this.range().containsMessage(options);
+  }
+
+  /**
+   * Assert that a function call output matching criteria exists anywhere in the events.
+   *
+   * @example
+   * ```typescript
+   * result.expect.containsFunctionCallOutput({ isError: false });
+   * ```
+   */
+  containsFunctionCallOutput(options?: FunctionCallOutputAssertOptions): FunctionCallOutputAssert {
+    return this.range().containsFunctionCallOutput(options);
+  }
+
+  /**
+   * Assert that an agent handoff matching criteria exists anywhere in the events.
+   *
+   * @example
+   * ```typescript
+   * result.expect.containsAgentHandoff({ newAgentType: MyAgent });
+   * ```
+   */
+  containsAgentHandoff(options?: AgentHandoffAssertOptions): AgentHandoffAssert {
+    return this.range().containsAgentHandoff(options);
   }
 
   /**
@@ -445,8 +583,7 @@ export class EventAssert {
       this._raise(`Expected AgentHandoffEvent, got ${this._event.type}`);
     }
 
-    // Cast to the correct type after validation
-    const event = this._event as AgentHandoffEvent;
+    const event = this._event;
 
     if (options?.newAgentType) {
       const actualType = event.newAgent.constructor.name;
@@ -456,6 +593,118 @@ export class EventAssert {
     }
 
     return new AgentHandoffAssert(event, this._parent, this._index);
+  }
+}
+
+/**
+ * Assertion wrapper for a range of events.
+ * Provides contains*() methods to search within the range.
+ */
+export class EventRangeAssert {
+  private _events: RunEvent[];
+  private _parent: RunAssert;
+  private _range: { start: number; end: number };
+
+  constructor(events: RunEvent[], parent: RunAssert, range: { start: number; end: number }) {
+    this._events = events;
+    this._parent = parent;
+    this._range = range;
+  }
+
+  /**
+   * Assert that a function call matching criteria exists in this event range.
+   *
+   * @example
+   * ```typescript
+   * result.expect.range(0, 3).containsFunctionCall({ name: 'foo' });
+   * ```
+   */
+  containsFunctionCall(options?: FunctionCallAssertOptions): FunctionCallAssert {
+    for (let idx = 0; idx < this._events.length; idx++) {
+      const ev = this._events[idx]!;
+      const candidate = new EventAssert(ev, this._parent, this._range.start + idx);
+      try {
+        return candidate.isFunctionCall(options);
+      } catch {
+        // Continue searching
+      }
+    }
+
+    this._parent._raiseWithDebugInfo(
+      `No FunctionCallEvent satisfying criteria found in range [${this._range.start}:${this._range.end}]`,
+    );
+  }
+
+  /**
+   * Assert that a message matching criteria exists in this event range.
+   *
+   * @example
+   * ```typescript
+   * result.expect.range(0, 2).containsMessage({ role: 'assistant' });
+   * ```
+   */
+  containsMessage(options?: MessageAssertOptions): MessageAssert {
+    for (let idx = 0; idx < this._events.length; idx++) {
+      const ev = this._events[idx]!;
+      const candidate = new EventAssert(ev, this._parent, this._range.start + idx);
+      try {
+        return candidate.isMessage(options);
+      } catch {
+        // Continue searching
+      }
+    }
+
+    this._parent._raiseWithDebugInfo(
+      `No ChatMessageEvent matching criteria found in range [${this._range.start}:${this._range.end}]`,
+    );
+  }
+
+  /**
+   * Assert that a function call output matching criteria exists in this event range.
+   *
+   * @example
+   * ```typescript
+   * result.expect.range(1, 4).containsFunctionCallOutput({ isError: true });
+   * ```
+   */
+  containsFunctionCallOutput(options?: FunctionCallOutputAssertOptions): FunctionCallOutputAssert {
+    for (let idx = 0; idx < this._events.length; idx++) {
+      const ev = this._events[idx]!;
+      const candidate = new EventAssert(ev, this._parent, this._range.start + idx);
+      try {
+        return candidate.isFunctionCallOutput(options);
+      } catch {
+        // Continue searching
+      }
+    }
+
+    this._parent._raiseWithDebugInfo(
+      `No FunctionCallOutputEvent matching criteria found in range [${this._range.start}:${this._range.end}]`,
+    );
+  }
+
+  /**
+   * Assert that an agent handoff matching criteria exists in this event range.
+   *
+   * @example
+   * ```typescript
+   * result.expect.range(0, 3).containsAgentHandoff({ newAgentType: MyAgent });
+   * ```
+   */
+  containsAgentHandoff(options?: AgentHandoffAssertOptions): AgentHandoffAssert {
+    for (let idx = 0; idx < this._events.length; idx++) {
+      const ev = this._events[idx]!;
+      const candidate = new EventAssert(ev, this._parent, this._range.start + idx);
+      try {
+        return candidate.isAgentHandoff(options);
+      } catch {
+        // Continue searching
+      }
+    }
+
+    this._parent._raiseWithDebugInfo(
+      `No AgentHandoffEvent matching criteria found in range [${this._range.start}:${this._range.end}]`,
+    );
   }
 }
 
@@ -473,7 +722,115 @@ export class MessageAssert extends EventAssert {
     return this._event;
   }
 
-  // Phase 3: judge() method will be added here
+  /**
+   * Evaluate whether the message fulfills the given intent using an LLM.
+   *
+   * @param llm - LLM instance for judgment
+   * @param options - Options containing the intent description
+   * @returns Self for chaining further assertions
+   *
+   * @example
+   * ```typescript
+   * await result.expect
+   *   .nextEvent()
+   *   .isMessage({ role: 'assistant' })
+   *   .judge(llm, { intent: 'should ask for the drink size' });
+   * ```
+   */
+  async judge(llm: LLM, options: { intent: string }): Promise<MessageAssert> {
+    const { intent } = options;
+
+    // Extract text content from message
+    const content = this._event.item.content;
+    const msgContent =
+      typeof content === 'string'
+        ? content
+        : Array.isArray(content)
+          ? content.filter((c): c is string => typeof c === 'string').join(' ')
+          : '';
+
+    if (!msgContent) {
+      this._raise('The chat message is empty.');
+    }
+
+    if (!intent) {
+      this._raise('Intent is required to judge the message.');
+    }
+
+    // Create the check_intent tool
+    const checkIntentTool = tool({
+      description:
+        'Determines whether the message correctly fulfills the given intent. ' +
+        'Returns success=true if the message satisfies the intent, false otherwise. ' +
+        'Provide a concise reason justifying the result.',
+      parameters: z.object({
+        success: z.boolean().describe('Whether the message satisfies the intent'),
+        reason: z.string().describe('A concise explanation justifying the result'),
+      }),
+      execute: async ({ success, reason }: { success: boolean; reason: string }) => {
+        return { success, reason };
+      },
+    });
+
+    // Create chat context for the judge
+    const chatCtx = ChatContext.empty();
+    chatCtx.addMessage({
+      role: 'system',
+      content:
+        'You are a test evaluator for conversational agents.\n' +
+        'You will be shown a message and a target intent. Determine whether the message accomplishes the intent.\n' +
+        'Only respond by calling the `check_intent(success: bool, reason: str)` function with your final judgment.\n' +
+        'Be strict: if the message does not clearly fulfill the intent, return `success = false` and explain why.',
+    });
+    chatCtx.addMessage({
+      role: 'user',
+      content:
+        'Check if the following message fulfills the given intent.\n\n' +
+        `Intent:\n${intent}\n\n` +
+        `Message:\n${msgContent}`,
+    });
+
+    // Call the LLM with the check_intent tool
+    let toolArgs: { success: boolean; reason: string } | undefined;
+
+    const stream = llm.chat({
+      chatCtx,
+      toolCtx: { check_intent: checkIntentTool },
+      toolChoice: { type: 'function', function: { name: 'check_intent' } },
+      extraKwargs: { temperature: 0 },
+    });
+
+    for await (const chunk of stream) {
+      if (!chunk.delta) continue;
+
+      if (chunk.delta.toolCalls && chunk.delta.toolCalls.length > 0) {
+        const toolCall = chunk.delta.toolCalls[0]!;
+        if (toolCall.args) {
+          try {
+            toolArgs = JSON.parse(toolCall.args);
+          } catch {
+            // Args might be streamed incrementally, keep the last valid parse
+          }
+        }
+      }
+    }
+
+    if (!toolArgs) {
+      this._raise('LLM did not return any arguments for evaluation.');
+    }
+
+    const { success, reason } = toolArgs;
+
+    if (!success) {
+      this._raise(`Judgment failed: ${reason}`);
+    } else if (evalsVerbose) {
+      const printMsg =
+        msgContent.length > 30 ? msgContent.slice(0, 30).replace(/\n/g, '\\n') + '...' : msgContent;
+      console.log(`- Judgment succeeded for \`${printMsg}\`: \`${reason}\``);
+    }
+
+    return this;
+  }
 }
 
 /**
@@ -531,6 +888,10 @@ export class AssertionError extends Error {
     Error.captureStackTrace?.(this, AssertionError);
   }
 }
+
+// TODO: mockTools() utility for mocking tool implementations in tests
+// Will be implemented for test suites.
+// See Python run_result.py lines 1010-1031 for reference.
 
 /**
  * Format events for debug output, optionally marking a selected index.
