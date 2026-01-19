@@ -108,7 +108,6 @@ export const sttInterimTranscriptEventSchema = z.object({
 });
 
 // Final transcript event
-// Ref: Python inference/stt.py lines 587-591 - transcript fields use .get() with defaults
 export const sttFinalTranscriptEventSchema = z.object({
   type: z.literal('final_transcript'),
   session_id: z.string().optional(),

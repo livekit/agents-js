@@ -27,7 +27,6 @@ export class STT extends stt.STT {
   label = 'baseten.STT';
 
   constructor(opts: Partial<BasetenSttOptions> = {}) {
-    // Ref: Python livekit-plugins-baseten/stt.py lines 84-90 - Baseten supports word-level timestamps (via segments)
     super({
       streaming: true,
       interimResults: opts.enablePartialTranscripts ?? defaultSTTOptions.enablePartialTranscripts!,

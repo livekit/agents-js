@@ -106,7 +106,6 @@ export class STTv2 extends stt.STT {
    * @throws Error if no API key is provided
    */
   constructor(opts: Partial<STTv2Options> = {}) {
-    // Ref: Python livekit-plugins-deepgram/stt.py lines 139-144 - Deepgram supports word-level timestamps
     super({
       streaming: true,
       interimResults: true,
@@ -407,7 +406,6 @@ class SpeechStreamv2 extends stt.SpeechStream {
   }
 
   #sendTranscriptEvent(eventType: stt.SpeechEventType, data: Record<string, unknown>) {
-    // Ref: Python livekit-plugins-deepgram/stt.py lines 707-729 - Pass startTimeOffset to apply linear timestamps
     const alts = parseTranscription(this.#opts.language || 'en', data, this.startTimeOffset);
 
     if (alts.length > 0) {
