@@ -34,7 +34,7 @@ const defaultTTSOptions: TTSOptions = {
   voiceUuid: TTSDefaultVoiceId,
   sampleRate: 44100,
   precision: 'PCM_16',
-  model: 'chatterbox',
+  model: 'resemble',
   apiKey: process.env.RESEMBLE_API_KEY,
 };
 
