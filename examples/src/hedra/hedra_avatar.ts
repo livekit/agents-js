@@ -7,6 +7,7 @@ import {
   ServerOptions,
   cli,
   defineAgent,
+  inference,
   metrics,
   voice,
 } from '@livekit/agents';
@@ -30,9 +31,16 @@ export default defineAgent({
     });
 
     const session = new voice.AgentSession({
-      stt: 'deepgram/nova-3',
-      llm: 'openai/gpt-4o-mini',
-      tts: 'cartesia/sonic-2',
+      stt: new inference.STT({
+        model: 'deepgram/nova-3',
+        language: 'en',
+      }),
+      llm: new inference.LLM({
+        model: 'openai/gpt-4o-mini',
+      }),
+      tts: new inference.TTS({
+        model: 'cartesia/sonic-3',
+      }),
       vad: ctx.proc.userData.vad! as silero.VAD,
       turnDetection: new livekit.turnDetector.MultilingualModel(),
     });
