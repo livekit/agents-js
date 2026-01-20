@@ -25,8 +25,8 @@ export interface PredictResponse {
   predictionDuration: number;
 }
 
-export async function predict(
-  data: Uint8Array,
+export async function predictHTTP(
+  data: Int16Array,
   predictOptions: PredictOptions,
   options: PostOptions,
 ): Promise<PredictResponse> {

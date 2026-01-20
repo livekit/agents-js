@@ -64,3 +64,18 @@ export async function connectWs(
     socket.once('close', onClose);
   });
 }
+
+export function slidingWindowMinMax(probabilities: Float32Array, minWindow: number): number {
+  if (probabilities.length < minWindow) {
+    return -Infinity;
+  }
+
+  let maxOfMins = -Infinity;
+
+  for (let i = 0; i <= probabilities.length - minWindow; i++) {
+    const windowMin = Math.min(...probabilities.slice(i, i + minWindow));
+    maxOfMins = Math.max(maxOfMins, windowMin);
+  }
+
+  return maxOfMins;
+}
