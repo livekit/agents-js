@@ -184,9 +184,11 @@ export class InterruptionStreamBase {
             log().debug('overlap speech started, starting interruption inference');
             overlapSpeechStarted = true;
             accumulatedSamples = 0;
+            // Include both speech duration and audio prefix duration for context
             const shiftSize = Math.min(
               startIdx,
-              Math.round(chunk.speechDuration * this.options.sampleRate),
+              Math.round(chunk.speechDuration * this.options.sampleRate) +
+                Math.round(this.options.audioPrefixDuration * this.options.sampleRate),
             );
             // Shift the buffer: copy the last `shiftSize` samples before startIdx
             // to the beginning of the buffer. This preserves recent audio context

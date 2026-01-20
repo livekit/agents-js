@@ -139,4 +139,13 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
     const stream = httpStream.stream.pipeThrough(transformer);
     return stream;
   }
+
+  updateOptions(options: { threshold?: number; minInterruptionDuration?: number }): void {
+    if (options.threshold !== undefined) {
+      this.options.threshold = options.threshold;
+    }
+    if (options.minInterruptionDuration !== undefined) {
+      this.options.minFrames = Math.ceil(options.minInterruptionDuration * FRAMES_PER_SECOND);
+    }
+  }
 }
