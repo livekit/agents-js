@@ -250,7 +250,16 @@ class InworldConnection {
     this.#lastActivityAt = Date.now();
 
     // Send create context command
-    await this.#sendCreateContext(contextId, config);
+    try {
+      await this.#sendCreateContext(contextId, config);
+    } catch (err) {
+      // Clean up context on failure to prevent leak
+      this.#contexts.delete(contextId);
+      if (this.#onCapacityAvailable) {
+        this.#onCapacityAvailable();
+      }
+      throw err;
+    }
 
     return { contextId, waiter };
   }
@@ -408,13 +417,19 @@ class InworldConnection {
           return;
         }
 
-        // Handle errors
+        // Handle errors - remove context and notify capacity
         if (result.status && result.status.code !== 0) {
           this.#logger.error({ contextId, status: result.status }, 'Inworld stream error');
           const ctx = this.#contexts.get(contextId);
+          this.#contexts.delete(contextId);
           if (ctx?.rejectWaiter) {
             ctx.rejectWaiter(new Error(`Inworld error: ${result.status.message}`));
           }
+          // Notify pool that capacity is available
+          if (this.#onCapacityAvailable) {
+            this.#onCapacityAvailable();
+          }
+          return;
         }
 
         // Forward message to listener
@@ -473,9 +488,11 @@ class ConnectionPool {
     this.#auth = auth;
 
     // Start idle connection cleanup
+    // Use unref() to prevent this interval from keeping the process alive
     this.#idleCleanupInterval = setInterval(() => {
       this.#cleanupIdleConnections();
     }, 60_000); // Check every minute
+    this.#idleCleanupInterval.unref?.();
   }
 
   async acquireContext(
@@ -583,22 +600,48 @@ class ConnectionPool {
   }
 }
 
-// Module-level singleton pool per API key
+// Module-level singleton pool per API key with reference counting
 const sharedPools = new Map<string, ConnectionPool>();
+const sharedPoolRefs = new Map<string, number>();
 
-function getSharedPool(wsUrl: string, authorization: string): ConnectionPool {
-  const key = `${wsUrl}:${authorization}`;
+function getSharedPoolKey(wsUrl: string, authorization: string): string {
+  return `${wsUrl}:${authorization}`;
+}
+
+function acquireSharedPool(wsUrl: string, authorization: string): ConnectionPool {
+  const key = getSharedPoolKey(wsUrl, authorization);
   let pool = sharedPools.get(key);
   if (!pool) {
     pool = new ConnectionPool(wsUrl, authorization);
     sharedPools.set(key, pool);
+    sharedPoolRefs.set(key, 0);
   }
+  sharedPoolRefs.set(key, (sharedPoolRefs.get(key) || 0) + 1);
   return pool;
 }
+
+function releaseSharedPool(wsUrl: string, authorization: string): void {
+  const key = getSharedPoolKey(wsUrl, authorization);
+  const refCount = (sharedPoolRefs.get(key) || 1) - 1;
+  if (refCount <= 0) {
+    const pool = sharedPools.get(key);
+    if (pool) {
+      pool.close();
+      sharedPools.delete(key);
+    }
+    sharedPoolRefs.delete(key);
+  } else {
+    sharedPoolRefs.set(key, refCount);
+  }
+}
+
+// Export for testing
+export { InworldConnection, ConnectionPool, MAX_CONTEXTS_PER_CONNECTION, MAX_CONNECTIONS };
 
 export class TTS extends tts.TTS {
   #opts: TTSOptions;
   #authorization: string;
+  #pool: ConnectionPool;
   label = 'inworld.TTS';
 
   constructor(opts: Partial<TTSOptions> = {}) {
@@ -616,6 +659,11 @@ export class TTS extends tts.TTS {
       this.#opts.tokenizer = new tokenize.basic.SentenceTokenizer({ retainFormat: true });
     }
     this.#authorization = `Basic ${mergedOpts.apiKey}`;
+    this.#pool = acquireSharedPool(this.#opts.wsURL, this.#authorization);
+  }
+
+  get pool(): ConnectionPool {
+    return this.#pool;
   }
 
   get opts(): TTSOptions {
@@ -678,7 +726,7 @@ export class TTS extends tts.TTS {
   }
 
   async close() {
-    // No per-instance cleanup needed - pool is shared
+    releaseSharedPool(this.#opts.wsURL, this.#authorization);
   }
 }
 
@@ -821,7 +869,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   protected async run() {
-    const pool = getSharedPool(this.#tts.wsURL, this.#tts.authorization);
+    const pool = this.#tts.pool;
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const tokenizerStream = this.#opts.tokenizer!.stream();
 
