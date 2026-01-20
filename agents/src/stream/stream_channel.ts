@@ -8,25 +8,33 @@ export interface StreamChannel<T> {
   write(chunk: T): Promise<void>;
   close(): Promise<void>;
   stream(): ReadableStream<T>;
+  readonly closed: boolean;
 }
 
 export function createStreamChannel<T>(): StreamChannel<T> {
   const transform = new IdentityTransform<T>();
   const writer = transform.writable.getWriter();
+  let isClosed = false;
 
   return {
     write: (chunk: T) => writer.write(chunk),
     stream: () => transform.readable,
     close: async () => {
       try {
-        return await writer.close();
+        const result = await writer.close();
+        isClosed = true;
+        return result;
       } catch (e) {
         if (e instanceof Error && e.name === 'TypeError') {
           // Ignore error if the stream is already closed
+          isClosed = true;
           return;
         }
         throw e;
       }
+    },
+    get closed() {
+      return isClosed;
     },
   };
 }

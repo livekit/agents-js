@@ -1,5 +1,99 @@
 # @livekit/agents
 
+## 1.0.37
+
+### Patch Changes
+
+- Add tests for existing agent implementations in examples - [#978](https://github.com/livekit/agents-js/pull/978) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add advanced test utilities for test framework - [#976](https://github.com/livekit/agents-js/pull/976) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.36
+
+### Patch Changes
+
+- Add connector participant kind to defaults - [#973](https://github.com/livekit/agents-js/pull/973) ([@lukasIO](https://github.com/lukasIO))
+
+- Supports initial set of testing utilities in agent framework - [#965](https://github.com/livekit/agents-js/pull/965) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.35
+
+### Patch Changes
+
+- Fix error logging during shutdown process - [#961](https://github.com/livekit/agents-js/pull/961) ([@Fox32](https://github.com/Fox32))
+
+- Support extra content in inference llm for provider-specific metadata - [#967](https://github.com/livekit/agents-js/pull/967) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.34
+
+### Patch Changes
+
+- Implemented FallbackAdapter for LLM - [#916](https://github.com/livekit/agents-js/pull/916) ([@KrishnaShuk](https://github.com/KrishnaShuk))
+
+- Fix queue closure in LLMStream, STTStream, TTSStream - [#954](https://github.com/livekit/agents-js/pull/954) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.33
+
+### Patch Changes
+
+- Revert "Send all log levels to cloud observability regardless of terminal log level" - [#951](https://github.com/livekit/agents-js/pull/951) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.32
+
+### Patch Changes
+
+- fix(google): handle late-arriving toolCalls in Gemini realtime API - [#937](https://github.com/livekit/agents-js/pull/937) ([@kirsten-emak](https://github.com/kirsten-emak))
+
+  When using the Gemini realtime API, tool calls could occasionally arrive after `turnComplete`, causing them to be lost or trigger errors. This fix keeps the `functionChannel` open after `turnComplete` to catch late-arriving tool calls, and adds a `closed` property to `StreamChannel` to track channel state.
+
+  No code changes required for consumers.
+
+- awaited the prewarm function - [#919](https://github.com/livekit/agents-js/pull/919) ([@KrishnaShuk](https://github.com/KrishnaShuk))
+
+- Fix flaky IPC test EPIPE error - [#941](https://github.com/livekit/agents-js/pull/941) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Send all log levels to cloud observability regardless of terminal log level - [#942](https://github.com/livekit/agents-js/pull/942) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Fix supervisor process crashes when child process dies unexpectedly - [#935](https://github.com/livekit/agents-js/pull/935) ([@Hormold](https://github.com/Hormold))
+
+- inherit execArgv when forking TypeScript child processes - [#948](https://github.com/livekit/agents-js/pull/948) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix realtime function call timestamps - [#946](https://github.com/livekit/agents-js/pull/946) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Fork files with cjs extension when running cjs file - [#892](https://github.com/livekit/agents-js/pull/892) ([@budde377](https://github.com/budde377))
+
+- fix(agents): return to listening state for Gemini realtime API thinking-only turns - [#936](https://github.com/livekit/agents-js/pull/936) ([@kirsten-emak](https://github.com/kirsten-emak))
+
+## 1.0.31
+
+## 1.0.30
+
+## 1.0.29
+
+### Patch Changes
+
+- Fix voice interruption transcript spill, add ConnectionPool for inference websockets, and log TTS websocket pool misses. - [#910](https://github.com/livekit/agents-js/pull/910) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Support thinking sound inside background audio player - [#915](https://github.com/livekit/agents-js/pull/915) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Support multi-context WebSocket connection for elevenlabs TTS - [#912](https://github.com/livekit/agents-js/pull/912) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.28
+
+## 1.0.27
+
+### Patch Changes
+
+- Sync all package versions - [#900](https://github.com/livekit/agents-js/pull/900) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.26
+
+### Patch Changes
+
+- Fix improper resource cleanup inside AgentActivity by not close global STT / TTS / VAD components - [#893](https://github.com/livekit/agents-js/pull/893) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Improve TTS resource cleanup - [#893](https://github.com/livekit/agents-js/pull/893) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.25
 
 ### Patch Changes

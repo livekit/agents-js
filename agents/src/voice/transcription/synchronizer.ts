@@ -362,7 +362,7 @@ class SyncedAudioOutput extends AudioOutput {
     public synchronizer: TranscriptionSynchronizer,
     private nextInChainAudio: AudioOutput,
   ) {
-    super(nextInChainAudio.sampleRate, nextInChainAudio);
+    super(nextInChainAudio.sampleRate, nextInChainAudio, { pause: true });
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {

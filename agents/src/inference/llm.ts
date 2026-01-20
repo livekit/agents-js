@@ -27,7 +27,14 @@ export type OpenAIModels =
   | 'openai/gpt-4o-mini'
   | 'openai/gpt-oss-120b';
 
-export type GoogleModels = 'google/gemini-2.0-flash-lite';
+export type GoogleModels =
+  | 'google/gemini-3-pro-preview'
+  | 'google/gemini-3-flash-preview'
+  | 'google/gemini-2.5-pro'
+  | 'google/gemini-2.5-flash'
+  | 'google/gemini-2.5-flash-lite'
+  | 'google/gemini-2.0-flash'
+  | 'google/gemini-2.0-flash-lite';
 
 export type QwenModels = 'qwen/qwen3-235b-a22b-instruct';
 
@@ -235,6 +242,7 @@ export class LLMStream extends llm.LLMStream {
   private toolIndex?: number;
   private fncName?: string;
   private fncRawArguments?: string;
+  private toolExtra?: Record<string, unknown>;
 
   constructor(
     llm: LLM,
@@ -277,6 +285,7 @@ export class LLMStream extends llm.LLMStream {
     // (defined inside the run method to make sure the state is reset for each run/attempt)
     let retryable = true;
     this.toolCallId = this.fncName = this.fncRawArguments = this.toolIndex = undefined;
+    this.toolExtra = undefined;
 
     try {
       const messages = (await this.chatCtx.toProviderFormat(
@@ -386,8 +395,6 @@ export class LLMStream extends llm.LLMStream {
           options: { retryable },
         });
       }
-    } finally {
-      this.queue.close();
     }
   }
 
@@ -430,6 +437,7 @@ export class LLMStream extends llm.LLMStream {
         if (this.toolCallId && tool.id && tool.index !== this.toolIndex) {
           callChunk = this.createRunningToolCallChunk(id, delta);
           this.toolCallId = this.fncName = this.fncRawArguments = undefined;
+          this.toolExtra = undefined;
         }
 
         // Start or continue building the current tool call
@@ -438,6 +446,10 @@ export class LLMStream extends llm.LLMStream {
           this.toolCallId = tool.id;
           this.fncName = tool.function.name;
           this.fncRawArguments = tool.function.arguments || '';
+          // Extract extra from tool call (e.g., Google thought signatures)
+          this.toolExtra =
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ((tool as any).extra_content as Record<string, unknown> | undefined) ?? undefined;
         } else if (tool.function.arguments) {
           this.fncRawArguments = (this.fncRawArguments || '') + tool.function.arguments;
         }
@@ -456,11 +468,17 @@ export class LLMStream extends llm.LLMStream {
     ) {
       const callChunk = this.createRunningToolCallChunk(id, delta);
       this.toolCallId = this.fncName = this.fncRawArguments = undefined;
+      this.toolExtra = undefined;
       return callChunk;
     }
 
+    // Extract extra from delta (e.g., Google thought signatures on text parts)
+    const deltaExtra =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ((delta as any).extra_content as Record<string, unknown> | undefined) ?? undefined;
+
     // Regular content message
-    if (!delta.content) {
+    if (!delta.content && !deltaExtra) {
       return undefined;
     }
 
@@ -468,7 +486,8 @@ export class LLMStream extends llm.LLMStream {
       id,
       delta: {
         role: 'assistant',
-        content: delta.content,
+        content: delta.content || undefined,
+        extra: deltaExtra,
       },
     };
   }
@@ -477,19 +496,37 @@ export class LLMStream extends llm.LLMStream {
     id: string,
     delta: OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta,
   ): llm.ChatChunk {
+    const toolExtra = this.toolExtra ? { ...this.toolExtra } : {};
+    const thoughtSignature = this.extractThoughtSignature(toolExtra);
+    const deltaExtra =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ((delta as any).extra_content as Record<string, unknown> | undefined) ?? undefined;
+
     return {
       id,
       delta: {
         role: 'assistant',
         content: delta.content || undefined,
+        extra: deltaExtra,
         toolCalls: [
           llm.FunctionCall.create({
             callId: this.toolCallId || '',
             name: this.fncName || '',
             args: this.fncRawArguments || '',
+            extra: toolExtra,
+            thoughtSignature,
           }),
         ],
       },
     };
+  }
+
+  private extractThoughtSignature(extra?: Record<string, unknown>): string | undefined {
+    const googleExtra = extra?.google;
+    if (googleExtra && typeof googleExtra === 'object') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (googleExtra as any).thoughtSignature || (googleExtra as any).thought_signature;
+    }
+    return undefined;
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-bey",
-  "version": "1.0.15",
+  "version": "1.0.37",
   "description": "Beyond Presence plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -35,7 +35,7 @@
   },
   "devDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "^0.13.12",
+    "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
     "pino": "^8.19.0",
     "tsup": "^8.3.5",
@@ -46,6 +46,6 @@
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "^0.13.12"
+    "@livekit/rtc-node": "catalog:"
   }
 }

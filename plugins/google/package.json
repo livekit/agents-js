@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-google",
-  "version": "1.0.25",
+  "version": "1.0.37",
   "description": "Google Gemini plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -37,19 +37,19 @@
     "@livekit/agents": "workspace:*",
     "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/agents-plugins-test": "workspace:*",
-    "@livekit/rtc-node": "^0.13.12",
+    "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@google/genai": "^1.13.0",
+    "@google/genai": "^1.34.0",
     "@livekit/mutex": "^1.1.1",
     "@types/json-schema": "^7.0.15",
     "json-schema": "^0.4.0"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "^0.13.12"
+    "@livekit/rtc-node": "catalog:"
   }
 }

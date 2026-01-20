@@ -1,5 +1,95 @@
 # @livekit/agents-plugin-neuphonic
 
+## 1.0.37
+
+### Patch Changes
+
+- Updated dependencies [[`1d359674f588278b56add73e6d2e82d99a414b9b`](https://github.com/livekit/agents-js/commit/1d359674f588278b56add73e6d2e82d99a414b9b), [`396dc7d718c2c911c0035de8015dc4f88fc659bb`](https://github.com/livekit/agents-js/commit/396dc7d718c2c911c0035de8015dc4f88fc659bb)]:
+  - @livekit/agents@1.0.37
+
+## 1.0.36
+
+### Patch Changes
+
+- Updated dependencies [[`92699c990e14d2ef4a55dafbcfd4ab46df7e8b35`](https://github.com/livekit/agents-js/commit/92699c990e14d2ef4a55dafbcfd4ab46df7e8b35), [`df523ab6d48663d697b6a654853284cf868cfc96`](https://github.com/livekit/agents-js/commit/df523ab6d48663d697b6a654853284cf868cfc96)]:
+  - @livekit/agents@1.0.36
+
+## 1.0.35
+
+### Patch Changes
+
+- Updated dependencies [[`6cb1a877777a918850f8cc73b7007fe6ff01db54`](https://github.com/livekit/agents-js/commit/6cb1a877777a918850f8cc73b7007fe6ff01db54), [`50a12aa6ca589aff31aaee21b3241a046750d324`](https://github.com/livekit/agents-js/commit/50a12aa6ca589aff31aaee21b3241a046750d324)]:
+  - @livekit/agents@1.0.35
+
+## 1.0.34
+
+### Patch Changes
+
+- Updated dependencies [[`0bf2a8ed8f88dc40301912613aabd119bdc40784`](https://github.com/livekit/agents-js/commit/0bf2a8ed8f88dc40301912613aabd119bdc40784), [`b9c7cb2299873ea15a4ab72b5c137102faf840eb`](https://github.com/livekit/agents-js/commit/b9c7cb2299873ea15a4ab72b5c137102faf840eb)]:
+  - @livekit/agents@1.0.34
+
+## 1.0.33
+
+### Patch Changes
+
+- Updated dependencies [[`66aceb44fc8dae016566d8ca1c5d0d1adc66820a`](https://github.com/livekit/agents-js/commit/66aceb44fc8dae016566d8ca1c5d0d1adc66820a)]:
+  - @livekit/agents@1.0.33
+
+## 1.0.32
+
+### Patch Changes
+
+- Updated dependencies [[`42fe53b88746baa71c80ab9b29fdf7a311cf266b`](https://github.com/livekit/agents-js/commit/42fe53b88746baa71c80ab9b29fdf7a311cf266b), [`79664cc302938e73589f32037f87f50f894a3057`](https://github.com/livekit/agents-js/commit/79664cc302938e73589f32037f87f50f894a3057), [`3b8fcd7b624642cf9d5331d0a209d7c2deba5dae`](https://github.com/livekit/agents-js/commit/3b8fcd7b624642cf9d5331d0a209d7c2deba5dae), [`0ff2d1a29737de4a842006ad88431f4978010bbc`](https://github.com/livekit/agents-js/commit/0ff2d1a29737de4a842006ad88431f4978010bbc), [`1fa10e11d7d1d8c781df52e8d1ddfede7bc27b42`](https://github.com/livekit/agents-js/commit/1fa10e11d7d1d8c781df52e8d1ddfede7bc27b42), [`3aaa8286c631da734d51a6e42217083be50f9568`](https://github.com/livekit/agents-js/commit/3aaa8286c631da734d51a6e42217083be50f9568), [`62e397b34367dab24b427b1a813ee525a98f0438`](https://github.com/livekit/agents-js/commit/62e397b34367dab24b427b1a813ee525a98f0438), [`0459da7663e553eef3aa58689f35bd1c0a756cb0`](https://github.com/livekit/agents-js/commit/0459da7663e553eef3aa58689f35bd1c0a756cb0), [`710688b9424b41d90c99ee0dc8e530a101d32526`](https://github.com/livekit/agents-js/commit/710688b9424b41d90c99ee0dc8e530a101d32526)]:
+  - @livekit/agents@1.0.32
+
+## 1.0.31
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @livekit/agents@1.0.31
+
+## 1.0.30
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @livekit/agents@1.0.30
+
+## 1.0.29
+
+### Patch Changes
+
+- Support thinking sound inside background audio player - [#915](https://github.com/livekit/agents-js/pull/915) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`6eeba4a36b13f7b7817bcc328d5d61f60a20312d`](https://github.com/livekit/agents-js/commit/6eeba4a36b13f7b7817bcc328d5d61f60a20312d), [`6115277e6ebfaba8df713cf1125b3bac9f4ba669`](https://github.com/livekit/agents-js/commit/6115277e6ebfaba8df713cf1125b3bac9f4ba669), [`f3d33453976d6447ebdf22f9d2d8783df76d7562`](https://github.com/livekit/agents-js/commit/f3d33453976d6447ebdf22f9d2d8783df76d7562)]:
+  - @livekit/agents@1.0.29
+
+## 1.0.28
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @livekit/agents@1.0.28
+
+## 1.0.27
+
+### Patch Changes
+
+- Sync all package versions - [#900](https://github.com/livekit/agents-js/pull/900) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`714c1a9f73d03a83ee25f7b6d3bd6727070030ae`](https://github.com/livekit/agents-js/commit/714c1a9f73d03a83ee25f7b6d3bd6727070030ae)]:
+  - @livekit/agents@1.0.27
+
+## 1.0.26
+
+### Patch Changes
+
+- Improve TTS resource cleanup - [#893](https://github.com/livekit/agents-js/pull/893) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`78a0d217b783c9467e68c24752d01b9c806b9280`](https://github.com/livekit/agents-js/commit/78a0d217b783c9467e68c24752d01b9c806b9280), [`78a0d217b783c9467e68c24752d01b9c806b9280`](https://github.com/livekit/agents-js/commit/78a0d217b783c9467e68c24752d01b9c806b9280)]:
+  - @livekit/agents@1.0.26
+
 ## 1.0.25
 
 ### Patch Changes

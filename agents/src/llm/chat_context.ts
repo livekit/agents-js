@@ -189,19 +189,53 @@ export class FunctionCall {
 
   createdAt: number;
 
+  extra: Record<string, unknown>;
+  /**
+   * Optional grouping identifier for parallel tool calls.
+   */
+  groupId?: string;
+
+  /**
+   * Opaque signature for Gemini thinking mode.
+   * When using Gemini 3+ models with thinking enabled, this signature must be
+   * preserved and returned with function responses to maintain thought context.
+   */
+  thoughtSignature?: string;
+
   constructor(params: {
     callId: string;
     name: string;
     args: string;
     id?: string;
     createdAt?: number;
+    extra?: Record<string, unknown>;
+    groupId?: string;
+    thoughtSignature?: string;
   }) {
-    const { callId, name, args, id = shortuuid('item_'), createdAt = Date.now() } = params;
+    const {
+      callId,
+      name,
+      args,
+      id = shortuuid('item_'),
+      createdAt = Date.now(),
+      extra = {},
+      groupId,
+      thoughtSignature,
+    } = params;
     this.id = id;
     this.callId = callId;
     this.args = args;
     this.name = name;
     this.createdAt = createdAt;
+    this.extra = { ...extra };
+    this.groupId = groupId;
+    this.thoughtSignature =
+      thoughtSignature ??
+      (typeof this.extra.google === 'object' && this.extra.google !== null
+        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (this.extra.google as any).thoughtSignature ||
+          (this.extra.google as any).thought_signature
+        : undefined);
   }
 
   static create(params: {
@@ -210,6 +244,9 @@ export class FunctionCall {
     args: string;
     id?: string;
     createdAt?: number;
+    extra?: Record<string, unknown>;
+    groupId?: string;
+    thoughtSignature?: string;
   }) {
     return new FunctionCall(params);
   }
@@ -223,6 +260,18 @@ export class FunctionCall {
       name: this.name,
       args: this.args,
     };
+
+    if (Object.keys(this.extra).length > 0) {
+      result.extra = this.extra as JSONValue;
+    }
+
+    if (this.groupId) {
+      result.groupId = this.groupId;
+    }
+
+    if (this.thoughtSignature) {
+      result.thoughtSignature = this.thoughtSignature;
+    }
 
     if (!excludeTimestamp) {
       result.createdAt = this.createdAt;
@@ -602,7 +651,14 @@ export class ChatContext {
           return false;
         }
       } else if (a.type === 'function_call' && b.type === 'function_call') {
-        if (a.name !== b.name || a.callId !== b.callId || a.args !== b.args) {
+        if (
+          a.name !== b.name ||
+          a.callId !== b.callId ||
+          a.args !== b.args ||
+          a.thoughtSignature !== b.thoughtSignature ||
+          a.groupId !== b.groupId ||
+          JSON.stringify(a.extra) !== JSON.stringify(b.extra)
+        ) {
           return false;
         }
       } else if (a.type === 'function_call_output' && b.type === 'function_call_output') {

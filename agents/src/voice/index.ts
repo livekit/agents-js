@@ -6,6 +6,8 @@ export { AgentSession, type AgentSessionOptions } from './agent_session.js';
 export * from './avatar/index.js';
 export * from './background_audio.js';
 export * from './events.js';
+export { type TimedString } from './io.js';
 export * from './report.js';
 export * from './room_io/index.js';
 export { RunContext } from './run_context.js';
+export * as testing from './testing/index.js';

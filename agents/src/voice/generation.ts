@@ -442,6 +442,9 @@ export function performLLMInference(
                 callId: `${data.id}/fnc_${data.generatedToolCalls.length}`,
                 name: tool.name,
                 args: tool.args,
+                // Preserve thought signature for Gemini 3+ thinking mode
+                thoughtSignature: tool.thoughtSignature,
+                extra: tool.extra || {},
               });
 
               data.generatedToolCalls.push(toolCall);

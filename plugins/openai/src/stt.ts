@@ -46,8 +46,8 @@ export class STT extends stt.STT {
     this.#client =
       this.#opts.client ||
       new OpenAI({
-        baseURL: opts.baseURL,
-        apiKey: opts.apiKey,
+        baseURL: this.#opts.baseURL,
+        apiKey: this.#opts.apiKey,
       });
   }
 

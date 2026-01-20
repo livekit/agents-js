@@ -102,6 +102,7 @@ interface RealtimeOptions {
   contextWindowCompression?: ContextWindowCompressionConfig;
   apiVersion?: string;
   geminiTools?: LLMTools;
+  thinkingConfig?: types.ThinkingConfig;
 }
 
 /**
@@ -135,6 +136,10 @@ interface ResponseGeneration {
 export class RealtimeModel extends llm.RealtimeModel {
   /** @internal */
   _options: RealtimeOptions;
+
+  get model(): string {
+    return this._options.model;
+  }
 
   constructor(
     options: {
@@ -273,6 +278,14 @@ export class RealtimeModel extends llm.RealtimeModel {
        * Gemini-specific tools to use for the session
        */
       geminiTools?: LLMTools;
+
+      /**
+       * Thinking configuration for native audio models.
+       * If not set, the model's default thinking behavior is used.
+       * Use `\{ thinkingBudget: 0 \}` to disable thinking.
+       * Use `\{ thinkingBudget: -1 \}` for automatic/dynamic thinking.
+       */
+      thinkingConfig?: types.ThinkingConfig;
     } = {},
   ) {
     const inputAudioTranscription =
@@ -300,7 +313,9 @@ export class RealtimeModel extends llm.RealtimeModel {
     const vertexai = options.vertexai ?? false;
 
     // Model selection based on API type
-    const defaultModel = vertexai ? 'gemini-2.0-flash-exp' : 'gemini-2.0-flash-live-001';
+    const defaultModel = vertexai
+      ? 'gemini-live-2.5-flash-native-audio'
+      : 'gemini-2.5-flash-native-audio-preview-12-2025';
 
     this._options = {
       model: options.model || defaultModel,
@@ -330,6 +345,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       contextWindowCompression: options.contextWindowCompression,
       apiVersion: options.apiVersion,
       geminiTools: options.geminiTools,
+      thinkingConfig: options.thinkingConfig,
     };
   }
 
@@ -934,9 +950,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       unlock();
     }
 
+    // start new generation for serverContent or for standalone toolCalls (functionChannel closed)
     if (
       (!this.currentGeneration || this.currentGeneration._done) &&
-      (response.serverContent || response.toolCall)
+      (response.serverContent ||
+        (response.toolCall && this.currentGeneration?.functionChannel.closed !== false))
     ) {
       this.startNewGeneration();
     }
@@ -1034,7 +1052,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     return obj;
   }
 
-  private markCurrentGenerationDone(): void {
+  private markCurrentGenerationDone(keepFunctionChannelOpen: boolean = false): void {
     if (!this.currentGeneration || this.currentGeneration._done) {
       return;
     }
@@ -1076,7 +1094,9 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     gen.textChannel.close();
     gen.audioChannel.close();
-    gen.functionChannel.close();
+    if (!keepFunctionChannelOpen) {
+      gen.functionChannel.close();
+    }
     gen.messageChannel.close();
     gen._done = true;
   }
@@ -1095,6 +1115,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     const opts = this.options;
 
     const config: types.LiveConnectConfig = {
+      thinkingConfig: opts.thinkingConfig,
       responseModalities: opts.responseModalities,
       systemInstruction: opts.instructions
         ? {
@@ -1156,6 +1177,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private startNewGeneration(): void {
+    // close functionChannel of previous generation if still open (no toolCall arrived)
+    if (this.currentGeneration && !this.currentGeneration.functionChannel.closed) {
+      this.currentGeneration.functionChannel.close();
+    }
+
     if (this.currentGeneration && !this.currentGeneration._done) {
       this.#logger.warn('Starting new generation while another is active. Finalizing previous.');
       this.markCurrentGenerationDone();
@@ -1196,6 +1222,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       messageStream: this.currentGeneration.messageChannel.stream(),
       functionStream: this.currentGeneration.functionChannel.stream(),
       userInitiated: false,
+      responseId,
     };
 
     if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
@@ -1233,6 +1260,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       const turn = serverContent.modelTurn;
 
       for (const part of turn.parts || []) {
+        // bypass reasoning/thought output
+        if (part.thought) {
+          continue;
+        }
+
         if (part.text) {
           gen.outputText += part.text;
           gen.textChannel.write(part.text);
@@ -1301,7 +1333,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (serverContent.turnComplete) {
-      this.markCurrentGenerationDone();
+      // keep functionChannel open for potential late-arriving toolCalls
+      this.markCurrentGenerationDone(true);
     }
   }
 
@@ -1313,14 +1346,26 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const gen = this.currentGeneration;
 
-    for (const fc of toolCall.functionCalls || []) {
-      gen.functionChannel.write({
-        callId: fc.id || shortuuid('fnc-call-'),
-        name: fc.name,
-        args: fc.args ? JSON.stringify(fc.args) : '',
-      } as llm.FunctionCall);
+    if (gen.functionChannel.closed) {
+      this.#logger.warn('received tool call but functionChannel is already closed.');
+      return;
     }
 
+    for (const fc of toolCall.functionCalls || []) {
+      if (!fc.name) {
+        this.#logger.warn('received function call without name, skipping');
+        continue;
+      }
+      gen.functionChannel.write(
+        llm.FunctionCall.create({
+          callId: fc.id || shortuuid('fnc-call-'),
+          name: fc.name,
+          args: fc.args ? JSON.stringify(fc.args) : '',
+        }),
+      );
+    }
+
+    gen.functionChannel.close();
     this.markCurrentGenerationDone();
   }
 

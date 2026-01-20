@@ -67,13 +67,17 @@ export async function toChatCtx(
         }
       }
     } else if (msg.type === 'function_call') {
-      parts.push({
+      const functionCallPart: Record<string, unknown> = {
         functionCall: {
           id: msg.callId,
           name: msg.name,
           args: JSON.parse(msg.args || '{}'),
         },
-      });
+      };
+      if (msg.thoughtSignature) {
+        functionCallPart.thoughtSignature = msg.thoughtSignature;
+      }
+      parts.push(functionCallPart);
     } else if (msg.type === 'function_call_output') {
       const response = msg.isError ? { error: msg.output } : { output: msg.output };
       parts.push({

@@ -23,6 +23,7 @@ import * as voice from './voice/index.js';
 
 export * from './_exceptions.js';
 export * from './audio.js';
+export * from './connection_pool.js';
 export * from './generator.js';
 export * from './inference_runner.js';
 export * from './job.js';
