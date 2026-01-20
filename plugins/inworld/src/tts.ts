@@ -369,6 +369,7 @@ class InworldConnection {
       ws.on('close', () => {
         this.#ws = undefined;
         this.#connecting = undefined;
+        const cleared = this.#contexts.size;
         // Reject all pending context waiters
         for (const context of this.#contexts.values()) {
           if (context.rejectWaiter) {
@@ -376,6 +377,10 @@ class InworldConnection {
           }
         }
         this.#contexts.clear();
+        // Notify pool that capacity is available for each cleared context
+        for (let i = 0; i < cleared; i++) {
+          this.#onCapacityAvailable?.();
+        }
       });
 
       ws.on('message', (data: RawData) => {
@@ -600,41 +605,6 @@ class ConnectionPool {
   }
 }
 
-// Module-level singleton pool per API key with reference counting
-const sharedPools = new Map<string, ConnectionPool>();
-const sharedPoolRefs = new Map<string, number>();
-
-function getSharedPoolKey(wsUrl: string, authorization: string): string {
-  return `${wsUrl}:${authorization}`;
-}
-
-function acquireSharedPool(wsUrl: string, authorization: string): ConnectionPool {
-  const key = getSharedPoolKey(wsUrl, authorization);
-  let pool = sharedPools.get(key);
-  if (!pool) {
-    pool = new ConnectionPool(wsUrl, authorization);
-    sharedPools.set(key, pool);
-    sharedPoolRefs.set(key, 0);
-  }
-  sharedPoolRefs.set(key, (sharedPoolRefs.get(key) || 0) + 1);
-  return pool;
-}
-
-function releaseSharedPool(wsUrl: string, authorization: string): void {
-  const key = getSharedPoolKey(wsUrl, authorization);
-  const refCount = (sharedPoolRefs.get(key) || 1) - 1;
-  if (refCount <= 0) {
-    const pool = sharedPools.get(key);
-    if (pool) {
-      pool.close();
-      sharedPools.delete(key);
-    }
-    sharedPoolRefs.delete(key);
-  } else {
-    sharedPoolRefs.set(key, refCount);
-  }
-}
-
 // Export for testing
 export { InworldConnection, ConnectionPool, MAX_CONTEXTS_PER_CONNECTION, MAX_CONNECTIONS };
 
@@ -659,7 +629,7 @@ export class TTS extends tts.TTS {
       this.#opts.tokenizer = new tokenize.basic.SentenceTokenizer({ retainFormat: true });
     }
     this.#authorization = `Basic ${mergedOpts.apiKey}`;
-    this.#pool = acquireSharedPool(this.#opts.wsURL, this.#authorization);
+    this.#pool = new ConnectionPool(this.#opts.wsURL, this.#authorization);
   }
 
   get pool(): ConnectionPool {
@@ -726,7 +696,7 @@ export class TTS extends tts.TTS {
   }
 
   async close() {
-    releaseSharedPool(this.#opts.wsURL, this.#authorization);
+    this.#pool.close();
   }
 }
 
