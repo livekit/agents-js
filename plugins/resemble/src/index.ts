@@ -4,6 +4,7 @@
 import { Plugin } from '@livekit/agents';
 
 export * from './tts.js';
+export * from './models.js';
 
 class ResemblePlugin extends Plugin {
   constructor() {
