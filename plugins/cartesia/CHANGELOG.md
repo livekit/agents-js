@@ -1,5 +1,19 @@
 # @livekit/agents-plugin-cartesia
 
+## 1.0.36
+
+### Patch Changes
+
+- Updated dependencies [[`92699c990e14d2ef4a55dafbcfd4ab46df7e8b35`](https://github.com/livekit/agents-js/commit/92699c990e14d2ef4a55dafbcfd4ab46df7e8b35), [`df523ab6d48663d697b6a654853284cf868cfc96`](https://github.com/livekit/agents-js/commit/df523ab6d48663d697b6a654853284cf868cfc96)]:
+  - @livekit/agents@1.0.36
+
+## 1.0.35
+
+### Patch Changes
+
+- Updated dependencies [[`6cb1a877777a918850f8cc73b7007fe6ff01db54`](https://github.com/livekit/agents-js/commit/6cb1a877777a918850f8cc73b7007fe6ff01db54), [`50a12aa6ca589aff31aaee21b3241a046750d324`](https://github.com/livekit/agents-js/commit/50a12aa6ca589aff31aaee21b3241a046750d324)]:
+  - @livekit/agents@1.0.35
+
 ## 1.0.34
 
 ### Patch Changes

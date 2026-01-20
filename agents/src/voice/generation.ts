@@ -444,6 +444,7 @@ export function performLLMInference(
                 args: tool.args,
                 // Preserve thought signature for Gemini 3+ thinking mode
                 thoughtSignature: tool.thoughtSignature,
+                extra: tool.extra || {},
               });
 
               data.generatedToolCalls.push(toolCall);

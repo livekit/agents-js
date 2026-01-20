@@ -1,5 +1,21 @@
 # @livekit/agents
 
+## 1.0.36
+
+### Patch Changes
+
+- Add connector participant kind to defaults - [#973](https://github.com/livekit/agents-js/pull/973) ([@lukasIO](https://github.com/lukasIO))
+
+- Supports initial set of testing utilities in agent framework - [#965](https://github.com/livekit/agents-js/pull/965) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.35
+
+### Patch Changes
+
+- Fix error logging during shutdown process - [#961](https://github.com/livekit/agents-js/pull/961) ([@Fox32](https://github.com/Fox32))
+
+- Support extra content in inference llm for provider-specific metadata - [#967](https://github.com/livekit/agents-js/pull/967) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.34
 
 ### Patch Changes

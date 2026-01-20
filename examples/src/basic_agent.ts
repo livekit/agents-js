@@ -82,7 +82,7 @@ export default defineAgent({
       agent,
       room: ctx.room,
       inputOptions: {
-        noiseCancellation: aic.audioEnhancement({ model: 'quailS' }),
+        noiseCancellation: aic.audioEnhancement(),
       },
     });
 

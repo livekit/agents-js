@@ -17,6 +17,7 @@ export interface ChoiceDelta {
   role: ChatRole;
   content?: string;
   toolCalls?: FunctionCall[];
+  extra?: Record<string, unknown>;
 }
 
 export interface CompletionUsage {
