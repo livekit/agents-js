@@ -42,3 +42,15 @@ SPDX-License-Identifier = "Apache-2.0"
 path = ["agents/resources/*.ogg", "agents/resources/NOTICE"]
 SPDX-FileCopyrightText = "2024 LiveKit, Inc."
 SPDX-License-Identifier = "Apache-2.0"
+
+# image assets
+[[annotations]]
+path = ["**/*.png", "**/*.jpg", "**/*.jpeg"]
+SPDX-FileCopyrightText = "2026 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+# README files
+[[annotations]]
+path = ["**/README.md"]
+SPDX-FileCopyrightText = "2026 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
