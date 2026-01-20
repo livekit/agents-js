@@ -52,7 +52,8 @@
     "LK_OPENAI_DEBUG",
     "LIVEKIT_EVALS_VERBOSE",
     "OVHCLOUD_API_KEY",
-    "INWORLD_API_KEY"
+    "INWORLD_API_KEY",
+    "VITEST"
   ],
   "pipeline": {
     "build": {
