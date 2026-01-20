@@ -15,6 +15,7 @@ import {
   type STTModelString,
   type TTSModelString,
 } from '../inference/index.js';
+import type { AdaptiveInterruptionDetector } from '../inference/interruption/AdaptiveInterruptionDetector.js';
 import { type JobContext, getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
@@ -106,6 +107,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
   tts?: TTS | TTSModelString;
+  interruptionDetector?: AdaptiveInterruptionDetector;
   userData?: UserData;
   voiceOptions?: Partial<VoiceOptions>;
   connOptions?: SessionConnectOptions;
@@ -167,6 +169,8 @@ export class AgentSession<
   /** @internal - Timestamp when the session started (milliseconds) */
   _startedAt?: number;
 
+  interruptionDetector?: AdaptiveInterruptionDetector;
+
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
 
@@ -176,6 +180,7 @@ export class AgentSession<
       llm,
       tts,
       turnDetection,
+      interruptionDetector,
       userData,
       voiceOptions = defaultVoiceOptions,
       connOptions,
@@ -212,6 +217,7 @@ export class AgentSession<
     }
 
     this.turnDetection = turnDetection;
+    this.interruptionDetector = interruptionDetector;
     this._userData = userData;
 
     // configurable IO
@@ -637,6 +643,8 @@ export class AgentSession<
       return;
     }
 
+    const oldState = this._agentState;
+
     if (state === 'speaking') {
       // Reset error counts when agent starts speaking
       this.llmErrorCounts = 0;
@@ -651,13 +659,25 @@ export class AgentSession<
         // TODO(brian): PR4 - Set participant attributes if roomIO.room.localParticipant is available
         // (Ref: Python agent_session.py line 1161-1164)
       }
+
+      // Notify AudioRecognition that agent started speaking (for interruption detection)
+      this.activity?.notifyAgentSpeechStarted();
+    } else if (oldState === 'speaking') {
+      // Agent stopped speaking
+      if (this.agentSpeakingSpan !== undefined) {
+        // TODO(brian): PR4 - Set ATTR_END_TIME attribute if available
+        this.agentSpeakingSpan.end();
+        this.agentSpeakingSpan = undefined;
+      }
+
+      // Notify AudioRecognition that agent stopped speaking (for interruption detection)
+      this.activity?.notifyAgentSpeechEnded();
     } else if (this.agentSpeakingSpan !== undefined) {
-      // TODO(brian): PR4 - Set ATTR_END_TIME attribute if available
+      // Non-speaking to non-speaking transition but span is still open
       this.agentSpeakingSpan.end();
       this.agentSpeakingSpan = undefined;
     }
 
-    const oldState = this._agentState;
     this._agentState = state;
 
     // Handle user away timer based on state changes

@@ -41,6 +41,8 @@ import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
 import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
+import type { InterruptionEvent } from '../inference/interruption/interruption.js';
+import { InterruptionEventType } from '../inference/interruption/interruption.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import { StopResponse, asyncLocalStorage } from './agent.js';
@@ -111,6 +113,24 @@ export class AgentActivity implements RecognitionHooks {
   /** @internal */
   _mainTask?: Task<void>;
   _userTurnCompletedTask?: Promise<void>;
+
+  /**
+   * Notify that agent started speaking.
+   * This enables interruption detection in AudioRecognition.
+   * @internal
+   */
+  notifyAgentSpeechStarted(): void {
+    this.audioRecognition?.onStartOfAgentSpeech();
+  }
+
+  /**
+   * Notify that agent stopped speaking.
+   * This disables interruption detection in AudioRecognition.
+   * @internal
+   */
+  notifyAgentSpeechEnded(): void {
+    this.audioRecognition?.onEndOfAgentSpeech();
+  }
 
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
@@ -292,6 +312,7 @@ export class AgentActivity implements RecognitionHooks {
         // Disable stt node if stt is not provided
         stt: this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
         vad: this.vad,
+        interruptionDetector: this.agentSession.interruptionDetector,
         turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
         turnDetectionMode: this.turnDetectionMode,
         minEndpointingDelay: this.agentSession.options.minEndpointingDelay,
@@ -692,6 +713,46 @@ export class AgentActivity implements RecognitionHooks {
       this._currentSpeech.allowInterruptions
     ) {
       this.logger.info({ 'speech id': this._currentSpeech.id }, 'speech interrupted by VAD');
+      this.realtimeSession?.interrupt();
+      this._currentSpeech.interrupt();
+    }
+  }
+
+  onInterruption(ev: InterruptionEvent): void {
+    if (ev.type !== InterruptionEventType.INTERRUPTION) {
+      // Only handle actual interruptions, not overlap_speech_ended events
+      return;
+    }
+
+    this.logger.info(
+      {
+        probability: ev.probability,
+        detectionDelay: ev.detectionDelay,
+        totalDuration: ev.totalDuration,
+      },
+      'adaptive interruption detected',
+    );
+
+    // Similar to onVADInferenceDone but triggered by the adaptive interruption detector
+    if (this.turnDetection === 'manual' || this.turnDetection === 'realtime_llm') {
+      return;
+    }
+
+    if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
+      return;
+    }
+
+    this.realtimeSession?.startUserActivity();
+
+    if (
+      this._currentSpeech &&
+      !this._currentSpeech.interrupted &&
+      this._currentSpeech.allowInterruptions
+    ) {
+      this.logger.info(
+        { 'speech id': this._currentSpeech.id },
+        'speech interrupted by adaptive interruption detector',
+      );
       this.realtimeSession?.interrupt();
       this._currentSpeech.interrupt();
     }

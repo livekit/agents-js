@@ -1,6 +1,6 @@
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
-import type { Span } from '@opentelemetry/sdk-trace-base';
-import { traceTypes } from 'agents/src/telemetry/index.js';
+import type { Span } from '@opentelemetry/api';
+import { traceTypes } from '../../telemetry/index.js';
 import { type ReadableStream, TransformStream, WritableStream } from 'stream/web';
 import { log } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';

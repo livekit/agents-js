@@ -123,9 +123,24 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
     });
   }
 
+  /**
+   * Creates a new InterruptionStreamBase for internal use.
+   * The stream can receive audio frames and sentinels via pushFrame().
+   * Use this when you need direct access to the stream for pushing frames.
+   */
+  createStream(): InterruptionStreamBase {
+    const stream = new InterruptionStreamBase(this, {});
+    this.streams.add(stream);
+    return stream;
+  }
+
+  /**
+   * Creates a new interruption stream and returns a ReadableStream of InterruptionEvents.
+   * This is a convenience method for consuming interruption events without needing
+   * to manage the underlying stream directly.
+   */
   stream(): ReadableStream<InterruptionEvent> {
-    const httpStream = new InterruptionStreamBase(this, {});
-    this.streams.add(httpStream);
+    const httpStream = this.createStream();
     const transformer = new TransformStream<InterruptionEvent, InterruptionEvent>({
       transform: (chunk, controller) => {
         if (chunk.type === InterruptionEventType.INTERRUPTION) {
