@@ -1,5 +1,6 @@
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/sdk-trace-base';
+import { traceTypes } from 'agents/src/telemetry/index.js';
 import { type ReadableStream, TransformStream, WritableStream } from 'stream/web';
 import { log } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
@@ -77,7 +78,18 @@ export interface ApiConnectOptions {
   timeout: number;
 }
 
-abstract class InterruptionStreamBase {
+function updateUserSpeakingSpan(span: Span, entry: InterruptionCacheEntry) {
+  span.setAttribute(
+    traceTypes.ATTR_IS_INTERRUPTION,
+    (entry.isInterruption ?? false).toString().toLowerCase(),
+  );
+  span.setAttribute(traceTypes.ATTR_INTERRUPTION_PROBABILITY, entry.probability);
+  span.setAttribute(traceTypes.ATTR_INTERRUPTION_TOTAL_DURATION, entry.totalDuration);
+  span.setAttribute(traceTypes.ATTR_INTERRUPTION_PREDICTION_DURATION, entry.predictionDuration);
+  span.setAttribute(traceTypes.ATTR_INTERRUPTION_DETECTION_DELAY, entry.detectionDelay);
+}
+
+export class InterruptionStreamBase {
   private inputStream: StreamChannel<InterruptionSentinel | AudioFrame, InterruptionDetectionError>;
 
   private eventStream: StreamChannel<InterruptionEvent, InterruptionDetectionError>;
@@ -220,23 +232,51 @@ abstract class InterruptionStreamBase {
       {
         // Implement the sink
         write: async (chunk) => {
-          if (this.overlapSpeechStartedAt) {
+          if (!this.overlapSpeechStartedAt) {
             return;
           }
-          await predictHTTP(
+          const resp = await predictHTTP(
             chunk,
             { threshold: this.options.threshold, minFrames: this.options.minFrames },
             {
               baseUrl: this.options.baseUrl,
               timeout: this.options.inferenceTimeout,
-              token: await createAccessToken(),
+              token: await createAccessToken(this.options.apiKey, this.options.apiSecret),
             },
           );
+          console.log('received inference response', resp);
+          const { createdAt, isBargein, probabilities, predictionDuration } = resp;
+          const entry = new InterruptionCacheEntry({
+            createdAt,
+            probabilities,
+            isInterruption: isBargein,
+            speechInput: chunk,
+            totalDuration: (performance.now() - createdAt) / 1e9,
+            detectionDelay: Date.now() - this.overlapSpeechStartedAt,
+            predictionDuration,
+          });
+          cache.set(createdAt, entry);
+          if (overlapSpeechStarted && entry.isInterruption) {
+            if (this.userSpeakingSpan) {
+              this.updateUserSpeakingSpan(this.userSpeakingSpan, entry);
+            }
+            const event: InterruptionEvent = {
+              type: InterruptionEventType.INTERRUPTION,
+              timestamp: Date.now(),
+              overlapSpeechStartedAt: this.overlapSpeechStartedAt,
+              isInterruption: entry.isInterruption,
+              speechInput: entry.speechInput,
+              probabilities: entry.probabilities,
+              totalDuration: entry.totalDuration,
+              predictionDuration: entry.predictionDuration,
+              detectionDelay: entry.detectionDelay,
+              probability: entry.probability,
+            };
+            this.eventStream.write(event);
+          }
         },
         close() {
-          const listItem = document.createElement('li');
-          listItem.textContent = `[MESSAGE RECEIVED] ${result}`;
-          list.appendChild(listItem);
+          console.log('closing http writer');
         },
         abort(err) {
           console.log('Sink error:', err);

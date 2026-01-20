@@ -1,4 +1,5 @@
 import { slidingWindowMinMax } from '../utils.js';
+import { MIN_INTERRUPTION_DURATION } from './defaults.js';
 
 export enum InterruptionEventType {
   INTERRUPTION = 'interruption',
