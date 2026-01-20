@@ -1,12 +1,18 @@
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';
+import { type ReadableStream, TransformStream } from 'stream/web';
+import { InterruptionStreamBase } from './InterruptionStream.js';
 import {
   DEFAULT_BASE_URL,
   FRAMES_PER_SECOND,
   SAMPLE_RATE,
   interruptionOptionDefaults,
 } from './defaults.js';
-import type { InterruptionDetectionError } from './interruption.js';
+import {
+  type InterruptionDetectionError,
+  type InterruptionEvent,
+  InterruptionEventType,
+} from './interruption.js';
 
 type InterruptionCallbacks = {
   interruptionDetected: () => void;
@@ -115,5 +121,22 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
       inferenceTimeout: this.options.inferenceTimeout,
       useProxy: this.options.useProxy,
     });
+  }
+
+  stream(): ReadableStream<InterruptionEvent> {
+    const httpStream = new InterruptionStreamBase(this, {});
+    this.streams.add(httpStream);
+    const transformer = new TransformStream<InterruptionEvent, InterruptionEvent>({
+      transform: (chunk, controller) => {
+        if (chunk.type === InterruptionEventType.INTERRUPTION) {
+          this.emit('interruptionDetected'); // TODO payload
+        } else if (chunk.type === InterruptionEventType.OVERLAP_SPEECH_ENDED) {
+          this.emit('overlapSpeechDetected'); // TODO payload
+        }
+        controller.enqueue(chunk);
+      },
+    });
+    const stream = httpStream.stream.pipeThrough(transformer);
+    return stream;
   }
 }

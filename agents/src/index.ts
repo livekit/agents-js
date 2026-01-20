@@ -36,4 +36,6 @@ export * from './vad.js';
 export * from './version.js';
 export * from './worker.js';
 
+export * from './inference/interruption/index.js';
+
 export { cli, inference, ipc, llm, metrics, stream, stt, telemetry, tokenize, tts, voice };

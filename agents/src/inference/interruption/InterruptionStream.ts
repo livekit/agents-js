@@ -48,8 +48,8 @@ export type InterruptionSentinel =
   | Flush;
 
 export class InterruptionStreamSentinel {
-  static speechStarted(): AgentSpeechEnded {
-    return { type: 'agent-speech-ended' };
+  static speechStarted(): AgentSpeechStarted {
+    return { type: 'agent-speech-started' };
   }
 
   static speechEnded(): AgentSpeechEnded {
@@ -117,6 +117,8 @@ export class InterruptionStreamBase {
     this.model = model;
     this.options = model.options;
     this.apiOptions = { ...apiConnectDefaults, ...apiOptions };
+
+    this.setupTransform();
   }
 
   private setupTransform() {
@@ -258,7 +260,7 @@ export class InterruptionStreamBase {
           cache.set(createdAt, entry);
           if (overlapSpeechStarted && entry.isInterruption) {
             if (this.userSpeakingSpan) {
-              this.updateUserSpeakingSpan(this.userSpeakingSpan, entry);
+              updateUserSpeakingSpan(this.userSpeakingSpan, entry);
             }
             const event: InterruptionEvent = {
               type: InterruptionEventType.INTERRUPTION,
