@@ -314,6 +314,9 @@ export class InterruptionStreamBase {
   async pushFrame(frame: InterruptionSentinel | AudioFrame): Promise<void> {
     this.ensureStreamsNotEnded();
     if (!(frame instanceof AudioFrame)) {
+      if (frame.type === 'overlap-speech-started') {
+        this.overlapSpeechStartedAt = Date.now() - frame.speechDuration;
+      }
       return this.inputStream.write(frame);
     } else if (this.options.sampleRate !== frame.sampleRate) {
       const resampler = this.getResamplerFor(frame.sampleRate);
