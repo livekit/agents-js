@@ -1,7 +1,6 @@
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
-import { log } from 'agents/src/log.js';
 import EventEmitter from 'events';
-import { TransformStream } from 'stream/web';
+import { log } from '../../log.js';
 import { InterruptionStreamBase } from './InterruptionStream.js';
 import {
   DEFAULT_BASE_URL,
@@ -9,11 +8,7 @@ import {
   SAMPLE_RATE,
   interruptionOptionDefaults,
 } from './defaults.js';
-import {
-  type InterruptionDetectionError,
-  type InterruptionEvent,
-  InterruptionEventType,
-} from './interruption.js';
+import { type InterruptionDetectionError } from './interruption.js';
 
 type InterruptionCallbacks = {
   interruptionDetected: () => void;
@@ -40,7 +35,7 @@ export type AdaptiveInterruptionDetectorOptions = Partial<InterruptionOptions>;
 
 export class AdaptiveInterruptionDetector extends (EventEmitter as new () => TypedEventEmitter<InterruptionCallbacks>) {
   options: InterruptionOptions;
-  private label: string;
+  private logger = log();
   private streams: WeakSet<object>; // TODO: Union of InterruptionHttpStream | InterruptionWebSocketStream
 
   constructor(options: AdaptiveInterruptionDetectorOptions = {}) {
@@ -109,19 +104,21 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
       minInterruptionDuration,
     };
 
-    this.label = `${this.constructor.name}`;
     this.streams = new WeakSet();
 
-    console.info('adaptive interruption detector initialized', {
-      baseUrl: this.options.baseUrl,
-      detectionInterval: this.options.detectionInterval,
-      audioPrefixDuration: this.options.audioPrefixDuration,
-      maxAudioDuration: this.options.maxAudioDuration,
-      minFrames: this.options.minFrames,
-      threshold: this.options.threshold,
-      inferenceTimeout: this.options.inferenceTimeout,
-      useProxy: this.options.useProxy,
-    });
+    this.logger.debug(
+      {
+        baseUrl: this.options.baseUrl,
+        detectionInterval: this.options.detectionInterval,
+        audioPrefixDuration: this.options.audioPrefixDuration,
+        maxAudioDuration: this.options.maxAudioDuration,
+        minFrames: this.options.minFrames,
+        threshold: this.options.threshold,
+        inferenceTimeout: this.options.inferenceTimeout,
+        useProxy: this.options.useProxy,
+      },
+      'adaptive interruption detector initialized',
+    );
   }
 
   /**
