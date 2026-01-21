@@ -1,5 +1,5 @@
 import { slidingWindowMinMax } from '../utils.js';
-import { MIN_INTERRUPTION_DURATION } from './defaults.js';
+import { FRAME_DURATION_IN_S, MIN_INTERRUPTION_DURATION_IN_S } from './defaults.js';
 
 export enum InterruptionEventType {
   INTERRUPTION = 'interruption',
@@ -40,9 +40,9 @@ export class InterruptionDetectionError extends Error {
 
 function estimateProbability(
   probabilities: number[],
-  windowSize: number = MIN_INTERRUPTION_DURATION,
+  windowSizeInS: number = MIN_INTERRUPTION_DURATION_IN_S,
 ): number {
-  const minWindow = Math.ceil(windowSize / 0.025); // 25ms per frame
+  const minWindow = Math.ceil(windowSizeInS / FRAME_DURATION_IN_S);
   if (probabilities.length < minWindow) {
     return 0;
   }

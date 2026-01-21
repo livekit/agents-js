@@ -20,11 +20,11 @@ export interface InterruptionOptions {
   sampleRate: number;
   threshold: number;
   minFrames: number;
-  maxAudioDuration: number;
-  audioPrefixDuration: number;
-  detectionInterval: number;
+  maxAudioDurationInS: number;
+  audioPrefixDurationInS: number;
+  detectionIntervalInS: number;
   inferenceTimeout: number;
-  minInterruptionDuration: number;
+  minInterruptionDurationInS: number;
   baseUrl: string;
   apiKey: string;
   apiSecret: string;
@@ -42,20 +42,20 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
     super();
 
     const {
-      maxAudioDuration,
+      maxAudioDurationInS,
       baseUrl,
       apiKey,
       apiSecret,
       useProxy: useProxyArg,
-      audioPrefixDuration,
+      audioPrefixDurationInS,
       threshold,
-      detectionInterval,
+      detectionIntervalInS,
       inferenceTimeout,
-      minInterruptionDuration,
+      minInterruptionDurationInS,
     } = { ...interruptionOptionDefaults, ...options };
 
-    if (maxAudioDuration > 3.0) {
-      throw new Error('maxAudioDuration must be less than or equal to 3.0 seconds');
+    if (maxAudioDurationInS > 3.0) {
+      throw new Error('maxAudioDurationInS must be less than or equal to 3.0 seconds');
     }
 
     const lkBaseUrl = baseUrl ?? process.env.LIVEKIT_REMOTE_EOT_URL ?? DEFAULT_BASE_URL;
@@ -92,16 +92,16 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
     this.options = {
       sampleRate: SAMPLE_RATE,
       threshold,
-      minFrames: Math.ceil(minInterruptionDuration * FRAMES_PER_SECOND),
-      maxAudioDuration,
-      audioPrefixDuration,
-      detectionInterval,
+      minFrames: Math.ceil(minInterruptionDurationInS * FRAMES_PER_SECOND),
+      maxAudioDurationInS,
+      audioPrefixDurationInS,
+      detectionIntervalInS,
       inferenceTimeout,
       baseUrl: lkBaseUrl,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
       useProxy,
-      minInterruptionDuration,
+      minInterruptionDurationInS,
     };
 
     this.streams = new WeakSet();
@@ -109,9 +109,9 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
     this.logger.debug(
       {
         baseUrl: this.options.baseUrl,
-        detectionInterval: this.options.detectionInterval,
-        audioPrefixDuration: this.options.audioPrefixDuration,
-        maxAudioDuration: this.options.maxAudioDuration,
+        detectionIntervalInS: this.options.detectionIntervalInS,
+        audioPrefixDurationInS: this.options.audioPrefixDurationInS,
+        maxAudioDurationInS: this.options.maxAudioDurationInS,
         minFrames: this.options.minFrames,
         threshold: this.options.threshold,
         inferenceTimeout: this.options.inferenceTimeout,
@@ -144,12 +144,12 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
     return streamBase;
   }
 
-  updateOptions(options: { threshold?: number; minInterruptionDuration?: number }): void {
+  updateOptions(options: { threshold?: number; minInterruptionDurationInS?: number }): void {
     if (options.threshold !== undefined) {
       this.options.threshold = options.threshold;
     }
-    if (options.minInterruptionDuration !== undefined) {
-      this.options.minFrames = Math.ceil(options.minInterruptionDuration * FRAMES_PER_SECOND);
+    if (options.minInterruptionDurationInS !== undefined) {
+      this.options.minFrames = Math.ceil(options.minInterruptionDurationInS * FRAMES_PER_SECOND);
     }
   }
 }
