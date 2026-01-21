@@ -14,7 +14,7 @@ export interface InterruptionEvent {
   detectionDelay: number;
   overlapSpeechStartedAt?: number;
   speechInput?: Int16Array;
-  probabilities?: Float32Array;
+  probabilities?: number[];
   probability: number;
 }
 
@@ -39,7 +39,7 @@ export class InterruptionDetectionError extends Error {
 }
 
 function estimateProbability(
-  probabilities: Float32Array,
+  probabilities: number[],
   windowSize: number = MIN_INTERRUPTION_DURATION,
 ): number {
   const minWindow = Math.ceil(windowSize / 0.025); // 25ms per frame
@@ -47,7 +47,7 @@ function estimateProbability(
     return 0;
   }
 
-  return slidingWindowMinMax(probabilities, windowSize);
+  return slidingWindowMinMax(probabilities, minWindow);
 }
 
 /**
@@ -59,7 +59,7 @@ export class InterruptionCacheEntry {
   readonly predictionDuration: number;
   readonly detectionDelay: number;
   readonly speechInput?: Int16Array;
-  readonly probabilities?: Float32Array;
+  readonly probabilities?: number[];
   readonly isInterruption?: boolean;
   readonly probability: number;
 
@@ -69,7 +69,7 @@ export class InterruptionCacheEntry {
     totalDuration?: number;
     predictionDuration?: number;
     detectionDelay?: number;
-    probabilities?: Float32Array;
+    probabilities?: number[];
     isInterruption?: boolean;
   }) {
     this.createdAt = params.createdAt;

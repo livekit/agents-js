@@ -65,7 +65,7 @@ export async function connectWs(
   });
 }
 
-export function slidingWindowMinMax(probabilities: Float32Array, minWindow: number): number {
+export function slidingWindowMinMax(probabilities: number[], minWindow: number): number {
   if (probabilities.length < minWindow) {
     return -Infinity;
   }

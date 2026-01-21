@@ -1,6 +1,7 @@
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
+import { log } from 'agents/src/log.js';
 import EventEmitter from 'events';
-import { type ReadableStream, TransformStream } from 'stream/web';
+import { TransformStream } from 'stream/web';
 import { InterruptionStreamBase } from './InterruptionStream.js';
 import {
   DEFAULT_BASE_URL,
@@ -129,30 +130,21 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
    * Use this when you need direct access to the stream for pushing frames.
    */
   createStream(): InterruptionStreamBase {
-    const stream = new InterruptionStreamBase(this, {});
-    this.streams.add(stream);
-    return stream;
-  }
-
-  /**
-   * Creates a new interruption stream and returns a ReadableStream of InterruptionEvents.
-   * This is a convenience method for consuming interruption events without needing
-   * to manage the underlying stream directly.
-   */
-  stream(): ReadableStream<InterruptionEvent> {
-    const httpStream = this.createStream();
-    const transformer = new TransformStream<InterruptionEvent, InterruptionEvent>({
-      transform: (chunk, controller) => {
-        if (chunk.type === InterruptionEventType.INTERRUPTION) {
-          this.emit('interruptionDetected'); // TODO payload
-        } else if (chunk.type === InterruptionEventType.OVERLAP_SPEECH_ENDED) {
-          this.emit('overlapSpeechDetected'); // TODO payload
-        }
-        controller.enqueue(chunk);
-      },
-    });
-    const stream = httpStream.stream.pipeThrough(transformer);
-    return stream;
+    const streamBase = new InterruptionStreamBase(this, {});
+    this.streams.add(streamBase);
+    // const transformer = new TransformStream<InterruptionEvent, InterruptionEvent>({
+    //   transform: (chunk, controller) => {
+    //     log().info('adaptive interruption detection stream transformer', chunk);
+    //     if (chunk.type === InterruptionEventType.INTERRUPTION) {
+    //       this.emit('interruptionDetected'); // TODO payload
+    //     } else if (chunk.type === InterruptionEventType.OVERLAP_SPEECH_ENDED) {
+    //       this.emit('overlapSpeechDetected'); // TODO payload
+    //     }
+    //     controller.enqueue(chunk);
+    //   },
+    // });
+    // streamBase.stream().pipeThrough(transformer);
+    return streamBase;
   }
 
   updateOptions(options: { threshold?: number; minInterruptionDuration?: number }): void {

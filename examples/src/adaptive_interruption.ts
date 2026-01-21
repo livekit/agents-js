@@ -79,6 +79,9 @@ export default defineAgent({
       vad,
       // Pass the interruption detector
       interruptionDetector,
+      voiceOptions: {
+        allowInterruptions: false,
+      },
     });
 
     // Start the session

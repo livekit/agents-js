@@ -21,7 +21,7 @@ export interface PredictEndpointResponse {
 export interface PredictResponse {
   createdAt: number;
   isBargein: boolean;
-  probabilities: Float32Array;
+  probabilities: number[];
   predictionDuration: number;
 }
 
@@ -55,7 +55,7 @@ export async function predictHTTP(
   return {
     createdAt: created_at,
     isBargein: is_bargein,
-    probabilities: new Float32Array(probabilities),
-    predictionDuration: (performance.now() - createdAt) / 1e9,
+    probabilities,
+    predictionDuration: (performance.now() - createdAt) / 1000,
   };
 }

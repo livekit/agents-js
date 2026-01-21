@@ -609,7 +609,8 @@ export class AudioRecognition {
             }
 
             // If agent is speaking, user speech is overlap - trigger interruption detection
-            if (this.agentSpeaking && this.interruptionEnabled) {
+            if (this.agentSpeaking) {
+              // TODO re-enable check for this.interruptionEnabled
               this.onStartOfOverlapSpeech(ev.speechDuration, this.userTurnSpan);
             }
 
@@ -682,7 +683,7 @@ export class AudioRecognition {
     })();
 
     // Read interruption events from the stream
-    const eventStream = this.interruptionStream.stream;
+    const eventStream = this.interruptionStream.stream();
     const eventReader = eventStream.getReader();
 
     const abortHandler = () => {
@@ -697,7 +698,7 @@ export class AudioRecognition {
         const { done, value: ev } = await eventReader.read();
         if (done) break;
 
-        this.logger.debug({ type: ev.type, probability: ev.probability }, 'Interruption event');
+        this.logger.info({ type: ev.type, probability: ev.probability }, 'Interruption event');
         this.hooks.onInterruption(ev);
       }
     } catch (e) {

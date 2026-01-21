@@ -1,9 +1,9 @@
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
-import { traceTypes } from '../../telemetry/index.js';
 import { type ReadableStream, TransformStream, WritableStream } from 'stream/web';
 import { log } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
+import { traceTypes } from '../../telemetry/index.js';
 import { createAccessToken } from '../utils.js';
 import type {
   AdaptiveInterruptionDetector,
@@ -164,7 +164,7 @@ export class InterruptionStreamBase {
               controller.enqueue(audioSlice);
             }
           } else if (chunk.type === 'agent-speech-started') {
-            log().debug('agent speech started');
+            log().info('agent speech started');
 
             agentSpeechStarted = true;
             overlapSpeechStarted = false;
@@ -172,7 +172,7 @@ export class InterruptionStreamBase {
             startIdx = 0;
             cache.clear();
           } else if (chunk.type === 'agent-speech-ended') {
-            log().debug('agent speech ended');
+            log().info('agent speech ended');
 
             agentSpeechStarted = false;
             overlapSpeechStarted = false;
@@ -181,7 +181,7 @@ export class InterruptionStreamBase {
             cache.clear();
           } else if (chunk.type === 'overlap-speech-started' && agentSpeechStarted) {
             this.userSpeakingSpan = chunk.userSpeakingSpan;
-            log().debug('overlap speech started, starting interruption inference');
+            log().info('overlap speech started, starting interruption inference');
             overlapSpeechStarted = true;
             accumulatedSamples = 0;
             // Include both speech duration and audio prefix duration for context
@@ -197,7 +197,7 @@ export class InterruptionStreamBase {
             startIdx = shiftSize;
             cache.clear();
           } else if (chunk.type === 'overlap-speech-ended') {
-            log().debug('overlap speech ended');
+            log().info('overlap speech ended');
 
             if (overlapSpeechStarted) {
               this.userSpeakingSpan = undefined;
@@ -248,14 +248,13 @@ export class InterruptionStreamBase {
               token: await createAccessToken(this.options.apiKey, this.options.apiSecret),
             },
           );
-          console.log('received inference response', resp);
           const { createdAt, isBargein, probabilities, predictionDuration } = resp;
           const entry = new InterruptionCacheEntry({
             createdAt,
             probabilities,
             isInterruption: isBargein,
             speechInput: chunk,
-            totalDuration: (performance.now() - createdAt) / 1e9,
+            totalDuration: (performance.now() - createdAt) / 1000,
             detectionDelay: Date.now() - this.overlapSpeechStartedAt,
             predictionDuration,
           });
@@ -276,6 +275,7 @@ export class InterruptionStreamBase {
               detectionDelay: entry.detectionDelay,
               probability: entry.probability,
             };
+            log().info(`emitting interruption event: ${event.type}`);
             this.eventStream.write(event);
           }
         },
@@ -309,7 +309,7 @@ export class InterruptionStreamBase {
     return this.resampler;
   }
 
-  get stream(): ReadableStream<InterruptionEvent> {
+  stream(): ReadableStream<InterruptionEvent> {
     return this.eventStream.stream();
   }
 
