@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.37
+
+### Patch Changes
+
+- Add tests for existing agent implementations in examples - [#978](https://github.com/livekit/agents-js/pull/978) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add advanced test utilities for test framework - [#976](https://github.com/livekit/agents-js/pull/976) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.36
 
 ### Patch Changes

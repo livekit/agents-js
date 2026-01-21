@@ -13,6 +13,7 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
 import type { AudioBuffer } from '../utils.js';
 import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
+import type { TimedString } from '../voice/index.js';
 
 /** Indicates start/middle/end of speech */
 export enum SpeechEventType {
@@ -53,6 +54,7 @@ export interface SpeechData {
   startTime: number;
   endTime: number;
   confidence: number;
+  words?: TimedString[];
 }
 
 export interface RecognitionUsage {
@@ -76,6 +78,13 @@ export interface SpeechEvent {
 export interface STTCapabilities {
   streaming: boolean;
   interimResults: boolean;
+  /**
+   * Whether this STT supports aligned transcripts with word/chunk timestamps.
+   * - 'word': Provider returns word-level timestamps
+   * - 'chunk': Provider returns chunk-level timestamps (e.g., sentence/phrase boundaries)
+   * - false: Provider does not support aligned transcripts
+   */
+  alignedTranscript?: 'word' | 'chunk' | false;
 }
 
 export interface STTError {
@@ -176,6 +185,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
   private _connOptions: APIConnectOptions;
+  private _startTimeOffset: number = 0;
 
   protected abortController = new AbortController();
 
@@ -298,6 +308,17 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   protected get abortSignal(): AbortSignal {
     return this.abortController.signal;
+  }
+
+  get startTimeOffset(): number {
+    return this._startTimeOffset;
+  }
+
+  set startTimeOffset(value: number) {
+    if (value < 0) {
+      throw new Error('startTimeOffset must be non-negative');
+    }
+    this._startTimeOffset = value;
   }
 
   updateInputStream(audioStream: ReadableStream<AudioFrame>) {
