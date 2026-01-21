@@ -40,6 +40,7 @@
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugin-xai": "workspace:*",
     "@livekit/noise-cancellation-node": "^0.1.9",
+    "@livekit/plugins-ai-coustics": "0.1.7",
     "@livekit/rtc-node": "catalog:",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/api-logs": "^0.54.0",
