@@ -7,6 +7,7 @@ import {
   APIStatusError,
   APITimeoutError,
   AudioByteStream,
+  createTimedString,
   Future,
   log,
   shortuuid,
@@ -116,6 +117,8 @@ interface StreamData {
   textBuffer: string;
   startTimesMs: number[];
   durationsMs: number[];
+  /** First word offset for timestamp normalization (removes leading silence) */
+  firstWordOffsetMs: number | null;
 }
 
 type ConnectionMessage = SynthesizeContent | CloseContext;
@@ -170,12 +173,17 @@ function stripUndefined<T extends object>(obj: T): Partial<T> {
 /**
  * Convert alignment data to timed words.
  * Returns the timed words and remaining text buffer.
+ *
+ * @param firstWordOffsetMs - Optional offset to normalize timestamps (subtract from all).
+ *   ElevenLabs returns absolute timestamps from the start of TTS audio, which may include
+ *   leading silence. By normalizing to 0, we ensure proper sync with the synchronizer.
  */
 function toTimedWords(
   text: string,
   startTimesMs: number[],
   durationsMs: number[],
   flush: boolean = false,
+  firstWordOffsetMs: number = 0,
 ): [TimedString[], string] {
   if (!text || startTimesMs.length === 0 || durationsMs.length === 0) {
     return [[], text || ''];
@@ -200,24 +208,25 @@ function toTimedWords(
     const start = startIndices[i]!;
     const nextStart = startIndices[i + 1]!;
     end = nextStart;
-    const startT = (timestamps[start] ?? 0) / 1000;
-    const endT = (timestamps[nextStart] ?? 0) / 1000;
-    timedWords.push({
+    // Normalize timestamps by subtracting the first word offset
+    const startT = Math.max(0, ((timestamps[start] ?? 0) - firstWordOffsetMs)) / 1000;
+    const endT = Math.max(0, ((timestamps[nextStart] ?? 0) - firstWordOffsetMs)) / 1000;
+    timedWords.push(createTimedString({
       text: text.slice(start, nextStart),
       startTime: startT,
       endTime: endT,
-    });
+    }));
   }
 
   if (flush && words.length > 0) {
     const lastWordStart = startIndices[startIndices.length - 1]!;
-    const startT = (timestamps[lastWordStart] ?? 0) / 1000;
-    const endT = (timestamps[timestamps.length - 1] ?? 0) / 1000;
-    timedWords.push({
+    const startT = Math.max(0, ((timestamps[lastWordStart] ?? 0) - firstWordOffsetMs)) / 1000;
+    const endT = Math.max(0, ((timestamps[timestamps.length - 1] ?? 0) - firstWordOffsetMs)) / 1000;
+    timedWords.push(createTimedString({
       text: text.slice(lastWordStart),
       startTime: startT,
       endTime: endT,
-    });
+    }));
     end = text.length;
   } else if (words.length > 0) {
     end = startIndices[startIndices.length - 1]!;
@@ -294,6 +303,7 @@ class Connection {
       textBuffer: '',
       startTimesMs: [],
       durationsMs: [],
+      firstWordOffsetMs: null,
     });
   }
 
@@ -498,6 +508,12 @@ class Connection {
                 const start = starts[i]!;
                 const dur = durs[i]!;
 
+                // Capture the first word's start time for normalization
+                // This removes leading silence from timestamps
+                if (ctx.firstWordOffsetMs === null && start > 0) {
+                  ctx.firstWordOffsetMs = start;
+                }
+
                 if (char.length > 1) {
                   for (let j = 0; j < char.length - 1; j++) {
                     ctx.startTimesMs.push(start);
@@ -512,6 +528,8 @@ class Connection {
                 ctx.textBuffer,
                 ctx.startTimesMs,
                 ctx.durationsMs,
+                false,
+                ctx.firstWordOffsetMs ?? 0,
               );
 
               if (timedWords.length > 0) {
@@ -537,6 +555,7 @@ class Connection {
                 ctx.startTimesMs,
                 ctx.durationsMs,
                 true,
+                ctx.firstWordOffsetMs ?? 0,
               );
               if (timedWords.length > 0) {
                 stream.pushTimedTranscript(timedWords);

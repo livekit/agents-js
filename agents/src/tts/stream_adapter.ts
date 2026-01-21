@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { SentenceStream, SentenceTokenizer } from '../tokenize/index.js';
 import type { APIConnectOptions } from '../types.js';
+import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Task } from '../utils.js';
+import { createTimedString } from '../voice/io.js';
 import type { ChunkedStream } from './tts.js';
 import { SynthesizeStream, TTS } from './tts.js';
 
@@ -53,6 +55,9 @@ export class StreamAdapterWrapper extends SynthesizeStream {
   }
 
   protected async run() {
+    // Ref: Python stream_adapter.py line 113 - track cumulative duration for TimedString
+    let cumulativeDuration = 0;
+
     const forwardInput = async () => {
       for await (const input of this.input) {
         if (this.abortController.signal.aborted) break;
@@ -99,8 +104,28 @@ export class StreamAdapterWrapper extends SynthesizeStream {
       await prevTask?.result;
       if (controller.signal.aborted) return;
 
+      // Ref: Python stream_adapter.py lines 123-126 - create TimedString for sentence
+      // Create a TimedString with the sentence text and current cumulative duration
+      const timedString = createTimedString({
+        text: token,
+        startTime: cumulativeDuration,
+      });
+
+      let isFirstFrame = true;
       for await (const audio of audioStream) {
         if (controller.signal.aborted) break;
+
+        // Attach the TimedString to the first frame of this sentence
+        // Ref: Python stream_adapter.py - timing is attached to audio frames
+        if (isFirstFrame) {
+          audio.frame.userdata[USERDATA_TIMED_TRANSCRIPT] = [timedString];
+          isFirstFrame = false;
+        }
+
+        // Track cumulative duration
+        const frameDuration = audio.frame.samplesPerChannel / audio.frame.sampleRate;
+        cumulativeDuration += frameDuration;
+
         this.queue.put(audio);
       }
     };

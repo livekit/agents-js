@@ -11,6 +11,7 @@ import {
   metrics,
   voice,
 } from '@livekit/agents';
+import * as cartesia from '@livekit/agents-plugin-cartesia';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
 // import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
@@ -51,7 +52,7 @@ export default defineAgent({
       // Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
       // See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
       // tts: new inference.TTS({ model: 'cartesia/sonic-2:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
-      tts: 'cartesia/sonic-2:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      tts: new cartesia.TTS(),
       // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
       // See more at https://docs.livekit.io/agents/build/turns
       vad: ctx.proc.userData.vad! as silero.VAD,
@@ -61,6 +62,7 @@ export default defineAgent({
       voiceOptions: {
         // allow the LLM to generate a response while waiting for the end of turn
         preemptiveGeneration: true,
+        useTtsAlignedTranscript: true,
       },
       connOptions: {
         // Example of overriding the default connection options for the LLM/TTS/STT

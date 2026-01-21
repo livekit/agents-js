@@ -34,7 +34,7 @@ export * from './types.js';
 export * from './utils.js';
 export * from './vad.js';
 export * from './version.js';
-export type { TimedString } from './voice/io.js';
+export { createTimedString, isTimedString, type TimedString } from './voice/io.js';
 export * from './worker.js';
 
 export { cli, inference, ipc, llm, metrics, stream, stt, telemetry, tokenize, tts, voice };

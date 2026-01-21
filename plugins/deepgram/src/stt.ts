@@ -8,6 +8,7 @@ import {
   AudioEnergyFilter,
   Future,
   Task,
+  createTimedString,
   log,
   stt,
   waitForAbort,
@@ -441,7 +442,7 @@ const liveTranscriptionToSpeechData = (
         : startTimeOffset,
       confidence: alt['confidence'],
       text: alt['transcript'],
-      words: wordsData.map((word) => ({
+      words: wordsData.map((word) => createTimedString({
         text: word['word'] ?? '',
         startTime: (word['start'] ?? 0) + startTimeOffset,
         endTime: (word['end'] ?? 0) + startTimeOffset,
