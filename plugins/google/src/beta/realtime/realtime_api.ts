@@ -43,6 +43,8 @@ const INPUT_AUDIO_CHANNELS = 1;
 const OUTPUT_AUDIO_SAMPLE_RATE = 24000;
 const OUTPUT_AUDIO_CHANNELS = 1;
 
+const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
+
 /**
  * Default image encoding options for Google Realtime API
  */
@@ -881,7 +883,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         switch (msg.type) {
           case 'content':
             const { turns, turnComplete } = msg.value;
-            this.#logger.debug(`(client) -> ${JSON.stringify(this.loggableClientEvent(msg))}`);
+            if (LK_GOOGLE_DEBUG) {
+              this.#logger.debug(`(client) -> ${JSON.stringify(this.loggableClientEvent(msg))}`);
+            }
             await session.sendClientContent({
               turns,
               turnComplete: turnComplete ?? true,
@@ -890,7 +894,9 @@ export class RealtimeSession extends llm.RealtimeSession {
           case 'tool_response':
             const { functionResponses } = msg.value;
             if (functionResponses) {
-              this.#logger.debug(`(client) -> ${JSON.stringify(this.loggableClientEvent(msg))}`);
+              if (LK_GOOGLE_DEBUG) {
+                this.#logger.debug(`(client) -> ${JSON.stringify(this.loggableClientEvent(msg))}`);
+              }
               await session.sendToolResponse({
                 functionResponses,
               });
@@ -936,7 +942,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     const hasAudioData = response.serverContent?.modelTurn?.parts?.some(
       (part) => part.inlineData?.data,
     );
-    if (!hasAudioData) {
+    if (LK_GOOGLE_DEBUG) {
+      this.#logger.debug(`(server) <- ${JSON.stringify(this.loggableServerMessage(response))}`);
+    } else if (!hasAudioData) {
       this.#logger.debug(`(server) <- ${JSON.stringify(this.loggableServerMessage(response))}`);
     }
     const unlock = await this.sessionLock.lock();
@@ -950,15 +958,46 @@ export class RealtimeSession extends llm.RealtimeSession {
       unlock();
     }
 
-    // start new generation for serverContent or for standalone toolCalls (functionChannel closed)
-    if (
-      (!this.currentGeneration || this.currentGeneration._done) &&
-      (response.serverContent ||
-        (response.toolCall && this.currentGeneration?.functionChannel.closed !== false))
-    ) {
-      this.startNewGeneration();
-    }
+    const shouldStartNewGeneration =
+      !this.currentGeneration || this.currentGeneration._done || !!this.pendingGenerationFut;
 
+    if (shouldStartNewGeneration) {
+      if (response.serverContent?.interrupted) {
+        // Two cases when an interrupted event is sent without an active generation:
+        // 1) generation done but playout not finished (turnComplete -> interrupted)
+        // 2) generation not started (interrupted -> turnComplete)
+        if (!this.pendingGenerationFut) {
+          this.handleInputSpeechStarted();
+        }
+
+        response.serverContent = {
+          ...response.serverContent,
+          interrupted: undefined,
+        };
+
+        const sc = response.serverContent;
+        const hasServerContent =
+          !!sc?.modelTurn ||
+          sc?.outputTranscription != null ||
+          sc?.inputTranscription != null ||
+          sc?.generationComplete != null ||
+          sc?.turnComplete != null;
+        if (!hasServerContent) {
+          response.serverContent = undefined;
+          if (LK_GOOGLE_DEBUG) {
+            this.#logger.debug('ignoring empty server content');
+          }
+        }
+      }
+
+      // start new generation for serverContent or for standalone toolCalls
+      if (this.isNewGeneration(response)) {
+        this.startNewGeneration();
+        if (LK_GOOGLE_DEBUG) {
+          this.#logger.debug(`new generation started: ${this.currentGeneration?.responseId}`);
+        }
+      }
+    }
     if (response.sessionResumptionUpdate) {
       if (
         response.sessionResumptionUpdate.resumable &&
@@ -1328,13 +1367,12 @@ export class RealtimeSession extends llm.RealtimeSession {
       gen._completedTimestamp = Date.now();
     }
 
-    if (serverContent.interrupted) {
+    if (serverContent.interrupted && !this.pendingGenerationFut) {
       this.handleInputSpeechStarted();
     }
 
     if (serverContent.turnComplete) {
-      // keep functionChannel open for potential late-arriving toolCalls
-      this.markCurrentGenerationDone(true);
+      this.markCurrentGenerationDone();
     }
   }
 
@@ -1488,5 +1526,21 @@ export class RealtimeSession extends llm.RealtimeSession {
     } else {
       yield frame;
     }
+  }
+
+  private isNewGeneration(response: types.LiveServerMessage) {
+    if (response.toolCall) {
+      return true;
+    }
+
+    const serverContent = response.serverContent;
+    return (
+      !!serverContent &&
+      (serverContent.modelTurn ||
+        serverContent.outputTranscription != null ||
+        serverContent.inputTranscription != null ||
+        serverContent.generationComplete != null ||
+        serverContent.turnComplete != null)
+    );
   }
 }
