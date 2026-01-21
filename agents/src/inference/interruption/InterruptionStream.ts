@@ -1,6 +1,6 @@
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
-import { type ReadableStream, TransformStream, WritableStream } from 'stream/web';
+import { type ReadableStream, TransformStream } from 'stream/web';
 import { log } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { traceTypes } from '../../telemetry/index.js';
@@ -92,7 +92,7 @@ function updateUserSpeakingSpan(span: Span, entry: InterruptionCacheEntry) {
 export class InterruptionStreamBase {
   private inputStream: StreamChannel<InterruptionSentinel | AudioFrame, InterruptionDetectionError>;
 
-  private eventStream: StreamChannel<InterruptionEvent, InterruptionDetectionError>;
+  private eventStream: ReadableStream<InterruptionEvent>;
 
   private resampler?: AudioResampler;
 
@@ -112,16 +112,14 @@ export class InterruptionStreamBase {
       InterruptionDetectionError
     >();
 
-    this.eventStream = createStreamChannel<InterruptionEvent, InterruptionDetectionError>();
-
     this.model = model;
     this.options = model.options;
     this.apiOptions = { ...apiConnectDefaults, ...apiOptions };
 
-    this.setupTransform();
+    this.eventStream = this.setupTransform();
   }
 
-  private setupTransform() {
+  private setupTransform(): ReadableStream<InterruptionEvent> {
     let agentSpeechStarted = false;
     let startIdx = 0;
     let accumulatedSamples = 0;
@@ -131,7 +129,11 @@ export class InterruptionStreamBase {
       Math.ceil(this.options.maxAudioDuration * this.options.sampleRate),
     ).fill(0);
 
-    const transformer = new TransformStream<InterruptionSentinel | AudioFrame, Int16Array>(
+    // First transform: process input frames/sentinels and output audio slices or events
+    const audioTransformer = new TransformStream<
+      InterruptionSentinel | AudioFrame,
+      Int16Array | InterruptionEvent
+    >(
       {
         transform: (chunk, controller) => {
           if (chunk instanceof AudioFrame) {
@@ -159,8 +161,13 @@ export class InterruptionStreamBase {
             ) {
               // Send a copy of the audio data up to startIdx for inference
               const audioSlice = inferenceS16Data.slice(0, startIdx);
-              // TODO: send to data channel - dataChan.send(audioSlice);
               accumulatedSamples = 0;
+              const sinceOverlapStart = this.overlapSpeechStartedAt
+                ? Date.now() - this.overlapSpeechStartedAt
+                : 0;
+              log().info(
+                `audioTransformer: enqueuing audio slice for inference, ${sinceOverlapStart}ms since overlap start, ${audioSlice.length} samples`,
+              );
               controller.enqueue(audioSlice);
             }
           } else if (chunk.type === 'agent-speech-started') {
@@ -220,7 +227,8 @@ export class InterruptionStreamBase {
                 predictionDuration: latestEntry.predictionDuration,
                 probability: latestEntry.probability,
               };
-              this.eventStream.write(event);
+              controller.enqueue(event);
+              overlapSpeechStarted = false;
             }
           } else if (chunk.type === 'flush') {
             log().debug('flushing');
@@ -228,17 +236,31 @@ export class InterruptionStreamBase {
           }
         },
       },
-      { highWaterMark: Number.MAX_SAFE_INTEGER },
-      { highWaterMark: Number.MAX_SAFE_INTEGER },
+      { highWaterMark: 32 },
+      { highWaterMark: 32 },
     );
 
-    const httpPostWriter = new WritableStream<Int16Array>(
+    // Second transform: HTTP transport - converts audio slices to events, passes through existing events
+    const httpTransport = new TransformStream<Int16Array | InterruptionEvent, InterruptionEvent>(
       {
-        // Implement the sink
-        write: async (chunk) => {
+        transform: async (chunk, controller) => {
+          // Pass through InterruptionEvents unchanged
+          if (!(chunk instanceof Int16Array)) {
+            log().info(
+              `httpTransport: passing through event type=${chunk.type}, detectionDelay=${chunk.detectionDelay}ms`,
+            );
+            controller.enqueue(chunk);
+            return;
+          }
+
           if (!this.overlapSpeechStartedAt) {
             return;
           }
+          const httpStartTime = Date.now();
+          const sinceOverlapStart = httpStartTime - this.overlapSpeechStartedAt;
+          log().info(
+            `httpTransport: starting HTTP prediction, ${sinceOverlapStart}ms since overlap start`,
+          );
           const resp = await predictHTTP(
             chunk,
             { threshold: this.options.threshold, minFrames: this.options.minFrames },
@@ -248,7 +270,11 @@ export class InterruptionStreamBase {
               token: await createAccessToken(this.options.apiKey, this.options.apiSecret),
             },
           );
+          const httpDuration = Date.now() - httpStartTime;
           const { createdAt, isBargein, probabilities, predictionDuration } = resp;
+          log().info(
+            `httpTransport: HTTP prediction completed in ${httpDuration}ms, isBargein=${isBargein}, predictionDuration=${predictionDuration}ms`,
+          );
           const entry = new InterruptionCacheEntry({
             createdAt,
             probabilities,
@@ -275,21 +301,20 @@ export class InterruptionStreamBase {
               detectionDelay: entry.detectionDelay,
               probability: entry.probability,
             };
-            log().info(`emitting interruption event: ${event.type}`);
-            this.eventStream.write(event);
+            log().info(
+              `httpTransport: emitting interruption event, detectionDelay=${entry.detectionDelay}ms, totalDuration=${(entry.totalDuration * 1000).toFixed(0)}ms`,
+            );
+            overlapSpeechStarted = false;
+            controller.enqueue(event);
           }
         },
-        close() {
-          console.log('closing http writer');
-        },
-        abort(err) {
-          console.log('Sink error:', err);
-        },
       },
-      { highWaterMark: Number.MAX_SAFE_INTEGER },
+      { highWaterMark: 2 },
+      { highWaterMark: 2 },
     );
 
-    this.inputStream.stream().pipeThrough(transformer).pipeTo(httpPostWriter);
+    // Pipeline: input -> audioTransformer -> httpTransport -> eventStream
+    return this.inputStream.stream().pipeThrough(audioTransformer).pipeThrough(httpTransport);
   }
 
   private ensureInputNotEnded() {
@@ -310,7 +335,7 @@ export class InterruptionStreamBase {
   }
 
   stream(): ReadableStream<InterruptionEvent> {
-    return this.eventStream.stream();
+    return this.eventStream;
   }
 
   async pushFrame(frame: InterruptionSentinel | AudioFrame): Promise<void> {
@@ -318,6 +343,11 @@ export class InterruptionStreamBase {
     if (!(frame instanceof AudioFrame)) {
       if (frame.type === 'overlap-speech-started') {
         this.overlapSpeechStartedAt = Date.now() - frame.speechDuration;
+        log().info(
+          `pushFrame: overlap-speech-started, speechDuration=${frame.speechDuration}ms, overlapSpeechStartedAt set to ${this.overlapSpeechStartedAt}`,
+        );
+      } else {
+        log().info(`pushFrame: sentinel type=${frame.type}`);
       }
       return this.inputStream.write(frame);
     } else if (this.options.sampleRate !== frame.sampleRate) {
