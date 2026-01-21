@@ -2,8 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  type AudioFrame,
   ConnectionState,
   DisconnectReason,
+  type FrameProcessor,
   type NoiseCancellationOptions,
   type Participant,
   ParticipantKind,
@@ -51,6 +53,7 @@ const DEFAULT_TEXT_INPUT_CALLBACK: TextInputCallback = (sess: AgentSession, ev: 
 };
 
 const DEFAULT_PARTICIPANT_KINDS: ParticipantKind[] = [
+  ParticipantKind.CONNECTOR,
   ParticipantKind.SIP,
   ParticipantKind.STANDARD,
 ];
@@ -74,7 +77,7 @@ export interface RoomInputOptions {
     Can be overridden by the `participant` argument of RoomIO constructor or `set_participant`.
   */
   participantIdentity?: string;
-  noiseCancellation?: NoiseCancellationOptions;
+  noiseCancellation?: NoiseCancellationOptions | FrameProcessor<AudioFrame>;
   textInputCallback?: TextInputCallback;
   /** Participant kinds accepted for auto subscription. If not provided,
     accept `DEFAULT_PARTICIPANT_KINDS`

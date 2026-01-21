@@ -1,5 +1,27 @@
 # @livekit/agents-plugin-openai
 
+## 1.0.37
+
+### Patch Changes
+
+- Updated dependencies [[`1d359674f588278b56add73e6d2e82d99a414b9b`](https://github.com/livekit/agents-js/commit/1d359674f588278b56add73e6d2e82d99a414b9b), [`396dc7d718c2c911c0035de8015dc4f88fc659bb`](https://github.com/livekit/agents-js/commit/396dc7d718c2c911c0035de8015dc4f88fc659bb)]:
+  - @livekit/agents@1.0.37
+
+## 1.0.36
+
+### Patch Changes
+
+- correct type assertions in livekitItemToOpenAIItem - [#981](https://github.com/livekit/agents-js/pull/981) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Fix OpenAI Realtime content types and audio truncation handling for restored sessions - [#977](https://github.com/livekit/agents-js/pull/977) ([@jjsquillante](https://github.com/jjsquillante))
+
+- remove buggy resolveGeneration method that used wrong key lookup in openai realtime model - [#969](https://github.com/livekit/agents-js/pull/969) ([@toubatbrian](https://github.com/toubatbrian))
+
+- use merged opts for OpenAI client initialization - [#971](https://github.com/livekit/agents-js/pull/971) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`92699c990e14d2ef4a55dafbcfd4ab46df7e8b35`](https://github.com/livekit/agents-js/commit/92699c990e14d2ef4a55dafbcfd4ab46df7e8b35), [`df523ab6d48663d697b6a654853284cf868cfc96`](https://github.com/livekit/agents-js/commit/df523ab6d48663d697b6a654853284cf868cfc96)]:
+  - @livekit/agents@1.0.36
+
 ## 1.0.35
 
 ### Patch Changes

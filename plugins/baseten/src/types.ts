@@ -26,7 +26,10 @@ export interface BasetenLLMOptions {
  */
 export interface BasetenSttOptions {
   apiKey: string;
-  modelId: string;
+  /** @deprecated Use modelEndpoint instead */
+  modelId?: string;
+  /** Full WebSocket endpoint URL (e.g., from Baseten dashboard). Takes priority over modelId. */
+  modelEndpoint?: string;
   environment?: string;
   encoding?: string;
   sampleRate?: number;

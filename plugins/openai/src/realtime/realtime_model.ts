@@ -381,6 +381,10 @@ export class RealtimeSession extends llm.RealtimeSession {
   private itemCreateFutures: { [id: string]: Future } = {};
   private itemDeleteFutures: { [id: string]: Future } = {};
 
+  // Track items that have real server-side audio (created in current session, not restored)
+  // Items restored after reconnection are text-only and cannot be truncated
+  private audioCapableItemIds: Set<string> = new Set();
+
   private updateChatCtxLock = new Mutex();
   private updateFuncCtxLock = new Mutex();
 
@@ -673,7 +677,12 @@ export class RealtimeSession extends llm.RealtimeSession {
     modalities?: Modality[];
     audioTranscript?: string;
   }): Promise<void> {
-    if (!_options.modalities || _options.modalities.includes('audio')) {
+    // Check if modalities include audio AND the item has real server-side audio
+    // Items restored after reconnection are text-only and cannot be truncated
+    const hasAudioModality = !_options.modalities || _options.modalities.includes('audio');
+    const hasServerSideAudio = this.audioCapableItemIds.has(_options.messageId);
+
+    if (hasAudioModality && hasServerSideAudio) {
       this.sendEvent({
         type: 'conversation.item.truncate',
         content_index: 0,
@@ -810,6 +819,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         if (!fut.done) fut.reject(new Error('Session reconnected'));
       }
       this.itemDeleteFutures = {};
+
+      // Clear audio-capable item tracking - restored items are text-only on the server
+      this.audioCapableItemIds.clear();
 
       const events: api_proto.ClientEvent[] = [];
 
@@ -1169,16 +1181,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('item.type is not set');
     }
 
-    if (!event.response_id) {
-      throw new Error('response_id is not set');
-    }
-
     const itemType = event.item.type;
-    const responseId = event.response_id;
 
     if (itemType !== 'message') {
-      // emit immediately if it's not a message, otherwise wait response.content_part.added
-      this.resolveGeneration(responseId);
+      // non-message items (e.g. function calls) don't need additional handling here
+      // the generation event was already emitted in handleResponseCreated
       this.textModeRecoveryRetries = 0;
       return;
     }
@@ -1235,6 +1242,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!event.item_id) {
       throw new Error('item_id is not set');
     }
+
+    // Clean up audio-capable tracking for deleted items
+    this.audioCapableItemIds.delete(event.item_id);
 
     try {
       this.remoteChatCtx.delete(event.item_id);
@@ -1302,6 +1312,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!itemGeneration.modalities.done) {
       const modalityResult: Modality[] = isTextType ? ['text'] : ['audio', 'text'];
       itemGeneration.modalities.resolve(modalityResult);
+
+      // Track items with real server-side audio for truncation eligibility
+      if (!isTextType) {
+        this.audioCapableItemIds.add(itemId);
+      }
     }
 
     if (this.currentGeneration._firstTokenTimestamp === undefined) {
@@ -1598,33 +1613,10 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     return handle;
   }
-
-  private resolveGeneration(responseId: string): void {
-    if (!this.currentGeneration) {
-      throw new Error('currentGeneration is not set');
-    }
-
-    const generation_ev = {
-      messageStream: this.currentGeneration.messageChannel.stream(),
-      functionStream: this.currentGeneration.functionChannel.stream(),
-      userInitiated: false,
-      responseId,
-    } as llm.GenerationCreatedEvent;
-
-    const handle = this.responseCreatedFutures[responseId];
-    if (handle) {
-      delete this.responseCreatedFutures[responseId];
-      generation_ev.userInitiated = true;
-      if (handle.doneFut.done) {
-        this.#logger.warn({ responseId }, 'response received after timeout');
-      } else {
-        handle.doneFut.resolve(generation_ev);
-      }
-    }
-  }
 }
 
-function livekitItemToOpenAIItem(item: llm.ChatItem): api_proto.ItemResource {
+/** @internal Exported for testing purposes */
+export function livekitItemToOpenAIItem(item: llm.ChatItem): api_proto.ItemResource {
   switch (item.type) {
     case 'function_call':
       return {
@@ -1647,9 +1639,9 @@ function livekitItemToOpenAIItem(item: llm.ChatItem): api_proto.ItemResource {
       for (const c of item.content) {
         if (typeof c === 'string') {
           contentList.push({
-            type: role === 'assistant' ? 'text' : 'input_text',
+            type: role === 'assistant' ? 'output_text' : 'input_text',
             text: c,
-          } as api_proto.InputTextContent);
+          } as api_proto.InputTextContent | api_proto.OutputTextContent);
         } else if (c.type === 'image_content') {
           // not supported for now
           continue;
@@ -1668,7 +1660,7 @@ function livekitItemToOpenAIItem(item: llm.ChatItem): api_proto.ItemResource {
         type: 'message',
         role,
         content: contentList,
-      } as api_proto.UserItem;
+      } as api_proto.UserItem | api_proto.AssistantItem | api_proto.SystemItem;
     default:
       throw new Error(`Unsupported item type: ${(item as any).type}`);
   }

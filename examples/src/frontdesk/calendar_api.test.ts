@@ -461,15 +461,19 @@ describe('Calendar API', () => {
       const calendar = new FakeCalendar({ timezone: 'UTC' });
       await calendar.initialize();
 
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(0, 0, 0, 0);
+      // Find the next weekday (FakeCalendar skips weekends)
+      const nextWeekday = new Date();
+      nextWeekday.setDate(nextWeekday.getDate() + 1);
+      while (nextWeekday.getDay() === 0 || nextWeekday.getDay() === 6) {
+        nextWeekday.setDate(nextWeekday.getDate() + 1);
+      }
+      nextWeekday.setHours(0, 0, 0, 0);
 
-      const dayAfter = new Date(tomorrow);
+      const dayAfter = new Date(nextWeekday);
       dayAfter.setDate(dayAfter.getDate() + 1);
 
       const slots = await calendar.listAvailableSlots({
-        startTime: tomorrow,
+        startTime: nextWeekday,
         endTime: dayAfter,
       });
 
@@ -482,7 +486,7 @@ describe('Calendar API', () => {
       });
 
       const remainingSlots = await calendar.listAvailableSlots({
-        startTime: tomorrow,
+        startTime: nextWeekday,
         endTime: dayAfter,
       });
 

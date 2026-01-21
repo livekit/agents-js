@@ -80,6 +80,7 @@ export default defineAgent({
     });
 
     // timestamp handling (if enabled)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     session.tts!.on('alignment' as any, (data: any) => {
       if (data.wordAlignment) {
         const { words, starts, ends } = data.wordAlignment;
