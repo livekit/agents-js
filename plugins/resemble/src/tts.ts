@@ -13,7 +13,7 @@ import {
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
 import { WebSocket } from 'ws';
-import type { OutputFormat, Precision } from './models.js';
+import type { OutputFormat, Precision, ResembleModel } from './models.js';
 
 export const TTSDefaultVoiceId = '55592656';
 
@@ -25,6 +25,7 @@ export interface TTSOptions {
   voiceUuid: string;
   sampleRate: number;
   precision: Precision;
+  model?: ResembleModel;
   outputFormat?: OutputFormat;
   apiKey?: string;
 }
@@ -373,6 +374,10 @@ const toResembleOptions = (
     sample_rate: opts.sampleRate,
     precision: opts.precision,
   };
+
+  if (opts.model) {
+    options.model = opts.model;
+  }
 
   if (stream) {
     options.no_audio_header = true;
