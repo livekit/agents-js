@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { TimedString, metrics } from '@livekit/agents';
 import {
   type APIConnectOptions,
   APIConnectionError,
@@ -10,14 +9,11 @@ import {
   DEFAULT_API_CONNECT_OPTIONS,
   Future,
   Queue,
-  Task,
-  cancelAndWait,
-  delay,
+  Task, type TimedString, cancelAndWait, createTimedString, delay,
   isAPIError,
   llm,
-  log,
-  shortuuid,
-  stream,
+  log, type metrics, shortuuid,
+  stream
 } from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
@@ -1381,7 +1377,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     // When start_time is provided, wrap the delta in a TimedString for aligned transcripts
     let delta: string | TimedString = event.delta;
     if (event.start_time !== undefined) {
-      delta = { text: event.delta, startTime: event.start_time };
+      delta = createTimedString({ text: event.delta, startTime: event.start_time });
     }
 
     const itemGeneration = this.currentGeneration.messages.get(itemId);
