@@ -73,6 +73,7 @@ export class STT extends stt.STT {
     super({
       streaming: true,
       interimResults: opts.interimResults ?? defaultSTTOptions.interimResults,
+      alignedTranscript: 'word',
     });
     if (opts.apiKey === undefined && defaultSTTOptions.apiKey === undefined) {
       throw new Error(
@@ -339,7 +340,11 @@ export class SpeechStream extends stt.SpeechStream {
                 const isEndpoint = json['speech_final'];
                 this.#requestId = requestId;
 
-                const alternatives = liveTranscriptionToSpeechData(this.#opts.language!, json);
+                const alternatives = liveTranscriptionToSpeechData(
+                  this.#opts.language!,
+                  json,
+                  this.startTimeOffset,
+                );
 
                 // If, for some reason, we didn't get a SpeechStarted event but we got
                 // a transcript with text, we should start speaking. It's rare but has
@@ -421,14 +426,28 @@ export class SpeechStream extends stt.SpeechStream {
 const liveTranscriptionToSpeechData = (
   language: STTLanguages | string,
   data: { [id: string]: any },
+  startTimeOffset: number = 0,
 ): stt.SpeechData[] => {
   const alts: any[] = data['channel']['alternatives'];
 
-  return alts.map((alt) => ({
-    language,
-    startTime: alt['words'].length ? alt['words'][0]['start'] : 0,
-    endTime: alt['words'].length ? alt['words'][alt['words'].length - 1]['end'] : 0,
-    confidence: alt['confidence'],
-    text: alt['transcript'],
-  }));
+  return alts.map((alt) => {
+    const wordsData: any[] = alt['words'] ?? [];
+
+    return {
+      language,
+      startTime: wordsData.length ? wordsData[0]['start'] + startTimeOffset : startTimeOffset,
+      endTime: wordsData.length
+        ? wordsData[wordsData.length - 1]['end'] + startTimeOffset
+        : startTimeOffset,
+      confidence: alt['confidence'],
+      text: alt['transcript'],
+      words: wordsData.map((word) => ({
+        text: word['word'] ?? '',
+        startTime: (word['start'] ?? 0) + startTimeOffset,
+        endTime: (word['end'] ?? 0) + startTimeOffset,
+        confidence: word['confidence'] ?? 0.0,
+        startTimeOffset,
+      })),
+    };
+  });
 };

@@ -271,6 +271,15 @@ export class Agent<UserData = any> {
 
       const connOptions = activity.agentSession.connOptions.sttConnOptions;
       const stream = wrapped_stt.stream({ connOptions });
+
+      // Set startTimeOffset to provide linear timestamps across reconnections
+      const audioInputStartedAt =
+        activity.agentSession._recorderIO?.recordingStartedAt ?? // Use recording start time if available
+        activity.agentSession._startedAt ?? // Fallback to session start time
+        Date.now(); // Fallback to current time
+
+      stream.startTimeOffset = (Date.now() - audioInputStartedAt) / 1000;
+
       stream.updateInputStream(audio);
 
       let cleaned = false;

@@ -10,6 +10,7 @@ export default defineConfig(({ mode }) => ({
     // it is recommended to define a name when using inline configs
     name: 'nodejs',
     environment: 'node',
+    // Default timeout for unit tests (5s), integration tests override this per-suite
     testTimeout: 5_000,
     env: loadEnv(mode, process.cwd(), ''),
   },

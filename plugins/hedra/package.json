@@ -1,7 +1,7 @@
 {
-  "name": "@livekit/agents-plugin-elevenlabs",
+  "name": "@livekit/agents-plugin-hedra",
   "version": "1.0.37",
-  "description": "ElevenLabs plugin for LiveKit Node Agents",
+  "description": "Hedra avatar plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",
@@ -35,20 +35,17 @@
   },
   "devDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/agents-plugin-openai": "workspace:*",
-    "@livekit/agents-plugins-test": "workspace:*",
-    "@livekit/rtc-node": "catalog:",
+    "@livekit/rtc-node": "^0.13.22",
     "@microsoft/api-extractor": "^7.35.0",
-    "@types/ws": "^8.5.10",
+    "pino": "^8.19.0",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@livekit/mutex": "^1.1.1",
-    "ws": "^8.16.0"
+    "livekit-server-sdk": "^2.13.3"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "catalog:"
+    "@livekit/rtc-node": "^0.13.22"
   }
 }
