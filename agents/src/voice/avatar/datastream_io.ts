@@ -47,6 +47,7 @@ export class DataStreamAudioOutput extends AudioOutput {
   private started: boolean = false;
   private lock = new Mutex();
   private startTask?: Task<void>;
+  private firstFrameEmitted: boolean = false;
 
   #logger = log();
 
@@ -146,6 +147,11 @@ export class DataStreamAudioOutput extends AudioOutput {
     await this.startTask.result;
     await super.captureFrame(frame);
 
+    if (!this.firstFrameEmitted) {
+      this.firstFrameEmitted = true;
+      this.onPlaybackStarted(Date.now());
+    }
+
     if (!this.streamWriter) {
       this.streamWriter = await this.room.localParticipant!.streamBytes({
         name: shortuuid('AUDIO_'),
@@ -174,6 +180,8 @@ export class DataStreamAudioOutput extends AudioOutput {
     this.streamWriter.close().finally(() => {
       this.streamWriter = undefined;
     });
+
+    this.firstFrameEmitted = false;
   }
 
   clearBuffer(): void {

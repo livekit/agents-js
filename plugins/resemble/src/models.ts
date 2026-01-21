@@ -8,3 +8,8 @@
 export type OutputFormat = 'wav';
 
 export type Precision = 'PCM_16';
+
+/**
+ * Available Resemble TTS models
+ */
+export type ResembleModel = 'chatterbox' | 'chatterbox-turbo';
