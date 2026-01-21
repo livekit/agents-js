@@ -4,7 +4,7 @@
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
-import { ROOT_CONTEXT, trace } from '@opentelemetry/api';
+import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
@@ -637,9 +637,12 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   // recognition hooks
-
-  onStartOfSpeech(_ev: VADEvent): void {
-    this.agentSession._updateUserState('speaking');
+  onStartOfSpeech(ev: VADEvent): void {
+    let speechStartTime = Date.now();
+    if (ev) {
+      speechStartTime = speechStartTime - ev.speechDuration;
+    }
+    this.agentSession._updateUserState('speaking', speechStartTime);
   }
 
   onEndOfSpeech(ev: VADEvent): void {
@@ -1168,6 +1171,8 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController: AbortController,
     audio?: ReadableStream<AudioFrame> | null,
   ): Promise<void> {
+    speechHandle._agentTurnContext = otelContext.active();
+
     speechHandleStorage.enterWith(speechHandle);
 
     const transcriptionOutput = this.agentSession.output.transcriptionEnabled
@@ -1212,13 +1217,18 @@ export class AgentActivity implements RecognitionHooks {
       tasks.push(textForwardTask);
     }
 
-    const onFirstFrame = () => {
-      this.agentSession._updateAgentState('speaking');
+    const onFirstFrame = (startedSpeakingAt?: number) => {
+      this.agentSession._updateAgentState('speaking', {
+        startTime: startedSpeakingAt,
+        otelContext: speechHandle._agentTurnContext,
+      });
     };
 
     if (!audioOutput) {
       if (textOut) {
-        textOut.firstTextFut.await.finally(onFirstFrame);
+        textOut.firstTextFut.await
+          .then(() => onFirstFrame())
+          .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
       }
     } else {
       let audioOut: _AudioOut | null = null;
@@ -1249,7 +1259,9 @@ export class AgentActivity implements RecognitionHooks {
         tasks.push(forwardTask);
         audioOut = _audioOut;
       }
-      audioOut.firstFrameFut.await.finally(onFirstFrame);
+      audioOut.firstFrameFut.await
+        .then((ts) => onFirstFrame(ts))
+        .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
     }
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
@@ -1303,6 +1315,8 @@ export class AgentActivity implements RecognitionHooks {
     toolsMessages?: ChatItem[];
     span: Span;
   }): Promise<void> => {
+    speechHandle._agentTurnContext = otelContext.active();
+
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
     if (instructions) {
       span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, instructions);
@@ -1402,8 +1416,11 @@ export class AgentActivity implements RecognitionHooks {
       textOut = _textOut;
     }
 
-    const onFirstFrame = () => {
-      this.agentSession._updateAgentState('speaking');
+    const onFirstFrame = (startedSpeakingAt?: number) => {
+      this.agentSession._updateAgentState('speaking', {
+        startTime: startedSpeakingAt,
+        otelContext: speechHandle._agentTurnContext,
+      });
     };
 
     let audioOut: _AudioOut | null = null;
@@ -1416,12 +1433,16 @@ export class AgentActivity implements RecognitionHooks {
         );
         audioOut = _audioOut;
         tasks.push(forwardTask);
-        audioOut.firstFrameFut.await.finally(onFirstFrame);
+        audioOut.firstFrameFut.await
+          .then((ts) => onFirstFrame(ts))
+          .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
       } else {
         throw Error('ttsStream is null when audioOutput is enabled');
       }
     } else {
-      textOut?.firstTextFut.await.finally(onFirstFrame);
+      textOut?.firstTextFut.await
+        .then(() => onFirstFrame())
+        .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
     }
 
     //TODO(AJS-272): before executing tools, make sure we generated all the text
@@ -1462,8 +1483,14 @@ export class AgentActivity implements RecognitionHooks {
         msg.createdAt = replyStartedAt;
       }
       this.agent._chatCtx.insert(toolsMessages);
-      // Also add to session history (matches Python agent_session.py _tool_items_added)
-      this.agentSession._toolItemsAdded(toolsMessages as (FunctionCall | FunctionCallOutput)[]);
+      // Only add FunctionCallOutput items to session history since FunctionCall items
+      // were already added by onToolExecutionStarted when the tool execution began
+      const toolCallOutputs = toolsMessages.filter(
+        (m): m is FunctionCallOutput => m.type === 'function_call_output',
+      );
+      if (toolCallOutputs.length > 0) {
+        this.agentSession._toolItemsAdded(toolCallOutputs);
+      }
     }
 
     if (speechHandle.interrupted) {
@@ -1487,10 +1514,10 @@ export class AgentActivity implements RecognitionHooks {
 
       if (audioOutput) {
         const playbackEv = await audioOutput.waitForPlayout();
-        if (audioOut?.firstFrameFut.done) {
+        if (audioOut?.firstFrameFut.done && !audioOut.firstFrameFut.rejected) {
           // playback EV is valid only if the first frame was already played
           this.logger.info(
-            { speech_id: speechHandle.id, playbackPosition: playbackEv.playbackPosition },
+            { speech_id: speechHandle.id, playbackPositionInS: playbackEv.playbackPosition },
             'playout interrupted',
           );
           if (playbackEv.synchronizedTranscript) {
@@ -1656,8 +1683,18 @@ export class AgentActivity implements RecognitionHooks {
       for (const msg of toolMessages) {
         msg.createdAt = replyStartedAt;
       }
+
       this.agent._chatCtx.insert(toolMessages);
-      this.agentSession._toolItemsAdded(toolMessages as (FunctionCall | FunctionCallOutput)[]);
+
+      // Only add FunctionCallOutput items to session history since FunctionCall items
+      // were already added by onToolExecutionStarted when the tool execution began
+      const toolCallOutputs = toolMessages.filter(
+        (m): m is FunctionCallOutput => m.type === 'function_call_output',
+      );
+
+      if (toolCallOutputs.length > 0) {
+        this.agentSession._toolItemsAdded(toolCallOutputs);
+      }
     }
   };
 
@@ -1725,6 +1762,8 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController: AbortController;
     span: Span;
   }): Promise<void> {
+    speechHandle._agentTurnContext = otelContext.active();
+
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
 
     speechHandleStorage.enterWith(speechHandle);
@@ -1762,8 +1801,11 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    const onFirstFrame = () => {
-      this.agentSession._updateAgentState('speaking');
+    const onFirstFrame = (startedSpeakingAt?: number) => {
+      this.agentSession._updateAgentState('speaking', {
+        startTime: startedSpeakingAt,
+        otelContext: speechHandle._agentTurnContext,
+      });
     };
 
     const readMessages = async (
@@ -1851,10 +1893,14 @@ export class AgentActivity implements RecognitionHooks {
               );
               forwardTasks.push(forwardTask);
               audioOut = _audioOut;
-              audioOut.firstFrameFut.await.finally(onFirstFrame);
+              audioOut.firstFrameFut.await
+                .then((ts) => onFirstFrame(ts))
+                .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
             }
           } else if (textOut) {
-            textOut.firstTextFut.await.finally(onFirstFrame);
+            textOut.firstTextFut.await
+              .then(() => onFirstFrame())
+              .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
           }
           outputs.push([msg.messageId, textOut, audioOut, msgModalities]);
         }
@@ -1955,11 +2001,11 @@ export class AgentActivity implements RecognitionHooks {
         if (audioOutput) {
           audioOutput.clearBuffer();
           const playbackEv = await audioOutput.waitForPlayout();
-          let playbackPosition = playbackEv.playbackPosition;
-          if (audioOut?.firstFrameFut.done) {
+          let playbackPositionInS = playbackEv.playbackPosition;
+          if (audioOut?.firstFrameFut.done && !audioOut.firstFrameFut.rejected) {
             // playback EV is valid only if the first frame was already played
             this.logger.info(
-              { speech_id: speechHandle.id, playbackPosition: playbackEv.playbackPosition },
+              { speech_id: speechHandle.id, playbackPositionInS },
               'playout interrupted',
             );
             if (playbackEv.synchronizedTranscript) {
@@ -1967,13 +2013,13 @@ export class AgentActivity implements RecognitionHooks {
             }
           } else {
             forwardedText = '';
-            playbackPosition = 0;
+            playbackPositionInS = 0;
           }
 
           // truncate server-side message
           this.realtimeSession.truncate({
             messageId: msgId,
-            audioEndMs: Math.floor(playbackPosition),
+            audioEndMs: Math.floor(playbackPositionInS * 1000),
             modalities: msgModalities,
             audioTranscript: forwardedText,
           });

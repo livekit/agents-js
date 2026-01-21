@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { Context } from '@opentelemetry/api';
 import type { ChatItem } from '../llm/index.js';
 import type { Task } from '../utils.js';
 import { Event, Future, shortuuid } from '../utils.js';
@@ -41,6 +42,9 @@ export class SpeechHandle {
 
   /** @internal */
   _numSteps = 1;
+
+  /** @internal - OpenTelemetry context for the agent turn span */
+  _agentTurnContext?: Context;
 
   private itemAddedCallbacks: Set<(item: ChatItem) => void> = new Set();
   private doneCallbacks: Set<(sh: SpeechHandle) => void> = new Set();

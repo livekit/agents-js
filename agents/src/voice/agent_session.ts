@@ -677,7 +677,7 @@ export class AgentSession<
   }
 
   /** @internal */
-  _updateAgentState(state: AgentState) {
+  _updateAgentState(state: AgentState, options?: { startTime?: number; otelContext?: Context }) {
     if (this._agentState === state) {
       return;
     }
@@ -690,7 +690,8 @@ export class AgentSession<
       if (this.agentSpeakingSpan === undefined) {
         this.agentSpeakingSpan = tracer.startSpan({
           name: 'agent_speaking',
-          context: this.rootSpanContext,
+          context: options?.otelContext ?? this.rootSpanContext,
+          startTime: options?.startTime,
         });
 
         // TODO(brian): PR4 - Set participant attributes if roomIO.room.localParticipant is available
@@ -719,7 +720,7 @@ export class AgentSession<
   }
 
   /** @internal */
-  _updateUserState(state: UserState, _lastSpeakingTime?: number) {
+  _updateUserState(state: UserState, lastSpeakingTime?: number) {
     if (this.userState === state) {
       return;
     }
@@ -728,13 +729,13 @@ export class AgentSession<
       this.userSpeakingSpan = tracer.startSpan({
         name: 'user_speaking',
         context: this.rootSpanContext,
+        startTime: lastSpeakingTime,
       });
 
       // TODO(brian): PR4 - Set participant attributes if roomIO.linkedParticipant is available
       // (Ref: Python agent_session.py line 1192-1195)
     } else if (this.userSpeakingSpan !== undefined) {
-      // TODO(brian): PR4 - Set ATTR_END_TIME attribute with lastSpeakingTime if available
-      this.userSpeakingSpan.end();
+      this.userSpeakingSpan.end(lastSpeakingTime);
       this.userSpeakingSpan = undefined;
     }
 
