@@ -60,7 +60,7 @@ export default defineAgent({
     });
 
     interruptionDetector.on('overlapSpeechDetected', () => {
-      logger.debug('Overlap speech ended without interruption (backchannel)');
+      logger.info('Overlap speech ended without interruption (backchannel)');
     });
 
     // Create the agent

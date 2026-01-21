@@ -9,7 +9,7 @@ export const DETECTION_INTERVAL = 0.1;
 export const REMOTE_INFERENCE_TIMEOUT = 1.0;
 export const SAMPLE_RATE = 16000;
 export const FRAMES_PER_SECOND = 40;
-export const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
+export const DEFAULT_BASE_URL = 'http://localhost:8080';
 
 export const apiConnectDefaults: ApiConnectOptions = {
   maxRetries: 3,
