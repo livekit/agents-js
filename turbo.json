@@ -20,6 +20,9 @@
     "ELEVEN_API_KEY",
     "FIREWORKS_API_KEY",
     "GROQ_API_KEY",
+    "HEDRA_API_KEY",
+    "HEDRA_API_URL",
+    "HEDRA_AVATAR_ID",
     "LIVEKIT_API_KEY",
     "LIVEKIT_API_SECRET",
     "LIVEKIT_INFERENCE_API_KEY",
@@ -50,8 +53,10 @@
     "ANAM_AVATAR_ID",
     "RIME_API_KEY",
     "LK_OPENAI_DEBUG",
+    "LIVEKIT_EVALS_VERBOSE",
     "OVHCLOUD_API_KEY",
-    "INWORLD_API_KEY"
+    "INWORLD_API_KEY",
+    "VITEST"
   ],
   "pipeline": {
     "build": {

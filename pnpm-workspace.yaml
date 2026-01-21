@@ -1,4 +1,7 @@
 packages:
-  - "agents"
-  - "plugins/*"
-  - "examples"
+  - 'agents'
+  - 'plugins/*'
+  - 'examples'
+
+catalog:
+  '@livekit/rtc-node': ^0.13.24

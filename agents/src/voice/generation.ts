@@ -27,7 +27,7 @@ import { traceTypes, tracer } from '../telemetry/index.js';
 import { Future, Task, shortuuid, toError, waitForAbort } from '../utils.js';
 import { type Agent, type ModelSettings, asyncLocalStorage, isStopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
-import type { AudioOutput, LLMNode, TTSNode, TextOutput } from './io.js';
+import { AudioOutput, type LLMNode, type TTSNode, type TextOutput } from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 
@@ -608,7 +608,8 @@ export function performTextForwarding(
 
 export interface _AudioOut {
   audio: Array<AudioFrame>;
-  firstFrameFut: Future;
+  /** Future that will be set with the timestamp of the first frame's capture */
+  firstFrameFut: Future<number>;
 }
 
 async function forwardAudio(
@@ -620,7 +621,16 @@ async function forwardAudio(
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
 
+  const onPlaybackStarted = (ev: { createdAt: number }) => {
+    if (!out.firstFrameFut.done) {
+      out.firstFrameFut.resolve(ev.createdAt);
+    }
+  };
+
   try {
+    audioOuput.on(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
+    audioOuput.resume();
+
     while (true) {
       if (signal?.aborted) {
         break;
@@ -647,20 +657,21 @@ async function forwardAudio(
       } else {
         await audioOuput.captureFrame(frame);
       }
-
-      // set the first frame future if not already set
-      // (after completing the first frame)
-      if (!out.firstFrameFut.done) {
-        out.firstFrameFut.resolve();
-      }
     }
-  } finally {
-    reader?.releaseLock();
+
     if (resampler) {
       for (const f of resampler.flush()) {
         await audioOuput.captureFrame(f);
       }
     }
+  } finally {
+    audioOuput.off(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
+
+    if (!out.firstFrameFut.done) {
+      out.firstFrameFut.reject(new Error('audio forwarding cancelled before playback started'));
+    }
+
+    reader?.releaseLock();
     audioOuput.flush();
   }
 }
@@ -670,10 +681,11 @@ export function performAudioForwarding(
   audioOutput: AudioOutput,
   controller: AbortController,
 ): [Task<void>, _AudioOut] {
-  const out = {
+  const out: _AudioOut = {
     audio: [],
-    firstFrameFut: new Future(),
+    firstFrameFut: new Future<number>(),
   };
+
   return [
     Task.from(
       (controller) => forwardAudio(ttsStream, audioOutput, out, controller.signal),

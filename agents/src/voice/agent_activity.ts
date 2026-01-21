@@ -4,7 +4,7 @@
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
-import { ROOT_CONTEXT, trace } from '@opentelemetry/api';
+import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
@@ -637,9 +637,12 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   // recognition hooks
-
-  onStartOfSpeech(_ev: VADEvent): void {
-    this.agentSession._updateUserState('speaking');
+  onStartOfSpeech(ev: VADEvent): void {
+    let speechStartTime = Date.now();
+    if (ev) {
+      speechStartTime = speechStartTime - ev.speechDuration;
+    }
+    this.agentSession._updateUserState('speaking', speechStartTime);
   }
 
   onEndOfSpeech(ev: VADEvent): void {
@@ -1168,6 +1171,8 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController: AbortController,
     audio?: ReadableStream<AudioFrame> | null,
   ): Promise<void> {
+    speechHandle._agentTurnContext = otelContext.active();
+
     speechHandleStorage.enterWith(speechHandle);
 
     const transcriptionOutput = this.agentSession.output.transcriptionEnabled
@@ -1212,13 +1217,18 @@ export class AgentActivity implements RecognitionHooks {
       tasks.push(textForwardTask);
     }
 
-    const onFirstFrame = () => {
-      this.agentSession._updateAgentState('speaking');
+    const onFirstFrame = (startedSpeakingAt?: number) => {
+      this.agentSession._updateAgentState('speaking', {
+        startTime: startedSpeakingAt,
+        otelContext: speechHandle._agentTurnContext,
+      });
     };
 
     if (!audioOutput) {
       if (textOut) {
-        textOut.firstTextFut.await.finally(onFirstFrame);
+        textOut.firstTextFut.await
+          .then(() => onFirstFrame())
+          .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
       }
     } else {
       let audioOut: _AudioOut | null = null;
@@ -1249,7 +1259,9 @@ export class AgentActivity implements RecognitionHooks {
         tasks.push(forwardTask);
         audioOut = _audioOut;
       }
-      audioOut.firstFrameFut.await.finally(onFirstFrame);
+      audioOut.firstFrameFut.await
+        .then((ts) => onFirstFrame(ts))
+        .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
     }
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
@@ -1303,6 +1315,8 @@ export class AgentActivity implements RecognitionHooks {
     toolsMessages?: ChatItem[];
     span: Span;
   }): Promise<void> => {
+    speechHandle._agentTurnContext = otelContext.active();
+
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
     if (instructions) {
       span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, instructions);
@@ -1350,11 +1364,14 @@ export class AgentActivity implements RecognitionHooks {
     );
     tasks.push(llmTask);
 
-    const [ttsTextInput, llmOutput] = llmGenData.textStream.tee();
-
     let ttsTask: Task<void> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
+    let llmOutput: ReadableStream<string>;
+
     if (audioOutput) {
+      // Only tee the stream when we need TTS
+      const [ttsTextInput, textOutput] = llmGenData.textStream.tee();
+      llmOutput = textOutput;
       [ttsTask, ttsStream] = performTTSInference(
         (...args) => this.agent.ttsNode(...args),
         ttsTextInput,
@@ -1362,6 +1379,9 @@ export class AgentActivity implements RecognitionHooks {
         replyAbortController,
       );
       tasks.push(ttsTask);
+    } else {
+      // No TTS needed, use the stream directly
+      llmOutput = llmGenData.textStream;
     }
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForScheduled()]);
@@ -1396,8 +1416,11 @@ export class AgentActivity implements RecognitionHooks {
       textOut = _textOut;
     }
 
-    const onFirstFrame = () => {
-      this.agentSession._updateAgentState('speaking');
+    const onFirstFrame = (startedSpeakingAt?: number) => {
+      this.agentSession._updateAgentState('speaking', {
+        startTime: startedSpeakingAt,
+        otelContext: speechHandle._agentTurnContext,
+      });
     };
 
     let audioOut: _AudioOut | null = null;
@@ -1410,23 +1433,31 @@ export class AgentActivity implements RecognitionHooks {
         );
         audioOut = _audioOut;
         tasks.push(forwardTask);
-        audioOut.firstFrameFut.await.finally(onFirstFrame);
+        audioOut.firstFrameFut.await
+          .then((ts) => onFirstFrame(ts))
+          .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
       } else {
         throw Error('ttsStream is null when audioOutput is enabled');
       }
     } else {
-      textOut?.firstTextFut.await.finally(onFirstFrame);
+      textOut?.firstTextFut.await
+        .then(() => onFirstFrame())
+        .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
     }
 
     //TODO(AJS-272): before executing tools, make sure we generated all the text
     // (this ensure everything is kept ordered)
 
-    const onToolExecutionStarted = (_: FunctionCall) => {
-      // TODO(brian): handle speech_handle item_added
+    const onToolExecutionStarted = (f: FunctionCall) => {
+      speechHandle._itemAdded([f]);
+      this.agent._chatCtx.items.push(f);
+      this.agentSession._toolItemsAdded([f]);
     };
 
-    const onToolExecutionCompleted = (_: ToolExecutionOutput) => {
-      // TODO(brian): handle speech_handle item_added
+    const onToolExecutionCompleted = (out: ToolExecutionOutput) => {
+      if (out.toolCallOutput) {
+        speechHandle._itemAdded([out.toolCallOutput]);
+      }
     };
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
@@ -1452,8 +1483,14 @@ export class AgentActivity implements RecognitionHooks {
         msg.createdAt = replyStartedAt;
       }
       this.agent._chatCtx.insert(toolsMessages);
-      // Also add to session history (matches Python agent_session.py _tool_items_added)
-      this.agentSession._toolItemsAdded(toolsMessages as (FunctionCall | FunctionCallOutput)[]);
+      // Only add FunctionCallOutput items to session history since FunctionCall items
+      // were already added by onToolExecutionStarted when the tool execution began
+      const toolCallOutputs = toolsMessages.filter(
+        (m): m is FunctionCallOutput => m.type === 'function_call_output',
+      );
+      if (toolCallOutputs.length > 0) {
+        this.agentSession._toolItemsAdded(toolCallOutputs);
+      }
     }
 
     if (speechHandle.interrupted) {
@@ -1477,10 +1514,10 @@ export class AgentActivity implements RecognitionHooks {
 
       if (audioOutput) {
         const playbackEv = await audioOutput.waitForPlayout();
-        if (audioOut?.firstFrameFut.done) {
+        if (audioOut?.firstFrameFut.done && !audioOut.firstFrameFut.rejected) {
           // playback EV is valid only if the first frame was already played
           this.logger.info(
-            { speech_id: speechHandle.id, playbackPosition: playbackEv.playbackPosition },
+            { speech_id: speechHandle.id, playbackPositionInS: playbackEv.playbackPosition },
             'playout interrupted',
           );
           if (playbackEv.synchronizedTranscript) {
@@ -1501,6 +1538,7 @@ export class AgentActivity implements RecognitionHooks {
         });
         chatCtx.insert(message);
         this.agent._chatCtx.insert(message);
+        speechHandle._itemAdded([message]);
         this.agentSession._conversationItemAdded(message);
       }
 
@@ -1528,6 +1566,7 @@ export class AgentActivity implements RecognitionHooks {
       });
       chatCtx.insert(message);
       this.agent._chatCtx.insert(message);
+      speechHandle._itemAdded([message]);
       this.agentSession._conversationItemAdded(message);
       this.logger.info(
         { speech_id: speechHandle.id, message: textOut.text },
@@ -1612,28 +1651,18 @@ export class AgentActivity implements RecognitionHooks {
     if (shouldGenerateToolReply) {
       chatCtx.insert(toolMessages);
 
-      const handle = SpeechHandle.create({
-        allowInterruptions: speechHandle.allowInterruptions,
-        stepIndex: speechHandle._stepIndex + 1,
-        parent: speechHandle,
-      });
-      this.agentSession.emit(
-        AgentSessionEventTypes.SpeechCreated,
-        createSpeechCreatedEvent({
-          userInitiated: false,
-          source: 'tool_response',
-          speechHandle: handle,
-        }),
-      );
+      // Increment step count on SAME handle (parity with Python agent_activity.py L2081)
+      speechHandle._numSteps += 1;
 
       // Avoid setting tool_choice to "required" or a specific function when
       // passing tool response back to the LLM
       const respondToolChoice = draining || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
 
+      // Reuse same speechHandle for tool response (parity with Python agent_activity.py L2122-2140)
       const toolResponseTask = this.createSpeechTask({
         task: Task.from(() =>
           this.pipelineReplyTask(
-            handle,
+            speechHandle,
             chatCtx,
             toolCtx,
             { toolChoice: respondToolChoice },
@@ -1643,19 +1672,29 @@ export class AgentActivity implements RecognitionHooks {
             toolMessages,
           ),
         ),
-        ownedSpeechHandle: handle,
+        ownedSpeechHandle: speechHandle,
         name: 'AgentActivity.pipelineReply',
       });
 
       toolResponseTask.finally(() => this.onPipelineReplyDone());
 
-      this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
+      this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
     } else if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
       for (const msg of toolMessages) {
         msg.createdAt = replyStartedAt;
       }
+
       this.agent._chatCtx.insert(toolMessages);
-      this.agentSession._toolItemsAdded(toolMessages as (FunctionCall | FunctionCallOutput)[]);
+
+      // Only add FunctionCallOutput items to session history since FunctionCall items
+      // were already added by onToolExecutionStarted when the tool execution began
+      const toolCallOutputs = toolMessages.filter(
+        (m): m is FunctionCallOutput => m.type === 'function_call_output',
+      );
+
+      if (toolCallOutputs.length > 0) {
+        this.agentSession._toolItemsAdded(toolCallOutputs);
+      }
     }
   };
 
@@ -1723,6 +1762,8 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController: AbortController;
     span: Span;
   }): Promise<void> {
+    speechHandle._agentTurnContext = otelContext.active();
+
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
 
     speechHandleStorage.enterWith(speechHandle);
@@ -1760,8 +1801,11 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    const onFirstFrame = () => {
-      this.agentSession._updateAgentState('speaking');
+    const onFirstFrame = (startedSpeakingAt?: number) => {
+      this.agentSession._updateAgentState('speaking', {
+        startTime: startedSpeakingAt,
+        otelContext: speechHandle._agentTurnContext,
+      });
     };
 
     const readMessages = async (
@@ -1849,10 +1893,14 @@ export class AgentActivity implements RecognitionHooks {
               );
               forwardTasks.push(forwardTask);
               audioOut = _audioOut;
-              audioOut.firstFrameFut.await.finally(onFirstFrame);
+              audioOut.firstFrameFut.await
+                .then((ts) => onFirstFrame(ts))
+                .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
             }
           } else if (textOut) {
-            textOut.firstTextFut.await.finally(onFirstFrame);
+            textOut.firstTextFut.await
+              .then(() => onFirstFrame())
+              .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
           }
           outputs.push([msg.messageId, textOut, audioOut, msgModalities]);
         }
@@ -1953,11 +2001,11 @@ export class AgentActivity implements RecognitionHooks {
         if (audioOutput) {
           audioOutput.clearBuffer();
           const playbackEv = await audioOutput.waitForPlayout();
-          let playbackPosition = playbackEv.playbackPosition;
-          if (audioOut?.firstFrameFut.done) {
+          let playbackPositionInS = playbackEv.playbackPosition;
+          if (audioOut?.firstFrameFut.done && !audioOut.firstFrameFut.rejected) {
             // playback EV is valid only if the first frame was already played
             this.logger.info(
-              { speech_id: speechHandle.id, playbackPosition: playbackEv.playbackPosition },
+              { speech_id: speechHandle.id, playbackPositionInS },
               'playout interrupted',
             );
             if (playbackEv.synchronizedTranscript) {
@@ -1965,13 +2013,13 @@ export class AgentActivity implements RecognitionHooks {
             }
           } else {
             forwardedText = '';
-            playbackPosition = 0;
+            playbackPositionInS = 0;
           }
 
           // truncate server-side message
           this.realtimeSession.truncate({
             messageId: msgId,
-            audioEndMs: Math.floor(playbackPosition),
+            audioEndMs: Math.floor(playbackPositionInS * 1000),
             modalities: msgModalities,
             audioTranscript: forwardedText,
           });

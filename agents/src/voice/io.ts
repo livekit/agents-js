@@ -30,12 +30,14 @@ export type TTSNode = (
 ) => Promise<ReadableStream<AudioFrame> | null>;
 
 /**
- * A string with timing information for word-level alignment.
+ *A string with optional start and end timestamps for word-level alignment.
  */
 export interface TimedString {
   text: string;
   startTime?: number; // seconds
   endTime?: number; // seconds
+  confidence?: number;
+  startTimeOffset?: number;
 }
 
 export interface AudioOutputCapabilities {
@@ -57,6 +59,7 @@ export abstract class AudioInput {
 }
 
 export abstract class AudioOutput extends EventEmitter {
+  static readonly EVENT_PLAYBACK_STARTED = 'playbackStarted';
   static readonly EVENT_PLAYBACK_FINISHED = 'playbackFinished';
 
   private playbackFinishedFuture: Future<void> = new Future();
@@ -77,7 +80,11 @@ export abstract class AudioOutput extends EventEmitter {
   ) {
     super();
     this.capabilities = capabilities;
+
     if (this.nextInChain) {
+      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_STARTED, (ev: PlaybackStartedEvent) =>
+        this.onPlaybackStarted(ev.createdAt),
+      );
       this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_FINISHED, (ev: PlaybackFinishedEvent) =>
         this.onPlaybackFinished(ev),
       );
@@ -115,6 +122,14 @@ export abstract class AudioOutput extends EventEmitter {
     }
 
     return this.lastPlaybackEvent;
+  }
+
+  /**
+   * Called when playback actually starts (first frame is sent to output).
+   * Developers building audio sinks should call this when the first frame is captured.
+   */
+  onPlaybackStarted(createdAt: number): void {
+    this.emit(AudioOutput.EVENT_PLAYBACK_STARTED, { createdAt } as PlaybackStartedEvent);
   }
 
   /**
@@ -174,13 +189,20 @@ export abstract class AudioOutput extends EventEmitter {
 }
 
 export interface PlaybackFinishedEvent {
-  // How much of the audio was played back
+  /** How much of the audio was played back, in seconds */
   playbackPosition: number;
-  // Interrupted is True if playback was interrupted (clearBuffer() was called)
+  /** True if playback was interrupted (clearBuffer() was called) */
   interrupted: boolean;
-  // Transcript synced with playback; may be partial if the audio was interrupted
-  // When null, the transcript is not synchronized with the playback
+  /**
+   * Transcript synced with playback; may be partial if the audio was interrupted.
+   * When undefined, the transcript is not synchronized with the playback.
+   */
   synchronizedTranscript?: string;
+}
+
+export interface PlaybackStartedEvent {
+  /** The timestamp (Date.now()) when the playback started */
+  createdAt: number;
 }
 
 export abstract class TextOutput {

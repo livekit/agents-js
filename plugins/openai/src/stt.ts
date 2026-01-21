@@ -36,7 +36,7 @@ export class STT extends stt.STT {
    * `OPENAI_API_KEY` environment variable.
    */
   constructor(opts: Partial<STTOptions> = defaultSTTOptions) {
-    super({ streaming: false, interimResults: false });
+    super({ streaming: false, interimResults: false, alignedTranscript: false });
 
     this.#opts = { ...defaultSTTOptions, ...opts };
     if (this.#opts.apiKey === undefined) {
@@ -46,8 +46,8 @@ export class STT extends stt.STT {
     this.#client =
       this.#opts.client ||
       new OpenAI({
-        baseURL: opts.baseURL,
-        apiKey: opts.apiKey,
+        baseURL: this.#opts.baseURL,
+        apiKey: this.#opts.apiKey,
       });
   }
 
