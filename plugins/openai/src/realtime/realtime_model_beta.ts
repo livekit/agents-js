@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { metrics } from '@livekit/agents';
+import type { TimedString, metrics } from '@livekit/agents';
 import {
   type APIConnectOptions,
   APIConnectionError,
@@ -61,7 +61,8 @@ interface RealtimeOptions {
 
 interface MessageGeneration {
   messageId: string;
-  textChannel: stream.StreamChannel<string>;
+  // Ref: Python openai/realtime/realtime_model.py - text_ch can receive TimedString when start_time is provided
+  textChannel: stream.StreamChannel<string | TimedString>;
   audioChannel: stream.StreamChannel<AudioFrame>;
   audioTranscript: string;
   modalities: Future<('text' | 'audio')[]>;
@@ -1107,7 +1108,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     const modalitiesFut = new Future<Modality[]>();
     const itemGeneration: MessageGeneration = {
       messageId: itemId,
-      textChannel: stream.createStreamChannel<string>(),
+      // Ref: Python openai/realtime/realtime_model.py - text_ch can receive TimedString when start_time is provided
+      textChannel: stream.createStreamChannel<string | TimedString>(),
       audioChannel: stream.createStreamChannel<AudioFrame>(),
       audioTranscript: '',
       modalities: modalitiesFut,
@@ -1274,16 +1276,20 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const itemId = event.item_id;
-    const delta = event.delta;
 
-    // TODO (shubhra): add timed string support
+    // Ref: Python openai/realtime/realtime_model.py line 1539-1544 - TimedString for transcript deltas
+    // When start_time is provided, wrap the delta in a TimedString for aligned transcripts
+    let delta: string | TimedString = event.delta;
+    if (event.start_time !== undefined) {
+      delta = { text: event.delta, startTime: event.start_time };
+    }
 
     const itemGeneration = this.currentGeneration.messages.get(itemId);
     if (!itemGeneration) {
       throw new Error('itemGeneration is not set');
     } else {
       itemGeneration.textChannel.write(delta);
-      itemGeneration.audioTranscript += delta;
+      itemGeneration.audioTranscript += event.delta;
     }
   }
 

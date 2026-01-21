@@ -11,16 +11,14 @@ import {
   log,
   shortuuid,
   stream,
+  type TimedString,
   tokenize,
   tts,
-  type voice,
 } from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
 import type { TTSEncoding, TTSModels } from './models.js';
-
-type TimedString = voice.TimedString;
 
 const DEFAULT_VOICE_ID = 'bIHbv24MWmeRgasZH58o';
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1';
@@ -622,9 +620,12 @@ export class TTS extends tts.TTS {
     const autoMode = opts.autoMode ?? true;
     const encoding = opts.encoding ?? DEFAULT_ENCODING;
     const sampleRate = sampleRateFromFormat(encoding);
+    // Ref: Python elevenlabs/tts.py line 150 - alignedTranscript based on syncAlignment
+    const syncAlignment = opts.syncAlignment ?? true;
 
     super(sampleRate, 1, {
       streaming: true,
+      alignedTranscript: syncAlignment,
     });
 
     const apiKey = opts.apiKey ?? process.env.ELEVEN_API_KEY;
@@ -997,15 +998,37 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     const audioProcessTask = async () => {
       let lastFrame: AudioFrame | undefined;
+      // Ref: Python elevenlabs/tts.py - drain timed transcripts with audio frames
+      let pendingTimedTranscripts: TimedString[] = [];
+
+      const sendLastFrame = (final: boolean) => {
+        if (lastFrame) {
+          // Include timedTranscripts with the audio frame
+          // Ref: Python elevenlabs/tts.py line 730 - push_timed_transcript with audio
+          this.queue.put({
+            requestId,
+            segmentId,
+            frame: lastFrame,
+            final,
+            timedTranscripts:
+              pendingTimedTranscripts.length > 0 ? pendingTimedTranscripts : undefined,
+          });
+          lastFrame = undefined;
+          pendingTimedTranscripts = [];
+        }
+      };
 
       while (!this.abortController.signal.aborted) {
+        // Drain timed transcript queue
+        while (this.#timedTranscriptQueue.length > 0) {
+          pendingTimedTranscripts.push(this.#timedTranscriptQueue.shift()!);
+        }
+
         // Process audio queue
         while (this.#audioQueue.length > 0) {
           const audioData = this.#audioQueue.shift()!;
           for (const frame of bstream.write(audioData.buffer)) {
-            if (lastFrame) {
-              this.queue.put({ requestId, segmentId, frame: lastFrame, final: false });
-            }
+            sendLastFrame(false);
             lastFrame = frame;
           }
         }
@@ -1019,17 +1042,18 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
 
+      // Drain any remaining timed transcripts
+      while (this.#timedTranscriptQueue.length > 0) {
+        pendingTimedTranscripts.push(this.#timedTranscriptQueue.shift()!);
+      }
+
       // Flush remaining
       for (const frame of bstream.flush()) {
-        if (lastFrame) {
-          this.queue.put({ requestId, segmentId, frame: lastFrame, final: false });
-        }
+        sendLastFrame(false);
         lastFrame = frame;
       }
 
-      if (lastFrame) {
-        this.queue.put({ requestId, segmentId, frame: lastFrame, final: true });
-      }
+      sendLastFrame(true);
     };
 
     try {

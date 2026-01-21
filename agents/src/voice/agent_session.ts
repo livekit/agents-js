@@ -110,6 +110,13 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   userData?: UserData;
   voiceOptions?: Partial<VoiceOptions>;
   connOptions?: SessionConnectOptions;
+  /**
+   * Whether to use TTS-aligned transcripts for the transcription node input.
+   * When enabled and the TTS supports it, word-level timestamps from TTS
+   * will be forwarded to the transcription node instead of raw LLM text.
+   * Ref: Python agent_session.py line 89, 159, 236-238
+   */
+  useTtsAlignedTranscript?: boolean;
 };
 
 export class AgentSession<
@@ -122,6 +129,12 @@ export class AgentSession<
   turnDetection?: TurnDetectionMode;
 
   readonly options: VoiceOptions;
+
+  /**
+   * Whether to use TTS-aligned transcripts for the transcription node input.
+   * Ref: Python agent_session.py line 236-238 - use_tts_aligned_transcript property
+   */
+  useTtsAlignedTranscript: boolean;
 
   private agent?: Agent;
   private activity?: AgentActivity;
@@ -183,7 +196,11 @@ export class AgentSession<
       userData,
       voiceOptions = defaultVoiceOptions,
       connOptions,
+      useTtsAlignedTranscript,
     } = opts;
+
+    // Ref: Python agent_session.py line 236-238 - resolve useTtsAlignedTranscript
+    this.useTtsAlignedTranscript = useTtsAlignedTranscript ?? false;
 
     // Merge user-provided connOptions with defaults
     this._connOptions = {

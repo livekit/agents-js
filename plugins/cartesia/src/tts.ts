@@ -7,6 +7,7 @@ import {
   Future,
   log,
   shortuuid,
+  type TimedString,
   tokenize,
   tts,
 } from '@livekit/agents';
@@ -42,6 +43,14 @@ export interface TTSOptions {
    * The timeout for the next chunk to be received from the Cartesia API.
    */
   chunkTimeout: number;
+
+  /**
+   * Whether to add word timestamps to the output. When enabled, the TTS will return
+   * timing information for each word in the transcript.
+   * Ref: Python cartesia/tts.py line 98 - word_timestamps option
+   * @default true
+   */
+  wordTimestamps?: boolean;
 }
 
 const defaultTTSOptions: TTSOptions = {
@@ -53,6 +62,8 @@ const defaultTTSOptions: TTSOptions = {
   language: 'en',
   baseUrl: 'https://api.cartesia.ai',
   chunkTimeout: 5000,
+  // Ref: Python cartesia/tts.py line 98 - wordTimestamps defaults to true
+  wordTimestamps: true,
 };
 
 export class TTS extends tts.TTS {
@@ -60,14 +71,18 @@ export class TTS extends tts.TTS {
   label = 'cartesia.TTS';
 
   constructor(opts: Partial<TTSOptions> = {}) {
-    super(opts.sampleRate || defaultTTSOptions.sampleRate, NUM_CHANNELS, {
-      streaming: true,
-    });
-
-    this.#opts = {
+    const resolvedOpts = {
       ...defaultTTSOptions,
       ...opts,
     };
+
+    // Ref: Python cartesia/tts.py line 130-133 - set alignedTranscript based on wordTimestamps
+    super(resolvedOpts.sampleRate || defaultTTSOptions.sampleRate, NUM_CHANNELS, {
+      streaming: true,
+      alignedTranscript: resolvedOpts.wordTimestamps ?? true,
+    });
+
+    this.#opts = resolvedOpts;
 
     if (this.#opts.apiKey === undefined) {
       throw new Error(
@@ -219,7 +234,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     let closing = false;
 
     const sentenceStreamTask = async (ws: WebSocket) => {
-      const packet = toCartesiaOptions(this.#opts);
+      // Ref: Python cartesia/tts.py - use streaming: true to include add_timestamps
+      const packet = toCartesiaOptions(this.#opts, true);
       for await (const event of this.#tokenizer) {
         ws.send(
           JSON.stringify({
@@ -259,10 +275,22 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
 
       let lastFrame: AudioFrame | undefined;
+      // Ref: Python cartesia/tts.py line 490-492 - collect timed transcripts
+      let pendingTimedTranscripts: TimedString[] = [];
+
       const sendLastFrame = (segmentId: string, final: boolean) => {
         if (lastFrame && !this.queue.closed) {
-          this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+          // Include timedTranscripts with the audio frame
+          // Ref: Python cartesia/tts.py line 490-492 - push_timed_transcript
+          this.queue.put({
+            requestId,
+            segmentId,
+            frame: lastFrame,
+            final,
+            timedTranscripts: pendingTimedTranscripts.length > 0 ? pendingTimedTranscripts : undefined,
+          });
           lastFrame = undefined;
+          pendingTimedTranscripts = [];
         }
       };
 
@@ -298,6 +326,35 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
             const json = JSON.parse(msg.toString());
             const segmentId = json.context_id;
+
+            // Ref: Python cartesia/tts.py line 456-492 - parse word_timestamps
+            // Process word timestamps if present
+            if (
+              this.#opts.wordTimestamps !== false &&
+              'word_timestamps' in json &&
+              json.word_timestamps
+            ) {
+              const wordTimestamps = json.word_timestamps as {
+                words: string[];
+                start: number[];
+                end: number[];
+              };
+              if (wordTimestamps.words && wordTimestamps.start && wordTimestamps.end) {
+                for (let i = 0; i < wordTimestamps.words.length; i++) {
+                  const word = wordTimestamps.words[i];
+                  const startTime = wordTimestamps.start[i];
+                  const endTime = wordTimestamps.end[i];
+                  if (word !== undefined && startTime !== undefined && endTime !== undefined) {
+                    pendingTimedTranscripts.push({
+                      text: word + ' ', // Add space after word for consistency
+                      startTime,
+                      endTime,
+                    });
+                  }
+                }
+              }
+            }
+
             if ('data' in json) {
               const data = new Int8Array(Buffer.from(json.data, 'base64'));
               for (const frame of bstream.write(data)) {
@@ -371,7 +428,17 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 }
 
-const toCartesiaOptions = (opts: TTSOptions): { [id: string]: unknown } => {
+/**
+ * Convert TTSOptions to Cartesia API format.
+ * Ref: Python cartesia/tts.py line 531-581 - _to_cartesia_options
+ *
+ * @param opts - TTS options
+ * @param streaming - Whether this is for streaming (WebSocket) or non-streaming (HTTP)
+ */
+const toCartesiaOptions = (
+  opts: TTSOptions,
+  streaming: boolean = false,
+): { [id: string]: unknown } => {
   const voice: { [id: string]: unknown } = {};
   if (typeof opts.voice === 'string') {
     voice.mode = 'id';
@@ -393,7 +460,7 @@ const toCartesiaOptions = (opts: TTSOptions): { [id: string]: unknown } => {
     voice.__experimental_controls = voiceControls;
   }
 
-  return {
+  const result: { [id: string]: unknown } = {
     model_id: opts.model,
     voice,
     output_format: {
@@ -403,4 +470,11 @@ const toCartesiaOptions = (opts: TTSOptions): { [id: string]: unknown } => {
     },
     language: opts.language,
   };
+
+  // Ref: Python cartesia/tts.py line 578-579 - add_timestamps for streaming
+  if (streaming && opts.wordTimestamps !== false) {
+    result.add_timestamps = true;
+  }
+
+  return result;
 };

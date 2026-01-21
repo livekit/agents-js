@@ -24,10 +24,11 @@ import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
+import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Future, Task, shortuuid, toError, waitForAbort } from '../utils.js';
 import { type Agent, type ModelSettings, asyncLocalStorage, isStopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
-import { AudioOutput, type LLMNode, type TTSNode, type TextOutput } from './io.js';
+import { AudioOutput, type LLMNode, type TTSNode, type TextOutput, type TimedString } from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 
@@ -44,6 +45,23 @@ export class _LLMGenerationData {
     this.id = shortuuid('item_');
     this.generatedToolCalls = [];
   }
+}
+
+/**
+ * TTS generation data containing audio stream and optional timed transcripts.
+ * Ref: Python generation.py line 183-188 - _TTSGenerationData
+ * @internal
+ */
+export interface _TTSGenerationData {
+  /** Audio frame stream from TTS */
+  audioStream: ReadableStream<AudioFrame>;
+  /**
+   * Future that resolves to a stream of timed transcripts, or null if TTS doesn't support it.
+   * Ref: Python generation.py line 185 - timed_texts_fut
+   */
+  timedTextsFut: Future<ReadableStream<TimedString> | null>;
+  /** Time to first byte (set when first audio frame is received) */
+  ttfb?: number;
 }
 
 // TODO(brian): remove this class in favor of ToolOutput
@@ -492,24 +510,64 @@ export function performLLMInference(
   ];
 }
 
+/**
+ * Perform TTS inference and return audio stream with optional timed transcripts.
+ * Ref: Python generation.py line 190-213 - perform_tts_inference
+ *
+ * @param node - TTS node function
+ * @param text - Input text stream (may contain TimedString objects, text is extracted)
+ * @param modelSettings - Model settings
+ * @param controller - Abort controller
+ * @returns Tuple of [Task, _TTSGenerationData] containing audio stream and timed texts future
+ */
 export function performTTSInference(
   node: TTSNode,
-  text: ReadableStream<string>,
+  text: ReadableStream<string | TimedString>,
   modelSettings: ModelSettings,
   controller: AbortController,
-): [Task<void>, ReadableStream<AudioFrame>] {
+): [Task<void>, _TTSGenerationData] {
   const audioStream = new IdentityTransform<AudioFrame>();
   const outputWriter = audioStream.writable.getWriter();
   const audioOutputStream = audioStream.readable;
 
+  // Ref: Python generation.py line 185, 198-199 - timed_texts_fut and timed_text_ch
+  const timedTextsFut = new Future<ReadableStream<TimedString> | null>();
+  const timedTextsStream = new IdentityTransform<TimedString>();
+  const timedTextsWriter = timedTextsStream.writable.getWriter();
+  let hasTimedTranscripts = false;
+
+  // Transform stream to extract text from TimedString objects
+  // Ref: Python TimedString is a str subclass, so TTS just sees it as a string
+  const textOnlyStream = new IdentityTransform<string>();
+  const textOnlyWriter = textOnlyStream.writable.getWriter();
+  (async () => {
+    const reader = text.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const textValue = typeof value === 'string' ? value : value.text;
+        await textOnlyWriter.write(textValue);
+      }
+      await textOnlyWriter.close();
+    } catch (e) {
+      await textOnlyWriter.abort(e as Error);
+    } finally {
+      reader.releaseLock();
+    }
+  })();
+
   const _performTTSInferenceImpl = async (signal: AbortSignal) => {
+    // Ref: Python generation.py line 232-263 - _tts_node_inference processes audio frames
     let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
 
     try {
-      ttsStream = await node(text, modelSettings);
+      ttsStream = await node(textOnlyStream.readable, modelSettings);
       if (ttsStream === null) {
+        timedTextsFut.resolve(null);
         await outputWriter.close();
+        await timedTextsWriter.close();
         return;
       }
 
@@ -518,11 +576,22 @@ export function performTTSInference(
         if (signal.aborted) {
           break;
         }
-        const { done, value: chunk } = await ttsStreamReader.read();
+        const { done, value: frame } = await ttsStreamReader.read();
         if (done) {
           break;
         }
-        await outputWriter.write(chunk);
+
+        // Write the audio frame to the output stream
+        await outputWriter.write(frame);
+
+        // Ref: Python generation.py line 252-259 - extract timed transcripts from frame.userdata
+        const timedTranscripts = frame.userdata[USERDATA_TIMED_TRANSCRIPT] as TimedString[] | undefined;
+        if (timedTranscripts && timedTranscripts.length > 0) {
+          for (const timedText of timedTranscripts) {
+            hasTimedTranscripts = true;
+            await timedTextsWriter.write(timedText);
+          }
+        }
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -534,6 +603,17 @@ export function performTTSInference(
       ttsStreamReader?.releaseLock();
       await ttsStream?.cancel();
       await outputWriter.close();
+      await timedTextsWriter.close();
+
+      // Resolve the future with the timed texts stream or null
+      // Ref: Python generation.py line 238-246, 205-210 - resolve timed_texts_fut
+      if (!timedTextsFut.done) {
+        if (hasTimedTranscripts) {
+          timedTextsFut.resolve(timedTextsStream.readable);
+        } else {
+          timedTextsFut.resolve(null);
+        }
+      }
     }
   };
 
@@ -546,9 +626,14 @@ export function performTTSInference(
       context: currentContext,
     });
 
+  const genData: _TTSGenerationData = {
+    audioStream: audioOutputStream,
+    timedTextsFut,
+  };
+
   return [
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performTTSInference'),
-    audioOutputStream,
+    genData,
   ];
 }
 
@@ -557,8 +642,17 @@ export interface _TextOut {
   firstTextFut: Future;
 }
 
+/**
+ * Forward text (or TimedString) from source to text output.
+ * Ref: Python generation.py - text forwarding logic
+ *
+ * @param source - The source stream of text or TimedString
+ * @param out - Output object to accumulate text
+ * @param signal - Abort signal
+ * @param textOutput - Text output sink (can be null)
+ */
 async function forwardText(
-  source: ReadableStream<string>,
+  source: ReadableStream<string | TimedString>,
   out: _TextOut,
   signal: AbortSignal,
   textOutput: TextOutput | null,
@@ -571,9 +665,15 @@ async function forwardText(
       }
       const { done, value: delta } = await reader.read();
       if (done) break;
-      out.text += delta;
+
+      // Handle both string and TimedString
+      // Ref: Python io.py line 94-117 - TimedString is a str subclass
+      // Note: In JS, TimedString is an interface, so we extract text property
+      const textDelta = typeof delta === 'string' ? delta : delta.text;
+
+      out.text += textDelta;
       if (textOutput !== null) {
-        await textOutput.captureText(delta);
+        await textOutput.captureText(textDelta);
       }
       if (!out.firstTextFut.done) {
         out.firstTextFut.resolve();
@@ -587,8 +687,17 @@ async function forwardText(
   }
 }
 
+/**
+ * Perform text forwarding from a source stream to a text output.
+ * Ref: Python generation.py - perform_text_forwarding equivalent
+ *
+ * @param source - The source stream of text or TimedString
+ * @param controller - Abort controller
+ * @param textOutput - Text output sink (can be null)
+ * @returns Tuple of [Task, _TextOut]
+ */
 export function performTextForwarding(
-  source: ReadableStream<string>,
+  source: ReadableStream<string | TimedString>,
   controller: AbortController,
   textOutput: TextOutput | null,
 ): [Task<void>, _TextOut] {

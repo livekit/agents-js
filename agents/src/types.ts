@@ -3,6 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
+ * Key used to store timed transcripts in AudioFrame.userdata.
+ * Ref: Python types.py line 28 - USERDATA_TIMED_TRANSCRIPT
+ */
+export const USERDATA_TIMED_TRANSCRIPT = 'lk.timed_transcripts';
+
+/**
  * Connection options for API calls, controlling retry and timeout behavior.
  */
 export interface APIConnectOptions {

@@ -13,8 +13,12 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
 import { AsyncIterableQueue, delay, mergeFrames, startSoon, toError } from '../utils.js';
+import type { TimedString } from '../voice/io.js';
 
-/** SynthesizedAudio is a packet of speech synthesis as returned by the TTS. */
+/**
+ * SynthesizedAudio is a packet of speech synthesis as returned by the TTS.
+ * Ref: Python tts/tts.py line 782-793
+ */
 export interface SynthesizedAudio {
   /** Request ID (one segment could be made up of multiple requests) */
   requestId: string;
@@ -26,10 +30,16 @@ export interface SynthesizedAudio {
   deltaText?: string;
   /** Whether this is the last frame of the segment (streaming only) */
   final: boolean;
+  /**
+   * Timed transcripts associated with this audio packet (word-level timestamps).
+   * Ref: Python tts/tts.py line 835, 887 - push_timed_transcript method
+   */
+  timedTranscripts?: TimedString[];
 }
 
 /**
  * Describes the capabilities of the TTS provider.
+ * Ref: Python tts/tts.py line 47-51
  *
  * @remarks
  * At present, only `streaming` is supplied to this interface, and the framework only supports
@@ -37,6 +47,11 @@ export interface SynthesizedAudio {
  */
 export interface TTSCapabilities {
   streaming: boolean;
+  /**
+   * Whether this TTS supports aligned transcripts (word-level timestamps).
+   * Ref: Python tts/tts.py line 50 - TTSCapabilities.aligned_transcript
+   */
+  alignedTranscript?: boolean;
 }
 
 export interface TTSError {
