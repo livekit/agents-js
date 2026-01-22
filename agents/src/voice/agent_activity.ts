@@ -742,6 +742,20 @@ export class AgentActivity implements RecognitionHooks {
         // TODO(AJS-106): add multi participant support
       }),
     );
+
+    // agent speech might not be interrupted if VAD failed and a final transcript is received
+    // we call interruptByAudioActivity (idempotent) to pause the speech, if possible
+    if (
+      this.audioRecognition &&
+      this.turnDetection !== 'manual' &&
+      this.turnDetection !== 'realtime_llm'
+    ) {
+      this.interruptByAudioActivity();
+
+      // TODO: resume false interruption - schedule a resume timer if interrupted after end_of_speech
+    }
+
+    // TODO: resume false interruption - start interrupt paused speech task
   }
 
   onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
