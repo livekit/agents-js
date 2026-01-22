@@ -77,7 +77,6 @@ export interface VoiceOptions {
    * Whether to use TTS-aligned transcripts for the transcription node input.
    * When enabled and the TTS supports it, word-level timestamps from TTS
    * will be forwarded to the transcription node instead of raw LLM text.
-   * Ref: Python agent_session.py line 89, 159, 236-238
    */
   useTtsAlignedTranscript: boolean;
 }
@@ -274,7 +273,6 @@ export class AgentSession<
 
   /**
    * Whether to use TTS-aligned transcripts for the transcription node input.
-   * Ref: Python agent_session.py line 236-238 - use_tts_aligned_transcript property
    */
   get useTtsAlignedTranscript(): boolean {
     return this.options.useTtsAlignedTranscript;

@@ -4,12 +4,12 @@
 import {
   type APIConnectOptions,
   AudioByteStream,
-  createTimedString,
   Future,
+  type TimedString,
+  createTimedString,
   log,
   shortuuid,
   stream,
-  type TimedString,
   tokenize,
   tts,
 } from '@livekit/agents';
@@ -24,12 +24,12 @@ import {
   type TTSVoiceSpeed,
 } from './models.js';
 import {
-  cartesiaMessageSchema,
   type CartesiaServerMessage,
+  cartesiaMessageSchema,
   hasWordTimestamps,
   isChunkMessage,
   isDoneMessage,
-  isErrorMessage
+  isErrorMessage,
 } from './types.js';
 
 const AUTHORIZATION_HEADER = 'X-API-Key';
@@ -57,8 +57,7 @@ export interface TTSOptions {
   /**
    * Whether to add word timestamps to the output. When enabled, the TTS will return
    * timing information for each word in the transcript.
-   * Ref: Python cartesia/tts.py line 98 - word_timestamps option
-   * @default true
+   * @defaultValue true
    */
   wordTimestamps?: boolean;
 }
@@ -245,9 +244,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     const sentenceStreamTask = async (ws: WebSocket) => {
       const packet = toCartesiaOptions(this.#opts, true);
-      let sentenceCount = 0;
       for await (const event of this.#tokenizer) {
-        sentenceCount++;
         const msg = {
           ...packet,
           context_id: requestId,
@@ -264,7 +261,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         continue: false,
       };
       ws.send(JSON.stringify(endMsg));
-      // Mark sentence stream as closed - Ref: Python sent_tokenizer_stream.closed
+      // Mark sentence stream as closed
       sentenceStreamClosed = true;
     };
 
@@ -283,7 +280,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     // Use event channel and set up listeners ONCE to avoid missing messages during listener re-registration
     const recvTask = async (ws: WebSocket) => {
       const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
-      
+
       // Create event channel to buffer incoming messages
       // This prevents message loss between listener re-registrations
       const eventChannel = stream.createStreamChannel<RawData>();
@@ -299,7 +296,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             segmentId,
             frame: lastFrame,
             final,
-            timedTranscripts: pendingTimedTranscripts.length > 0 ? pendingTimedTranscripts : undefined,
+            timedTranscripts:
+              pendingTimedTranscripts.length > 0 ? pendingTimedTranscripts : undefined,
           });
           lastFrame = undefined;
           pendingTimedTranscripts = [];
@@ -343,13 +341,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       try {
         // Process messages from the channel
         const reader = eventChannel.stream().getReader();
-        
+
         while (!this.closed && !this.abortController.signal.aborted) {
           const result = await reader.read();
           if (result.done) break;
-          
+
           const rawMsg = result.value;
-          
+
           // Parse message with Zod schema for type safety
           let serverMsg: CartesiaServerMessage;
           try {
@@ -376,11 +374,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               const startTime = wordTimestamps.start[i];
               const endTime = wordTimestamps.end[i];
               if (word !== undefined && startTime !== undefined && endTime !== undefined) {
-                pendingTimedTranscripts.push(createTimedString({
-                  text: word + ' ', // Add space after word for consistency
-                  startTime,
-                  endTime,
-                }));
+                pendingTimedTranscripts.push(
+                  createTimedString({
+                    text: word + ' ', // Add space after word for consistency
+                    startTime,
+                    endTime,
+                  }),
+                );
               }
             }
           }
@@ -434,7 +434,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       } catch (err) {
         // skip log error for normal websocket close
         if (err instanceof Error && !err.message.includes('WebSocket closed')) {
-          if (err.message.includes('Queue is closed') || err.message.includes('Channel is closed')) {
+          if (
+            err.message.includes('Queue is closed') ||
+            err.message.includes('Channel is closed')
+          ) {
             this.#logger.warn(
               { err },
               'Channel closed during transcript processing (expected during disconnect)',
@@ -472,7 +475,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
 /**
  * Convert TTSOptions to Cartesia API format.
- * Ref: Python cartesia/tts.py line 531-581 - _to_cartesia_options
  *
  * @param opts - TTS options
  * @param streaming - Whether this is for streaming (WebSocket) or non-streaming (HTTP)

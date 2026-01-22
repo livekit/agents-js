@@ -20,7 +20,6 @@ export interface MessageGeneration {
   messageId: string;
   /**
    * Text stream that may contain plain strings or TimedString objects with timestamps.
-   * Ref: Python openai/realtime/realtime_model.py line 1539-1544 - text_ch can receive TimedString
    */
   textStream: ReadableStream<string | TimedString>;
   audioStream: ReadableStream<AudioFrame>;

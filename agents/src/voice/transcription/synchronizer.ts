@@ -8,7 +8,13 @@ import { IdentityTransform } from '../../stream/identity_transform.js';
 import type { SentenceStream, SentenceTokenizer } from '../../tokenize/index.js';
 import { basic } from '../../tokenize/index.js';
 import { Future, Task, delay } from '../../utils.js';
-import { AudioOutput, TextOutput, isTimedString, type PlaybackFinishedEvent, type TimedString } from '../io.js';
+import {
+  AudioOutput,
+  type PlaybackFinishedEvent,
+  TextOutput,
+  type TimedString,
+  isTimedString,
+} from '../io.js';
 
 const STANDARD_SPEECH_RATE = 3.83; // hyphens (syllables) per second
 
@@ -44,9 +50,8 @@ class SpeakingRateData {
    * Add by speaking rate estimation.
    */
   addByRate(timestamp: number, speakingRate: number): void {
-    const integral = this.speakIntegrals.length > 0 
-      ? this.speakIntegrals[this.speakIntegrals.length - 1]! 
-      : 0;
+    const integral =
+      this.speakIntegrals.length > 0 ? this.speakIntegrals[this.speakIntegrals.length - 1]! : 0;
     const dt = timestamp - this.pushedDuration;
     const newIntegral = integral + speakingRate * dt;
 
@@ -61,9 +66,8 @@ class SpeakingRateData {
   addByAnnotation(text: string, startTime: number | undefined, endTime: number | undefined): void {
     if (startTime !== undefined) {
       // Calculate the integral of the speaking rate up to the start time
-      const integral = this.speakIntegrals.length > 0 
-        ? this.speakIntegrals[this.speakIntegrals.length - 1]! 
-        : 0;
+      const integral =
+        this.speakIntegrals.length > 0 ? this.speakIntegrals[this.speakIntegrals.length - 1]! : 0;
 
       const dt = startTime - this.pushedDuration;
       // Use the length of the text directly instead of hyphens
@@ -110,9 +114,8 @@ class SpeakingRateData {
 
     // Fill the tail assuming the speaking rate is constant
     const dt = timestamp - this.timestamps[idx - 1]!;
-    const rate = idx < this.speakingRate.length 
-      ? this.speakingRate[idx]! 
-      : this.speakingRate[idx - 1]!;
+    const rate =
+      idx < this.speakingRate.length ? this.speakingRate[idx]! : this.speakingRate[idx - 1]!;
     integralT += rate * dt;
 
     // If there is a next timestamp, make sure the integral does not exceed the next
@@ -353,12 +356,12 @@ class SegmentSynchronizerImpl {
 
         let dHyphens = 0;
         const annotated = this.audioData.annotatedRate;
-        
+
         if (annotated && annotated.pushedDuration >= elapsedSeconds) {
           // Use actual TTS timing annotations for accurate sync
           const targetLen = Math.floor(annotated.accumulateTo(elapsedSeconds));
           const forwardedLen = this.textData.forwardedText.length;
-          
+
           if (targetLen >= forwardedLen) {
             const dText = this.textData.pushedText.slice(forwardedLen, targetLen);
             dHyphens = this.calcHyphens(dText).length;
@@ -366,7 +369,6 @@ class SegmentSynchronizerImpl {
             const dText = this.textData.pushedText.slice(targetLen, forwardedLen);
             dHyphens = -this.calcHyphens(dText).length;
           }
-
         } else {
           // Fall back to estimated hyphens-per-second calculation
           const targetHyphens = elapsedSeconds * this.options.speed;
@@ -625,10 +627,6 @@ class SyncedTextOutput extends TextOutput {
     super(nextInChain);
   }
 
-  /**
-   * Capture text for synchronization.
-   * Ref: Python synchronizer.py lines 607-624 - capture_text accepts str (which includes TimedString)
-   */
   async captureText(text: string | TimedString): Promise<void> {
     await this.synchronizer.barrier();
 

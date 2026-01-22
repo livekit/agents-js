@@ -601,10 +601,7 @@ export interface ResponseAudioTranscriptDeltaEvent extends BaseServerEvent {
   output_index: number;
   content_index: number;
   delta: string;
-  /**
-   * Start time of this transcript segment in seconds (relative to audio output).
-   * Ref: Python openai/realtime/realtime_model.py line 1539-1540 - start_time for TimedString
-   */
+  // Start time of this transcript segment in seconds (relative to audio output).
   start_time?: number;
 }
 

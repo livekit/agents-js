@@ -442,13 +442,15 @@ const liveTranscriptionToSpeechData = (
         : startTimeOffset,
       confidence: alt['confidence'],
       text: alt['transcript'],
-      words: wordsData.map((word) => createTimedString({
-        text: word['word'] ?? '',
-        startTime: (word['start'] ?? 0) + startTimeOffset,
-        endTime: (word['end'] ?? 0) + startTimeOffset,
-        confidence: word['confidence'] ?? 0.0,
-        startTimeOffset,
-      })),
+      words: wordsData.map((word) =>
+        createTimedString({
+          text: word['word'] ?? '',
+          startTime: (word['start'] ?? 0) + startTimeOffset,
+          endTime: (word['end'] ?? 0) + startTimeOffset,
+          confidence: word['confidence'] ?? 0.0,
+          startTimeOffset,
+        }),
+      ),
     };
   });
 };

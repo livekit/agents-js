@@ -362,7 +362,6 @@ export class AgentActivity implements RecognitionHooks {
   /**
    * Whether to use TTS-aligned transcripts for the transcription node input.
    * Resolves from agent setting first, then falls back to session setting.
-   * Ref: Python agent_activity.py line 298-306 - use_tts_aligned_transcript property
    */
   get useTtsAlignedTranscript(): boolean {
     // Agent setting takes precedence over session setting
@@ -1421,11 +1420,7 @@ export class AgentActivity implements RecognitionHooks {
 
     // Check if we should use TTS aligned transcripts
     // Conditions: useTtsAlignedTranscript enabled, TTS has alignedTranscript capability, and we have ttsGenData
-    if (
-      this.useTtsAlignedTranscript &&
-      this.tts?.capabilities.alignedTranscript &&
-      ttsGenData
-    ) {
+    if (this.useTtsAlignedTranscript && this.tts?.capabilities.alignedTranscript && ttsGenData) {
       // Wait for the timed texts stream to be resolved
       const timedTextsStream = await ttsGenData.timedTextsFut.await;
       if (timedTextsStream) {

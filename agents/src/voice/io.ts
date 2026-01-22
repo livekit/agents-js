@@ -24,14 +24,6 @@ export type LLMNode = (
   modelSettings: ModelSettings,
 ) => Promise<ReadableStream<ChatChunk | string> | null>;
 
-/**
- * TTS node function type.
- * Ref: Python agent.py - tts_node signature returns AsyncIterable[rtc.AudioFrame]
- *
- * Note: In Python, AudioFrame has a userdata dict where timed transcripts are stored.
- * Once @livekit/rtc-node adds userdata support, performTTSInference will extract
- * timed transcripts from frame.userdata (similar to Python's USERDATA_TIMED_TRANSCRIPT).
- */
 export type TTSNode = (
   text: ReadableStream<string>,
   modelSettings: ModelSettings,
@@ -254,11 +246,6 @@ export interface PlaybackStartedEvent {
 export abstract class TextOutput {
   constructor(protected readonly nextInChain?: TextOutput) {}
 
-  /**
-   * Capture a text segment (Used by the output of LLM nodes)
-   * Ref: Python io.py line 301 - capture_text accepts str (which includes TimedString in Python)
-   * In TypeScript, we explicitly accept both string and TimedString.
-   */
   abstract captureText(text: string | TimedString): Promise<void>;
 
   /**

@@ -17,7 +17,6 @@ import type { TimedString } from '../voice/io.js';
 
 /**
  * SynthesizedAudio is a packet of speech synthesis as returned by the TTS.
- * Ref: Python tts/tts.py line 782-793
  */
 export interface SynthesizedAudio {
   /** Request ID (one segment could be made up of multiple requests) */
@@ -32,14 +31,13 @@ export interface SynthesizedAudio {
   final: boolean;
   /**
    * Timed transcripts associated with this audio packet (word-level timestamps).
-   * Ref: Python tts/tts.py line 835, 887 - push_timed_transcript method
    */
   timedTranscripts?: TimedString[];
 }
 
 /**
  * Describes the capabilities of the TTS provider.
- * Ref: Python tts/tts.py line 47-51
+ *  tts/tts.py line 47-51
  *
  * @remarks
  * At present, only `streaming` is supplied to this interface, and the framework only supports
@@ -49,7 +47,7 @@ export interface TTSCapabilities {
   streaming: boolean;
   /**
    * Whether this TTS supports aligned transcripts (word-level timestamps).
-   * Ref: Python tts/tts.py line 50 - TTSCapabilities.aligned_transcript
+   *  tts/tts.py line 50 - TTSCapabilities.aligned_transcript
    */
   alignedTranscript?: boolean;
 }

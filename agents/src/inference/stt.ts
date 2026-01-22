@@ -489,13 +489,14 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         confidence: data.confidence,
         text,
         words: data.words.map(
-          (word): TimedString => createTimedString({
-            text: word.word,
-            startTime: word.start + this.startTimeOffset,
-            endTime: word.end + this.startTimeOffset,
-            startTimeOffset: this.startTimeOffset,
-            confidence: word.confidence,
-          }),
+          (word): TimedString =>
+            createTimedString({
+              text: word.word,
+              startTime: word.start + this.startTimeOffset,
+              endTime: word.end + this.startTimeOffset,
+              startTimeOffset: this.startTimeOffset,
+              confidence: word.confidence,
+            }),
         ),
       };
 

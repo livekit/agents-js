@@ -7,12 +7,12 @@ import {
   APIStatusError,
   APITimeoutError,
   AudioByteStream,
-  createTimedString,
   Future,
+  type TimedString,
+  createTimedString,
   log,
   shortuuid,
   stream,
-  type TimedString,
   tokenize,
   tts,
 } from '@livekit/agents';
@@ -209,24 +209,28 @@ function toTimedWords(
     const nextStart = startIndices[i + 1]!;
     end = nextStart;
     // Normalize timestamps by subtracting the first word offset
-    const startT = Math.max(0, ((timestamps[start] ?? 0) - firstWordOffsetMs)) / 1000;
-    const endT = Math.max(0, ((timestamps[nextStart] ?? 0) - firstWordOffsetMs)) / 1000;
-    timedWords.push(createTimedString({
-      text: text.slice(start, nextStart),
-      startTime: startT,
-      endTime: endT,
-    }));
+    const startT = Math.max(0, (timestamps[start] ?? 0) - firstWordOffsetMs) / 1000;
+    const endT = Math.max(0, (timestamps[nextStart] ?? 0) - firstWordOffsetMs) / 1000;
+    timedWords.push(
+      createTimedString({
+        text: text.slice(start, nextStart),
+        startTime: startT,
+        endTime: endT,
+      }),
+    );
   }
 
   if (flush && words.length > 0) {
     const lastWordStart = startIndices[startIndices.length - 1]!;
-    const startT = Math.max(0, ((timestamps[lastWordStart] ?? 0) - firstWordOffsetMs)) / 1000;
-    const endT = Math.max(0, ((timestamps[timestamps.length - 1] ?? 0) - firstWordOffsetMs)) / 1000;
-    timedWords.push(createTimedString({
-      text: text.slice(lastWordStart),
-      startTime: startT,
-      endTime: endT,
-    }));
+    const startT = Math.max(0, (timestamps[lastWordStart] ?? 0) - firstWordOffsetMs) / 1000;
+    const endT = Math.max(0, (timestamps[timestamps.length - 1] ?? 0) - firstWordOffsetMs) / 1000;
+    timedWords.push(
+      createTimedString({
+        text: text.slice(lastWordStart),
+        startTime: startT,
+        endTime: endT,
+      }),
+    );
     end = text.length;
   } else if (words.length > 0) {
     end = startIndices[startIndices.length - 1]!;

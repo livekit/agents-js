@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 import { z } from 'zod';
 
 // ============================================================================
@@ -112,8 +111,6 @@ export function isErrorMessage(msg: CartesiaServerMessage): msg is CartesiaError
   return 'error' in msg && typeof msg.error === 'string';
 }
 
-export function hasWordTimestamps(
-  msg: CartesiaServerMessage,
-): msg is CartesiaTimestampsMessage {
+export function hasWordTimestamps(msg: CartesiaServerMessage): msg is CartesiaTimestampsMessage {
   return isTimestampsMessage(msg);
 }

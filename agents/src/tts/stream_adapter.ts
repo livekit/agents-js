@@ -15,7 +15,7 @@ export class StreamAdapter extends TTS {
   label: string;
 
   constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer) {
-    super(tts.sampleRate, tts.numChannels, { streaming: true });
+    super(tts.sampleRate, tts.numChannels, { streaming: true, alignedTranscript: true });
     this.#tts = tts;
     this.#sentenceTokenizer = sentenceTokenizer;
     this.label = this.#tts.label;

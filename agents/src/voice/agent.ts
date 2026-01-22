@@ -76,7 +76,7 @@ export interface AgentOptions<UserData> {
    * Whether to use TTS-aligned transcripts for the transcription node input.
    * When enabled and the TTS supports it, word-level timestamps from TTS
    * will be forwarded to the transcription node instead of raw LLM text.
-   * Ref: Python agent.py line 50, 80 - use_tts_aligned_transcript
+   *  agent.py line 50, 80 - use_tts_aligned_transcript
    */
   useTtsAlignedTranscript?: boolean;
 }
@@ -90,7 +90,6 @@ export class Agent<UserData = any> {
   private _tts?: TTS;
   /**
    * Whether to use TTS-aligned transcripts for the transcription node input.
-   * Ref: Python agent.py line 50, 80, 621-632 - use_tts_aligned_transcript
    */
   private _useTtsAlignedTranscript?: boolean;
 
@@ -185,7 +184,6 @@ export class Agent<UserData = any> {
 
   /**
    * Whether to use TTS-aligned transcripts for the transcription node input.
-   * Ref: Python agent.py line 621-632 - use_tts_aligned_transcript property
    */
   get useTtsAlignedTranscript(): boolean | undefined {
     return this._useTtsAlignedTranscript;
@@ -217,7 +215,6 @@ export class Agent<UserData = any> {
 
   /**
    * Process transcription text (or TimedString) before outputting.
-   * Ref: Python agent.py line 284-307 - transcription_node signature
    *
    * @param text - The input text stream. When useTtsAlignedTranscript is enabled
    *               and TTS supports aligned transcripts, this will be a stream of
@@ -396,11 +393,6 @@ export class Agent<UserData = any> {
       });
     },
 
-    /**
-     * Default TTS node implementation.
-     * Ref: Python agent.py tts_node - returns AudioFrame with userdata containing timed transcripts.
-     * Attaches timed transcripts to frame.userdata similar to Python's USERDATA_TIMED_TRANSCRIPT pattern.
-     */
     async ttsNode(
       agent: Agent,
       text: ReadableStream<string>,
@@ -452,10 +444,6 @@ export class Agent<UserData = any> {
       });
     },
 
-    /**
-     * Default transcription node implementation - passes through text unchanged.
-     * Ref: Python agent.py line 284-307 - default transcription_node
-     */
     async transcriptionNode(
       agent: Agent,
       text: ReadableStream<string | TimedString>,

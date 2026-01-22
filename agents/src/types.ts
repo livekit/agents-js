@@ -4,7 +4,6 @@
 
 /**
  * Key used to store timed transcripts in AudioFrame.userdata.
- * Ref: Python types.py line 28 - USERDATA_TIMED_TRANSCRIPT
  */
 export const USERDATA_TIMED_TRANSCRIPT = 'lk.timed_transcripts';
 

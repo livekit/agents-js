@@ -28,7 +28,15 @@ import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Future, Task, shortuuid, toError, waitForAbort } from '../utils.js';
 import { type Agent, type ModelSettings, asyncLocalStorage, isStopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
-import { AudioOutput, type LLMNode, type TTSNode, type TextOutput, type TimedString, createTimedString, isTimedString } from './io.js';
+import {
+  AudioOutput,
+  type LLMNode,
+  type TTSNode,
+  type TextOutput,
+  type TimedString,
+  createTimedString,
+  isTimedString,
+} from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 
@@ -530,7 +538,6 @@ export function performTTSInference(
   const timedTextsFut = new Future<ReadableStream<TimedString> | null>();
   const timedTextsStream = new IdentityTransform<TimedString>();
   const timedTextsWriter = timedTextsStream.writable.getWriter();
-  let hasTimedTranscripts = false;
 
   // Transform stream to extract text from TimedString objects
   const textOnlyStream = new IdentityTransform<string>();
@@ -593,15 +600,22 @@ export function performTTSInference(
         // Write the audio frame to the output stream
         await outputWriter.write(frame);
 
-        const timedTranscripts = frame.userdata[USERDATA_TIMED_TRANSCRIPT] as TimedString[] | undefined;
+        const timedTranscripts = frame.userdata[USERDATA_TIMED_TRANSCRIPT] as
+          | TimedString[]
+          | undefined;
         if (timedTranscripts && timedTranscripts.length > 0) {
           for (const timedText of timedTranscripts) {
-            hasTimedTranscripts = true;
             // Uses the INITIAL value (from previous inferences), not the accumulated value
             const adjustedTimedText = createTimedString({
               text: timedText.text,
-              startTime: timedText.startTime !== undefined ? timedText.startTime + initialPushedDuration : undefined,
-              endTime: timedText.endTime !== undefined ? timedText.endTime + initialPushedDuration : undefined,
+              startTime:
+                timedText.startTime !== undefined
+                  ? timedText.startTime + initialPushedDuration
+                  : undefined,
+              endTime:
+                timedText.endTime !== undefined
+                  ? timedText.endTime + initialPushedDuration
+                  : undefined,
               confidence: timedText.confidence,
               startTimeOffset: timedText.startTimeOffset,
             });
