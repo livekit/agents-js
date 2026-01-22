@@ -55,7 +55,6 @@ export class StreamAdapterWrapper extends SynthesizeStream {
   }
 
   protected async run() {
-    // Ref: Python stream_adapter.py line 113 - track cumulative duration for TimedString
     let cumulativeDuration = 0;
 
     const forwardInput = async () => {
@@ -104,7 +103,6 @@ export class StreamAdapterWrapper extends SynthesizeStream {
       await prevTask?.result;
       if (controller.signal.aborted) return;
 
-      // Ref: Python stream_adapter.py lines 123-126 - create TimedString for sentence
       // Create a TimedString with the sentence text and current cumulative duration
       const timedString = createTimedString({
         text: token,
@@ -116,7 +114,6 @@ export class StreamAdapterWrapper extends SynthesizeStream {
         if (controller.signal.aborted) break;
 
         // Attach the TimedString to the first frame of this sentence
-        // Ref: Python stream_adapter.py - timing is attached to audio frames
         if (isFirstFrame) {
           audio.frame.userdata[USERDATA_TIMED_TRANSCRIPT] = [timedString];
           isFirstFrame = false;

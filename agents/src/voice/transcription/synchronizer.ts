@@ -29,21 +29,19 @@ interface TextData {
 
 /**
  * Tracks speaking rate data from TTS timing annotations.
- * Ref: Python synchronizer.py lines 33-109 - _SpeakingRateData class
  */
 class SpeakingRateData {
-  /** Timestamps of the speaking rate. Ref: Python line 34 */
+  /** Timestamps of the speaking rate. */
   timestamps: number[] = [];
-  /** Speed at the timestamp. Ref: Python line 37-38 */
+  /** Speed at the timestamp. */
   speakingRate: number[] = [];
-  /** Accumulated speaking units up to the timestamp. Ref: Python line 40-41 */
+  /** Accumulated speaking units up to the timestamp. */
   speakIntegrals: number[] = [];
-  /** Buffer for text without timing annotations yet. Ref: Python line 43 */
+  /** Buffer for text without timing annotations yet. */
   private textBuffer: string[] = [];
 
   /**
    * Add by speaking rate estimation.
-   * Ref: Python synchronizer.py lines 45-52 - add_by_rate
    */
   addByRate(timestamp: number, speakingRate: number): void {
     const integral = this.speakIntegrals.length > 0 
@@ -59,34 +57,28 @@ class SpeakingRateData {
 
   /**
    * Add annotation from TimedString with start_time/end_time.
-   * Ref: Python synchronizer.py lines 54-79 - add_by_annotation
    */
   addByAnnotation(text: string, startTime: number | undefined, endTime: number | undefined): void {
     if (startTime !== undefined) {
       // Calculate the integral of the speaking rate up to the start time
-      // Ref: Python lines 62-63
       const integral = this.speakIntegrals.length > 0 
         ? this.speakIntegrals[this.speakIntegrals.length - 1]! 
         : 0;
 
-      // Ref: Python lines 65-69
       const dt = startTime - this.pushedDuration;
       // Use the length of the text directly instead of hyphens
       const textLen = this.textBuffer.reduce((sum, t) => sum + t.length, 0);
       const newIntegral = integral + textLen;
       const rate = dt > 0 ? textLen / dt : 0;
 
-      // Ref: Python lines 71-74
       this.timestamps.push(startTime);
       this.speakingRate.push(rate);
       this.speakIntegrals.push(newIntegral);
       this.textBuffer = [];
     }
 
-    // Ref: Python line 76
     this.textBuffer.push(text);
 
-    // Ref: Python lines 78-79
     if (endTime !== undefined) {
       this.addByAnnotation('', endTime, undefined);
     }
@@ -94,7 +86,6 @@ class SpeakingRateData {
 
   /**
    * Get accumulated speaking units up to the given timestamp.
-   * Ref: Python synchronizer.py lines 81-105 - accumulate_to
    */
   accumulateTo(timestamp: number): number {
     if (this.timestamps.length === 0) {
@@ -102,7 +93,6 @@ class SpeakingRateData {
     }
 
     // Binary search for the right position (equivalent to np.searchsorted with side="right")
-    // Ref: Python line 86
     let idx = 0;
     for (let i = 0; i < this.timestamps.length; i++) {
       if (this.timestamps[i]! <= timestamp) {
@@ -112,16 +102,13 @@ class SpeakingRateData {
       }
     }
 
-    // Ref: Python lines 87-88
     if (idx === 0) {
       return 0;
     }
 
-    // Ref: Python line 90
     let integralT = this.speakIntegrals[idx - 1]!;
 
     // Fill the tail assuming the speaking rate is constant
-    // Ref: Python lines 92-99
     const dt = timestamp - this.timestamps[idx - 1]!;
     const rate = idx < this.speakingRate.length 
       ? this.speakingRate[idx]! 
@@ -129,7 +116,6 @@ class SpeakingRateData {
     integralT += rate * dt;
 
     // If there is a next timestamp, make sure the integral does not exceed the next
-    // Ref: Python lines 101-103
     if (idx < this.timestamps.length) {
       integralT = Math.min(integralT, this.speakIntegrals[idx]!);
     }
@@ -137,7 +123,7 @@ class SpeakingRateData {
     return integralT;
   }
 
-  /** Get the last pushed timestamp. Ref: Python lines 107-109 */
+  /** Get the last pushed timestamp. */
   get pushedDuration(): number {
     return this.timestamps.length > 0 ? this.timestamps[this.timestamps.length - 1]! : 0;
   }
@@ -146,7 +132,7 @@ class SpeakingRateData {
 interface AudioData {
   pushedDuration: number;
   done: boolean;
-  /** Speaking rate data from TTS timing annotations. Ref: Python synchronizer.py line 118 */
+  /** Speaking rate data from TTS timing annotations. */
   annotatedRate: SpeakingRateData | null;
 }
 
@@ -180,7 +166,7 @@ class SegmentSynchronizerImpl {
     this.audioData = {
       pushedDuration: 0,
       done: false,
-      annotatedRate: null, // Ref: Python synchronizer.py line 118
+      annotatedRate: null,
     };
     this.outputStream = new IdentityTransform();
     this.outputStreamWriter = this.outputStream.writable.getWriter();
@@ -243,7 +229,6 @@ class SegmentSynchronizerImpl {
 
   /**
    * Push text to the synchronizer.
-   * Ref: Python synchronizer.py lines 197-215 - push_text with TimedString support
    */
   pushText(text: string | TimedString) {
     if (this.closed) {
@@ -252,7 +237,6 @@ class SegmentSynchronizerImpl {
     }
 
     // Check if text is a TimedString (has timing information)
-    // Ref: Python synchronizer.py lines 203-212 - isinstance(text, io.TimedString)
     let textStr: string;
     let startTime: number | undefined;
     let endTime: number | undefined;
@@ -299,7 +283,6 @@ class SegmentSynchronizerImpl {
         { textDone: this.textData.done, audioDone: this.audioData.done },
         'SegmentSynchronizerImpl.markPlaybackFinished called before text/audio input is done',
       );
-      // Ref: Python synchronizer.py lines 268-273 - still set playbackCompleted if not interrupted
       // This allows mainTask to flush remaining text even if audio wasn't formally ended
       if (!interrupted) {
         this.playbackCompleted = true;
@@ -322,8 +305,7 @@ class SegmentSynchronizerImpl {
   private async captureTaskImpl() {
     // Don't use a for-await loop here, because exiting the loop will close the writer in the
     // outputStream, which will cause an error in the mainTask.then method.
-    // Ref: Python synchronizer.py lines 288-295 - _capture_task
-    // NOTE: forwardedText is updated in mainTask (like Python), NOT here
+    // NOTE: forwardedText is updated in mainTask, NOT here
     const reader = this.outputStream.readable.getReader();
     while (true) {
       const { done, value: text } = await reader.read();
@@ -369,13 +351,11 @@ class SegmentSynchronizerImpl {
         const wordHphens = this.options.hyphenateWord(word).length;
         const elapsedSeconds = (Date.now() - this.startWallTime) / 1000;
 
-        // Ref: Python synchronizer.py lines 331-351 - use annotated_rate when available
         let dHyphens = 0;
         const annotated = this.audioData.annotatedRate;
         
         if (annotated && annotated.pushedDuration >= elapsedSeconds) {
           // Use actual TTS timing annotations for accurate sync
-          // Ref: Python synchronizer.py lines 332-343
           const targetLen = Math.floor(annotated.accumulateTo(elapsedSeconds));
           const forwardedLen = this.textData.forwardedText.length;
           
@@ -405,7 +385,6 @@ class SegmentSynchronizerImpl {
 
         await this.sleepIfNotClosed(delayTime / 2);
 
-        // Ref: Python synchronizer.py lines 361-362 - update forwarded_hyphens and forwarded_text
         this.textData.forwardedHyphens += wordHphens;
         this.textData.forwardedText += forwardedWord;
         textCursor = endPos;
@@ -420,7 +399,6 @@ class SegmentSynchronizerImpl {
 
   /**
    * Calculate hyphens for text.
-   * Ref: Python synchronizer.py lines 364-370 - _calc_hyphens
    */
   private calcHyphens(text: string): string[] {
     const words = this.options.splitWords(text);
@@ -600,7 +578,6 @@ class SyncedAudioOutput extends AudioOutput {
       // For timed texts, audio goes directly to room without going through synchronizer.
       // If text was pushed but no audio, still end audio input so text can be processed.
       // Only rotate if there's also no text (truly empty segment).
-      // Ref: This differs from Python where audio always goes through synchronizer
       if (this.synchronizer._impl.hasPendingText) {
         // Text is pending - end audio input to allow text processing
         this.synchronizer._impl.endAudioInput();
@@ -676,7 +653,6 @@ class SyncedTextOutput extends TextOutput {
   }
 
   async flush() {
-    // Ref: Python synchronizer.py lines 626-636 - flush must wait for barrier
     // Wait for any pending rotation to complete before accessing _impl
     await this.synchronizer.barrier();
 

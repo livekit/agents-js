@@ -49,7 +49,6 @@ export class _LLMGenerationData {
 
 /**
  * TTS generation data containing audio stream and optional timed transcripts.
- * Ref: Python generation.py line 183-188 - _TTSGenerationData
  * @internal
  */
 export interface _TTSGenerationData {
@@ -57,7 +56,6 @@ export interface _TTSGenerationData {
   audioStream: ReadableStream<AudioFrame>;
   /**
    * Future that resolves to a stream of timed transcripts, or null if TTS doesn't support it.
-   * Ref: Python generation.py line 185 - timed_texts_fut
    */
   timedTextsFut: Future<ReadableStream<TimedString> | null>;
   /** Time to first byte (set when first audio frame is received) */
@@ -512,7 +510,6 @@ export function performLLMInference(
 
 /**
  * Perform TTS inference and return audio stream with optional timed transcripts.
- * Ref: Python generation.py line 190-213 - perform_tts_inference
  *
  * @param node - TTS node function
  * @param text - Input text stream (may contain TimedString objects, text is extracted)
@@ -530,14 +527,12 @@ export function performTTSInference(
   const outputWriter = audioStream.writable.getWriter();
   const audioOutputStream = audioStream.readable;
 
-  // Ref: Python generation.py line 185, 198-199 - timed_texts_fut and timed_text_ch
   const timedTextsFut = new Future<ReadableStream<TimedString> | null>();
   const timedTextsStream = new IdentityTransform<TimedString>();
   const timedTextsWriter = timedTextsStream.writable.getWriter();
   let hasTimedTranscripts = false;
 
   // Transform stream to extract text from TimedString objects
-  // Ref: Python TimedString is a str subclass, so TTS just sees it as a string
   const textOnlyStream = new IdentityTransform<string>();
   const textOnlyWriter = textOnlyStream.writable.getWriter();
   (async () => {
@@ -560,10 +555,8 @@ export function performTTSInference(
   })();
 
   const _performTTSInferenceImpl = async (signal: AbortSignal) => {
-    // Ref: Python generation.py line 232-263 - _tts_node_inference processes audio frames
     let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
-    // Ref: Python generation.py line 249 - track pushed_duration for timestamp adjustment
     let pushedDuration = 0;
 
     try {
@@ -575,7 +568,6 @@ export function performTTSInference(
         return;
       }
 
-      // Ref: Python generation.py lines 242-246 - resolve timed_texts_fut BEFORE iterating
       // This is critical: the future must be resolved with the channel/stream before the loop
       // so that agent_activity can start reading while we write
       if (!timedTextsFut.done) {
@@ -584,13 +576,11 @@ export function performTTSInference(
 
       ttsStreamReader = ttsStream.getReader();
 
-      // Ref: Python generation.py line 228 - pushed_duration is passed as a PARAMETER
-      // to _tts_node_inference, which stays CONSTANT within one inference. It represents
+      // pushed_duration stays CONSTANT within one inference. It represents
       // the cumulative duration from PREVIOUS TTS inferences. We capture it here before
       // the loop to match Python's behavior.
       const initialPushedDuration = pushedDuration;
 
-      // Ref: Python generation.py lines 248-262 - iterate over audio frames
       while (true) {
         if (signal.aborted) {
           break;
@@ -603,12 +593,10 @@ export function performTTSInference(
         // Write the audio frame to the output stream
         await outputWriter.write(frame);
 
-        // Ref: Python generation.py lines 252-259 - extract timed transcripts from frame.userdata
         const timedTranscripts = frame.userdata[USERDATA_TIMED_TRANSCRIPT] as TimedString[] | undefined;
         if (timedTranscripts && timedTranscripts.length > 0) {
           for (const timedText of timedTranscripts) {
             hasTimedTranscripts = true;
-            // Ref: Python generation.py lines 255-258 - adjust timestamps by pushed_duration
             // Uses the INITIAL value (from previous inferences), not the accumulated value
             const adjustedTimedText = createTimedString({
               text: timedText.text,
@@ -621,7 +609,6 @@ export function performTTSInference(
           }
         }
 
-        // Ref: Python generation.py line 262 - accumulate audio duration
         const frameDuration = frame.samplesPerChannel / frame.sampleRate;
         pushedDuration += frameDuration;
       }
@@ -635,7 +622,6 @@ export function performTTSInference(
       ttsStreamReader?.releaseLock();
       await ttsStream?.cancel();
       await outputWriter.close();
-      // Ref: Python generation.py lines 206-209 - close channels in done callback
       await timedTextsWriter.close();
     }
   };
@@ -667,7 +653,6 @@ export interface _TextOut {
 
 /**
  * Forward text (or TimedString) from source to text output.
- * Ref: Python generation.py - text forwarding logic
  *
  * @param source - The source stream of text or TimedString
  * @param out - Output object to accumulate text
@@ -690,7 +675,6 @@ async function forwardText(
       if (done) break;
 
       // Handle both string and TimedString
-      // Ref: Python io.py line 94-117 - TimedString is a str subclass
       // Note: In JS, TimedString is an interface, so we extract text property
       const deltaIsTimedString = isTimedString(delta);
       const textDelta = deltaIsTimedString ? delta.text : delta;
@@ -714,7 +698,6 @@ async function forwardText(
 
 /**
  * Perform text forwarding from a source stream to a text output.
- * Ref: Python generation.py - perform_text_forwarding equivalent
  *
  * @param source - The source stream of text or TimedString
  * @param controller - Abort controller

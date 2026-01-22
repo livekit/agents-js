@@ -57,7 +57,6 @@ interface RealtimeOptions {
 
 interface MessageGeneration {
   messageId: string;
-  // Ref: Python openai/realtime/realtime_model.py - text_ch can receive TimedString when start_time is provided
   textChannel: stream.StreamChannel<string | TimedString>;
   audioChannel: stream.StreamChannel<AudioFrame>;
   audioTranscript: string;
@@ -1104,7 +1103,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     const modalitiesFut = new Future<Modality[]>();
     const itemGeneration: MessageGeneration = {
       messageId: itemId,
-      // Ref: Python openai/realtime/realtime_model.py - text_ch can receive TimedString when start_time is provided
       textChannel: stream.createStreamChannel<string | TimedString>(),
       audioChannel: stream.createStreamChannel<AudioFrame>(),
       audioTranscript: '',
@@ -1273,7 +1271,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const itemId = event.item_id;
 
-    // Ref: Python openai/realtime/realtime_model.py line 1539-1544 - TimedString for transcript deltas
     // When start_time is provided, wrap the delta in a TimedString for aligned transcripts
     let delta: string | TimedString = event.delta;
     if (event.start_time !== undefined) {

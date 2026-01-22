@@ -639,7 +639,6 @@ export class TTS extends tts.TTS {
     const autoMode = opts.autoMode ?? true;
     const encoding = opts.encoding ?? DEFAULT_ENCODING;
     const sampleRate = sampleRateFromFormat(encoding);
-    // Ref: Python elevenlabs/tts.py line 150 - alignedTranscript based on syncAlignment
     const syncAlignment = opts.syncAlignment ?? true;
 
     super(sampleRate, 1, {
@@ -1017,13 +1016,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     const audioProcessTask = async () => {
       let lastFrame: AudioFrame | undefined;
-      // Ref: Python elevenlabs/tts.py - drain timed transcripts with audio frames
       let pendingTimedTranscripts: TimedString[] = [];
 
       const sendLastFrame = (final: boolean) => {
         if (lastFrame) {
           // Include timedTranscripts with the audio frame
-          // Ref: Python elevenlabs/tts.py line 730 - push_timed_transcript with audio
           this.queue.put({
             requestId,
             segmentId,

@@ -1245,7 +1245,6 @@ export class AgentActivity implements RecognitionHooks {
       let audioOut: _AudioOut | null = null;
       if (!audio) {
         // generate audio using TTS
-        // Ref: Python agent_activity.py line 1237-1250 - TTS inference with timed transcripts
         const [ttsTask, ttsGenData] = performTTSInference(
           (...args) => this.agent.ttsNode(...args),
           audioSource,
@@ -1382,7 +1381,6 @@ export class AgentActivity implements RecognitionHooks {
 
     if (audioOutput) {
       // Only tee the stream when we need TTS
-      // Ref: Python agent_activity.py line 1689-1695 - TTS inference with timed transcripts
       const [ttsTextInput, textOutput] = llmGenData.textStream.tee();
       llmOutput = textOutput;
       [ttsTask, ttsGenData] = performTTSInference(
@@ -1419,7 +1417,6 @@ export class AgentActivity implements RecognitionHooks {
     const replyStartedAt = Date.now();
 
     // Determine the transcription input source
-    // Ref: Python agent_activity.py line 1689-1695 - TTS aligned transcript switching logic
     let transcriptionInput: ReadableStream<string | TimedString> = llmOutput;
 
     // Check if we should use TTS aligned transcripts
@@ -1860,7 +1857,6 @@ export class AgentActivity implements RecognitionHooks {
           }
 
           const msgModalities = msg.modalities ? await msg.modalities : undefined;
-          // Ref: Python realtime.py line 32 - text_stream could be io.TimedString
           let ttsTextInput: ReadableStream<string | TimedString> | null = null;
           let trTextInput: ReadableStream<string | TimedString>;
 
@@ -1894,7 +1890,6 @@ export class AgentActivity implements RecognitionHooks {
             let realtimeAudioResult: ReadableStream<AudioFrame> | null = null;
 
             if (ttsTextInput) {
-              // Ref: Python agent_activity.py line 1882-1889 - TTS inference fallback for realtime
               const [ttsTask, ttsGenData] = performTTSInference(
                 (...args) => this.agent.ttsNode(...args),
                 ttsTextInput,

@@ -162,7 +162,6 @@ export class Agent<UserData = any> {
       this._tts = tts;
     }
 
-    // Ref: Python agent.py line 50, 80 - useTtsAlignedTranscript
     this._useTtsAlignedTranscript = useTtsAlignedTranscript;
 
     this._agentActivity = undefined;
@@ -436,8 +435,7 @@ export class Agent<UserData = any> {
               if (chunk === SynthesizeStream.END_OF_STREAM) {
                 break;
               }
-              // Ref: Python tts_node attaches timed transcripts to frame.userdata
-              // See Python tts/tts.py line 887 - frame.userdata[USERDATA_TIMED_TRANSCRIPT]
+              // Attach timed transcripts to frame.userdata
               if (chunk.timedTranscripts && chunk.timedTranscripts.length > 0) {
                 chunk.frame.userdata[USERDATA_TIMED_TRANSCRIPT] = chunk.timedTranscripts;
               }

@@ -37,7 +37,6 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 // Type for the TimedString interface
-// Ref: Python io.py line 94-117 - TimedString class definition
 // Note: Python TimedString is a str subclass; JS uses interface since
 // string primitives cannot have properties attached
 type TimedString = voice.TimedString;
@@ -52,7 +51,6 @@ class TimedTranscriptAgent extends voice.Agent {
     modelSettings: voice.ModelSettings,
   ): Promise<ReadableStream<string | TimedString> | null> {
     // Use IdentityTransform to create an output stream
-    // Ref: Python agent.py line 284-307 - transcription_node signature
     const outputStream = new stream.IdentityTransform<string | TimedString>();
     const writer = outputStream.writable.getWriter();
 
@@ -100,7 +98,6 @@ export default defineAgent({
       instructions:
         'You are a helpful assistant. Keep your responses brief so we can see the timed transcripts clearly.',
       // Enable TTS aligned transcripts for this agent
-      // Ref: Python agent.py line 50, 80 - use_tts_aligned_transcript option
       useTtsAlignedTranscript: true,
       tools: {
         getTime: llm.tool({
@@ -115,7 +112,6 @@ export default defineAgent({
 
     // Create a TTS that supports aligned transcripts
     // Cartesia with wordTimestamps enabled (default: true)
-    // Ref: Python cartesia/tts.py line 98 - word_timestamps option
     const tts = new cartesia.TTS({
       // wordTimestamps is true by default, but we're explicit here for demonstration
       wordTimestamps: true,
@@ -132,7 +128,6 @@ export default defineAgent({
       vad: ctx.proc.userData.vad! as silero.VAD,
       // You can also set useTtsAlignedTranscript at the session level
       // Agent-level setting takes precedence if both are set
-      // Ref: Python agent_session.py line 89, 159 - useTtsAlignedTranscript option
       // useTtsAlignedTranscript: true,
     });
 

@@ -72,7 +72,6 @@ const defaultTTSOptions: TTSOptions = {
   language: 'en',
   baseUrl: 'https://api.cartesia.ai',
   chunkTimeout: 5000,
-  // Ref: Python cartesia/tts.py line 98 - wordTimestamps defaults to true
   wordTimestamps: true,
 };
 
@@ -86,7 +85,6 @@ export class TTS extends tts.TTS {
       ...opts,
     };
 
-    // Ref: Python cartesia/tts.py line 130-133 - set alignedTranscript based on wordTimestamps
     super(resolvedOpts.sampleRate || defaultTTSOptions.sampleRate, NUM_CHANNELS, {
       streaming: true,
       alignedTranscript: resolvedOpts.wordTimestamps ?? true,
@@ -242,12 +240,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   protected async run() {
     const requestId = shortuuid();
     let closing = false;
-    // Ref: Python cartesia/tts.py line 465 - track when sentence stream is done
     // Only close WebSocket when both: 1) Cartesia returns done, AND 2) all sentences have been sent
     let sentenceStreamClosed = false;
 
     const sentenceStreamTask = async (ws: WebSocket) => {
-      // Ref: Python cartesia/tts.py - use streaming: true to include add_timestamps
       const packet = toCartesiaOptions(this.#opts, true);
       let sentenceCount = 0;
       for await (const event of this.#tokenizer) {
@@ -284,8 +280,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       this.#tokenizer.close();
     };
 
-    // Ref: inference/tts.ts pattern - use event channel and set up listeners ONCE
-    // to avoid missing messages during listener re-registration
+    // Use event channel and set up listeners ONCE to avoid missing messages during listener re-registration
     const recvTask = async (ws: WebSocket) => {
       const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
       
@@ -294,13 +289,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const eventChannel = stream.createStreamChannel<RawData>();
 
       let lastFrame: AudioFrame | undefined;
-      // Ref: Python cartesia/tts.py line 490-492 - collect timed transcripts
       let pendingTimedTranscripts: TimedString[] = [];
 
       const sendLastFrame = (segmentId: string, final: boolean) => {
         if (lastFrame && !this.queue.closed) {
           // Include timedTranscripts with the audio frame
-          // Ref: Python cartesia/tts.py line 490-492 - push_timed_transcript
           this.queue.put({
             requestId,
             segmentId,
@@ -323,7 +316,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       };
 
       // Set up WebSocket listeners ONCE (not in a loop)
-      // Ref: inference/tts.ts createWsListenerTask pattern
       const onMessage = (data: RawData) => {
         void eventChannel.write(data).catch((error: unknown) => {
           this.#logger.debug({ error }, 'Failed writing Cartesia event to channel (likely closed)');
@@ -376,7 +368,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
           const segmentId = serverMsg.context_id;
 
-          // Ref: Python cartesia/tts.py line 456-492 - parse word_timestamps
           // Process word timestamps if present (typed via Zod schema)
           if (this.#opts.wordTimestamps !== false && hasWordTimestamps(serverMsg)) {
             const wordTimestamps = serverMsg.word_timestamps;
@@ -419,7 +410,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               ws.close();
             }, this.#opts.chunkTimeout);
           } else if (isDoneMessage(serverMsg)) {
-            // Ref: Python cartesia/tts.py line 464-468 - only close if sentence stream is done
             // This ensures all sentences have been sent before closing
             if (sentenceStreamClosed) {
               for (const frame of bstream.flush()) {
@@ -455,7 +445,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       } finally {
         // IMPORTANT: Remove listeners so connection can be reused
-        // Ref: inference/tts.ts lines 422-426
         ws.off('message', onMessage);
         ws.off('close', onClose);
         ws.off('error', onError);
@@ -524,7 +513,6 @@ const toCartesiaOptions = (
     language: opts.language,
   };
 
-  // Ref: Python cartesia/tts.py line 578-579 - add_timestamps for streaming
   if (streaming && opts.wordTimestamps !== false) {
     result.add_timestamps = true;
   }
