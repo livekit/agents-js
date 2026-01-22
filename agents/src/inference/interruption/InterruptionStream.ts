@@ -95,8 +95,14 @@ export class InterruptionStreamBase {
 
   // Mutable transport options that can be updated via updateOptions()
   private transportOptions: {
+    baseUrl: string;
+    apiKey: string;
+    apiSecret: string;
+    sampleRate: number;
     threshold: number;
     minFrames: number;
+    timeout: number;
+    maxRetries: number;
   };
 
   constructor(model: AdaptiveInterruptionDetector, apiOptions: Partial<ApiConnectOptions>) {
@@ -111,8 +117,14 @@ export class InterruptionStreamBase {
 
     // Initialize mutable transport options
     this.transportOptions = {
+      baseUrl: this.options.baseUrl,
+      apiKey: this.options.apiKey,
+      apiSecret: this.options.apiSecret,
+      sampleRate: this.options.sampleRate,
       threshold: this.options.threshold,
       minFrames: this.options.minFrames,
+      timeout: this.options.inferenceTimeout,
+      maxRetries: this.apiOptions.maxRetries,
     };
 
     this.eventStream = this.setupTransform();
@@ -273,30 +285,15 @@ export class InterruptionStreamBase {
     );
 
     // Second transform: transport layer (HTTP or WebSocket based on useProxy)
-    // Use a getter for threshold/minFrames so HTTP transport picks up updated values
-    const getTransportOptions = () => ({
-      baseUrl: this.options.baseUrl,
-      apiKey: this.options.apiKey,
-      apiSecret: this.options.apiSecret,
-      sampleRate: this.options.sampleRate,
-      threshold: this.transportOptions.threshold,
-      minFrames: this.transportOptions.minFrames,
-      timeout: this.options.inferenceTimeout,
-      maxRetries: this.apiOptions.maxRetries,
-    });
+    const transportOptions = this.transportOptions;
 
     let transport: TransformStream<Int16Array | InterruptionEvent, InterruptionEvent>;
     if (this.options.useProxy) {
-      const wsResult = createWsTransport(
-        getTransportOptions(),
-        getState,
-        setState,
-        handleSpanUpdate,
-      );
+      const wsResult = createWsTransport(transportOptions, getState, setState, handleSpanUpdate);
       transport = wsResult.transport;
       this.wsReconnect = wsResult.reconnect;
     } else {
-      transport = createHttpTransport(getTransportOptions, getState, setState, handleSpanUpdate);
+      transport = createHttpTransport(transportOptions, getState, setState, handleSpanUpdate);
     }
 
     // Pipeline: input -> audioTransformer -> transport -> eventStream
@@ -346,7 +343,7 @@ export class InterruptionStreamBase {
 
   async flush(): Promise<void> {
     this.ensureStreamsNotEnded();
-    this.inputStream.write(InterruptionStreamSentinel.flush());
+    await this.inputStream.write(InterruptionStreamSentinel.flush());
   }
 
   async endInput(): Promise<void> {

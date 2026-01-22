@@ -95,11 +95,11 @@ export interface HttpTransportState {
  * This transport receives Int16Array audio slices and outputs InterruptionEvents.
  * Each audio slice triggers an HTTP POST request.
  *
- * @param getOptions - Getter function that returns current transport options.
- *                     This allows options like threshold/minFrames to be updated dynamically.
+ * @param options - Transport options object. This is read on each request, so mutations
+ *                  to threshold/minFrames will be picked up dynamically.
  */
 export function createHttpTransport(
-  getOptions: () => HttpTransportOptions,
+  options: HttpTransportOptions,
   getState: () => HttpTransportState,
   setState: (partial: Partial<HttpTransportState>) => void,
   updateUserSpeakingSpan?: (entry: InterruptionCacheEntry) => void,
@@ -117,9 +117,6 @@ export function createHttpTransport(
 
         const state = getState();
         if (!state.overlapSpeechStartedAt) return;
-
-        // Get current options on each request to pick up any updates
-        const options = getOptions();
 
         try {
           const resp = await predictHTTP(
