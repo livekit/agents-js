@@ -3,13 +3,10 @@ import { TransformStream } from 'stream/web';
 import WebSocket, { createWebSocketStream } from 'ws';
 import { log } from '../../log.js';
 import { createAccessToken } from '../utils.js';
+import { InterruptionCacheEntry } from './InterruptionCacheEntry.js';
 import { intervalForRetry } from './defaults.js';
-import {
-  type BoundedCache,
-  InterruptionCacheEntry,
-  type InterruptionEvent,
-  InterruptionEventType,
-} from './interruption.js';
+import { type InterruptionEvent, InterruptionEventType } from './types.js';
+import type { BoundedCache } from './utils.js';
 
 // WebSocket message types
 const MSG_SESSION_CREATE = 'session.create';

@@ -8,7 +8,8 @@ import {
   SAMPLE_RATE,
   interruptionOptionDefaults,
 } from './defaults.js';
-import { type InterruptionDetectionError, type InterruptionEvent } from './interruption.js';
+import type { InterruptionDetectionError } from './errors.js';
+import type { InterruptionEvent, InterruptionOptions } from './types.js';
 
 type InterruptionCallbacks = {
   userInterruptionDetected: (event: InterruptionEvent) => void;
@@ -16,21 +17,6 @@ type InterruptionCallbacks = {
   overlapSpeechEnded: (event: InterruptionEvent) => void;
   error: (error: InterruptionDetectionError) => void;
 };
-
-export interface InterruptionOptions {
-  sampleRate: number;
-  threshold: number;
-  minFrames: number;
-  maxAudioDurationInS: number;
-  audioPrefixDurationInS: number;
-  detectionIntervalInS: number;
-  inferenceTimeout: number;
-  minInterruptionDurationInS: number;
-  baseUrl: string;
-  apiKey: string;
-  apiSecret: string;
-  useProxy: boolean;
-}
 
 export type AdaptiveInterruptionDetectorOptions = Partial<InterruptionOptions>;
 

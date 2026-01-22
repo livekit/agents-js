@@ -2,13 +2,10 @@ import { ofetch } from 'ofetch';
 import { TransformStream } from 'stream/web';
 import { log } from '../../log.js';
 import { createAccessToken } from '../utils.js';
+import { InterruptionCacheEntry } from './InterruptionCacheEntry.js';
 import { intervalForRetry } from './defaults.js';
-import {
-  BoundedCache,
-  InterruptionCacheEntry,
-  type InterruptionEvent,
-  InterruptionEventType,
-} from './interruption.js';
+import { type InterruptionEvent, InterruptionEventType } from './types.js';
+import type { BoundedCache } from './utils.js';
 
 export interface PostOptions {
   baseUrl: string;

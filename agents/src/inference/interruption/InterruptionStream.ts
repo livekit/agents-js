@@ -4,49 +4,36 @@ import { type ReadableStream, TransformStream } from 'stream/web';
 import { log } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { traceTypes } from '../../telemetry/index.js';
-import type {
-  AdaptiveInterruptionDetector,
-  InterruptionOptions,
-} from './AdaptiveInterruptionDetector.js';
+import type { AdaptiveInterruptionDetector } from './AdaptiveInterruptionDetector.js';
+import { InterruptionCacheEntry } from './InterruptionCacheEntry.js';
 import { FRAMES_PER_SECOND, apiConnectDefaults } from './defaults.js';
+import type { InterruptionDetectionError } from './errors.js';
 import { createHttpTransport } from './http_transport.js';
 import {
-  BoundedCache,
-  InterruptionCacheEntry,
-  type InterruptionDetectionError,
+  type AgentSpeechEnded,
+  type AgentSpeechStarted,
+  type ApiConnectOptions,
+  type Flush,
   type InterruptionEvent,
   InterruptionEventType,
-} from './interruption.js';
+  type InterruptionOptions,
+  type InterruptionSentinel,
+  type OverlapSpeechEnded,
+  type OverlapSpeechStarted,
+} from './types.js';
+import { BoundedCache } from './utils.js';
 import { createWsTransport } from './ws_transport.js';
 
-export interface AgentSpeechStarted {
-  type: 'agent-speech-started';
-}
-
-export interface AgentSpeechEnded {
-  type: 'agent-speech-ended';
-}
-
-export interface OverlapSpeechStarted {
-  type: 'overlap-speech-started';
-  speechDurationInS: number;
-  userSpeakingSpan: Span;
-}
-
-export interface OverlapSpeechEnded {
-  type: 'overlap-speech-ended';
-}
-
-export interface Flush {
-  type: 'flush';
-}
-
-export type InterruptionSentinel =
-  | AgentSpeechStarted
-  | AgentSpeechEnded
-  | OverlapSpeechStarted
-  | OverlapSpeechEnded
-  | Flush;
+// Re-export sentinel types for backwards compatibility
+export type {
+  AgentSpeechEnded,
+  AgentSpeechStarted,
+  ApiConnectOptions,
+  Flush,
+  InterruptionSentinel,
+  OverlapSpeechEnded,
+  OverlapSpeechStarted,
+};
 
 export class InterruptionStreamSentinel {
   static speechStarted(): AgentSpeechStarted {
@@ -71,12 +58,6 @@ export class InterruptionStreamSentinel {
   static flush(): Flush {
     return { type: 'flush' };
   }
-}
-
-export interface ApiConnectOptions {
-  maxRetries: number;
-  retryInterval: number;
-  timeout: number;
 }
 
 function updateUserSpeakingSpan(span: Span, entry: InterruptionCacheEntry) {

@@ -1,5 +1,5 @@
-import type { InterruptionOptions } from './AdaptiveInterruptionDetector.js';
 import type { ApiConnectOptions } from './InterruptionStream.js';
+import type { InterruptionOptions } from './types.js';
 
 export const MIN_INTERRUPTION_DURATION_IN_S = 0.025 * 2; // 25ms per frame, 2 consecutive frames
 export const THRESHOLD = 0.65;
