@@ -1,5 +1,15 @@
 # @livekit/agents
 
+## 1.0.38
+
+### Patch Changes
+
+- Add support for noiseCancellation frameProcessors - [#966](https://github.com/livekit/agents-js/pull/966) ([@lukasIO](https://github.com/lukasIO))
+
+- refine timestamps in spans and recording alignment - [#982](https://github.com/livekit/agents-js/pull/982) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add aligned transcript support with word-level timing for STT plugins - [#984](https://github.com/livekit/agents-js/pull/984) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.37
 
 ### Patch Changes

@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-google
 
+## 1.0.38
+
+### Patch Changes
+
+- Fix Google realtime generation sequencing to avoid generateReply timeouts and align with Python plugin behavior. - [#989](https://github.com/livekit/agents-js/pull/989) ([@tillkolter](https://github.com/tillkolter))
+
+- Updated dependencies [[`44a0471681bf44eb49c0de7dc0448cd56adbb5a8`](https://github.com/livekit/agents-js/commit/44a0471681bf44eb49c0de7dc0448cd56adbb5a8), [`25df43af4969f0101eb98a30593a620b48d192a3`](https://github.com/livekit/agents-js/commit/25df43af4969f0101eb98a30593a620b48d192a3), [`989f16a8a0619ca75d96f3add1372d93552a828e`](https://github.com/livekit/agents-js/commit/989f16a8a0619ca75d96f3add1372d93552a828e)]:
+  - @livekit/agents@1.0.38
+
 ## 1.0.37
 
 ### Patch Changes
