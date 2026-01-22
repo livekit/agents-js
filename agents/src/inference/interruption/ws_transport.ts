@@ -183,13 +183,7 @@ export function createWsTransport(
               const message: WsMessage = JSON.parse(line);
               handleMessage(message);
             } catch {
-              // Try parsing the whole buffer as a single message
-              try {
-                const message: WsMessage = JSON.parse(line);
-                handleMessage(message);
-              } catch {
-                logger.warn({ line }, 'Failed to parse WebSocket message');
-              }
+              logger.warn({ line }, 'Failed to parse WebSocket message');
             }
           }
         }

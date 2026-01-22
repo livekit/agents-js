@@ -21,6 +21,7 @@ export function createStreamChannel<T, E extends Error = Error>(): StreamChannel
     write: (chunk: T) => writer.write(chunk),
     stream: () => transform.readable,
     abort: (error: E) => {
+      isClosed = true;
       return writer.abort(error);
     },
     close: async () => {
