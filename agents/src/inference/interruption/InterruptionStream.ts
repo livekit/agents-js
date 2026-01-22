@@ -299,8 +299,23 @@ export class InterruptionStreamBase {
       transport = createHttpTransport(transportOptions, getState, setState, handleSpanUpdate);
     }
 
+    const eventEmitter = new TransformStream<InterruptionEvent, InterruptionEvent>({
+      transform: (chunk, controller) => {
+        if (chunk.type === InterruptionEventType.INTERRUPTION) {
+          this.model.emit('userInterruptionDetected', chunk);
+        } else if (chunk.type === InterruptionEventType.OVERLAP_SPEECH_ENDED) {
+          this.model.emit('overlapSpeechEnded', chunk);
+        }
+        controller.enqueue(chunk);
+      },
+    });
+
     // Pipeline: input -> audioTransformer -> transport -> eventStream
-    return this.inputStream.stream().pipeThrough(audioTransformer).pipeThrough(transport);
+    return this.inputStream
+      .stream()
+      .pipeThrough(audioTransformer)
+      .pipeThrough(transport)
+      .pipeThrough(eventEmitter);
   }
 
   private ensureInputNotEnded() {
