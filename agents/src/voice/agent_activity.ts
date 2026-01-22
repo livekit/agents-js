@@ -697,7 +697,10 @@ export class AgentActivity implements RecognitionHooks {
       !this._currentSpeech.interrupted &&
       this._currentSpeech.allowInterruptions
     ) {
-      this.logger.info({ 'speech id': this._currentSpeech.id }, 'speech interrupted by audio activity');
+      this.logger.info(
+        { 'speech id': this._currentSpeech.id },
+        'speech interrupted by audio activity',
+      );
       this.realtimeSession?.interrupt();
       this._currentSpeech.interrupt();
     }
