@@ -37,7 +37,6 @@ export interface SynthesizedAudio {
 
 /**
  * Describes the capabilities of the TTS provider.
- *  tts/tts.py line 47-51
  *
  * @remarks
  * At present, only `streaming` is supplied to this interface, and the framework only supports
