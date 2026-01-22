@@ -516,15 +516,6 @@ export function performLLMInference(
   ];
 }
 
-/**
- * Perform TTS inference and return audio stream with optional timed transcripts.
- *
- * @param node - TTS node function
- * @param text - Input text stream (may contain TimedString objects, text is extracted)
- * @param modelSettings - Model settings
- * @param controller - Abort controller
- * @returns Tuple of [Task, _TTSGenerationData] containing audio stream and timed texts future
- */
 export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string | TimedString>,
@@ -665,14 +656,6 @@ export interface _TextOut {
   firstTextFut: Future;
 }
 
-/**
- * Forward text (or TimedString) from source to text output.
- *
- * @param source - The source stream of text or TimedString
- * @param out - Output object to accumulate text
- * @param signal - Abort signal
- * @param textOutput - Text output sink (can be null)
- */
 async function forwardText(
   source: ReadableStream<string | TimedString>,
   out: _TextOut,
@@ -688,8 +671,6 @@ async function forwardText(
       const { done, value: delta } = await reader.read();
       if (done) break;
 
-      // Handle both string and TimedString
-      // Note: In JS, TimedString is an interface, so we extract text property
       const deltaIsTimedString = isTimedString(delta);
       const textDelta = deltaIsTimedString ? delta.text : delta;
 
@@ -710,14 +691,6 @@ async function forwardText(
   }
 }
 
-/**
- * Perform text forwarding from a source stream to a text output.
- *
- * @param source - The source stream of text or TimedString
- * @param controller - Abort controller
- * @param textOutput - Text output sink (can be null)
- * @returns Tuple of [Task, _TextOut]
- */
 export function performTextForwarding(
   source: ReadableStream<string | TimedString>,
   controller: AbortController,

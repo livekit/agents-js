@@ -359,10 +359,6 @@ export class AgentActivity implements RecognitionHooks {
     return this.agentSession.options.allowInterruptions;
   }
 
-  /**
-   * Whether to use TTS-aligned transcripts for the transcription node input.
-   * Resolves from agent setting first, then falls back to session setting.
-   */
   get useTtsAlignedTranscript(): boolean {
     // Agent setting takes precedence over session setting
     return this.agent.useTtsAlignedTranscript ?? this.agentSession.useTtsAlignedTranscript;
@@ -1419,7 +1415,6 @@ export class AgentActivity implements RecognitionHooks {
     let transcriptionInput: ReadableStream<string | TimedString> = llmOutput;
 
     // Check if we should use TTS aligned transcripts
-    // Conditions: useTtsAlignedTranscript enabled, TTS has alignedTranscript capability, and we have ttsGenData
     if (this.useTtsAlignedTranscript && this.tts?.capabilities.alignedTranscript && ttsGenData) {
       // Wait for the timed texts stream to be resolved
       const timedTextsStream = await ttsGenData.timedTextsFut.await;

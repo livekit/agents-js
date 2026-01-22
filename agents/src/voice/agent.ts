@@ -72,12 +72,6 @@ export interface AgentOptions<UserData> {
   tts?: TTS | TTSModelString;
   allowInterruptions?: boolean;
   minConsecutiveSpeechDelay?: number;
-  /**
-   * Whether to use TTS-aligned transcripts for the transcription node input.
-   * When enabled and the TTS supports it, word-level timestamps from TTS
-   * will be forwarded to the transcription node instead of raw LLM text.
-   *  agent.py line 50, 80 - use_tts_aligned_transcript
-   */
   useTtsAlignedTranscript?: boolean;
 }
 
@@ -88,9 +82,6 @@ export class Agent<UserData = any> {
   private _vad?: VAD;
   private _llm?: LLM | RealtimeModel;
   private _tts?: TTS;
-  /**
-   * Whether to use TTS-aligned transcripts for the transcription node input.
-   */
   private _useTtsAlignedTranscript?: boolean;
 
   /** @internal */
@@ -182,9 +173,6 @@ export class Agent<UserData = any> {
     return this._tts;
   }
 
-  /**
-   * Whether to use TTS-aligned transcripts for the transcription node input.
-   */
   get useTtsAlignedTranscript(): boolean | undefined {
     return this._useTtsAlignedTranscript;
   }
@@ -213,15 +201,6 @@ export class Agent<UserData = any> {
 
   async onExit(): Promise<void> {}
 
-  /**
-   * Process transcription text (or TimedString) before outputting.
-   *
-   * @param text - The input text stream. When useTtsAlignedTranscript is enabled
-   *               and TTS supports aligned transcripts, this will be a stream of
-   *               TimedString objects with timing information.
-   * @param modelSettings - Model settings for the transcription node.
-   * @returns The processed text/TimedString stream, or null to disable transcription output.
-   */
   async transcriptionNode(
     text: ReadableStream<string | TimedString>,
     modelSettings: ModelSettings,

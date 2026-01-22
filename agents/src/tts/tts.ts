@@ -45,10 +45,7 @@ export interface SynthesizedAudio {
  */
 export interface TTSCapabilities {
   streaming: boolean;
-  /**
-   * Whether this TTS supports aligned transcripts (word-level timestamps).
-   *  tts/tts.py line 50 - TTSCapabilities.aligned_transcript
-   */
+  // Whether this TTS supports aligned transcripts (word-level timestamps).
   alignedTranscript?: boolean;
 }
 

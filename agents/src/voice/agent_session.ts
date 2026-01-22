@@ -73,11 +73,6 @@ export interface VoiceOptions {
   maxToolSteps: number;
   preemptiveGeneration: boolean;
   userAwayTimeout?: number | null;
-  /**
-   * Whether to use TTS-aligned transcripts for the transcription node input.
-   * When enabled and the TTS supports it, word-level timestamps from TTS
-   * will be forwarded to the transcription node instead of raw LLM text.
-   */
   useTtsAlignedTranscript: boolean;
 }
 
@@ -271,9 +266,6 @@ export class AgentSession<
     return this._connOptions;
   }
 
-  /**
-   * Whether to use TTS-aligned transcripts for the transcription node input.
-   */
   get useTtsAlignedTranscript(): boolean {
     return this.options.useTtsAlignedTranscript;
   }

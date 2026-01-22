@@ -35,8 +35,9 @@ interface TextData {
 
 /**
  * Tracks speaking rate data from TTS timing annotations.
+ * @internal Exported for testing purposes.
  */
-class SpeakingRateData {
+export class SpeakingRateData {
   /** Timestamps of the speaking rate. */
   timestamps: number[] = [];
   /** Speed at the timestamp. */
@@ -135,7 +136,6 @@ class SpeakingRateData {
 interface AudioData {
   pushedDuration: number;
   done: boolean;
-  /** Speaking rate data from TTS timing annotations. */
   annotatedRate: SpeakingRateData | null;
 }
 
@@ -196,7 +196,6 @@ class SegmentSynchronizerImpl {
     return this.textData.done;
   }
 
-  /** Check if there's pending text that hasn't been forwarded yet */
   get hasPendingText(): boolean {
     return this.textData.pushedText.length > 0;
   }
@@ -230,9 +229,6 @@ class SegmentSynchronizerImpl {
     this.audioData.done = true;
   }
 
-  /**
-   * Push text to the synchronizer.
-   */
   pushText(text: string | TimedString) {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.pushText called after close');
@@ -399,9 +395,6 @@ class SegmentSynchronizerImpl {
     }
   }
 
-  /**
-   * Calculate hyphens for text.
-   */
   private calcHyphens(text: string): string[] {
     const words = this.options.splitWords(text);
     const hyphens: string[] = [];
