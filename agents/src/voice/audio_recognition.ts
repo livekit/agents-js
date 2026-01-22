@@ -597,9 +597,11 @@ export class AudioRecognition {
             this.speaking = true;
 
             if (!this.userTurnSpan) {
+              const startTime = Date.now() - ev.speechDuration;
               this.userTurnSpan = tracer.startSpan({
                 name: 'user_turn',
                 context: this.rootSpanContext,
+                startTime,
               });
             }
 

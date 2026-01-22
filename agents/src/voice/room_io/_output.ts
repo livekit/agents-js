@@ -326,6 +326,7 @@ export class ParticipantAudioOutput extends AudioOutput {
   private pushedDuration: number = 0;
   private startedFuture: Future<void> = new Future();
   private interruptedFuture: Future<void> = new Future();
+  private firstFrameEmitted: boolean = false;
 
   constructor(room: Room, options: AudioOutputOptions) {
     super(options.sampleRate, undefined, { pause: true });
@@ -346,6 +347,11 @@ export class ParticipantAudioOutput extends AudioOutput {
     await this.startedFuture.await;
 
     super.captureFrame(frame);
+
+    if (!this.firstFrameEmitted) {
+      this.firstFrameEmitted = true;
+      this.onPlaybackStarted(Date.now());
+    }
 
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
@@ -382,6 +388,8 @@ export class ParticipantAudioOutput extends AudioOutput {
 
     this.pushedDuration = 0;
     this.interruptedFuture = new Future();
+    this.firstFrameEmitted = false;
+
     this.onPlaybackFinished({
       playbackPosition: pushedDuration,
       interrupted,
