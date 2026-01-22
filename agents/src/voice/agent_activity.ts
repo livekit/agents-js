@@ -730,8 +730,8 @@ export class AgentActivity implements RecognitionHooks {
     this.logger.info(
       {
         probability: ev.probability,
-        detectionDelay: ev.detectionDelay,
-        totalDuration: ev.totalDuration,
+        detectionDelayInS: ev.detectionDelayInS,
+        totalDurationInS: ev.totalDurationInS,
       },
       'adaptive interruption detected',
     );

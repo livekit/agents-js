@@ -8,11 +8,12 @@ import {
   SAMPLE_RATE,
   interruptionOptionDefaults,
 } from './defaults.js';
-import { type InterruptionDetectionError } from './interruption.js';
+import { type InterruptionDetectionError, type InterruptionEvent } from './interruption.js';
 
 type InterruptionCallbacks = {
-  interruptionDetected: () => void;
-  overlapSpeechDetected: () => void;
+  userInterruptionDetected: (event: InterruptionEvent) => void;
+  userNonInterruptionDetected: (event: InterruptionEvent) => void;
+  overlapSpeechEnded: (event: InterruptionEvent) => void;
   error: (error: InterruptionDetectionError) => void;
 };
 
@@ -35,8 +36,10 @@ export type AdaptiveInterruptionDetectorOptions = Partial<InterruptionOptions>;
 
 export class AdaptiveInterruptionDetector extends (EventEmitter as new () => TypedEventEmitter<InterruptionCallbacks>) {
   options: InterruptionOptions;
+  private readonly _label: string;
   private logger = log();
-  private streams: WeakSet<object>; // TODO: Union of InterruptionHttpStream | InterruptionWebSocketStream
+  // Use Set instead of WeakSet to allow iteration for propagating option updates
+  private streams: Set<InterruptionStreamBase> = new Set();
 
   constructor(options: AdaptiveInterruptionDetectorOptions = {}) {
     super();
@@ -46,7 +49,6 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
       baseUrl,
       apiKey,
       apiSecret,
-      useProxy: useProxyArg,
       audioPrefixDurationInS,
       threshold,
       detectionIntervalInS,
@@ -86,7 +88,8 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
 
       useProxy = true;
     } else {
-      useProxy = useProxyArg ?? false;
+      // Force useProxy to false for custom URLs (matching Python behavior)
+      useProxy = false;
     }
 
     this.options = {
@@ -104,7 +107,7 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
       minInterruptionDurationInS,
     };
 
-    this.streams = new WeakSet();
+    this._label = `${this.constructor.name}`;
 
     this.logger.debug(
       {
@@ -122,6 +125,41 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
   }
 
   /**
+   * The model identifier for this detector.
+   */
+  get model(): string {
+    return 'adaptive interruption';
+  }
+
+  /**
+   * The provider identifier for this detector.
+   */
+  get provider(): string {
+    return 'livekit';
+  }
+
+  /**
+   * The label for this detector instance.
+   */
+  get label(): string {
+    return this._label;
+  }
+
+  /**
+   * The sample rate used for audio processing.
+   */
+  get sampleRate(): number {
+    return this.options.sampleRate;
+  }
+
+  /**
+   * Emit an error event from the detector.
+   */
+  emitError(error: InterruptionDetectionError): void {
+    this.emit('error', error);
+  }
+
+  /**
    * Creates a new InterruptionStreamBase for internal use.
    * The stream can receive audio frames and sentinels via pushFrame().
    * Use this when you need direct access to the stream for pushing frames.
@@ -129,27 +167,37 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
   createStream(): InterruptionStreamBase {
     const streamBase = new InterruptionStreamBase(this, {});
     this.streams.add(streamBase);
-    // const transformer = new TransformStream<InterruptionEvent, InterruptionEvent>({
-    //   transform: (chunk, controller) => {
-    //     log().info('adaptive interruption detection stream transformer', chunk);
-    //     if (chunk.type === InterruptionEventType.INTERRUPTION) {
-    //       this.emit('interruptionDetected'); // TODO payload
-    //     } else if (chunk.type === InterruptionEventType.OVERLAP_SPEECH_ENDED) {
-    //       this.emit('overlapSpeechDetected'); // TODO payload
-    //     }
-    //     controller.enqueue(chunk);
-    //   },
-    // });
-    // streamBase.stream().pipeThrough(transformer);
     return streamBase;
   }
 
-  updateOptions(options: { threshold?: number; minInterruptionDurationInS?: number }): void {
+  /**
+   * Remove a stream from tracking (called when stream is closed).
+   */
+  removeStream(stream: InterruptionStreamBase): void {
+    this.streams.delete(stream);
+  }
+
+  /**
+   * Update options for the detector and propagate to all active streams.
+   * For WebSocket streams, this triggers a reconnection with new settings.
+   */
+  async updateOptions(options: {
+    threshold?: number;
+    minInterruptionDurationInS?: number;
+  }): Promise<void> {
     if (options.threshold !== undefined) {
       this.options.threshold = options.threshold;
     }
     if (options.minInterruptionDurationInS !== undefined) {
+      this.options.minInterruptionDurationInS = options.minInterruptionDurationInS;
       this.options.minFrames = Math.ceil(options.minInterruptionDurationInS * FRAMES_PER_SECOND);
     }
+
+    // Propagate option updates to all active streams (matching Python behavior)
+    const updatePromises: Promise<void>[] = [];
+    for (const stream of this.streams) {
+      updatePromises.push(stream.updateOptions(options));
+    }
+    await Promise.all(updatePromises);
   }
 }

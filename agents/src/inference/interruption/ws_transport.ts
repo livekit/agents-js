@@ -3,7 +3,9 @@ import { TransformStream } from 'stream/web';
 import WebSocket, { createWebSocketStream } from 'ws';
 import { log } from '../../log.js';
 import { createAccessToken } from '../utils.js';
+import { intervalForRetry } from './defaults.js';
 import {
+  type BoundedCache,
   InterruptionCacheEntry,
   type InterruptionEvent,
   InterruptionEventType,
@@ -26,12 +28,13 @@ export interface WsTransportOptions {
   threshold: number;
   minFrames: number;
   timeout: number;
+  maxRetries?: number;
 }
 
 export interface WsTransportState {
   overlapSpeechStarted: boolean;
   overlapSpeechStartedAt: number | undefined;
-  cache: Map<number, InterruptionCacheEntry>;
+  cache: BoundedCache<number, InterruptionCacheEntry>;
 }
 
 interface WsMessage {
@@ -92,18 +95,24 @@ async function connectWebSocket(options: WsTransportOptions): Promise<{
   return { readable, writable, ws };
 }
 
+export interface WsTransportResult {
+  transport: TransformStream<Int16Array | InterruptionEvent, InterruptionEvent>;
+  reconnect: () => Promise<void>;
+}
+
 /**
  * Creates a WebSocket transport TransformStream for interruption detection.
  *
  * This transport receives Int16Array audio slices and outputs InterruptionEvents.
- * It maintains a persistent WebSocket connection.
+ * It maintains a persistent WebSocket connection with automatic retry on failure.
+ * Returns both the transport and a reconnect function for option updates.
  */
 export function createWsTransport(
   options: WsTransportOptions,
   getState: () => WsTransportState,
   setState: (partial: Partial<WsTransportState>) => void,
   updateUserSpeakingSpan?: (entry: InterruptionCacheEntry) => void,
-): TransformStream<Int16Array | InterruptionEvent, InterruptionEvent> {
+): WsTransportResult {
   const logger = log();
   let ws: WebSocket | null = null;
   let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -113,25 +122,45 @@ export function createWsTransport(
   async function ensureConnection(): Promise<void> {
     if (ws && ws.readyState === WebSocket.OPEN) return;
 
-    const conn = await connectWebSocket(options);
-    ws = conn.ws;
-    writer = conn.writable.getWriter();
+    const maxRetries = options.maxRetries ?? 3;
+    let lastError: Error | null = null;
 
-    // Send session.create message
-    const sessionCreateMsg = JSON.stringify({
-      type: MSG_SESSION_CREATE,
-      settings: {
-        sample_rate: options.sampleRate,
-        num_channels: 1,
-        threshold: options.threshold,
-        min_frames: options.minFrames,
-        encoding: 's16le',
-      },
-    });
-    await writer.write(new TextEncoder().encode(sessionCreateMsg));
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const conn = await connectWebSocket(options);
+        ws = conn.ws;
+        writer = conn.writable.getWriter();
 
-    // Start reading responses
-    readerTask = processResponses(conn.readable);
+        // Send session.create message
+        const sessionCreateMsg = JSON.stringify({
+          type: MSG_SESSION_CREATE,
+          settings: {
+            sample_rate: options.sampleRate,
+            num_channels: 1,
+            threshold: options.threshold,
+            min_frames: options.minFrames,
+            encoding: 's16le',
+          },
+        });
+        await writer.write(new TextEncoder().encode(sessionCreateMsg));
+
+        // Start reading responses
+        readerTask = processResponses(conn.readable);
+        return;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < maxRetries) {
+          const delay = intervalForRetry(attempt);
+          logger.warn(
+            { attempt, delay, err: lastError.message },
+            'WebSocket connection failed, retrying',
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    throw lastError ?? new Error('Failed to connect to WebSocket after retries');
   }
 
   async function processResponses(readable: ReadableStream<Uint8Array>): Promise<void> {
@@ -314,12 +343,24 @@ export function createWsTransport(
       const closeMsg = JSON.stringify({ type: MSG_SESSION_CLOSE });
       await writer.write(new TextEncoder().encode(closeMsg));
       writer.releaseLock();
+      writer = null;
     }
     ws?.close(1000);
+    ws = null;
     await readerTask;
+    readerTask = null;
   }
 
-  return new TransformStream<Int16Array | InterruptionEvent, InterruptionEvent>(
+  /**
+   * Reconnect the WebSocket with updated options.
+   * This is called when options are updated via updateOptions().
+   */
+  async function reconnect(): Promise<void> {
+    await close();
+    // Connection will be re-established on next sendAudioData call
+  }
+
+  const transport = new TransformStream<Int16Array | InterruptionEvent, InterruptionEvent>(
     {
       start(controller) {
         outputController = controller;
@@ -349,4 +390,6 @@ export function createWsTransport(
     { highWaterMark: 2 },
     { highWaterMark: 2 },
   );
+
+  return { transport, reconnect };
 }

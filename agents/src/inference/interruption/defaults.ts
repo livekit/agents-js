@@ -10,13 +10,28 @@ export const REMOTE_INFERENCE_TIMEOUT_IN_S = 1.0;
 export const SAMPLE_RATE = 16000;
 export const FRAMES_PER_SECOND = 40;
 export const FRAME_DURATION_IN_S = 0.025; // 25ms per frame
-export const DEFAULT_BASE_URL = 'http://localhost:8080';
+export const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 
 export const apiConnectDefaults: ApiConnectOptions = {
   maxRetries: 3,
   retryInterval: 2_000,
   timeout: 10_000,
 } as const;
+
+/**
+ * Calculate the retry interval using exponential backoff with jitter.
+ * Matches the Python implementation's _interval_for_retry behavior.
+ */
+export function intervalForRetry(
+  attempt: number,
+  baseInterval: number = apiConnectDefaults.retryInterval,
+): number {
+  // Exponential backoff: baseInterval * 2^attempt with some jitter
+  const exponentialDelay = baseInterval * Math.pow(2, attempt);
+  // Add jitter (0-25% of the delay)
+  const jitter = exponentialDelay * Math.random() * 0.25;
+  return exponentialDelay + jitter;
+}
 
 export const interruptionOptionDefaults: InterruptionOptions = {
   sampleRate: SAMPLE_RATE,

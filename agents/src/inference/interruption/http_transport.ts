@@ -2,7 +2,9 @@ import { ofetch } from 'ofetch';
 import { TransformStream } from 'stream/web';
 import { log } from '../../log.js';
 import { createAccessToken } from '../utils.js';
+import { intervalForRetry } from './defaults.js';
 import {
+  BoundedCache,
   InterruptionCacheEntry,
   type InterruptionEvent,
   InterruptionEventType,
@@ -13,6 +15,7 @@ export interface PostOptions {
   token: string;
   signal?: AbortSignal;
   timeout?: number;
+  maxRetries?: number;
 }
 
 export interface PredictOptions {
@@ -44,13 +47,15 @@ export async function predictHTTP(
   url.searchParams.append('min_frames', predictOptions.minFrames.toFixed());
   url.searchParams.append('created_at', createdAt.toFixed());
 
+  let retryCount = 0;
   const { created_at, is_bargein, probabilities } = await ofetch<PredictEndpointResponse>(
     url.toString(),
     {
-      retry: 1,
+      retry: options.maxRetries ?? 3,
       retryDelay: () => {
-        // TODO backoff
-        return 500;
+        const delay = intervalForRetry(retryCount);
+        retryCount++;
+        return delay;
       },
       headers: {
         'Content-Type': 'application/octet-stream',
@@ -78,12 +83,13 @@ export interface HttpTransportOptions {
   threshold: number;
   minFrames: number;
   timeout: number;
+  maxRetries?: number;
 }
 
 export interface HttpTransportState {
   overlapSpeechStarted: boolean;
   overlapSpeechStartedAt: number | undefined;
-  cache: Map<number, InterruptionCacheEntry>;
+  cache: BoundedCache<number, InterruptionCacheEntry>;
 }
 
 /**
@@ -119,6 +125,7 @@ export function createHttpTransport(
             {
               baseUrl: options.baseUrl,
               timeout: options.timeout,
+              maxRetries: options.maxRetries,
               token: await createAccessToken(options.apiKey, options.apiSecret),
             },
           );

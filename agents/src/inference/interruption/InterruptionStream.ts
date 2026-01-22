@@ -8,9 +8,10 @@ import type {
   AdaptiveInterruptionDetector,
   InterruptionOptions,
 } from './AdaptiveInterruptionDetector.js';
-import { apiConnectDefaults } from './defaults.js';
+import { FRAMES_PER_SECOND, apiConnectDefaults } from './defaults.js';
 import { createHttpTransport } from './http_transport.js';
 import {
+  BoundedCache,
   InterruptionCacheEntry,
   type InterruptionDetectionError,
   type InterruptionEvent,
@@ -108,6 +109,9 @@ export class InterruptionStreamBase {
 
   private logger = log();
 
+  // Store reconnect function for WebSocket transport
+  private wsReconnect?: () => Promise<void>;
+
   constructor(model: AdaptiveInterruptionDetector, apiOptions: Partial<ApiConnectOptions>) {
     this.inputStream = createStreamChannel<
       InterruptionSentinel | AudioFrame,
@@ -115,10 +119,30 @@ export class InterruptionStreamBase {
     >();
 
     this.model = model;
-    this.options = model.options;
+    this.options = { ...model.options };
     this.apiOptions = { ...apiConnectDefaults, ...apiOptions };
 
     this.eventStream = this.setupTransform();
+  }
+
+  /**
+   * Update stream options. For WebSocket transport, this triggers a reconnection.
+   */
+  async updateOptions(options: {
+    threshold?: number;
+    minInterruptionDurationInS?: number;
+  }): Promise<void> {
+    if (options.threshold !== undefined) {
+      this.options.threshold = options.threshold;
+    }
+    if (options.minInterruptionDurationInS !== undefined) {
+      this.options.minInterruptionDurationInS = options.minInterruptionDurationInS;
+      this.options.minFrames = Math.ceil(options.minInterruptionDurationInS * FRAMES_PER_SECOND);
+    }
+    // Trigger WebSocket reconnection if using proxy (WebSocket transport)
+    if (this.options.useProxy && this.wsReconnect) {
+      await this.wsReconnect();
+    }
   }
 
   private setupTransform(): ReadableStream<InterruptionEvent> {
@@ -126,7 +150,8 @@ export class InterruptionStreamBase {
     let startIdx = 0;
     let accumulatedSamples = 0;
     let overlapSpeechStarted = false;
-    const cache = new Map<number, InterruptionCacheEntry>();
+    // Use BoundedCache with max_len=10 to prevent unbounded memory growth
+    const cache = new BoundedCache<number, InterruptionCacheEntry>(10);
     const inferenceS16Data = new Int16Array(
       Math.ceil(this.options.maxAudioDurationInS * this.options.sampleRate),
     ).fill(0);
@@ -219,12 +244,14 @@ export class InterruptionStreamBase {
             this.logger.debug('overlap speech ended');
             if (overlapSpeechStarted) {
               this.userSpeakingSpan = undefined;
-              let latestEntry = Array.from(cache.values()).at(-1);
+              // Use pop with predicate to get only completed requests (matching Python behavior)
+              // This ensures we don't return incomplete/in-flight requests as the "final" result
+              let latestEntry = cache.pop(
+                (entry) => entry.totalDurationInS !== undefined && entry.totalDurationInS > 0,
+              );
               if (!latestEntry) {
                 this.logger.debug('no request made for overlap speech');
                 latestEntry = InterruptionCacheEntry.default();
-              } else {
-                cache.delete(latestEntry.createdAt);
               }
               const event: InterruptionEvent = {
                 type: InterruptionEventType.OVERLAP_SPEECH_ENDED,
@@ -259,11 +286,17 @@ export class InterruptionStreamBase {
       threshold: this.options.threshold,
       minFrames: this.options.minFrames,
       timeout: this.options.inferenceTimeout,
+      maxRetries: this.apiOptions.maxRetries,
     };
 
-    const transport = this.options.useProxy
-      ? createWsTransport(transportOptions, getState, setState, handleSpanUpdate)
-      : createHttpTransport(transportOptions, getState, setState, handleSpanUpdate);
+    let transport: TransformStream<Int16Array | InterruptionEvent, InterruptionEvent>;
+    if (this.options.useProxy) {
+      const wsResult = createWsTransport(transportOptions, getState, setState, handleSpanUpdate);
+      transport = wsResult.transport;
+      this.wsReconnect = wsResult.reconnect;
+    } else {
+      transport = createHttpTransport(transportOptions, getState, setState, handleSpanUpdate);
+    }
 
     // Pipeline: input -> audioTransformer -> transport -> eventStream
     return this.inputStream.stream().pipeThrough(audioTransformer).pipeThrough(transport);
