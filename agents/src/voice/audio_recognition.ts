@@ -5,12 +5,6 @@ import { AudioFrame } from '@livekit/rtc-node';
 import type { Context, Span } from '@opentelemetry/api';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
-import type { AdaptiveInterruptionDetector } from '../inference/interruption/AdaptiveInterruptionDetector.js';
-import {
-  InterruptionStreamBase,
-  InterruptionStreamSentinel,
-} from '../inference/interruption/InterruptionStream.js';
-import type { InterruptionEvent } from '../inference/interruption/interruption.js';
 import { type ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream, isStreamReaderReleaseError } from '../stream/deferred_stream.js';
@@ -45,7 +39,6 @@ export interface RecognitionHooks {
   onFinalTranscript: (ev: SpeechEvent) => void;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
   onPreemptiveGeneration: (info: PreemptiveGenerationInfo) => void;
-  onInterruption: (ev: InterruptionEvent) => void;
 
   retrieveChatCtx: () => ChatContext;
 }
@@ -60,7 +53,6 @@ export interface AudioRecognitionOptions {
   recognitionHooks: RecognitionHooks;
   stt?: STTNode;
   vad?: VAD;
-  interruptionDetector?: AdaptiveInterruptionDetector;
   turnDetector?: _TurnDetector;
   turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
   minEndpointingDelay: number;
@@ -96,7 +88,6 @@ export class AudioRecognition {
 
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
-  private interruptionInputStream: ReadableStream<AudioFrame>;
   private silenceAudioTransform = new IdentityTransform<AudioFrame>();
   private silenceAudioWriter: WritableStreamDefaultWriter<AudioFrame>;
 
@@ -105,19 +96,11 @@ export class AudioRecognition {
   private commitUserTurnTask?: Task<void>;
   private vadTask?: Task<void>;
   private sttTask?: Task<void>;
-  private interruptionTask?: Task<void>;
-
-  // interruption detection
-  private interruptionDetector?: AdaptiveInterruptionDetector;
-  private interruptionStream?: InterruptionStreamBase;
-  private interruptionEnabled = false;
-  private agentSpeaking = false;
 
   constructor(opts: AudioRecognitionOptions) {
     this.hooks = opts.recognitionHooks;
     this.stt = opts.stt;
     this.vad = opts.vad;
-    this.interruptionDetector = opts.interruptionDetector;
     this.turnDetector = opts.turnDetector;
     this.turnDetectionMode = opts.turnDetectionMode;
     this.minEndpointingDelay = opts.minEndpointingDelay;
@@ -125,15 +108,10 @@ export class AudioRecognition {
     this.lastLanguage = undefined;
     this.rootSpanContext = opts.rootSpanContext;
 
-    // Interruption detection is only enabled if both detector and VAD are provided
-    this.interruptionEnabled = this.interruptionDetector !== undefined && this.vad !== undefined;
-
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
-    const [vadInputStream, rest] = this.deferredInputStream.stream.tee();
-    const [sttInputStream, interruptionInputStream] = rest.tee();
+    const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
     this.vadInputStream = vadInputStream;
     this.sttInputStream = mergeReadableStreams(sttInputStream, this.silenceAudioTransform.readable);
-    this.interruptionInputStream = interruptionInputStream;
     this.silenceAudioWriter = this.silenceAudioTransform.writable.getWriter();
   }
 
@@ -157,15 +135,6 @@ export class AudioRecognition {
     this.sttTask.result.catch((err) => {
       this.logger.error(`Error running STT task: ${err}`);
     });
-
-    if (this.interruptionEnabled && this.interruptionDetector) {
-      this.interruptionTask = Task.from(({ signal }) =>
-        this.createInterruptionTask(this.interruptionDetector!, signal),
-      );
-      this.interruptionTask.result.catch((err) => {
-        this.logger.error(`Error running interruption task: ${err}`);
-      });
-    }
   }
 
   private async onSTTEvent(ev: SpeechEvent) {
@@ -610,12 +579,6 @@ export class AudioRecognition {
               this.sampleRate = ev.frames[0].sampleRate;
             }
 
-            // If agent is speaking, user speech is overlap - trigger interruption detection
-            if (this.agentSpeaking) {
-              // TODO re-enable check for this.interruptionEnabled
-              this.onStartOfOverlapSpeech(ev.speechDuration, this.userTurnSpan);
-            }
-
             this.bounceEOUTask?.cancel();
             break;
           case VADEventType.INFERENCE_DONE:
@@ -636,11 +599,6 @@ export class AudioRecognition {
             // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
             this.speaking = false;
 
-            // If we were in overlap speech (agent speaking + user speaking), end it
-            if (this.agentSpeaking && this.interruptionEnabled) {
-              this.onEndOfOverlapSpeech();
-            }
-
             if (
               this.vadBaseTurnDetection ||
               (this.turnDetectionMode === 'stt' && this.userTurnCommitted)
@@ -656,123 +614,6 @@ export class AudioRecognition {
     } finally {
       this.logger.debug('VAD task closed');
     }
-  }
-
-  private async createInterruptionTask(
-    interruptionDetector: AdaptiveInterruptionDetector,
-    signal: AbortSignal,
-  ) {
-    // Create the interruption stream from the detector
-    this.interruptionStream = interruptionDetector.createStream();
-
-    // Forward audio frames to the interruption stream
-    const reader = this.interruptionInputStream.getReader();
-
-    const forwardTask = (async () => {
-      try {
-        while (!signal.aborted) {
-          const { done, value: frame } = await reader.read();
-          if (done) break;
-          await this.interruptionStream?.pushFrame(frame);
-        }
-      } catch (e) {
-        if (!signal.aborted) {
-          this.logger.error(e, 'Error forwarding audio to interruption stream');
-        }
-      } finally {
-        reader.releaseLock();
-      }
-    })();
-
-    // Read interruption events from the stream
-    const eventStream = this.interruptionStream.stream();
-    const eventReader = eventStream.getReader();
-
-    const abortHandler = () => {
-      eventReader.releaseLock();
-      this.interruptionStream?.close();
-      signal.removeEventListener('abort', abortHandler);
-    };
-    signal.addEventListener('abort', abortHandler);
-
-    try {
-      while (!signal.aborted) {
-        const { done, value: ev } = await eventReader.read();
-        if (done) break;
-
-        this.logger.info({ type: ev.type, probability: ev.probability }, 'Interruption event');
-        this.hooks.onInterruption(ev);
-      }
-    } catch (e) {
-      if (!signal.aborted) {
-        this.logger.error(e, 'Error in interruption task');
-      }
-    } finally {
-      this.logger.debug('Interruption task closed');
-      await forwardTask;
-    }
-  }
-
-  /**
-   * Called when the agent starts speaking.
-   * Enables interruption detection by sending the agent-speech-started sentinel.
-   */
-  onStartOfAgentSpeech(): void {
-    this.agentSpeaking = true;
-
-    if (!this.interruptionEnabled || !this.interruptionStream) {
-      return;
-    }
-
-    this.interruptionStream.pushFrame(InterruptionStreamSentinel.speechStarted());
-  }
-
-  /**
-   * Called when the agent stops speaking.
-   * Disables interruption detection by sending the agent-speech-ended sentinel.
-   */
-  onEndOfAgentSpeech(): void {
-    if (!this.interruptionEnabled || !this.interruptionStream) {
-      this.agentSpeaking = false;
-      return;
-    }
-
-    this.interruptionStream.pushFrame(InterruptionStreamSentinel.speechEnded());
-
-    if (this.agentSpeaking) {
-      // No interruption was detected, end the overlap inference (idempotent)
-      this.onEndOfOverlapSpeech();
-    }
-
-    this.agentSpeaking = false;
-  }
-
-  /**
-   * Called when user starts speaking while agent is speaking (overlap speech).
-   * This triggers the interruption detection inference.
-   */
-  onStartOfOverlapSpeech(speechDuration: number, userSpeakingSpan?: Span): void {
-    if (!this.interruptionEnabled || !this.interruptionStream) {
-      return;
-    }
-
-    if (this.agentSpeaking && userSpeakingSpan) {
-      this.interruptionStream.pushFrame(
-        InterruptionStreamSentinel.overlapSpeechStarted(speechDuration, userSpeakingSpan),
-      );
-    }
-  }
-
-  /**
-   * Called when user stops speaking during overlap.
-   * This ends the interruption detection inference for this overlap period.
-   */
-  onEndOfOverlapSpeech(): void {
-    if (!this.interruptionEnabled || !this.interruptionStream) {
-      return;
-    }
-
-    this.interruptionStream.pushFrame(InterruptionStreamSentinel.overlapSpeechEnded());
   }
 
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {
@@ -847,8 +688,6 @@ export class AudioRecognition {
     await this.sttTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
     await this.bounceEOUTask?.cancelAndWait();
-    await this.interruptionTask?.cancelAndWait();
-    await this.interruptionStream?.close();
   }
 
   private _endUserTurnSpan({
