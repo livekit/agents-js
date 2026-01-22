@@ -3,16 +3,31 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
-import { webSocketStream } from './ws_transport.js';
+import { webSocketToStream } from './ws_transport.js';
 
-describe('webSocketStream', () => {
+/** Helper to create a WebSocket server and return its port */
+async function createServer(): Promise<{ wss: WebSocketServer; port: number }> {
+  const wss = await new Promise<WebSocketServer>((resolve) => {
+    const server: WebSocketServer = new WebSocketServer({ port: 0 }, () => resolve(server));
+  });
+  const port = (wss.address() as { port: number }).port;
+  return { wss, port };
+}
+
+/** Helper to create a connected WebSocket client */
+async function createClient(port: number): Promise<WebSocket> {
+  const ws = new WebSocket(`ws://localhost:${port}`);
+  // await new Promise<void>((resolve, reject) => {
+  //   ws.once('open', resolve);
+  //   ws.once('error', reject);
+  // });
+  return ws;
+}
+
+describe('webSocketToStream', () => {
   describe('readable stream', () => {
     it('receives messages from the WebSocket', async () => {
-      const wss = await new Promise<WebSocketServer>((resolve) => {
-        const server: WebSocketServer = new WebSocketServer({ port: 0 }, () => resolve(server));
-      });
-
-      const port = (wss.address() as { port: number }).port;
+      const { wss, port } = await createServer();
 
       wss.on('connection', (serverWs) => {
         serverWs.send('hello');
@@ -20,7 +35,8 @@ describe('webSocketStream', () => {
         serverWs.close();
       });
 
-      const { readable } = webSocketStream(`ws://localhost:${port}`);
+      const ws = await createClient(port);
+      const { readable } = webSocketToStream(ws);
       const reader = readable.getReader();
 
       const messages: string[] = [];
@@ -40,11 +56,7 @@ describe('webSocketStream', () => {
     });
 
     it('handles binary messages', async () => {
-      const wss = await new Promise<WebSocketServer>((resolve) => {
-        const server: WebSocketServer = new WebSocketServer({ port: 0 }, () => resolve(server));
-      });
-
-      const port = (wss.address() as { port: number }).port;
+      const { wss, port } = await createServer();
 
       const binaryData = new Uint8Array([1, 2, 3, 4, 5]);
 
@@ -53,7 +65,8 @@ describe('webSocketStream', () => {
         serverWs.close();
       });
 
-      const { readable } = webSocketStream(`ws://localhost:${port}`);
+      const ws = await createClient(port);
+      const { readable } = webSocketToStream(ws);
       const reader = readable.getReader();
 
       const chunks: Uint8Array[] = [];
@@ -74,16 +87,14 @@ describe('webSocketStream', () => {
     });
 
     it('handles empty stream when connection closes immediately', async () => {
-      const wss = await new Promise<WebSocketServer>((resolve) => {
-        const server: WebSocketServer = new WebSocketServer({ port: 0 }, () => resolve(server));
-      });
-
-      const port = (wss.address() as { port: number }).port;
+      const { wss, port } = await createServer();
 
       wss.on('connection', (serverWs) => {
         serverWs.close();
       });
-      const { readable } = webSocketStream(`ws://localhost:${port}`);
+
+      const ws = await createClient(port);
+      const { readable } = webSocketToStream(ws);
       const reader = readable.getReader();
 
       const chunks: Uint8Array[] = [];
@@ -105,16 +116,7 @@ describe('webSocketStream', () => {
 
   describe('writable stream', () => {
     it('sends messages through the WebSocket', async () => {
-      const wss = await new Promise<WebSocketServer>((resolve) => {
-        const server: WebSocketServer = new WebSocketServer({ port: 0 }, () => resolve(server));
-      });
-
-      const port = (wss.address() as { port: number }).port;
-      const ws = new WebSocket(`ws://localhost:${port}`);
-
-      const connected = new Promise<void>((resolve) => {
-        ws.on('open', resolve);
-      });
+      const { wss, port } = await createServer();
 
       const messagesReceived: string[] = [];
       const serverClosed = new Promise<void>((resolve) => {
@@ -126,8 +128,8 @@ describe('webSocketStream', () => {
         });
       });
 
-      await connected;
-      const { writable } = webSocketStream(`ws://localhost:${port}`);
+      const ws = await createClient(port);
+      const { writable } = webSocketToStream(ws);
       const writer = writable.getWriter();
 
       await writer.write(new TextEncoder().encode('hello'));
@@ -142,11 +144,7 @@ describe('webSocketStream', () => {
     });
 
     it('sends binary data through the WebSocket', async () => {
-      const wss = await new Promise<WebSocketServer>((resolve) => {
-        const server: WebSocketServer = new WebSocketServer({ port: 0 }, () => resolve(server));
-      });
-
-      const port = (wss.address() as { port: number }).port;
+      const { wss, port } = await createServer();
 
       const chunksReceived: Buffer[] = [];
       const serverClosed = new Promise<void>((resolve) => {
@@ -158,7 +156,8 @@ describe('webSocketStream', () => {
         });
       });
 
-      const { writable } = webSocketStream(`ws://localhost:${port}`);
+      const ws = await createClient(port);
+      const { writable } = webSocketToStream(ws);
       const writer = writable.getWriter();
 
       const binaryData = new Uint8Array([10, 20, 30, 40, 50]);
@@ -172,46 +171,11 @@ describe('webSocketStream', () => {
 
       wss.close();
     });
-
-    it('buffers writes if readyState is CONNECTING', async () => {
-      const wss = await new Promise<WebSocketServer>((resolve) => {
-        const server: WebSocketServer = new WebSocketServer({ port: 0 }, () => resolve(server));
-      });
-
-      const port = (wss.address() as { port: number }).port;
-
-      const { writable } = webSocketStream(`ws://localhost:${port}`);
-      const writer = writable.getWriter();
-
-      const messagesReceived: string[] = [];
-      const serverClosed = new Promise<void>((resolve) => {
-        wss.on('connection', (serverWs) => {
-          serverWs.on('message', (data) => {
-            messagesReceived.push(data.toString());
-          });
-          serverWs.on('close', resolve);
-        });
-      });
-
-      // These writes should be buffered
-      await writer.write(new TextEncoder().encode('buffered message'));
-      await writer.close();
-
-      await serverClosed;
-
-      expect(messagesReceived).toEqual(['buffered message']);
-
-      wss.close();
-    });
   });
 
   describe('bidirectional communication', () => {
     it('supports echo pattern with readable and writable', async () => {
-      const wss = await new Promise<WebSocketServer>((resolve) => {
-        const server: WebSocketServer = new WebSocketServer({ port: 0 }, () => resolve(server));
-      });
-
-      const port = (wss.address() as { port: number }).port;
+      const { wss, port } = await createServer();
 
       // Server echoes messages back
       wss.on('connection', (serverWs) => {
@@ -220,7 +184,8 @@ describe('webSocketStream', () => {
         });
       });
 
-      const { readable, writable } = webSocketStream(`ws://localhost:${port}`);
+      const ws = await createClient(port);
+      const { readable, writable } = webSocketToStream(ws);
       const writer = writable.getWriter();
       const reader = readable.getReader();
 
@@ -244,11 +209,7 @@ describe('webSocketStream', () => {
 
   describe('error handling', () => {
     it('readable stream ends when WebSocket closes unexpectedly', async () => {
-      const wss = await new Promise<WebSocketServer>((resolve) => {
-        const server: WebSocketServer = new WebSocketServer({ port: 0 }, () => resolve(server));
-      });
-
-      const port = (wss.address() as { port: number }).port;
+      const { wss, port } = await createServer();
 
       wss.on('connection', (serverWs) => {
         serverWs.send('before close');
@@ -256,7 +217,8 @@ describe('webSocketStream', () => {
         serverWs.terminate();
       });
 
-      const { readable } = webSocketStream(`ws://localhost:${port}`);
+      const ws = await createClient(port);
+      const { readable } = webSocketToStream(ws);
       const reader = readable.getReader();
 
       const chunks: string[] = [];
@@ -266,8 +228,7 @@ describe('webSocketStream', () => {
           if (done) break;
           chunks.push(Buffer.from(value).toString());
         }
-      } catch (error) {
-        console.error(error);
+      } catch {
         // Connection terminated, stream may error
       } finally {
         reader.releaseLock();

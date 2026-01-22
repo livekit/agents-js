@@ -43,6 +43,19 @@ interface WsMessage {
   error?: string;
 }
 
+export function webSocketToStream(ws: WebSocket) {
+  const duplex = createWebSocketStream(ws);
+  duplex.on('error', (err) => log().error({ err }, 'WebSocket stream error'));
+
+  // End the write side when the read side ends
+  duplex.on('end', () => duplex.end());
+
+  const writable = Writable.toWeb(duplex) as WritableStream<Uint8Array>;
+  const readable = Readable.toWeb(duplex) as ReadableStream<Uint8Array>;
+
+  return { readable, writable };
+}
+
 /**
  * Creates a WebSocket connection and returns web-standard streams.
  */
@@ -59,6 +72,8 @@ async function connectWebSocket(options: WsTransportOptions): Promise<{
     headers: { Authorization: `Bearer ${token}` },
   });
 
+  const { readable, writable } = webSocketToStream(ws);
+
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(
       () => reject(new Error('WebSocket connection timeout')),
@@ -73,15 +88,6 @@ async function connectWebSocket(options: WsTransportOptions): Promise<{
       reject(err);
     });
   });
-
-  const duplex = createWebSocketStream(ws);
-  duplex.on('error', (err) => log().error({ err }, 'WebSocket stream error'));
-
-  // End the write side when the read side ends
-  duplex.on('end', () => duplex.end());
-
-  const writable = Writable.toWeb(duplex) as WritableStream<Uint8Array>;
-  const readable = Readable.toWeb(duplex) as ReadableStream<Uint8Array>;
 
   return { readable, writable, ws };
 }
@@ -192,11 +198,11 @@ export function createWsTransport(
           const entry = new InterruptionCacheEntry({
             createdAt,
             speechInput: existing?.speechInput,
-            totalDuration: (performance.now() - createdAt) / 1000,
+            totalDurationInS: (performance.now() - createdAt) / 1000,
             probabilities: message.probabilities,
             isInterruption: true,
-            predictionDuration: message.prediction_duration ?? 0,
-            detectionDelay: Date.now() - state.overlapSpeechStartedAt,
+            predictionDurationInS: message.prediction_duration ?? 0,
+            detectionDelayInS: (Date.now() - state.overlapSpeechStartedAt) / 1000,
           });
           state.cache.set(createdAt, entry);
 
@@ -206,9 +212,9 @@ export function createWsTransport(
 
           logger.debug(
             {
-              totalDuration: entry.totalDuration,
-              predictionDuration: entry.predictionDuration,
-              detectionDelay: entry.detectionDelay,
+              totalDurationInS: entry.totalDurationInS,
+              predictionDurationInS: entry.predictionDurationInS,
+              detectionDelayInS: entry.detectionDelayInS,
               probability: entry.probability,
             },
             'interruption detected',
@@ -218,12 +224,12 @@ export function createWsTransport(
             type: InterruptionEventType.INTERRUPTION,
             timestamp: Date.now(),
             isInterruption: true,
-            totalDuration: entry.totalDuration,
-            predictionDuration: entry.predictionDuration,
+            totalDurationInS: entry.totalDurationInS,
+            predictionDurationInS: entry.predictionDurationInS,
             overlapSpeechStartedAt: state.overlapSpeechStartedAt,
             speechInput: entry.speechInput,
             probabilities: entry.probabilities,
-            detectionDelay: entry.detectionDelay,
+            detectionDelayInS: entry.detectionDelayInS,
             probability: entry.probability,
           };
 
@@ -240,18 +246,18 @@ export function createWsTransport(
           const entry = new InterruptionCacheEntry({
             createdAt,
             speechInput: existing?.speechInput,
-            totalDuration: (performance.now() - createdAt) / 1000,
-            predictionDuration: message.prediction_duration ?? 0,
+            totalDurationInS: (performance.now() - createdAt) / 1000,
+            predictionDurationInS: message.prediction_duration ?? 0,
             probabilities: message.probabilities,
             isInterruption: message.is_bargein ?? false,
-            detectionDelay: Date.now() - state.overlapSpeechStartedAt,
+            detectionDelayInS: (Date.now() - state.overlapSpeechStartedAt) / 1000,
           });
           state.cache.set(createdAt, entry);
 
           logger.trace(
             {
-              totalDuration: entry.totalDuration,
-              predictionDuration: entry.predictionDuration,
+              totalDurationInS: entry.totalDurationInS,
+              predictionDurationInS: entry.predictionDurationInS,
             },
             'interruption inference done',
           );

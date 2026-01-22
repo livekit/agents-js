@@ -2,7 +2,6 @@ import { ofetch } from 'ofetch';
 import { TransformStream } from 'stream/web';
 import { log } from '../../log.js';
 import { createAccessToken } from '../utils.js';
-import type { ApiConnectOptions } from './InterruptionStream.js';
 import {
   InterruptionCacheEntry,
   type InterruptionEvent,
@@ -38,7 +37,6 @@ export async function predictHTTP(
   data: Int16Array,
   predictOptions: PredictOptions,
   options: PostOptions,
-  apiOptions: ApiConnectOptions,
 ): Promise<PredictResponse> {
   const createdAt = performance.now();
   const url = new URL(`/bargein`, options.baseUrl);
@@ -49,10 +47,10 @@ export async function predictHTTP(
   const { created_at, is_bargein, probabilities } = await ofetch<PredictEndpointResponse>(
     url.toString(),
     {
-      retry: apiOptions.maxRetries,
+      retry: 1,
       retryDelay: () => {
         // TODO backoff
-        return apiOptions.retryInterval;
+        return 500;
       },
       headers: {
         'Content-Type': 'application/octet-stream',
@@ -131,9 +129,9 @@ export function createHttpTransport(
             probabilities,
             isInterruption: isBargein,
             speechInput: chunk,
-            totalDuration: (performance.now() - createdAt) / 1000,
-            detectionDelay: Date.now() - state.overlapSpeechStartedAt,
-            predictionDuration: predictionDurationInS,
+            totalDurationInS: (performance.now() - createdAt) / 1000,
+            detectionDelayInS: (Date.now() - state.overlapSpeechStartedAt) / 1000,
+            predictionDurationInS,
           });
           state.cache.set(createdAt, entry);
 
@@ -148,13 +146,16 @@ export function createHttpTransport(
               isInterruption: entry.isInterruption,
               speechInput: entry.speechInput,
               probabilities: entry.probabilities,
-              totalDuration: entry.totalDuration,
-              predictionDuration: entry.predictionDuration,
-              detectionDelay: entry.detectionDelay,
+              totalDurationInS: entry.totalDurationInS,
+              predictionDurationInS: entry.predictionDurationInS,
+              detectionDelayInS: entry.detectionDelayInS,
               probability: entry.probability,
             };
             logger.debug(
-              { detectionDelay: entry.detectionDelay, totalDuration: entry.totalDuration },
+              {
+                detectionDelayInS: entry.detectionDelayInS,
+                totalDurationInS: entry.totalDurationInS,
+              },
               'interruption detected',
             );
             setState({ overlapSpeechStarted: false });

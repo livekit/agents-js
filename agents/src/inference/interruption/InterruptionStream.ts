@@ -84,9 +84,9 @@ function updateUserSpeakingSpan(span: Span, entry: InterruptionCacheEntry) {
     (entry.isInterruption ?? false).toString().toLowerCase(),
   );
   span.setAttribute(traceTypes.ATTR_INTERRUPTION_PROBABILITY, entry.probability);
-  span.setAttribute(traceTypes.ATTR_INTERRUPTION_TOTAL_DURATION, entry.totalDuration);
-  span.setAttribute(traceTypes.ATTR_INTERRUPTION_PREDICTION_DURATION, entry.predictionDuration);
-  span.setAttribute(traceTypes.ATTR_INTERRUPTION_DETECTION_DELAY, entry.detectionDelay);
+  span.setAttribute(traceTypes.ATTR_INTERRUPTION_TOTAL_DURATION, entry.totalDurationInS);
+  span.setAttribute(traceTypes.ATTR_INTERRUPTION_PREDICTION_DURATION, entry.predictionDurationInS);
+  span.setAttribute(traceTypes.ATTR_INTERRUPTION_DETECTION_DELAY, entry.detectionDelayInS);
 }
 
 export class InterruptionStreamBase {
@@ -233,9 +233,9 @@ export class InterruptionStreamBase {
                 overlapSpeechStartedAt: this.overlapSpeechStartedAt,
                 speechInput: latestEntry.speechInput,
                 probabilities: latestEntry.probabilities,
-                totalDuration: latestEntry.totalDuration,
-                detectionDelay: latestEntry.detectionDelay,
-                predictionDuration: latestEntry.predictionDuration,
+                totalDurationInS: latestEntry.totalDurationInS,
+                detectionDelayInS: latestEntry.detectionDelayInS,
+                predictionDurationInS: latestEntry.predictionDurationInS,
                 probability: latestEntry.probability,
               };
               controller.enqueue(event);

@@ -9,9 +9,9 @@ export interface InterruptionEvent {
   type: InterruptionEventType;
   timestamp: number;
   isInterruption: boolean;
-  totalDuration: number;
-  predictionDuration: number;
-  detectionDelay: number;
+  totalDurationInS: number;
+  predictionDurationInS: number;
+  detectionDelayInS: number;
   overlapSpeechStartedAt?: number;
   speechInput?: Int16Array;
   probabilities?: number[];
@@ -55,9 +55,9 @@ function estimateProbability(
  */
 export class InterruptionCacheEntry {
   readonly createdAt: number;
-  readonly totalDuration: number;
-  readonly predictionDuration: number;
-  readonly detectionDelay: number;
+  readonly totalDurationInS: number;
+  readonly predictionDurationInS: number;
+  readonly detectionDelayInS: number;
   readonly speechInput?: Int16Array;
   readonly probabilities?: number[];
   readonly isInterruption?: boolean;
@@ -66,16 +66,16 @@ export class InterruptionCacheEntry {
   constructor(params: {
     createdAt: number;
     speechInput?: Int16Array;
-    totalDuration?: number;
-    predictionDuration?: number;
-    detectionDelay?: number;
+    totalDurationInS?: number;
+    predictionDurationInS?: number;
+    detectionDelayInS?: number;
     probabilities?: number[];
     isInterruption?: boolean;
   }) {
     this.createdAt = params.createdAt;
-    this.totalDuration = params.totalDuration ?? 0;
-    this.predictionDuration = params.predictionDuration ?? 0;
-    this.detectionDelay = params.detectionDelay ?? 0;
+    this.totalDurationInS = params.totalDurationInS ?? 0;
+    this.predictionDurationInS = params.predictionDurationInS ?? 0;
+    this.detectionDelayInS = params.detectionDelayInS ?? 0;
     this.speechInput = params.speechInput;
     this.probabilities = params.probabilities;
     this.isInterruption = params.isInterruption;
