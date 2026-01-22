@@ -194,12 +194,13 @@ export class AgentActivity implements RecognitionHooks {
     if (
       !this.vad &&
       this.stt &&
+      !this.stt.capabilities.streaming &&
       this.llm instanceof LLM &&
       this.allowInterruptions &&
       this.turnDetectionMode === undefined
     ) {
       this.logger.warn(
-        'VAD is not set. Enabling VAD is recommended when using LLM and STT ' +
+        'VAD is not set. Enabling VAD is recommended when using LLM and non-streaming STT ' +
           'for more responsive interruption handling.',
       );
     }
@@ -659,12 +660,14 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
+    if (ev.speechDuration >= this.agentSession.options.minInterruptionDuration) {
+      this.interruptByAudioActivity();
+    }
+  }
+
+  private interruptByAudioActivity(): void {
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
       // skip speech handle interruption if server side turn detection is enabled
-      return;
-    }
-
-    if (ev.speechDuration < this.agentSession.options.minInterruptionDuration) {
       return;
     }
 
@@ -694,7 +697,7 @@ export class AgentActivity implements RecognitionHooks {
       !this._currentSpeech.interrupted &&
       this._currentSpeech.allowInterruptions
     ) {
-      this.logger.info({ 'speech id': this._currentSpeech.id }, 'speech interrupted by VAD');
+      this.logger.info({ 'speech id': this._currentSpeech.id }, 'speech interrupted by audio activity');
       this.realtimeSession?.interrupt();
       this._currentSpeech.interrupt();
     }
@@ -715,6 +718,10 @@ export class AgentActivity implements RecognitionHooks {
         // TODO(AJS-106): add multi participant support
       }),
     );
+
+    if (ev.alternatives![0].text) {
+      this.interruptByAudioActivity();
+    }
   }
 
   onFinalTranscript(ev: SpeechEvent): void {
@@ -1982,7 +1989,6 @@ export class AgentActivity implements RecognitionHooks {
 
     if (audioOutput) {
       await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
-      this.agentSession._updateAgentState('listening');
     }
 
     if (speechHandle.interrupted) {
@@ -2069,17 +2075,15 @@ export class AgentActivity implements RecognitionHooks {
     speechHandle._markGenerationDone();
     // TODO(brian): close tees
 
-    toolOutput.firstToolStartedFuture.await.finally(() => {
-      this.agentSession._updateAgentState('thinking');
-    });
-
     await executeToolsTask.result;
 
+    if (toolOutput.output.length > 0) {
+      this.agentSession._updateAgentState('thinking');
+    } else if (this.agentSession.agentState === 'speaking') {
+      this.agentSession._updateAgentState('listening');
+    }
+
     if (toolOutput.output.length === 0) {
-      // return to listening state for thinking-only turns (no audio output, no tools)
-      if (!speechHandle.interrupted) {
-        this.agentSession._updateAgentState('listening');
-      }
       return;
     }
 
