@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
 import { type ReadableStream, TransformStream } from 'stream/web';

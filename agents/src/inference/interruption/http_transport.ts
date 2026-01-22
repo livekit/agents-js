@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import { ofetch } from 'ofetch';
 import { TransformStream } from 'stream/web';
 import { log } from '../../log.js';
