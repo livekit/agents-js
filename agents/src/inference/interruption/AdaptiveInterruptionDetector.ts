@@ -18,7 +18,7 @@ type InterruptionCallbacks = {
   error: (error: InterruptionDetectionError) => void;
 };
 
-export type AdaptiveInterruptionDetectorOptions = Partial<InterruptionOptions>;
+export type AdaptiveInterruptionDetectorOptions = Omit<Partial<InterruptionOptions>, 'useProxy'>;
 
 export class AdaptiveInterruptionDetector extends (EventEmitter as new () => TypedEventEmitter<InterruptionCallbacks>) {
   options: InterruptionOptions;

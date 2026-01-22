@@ -93,6 +93,12 @@ export class InterruptionStreamBase {
   // Store reconnect function for WebSocket transport
   private wsReconnect?: () => Promise<void>;
 
+  // Mutable transport options that can be updated via updateOptions()
+  private transportOptions: {
+    threshold: number;
+    minFrames: number;
+  };
+
   constructor(model: AdaptiveInterruptionDetector, apiOptions: Partial<ApiConnectOptions>) {
     this.inputStream = createStreamChannel<
       InterruptionSentinel | AudioFrame,
@@ -102,6 +108,12 @@ export class InterruptionStreamBase {
     this.model = model;
     this.options = { ...model.options };
     this.apiOptions = { ...apiConnectDefaults, ...apiOptions };
+
+    // Initialize mutable transport options
+    this.transportOptions = {
+      threshold: this.options.threshold,
+      minFrames: this.options.minFrames,
+    };
 
     this.eventStream = this.setupTransform();
   }
@@ -115,10 +127,12 @@ export class InterruptionStreamBase {
   }): Promise<void> {
     if (options.threshold !== undefined) {
       this.options.threshold = options.threshold;
+      this.transportOptions.threshold = options.threshold;
     }
     if (options.minInterruptionDurationInS !== undefined) {
       this.options.minInterruptionDurationInS = options.minInterruptionDurationInS;
       this.options.minFrames = Math.ceil(options.minInterruptionDurationInS * FRAMES_PER_SECOND);
+      this.transportOptions.minFrames = this.options.minFrames;
     }
     // Trigger WebSocket reconnection if using proxy (WebSocket transport)
     if (this.options.useProxy && this.wsReconnect) {
@@ -259,24 +273,30 @@ export class InterruptionStreamBase {
     );
 
     // Second transform: transport layer (HTTP or WebSocket based on useProxy)
-    const transportOptions = {
+    // Use a getter for threshold/minFrames so HTTP transport picks up updated values
+    const getTransportOptions = () => ({
       baseUrl: this.options.baseUrl,
       apiKey: this.options.apiKey,
       apiSecret: this.options.apiSecret,
       sampleRate: this.options.sampleRate,
-      threshold: this.options.threshold,
-      minFrames: this.options.minFrames,
+      threshold: this.transportOptions.threshold,
+      minFrames: this.transportOptions.minFrames,
       timeout: this.options.inferenceTimeout,
       maxRetries: this.apiOptions.maxRetries,
-    };
+    });
 
     let transport: TransformStream<Int16Array | InterruptionEvent, InterruptionEvent>;
     if (this.options.useProxy) {
-      const wsResult = createWsTransport(transportOptions, getState, setState, handleSpanUpdate);
+      const wsResult = createWsTransport(
+        getTransportOptions(),
+        getState,
+        setState,
+        handleSpanUpdate,
+      );
       transport = wsResult.transport;
       this.wsReconnect = wsResult.reconnect;
     } else {
-      transport = createHttpTransport(transportOptions, getState, setState, handleSpanUpdate);
+      transport = createHttpTransport(getTransportOptions, getState, setState, handleSpanUpdate);
     }
 
     // Pipeline: input -> audioTransformer -> transport -> eventStream
