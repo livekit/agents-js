@@ -197,7 +197,7 @@ class SegmentSynchronizerImpl {
   }
 
   get hasPendingText(): boolean {
-    return this.textData.pushedText.length > 0;
+    return this.textData.pushedText.length > this.textData.forwardedText.length;
   }
 
   get readable(): ReadableStream<string> {

@@ -405,7 +405,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             timeout = setTimeout(() => {
               // cartesia chunk timeout quite often, so we make it a debug log
               this.#logger.debug(
-                `Cartesia WebSocket STT chunk stream timeout after ${this.#opts.chunkTimeout}ms`,
+                `Cartesia WebSocket TTS chunk stream timeout after ${this.#opts.chunkTimeout}ms`,
               );
               ws.close();
             }, this.#opts.chunkTimeout);

@@ -574,9 +574,10 @@ export function performTTSInference(
 
       ttsStreamReader = ttsStream.getReader();
 
-      // pushed_duration stays CONSTANT within one inference. It represents
-      // the cumulative duration from PREVIOUS TTS inferences. We capture it here before
-      // the loop to match Python's behavior.
+      // In Python, perform_tts_inference has a while loop processing multiple input segments
+      // (separated by FlushSentinel), with pushed_duration accumulating across segments.
+      // JS currently only does single inference, so initialPushedDuration is always 0.
+      // TODO: Add FlushSentinel + multi-segment loop
       const initialPushedDuration = pushedDuration;
 
       while (true) {

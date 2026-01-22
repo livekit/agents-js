@@ -1416,8 +1416,13 @@ export class AgentActivity implements RecognitionHooks {
 
     // Check if we should use TTS aligned transcripts
     if (this.useTtsAlignedTranscript && this.tts?.capabilities.alignedTranscript && ttsGenData) {
-      // Wait for the timed texts stream to be resolved
-      const timedTextsStream = await ttsGenData.timedTextsFut.await;
+      // Race timedTextsFut with ttsTask to avoid hanging if TTS fails before resolving the future
+      const timedTextsStream = await Promise.race([
+        ttsGenData.timedTextsFut.await,
+        ttsTask?.result.catch(() =>
+          this.logger.warn('TTS task failed before resolving timedTextsFut'),
+        ) ?? Promise.resolve(),
+      ]);
       if (timedTextsStream) {
         this.logger.debug('Using TTS aligned transcripts for transcription node input');
         transcriptionInput = timedTextsStream;
