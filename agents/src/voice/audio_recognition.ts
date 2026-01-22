@@ -2,17 +2,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
-import type { Context, Span } from '@opentelemetry/api';
+import type { Context } from '@opentelemetry/api';
+import type { Span } from '@opentelemetry/sdk-trace-node';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
+import type { AdaptiveInterruptionDetector } from '../inference/interruption/AdaptiveInterruptionDetector.js';
+import {
+  type InterruptionStreamBase,
+  InterruptionStreamSentinel,
+} from '../inference/interruption/InterruptionStream.js';
+import type { InterruptionEvent, InterruptionSentinel } from '../inference/interruption/types.js';
 import { type ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream, isStreamReaderReleaseError } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
+import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
-import { Task, delay } from '../utils.js';
+import { Queue, Task, delay } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
@@ -32,6 +40,7 @@ export interface PreemptiveGenerationInfo {
 }
 
 export interface RecognitionHooks {
+  onInterruption: (ev: InterruptionEvent) => void;
   onStartOfSpeech: (ev: VADEvent) => void;
   onVADInferenceDone: (ev: VADEvent) => void;
   onEndOfSpeech: (ev: VADEvent) => void;
@@ -55,6 +64,7 @@ export interface AudioRecognitionOptions {
   vad?: VAD;
   turnDetector?: _TurnDetector;
   turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
+  interruptionDetection?: AdaptiveInterruptionDetector;
   minEndpointingDelay: number;
   maxEndpointingDelay: number;
   rootSpanContext?: Context;
@@ -97,6 +107,15 @@ export class AudioRecognition {
   private vadTask?: Task<void>;
   private sttTask?: Task<void>;
 
+  // interruption detection
+  private interruptionDetection?: AdaptiveInterruptionDetector;
+  private inputStartedAt?: number;
+  private ignoreUserTranscriptUntil?: number;
+  private transcriptBuffer: Queue<SpeechEvent>;
+  private isInterruptionEnabled: boolean;
+  private isAgentSpeaking: boolean;
+  private interruptionStreamChannel: StreamChannel<InterruptionSentinel | AudioFrame>;
+
   constructor(opts: AudioRecognitionOptions) {
     this.hooks = opts.recognitionHooks;
     this.stt = opts.stt;
@@ -113,6 +132,12 @@ export class AudioRecognition {
     this.vadInputStream = vadInputStream;
     this.sttInputStream = mergeReadableStreams(sttInputStream, this.silenceAudioTransform.readable);
     this.silenceAudioWriter = this.silenceAudioTransform.writable.getWriter();
+
+    this.interruptionDetection = opts.interruptionDetection;
+    this.transcriptBuffer = new Queue<SpeechEvent>();
+    this.isInterruptionEnabled = !!(opts.interruptionDetection || opts.vad);
+    this.isAgentSpeaking = false;
+    this.interruptionStreamChannel = createStreamChannel();
   }
 
   /**
@@ -135,6 +160,50 @@ export class AudioRecognition {
     this.sttTask.result.catch((err) => {
       this.logger.error(`Error running STT task: ${err}`);
     });
+
+    this.updateInterruptionDetection(this.interruptionDetection);
+  }
+
+  async stop() {
+    await this.sttTask?.cancelAndWait();
+    await this.vadTask?.cancelAndWait();
+    this.updateInterruptionDetection(undefined);
+  }
+
+  async onStartOfAgentSpeech() {
+    this.isAgentSpeaking = true;
+    return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());
+  }
+
+  /** Start interruption inference when agent is speaking and overlap speech starts. */
+  async onStartOfOverlapSpeech(speechDurationInS?: number, userSpeakingSpan?: Span) {
+    if (this.isAgentSpeaking) {
+      this.trySendInterruptionSentinel(
+        InterruptionStreamSentinel.overlapSpeechStarted(speechDurationInS, userSpeakingSpan),
+      );
+    }
+  }
+
+  async onEndOfOverlapSpeech(userSpeakingSpan?: Span) {
+    if (this.isInterruptionEnabled) {
+      return;
+    }
+    // Only set is_interruption=false if not already set (avoid overwriting true from interruption detection)
+    if (userSpeakingSpan && userSpeakingSpan.isRecording()) {
+      if (!userSpeakingSpan.attributes[traceTypes.ATTR_IS_INTERRUPTION]) {
+        userSpeakingSpan.setAttribute(traceTypes.ATTR_IS_INTERRUPTION, 'false');
+      }
+    } else {
+      userSpeakingSpan?.setAttribute(traceTypes.ATTR_IS_INTERRUPTION, 'false');
+    }
+
+    return this.trySendInterruptionSentinel(InterruptionStreamSentinel.overlapSpeechEnded());
+  }
+
+  private async trySendInterruptionSentinel(frame: AudioFrame | InterruptionSentinel) {
+    if (this.isInterruptionEnabled && !this.interruptionStreamChannel.closed) {
+      this.interruptionStreamChannel.write(frame);
+    }
   }
 
   private async onSTTEvent(ev: SpeechEvent) {

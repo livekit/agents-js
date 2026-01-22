@@ -39,17 +39,17 @@ export type {
 };
 
 export class InterruptionStreamSentinel {
-  static speechStarted(): AgentSpeechStarted {
+  static agentSpeechStarted(): AgentSpeechStarted {
     return { type: 'agent-speech-started' };
   }
 
-  static speechEnded(): AgentSpeechEnded {
+  static agentSpeechEnded(): AgentSpeechEnded {
     return { type: 'agent-speech-ended' };
   }
 
   static overlapSpeechStarted(
-    speechDurationInS: number,
-    userSpeakingSpan: Span,
+    speechDurationInS?: number,
+    userSpeakingSpan?: Span,
   ): OverlapSpeechStarted {
     return { type: 'overlap-speech-started', speechDurationInS, userSpeakingSpan };
   }
