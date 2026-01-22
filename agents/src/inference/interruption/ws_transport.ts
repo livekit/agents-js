@@ -75,16 +75,17 @@ async function connectWebSocket(options: WsTransportOptions): Promise<{
   const { readable, writable } = webSocketToStream(ws);
 
   await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error('WebSocket connection timeout')),
-      options.timeout,
-    );
+    const timeout = setTimeout(() => {
+      ws.terminate();
+      reject(new Error('WebSocket connection timeout'));
+    }, options.timeout);
     ws.once('open', () => {
       clearTimeout(timeout);
       resolve();
     });
     ws.once('error', (err) => {
       clearTimeout(timeout);
+      ws.terminate();
       reject(err);
     });
   });
