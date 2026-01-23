@@ -348,8 +348,12 @@ export class AgentServer {
           return { healthy: false, message: 'inference process not running' };
         }
 
-        // Check if we've lost connection to LiveKit (session closed while not intentionally closing)
-        if (!this.#closed && !this.#connecting && !this.#session) {
+        // Check if we've lost connection to LiveKit (session closed unintentionally)
+        if (
+          !this.#closed &&
+          !this.#connecting &&
+          (!this.#session || this.#session.readyState !== WebSocket.OPEN)
+        ) {
           return { healthy: false, message: 'not connected to livekit' };
         }
 
