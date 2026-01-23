@@ -111,7 +111,7 @@ export class AudioRecognition {
   private interruptionDetection?: AdaptiveInterruptionDetector;
   private inputStartedAt?: number;
   private ignoreUserTranscriptUntil?: number;
-  private transcriptBuffer: Queue<SpeechEvent>;
+  private transcriptBuffer: SpeechEvent[];
   private isInterruptionEnabled: boolean;
   private isAgentSpeaking: boolean;
   private interruptionStreamChannel: StreamChannel<InterruptionSentinel | AudioFrame>;
@@ -134,7 +134,7 @@ export class AudioRecognition {
     this.silenceAudioWriter = this.silenceAudioTransform.writable.getWriter();
 
     this.interruptionDetection = opts.interruptionDetection;
-    this.transcriptBuffer = new Queue<SpeechEvent>();
+    this.transcriptBuffer = [];
     this.isInterruptionEnabled = !!(opts.interruptionDetection || opts.vad);
     this.isAgentSpeaking = false;
     this.interruptionStreamChannel = createStreamChannel();
@@ -175,6 +175,34 @@ export class AudioRecognition {
     return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());
   }
 
+  async onEndOfAgentSpeech(ignoreUserTranscriptUntil: number) {
+    if (!this.isInterruptionEnabled) {
+      this.isAgentSpeaking = false;
+      return;
+    }
+
+    const inputOpen = await this.trySendInterruptionSentinel(
+      InterruptionStreamSentinel.agentSpeechEnded(),
+    );
+    if (!inputOpen) {
+      this.isAgentSpeaking = false;
+      return;
+    }
+
+    if (this.isAgentSpeaking) {
+      if (this.ignoreUserTranscriptUntil === undefined) {
+        this.onEndOfOverlapSpeech();
+      }
+      this.ignoreUserTranscriptUntil = this.ignoreUserTranscriptUntil
+        ? Math.min(ignoreUserTranscriptUntil, this.ignoreUserTranscriptUntil)
+        : ignoreUserTranscriptUntil;
+
+      // flush held transcripts if possible
+      await this.flushHeldTranscripts();
+    }
+    this.isAgentSpeaking = false;
+  }
+
   /** Start interruption inference when agent is speaking and overlap speech starts. */
   async onStartOfOverlapSpeech(speechDurationInS?: number, userSpeakingSpan?: Span) {
     if (this.isAgentSpeaking) {
@@ -200,10 +228,81 @@ export class AudioRecognition {
     return this.trySendInterruptionSentinel(InterruptionStreamSentinel.overlapSpeechEnded());
   }
 
-  private async trySendInterruptionSentinel(frame: AudioFrame | InterruptionSentinel) {
-    if (this.isInterruptionEnabled && !this.interruptionStreamChannel.closed) {
-      this.interruptionStreamChannel.write(frame);
+  /**
+   * Flush held transcripts whose *end time* is after the ignoreUserTranscriptUntil timestamp.
+   * If the event has no timestamps, we assume it is the same as the next valid event.
+   */
+  private async flushHeldTranscripts() {
+    if (
+      !this.isInterruptionEnabled ||
+      this.ignoreUserTranscriptUntil === undefined ||
+      this.transcriptBuffer.length === 0
+    ) {
+      return;
     }
+
+    if (!this.inputStartedAt) {
+      this.transcriptBuffer = [];
+      this.ignoreUserTranscriptUntil = undefined;
+      return;
+    }
+
+    let emitFromIndex: number | null = null;
+    let shouldFlush = false;
+
+    for (let i = 0; i < this.transcriptBuffer.length; i++) {
+      const ev = this.transcriptBuffer[i];
+      if (!ev || !ev.alternatives || ev.alternatives.length === 0) {
+        emitFromIndex = Math.min(emitFromIndex ?? i, i);
+        continue;
+      }
+      const firstAlternative = ev.alternatives[0];
+      if (
+        firstAlternative.startTime === firstAlternative.endTime &&
+        firstAlternative.startTime === 0
+      ) {
+        this.transcriptBuffer = [];
+        this.ignoreUserTranscriptUntil = undefined;
+        return;
+      }
+
+      if (
+        firstAlternative.endTime > 0 &&
+        firstAlternative.endTime + this.inputStartedAt < this.ignoreUserTranscriptUntil
+      ) {
+        emitFromIndex = null;
+      } else {
+        emitFromIndex = Math.min(emitFromIndex ?? i, i);
+        shouldFlush = true;
+        break;
+      }
+    }
+
+    const eventsToEmit =
+      emitFromIndex && shouldFlush ? this.transcriptBuffer.slice(emitFromIndex) : [];
+
+    this.transcriptBuffer = [];
+    this.ignoreUserTranscriptUntil = undefined;
+
+    for (const event of eventsToEmit) {
+      this.logger.trace(
+        {
+          event: event.type,
+        },
+        're-emitting held user transcript',
+      );
+      this.onSTTEvent(event);
+    }
+  }
+
+  private async trySendInterruptionSentinel(
+    frame: AudioFrame | InterruptionSentinel,
+  ): Promise<boolean> {
+    if (this.isInterruptionEnabled && !this.interruptionStreamChannel.closed) {
+      await this.interruptionStreamChannel.write(frame);
+      return true;
+    }
+    return false;
   }
 
   private async onSTTEvent(ev: SpeechEvent) {

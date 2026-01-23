@@ -88,6 +88,7 @@ interface PreemptiveGeneration {
   createdAt: number;
 }
 
+// TODO add false interruption handling and barge in handling for https://github.com/livekit/agents/pull/3109/changes
 export class AgentActivity implements RecognitionHooks {
   private static readonly REPLY_TASK_CANCEL_TIMEOUT = 5000;
   private started = false;
@@ -705,6 +706,10 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private interruptByAudioActivity(): void {
+    if (!this.isInterruptionByAudioActivityEnabled) {
+      return;
+    }
+
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
       // skip speech handle interruption if server side turn detection is enabled
       return;
@@ -747,7 +752,7 @@ export class AgentActivity implements RecognitionHooks {
 
   onInterruption(ev: InterruptionEvent) {
     this.restoreInterruptionByAudioActivity();
-    this.interruptAudioByActivity();
+    this.interruptByAudioActivity();
     if (this.audioRecognition) {
       this.audioRecognition.onEndOfAgentSpeech(!!(ev.overlapSpeechStartedAt || ev.timestamp));
     }
