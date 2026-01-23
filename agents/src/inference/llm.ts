@@ -82,12 +82,7 @@ export interface ChatCompletionOptions extends Record<string, unknown> {
   // response_format?: OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format']
 }
 
-export type LLMModels =
-  | OpenAIModels
-  | GoogleModels
-  | MoonshotModels
-  | DeepSeekModels
-  | AnyString;
+export type LLMModels = OpenAIModels | GoogleModels | MoonshotModels | DeepSeekModels | AnyString;
 
 export interface InferenceLLMOptions {
   model: LLMModels;

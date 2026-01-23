@@ -35,7 +35,9 @@ export type DeepgramModels =
 
 export type CartesiaModels = 'cartesia/ink-whisper';
 
-export type AssemblyaiModels = 'assemblyai/universal-streaming' | 'assemblyai/universal-streaming-multilingual';
+export type AssemblyaiModels =
+  | 'assemblyai/universal-streaming'
+  | 'assemblyai/universal-streaming-multilingual';
 
 export type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
 

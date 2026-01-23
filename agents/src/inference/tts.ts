@@ -61,7 +61,12 @@ export interface RimeOptions {}
 
 export interface InworldOptions {}
 
-type _TTSModels = CartesiaModels | DeepgramTTSModels | ElevenlabsModels | RimeModels | InworldModels;
+type _TTSModels =
+  | CartesiaModels
+  | DeepgramTTSModels
+  | ElevenlabsModels
+  | RimeModels
+  | InworldModels;
 
 export type TTSModels =
   | CartesiaModels
