@@ -2,13 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
-import type { Context } from '@opentelemetry/api';
-import type { Span } from '@opentelemetry/sdk-trace-node';
+import type { Context, Span } from '@opentelemetry/api';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
 import type { AdaptiveInterruptionDetector } from '../inference/interruption/AdaptiveInterruptionDetector.js';
 import { InterruptionStreamSentinel } from '../inference/interruption/InterruptionStream.js';
-import type { InterruptionEvent, InterruptionSentinel } from '../inference/interruption/types.js';
+import {
+  type InterruptionEvent,
+  InterruptionEventType,
+  type InterruptionSentinel,
+} from '../inference/interruption/types.js';
 import { type ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream, isStreamReaderReleaseError } from '../stream/deferred_stream.js';
@@ -67,6 +70,7 @@ export interface AudioRecognitionOptions {
   rootSpanContext?: Context;
 }
 
+// TODO add ability to update stt/vad/interruption-detection
 export class AudioRecognition {
   private hooks: RecognitionHooks;
   private stt?: STTNode;
@@ -112,7 +116,6 @@ export class AudioRecognition {
   private isInterruptionEnabled: boolean;
   private isAgentSpeaking: boolean;
   private interruptionStreamChannel: StreamChannel<InterruptionSentinel | AudioFrame>;
-  private interruptionStream: ReadableStream<InterruptionSentinel | AudioFrame>;
 
   constructor(opts: AudioRecognitionOptions) {
     this.hooks = opts.recognitionHooks;
@@ -161,13 +164,13 @@ export class AudioRecognition {
       this.logger.error(`Error running STT task: ${err}`);
     });
 
-    this.updateInterruptionDetection(this.interruptionDetection);
+    // this.updateInterruptionDetection(this.interruptionDetection);  // TODO implement updateability together with update to vad/stt
   }
 
   async stop() {
     await this.sttTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
-    this.updateInterruptionDetection(undefined);
+    // this.updateInterruptionDetection(undefined); // TODO implement updateability together with update to vad/stt
   }
 
   async onStartOfAgentSpeech() {
@@ -216,13 +219,8 @@ export class AudioRecognition {
     if (this.isInterruptionEnabled) {
       return;
     }
-    // Only set is_interruption=false if not already set (avoid overwriting true from interruption detection)
     if (userSpeakingSpan && userSpeakingSpan.isRecording()) {
-      if (!userSpeakingSpan.attributes[traceTypes.ATTR_IS_INTERRUPTION]) {
-        userSpeakingSpan.setAttribute(traceTypes.ATTR_IS_INTERRUPTION, 'false');
-      }
-    } else {
-      userSpeakingSpan?.setAttribute(traceTypes.ATTR_IS_INTERRUPTION, 'false');
+      userSpeakingSpan.setAttribute(traceTypes.ATTR_IS_INTERRUPTION, 'false');
     }
 
     return this.trySendInterruptionSentinel(InterruptionStreamSentinel.overlapSpeechEnded());
@@ -354,6 +352,25 @@ export class AudioRecognition {
         'ignoring stt event',
       );
       return;
+    }
+
+    // handle interruption detection
+    // - hold the event until the ignore_user_transcript_until expires
+    // - release only relevant events
+    // - allow RECOGNITION_USAGE to pass through immediately
+
+    if (ev.type !== SpeechEventType.RECOGNITION_USAGE && this.isInterruptionEnabled) {
+      if (this.shouldHoldSttEvent(ev)) {
+        this.logger.trace(
+          { event: ev.type, ignoreUserTranscriptUntil: this.ignoreUserTranscriptUntil },
+          'holding STT event until ignore_user_transcript_until expires',
+        );
+        this.transcriptBuffer.push(ev);
+        return;
+      } else if (this.transcriptBuffer) {
+        await this.flushHeldTranscripts();
+        // no return here to allow the new event to be processed normally
+      }
     }
 
     switch (ev.type) {
@@ -523,6 +540,12 @@ export class AudioRecognition {
           this.logger.debug('running EOU detection on stt END_OF_SPEECH');
           this.runEOUDetection(chatCtx);
         }
+    }
+  }
+
+  private onInterruptionEvent(ev: InterruptionEvent) {
+    if (ev.type === InterruptionEventType.INTERRUPTION) {
+      this.hooks.onInterruption(ev);
     }
   }
 
@@ -885,6 +908,7 @@ export class AudioRecognition {
     await this.sttTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
     await this.bounceEOUTask?.cancelAndWait();
+    await this.interruptionStreamChannel.close();
   }
 
   private _endUserTurnSpan({
