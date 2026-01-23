@@ -754,7 +754,7 @@ export class AgentActivity implements RecognitionHooks {
     this.restoreInterruptionByAudioActivity();
     this.interruptByAudioActivity();
     if (this.audioRecognition) {
-      this.audioRecognition.onEndOfAgentSpeech(!!(ev.overlapSpeechStartedAt || ev.timestamp));
+      this.audioRecognition.onEndOfAgentSpeech(ev.overlapSpeechStartedAt || ev.timestamp);
     }
   }
 
@@ -1372,7 +1372,7 @@ export class AgentActivity implements RecognitionHooks {
     if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.OnEndOfAgentSpeech({ ignoreUserTranscriptUntil: Date.now() });
+        this.audioRecognition.OnEndOfAgentSpeech(Date.now());
       }
       this.restoreInterruptionByAudioActivity();
     }
@@ -1633,7 +1633,7 @@ export class AgentActivity implements RecognitionHooks {
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
         if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-          this.audioRecognition.onEndOfAgentSpeech({ ignoreUserTranscriptUntil: Date.now() });
+          this.audioRecognition.onEndOfAgentSpeech(Date.now());
           this.restoreInterruptionByAudioActivity();
         }
       }
