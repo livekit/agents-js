@@ -7,10 +7,7 @@ import type { Span } from '@opentelemetry/sdk-trace-node';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
 import type { AdaptiveInterruptionDetector } from '../inference/interruption/AdaptiveInterruptionDetector.js';
-import {
-  type InterruptionStreamBase,
-  InterruptionStreamSentinel,
-} from '../inference/interruption/InterruptionStream.js';
+import { InterruptionStreamSentinel } from '../inference/interruption/InterruptionStream.js';
 import type { InterruptionEvent, InterruptionSentinel } from '../inference/interruption/types.js';
 import { type ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
@@ -20,7 +17,7 @@ import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
-import { Queue, Task, delay } from '../utils.js';
+import { Task, delay } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
@@ -115,6 +112,7 @@ export class AudioRecognition {
   private isInterruptionEnabled: boolean;
   private isAgentSpeaking: boolean;
   private interruptionStreamChannel: StreamChannel<InterruptionSentinel | AudioFrame>;
+  private interruptionStream: ReadableStream<InterruptionSentinel | AudioFrame>;
 
   constructor(opts: AudioRecognitionOptions) {
     this.hooks = opts.recognitionHooks;
@@ -128,7 +126,8 @@ export class AudioRecognition {
     this.rootSpanContext = opts.rootSpanContext;
 
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
-    const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
+    const [vadInputStream, teedInput] = this.deferredInputStream.stream.tee();
+    const [inputStream, sttInputStream] = teedInput.tee();
     this.vadInputStream = vadInputStream;
     this.sttInputStream = mergeReadableStreams(sttInputStream, this.silenceAudioTransform.readable);
     this.silenceAudioWriter = this.silenceAudioTransform.writable.getWriter();
@@ -138,6 +137,7 @@ export class AudioRecognition {
     this.isInterruptionEnabled = !!(opts.interruptionDetection || opts.vad);
     this.isAgentSpeaking = false;
     this.interruptionStreamChannel = createStreamChannel();
+    this.interruptionStreamChannel.addStreamInput(inputStream);
   }
 
   /**
@@ -293,6 +293,35 @@ export class AudioRecognition {
       );
       this.onSTTEvent(event);
     }
+  }
+
+  private shouldHoldSttEvent(ev: SpeechEvent): boolean {
+    if (!this.isInterruptionEnabled) {
+      return false;
+    }
+    if (this.isAgentSpeaking) {
+      return true;
+    }
+
+    if (this.ignoreUserTranscriptUntil === undefined) {
+      return false;
+    }
+    // sentinel events are always held until we have something concrete to release them
+    if (!ev.alternatives || ev.alternatives.length === 0) {
+      return true;
+    }
+
+    const alternative = ev.alternatives[0];
+
+    if (
+      this.inputStartedAt &&
+      alternative.startTime !== alternative.endTime &&
+      alternative.endTime > 0 &&
+      alternative.endTime + this.inputStartedAt < this.ignoreUserTranscriptUntil
+    ) {
+      return true;
+    }
+    return false;
   }
 
   private async trySendInterruptionSentinel(
