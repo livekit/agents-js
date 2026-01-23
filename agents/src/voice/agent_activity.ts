@@ -1372,7 +1372,7 @@ export class AgentActivity implements RecognitionHooks {
     if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.OnEndOfAgentSpeech(Date.now());
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
       this.restoreInterruptionByAudioActivity();
     }
