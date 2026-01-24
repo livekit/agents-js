@@ -676,6 +676,20 @@ export class InvalidErrorType extends Error {
 }
 
 /**
+ * Check if an error is a stream closed error that can be safely ignored during cleanup.
+ * This happens during handover/cleanup when close() is called while operations are still running.
+ *
+ * @param error - The error to check.
+ * @returns True if the error is a stream closed error.
+ */
+export function isStreamClosedError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message === 'Stream is closed' || error.message === 'Input is closed')
+  );
+}
+
+/**
  * In JS an error can be any arbitrary value.
  * This function converts an unknown error to an Error and stores the original value in the error object.
  *
