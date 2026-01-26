@@ -283,7 +283,7 @@ export class AudioRecognition {
     }
 
     const eventsToEmit =
-      emitFromIndex && shouldFlush ? this.transcriptBuffer.slice(emitFromIndex) : [];
+      emitFromIndex && shouldFlush !== undefined ? this.transcriptBuffer.slice(emitFromIndex) : [];
 
     this.transcriptBuffer = [];
     this.ignoreUserTranscriptUntil = undefined;
@@ -373,7 +373,7 @@ export class AudioRecognition {
         );
         this.transcriptBuffer.push(ev);
         return;
-      } else if (this.transcriptBuffer) {
+      } else {
         await this.flushHeldTranscripts();
         // no return here to allow the new event to be processed normally
       }
