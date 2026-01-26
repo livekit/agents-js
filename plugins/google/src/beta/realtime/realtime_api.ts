@@ -470,6 +470,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }
     this.earlyCompletionPending = false;
+    this.pendingInterruptText = false;
 
     unlock();
   }
