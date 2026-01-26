@@ -63,7 +63,7 @@ export interface AudioRecognitionOptions {
   stt?: STTNode;
   vad?: VAD;
   turnDetector?: _TurnDetector;
-  turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
+  turnDetectionMode?: TurnDetectionMode;
   interruptionDetection?: AdaptiveInterruptionDetector;
   minEndpointingDelay: number;
   maxEndpointingDelay: number;
@@ -76,7 +76,7 @@ export class AudioRecognition {
   private stt?: STTNode;
   private vad?: VAD;
   private turnDetector?: _TurnDetector;
-  private turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
+  private turnDetectionMode?: TurnDetectionMode;
   private minEndpointingDelay: number;
   private maxEndpointingDelay: number;
   private lastLanguage?: string;
@@ -207,7 +207,7 @@ export class AudioRecognition {
   }
 
   /** Start interruption inference when agent is speaking and overlap speech starts. */
-  async onStartOfOverlapSpeech(speechDurationInS?: number, userSpeakingSpan?: Span) {
+  async onStartOfOverlapSpeech(speechDurationInS: number, userSpeakingSpan?: Span) {
     if (this.isAgentSpeaking) {
       this.trySendInterruptionSentinel(
         InterruptionStreamSentinel.overlapSpeechStarted(speechDurationInS, userSpeakingSpan),
@@ -935,6 +935,10 @@ export class AudioRecognition {
   }
 
   private get vadBaseTurnDetection() {
-    return ['vad', undefined].includes(this.turnDetectionMode);
+    if (typeof this.turnDetectionMode === 'string') {
+      return ['vad', undefined].includes(this.turnDetectionMode);
+    } else {
+      return false;
+    }
   }
 }

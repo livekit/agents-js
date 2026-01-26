@@ -55,7 +55,16 @@ export default defineAgent({
       // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
       // See more at https://docs.livekit.io/agents/build/turns
       vad: ctx.proc.userData.vad! as silero.VAD,
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
+
+      turnHandling: {
+        turnDetection: new livekit.turnDetector.MultilingualModel(),
+        interruption: {
+          resumeFalseInterruption: true,
+          falseInterruptionTimeout: 1,
+          mode: 'adaptive',
+        },
+        preemptiveGeneration: true,
+      },
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
       voiceOptions: {
@@ -77,6 +86,14 @@ export default defineAgent({
     session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
       metrics.logMetrics(ev.metrics);
       usageCollector.collect(ev.metrics);
+    });
+
+    session.on(voice.AgentSessionEventTypes.UserInterruptionDetected, (ev) => {
+      console.warn('interruption detected', ev);
+    });
+
+    session.on(voice.AgentSessionEventTypes.UserNonInterruptionDetected, (ev) => {
+      console.warn('non interruption detected', ev);
     });
 
     await session.start({

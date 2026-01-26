@@ -66,7 +66,7 @@ export interface AgentSpeechEnded {
 
 export interface OverlapSpeechStarted {
   type: 'overlap-speech-started';
-  speechDurationInS?: number;
+  speechDurationInS: number;
   userSpeakingSpan?: Span;
 }
 

@@ -95,7 +95,7 @@ export class AgentActivity implements RecognitionHooks {
   private audioRecognition?: AudioRecognition;
   private realtimeSession?: RealtimeSession;
   private realtimeSpans?: Map<string, Span>; // Maps response_id to OTEL span for metrics recording
-  private turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
+  private turnDetectionMode?: TurnDetectionMode;
   private logger = log();
   private _draining = false;
   private _currentSpeech?: SpeechHandle;
@@ -578,7 +578,7 @@ export class AgentActivity implements RecognitionHooks {
     if (!this.vad) {
       this.agentSession._updateUserState('speaking');
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfOverlapSpeech(0, this.agentSession.userSpeakingSpan);
+        this.audioRecognition.onStartOfOverlapSpeech(0, this.agentSession._userSpeakingSpan);
       }
     }
 
@@ -599,7 +599,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (!this.vad) {
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onEndOfOverlapSpeech(this.agentSession.userSpeakingSpan);
+        this.audioRecognition.onEndOfOverlapSpeech(this.agentSession._userSpeakingSpan);
       }
       this.agentSession._updateUserState('listening');
     }
@@ -679,7 +679,10 @@ export class AgentActivity implements RecognitionHooks {
     }
     this.agentSession._updateUserState('speaking', speechStartTime);
     if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-      this.audioRecognition.onStartOfOverlapSpeech(ev.speechDuration, this.userSpeakingSpan);
+      this.audioRecognition.onStartOfOverlapSpeech(
+        ev.speechDuration,
+        this.agentSession._userSpeakingSpan,
+      );
     }
   }
 
@@ -689,7 +692,7 @@ export class AgentActivity implements RecognitionHooks {
       speechEndTime = speechEndTime - ev.silenceDuration;
     }
     if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-      this.audioRecognition.onEndOfOverlapSpeech(this.userSpeakingSpan);
+      this.audioRecognition.onEndOfOverlapSpeech(this.agentSession._userSpeakingSpan);
     }
     this.agentSession._updateUserState('listening', speechEndTime);
   }
@@ -1672,7 +1675,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('listening');
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
         {
-          this.audioRecognition.onEndOfAgentSpeech({ ignoreUserTranscriptUntil: Date.now() });
+          this.audioRecognition.onEndOfAgentSpeech(Date.now());
           this.restoreInterruptionByAudioActivity();
         }
       }
@@ -2486,10 +2489,10 @@ export class AgentActivity implements RecognitionHooks {
 
     // TODO cleanup these listeners
     detector.on('userInterruptionDetected', (ev) =>
-      this.agentSession.emit('userInterruptionDetected', ev),
+      this.agentSession.emit(AgentSessionEventTypes.UserInterruptionDetected, ev),
     );
     detector.on('userNonInterruptionDetected', (ev) =>
-      this.agentSession.emit('userNonInterruptionDetected', ev),
+      this.agentSession.emit(AgentSessionEventTypes.UserNonInterruptionDetected, ev),
     );
 
     return detector;

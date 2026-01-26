@@ -48,7 +48,7 @@ export class InterruptionStreamSentinel {
   }
 
   static overlapSpeechStarted(
-    speechDurationInS?: number,
+    speechDurationInS: number,
     userSpeakingSpan?: Span,
   ): OverlapSpeechStarted {
     return { type: 'overlap-speech-started', speechDurationInS, userSpeakingSpan };
