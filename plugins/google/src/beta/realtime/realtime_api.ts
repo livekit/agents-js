@@ -469,6 +469,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.activeSession = undefined;
       }
     }
+    this.earlyCompletionPending = false;
 
     unlock();
   }
