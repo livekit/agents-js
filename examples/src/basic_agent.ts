@@ -8,6 +8,7 @@ import {
   cli,
   defineAgent,
   llm,
+  log,
   metrics,
   voice,
 } from '@livekit/agents';
@@ -38,6 +39,8 @@ export default defineAgent({
         }),
       },
     });
+
+    const logger = log();
 
     const session = new voice.AgentSession({
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
@@ -89,11 +92,11 @@ export default defineAgent({
     });
 
     session.on(voice.AgentSessionEventTypes.UserInterruptionDetected, (ev) => {
-      console.warn('interruption detected', ev);
+      logger.warn({ type: ev.type }, 'interruption detected');
     });
 
     session.on(voice.AgentSessionEventTypes.UserNonInterruptionDetected, (ev) => {
-      console.warn('non interruption detected', ev);
+      logger.warn({ type: ev.type }, 'non interruption detected');
     });
 
     await session.start({

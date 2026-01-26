@@ -17,7 +17,6 @@ import type { InterruptionEvent, InterruptionOptions } from './types.js';
 type InterruptionCallbacks = {
   userInterruptionDetected: (event: InterruptionEvent) => void;
   userNonInterruptionDetected: (event: InterruptionEvent) => void;
-  overlapSpeechEnded: (event: InterruptionEvent) => void;
   error: (error: InterruptionDetectionError) => void;
 };
 
@@ -74,10 +73,9 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
           'apiSecret is required, either as argument or set LIVEKIT_API_SECRET environmental variable',
         );
       }
-
-      useProxy = true;
+      // FIXME disabled proxying for local testing
+      useProxy = false;
     } else {
-      // Force useProxy to false for custom URLs (matching Python behavior)
       useProxy = false;
     }
 

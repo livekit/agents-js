@@ -107,6 +107,7 @@ export class AudioRecognition {
   private commitUserTurnTask?: Task<void>;
   private vadTask?: Task<void>;
   private sttTask?: Task<void>;
+  private interruptionTask?: Task<void>;
 
   // interruption detection
   private interruptionDetection?: AdaptiveInterruptionDetector;
@@ -164,13 +165,18 @@ export class AudioRecognition {
       this.logger.error(`Error running STT task: ${err}`);
     });
 
-    // this.updateInterruptionDetection(this.interruptionDetection);  // TODO implement updateability together with update to vad/stt
+    this.interruptionTask = Task.from(({ signal }) =>
+      this.createInterruptionTask(this.interruptionDetection, signal),
+    );
+    this.interruptionTask.result.catch((err) => {
+      this.logger.error(`Error running interruption task: ${err}`);
+    });
   }
 
   async stop() {
     await this.sttTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
-    // this.updateInterruptionDetection(undefined); // TODO implement updateability together with update to vad/stt
+    await this.interruptionTask?.cancelAndWait();
   }
 
   async onStartOfAgentSpeech() {
@@ -216,7 +222,7 @@ export class AudioRecognition {
   }
 
   async onEndOfOverlapSpeech(userSpeakingSpan?: Span) {
-    if (this.isInterruptionEnabled) {
+    if (!this.isInterruptionEnabled) {
       return;
     }
     if (userSpeakingSpan && userSpeakingSpan.isRecording()) {
@@ -836,6 +842,62 @@ export class AudioRecognition {
     }
   }
 
+  private async createInterruptionTask(
+    interruptionDetection: AdaptiveInterruptionDetector | undefined,
+    signal: AbortSignal,
+  ) {
+    if (!interruptionDetection) return;
+
+    const stream = interruptionDetection.createStream();
+    const inputReader = this.interruptionStreamChannel.stream().getReader();
+
+    // Forward input frames/sentinels to the interruption stream
+    const forwardTask = (async () => {
+      try {
+        while (!signal.aborted) {
+          const { done, value } = await inputReader.read();
+          if (done) break;
+          await stream.pushFrame(value);
+        }
+      } finally {
+        inputReader.releaseLock();
+      }
+    })();
+
+    // Read output events from the interruption stream
+    const eventReader = stream.stream().getReader();
+    const abortHandler = async () => {
+      try {
+        eventReader.releaseLock();
+        await stream.close();
+      } catch (e) {
+        this.logger.debug('createInterruptionTask: error during abort handler:', e);
+      }
+    };
+    signal.addEventListener('abort', abortHandler);
+
+    try {
+      while (!signal.aborted) {
+        this.logger.warn('waiting for interruption event');
+
+        const { done, value: ev } = await eventReader.read();
+        if (done) break;
+        this.logger.warn('got interruption event');
+        this.onInterruptionEvent(ev);
+      }
+    } catch (e) {
+      if (!signal.aborted) {
+        this.logger.error(e, 'Error in interruption task');
+      }
+    } finally {
+      signal.removeEventListener('abort', abortHandler);
+      eventReader.releaseLock();
+      await stream.close();
+      await forwardTask;
+      this.logger.debug('Interruption task closed');
+    }
+  }
+
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {
     this.deferredInputStream.setSource(audioStream);
   }
@@ -935,10 +997,12 @@ export class AudioRecognition {
   }
 
   private get vadBaseTurnDetection() {
-    if (typeof this.turnDetectionMode === 'string') {
-      return ['vad', undefined].includes(this.turnDetectionMode);
-    } else {
+    if (typeof this.turnDetectionMode === 'object') {
       return false;
+    }
+
+    if (this.turnDetectionMode === undefined || this.turnDetectionMode === 'vad') {
+      return true;
     }
   }
 }

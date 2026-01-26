@@ -100,8 +100,7 @@ export class Agent<UserData = any> {
   _tools?: ToolContext<UserData>;
 
   constructor(options: AgentOptions<UserData>) {
-    const { id, instructions, chatCtx, tools, turnDetection, stt, vad, llm, tts, turnHandling } =
-      options;
+    const { id, instructions, chatCtx, tools, stt, vad, llm, tts, turnHandling } = options;
     if (id) {
       this._id = id;
     } else {
