@@ -1353,7 +1353,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.emit('input_audio_transcription_completed', {
         itemId: gen.inputId,
         transcript: gen.inputTranscription,
-        isFinal: false,
+        isFinal: !!serverContent.inputTranscription.finished,
       } as llm.InputTranscriptionCompleted);
     }
 
