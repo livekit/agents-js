@@ -17,6 +17,10 @@ import { type AnyString, createAccessToken } from './utils.js';
 const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 
 export type OpenAIModels =
+  | 'openai/gpt-5.2'
+  | 'openai/gpt-5.2-chat-latest'
+  | 'openai/gpt-5.1'
+  | 'openai/gpt-5.1-chat-latest'
   | 'openai/gpt-5'
   | 'openai/gpt-5-mini'
   | 'openai/gpt-5-nano'
@@ -28,19 +32,17 @@ export type OpenAIModels =
   | 'openai/gpt-oss-120b';
 
 export type GoogleModels =
-  | 'google/gemini-3-pro-preview'
-  | 'google/gemini-3-flash-preview'
+  | 'google/gemini-3-pro'
+  | 'google/gemini-3-flash'
   | 'google/gemini-2.5-pro'
   | 'google/gemini-2.5-flash'
   | 'google/gemini-2.5-flash-lite'
   | 'google/gemini-2.0-flash'
   | 'google/gemini-2.0-flash-lite';
 
-export type QwenModels = 'qwen/qwen3-235b-a22b-instruct';
+export type MoonshotModels = 'moonshotai/kimi-k2-instruct';
 
-export type KimiModels = 'moonshotai/kimi-k2-instruct';
-
-export type DeepSeekModels = 'deepseek-ai/deepseek-v3';
+export type DeepSeekModels = 'deepseek-ai/deepseek-v3' | 'deepseek-ai/deepseek-v3.2';
 
 type ChatCompletionPredictionContentParam =
   Expand<OpenAI.Chat.Completions.ChatCompletionPredictionContent>;
@@ -80,13 +82,7 @@ export interface ChatCompletionOptions extends Record<string, unknown> {
   // response_format?: OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format']
 }
 
-export type LLMModels =
-  | OpenAIModels
-  | GoogleModels
-  | QwenModels
-  | KimiModels
-  | DeepSeekModels
-  | AnyString;
+export type LLMModels = OpenAIModels | GoogleModels | MoonshotModels | DeepSeekModels | AnyString;
 
 export interface InferenceLLMOptions {
   model: LLMModels;
