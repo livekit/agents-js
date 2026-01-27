@@ -140,7 +140,14 @@ const makeTestSpeech = (targetSampleRate: number, chunkDuration?: number): Audio
 
   const chunkSize = (targetSampleRate * chunkDuration) / 1000;
   const bstream = new AudioByteStream(targetSampleRate, channels, chunkSize);
-  frames = bstream.write(merged.data);
+
+  // Convert Int16Array to ArrayBuffer
+  const arrayBuffer = merged.data.buffer.slice(
+    merged.data.byteOffset,
+    merged.data.byteOffset + merged.data.byteLength,
+  ) as ArrayBuffer;
+
+  frames = bstream.write(arrayBuffer);
   frames.push(...bstream.flush());
   return frames;
 };
