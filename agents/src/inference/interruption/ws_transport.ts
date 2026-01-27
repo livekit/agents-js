@@ -327,17 +327,24 @@ export function createWsTransport(
     combined.set(new Uint8Array(header), 0);
     combined.set(audioBytes, 8);
 
-    await writer.write(combined);
+    try {
+      await writer.write(combined);
+    } catch (e: unknown) {
+      logger.error(e, `failed to send audio via websocket`);
+    }
   }
 
   async function close(): Promise<void> {
     if (writer && ws?.readyState === WebSocket.OPEN) {
       const closeMsg = JSON.stringify({ type: MSG_SESSION_CLOSE });
-      await writer.write(new TextEncoder().encode(closeMsg));
-      writer.releaseLock();
-      writer = null;
+      try {
+        await writer.write(new TextEncoder().encode(closeMsg));
+      } finally {
+        writer.releaseLock();
+        writer = null;
+      }
     }
-    ws?.close(1000);
+    ws?.close(1000); // signal normal websocket closure
     ws = null;
     await readerTask;
     readerTask = null;
