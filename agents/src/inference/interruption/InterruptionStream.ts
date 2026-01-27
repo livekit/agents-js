@@ -220,14 +220,14 @@ export class InterruptionStreamBase {
               controller.enqueue(audioSlice);
             }
           } else if (chunk.type === 'agent-speech-started') {
-            this.logger.warn('agent speech started');
+            this.logger.debug('agent speech started');
             agentSpeechStarted = true;
             overlapSpeechStarted = false;
             accumulatedSamples = 0;
             startIdx = 0;
             cache.clear();
           } else if (chunk.type === 'agent-speech-ended') {
-            this.logger.warn('agent speech ended');
+            this.logger.debug('agent speech ended');
             agentSpeechStarted = false;
             overlapSpeechStarted = false;
             accumulatedSamples = 0;
@@ -235,7 +235,7 @@ export class InterruptionStreamBase {
             cache.clear();
           } else if (chunk.type === 'overlap-speech-started' && agentSpeechStarted) {
             this.userSpeakingSpan = chunk.userSpeakingSpan;
-            this.logger.warn('overlap speech started, starting interruption inference');
+            this.logger.debug('overlap speech started, starting interruption inference');
             overlapSpeechStarted = true;
             accumulatedSamples = 0;
             // Include both speech duration and audio prefix duration for context
@@ -251,7 +251,7 @@ export class InterruptionStreamBase {
             startIdx = shiftSize;
             cache.clear();
           } else if (chunk.type === 'overlap-speech-ended') {
-            this.logger.warn('overlap speech ended');
+            this.logger.debug('overlap speech ended');
             if (overlapSpeechStarted) {
               this.userSpeakingSpan = undefined;
               // Use pop with predicate to get only completed requests (matching Python behavior)
@@ -260,7 +260,7 @@ export class InterruptionStreamBase {
                 (entry) => entry.totalDurationInS !== undefined && entry.totalDurationInS > 0,
               );
               if (!latestEntry) {
-                this.logger.warn('no request made for overlap speech');
+                this.logger.debug('no request made for overlap speech');
                 latestEntry = InterruptionCacheEntry.default();
               }
               const event: InterruptionEvent = {
