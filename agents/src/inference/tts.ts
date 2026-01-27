@@ -23,22 +23,27 @@ import {
 import { type AnyString, connectWs, createAccessToken } from './utils.js';
 
 export type CartesiaModels =
-  | 'cartesia'
-  | 'cartesia/sonic'
+  | 'cartesia/sonic-3'
   | 'cartesia/sonic-2'
-  | 'cartesia/sonic-turbo';
+  | 'cartesia/sonic-turbo'
+  | 'cartesia/sonic';
+
+export type DeepgramTTSModels = 'deepgram/aura' | 'deepgram/aura-2';
 
 export type ElevenlabsModels =
-  | 'elevenlabs'
   | 'elevenlabs/eleven_flash_v2'
   | 'elevenlabs/eleven_flash_v2_5'
   | 'elevenlabs/eleven_turbo_v2'
   | 'elevenlabs/eleven_turbo_v2_5'
   | 'elevenlabs/eleven_multilingual_v2';
 
-export type RimeModels = 'rime' | 'rime/mist' | 'rime/mistv2' | 'rime/arcana';
+export type InworldModels =
+  | 'inworld/inworld-tts-1.5-max'
+  | 'inworld/inworld-tts-1.5-mini'
+  | 'inworld/inworld-tts-1-max'
+  | 'inworld/inworld-tts-1';
 
-export type InworldModels = 'inworld' | 'inworld/inworld-tts-1';
+export type RimeModels = 'rime/arcana' | 'rime/mistv2';
 
 export interface CartesiaOptions {
   duration?: number; // max duration of audio in seconds
@@ -50,25 +55,40 @@ export interface ElevenlabsOptions {
   apply_text_normalization?: 'auto' | 'off' | 'on'; // default: "auto"
 }
 
+export interface DeepgramTTSOptions {}
+
 export interface RimeOptions {}
 
 export interface InworldOptions {}
 
-type _TTSModels = CartesiaModels | ElevenlabsModels | RimeModels | InworldModels;
+type _TTSModels =
+  | CartesiaModels
+  | DeepgramTTSModels
+  | ElevenlabsModels
+  | RimeModels
+  | InworldModels;
 
-export type TTSModels = CartesiaModels | ElevenlabsModels | RimeModels | InworldModels | AnyString;
+export type TTSModels =
+  | CartesiaModels
+  | DeepgramTTSModels
+  | ElevenlabsModels
+  | RimeModels
+  | InworldModels
+  | AnyString;
 
 export type ModelWithVoice = `${_TTSModels}:${string}` | TTSModels;
 
 export type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels
   ? CartesiaOptions
-  : TModel extends ElevenlabsModels
-    ? ElevenlabsOptions
-    : TModel extends RimeOptions
-      ? RimeOptions
-      : TModel extends InworldOptions
-        ? InworldOptions
-        : Record<string, unknown>;
+  : TModel extends DeepgramTTSModels
+    ? DeepgramTTSOptions
+    : TModel extends ElevenlabsModels
+      ? ElevenlabsOptions
+      : TModel extends RimeModels
+        ? RimeOptions
+        : TModel extends InworldModels
+          ? InworldOptions
+          : Record<string, unknown>;
 
 type TTSEncoding = 'pcm_s16le';
 

@@ -25,19 +25,21 @@ import {
 import { type AnyString, connectWs, createAccessToken } from './utils.js';
 
 export type DeepgramModels =
-  | 'deepgram'
+  | 'deepgram/flux-general'
   | 'deepgram/nova-3'
-  | 'deepgram/nova-3-general'
   | 'deepgram/nova-3-medical'
-  | 'deepgram/nova-2-conversationalai'
   | 'deepgram/nova-2'
-  | 'deepgram/nova-2-general'
   | 'deepgram/nova-2-medical'
+  | 'deepgram/nova-2-conversationalai'
   | 'deepgram/nova-2-phonecall';
 
-export type CartesiaModels = 'cartesia' | 'cartesia/ink-whisper';
+export type CartesiaModels = 'cartesia/ink-whisper';
 
-export type AssemblyaiModels = 'assemblyai' | 'assemblyai/universal-streaming';
+export type AssemblyaiModels =
+  | 'assemblyai/universal-streaming'
+  | 'assemblyai/universal-streaming-multilingual';
+
+export type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
 
 export interface CartesiaOptions {
   min_volume?: number; // default: not specified
@@ -77,7 +79,7 @@ export type STTLanguages =
   | 'hi'
   | AnyString;
 
-type _STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels;
+type _STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels | ElevenlabsSTTModels;
 
 export type STTModels = _STTModels | 'auto' | AnyString;
 
