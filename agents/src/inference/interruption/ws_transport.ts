@@ -1,6 +1,7 @@
 import { Readable, Writable } from 'node:stream';
 import { TransformStream } from 'stream/web';
 import WebSocket, { createWebSocketStream } from 'ws';
+import { z } from 'zod';
 import { log } from '../../log.js';
 import { createAccessToken } from '../utils.js';
 import { InterruptionCacheEntry } from './InterruptionCacheEntry.js';
@@ -34,14 +35,16 @@ export interface WsTransportState {
   cache: BoundedCache<number, InterruptionCacheEntry>;
 }
 
-interface WsMessage {
-  type: string;
-  created_at?: number;
-  probabilities?: number[];
-  prediction_duration?: number;
-  is_bargein?: boolean;
-  error?: string;
-}
+const wsMessageSchema = z.object({
+  type: z.string(),
+  created_at: z.number().optional(),
+  probabilities: z.array(z.number()).optional(),
+  prediction_duration: z.number().optional(),
+  is_bargein: z.boolean().optional(),
+  error: z.string().optional(),
+});
+
+type WsMessage = z.infer<typeof wsMessageSchema>;
 
 export function webSocketToStream(ws: WebSocket) {
   const duplex = createWebSocketStream(ws);
@@ -180,7 +183,7 @@ export function createWsTransport(
         for (const line of lines) {
           if (line.trim()) {
             try {
-              const message: WsMessage = JSON.parse(line);
+              const message = wsMessageSchema.parse(JSON.parse(line));
               handleMessage(message);
             } catch {
               logger.warn({ line }, 'Failed to parse WebSocket message');
@@ -191,7 +194,7 @@ export function createWsTransport(
         // Also try parsing buffer as complete message (for non-newline-delimited)
         if (buffer.trim()) {
           try {
-            const message: WsMessage = JSON.parse(buffer);
+            const message = wsMessageSchema.parse(JSON.parse(buffer));
             handleMessage(message);
             buffer = '';
           } catch {

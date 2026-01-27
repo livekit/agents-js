@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ofetch } from 'ofetch';
 import { TransformStream } from 'stream/web';
+import { z } from 'zod';
 import { log } from '../../log.js';
 import { createAccessToken } from '../utils.js';
 import { InterruptionCacheEntry } from './InterruptionCacheEntry.js';
@@ -23,11 +24,13 @@ export interface PredictOptions {
   minFrames: number;
 }
 
-export interface PredictEndpointResponse {
-  created_at: number;
-  is_bargein: boolean;
-  probabilities: number[];
-}
+export const predictEndpointResponseSchema = z.object({
+  created_at: z.number(),
+  is_bargein: z.boolean(),
+  probabilities: z.array(z.number()),
+});
+
+export type PredictEndpointResponse = z.infer<typeof predictEndpointResponseSchema>;
 
 export interface PredictResponse {
   createdAt: number;
@@ -48,25 +51,23 @@ export async function predictHTTP(
   url.searchParams.append('created_at', createdAt.toFixed());
 
   let retryCount = 0;
-  const { created_at, is_bargein, probabilities } = await ofetch<PredictEndpointResponse>(
-    url.toString(),
-    {
-      retry: options.maxRetries ?? 3,
-      retryDelay: () => {
-        const delay = intervalForRetry(retryCount);
-        retryCount++;
-        return delay;
-      },
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        Authorization: `Bearer ${options.token}`,
-      },
-      signal: options.signal,
-      timeout: options.timeout,
-      method: 'POST',
-      body: data,
+  const response = await ofetch(url.toString(), {
+    retry: options.maxRetries ?? 3,
+    retryDelay: () => {
+      const delay = intervalForRetry(retryCount);
+      retryCount++;
+      return delay;
     },
-  );
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      Authorization: `Bearer ${options.token}`,
+    },
+    signal: options.signal,
+    timeout: options.timeout,
+    method: 'POST',
+    body: data,
+  });
+  const { created_at, is_bargein, probabilities } = predictEndpointResponseSchema.parse(response);
 
   return {
     createdAt: created_at,
