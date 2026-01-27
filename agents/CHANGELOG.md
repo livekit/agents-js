@@ -1,5 +1,22 @@
 # @livekit/agents
 
+## 1.0.39
+
+### Patch Changes
+
+- update livekit inference model to match latest - [#993](https://github.com/livekit/agents-js/pull/993) ([@davidzhao](https://github.com/davidzhao))
+
+- preserve thought_signature across parallel tool calls for Gemini 3+ for inference gateway - [#1000](https://github.com/livekit/agents-js/pull/1000) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Make agent state transition fixes and add interim transcript interruption support - [#992](https://github.com/livekit/agents-js/pull/992) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix: handle VAD stream closed error during agent handover - [#997](https://github.com/livekit/agents-js/pull/997) ([@toubatbrian](https://github.com/toubatbrian))
+
+  - Fixed a race condition in `StreamAdapter` where `endInput()` could be called on an already-closed VAD stream during agent handover, causing an unrecoverable `stt_error`. This affected non-streaming STTs (like OpenAI STT) that use the StreamAdapter wrapper.
+  - Added `isStreamClosedError()` utility function for consistent error handling.
+  - Upgraded sharp from 0.34.3 to 0.34.5 to fix libvips version conflict (1.2.0 vs 1.2.4) that caused flaky agent behavior and ObjC class collision warnings on macOS.
+  - Fixed pre-existing build error in test plugin (Int16Array to ArrayBuffer conversion).
+
 ## 1.0.38
 
 ### Patch Changes
