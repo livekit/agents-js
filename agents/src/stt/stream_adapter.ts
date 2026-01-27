@@ -4,6 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { log } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
+import { isStreamClosedError } from '../utils.js';
 import type { VAD, VADStream } from '../vad.js';
 import { VADEventType } from '../vad.js';
 import type { SpeechEvent } from './stt.js';
@@ -68,7 +69,17 @@ export class StreamAdapterWrapper extends SpeechStream {
           this.#vadStream.pushFrame(input);
         }
       }
-      this.#vadStream.endInput();
+
+      // Guard against calling endInput() on already-closed stream
+      // This happens during handover when close() is called while forwardInput is running
+      try {
+        this.#vadStream.endInput();
+      } catch (e) {
+        if (isStreamClosedError(e)) {
+          return;
+        }
+        throw e;
+      }
     };
 
     const recognize = async () => {
