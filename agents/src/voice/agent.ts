@@ -325,16 +325,16 @@ export class Agent<UserData = any> {
         );
       }
 
-      // TODO(brian): make parallelToolCalls configurable
       const { toolChoice } = modelSettings;
       const connOptions = activity.agentSession.connOptions.llmConnOptions;
 
+      // parallelToolCalls is not passed here - it will use the value from LLM's modelOptions
+      // This allows users to configure it via: new inference.LLM({ modelOptions: { parallel_tool_calls: false } })
       const stream = activity.llm.chat({
         chatCtx,
         toolCtx,
         toolChoice,
         connOptions,
-        parallelToolCalls: true,
       });
 
       let cleaned = false;

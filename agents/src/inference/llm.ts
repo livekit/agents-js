@@ -433,7 +433,10 @@ export class LLMStream extends llm.LLMStream {
         if (this.toolCallId && tool.id && tool.index !== this.toolIndex) {
           callChunk = this.createRunningToolCallChunk(id, delta);
           this.toolCallId = this.fncName = this.fncRawArguments = undefined;
-          this.toolExtra = undefined;
+          // Note: We intentionally do NOT reset toolExtra here.
+          // For Gemini 3+, the thought_signature is only provided on the first tool call
+          // in a parallel batch, but must be applied to ALL tool calls in the batch.
+          // We preserve toolExtra so subsequent tool calls inherit the thought_signature.
         }
 
         // Start or continue building the current tool call
@@ -443,9 +446,14 @@ export class LLMStream extends llm.LLMStream {
           this.fncName = tool.function.name;
           this.fncRawArguments = tool.function.arguments || '';
           // Extract extra from tool call (e.g., Google thought signatures)
-          this.toolExtra =
+          // Only update toolExtra if this tool call has extra_content.
+          // Otherwise, inherit from previous tool call (for parallel Gemini tool calls).
+          const newToolExtra =
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             ((tool as any).extra_content as Record<string, unknown> | undefined) ?? undefined;
+          if (newToolExtra) {
+            this.toolExtra = newToolExtra;
+          }
         } else if (tool.function.arguments) {
           this.fncRawArguments = (this.fncRawArguments || '') + tool.function.arguments;
         }
@@ -464,6 +472,7 @@ export class LLMStream extends llm.LLMStream {
     ) {
       const callChunk = this.createRunningToolCallChunk(id, delta);
       this.toolCallId = this.fncName = this.fncRawArguments = undefined;
+      // Reset toolExtra at the end of the response (not between parallel tool calls)
       this.toolExtra = undefined;
       return callChunk;
     }
