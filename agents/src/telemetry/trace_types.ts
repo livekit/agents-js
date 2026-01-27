@@ -51,6 +51,13 @@ export const ATTR_TRANSCRIPT_CONFIDENCE = 'lk.transcript_confidence';
 export const ATTR_TRANSCRIPTION_DELAY = 'lk.transcription_delay';
 export const ATTR_END_OF_TURN_DELAY = 'lk.end_of_turn_delay';
 
+// Adaptive Interruption attributes
+export const ATTR_IS_INTERRUPTION = 'lk.is_interruption';
+export const ATTR_INTERRUPTION_PROBABILITY = 'lk.interruption.probability';
+export const ATTR_INTERRUPTION_TOTAL_DURATION = 'lk.interruption.total_duration';
+export const ATTR_INTERRUPTION_PREDICTION_DURATION = 'lk.interruption.prediction_duration';
+export const ATTR_INTERRUPTION_DETECTION_DELAY = 'lk.interruption.detection_delay';
+
 // metrics
 export const ATTR_LLM_METRICS = 'lk.llm_metrics';
 export const ATTR_TTS_METRICS = 'lk.tts_metrics';

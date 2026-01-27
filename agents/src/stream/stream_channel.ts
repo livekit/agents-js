@@ -4,14 +4,15 @@
 import type { ReadableStream } from 'node:stream/web';
 import { IdentityTransform } from './identity_transform.js';
 
-export interface StreamChannel<T> {
+export interface StreamChannel<T, E extends Error = Error> {
   write(chunk: T): Promise<void>;
   close(): Promise<void>;
   stream(): ReadableStream<T>;
+  abort(error: E): Promise<void>;
   readonly closed: boolean;
 }
 
-export function createStreamChannel<T>(): StreamChannel<T> {
+export function createStreamChannel<T, E extends Error = Error>(): StreamChannel<T, E> {
   const transform = new IdentityTransform<T>();
   const writer = transform.writable.getWriter();
   let isClosed = false;
@@ -19,6 +20,10 @@ export function createStreamChannel<T>(): StreamChannel<T> {
   return {
     write: (chunk: T) => writer.write(chunk),
     stream: () => transform.readable,
+    abort: (error: E) => {
+      isClosed = true;
+      return writer.abort(error);
+    },
     close: async () => {
       try {
         const result = await writer.close();
