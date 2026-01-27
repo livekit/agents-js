@@ -1,5 +1,19 @@
 # @livekit/agents-plugins-test
 
+## 1.0.39
+
+### Patch Changes
+
+- fix: handle VAD stream closed error during agent handover - [#997](https://github.com/livekit/agents-js/pull/997) ([@toubatbrian](https://github.com/toubatbrian))
+
+  - Fixed a race condition in `StreamAdapter` where `endInput()` could be called on an already-closed VAD stream during agent handover, causing an unrecoverable `stt_error`. This affected non-streaming STTs (like OpenAI STT) that use the StreamAdapter wrapper.
+  - Added `isStreamClosedError()` utility function for consistent error handling.
+  - Upgraded sharp from 0.34.3 to 0.34.5 to fix libvips version conflict (1.2.0 vs 1.2.4) that caused flaky agent behavior and ObjC class collision warnings on macOS.
+  - Fixed pre-existing build error in test plugin (Int16Array to ArrayBuffer conversion).
+
+- Updated dependencies [[`ebfb82f257b66790caf6309ba7c3c93cbe93fa0d`](https://github.com/livekit/agents-js/commit/ebfb82f257b66790caf6309ba7c3c93cbe93fa0d), [`217eb7d315096d6f3a0804601292da43b4e9692e`](https://github.com/livekit/agents-js/commit/217eb7d315096d6f3a0804601292da43b4e9692e), [`15dd71be11711e953ca06e0d47da0a292def11d0`](https://github.com/livekit/agents-js/commit/15dd71be11711e953ca06e0d47da0a292def11d0), [`3544bfa972a4d7c7387c38b0b96aefa5e2b9a307`](https://github.com/livekit/agents-js/commit/3544bfa972a4d7c7387c38b0b96aefa5e2b9a307)]:
+  - @livekit/agents@1.0.39
+
 ## 1.0.38
 
 ### Patch Changes

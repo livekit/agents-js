@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-hedra",
-  "version": "1.0.38",
+  "version": "1.0.39",
   "description": "Hedra avatar plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
