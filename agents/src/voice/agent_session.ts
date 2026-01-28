@@ -162,8 +162,6 @@ export class AgentSession<
 
   private _interruptionDetection?: InterruptionConfig['mode'];
 
-  private turnHandlingConfig?: TurnHandlingConfig;
-
   /** @internal */
   _recorderIO?: RecorderIO;
 
@@ -232,8 +230,6 @@ export class AgentSession<
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
 
-    // @ts-ignore FIXME the return type of the migration util has all defaults filled
-    this.turnHandlingConfig = opts.turnHandling;
     // @ts-ignore FIXME the return type of the migration util has all defaults filled
     this.options = opts.voiceOptions;
 
