@@ -44,7 +44,6 @@ const OUTPUT_AUDIO_SAMPLE_RATE = 24000;
 const OUTPUT_AUDIO_CHANNELS = 1;
 
 const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
-
 /**
  * Default image encoding options for Google Realtime API
  */
@@ -410,6 +409,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private sessionLock = new Mutex();
   private numRetries = 0;
   private hasReceivedAudioInput = false;
+  private pendingInterruptText = false;
+  private earlyCompletionPending = false;
 
   #client: GoogleGenAI;
   #task: Promise<void>;
@@ -468,6 +469,8 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.activeSession = undefined;
       }
     }
+    this.earlyCompletionPending = false;
+    this.pendingInterruptText = false;
 
     unlock();
   }
@@ -568,6 +571,27 @@ export class RealtimeSession extends llm.RealtimeSession {
       const toolResults = this.getToolResultsForRealtime(appendCtx, this.options.vertexai);
 
       if (turns.length > 0) {
+        const shouldSendRealtimeText = this.pendingInterruptText;
+
+        if (shouldSendRealtimeText) {
+          for (const turn of turns as types.Content[]) {
+            if (turn.role !== 'user') continue;
+            // Realtime text drives live activity/interrupts
+            // { type: content:  turnComplete: true } alone does not reliably preempt a streaming response in Gemini Live.
+            const text = (turn.parts || [])
+              .map((part) => (part as { text?: string }).text)
+              .filter((value): value is string => !!value)
+              .join('');
+            if (text) {
+              this.sendClientEvent({
+                type: 'realtime_input',
+                value: { text },
+              });
+              this.pendingInterruptText = false;
+            }
+          }
+        }
+
         this.sendClientEvent({
           type: 'content',
           value: {
@@ -717,10 +741,24 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
+  private generationHasOutput(gen: ResponseGeneration): boolean {
+    return Boolean(gen.outputText) || gen._firstTokenTimestamp !== undefined;
+  }
+
   async interrupt() {
     // Gemini Live treats activity start as interruption, so we rely on startUserActivity to handle it
     if (this.options.realtimeInputConfig?.activityHandling === ActivityHandling.NO_INTERRUPTION) {
+      if (LK_GOOGLE_DEBUG) {
+        this.#logger.debug('interrupt skipped (activityHandling = NO_INTERRUPTION)');
+      }
       return;
+    }
+    if (this.currentGeneration && !this.currentGeneration._done) {
+      this.pendingInterruptText = true;
+      if (this.generationHasOutput(this.currentGeneration)) {
+        this.earlyCompletionPending = true;
+        this.markCurrentGenerationDone();
+      }
     }
     this.startUserActivity();
   }
@@ -903,11 +941,14 @@ export class RealtimeSession extends llm.RealtimeSession {
             }
             break;
           case 'realtime_input':
-            const { mediaChunks, activityStart, activityEnd } = msg.value;
+            const { mediaChunks, activityStart, activityEnd, text } = msg.value;
             if (mediaChunks) {
               for (const mediaChunk of mediaChunks) {
                 await session.sendRealtimeInput({ media: mediaChunk });
               }
+            }
+            if (text) {
+              await session.sendRealtimeInput({ text });
             }
             if (activityStart) await session.sendRealtimeInput({ activityStart });
             if (activityEnd) await session.sendRealtimeInput({ activityEnd });
@@ -960,7 +1001,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const shouldStartNewGeneration =
       !this.currentGeneration || this.currentGeneration._done || !!this.pendingGenerationFut;
-
     if (shouldStartNewGeneration) {
       if (response.serverContent?.interrupted) {
         // Two cases when an interrupted event is sent without an active generation:
@@ -1295,7 +1335,9 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const gen = this.currentGeneration;
 
-    if (serverContent.modelTurn) {
+    const discardOutput = this.earlyCompletionPending;
+
+    if (serverContent.modelTurn && !discardOutput) {
       const turn = serverContent.modelTurn;
 
       for (const part of turn.parts || []) {
@@ -1357,7 +1399,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       } as llm.InputTranscriptionCompleted);
     }
 
-    if (serverContent.outputTranscription && serverContent.outputTranscription.text) {
+    if (
+      !discardOutput &&
+      serverContent.outputTranscription &&
+      serverContent.outputTranscription.text
+    ) {
       const text = serverContent.outputTranscription.text;
       gen.outputText += text;
       gen.textChannel.write(text);
@@ -1371,8 +1417,17 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.handleInputSpeechStarted();
     }
 
-    if (serverContent.turnComplete) {
+    if (serverContent.turnComplete && !this.earlyCompletionPending) {
       this.markCurrentGenerationDone();
+    }
+
+    // Assume Gemini emits turnComplete/generationComplete before any new generation content.
+    // We keep discarding until that signal to avoid old stream spillover after interrupts.
+    if (
+      this.earlyCompletionPending &&
+      (serverContent.turnComplete || serverContent.generationComplete)
+    ) {
+      this.earlyCompletionPending = false;
     }
   }
 
@@ -1529,6 +1584,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private isNewGeneration(response: types.LiveServerMessage) {
+    if (this.earlyCompletionPending) {
+      return false;
+    }
     if (response.toolCall) {
       return true;
     }
