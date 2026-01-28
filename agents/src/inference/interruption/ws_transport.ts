@@ -1,6 +1,5 @@
-import { Readable, Writable } from 'node:stream';
 import { TransformStream } from 'stream/web';
-import WebSocket, { createWebSocketStream } from 'ws';
+import WebSocket from 'ws';
 import { z } from 'zod';
 import { log } from '../../log.js';
 import { createAccessToken } from '../utils.js';
@@ -46,36 +45,17 @@ const wsMessageSchema = z.object({
 
 type WsMessage = z.infer<typeof wsMessageSchema>;
 
-export function webSocketToStream(ws: WebSocket) {
-  const duplex = createWebSocketStream(ws);
-  duplex.on('error', (err) => log().error({ err }, 'WebSocket stream error'));
-
-  // End the write side when the read side ends
-  duplex.on('end', () => duplex.end());
-
-  const writable = Writable.toWeb(duplex) as WritableStream<Uint8Array>;
-  const readable = Readable.toWeb(duplex) as ReadableStream<Uint8Array>;
-
-  return { readable, writable };
-}
-
 /**
- * Creates a WebSocket connection and returns web-standard streams.
+ * Creates a WebSocket connection and waits for it to open.
  */
-async function connectWebSocket(options: WsTransportOptions): Promise<{
-  readable: ReadableStream<Uint8Array>;
-  writable: WritableStream<Uint8Array>;
-  ws: WebSocket;
-}> {
+async function connectWebSocket(options: WsTransportOptions): Promise<WebSocket> {
   const baseUrl = options.baseUrl.replace(/^http/, 'ws');
-  const url = `${baseUrl}/bargein`;
   const token = await createAccessToken(options.apiKey, options.apiSecret);
+  const url = `${baseUrl}/bargein`;
 
   const ws = new WebSocket(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
-
-  const { readable, writable } = webSocketToStream(ws);
 
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -86,14 +66,14 @@ async function connectWebSocket(options: WsTransportOptions): Promise<{
       clearTimeout(timeout);
       resolve();
     });
-    ws.once('error', (err) => {
+    ws.once('error', (err: Error) => {
       clearTimeout(timeout);
       ws.terminate();
       reject(err);
     });
   });
 
-  return { readable, writable, ws };
+  return ws;
 }
 
 export interface WsTransportResult {
@@ -116,9 +96,26 @@ export function createWsTransport(
 ): WsTransportResult {
   const logger = log();
   let ws: WebSocket | null = null;
-  let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
-  let readerTask: Promise<void> | null = null;
   let outputController: TransformStreamDefaultController<InterruptionEvent> | null = null;
+
+  function setupMessageHandler(socket: WebSocket): void {
+    socket.on('message', (data: WebSocket.Data) => {
+      try {
+        const message = JSON.parse(data.toString());
+        handleMessage(message);
+      } catch {
+        logger.warn({ data: data.toString() }, 'Failed to parse WebSocket message');
+      }
+    });
+
+    socket.on('error', (err: Error) => {
+      logger.error({ err }, 'WebSocket error');
+    });
+
+    socket.on('close', (code: number, reason: Buffer) => {
+      logger.debug({ code, reason: reason.toString() }, 'WebSocket closed');
+    });
+  }
 
   async function ensureConnection(): Promise<void> {
     if (ws && ws.readyState === WebSocket.OPEN) return;
@@ -128,9 +125,8 @@ export function createWsTransport(
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        const conn = await connectWebSocket(options);
-        ws = conn.ws;
-        writer = conn.writable.getWriter();
+        ws = await connectWebSocket(options);
+        setupMessageHandler(ws);
 
         // Send session.create message
         const sessionCreateMsg = JSON.stringify({
@@ -143,10 +139,7 @@ export function createWsTransport(
             encoding: 's16le',
           },
         });
-        await writer.write(new TextEncoder().encode(sessionCreateMsg));
-
-        // Start reading responses
-        readerTask = processResponses(conn.readable);
+        ws.send(sessionCreateMsg);
         return;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
@@ -164,55 +157,13 @@ export function createWsTransport(
     throw lastError ?? new Error('Failed to connect to WebSocket after retries');
   }
 
-  async function processResponses(readable: ReadableStream<Uint8Array>): Promise<void> {
-    const reader = readable.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // Process complete JSON messages (newline-delimited or single messages)
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-
-        for (const line of lines) {
-          if (line.trim()) {
-            try {
-              const message = wsMessageSchema.parse(JSON.parse(line));
-              handleMessage(message);
-            } catch {
-              logger.warn({ line }, 'Failed to parse WebSocket message');
-            }
-          }
-        }
-
-        // Also try parsing buffer as complete message (for non-newline-delimited)
-        if (buffer.trim()) {
-          try {
-            const message = wsMessageSchema.parse(JSON.parse(buffer));
-            handleMessage(message);
-            buffer = '';
-          } catch {
-            // Incomplete message, keep buffering
-          }
-        }
-      }
-    } finally {
-      reader.releaseLock();
-    }
-  }
-
   function handleMessage(message: WsMessage): void {
     const state = getState();
+    logger.warn(`WebSocket message: ${message.type}`);
 
     switch (message.type) {
       case MSG_SESSION_CREATED:
-        logger.debug('WebSocket session created');
+        logger.warn('WebSocket session created');
         break;
 
       case MSG_INTERRUPTION_DETECTED: {
@@ -234,7 +185,7 @@ export function createWsTransport(
             updateUserSpeakingSpan(entry);
           }
 
-          logger.debug(
+          logger.warn(
             {
               totalDurationInS: entry.totalDurationInS,
               predictionDurationInS: entry.predictionDurationInS,
@@ -278,7 +229,7 @@ export function createWsTransport(
           });
           state.cache.set(createdAt, entry);
 
-          logger.trace(
+          logger.warn(
             {
               totalDurationInS: entry.totalDurationInS,
               predictionDurationInS: entry.predictionDurationInS,
@@ -294,7 +245,7 @@ export function createWsTransport(
         break;
 
       case MSG_ERROR:
-        logger.error({ error: message.error }, 'WebSocket error message received');
+        logger.error({ ...message }, 'WebSocket error message received');
         outputController?.error(new Error(`LiveKit Interruption error: ${message.error}`));
         break;
 
@@ -303,9 +254,10 @@ export function createWsTransport(
     }
   }
 
-  async function sendAudioData(audioSlice: Int16Array): Promise<void> {
-    await ensureConnection();
-    if (!writer) throw new Error('WebSocket not connected');
+  function sendAudioData(audioSlice: Int16Array): void {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket not connected');
+    }
 
     const state = getState();
     const createdAt = performance.now();
@@ -331,26 +283,23 @@ export function createWsTransport(
     combined.set(audioBytes, 8);
 
     try {
-      await writer.write(combined);
+      ws.send(combined);
     } catch (e: unknown) {
       logger.error(e, `failed to send audio via websocket`);
     }
   }
 
-  async function close(): Promise<void> {
-    if (writer && ws?.readyState === WebSocket.OPEN) {
+  function close(): void {
+    if (ws?.readyState === WebSocket.OPEN) {
       const closeMsg = JSON.stringify({ type: MSG_SESSION_CLOSE });
       try {
-        await writer.write(new TextEncoder().encode(closeMsg));
-      } finally {
-        writer.releaseLock();
-        writer = null;
+        ws.send(closeMsg);
+      } catch (e: unknown) {
+        logger.error(e, 'failed to send close message');
       }
     }
     ws?.close(1000); // signal normal websocket closure
     ws = null;
-    await readerTask;
-    readerTask = null;
   }
 
   /**
@@ -358,17 +307,18 @@ export function createWsTransport(
    * This is called when options are updated via updateOptions().
    */
   async function reconnect(): Promise<void> {
-    await close();
-    // Connection will be re-established on next sendAudioData call
+    close();
+    // Connection will be re-established on next ensureConnection call
   }
 
   const transport = new TransformStream<Int16Array | InterruptionEvent, InterruptionEvent>(
     {
-      start(controller) {
+      async start(controller) {
         outputController = controller;
+        await ensureConnection();
       },
 
-      async transform(chunk, controller) {
+      transform(chunk, controller) {
         // Pass through InterruptionEvents unchanged
         if (!(chunk instanceof Int16Array)) {
           controller.enqueue(chunk);
@@ -379,14 +329,14 @@ export function createWsTransport(
         if (!state.overlapSpeechStartedAt) return;
 
         try {
-          await sendAudioData(chunk);
+          sendAudioData(chunk);
         } catch (err) {
           logger.error({ err }, 'Failed to send audio data over WebSocket');
         }
       },
 
-      async flush() {
-        await close();
+      flush() {
+        close();
       },
     },
     { highWaterMark: 2 },

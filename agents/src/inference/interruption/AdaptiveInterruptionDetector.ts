@@ -73,8 +73,7 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
           'apiSecret is required, either as argument or set LIVEKIT_API_SECRET environmental variable',
         );
       }
-      // FIXME disabled proxying for local testing
-      useProxy = false;
+      useProxy = true;
     } else {
       useProxy = false;
     }
