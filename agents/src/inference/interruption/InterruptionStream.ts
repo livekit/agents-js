@@ -302,9 +302,9 @@ export class InterruptionStreamBase {
     const eventEmitter = new TransformStream<InterruptionEvent, InterruptionEvent>({
       transform: (chunk, controller) => {
         if (chunk.type === InterruptionEventType.INTERRUPTION) {
-          this.model.emit('userInterruptionDetected', chunk);
+          this.model.emit('user_interruption_detected', chunk);
         } else if (chunk.type === InterruptionEventType.OVERLAP_SPEECH_ENDED) {
-          this.model.emit('userNonInterruptionDetected', chunk);
+          this.model.emit('user_non_interruption_detected', chunk);
         }
         controller.enqueue(chunk);
       },

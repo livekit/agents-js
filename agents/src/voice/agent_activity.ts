@@ -2488,10 +2488,10 @@ export class AgentActivity implements RecognitionHooks {
     const detector = new AdaptiveInterruptionDetector();
 
     // TODO cleanup these listeners
-    detector.on('userInterruptionDetected', (ev) =>
+    detector.on('user_interruption_detected', (ev) =>
       this.agentSession.emit(AgentSessionEventTypes.UserInterruptionDetected, ev),
     );
-    detector.on('userNonInterruptionDetected', (ev) =>
+    detector.on('user_non_interruption_detected', (ev) =>
       this.agentSession.emit(AgentSessionEventTypes.UserNonInterruptionDetected, ev),
     );
 

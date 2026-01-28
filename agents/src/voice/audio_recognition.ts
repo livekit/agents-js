@@ -20,7 +20,7 @@ import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
-import { Task, delay } from '../utils.js';
+import { Task, delay, waitForAbort } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
@@ -332,8 +332,14 @@ export class AudioRecognition {
     frame: AudioFrame | InterruptionSentinel,
   ): Promise<boolean> {
     if (this.isInterruptionEnabled && !this.interruptionStreamChannel.closed) {
-      await this.interruptionStreamChannel.write(frame);
-      return true;
+      try {
+        await this.interruptionStreamChannel.write(frame);
+        return true;
+      } catch (e: unknown) {
+        this.logger.warn(
+          `could not forward interruption sentinel: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     }
     return false;
   }
@@ -854,8 +860,11 @@ export class AudioRecognition {
     // Forward input frames/sentinels to the interruption stream
     const forwardTask = (async () => {
       try {
+        const abortPromise = waitForAbort(signal);
         while (!signal.aborted) {
-          const { done, value } = await inputReader.read();
+          const res = await Promise.race([inputReader.read(), abortPromise]);
+          if (!res) break;
+          const { value, done } = res;
           if (done) break;
           await stream.pushFrame(value);
         }
@@ -877,10 +886,13 @@ export class AudioRecognition {
     signal.addEventListener('abort', abortHandler);
 
     try {
+      const abortPromise = waitForAbort(signal);
+
       while (!signal.aborted) {
         this.logger.warn('waiting for interruption event');
-
-        const { done, value: ev } = await eventReader.read();
+        const res = await Promise.race([eventReader.read(), abortPromise]);
+        if (!res) break;
+        const { done, value: ev } = res;
         if (done) break;
         this.logger.warn('got interruption event');
         this.onInterruptionEvent(ev);

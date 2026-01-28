@@ -15,8 +15,8 @@ import type { InterruptionDetectionError } from './errors.js';
 import type { InterruptionEvent, InterruptionOptions } from './types.js';
 
 type InterruptionCallbacks = {
-  userInterruptionDetected: (event: InterruptionEvent) => void;
-  userNonInterruptionDetected: (event: InterruptionEvent) => void;
+  user_interruption_detected: (event: InterruptionEvent) => void;
+  user_non_interruption_detected: (event: InterruptionEvent) => void;
   error: (error: InterruptionDetectionError) => void;
 };
 
