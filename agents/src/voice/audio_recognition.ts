@@ -859,6 +859,7 @@ export class AudioRecognition {
 
     const cleanup = async () => {
       try {
+        signal.removeEventListener('abort', abortHandler);
         eventReader.releaseLock();
         await stream.close();
       } catch (e) {
@@ -906,7 +907,6 @@ export class AudioRecognition {
         this.logger.error(e, 'Error in interruption task');
       }
     } finally {
-      signal.removeEventListener('abort', abortHandler);
       await cleanup();
       await forwardTask;
       this.logger.debug('Interruption task closed');
