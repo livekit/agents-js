@@ -8,7 +8,13 @@ import { IdentityTransform } from '../../stream/identity_transform.js';
 import type { SentenceStream, SentenceTokenizer } from '../../tokenize/index.js';
 import { basic } from '../../tokenize/index.js';
 import { Future, Task, delay } from '../../utils.js';
-import { AudioOutput, type PlaybackFinishedEvent, TextOutput } from '../io.js';
+import {
+  AudioOutput,
+  type PlaybackFinishedEvent,
+  TextOutput,
+  type TimedString,
+  isTimedString,
+} from '../io.js';
 
 const STANDARD_SPEECH_RATE = 3.83; // hyphens (syllables) per second
 
@@ -27,9 +33,110 @@ interface TextData {
   forwardedText: string;
 }
 
+/**
+ * Tracks speaking rate data from TTS timing annotations.
+ * @internal Exported for testing purposes.
+ */
+export class SpeakingRateData {
+  /** Timestamps of the speaking rate. */
+  timestamps: number[] = [];
+  /** Speed at the timestamp. */
+  speakingRate: number[] = [];
+  /** Accumulated speaking units up to the timestamp. */
+  speakIntegrals: number[] = [];
+  /** Buffer for text without timing annotations yet. */
+  private textBuffer: string[] = [];
+
+  /**
+   * Add by speaking rate estimation.
+   */
+  addByRate(timestamp: number, speakingRate: number): void {
+    const integral =
+      this.speakIntegrals.length > 0 ? this.speakIntegrals[this.speakIntegrals.length - 1]! : 0;
+    const dt = timestamp - this.pushedDuration;
+    const newIntegral = integral + speakingRate * dt;
+
+    this.timestamps.push(timestamp);
+    this.speakingRate.push(speakingRate);
+    this.speakIntegrals.push(newIntegral);
+  }
+
+  /**
+   * Add annotation from TimedString with start_time/end_time.
+   */
+  addByAnnotation(text: string, startTime: number | undefined, endTime: number | undefined): void {
+    if (startTime !== undefined) {
+      // Calculate the integral of the speaking rate up to the start time
+      const integral =
+        this.speakIntegrals.length > 0 ? this.speakIntegrals[this.speakIntegrals.length - 1]! : 0;
+
+      const dt = startTime - this.pushedDuration;
+      // Use the length of the text directly instead of hyphens
+      const textLen = this.textBuffer.reduce((sum, t) => sum + t.length, 0);
+      const newIntegral = integral + textLen;
+      const rate = dt > 0 ? textLen / dt : 0;
+
+      this.timestamps.push(startTime);
+      this.speakingRate.push(rate);
+      this.speakIntegrals.push(newIntegral);
+      this.textBuffer = [];
+    }
+
+    this.textBuffer.push(text);
+
+    if (endTime !== undefined) {
+      this.addByAnnotation('', endTime, undefined);
+    }
+  }
+
+  /**
+   * Get accumulated speaking units up to the given timestamp.
+   */
+  accumulateTo(timestamp: number): number {
+    if (this.timestamps.length === 0) {
+      return 0;
+    }
+
+    // Binary search for the right position (equivalent to np.searchsorted with side="right")
+    let idx = 0;
+    for (let i = 0; i < this.timestamps.length; i++) {
+      if (this.timestamps[i]! <= timestamp) {
+        idx = i + 1;
+      } else {
+        break;
+      }
+    }
+
+    if (idx === 0) {
+      return 0;
+    }
+
+    let integralT = this.speakIntegrals[idx - 1]!;
+
+    // Fill the tail assuming the speaking rate is constant
+    const dt = timestamp - this.timestamps[idx - 1]!;
+    const rate =
+      idx < this.speakingRate.length ? this.speakingRate[idx]! : this.speakingRate[idx - 1]!;
+    integralT += rate * dt;
+
+    // If there is a next timestamp, make sure the integral does not exceed the next
+    if (idx < this.timestamps.length) {
+      integralT = Math.min(integralT, this.speakIntegrals[idx]!);
+    }
+
+    return integralT;
+  }
+
+  /** Get the last pushed timestamp. */
+  get pushedDuration(): number {
+    return this.timestamps.length > 0 ? this.timestamps[this.timestamps.length - 1]! : 0;
+  }
+}
+
 interface AudioData {
   pushedDuration: number;
   done: boolean;
+  annotatedRate: SpeakingRateData | null;
 }
 
 class SegmentSynchronizerImpl {
@@ -62,6 +169,7 @@ class SegmentSynchronizerImpl {
     this.audioData = {
       pushedDuration: 0,
       done: false,
+      annotatedRate: null,
     };
     this.outputStream = new IdentityTransform();
     this.outputStreamWriter = this.outputStream.writable.getWriter();
@@ -86,6 +194,10 @@ class SegmentSynchronizerImpl {
 
   get textInputEnded() {
     return this.textData.done;
+  }
+
+  get hasPendingText(): boolean {
+    return this.textData.pushedText.length > this.textData.forwardedText.length;
   }
 
   get readable(): ReadableStream<string> {
@@ -117,14 +229,36 @@ class SegmentSynchronizerImpl {
     this.audioData.done = true;
   }
 
-  pushText(text: string) {
+  pushText(text: string | TimedString) {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.pushText called after close');
       return;
     }
 
-    this.textData.sentenceStream.pushText(text);
-    this.textData.pushedText += text;
+    // Check if text is a TimedString (has timing information)
+    let textStr: string;
+    let startTime: number | undefined;
+    let endTime: number | undefined;
+
+    if (isTimedString(text)) {
+      // This is a TimedString
+      textStr = text.text;
+      startTime = text.startTime;
+      endTime = text.endTime;
+
+      // Create annotatedRate if it doesn't exist
+      if (!this.audioData.annotatedRate) {
+        this.audioData.annotatedRate = new SpeakingRateData();
+      }
+
+      // Add the timing annotation
+      this.audioData.annotatedRate.addByAnnotation(textStr, startTime, endTime);
+    } else {
+      textStr = text;
+    }
+
+    this.textData.sentenceStream.pushText(textStr);
+    this.textData.pushedText += textStr;
   }
 
   endTextInput() {
@@ -148,6 +282,10 @@ class SegmentSynchronizerImpl {
         { textDone: this.textData.done, audioDone: this.audioData.done },
         'SegmentSynchronizerImpl.markPlaybackFinished called before text/audio input is done',
       );
+      // This allows mainTask to flush remaining text even if audio wasn't formally ended
+      if (!interrupted) {
+        this.playbackCompleted = true;
+      }
       return;
     }
 
@@ -166,13 +304,13 @@ class SegmentSynchronizerImpl {
   private async captureTaskImpl() {
     // Don't use a for-await loop here, because exiting the loop will close the writer in the
     // outputStream, which will cause an error in the mainTask.then method.
+    // NOTE: forwardedText is updated in mainTask, NOT here
     const reader = this.outputStream.readable.getReader();
     while (true) {
       const { done, value: text } = await reader.read();
       if (done) {
         break;
       }
-      this.textData.forwardedText += text;
       await this.nextInChain.captureText(text);
     }
     reader.releaseLock();
@@ -211,19 +349,42 @@ class SegmentSynchronizerImpl {
 
         const wordHphens = this.options.hyphenateWord(word).length;
         const elapsedSeconds = (Date.now() - this.startWallTime) / 1000;
-        const targetHyphens = elapsedSeconds * this.options.speed;
-        const hyphensBehind = Math.max(0, targetHyphens - this.textData.forwardedHyphens);
-        let delay = Math.max(0, wordHphens - hyphensBehind) / this.speed;
 
-        if (this.playbackCompleted) {
-          delay = 0;
+        let dHyphens = 0;
+        const annotated = this.audioData.annotatedRate;
+
+        if (annotated && annotated.pushedDuration >= elapsedSeconds) {
+          // Use actual TTS timing annotations for accurate sync
+          const targetLen = Math.floor(annotated.accumulateTo(elapsedSeconds));
+          const forwardedLen = this.textData.forwardedText.length;
+
+          if (targetLen >= forwardedLen) {
+            const dText = this.textData.pushedText.slice(forwardedLen, targetLen);
+            dHyphens = this.calcHyphens(dText).length;
+          } else {
+            const dText = this.textData.pushedText.slice(targetLen, forwardedLen);
+            dHyphens = -this.calcHyphens(dText).length;
+          }
+        } else {
+          // Fall back to estimated hyphens-per-second calculation
+          const targetHyphens = elapsedSeconds * this.options.speed;
+          dHyphens = Math.max(0, targetHyphens - this.textData.forwardedHyphens);
         }
 
-        await this.sleepIfNotClosed(delay / 2);
-        this.outputStreamWriter.write(sentence.slice(textCursor, endPos));
-        await this.sleepIfNotClosed(delay / 2);
+        let delayTime = Math.max(0, wordHphens - dHyphens) / this.speed;
+
+        if (this.playbackCompleted) {
+          delayTime = 0;
+        }
+
+        await this.sleepIfNotClosed(delayTime / 2);
+        const forwardedWord = sentence.slice(textCursor, endPos);
+        this.outputStreamWriter.write(forwardedWord);
+
+        await this.sleepIfNotClosed(delayTime / 2);
 
         this.textData.forwardedHyphens += wordHphens;
+        this.textData.forwardedText += forwardedWord;
         textCursor = endPos;
       }
 
@@ -232,6 +393,15 @@ class SegmentSynchronizerImpl {
         this.outputStreamWriter.write(remaining);
       }
     }
+  }
+
+  private calcHyphens(text: string): string[] {
+    const words = this.options.splitWords(text);
+    const hyphens: string[] = [];
+    for (const [word] of words) {
+      hyphens.push(...this.options.hyphenateWord(word));
+    }
+    return hyphens;
   }
 
   private async sleepIfNotClosed(sleepTimeSeconds: number) {
@@ -350,6 +520,7 @@ export class TranscriptionSynchronizer {
     if (abort.aborted) {
       return;
     }
+
     await this._impl.close();
     this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain);
   }
@@ -399,7 +570,15 @@ class SyncedAudioOutput extends AudioOutput {
     }
 
     if (!this.pushedDuration) {
-      // in case there is no audio after the text was pushed, rotate the segment
+      // For timed texts, audio goes directly to room without going through synchronizer.
+      // If text was pushed but no audio, still end audio input so text can be processed.
+      // Only rotate if there's also no text (truly empty segment).
+      if (this.synchronizer._impl.hasPendingText) {
+        // Text is pending - end audio input to allow text processing
+        this.synchronizer._impl.endAudioInput();
+        return;
+      }
+      // No text and no audio - rotate the segment
       this.synchronizer.rotateSegment();
       return;
     }
@@ -441,12 +620,14 @@ class SyncedTextOutput extends TextOutput {
     super(nextInChain);
   }
 
-  async captureText(text: string): Promise<void> {
+  async captureText(text: string | TimedString): Promise<void> {
     await this.synchronizer.barrier();
 
+    const textStr = isTimedString(text) ? text.text : text;
+
     if (!this.synchronizer.enabled) {
-      // pass through to the next in chain
-      await this.nextInChain.captureText(text);
+      // pass through to the next in chain (extract string from TimedString if needed)
+      await this.nextInChain.captureText(textStr);
       return;
     }
 
@@ -458,10 +639,14 @@ class SyncedTextOutput extends TextOutput {
       this.synchronizer.rotateSegment();
       await this.synchronizer.barrier();
     }
+    // Pass the TimedString to pushText for timing extraction
     this.synchronizer._impl.pushText(text);
   }
 
-  flush() {
+  async flush() {
+    // Wait for any pending rotation to complete before accessing _impl
+    await this.synchronizer.barrier();
+
     if (!this.synchronizer.enabled) {
       this.nextInChain.flush(); // passthrough text if the synchronizer is disabled
       return;

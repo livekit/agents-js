@@ -73,6 +73,7 @@ export interface VoiceOptions {
   maxToolSteps: number;
   preemptiveGeneration: boolean;
   userAwayTimeout?: number | null;
+  useTtsAlignedTranscript: boolean;
 }
 
 const defaultVoiceOptions: VoiceOptions = {
@@ -85,6 +86,7 @@ const defaultVoiceOptions: VoiceOptions = {
   maxToolSteps: 3,
   preemptiveGeneration: false,
   userAwayTimeout: 15.0,
+  useTtsAlignedTranscript: true,
 } as const;
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
@@ -262,6 +264,10 @@ export class AgentSession<
   /** Connection options for STT, LLM, and TTS. */
   get connOptions(): ResolvedSessionConnectOptions {
     return this._connOptions;
+  }
+
+  get useTtsAlignedTranscript(): boolean {
+    return this.options.useTtsAlignedTranscript;
   }
 
   set userData(value: UserData) {

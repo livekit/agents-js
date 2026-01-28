@@ -601,6 +601,8 @@ export interface ResponseAudioTranscriptDeltaEvent extends BaseServerEvent {
   output_index: number;
   content_index: number;
   delta: string;
+  // Start time of this transcript segment in seconds (relative to audio output).
+  start_time?: number;
 }
 
 export interface ResponseAudioTranscriptDoneEvent extends BaseServerEvent {

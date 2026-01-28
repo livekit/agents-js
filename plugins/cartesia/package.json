@@ -48,6 +48,7 @@
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "catalog:"
+    "@livekit/rtc-node": "catalog:",
+    "zod": "^3.25.76 || ^4.1.8"
   }
 }

@@ -6,6 +6,7 @@ import { EventEmitter } from 'events';
 import type { ReadableStream } from 'node:stream/web';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { Task } from '../utils.js';
+import type { TimedString } from '../voice/io.js';
 import type { ChatContext, FunctionCall } from './chat_context.js';
 import type { ToolChoice, ToolContext } from './tool_context.js';
 
@@ -17,7 +18,10 @@ export interface InputSpeechStoppedEvent {
 
 export interface MessageGeneration {
   messageId: string;
-  textStream: ReadableStream<string>;
+  /**
+   * Text stream that may contain plain strings or TimedString objects with timestamps.
+   */
+  textStream: ReadableStream<string | TimedString>;
   audioStream: ReadableStream<AudioFrame>;
   modalities?: Promise<('text' | 'audio')[]>;
 }

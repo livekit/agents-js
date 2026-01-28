@@ -438,6 +438,9 @@ importers:
       ws:
         specifier: ^8.16.0
         version: 8.17.0
+      zod:
+        specifier: ^3.25.76 || ^4.1.8
+        version: 4.2.1
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
