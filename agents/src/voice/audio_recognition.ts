@@ -857,6 +857,15 @@ export class AudioRecognition {
     const stream = interruptionDetection.createStream();
     const inputReader = this.interruptionStreamChannel.stream().getReader();
 
+    const cleanup = async () => {
+      try {
+        eventReader.releaseLock();
+        await stream.close();
+      } catch (e) {
+        this.logger.debug('createInterruptionTask: error during abort handler:', e);
+      }
+    };
+
     // Forward input frames/sentinels to the interruption stream
     const forwardTask = (async () => {
       try {
@@ -876,12 +885,7 @@ export class AudioRecognition {
     // Read output events from the interruption stream
     const eventReader = stream.stream().getReader();
     const abortHandler = async () => {
-      try {
-        eventReader.releaseLock();
-        await stream.close();
-      } catch (e) {
-        this.logger.debug('createInterruptionTask: error during abort handler:', e);
-      }
+      await cleanup();
     };
     signal.addEventListener('abort', abortHandler);
 
@@ -903,8 +907,7 @@ export class AudioRecognition {
       }
     } finally {
       signal.removeEventListener('abort', abortHandler);
-      eventReader.releaseLock();
-      await stream.close();
+      await cleanup();
       await forwardTask;
       this.logger.debug('Interruption task closed');
     }
