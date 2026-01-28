@@ -59,6 +59,10 @@ export abstract class SupervisedProc {
     return this.#started;
   }
 
+  get isAlive(): boolean {
+    return this.#started && !this.#closing && !!this.proc?.connected;
+  }
+
   get runningJob(): RunningJobInfo | undefined {
     return this.#runningJob;
   }
