@@ -34,14 +34,22 @@ export interface WsTransportState {
   cache: BoundedCache<number, InterruptionCacheEntry>;
 }
 
-const wsMessageSchema = z.object({
-  type: z.string(),
-  created_at: z.number().optional(),
-  probabilities: z.array(z.number()).optional(),
-  prediction_duration: z.number().optional(),
-  is_bargein: z.boolean().optional(),
-  error: z.string().optional(),
-});
+const wsMessageSchema = z.union([
+  z.object({
+    type: z.literal(MSG_SESSION_CREATED).or(z.literal(MSG_SESSION_CLOSED)),
+  }),
+  z.object({
+    type: z.literal(MSG_INTERRUPTION_DETECTED).or(z.literal(MSG_INFERENCE_DONE)),
+    created_at: z.number().optional(),
+    probabilities: z.array(z.number()).optional(),
+    prediction_duration: z.number().optional(),
+    is_bargein: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal('error'),
+    message: z.string(),
+  }),
+]);
 
 type WsMessage = z.infer<typeof wsMessageSchema>;
 
@@ -101,7 +109,7 @@ export function createWsTransport(
   function setupMessageHandler(socket: WebSocket): void {
     socket.on('message', (data: WebSocket.Data) => {
       try {
-        const message = JSON.parse(data.toString());
+        const message = wsMessageSchema.parse(JSON.parse(data.toString()));
         handleMessage(message);
       } catch {
         logger.warn({ data: data.toString() }, 'Failed to parse WebSocket message');
@@ -145,7 +153,7 @@ export function createWsTransport(
         lastError = err instanceof Error ? err : new Error(String(err));
         if (attempt < maxRetries) {
           const delay = intervalForRetry(attempt);
-          logger.warn(
+          logger.debug(
             { attempt, delay, err: lastError.message },
             'WebSocket connection failed, retrying',
           );
@@ -159,11 +167,10 @@ export function createWsTransport(
 
   function handleMessage(message: WsMessage): void {
     const state = getState();
-    logger.warn(`WebSocket message: ${message.type}`);
 
     switch (message.type) {
       case MSG_SESSION_CREATED:
-        logger.warn('WebSocket session created');
+        logger.debug('WebSocket session created');
         break;
 
       case MSG_INTERRUPTION_DETECTED: {
@@ -185,7 +192,7 @@ export function createWsTransport(
             updateUserSpeakingSpan(entry);
           }
 
-          logger.warn(
+          logger.debug(
             {
               totalDurationInS: entry.totalDurationInS,
               predictionDurationInS: entry.predictionDurationInS,
@@ -229,7 +236,7 @@ export function createWsTransport(
           });
           state.cache.set(createdAt, entry);
 
-          logger.warn(
+          logger.debug(
             {
               totalDurationInS: entry.totalDurationInS,
               predictionDurationInS: entry.predictionDurationInS,
@@ -245,12 +252,8 @@ export function createWsTransport(
         break;
 
       case MSG_ERROR:
-        logger.error({ ...message }, 'WebSocket error message received');
-        outputController?.error(new Error(`LiveKit Interruption error: ${message.error}`));
+        outputController?.error(new Error(`LiveKit Interruption error: ${message.message}`));
         break;
-
-      default:
-        logger.warn({ type: message.type }, 'Received unexpected WebSocket message type');
     }
   }
 
