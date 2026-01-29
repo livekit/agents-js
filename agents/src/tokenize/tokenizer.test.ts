@@ -13,7 +13,7 @@ const TEXT =
   'This is a test. Another test. ' +
   'A short sentence. ' +
   'A longer sentence that is longer than the previous sentence. ' +
-  'Find additional resources on livekit.com.' +
+  'Find additional resources on docs.livekit.com. ' +
   'f(x) = x * 2.54 + 42. ' +
   'Hey! Hi! Hello! ';
 
@@ -23,7 +23,7 @@ const EXPECTED_MIN_20 = [
   'Mr. Theo is testing the sentence tokenizer.',
   'This is a test. Another test.',
   'A short sentence. A longer sentence that is longer than the previous sentence.',
-  'Find additional resources on livekit.com.',
+  'Find additional resources on docs.livekit.com.',
   'f(x) = x * 2.54 + 42.',
   'Hey! Hi! Hello!',
   ,
