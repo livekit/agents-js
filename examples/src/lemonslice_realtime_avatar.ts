@@ -8,12 +8,15 @@ import {
   cli,
   defineAgent,
   inference,
+  initializeLogger,
   voice,
 } from '@livekit/agents';
 import * as lemonslice from '@livekit/agents-plugin-lemonslice';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
+
+initializeLogger({ pretty: true });
 
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {

@@ -209,6 +209,10 @@ export class AvatarSession {
       localParticipantIdentity = room.localParticipant.identity;
     }
 
+    if (!localParticipantIdentity) {
+      throw new LemonSliceException('failed to get local participant identity');
+    }
+
     const at = new AccessToken(livekitApiKey, livekitApiSecret, {
       identity: this.avatarParticipantIdentity,
       name: this.avatarParticipantName,
