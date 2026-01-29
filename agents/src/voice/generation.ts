@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
-import type { Span } from '@opentelemetry/api';
 import { context as otelContext } from '@opentelemetry/api';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
 import {
@@ -24,6 +23,7 @@ import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
+import type { FunctionToolAttributes, TypedSpan } from '../telemetry/trace_types.js';
 import { Future, Task, shortuuid, toError, waitForAbort } from '../utils.js';
 import { type Agent, type ModelSettings, asyncLocalStorage, isStopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
@@ -394,7 +394,10 @@ export function performLLMInference(
   const toolCallWriter = toolCallStream.writable.getWriter();
   const data = new _LLMGenerationData(textStream.readable, toolCallStream.readable);
 
-  const _performLLMInferenceImpl = async (signal: AbortSignal, span: Span) => {
+  const _performLLMInferenceImpl = async (
+    signal: AbortSignal,
+    span: TypedSpan<FunctionToolAttributes>,
+  ) => {
     span.setAttribute(
       traceTypes.ATTR_CHAT_CTX,
       JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
@@ -832,7 +835,10 @@ export function performToolExecutions({
         });
       });
 
-      const _tracableToolExecutionImpl = async (toolExecTask: Promise<unknown>, span: Span) => {
+      const _tracableToolExecutionImpl = async (
+        toolExecTask: Promise<unknown>,
+        span: TypedSpan<FunctionToolAttributes>,
+      ) => {
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
 

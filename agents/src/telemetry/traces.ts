@@ -27,6 +27,7 @@ import { enableOtelLogging } from '../log.js';
 import type { SessionReport } from '../voice/report.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
+import type { TypedSpan } from './trace_types.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -102,7 +103,10 @@ class DynamicTracer {
    * @param options - Span configuration including name
    * @returns The result of the provided function
    */
-  async startActiveSpan<T>(fn: (span: Span) => Promise<T>, options: StartSpanOptions): Promise<T> {
+  async startActiveSpan<T>(
+    fn: (span: TypedSpan) => Promise<T>,
+    options: StartSpanOptions,
+  ): Promise<T> {
     const ctx = options.context || otelContext.active();
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
     const opts: SpanOptions = { attributes: options.attributes, startTime: options.startTime };

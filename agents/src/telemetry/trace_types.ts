@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { Attributes, Span } from '@opentelemetry/api';
 
 // LiveKit custom attributes
 export const ATTR_SPEECH_ID = 'lk.speech_id';
@@ -35,6 +36,18 @@ export const ATTR_FUNCTION_TOOL_NAME = 'lk.function_tool.name';
 export const ATTR_FUNCTION_TOOL_ARGS = 'lk.function_tool.arguments';
 export const ATTR_FUNCTION_TOOL_IS_ERROR = 'lk.function_tool.is_error';
 export const ATTR_FUNCTION_TOOL_OUTPUT = 'lk.function_tool.output';
+
+export interface FunctionToolAttributes {
+  [ATTR_FUNCTION_TOOL_NAME]: string;
+  [ATTR_FUNCTION_TOOL_ARGS]: string;
+  [ATTR_FUNCTION_TOOL_IS_ERROR]: boolean;
+  [ATTR_FUNCTION_TOOL_OUTPUT]: string;
+}
+
+export interface TypedSpan<A = Attributes> extends Omit<Span, 'setAttribute' | 'setAttributes'> {
+  setAttribute<T extends keyof A & string>(key: T, value: A[T]): this;
+  setAttributes(attributes: Partial<A>): this;
+}
 
 // tts node
 export const ATTR_TTS_INPUT_TEXT = 'lk.input_text';
