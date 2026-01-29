@@ -16,7 +16,7 @@ export const splitSentences = (
   const starters =
     /(Mr|Mrs|Ms|Dr|Prof|Capt|Cpt|Lt|He\s|She\s|It\s|They\s|Their\s|Our\s|We\s|But\s|However\s|That\s|This\s|Wherever)/g;
   const acronyms = /([A-Z][.][A-Z][.](?:[A-Z][.])?)/g;
-  const websites = /[.](com|net|org|io|gov|edu|me)/g;
+  const websites = /(\w+\.)+(com|net|org|io|gov|edu|me)/g;
   const digits = /([0-9])/g;
   const dots = /\.{2,}/g;
 
@@ -27,7 +27,7 @@ export const splitSentences = (
   }
 
   text = text.replaceAll(prefixes, '$1<prd>');
-  text = text.replaceAll(websites, '<prd>$1');
+  text = text.replace(websites, (match) => match.replaceAll('.', '<prd>'));
   text = text.replaceAll(new RegExp(`${digits.source}[.]${digits.source}`, 'g'), '$1<prd>$2');
   text = text.replaceAll(dots, (match) => '<prd>'.repeat(match.length));
   text = text.replaceAll('Ph.D.', 'Ph<prd>D<prd>');
@@ -51,7 +51,7 @@ export const splitSentences = (
   text = text.replaceAll('."', '".');
   text = text.replaceAll('!"', '"!');
   text = text.replaceAll('?"', '"?');
-  text = text.replaceAll('.', '.<stop>');
+  text = text.replace(/\.(?=\s|$)/g, '.<stop>');
   text = text.replaceAll('?', '?<stop>');
   text = text.replaceAll('!', '!<stop>');
   text = text.replaceAll('<prd>', '.');
