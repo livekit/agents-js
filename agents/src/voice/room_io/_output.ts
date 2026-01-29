@@ -23,7 +23,7 @@ import {
 } from '../../constants.js';
 import { log } from '../../log.js';
 import { Future, Task, shortuuid } from '../../utils.js';
-import { AudioOutput, TextOutput } from '../io.js';
+import { AudioOutput, TextOutput, type TimedString, isTimedString } from '../io.js';
 import { findMicrophoneTrackId } from '../transcription/index.js';
 
 abstract class BaseParticipantTranscriptionOutput extends TextOutput {
@@ -102,13 +102,14 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
     this.latestText = '';
   }
 
-  async captureText(text: string) {
+  async captureText(text: string | TimedString) {
     if (!this.participantIdentity) {
       return;
     }
 
-    this.latestText = text;
-    await this.handleCaptureText(text);
+    const textStr = isTimedString(text) ? text.text : text;
+    this.latestText = textStr;
+    await this.handleCaptureText(textStr);
   }
 
   flush() {
@@ -298,7 +299,7 @@ export class ParalellTextOutput extends TextOutput {
     this._sinks = sinks;
   }
 
-  async captureText(text: string) {
+  async captureText(text: string | TimedString) {
     await Promise.all(this._sinks.map((sink) => sink.captureText(text)));
   }
 
