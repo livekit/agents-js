@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentSessionOptions } from '../agent_session.js';
 import { defaultEndpointingConfig } from './endpointing.js';
 import { defaultInterruptionConfig } from './interruption.js';
-import { defaultTurnHandlingConfig } from './turnHandling.js';
+import { defaultTurnHandlingConfig } from './turn_handling.js';
 import { migrateLegacyOptions } from './utils.js';
 
 describe('migrateLegacyOptions', () => {
