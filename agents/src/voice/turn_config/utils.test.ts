@@ -3,11 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import type { AgentSessionOptions } from '../agent_session.js';
-import {
-  defaultEndpointingConfig,
-  defaultInterruptionConfig,
-  defaultTurnHandlingConfig,
-} from './index.js';
+import { defaultEndpointingConfig } from './endpointing.js';
+import { defaultInterruptionConfig } from './interruption.js';
+import { defaultTurnHandlingConfig } from './turnHandling.js';
 import { migrateLegacyOptions } from './utils.js';
 
 describe('migrateLegacyOptions', () => {
@@ -43,7 +41,7 @@ describe('migrateLegacyOptions', () => {
     };
     const result = migrateLegacyOptions(input);
 
-    expect(result.turnHandling!.interruption.mode).toBe(false);
+    expect(result.turnHandling!.interruption!.mode).toBe(false);
     expect('voiceOptions' in result).toBe(false);
   });
 
@@ -56,7 +54,7 @@ describe('migrateLegacyOptions', () => {
     const result = migrateLegacyOptions(input);
 
     // mode should remain undefined (the default) when allowInterruptions is true
-    expect(result.turnHandling!.interruption.mode).toBe(defaultInterruptionConfig.mode);
+    expect(result.turnHandling!.interruption!.mode).toBe(defaultInterruptionConfig.mode);
   });
 
   it('should migrate voiceOptions interruption settings', () => {
@@ -69,9 +67,9 @@ describe('migrateLegacyOptions', () => {
     };
     const result = migrateLegacyOptions(input);
 
-    expect(result.turnHandling!.interruption.minDuration).toBe(0.8);
-    expect(result.turnHandling!.interruption.minWords).toBe(3);
-    expect(result.turnHandling!.interruption.discardAudioIfUninterruptible).toBe(false);
+    expect(result.turnHandling!.interruption!.minDuration).toBe(0.8);
+    expect(result.turnHandling!.interruption!.minWords).toBe(3);
+    expect(result.turnHandling!.interruption!.discardAudioIfUninterruptible).toBe(false);
   });
 
   it('should migrate voiceOptions endpointing settings', () => {
@@ -83,8 +81,8 @@ describe('migrateLegacyOptions', () => {
     };
     const result = migrateLegacyOptions(input);
 
-    expect(result.turnHandling!.endpointing.minDelay).toBe(1.0);
-    expect(result.turnHandling!.endpointing.maxDelay).toBe(5.0);
+    expect(result.turnHandling!.endpointing!.minDelay).toBe(1.0);
+    expect(result.turnHandling!.endpointing!.maxDelay).toBe(5.0);
   });
 
   it('should migrate voiceOptions.preemptiveGeneration', () => {
@@ -126,12 +124,12 @@ describe('migrateLegacyOptions', () => {
     const result = migrateLegacyOptions(input);
 
     expect(result.turnHandling!.turnDetection).toBe('stt');
-    expect(result.turnHandling!.interruption.mode).toBe(false);
-    expect(result.turnHandling!.interruption.discardAudioIfUninterruptible).toBe(false);
-    expect(result.turnHandling!.interruption.minDuration).toBe(1.0);
-    expect(result.turnHandling!.interruption.minWords).toBe(2);
-    expect(result.turnHandling!.endpointing.minDelay).toBe(0.8);
-    expect(result.turnHandling!.endpointing.maxDelay).toBe(4.0);
+    expect(result.turnHandling!.interruption!.mode).toBe(false);
+    expect(result.turnHandling!.interruption!.discardAudioIfUninterruptible).toBe(false);
+    expect(result.turnHandling!.interruption!.minDuration).toBe(1.0);
+    expect(result.turnHandling!.interruption!.minWords).toBe(2);
+    expect(result.turnHandling!.endpointing!.minDelay).toBe(0.8);
+    expect(result.turnHandling!.endpointing!.maxDelay).toBe(4.0);
     expect(result.turnHandling!.preemptiveGeneration).toBe(true);
     expect(result.turnHandling!.userAwayTimeout).toBe(20.0);
 
@@ -161,6 +159,6 @@ describe('migrateLegacyOptions', () => {
     expect('turnDetection' in result).toBe(false);
     expect('voiceOptions' in result).toBe(false);
     expect(result.turnHandling!.turnDetection).toBe('vad');
-    expect(result.turnHandling!.endpointing.minDelay).toBe(1.0);
+    expect(result.turnHandling!.endpointing!.minDelay).toBe(1.0);
   });
 });

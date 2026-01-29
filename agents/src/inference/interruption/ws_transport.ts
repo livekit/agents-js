@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import { TransformStream } from 'stream/web';
 import WebSocket from 'ws';
 import { z } from 'zod';

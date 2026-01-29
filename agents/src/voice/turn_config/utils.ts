@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import type { AgentSessionOptions } from '../agent_session.js';
 import { defaultEndpointingConfig } from './endpointing.js';
 import { defaultInterruptionConfig } from './interruption.js';

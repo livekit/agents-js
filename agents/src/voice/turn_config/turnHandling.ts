@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import type { TurnDetectionMode } from '../agent_session.js';
 import { type EndpointingConfig, defaultEndpointingConfig } from './endpointing.js';
 import { type InterruptionConfig, defaultInterruptionConfig } from './interruption.js';
