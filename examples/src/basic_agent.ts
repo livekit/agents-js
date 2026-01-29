@@ -8,13 +8,13 @@ import {
   cli,
   defineAgent,
   llm,
+  log,
   metrics,
   voice,
 } from '@livekit/agents';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
-// import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
-import * as aic from '@livekit/plugins-ai-coustics';
+import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -39,6 +39,8 @@ export default defineAgent({
       },
     });
 
+    const logger = log();
+
     const session = new voice.AgentSession({
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
@@ -55,7 +57,16 @@ export default defineAgent({
       // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
       // See more at https://docs.livekit.io/agents/build/turns
       vad: ctx.proc.userData.vad! as silero.VAD,
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
+
+      turnHandling: {
+        turnDetection: new livekit.turnDetector.MultilingualModel(),
+        interruption: {
+          resumeFalseInterruption: true,
+          falseInterruptionTimeout: 1,
+          mode: 'adaptive',
+        },
+        preemptiveGeneration: true,
+      },
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
       voiceOptions: {
@@ -79,13 +90,19 @@ export default defineAgent({
       usageCollector.collect(ev.metrics);
     });
 
+    session.on(voice.AgentSessionEventTypes.UserInterruptionDetected, (ev) => {
+      logger.warn({ type: ev.type }, 'interruption detected');
+    });
+
+    session.on(voice.AgentSessionEventTypes.UserNonInterruptionDetected, (ev) => {
+      logger.warn({ type: ev.type }, 'non interruption detected');
+    });
+
     await session.start({
       agent,
       room: ctx.room,
       inputOptions: {
-        noiseCancellation: aic.audioEnhancement(),
-        // or for krisp use
-        // noiseCancellation: BackgroundVoiceCancellation(),
+        noiseCancellation: BackgroundVoiceCancellation(),
       },
     });
 
