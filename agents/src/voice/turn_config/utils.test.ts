@@ -30,7 +30,7 @@ describe('migrateLegacyOptions', () => {
     const result = migrateLegacyOptions(input);
 
     expect(result.turnHandling!.turnDetection).toBe('vad');
-    expect('turnDetection' in result).toBe(false);
+    expect(result.turnDetection).toBe('vad');
   });
 
   it('should set interruption.mode to false when allowInterruptions is false', () => {
@@ -42,7 +42,7 @@ describe('migrateLegacyOptions', () => {
     const result = migrateLegacyOptions(input);
 
     expect(result.turnHandling!.interruption!.mode).toBe(false);
-    expect('voiceOptions' in result).toBe(false);
+    expect(result.voiceOptions?.allowInterruptions).toBe(false);
   });
 
   it('should not set interruption.mode when allowInterruptions is true', () => {
@@ -133,9 +133,9 @@ describe('migrateLegacyOptions', () => {
     expect(result.turnHandling!.preemptiveGeneration).toBe(true);
     expect(result.turnHandling!.userAwayTimeout).toBe(20.0);
 
-    // Legacy options should be stripped
-    expect('turnDetection' in result).toBe(false);
-    expect('voiceOptions' in result).toBe(false);
+    // Legacy options should still be available
+    expect('turnDetection' in result).toBeDefined();
+    expect('voiceOptions' in result).toBeDefined();
   });
 
   it('should preserve non-legacy options in the result', () => {
@@ -155,9 +155,9 @@ describe('migrateLegacyOptions', () => {
     expect(result.maxToolSteps).toBe(5);
     expect(result.connOptions).toEqual({ maxUnrecoverableErrors: 10 });
 
-    // Legacy options should be stripped and migrated
-    expect('turnDetection' in result).toBe(false);
-    expect('voiceOptions' in result).toBe(false);
+    // Legacy options should still be available and mirror the new options
+    expect(result.turnDetection).toBe('vad');
+    expect(result.voiceOptions?.minEndpointingDelay).toBe(1.0);
     expect(result.turnHandling!.turnDetection).toBe('vad');
     expect(result.turnHandling!.endpointing!.minDelay).toBe(1.0);
   });

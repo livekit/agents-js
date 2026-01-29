@@ -32,7 +32,11 @@ export function migrateLegacyOptions<UserData>(
     ...rest.turnHandling,
   };
 
-  const newAgentSessionOptions: AgentSessionOptions<UserData> = { ...rest, turnHandling };
+  const newAgentSessionOptions: AgentSessionOptions<UserData> = {
+    ...rest,
+    turnDetection: turnHandling.turnDetection,
+    turnHandling,
+  };
 
   if (voiceOptions?.allowInterruptions === false) {
     turnHandling.interruption.mode = false;
