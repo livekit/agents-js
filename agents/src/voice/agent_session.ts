@@ -64,7 +64,7 @@ import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
 import type { InterruptionConfig } from './turn_config/interruption.js';
-import type { TurnHandlingConfig } from './turn_config/turnHandling.js';
+import type { TurnHandlingConfig } from './turn_config/turn_handling.js';
 import { migrateLegacyOptions } from './turn_config/utils.js';
 
 export interface VoiceOptions {

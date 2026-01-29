@@ -7,11 +7,11 @@ import { type ReadableStream, TransformStream } from 'stream/web';
 import { log } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { traceTypes } from '../../telemetry/index.js';
-import type { AdaptiveInterruptionDetector } from './AdaptiveInterruptionDetector.js';
-import { InterruptionCacheEntry } from './InterruptionCacheEntry.js';
 import { FRAMES_PER_SECOND, apiConnectDefaults } from './defaults.js';
 import type { InterruptionDetectionError } from './errors.js';
 import { createHttpTransport } from './http_transport.js';
+import { InterruptionCacheEntry } from './interruption_cache_entry.js';
+import type { AdaptiveInterruptionDetector } from './interruption_detector.js';
 import {
   type AgentSpeechEnded,
   type AgentSpeechStarted,

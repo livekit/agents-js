@@ -30,7 +30,7 @@ import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 import type { InterruptionConfig } from './turn_config/interruption.js';
-import type { TurnHandlingConfig } from './turn_config/turnHandling.js';
+import type { TurnHandlingConfig } from './turn_config/turn_handling.js';
 
 export const asyncLocalStorage = new AsyncLocalStorage<{ functionCall?: FunctionCall }>();
 export const STOP_RESPONSE_SYMBOL = Symbol('StopResponse');

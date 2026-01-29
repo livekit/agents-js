@@ -6,8 +6,8 @@ import { TransformStream } from 'stream/web';
 import { z } from 'zod';
 import { log } from '../../log.js';
 import { createAccessToken } from '../utils.js';
-import { InterruptionCacheEntry } from './InterruptionCacheEntry.js';
 import { intervalForRetry } from './defaults.js';
+import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import { type InterruptionEvent, InterruptionEventType } from './types.js';
 import type { BoundedCache } from './utils.js';
 

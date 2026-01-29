@@ -4,7 +4,7 @@
 import type { AgentSessionOptions } from '../agent_session.js';
 import { defaultEndpointingConfig } from './endpointing.js';
 import { defaultInterruptionConfig } from './interruption.js';
-import { type TurnHandlingConfig, defaultTurnHandlingConfig } from './turnHandling.js';
+import { type TurnHandlingConfig, defaultTurnHandlingConfig } from './turn_handling.js';
 
 export function migrateLegacyOptions<UserData>(
   legacyOptions: AgentSessionOptions<UserData>,
