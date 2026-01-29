@@ -27,7 +27,7 @@ export const splitSentences = (
   }
 
   text = text.replaceAll(prefixes, '$1<prd>');
-  text = text.replaceAll(websites, '<prd>$2');
+  text = text.replaceAll(websites, '<prd>$1');
   text = text.replaceAll(new RegExp(`${digits.source}[.]${digits.source}`, 'g'), '$1<prd>$2');
   text = text.replaceAll(dots, (match) => '<prd>'.repeat(match.length));
   text = text.replaceAll('Ph.D.', 'Ph<prd>D<prd>');
