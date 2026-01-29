@@ -29,6 +29,8 @@ import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/inde
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+import type { InterruptionConfig } from './turn_config/interruption.js';
+import type { TurnHandlingConfig } from './turn_config/turnHandling.js';
 
 export const asyncLocalStorage = new AsyncLocalStorage<{ functionCall?: FunctionCall }>();
 export const STOP_RESPONSE_SYMBOL = Symbol('StopResponse');
@@ -63,6 +65,7 @@ export interface AgentOptions<UserData> {
   instructions: string;
   chatCtx?: ChatContext;
   tools?: ToolContext<UserData>;
+  /** @deprecated use turnHandling instead */
   turnDetection?: TurnDetectionMode;
   stt?: STT | STTModelString;
   vad?: VAD;
@@ -70,6 +73,7 @@ export interface AgentOptions<UserData> {
   tts?: TTS | TTSModelString;
   allowInterruptions?: boolean;
   minConsecutiveSpeechDelay?: number;
+  turnHandling?: TurnHandlingConfig;
 }
 
 export class Agent<UserData = any> {
@@ -79,6 +83,9 @@ export class Agent<UserData = any> {
   private _vad?: VAD;
   private _llm?: LLM | RealtimeModel;
   private _tts?: TTS;
+  private turnHandling?: TurnHandlingConfig;
+  private _interruptionDetection: InterruptionConfig['mode'];
+  private _allowInterruptions?: boolean;
 
   /** @internal */
   _agentActivity?: AgentActivity;
@@ -92,17 +99,8 @@ export class Agent<UserData = any> {
   /** @internal */
   _tools?: ToolContext<UserData>;
 
-  constructor({
-    id,
-    instructions,
-    chatCtx,
-    tools,
-    turnDetection,
-    stt,
-    vad,
-    llm,
-    tts,
-  }: AgentOptions<UserData>) {
+  constructor(options: AgentOptions<UserData>) {
+    const { id, instructions, chatCtx, tools, stt, vad, llm, tts, turnHandling } = options;
     if (id) {
       this._id = id;
     } else {
@@ -126,7 +124,9 @@ export class Agent<UserData = any> {
         })
       : ChatContext.empty();
 
-    this.turnDetection = turnDetection;
+    this.turnHandling = turnHandling; // TODO migrate legacy options to new turn handling config when turnConfig is unset
+
+    this.turnDetection = this.turnHandling?.turnDetection;
     this._vad = vad;
 
     if (typeof stt === 'string') {
@@ -145,6 +145,11 @@ export class Agent<UserData = any> {
       this._tts = InferenceTTS.fromModelString(tts);
     } else {
       this._tts = tts;
+    }
+
+    this._interruptionDetection = this.turnHandling?.interruption.mode;
+    if (this.turnHandling?.interruption.mode !== undefined) {
+      this._allowInterruptions = !!this.turnHandling.interruption.mode;
     }
 
     this._agentActivity = undefined;
@@ -184,6 +189,14 @@ export class Agent<UserData = any> {
 
   get session(): AgentSession<UserData> {
     return this.getActivityOrThrow().agentSession as AgentSession<UserData>;
+  }
+
+  get interruptionDetection(): InterruptionConfig['mode'] {
+    return this._interruptionDetection;
+  }
+
+  get allowInterruptions(): boolean | undefined {
+    return this._allowInterruptions;
   }
 
   async onEnter(): Promise<void> {}

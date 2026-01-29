@@ -10,6 +10,7 @@ export interface StreamChannel<T, E extends Error = Error> {
   stream(): ReadableStream<T>;
   abort(error: E): Promise<void>;
   readonly closed: boolean;
+  addStreamInput(stream: ReadableStream<T>): void;
 }
 
 export function createStreamChannel<T, E extends Error = Error>(): StreamChannel<T, E> {
@@ -23,6 +24,20 @@ export function createStreamChannel<T, E extends Error = Error>(): StreamChannel
     abort: (error: E) => {
       isClosed = true;
       return writer.abort(error);
+    },
+    addStreamInput: (newInputStream) => {
+      const reader = newInputStream.getReader();
+      (async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            await writer.write(value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      })();
     },
     close: async () => {
       try {

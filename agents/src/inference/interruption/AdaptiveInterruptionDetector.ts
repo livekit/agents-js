@@ -15,9 +15,8 @@ import type { InterruptionDetectionError } from './errors.js';
 import type { InterruptionEvent, InterruptionOptions } from './types.js';
 
 type InterruptionCallbacks = {
-  userInterruptionDetected: (event: InterruptionEvent) => void;
-  userNonInterruptionDetected: (event: InterruptionEvent) => void;
-  overlapSpeechEnded: (event: InterruptionEvent) => void;
+  user_interruption_detected: (event: InterruptionEvent) => void;
+  user_non_interruption_detected: (event: InterruptionEvent) => void;
   error: (error: InterruptionDetectionError) => void;
 };
 
@@ -74,10 +73,8 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
           'apiSecret is required, either as argument or set LIVEKIT_API_SECRET environmental variable',
         );
       }
-
       useProxy = true;
     } else {
-      // Force useProxy to false for custom URLs (matching Python behavior)
       useProxy = false;
     }
 

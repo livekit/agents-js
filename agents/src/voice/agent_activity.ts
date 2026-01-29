@@ -8,6 +8,8 @@ import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api'
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
+import { AdaptiveInterruptionDetector } from '../inference/interruption/AdaptiveInterruptionDetector.js';
+import type { InterruptionEvent } from '../inference/interruption/types.js';
 import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
 import {
   type ChatItem,
@@ -86,13 +88,14 @@ interface PreemptiveGeneration {
   createdAt: number;
 }
 
+// TODO add false interruption handling and barge in handling for https://github.com/livekit/agents/pull/3109/changes
 export class AgentActivity implements RecognitionHooks {
   private static readonly REPLY_TASK_CANCEL_TIMEOUT = 5000;
   private started = false;
   private audioRecognition?: AudioRecognition;
   private realtimeSession?: RealtimeSession;
   private realtimeSpans?: Map<string, Span>; // Maps response_id to OTEL span for metrics recording
-  private turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
+  private turnDetectionMode?: TurnDetectionMode;
   private logger = log();
   private _draining = false;
   private _currentSpeech?: SpeechHandle;
@@ -104,6 +107,10 @@ export class AgentActivity implements RecognitionHooks {
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
   private _preemptiveGeneration?: PreemptiveGeneration;
+  private interruptionDetector?: AdaptiveInterruptionDetector;
+  private isInterruptionDetectionEnabled: boolean;
+  private isInterruptionByAudioActivityEnabled: boolean;
+  private isDefaultInterruptionByAudioActivityEnabled: boolean;
 
   agent: Agent;
   agentSession: AgentSession;
@@ -204,6 +211,16 @@ export class AgentActivity implements RecognitionHooks {
           'for more responsive interruption handling.',
       );
     }
+
+    this.interruptionDetector = this.resolveInterruptionDetector();
+    this.isInterruptionDetectionEnabled = !!this.interruptionDetector;
+
+    // this allows taking over audio interruption temporarily until interruption is detected
+    // by default is is ture unless turnDetection is manual or realtime_llm
+    this.isInterruptionByAudioActivityEnabled =
+      this.turnDetectionMode !== 'manual' && this.turnDetectionMode !== 'realtime_llm';
+
+    this.isDefaultInterruptionByAudioActivityEnabled = this.isInterruptionByAudioActivityEnabled;
   }
 
   async start(): Promise<void> {
@@ -295,6 +312,7 @@ export class AgentActivity implements RecognitionHooks {
         vad: this.vad,
         turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
         turnDetectionMode: this.turnDetectionMode,
+        interruptionDetection: this.interruptionDetector,
         minEndpointingDelay: this.agentSession.options.minEndpointingDelay,
         maxEndpointingDelay: this.agentSession.options.maxEndpointingDelay,
         rootSpanContext: this.agentSession.rootSpanContext,
@@ -385,7 +403,13 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  updateOptions({ toolChoice }: { toolChoice?: ToolChoice | null }): void {
+  updateOptions({
+    toolChoice,
+    turnDetection,
+  }: {
+    toolChoice?: ToolChoice | null;
+    turnDetection?: TurnDetectionMode;
+  }): void {
     if (toolChoice !== undefined) {
       this.toolChoice = toolChoice;
     }
@@ -393,6 +417,10 @@ export class AgentActivity implements RecognitionHooks {
     if (this.realtimeSession) {
       this.realtimeSession.updateOptions({ toolChoice: this.toolChoice });
     }
+
+    this.turnDetectionMode = turnDetection; // TODO fix types
+    this.isDefaultInterruptionByAudioActivityEnabled =
+      this.turnDetectionMode !== 'manual' && this.turnDetectionMode !== 'realtime_llm';
   }
 
   attachAudioInput(audioStream: ReadableStream<AudioFrame>): void {
@@ -549,6 +577,9 @@ export class AgentActivity implements RecognitionHooks {
 
     if (!this.vad) {
       this.agentSession._updateUserState('speaking');
+      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        this.audioRecognition.onStartOfOverlapSpeech(0, this.agentSession._userSpeakingSpan);
+      }
     }
 
     // this.interrupt() is going to raise when allow_interruptions is False,
@@ -567,6 +598,9 @@ export class AgentActivity implements RecognitionHooks {
     this.logger.info(ev, 'onInputSpeechStopped');
 
     if (!this.vad) {
+      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        this.audioRecognition.onEndOfOverlapSpeech(this.agentSession._userSpeakingSpan);
+      }
       this.agentSession._updateUserState('listening');
     }
 
@@ -644,12 +678,21 @@ export class AgentActivity implements RecognitionHooks {
       speechStartTime = speechStartTime - ev.speechDuration;
     }
     this.agentSession._updateUserState('speaking', speechStartTime);
+    if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+      this.audioRecognition.onStartOfOverlapSpeech(
+        ev.speechDuration,
+        this.agentSession._userSpeakingSpan,
+      );
+    }
   }
 
   onEndOfSpeech(ev: VADEvent): void {
     let speechEndTime = Date.now();
     if (ev) {
       speechEndTime = speechEndTime - ev.silenceDuration;
+    }
+    if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+      this.audioRecognition.onEndOfOverlapSpeech(this.agentSession._userSpeakingSpan);
     }
     this.agentSession._updateUserState('listening', speechEndTime);
   }
@@ -666,6 +709,10 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private interruptByAudioActivity(): void {
+    if (!this.isInterruptionByAudioActivityEnabled) {
+      return;
+    }
+
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
       // skip speech handle interruption if server side turn detection is enabled
       return;
@@ -703,6 +750,14 @@ export class AgentActivity implements RecognitionHooks {
       );
       this.realtimeSession?.interrupt();
       this._currentSpeech.interrupt();
+    }
+  }
+
+  onInterruption(ev: InterruptionEvent) {
+    this.restoreInterruptionByAudioActivity();
+    this.interruptByAudioActivity();
+    if (this.audioRecognition) {
+      this.audioRecognition.onEndOfAgentSpeech(ev.overlapSpeechStartedAt || ev.timestamp);
     }
   }
 
@@ -1246,6 +1301,10 @@ export class AgentActivity implements RecognitionHooks {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
+      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        this.audioRecognition.onStartOfAgentSpeech();
+        this.isInterruptionByAudioActivityEnabled = false;
+      }
     };
 
     if (!audioOutput) {
@@ -1315,6 +1374,10 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
+      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
+      this.restoreInterruptionByAudioActivity();
     }
   }
 
@@ -1445,6 +1508,10 @@ export class AgentActivity implements RecognitionHooks {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
+      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        this.audioRecognition.onStartOfAgentSpeech();
+        this.isInterruptionByAudioActivityEnabled = false;
+      }
     };
 
     let audioOut: _AudioOut | null = null;
@@ -1568,6 +1635,10 @@ export class AgentActivity implements RecognitionHooks {
 
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
+        if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+          this.audioRecognition.onEndOfAgentSpeech(Date.now());
+          this.restoreInterruptionByAudioActivity();
+        }
       }
 
       this.logger.info(
@@ -1602,6 +1673,12 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('thinking');
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
+      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        {
+          this.audioRecognition.onEndOfAgentSpeech(Date.now());
+          this.restoreInterruptionByAudioActivity();
+        }
+      }
     }
 
     // mark the playout done before waiting for the tool execution
@@ -2374,6 +2451,55 @@ export class AgentActivity implements RecognitionHooks {
     } finally {
       unlock();
     }
+  }
+
+  private resolveInterruptionDetector(): AdaptiveInterruptionDetector | undefined {
+    const interruptionDetection =
+      this.agent.interruptionDetection ?? this.agentSession.interruptionDetection;
+    if (
+      !(
+        this.stt &&
+        this.stt.capabilities.alignedTranscript &&
+        this.stt.capabilities.streaming &&
+        this.vad &&
+        this.turnDetection !== 'manual' &&
+        this.turnDetection !== 'realtime_llm' &&
+        !(this.llm instanceof RealtimeModel)
+      )
+    ) {
+      if (
+        typeof interruptionDetection === 'string' &&
+        ['adaptive', 'vad'].includes(interruptionDetection)
+      ) {
+        this.logger.warn(
+          "interruption_detection is provided, but it's not compatible with the current configuration and will be disabled",
+        );
+        return undefined;
+      }
+    }
+
+    if (
+      (interruptionDetection !== undefined && interruptionDetection === false) ||
+      interruptionDetection === 'vad'
+    ) {
+      return undefined;
+    }
+
+    const detector = new AdaptiveInterruptionDetector();
+
+    // TODO cleanup these listeners
+    detector.on('user_interruption_detected', (ev) =>
+      this.agentSession.emit(AgentSessionEventTypes.UserInterruptionDetected, ev),
+    );
+    detector.on('user_non_interruption_detected', (ev) =>
+      this.agentSession.emit(AgentSessionEventTypes.UserNonInterruptionDetected, ev),
+    );
+
+    return detector;
+  }
+
+  private restoreInterruptionByAudioActivity(): void {
+    this.isInterruptionByAudioActivityEnabled = this.isDefaultInterruptionByAudioActivityEnabled;
   }
 }
 

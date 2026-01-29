@@ -15,6 +15,7 @@ import {
   type STTModelString,
   type TTSModelString,
 } from '../inference/index.js';
+import type { InterruptionEvent } from '../inference/interruption/types.js';
 import { type JobContext, getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
@@ -62,6 +63,9 @@ import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
+import type { InterruptionConfig } from './turn_config/interruption.js';
+import type { TurnHandlingConfig } from './turn_config/turnHandling.js';
+import { migrateLegacyOptions } from './turn_config/utils.js';
 
 export interface VoiceOptions {
   allowInterruptions: boolean;
@@ -75,17 +79,17 @@ export interface VoiceOptions {
   userAwayTimeout?: number | null;
 }
 
-const defaultVoiceOptions: VoiceOptions = {
-  allowInterruptions: true,
-  discardAudioIfUninterruptible: true,
-  minInterruptionDuration: 500,
-  minInterruptionWords: 0,
-  minEndpointingDelay: 500,
-  maxEndpointingDelay: 6000,
-  maxToolSteps: 3,
-  preemptiveGeneration: false,
-  userAwayTimeout: 15.0,
-} as const;
+// const defaultVoiceOptions: VoiceOptions = {
+//   allowInterruptions: true,
+//   discardAudioIfUninterruptible: true,
+//   minInterruptionDuration: 500,
+//   minInterruptionWords: 0,
+//   minEndpointingDelay: 500,
+//   maxEndpointingDelay: 6000,
+//   maxToolSteps: 3,
+//   preemptiveGeneration: false,
+//   userAwayTimeout: 15.0,
+// } as const;
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
 
@@ -99,6 +103,8 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
+  [AgentSessionEventTypes.UserInterruptionDetected]: (ev: InterruptionEvent) => void;
+  [AgentSessionEventTypes.UserNonInterruptionDetected]: (ev: InterruptionEvent) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
@@ -110,6 +116,8 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   userData?: UserData;
   voiceOptions?: Partial<VoiceOptions>;
   connOptions?: SessionConnectOptions;
+  turnHandling?: Partial<TurnHandlingConfig>;
+  maxToolSteps?: number;
 };
 
 export class AgentSession<
@@ -150,8 +158,9 @@ export class AgentSession<
   private ttsErrorCounts = 0;
 
   private sessionSpan?: Span;
-  private userSpeakingSpan?: Span;
   private agentSpeakingSpan?: Span;
+
+  private _interruptionDetection?: InterruptionConfig['mode'];
 
   /** @internal */
   _recorderIO?: RecorderIO;
@@ -171,19 +180,15 @@ export class AgentSession<
   /** @internal - Current run state for testing */
   _globalRunState?: RunResult;
 
-  constructor(opts: AgentSessionOptions<UserData>) {
+  /** @internal */
+  _userSpeakingSpan?: Span;
+
+  constructor(options: AgentSessionOptions<UserData>) {
     super();
 
-    const {
-      vad,
-      stt,
-      llm,
-      tts,
-      turnDetection,
-      userData,
-      voiceOptions = defaultVoiceOptions,
-      connOptions,
-    } = opts;
+    const opts = migrateLegacyOptions<UserData>(options);
+
+    const { vad, stt, llm, tts, userData, connOptions, turnHandling } = opts;
     // Merge user-provided connOptions with defaults
     this._connOptions = {
       sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
@@ -214,7 +219,8 @@ export class AgentSession<
       this.tts = tts;
     }
 
-    this.turnDetection = turnDetection;
+    this.turnDetection = turnHandling?.turnDetection;
+    this._interruptionDetection = turnHandling?.interruption?.mode;
     this._userData = userData;
 
     // configurable IO
@@ -223,7 +229,9 @@ export class AgentSession<
 
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
-    this.options = { ...defaultVoiceOptions, ...voiceOptions };
+
+    // @ts-ignore FIXME the return type of the migration util has all defaults filled
+    this.options = opts.voiceOptions;
 
     this._onUserInputTranscribed = this._onUserInputTranscribed.bind(this);
     this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
@@ -261,6 +269,10 @@ export class AgentSession<
   /** Connection options for STT, LLM, and TTS. */
   get connOptions(): ResolvedSessionConnectOptions {
     return this._connOptions;
+  }
+
+  get interruptionDetection() {
+    return this._interruptionDetection;
   }
 
   set userData(value: UserData) {
@@ -724,8 +736,8 @@ export class AgentSession<
       return;
     }
 
-    if (state === 'speaking' && this.userSpeakingSpan === undefined) {
-      this.userSpeakingSpan = tracer.startSpan({
+    if (state === 'speaking' && this._userSpeakingSpan === undefined) {
+      this._userSpeakingSpan = tracer.startSpan({
         name: 'user_speaking',
         context: this.rootSpanContext,
         startTime: lastSpeakingTime,
@@ -733,9 +745,9 @@ export class AgentSession<
 
       // TODO(brian): PR4 - Set participant attributes if roomIO.linkedParticipant is available
       // (Ref: Python agent_session.py line 1192-1195)
-    } else if (this.userSpeakingSpan !== undefined) {
-      this.userSpeakingSpan.end(lastSpeakingTime);
-      this.userSpeakingSpan = undefined;
+    } else if (this._userSpeakingSpan !== undefined) {
+      this._userSpeakingSpan.end(lastSpeakingTime);
+      this._userSpeakingSpan = undefined;
     }
 
     const oldState = this.userState;
@@ -866,9 +878,9 @@ export class AgentSession<
       this.sessionSpan = undefined;
     }
 
-    if (this.userSpeakingSpan) {
-      this.userSpeakingSpan.end();
-      this.userSpeakingSpan = undefined;
+    if (this._userSpeakingSpan) {
+      this._userSpeakingSpan.end();
+      this._userSpeakingSpan = undefined;
     }
 
     if (this.agentSpeakingSpan) {

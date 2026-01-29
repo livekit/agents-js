@@ -39,17 +39,17 @@ export type {
 };
 
 export class InterruptionStreamSentinel {
-  static speechStarted(): AgentSpeechStarted {
+  static agentSpeechStarted(): AgentSpeechStarted {
     return { type: 'agent-speech-started' };
   }
 
-  static speechEnded(): AgentSpeechEnded {
+  static agentSpeechEnded(): AgentSpeechEnded {
     return { type: 'agent-speech-ended' };
   }
 
   static overlapSpeechStarted(
     speechDurationInS: number,
-    userSpeakingSpan: Span,
+    userSpeakingSpan?: Span,
   ): OverlapSpeechStarted {
     return { type: 'overlap-speech-started', speechDurationInS, userSpeakingSpan };
   }
@@ -302,9 +302,9 @@ export class InterruptionStreamBase {
     const eventEmitter = new TransformStream<InterruptionEvent, InterruptionEvent>({
       transform: (chunk, controller) => {
         if (chunk.type === InterruptionEventType.INTERRUPTION) {
-          this.model.emit('userInterruptionDetected', chunk);
+          this.model.emit('user_interruption_detected', chunk);
         } else if (chunk.type === InterruptionEventType.OVERLAP_SPEECH_ENDED) {
-          this.model.emit('overlapSpeechEnded', chunk);
+          this.model.emit('user_non_interruption_detected', chunk);
         }
         controller.enqueue(chunk);
       },

@@ -1,16 +1,12 @@
 import type { AgentSessionOptions } from '../agent_session.js';
-import {
-  type TurnHandlingConfig,
-  defaultEndpointingConfig,
-  defaultInterruptionConfig,
-  defaultTurnHandlingConfig,
-} from './index.js';
+import { defaultEndpointingConfig } from './endpointing.js';
+import { defaultInterruptionConfig } from './interruption.js';
+import { type TurnHandlingConfig, defaultTurnHandlingConfig } from './turnHandling.js';
 
-export function migrateLegacyOptions(
-  legacyOptions: AgentSessionOptions,
-): Omit<AgentSessionOptions, 'voiceOptions' | 'turnDetection'> {
+export function migrateLegacyOptions<UserData>(
+  legacyOptions: AgentSessionOptions<UserData>,
+): AgentSessionOptions<UserData> {
   const { voiceOptions, turnDetection, ...rest } = legacyOptions;
-  const newAgentSessionOptions = rest;
   const turnHandling: TurnHandlingConfig = {
     turnDetection: turnDetection ?? defaultTurnHandlingConfig.turnDetection,
     interruption: {
@@ -29,7 +25,11 @@ export function migrateLegacyOptions(
     userAwayTimeout: voiceOptions?.userAwayTimeout ?? defaultTurnHandlingConfig.userAwayTimeout,
     preemptiveGeneration:
       voiceOptions?.preemptiveGeneration ?? defaultTurnHandlingConfig.preemptiveGeneration,
+
+    ...rest.turnHandling,
   };
+
+  const newAgentSessionOptions: AgentSessionOptions<UserData> = { ...rest, turnHandling };
 
   if (voiceOptions?.allowInterruptions === false) {
     turnHandling.interruption.mode = false;
@@ -39,5 +39,16 @@ export function migrateLegacyOptions(
   if (voiceOptions?.maxToolSteps) {
     newAgentSessionOptions.maxToolSteps = voiceOptions.maxToolSteps;
   }
+
+  newAgentSessionOptions.voiceOptions = {
+    maxToolSteps: newAgentSessionOptions.maxToolSteps,
+    maxEndpointingDelay: turnHandling.endpointing.maxDelay,
+    minEndpointingDelay: turnHandling.endpointing.minDelay,
+    minInterruptionDuration: turnHandling.interruption.minDuration,
+    minInterruptionWords: turnHandling.interruption.minWords,
+    allowInterruptions: turnHandling.interruption.mode !== false,
+    discardAudioIfUninterruptible: turnHandling.interruption.discardAudioIfUninterruptible,
+    userAwayTimeout: turnHandling.userAwayTimeout,
+  };
   return newAgentSessionOptions;
 }
