@@ -265,7 +265,7 @@ export class AvatarSession {
           payload.agent_prompt = this.agentPrompt;
         }
 
-        if (this.idleTimeout) {
+        if (this.idleTimeout !== null) {
           payload.idle_timeout = this.idleTimeout;
         }
 
