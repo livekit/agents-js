@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.41
+
+### Patch Changes
+
+- Implement tts aligned transcripts - [#990](https://github.com/livekit/agents-js/pull/990) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.40
 
 ### Patch Changes
