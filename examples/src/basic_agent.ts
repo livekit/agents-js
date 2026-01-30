@@ -8,6 +8,7 @@ import {
   cli,
   defineAgent,
   llm,
+  log,
   metrics,
   voice,
 } from '@livekit/agents';
@@ -38,6 +39,8 @@ export default defineAgent({
       },
     });
 
+    const logger = log();
+
     const session = new voice.AgentSession({
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
@@ -54,12 +57,20 @@ export default defineAgent({
       // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
       // See more at https://docs.livekit.io/agents/build/turns
       vad: ctx.proc.userData.vad! as silero.VAD,
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
+
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
-      voiceOptions: {
+      options: {
         // allow the LLM to generate a response while waiting for the end of turn
         preemptiveGeneration: true,
+        turnHandling: {
+          turnDetection: new livekit.turnDetector.MultilingualModel(),
+          interruption: {
+            resumeFalseInterruption: true,
+            falseInterruptionTimeout: 1,
+            mode: 'adaptive',
+          },
+        },
       },
       connOptions: {
         // Example of overriding the default connection options for the LLM/TTS/STT
@@ -76,6 +87,14 @@ export default defineAgent({
     session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
       metrics.logMetrics(ev.metrics);
       usageCollector.collect(ev.metrics);
+    });
+
+    session.on(voice.AgentSessionEventTypes.UserInterruptionDetected, (ev) => {
+      logger.warn({ type: ev.type }, 'interruption detected');
+    });
+
+    session.on(voice.AgentSessionEventTypes.UserNonInterruptionDetected, (ev) => {
+      logger.warn({ type: ev.type }, 'non interruption detected');
     });
 
     await session.start({

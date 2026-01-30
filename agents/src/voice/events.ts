@@ -25,6 +25,8 @@ export enum AgentSessionEventTypes {
   FunctionToolsExecuted = 'function_tools_executed',
   MetricsCollected = 'metrics_collected',
   SpeechCreated = 'speech_created',
+  UserInterruptionDetected = 'user_interruption_detected',
+  UserNonInterruptionDetected = 'user_non_interruption_detected',
   Error = 'error',
   Close = 'close',
 }
