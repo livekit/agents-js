@@ -74,6 +74,7 @@ interface CreateContextConfig {
   maxBufferDelayMs: number;
   timestampType?: TimestampType;
   applyTextNormalization?: TextNormalization;
+  autoMode?: boolean;
 }
 
 interface WordAlignment {
@@ -635,6 +636,9 @@ class SynthesizeStream extends tts.SynthesizeStream {
       maxBufferDelayMs: this.#opts.maxBufferDelayMs,
       timestampType: this.#opts.timestampType,
       applyTextNormalization: this.#opts.textNormalization,
+      // Always enable auto_mode since we use sentence tokenizer and don't expose
+      // mid-stream flush_context control to users yet
+      autoMode: true,
     };
 
     return this.#send(ws, { create: config, contextId: this.#contextId });
