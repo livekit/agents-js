@@ -43,7 +43,7 @@ export const interruptionOptionDefaults: InterruptionOptions = {
   maxAudioDurationInS: MAX_AUDIO_DURATION_IN_S,
   audioPrefixDurationInS: AUDIO_PREFIX_DURATION_IN_S,
   detectionIntervalInS: DETECTION_INTERVAL_IN_S,
-  inferenceTimeout: 10_000,
+  inferenceTimeout: 1_000,
   baseUrl: DEFAULT_BASE_URL,
   apiKey: process.env.LIVEKIT_API_KEY || '',
   apiSecret: process.env.LIVEKIT_API_SECRET || '',
