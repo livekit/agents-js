@@ -283,7 +283,7 @@ export class AudioRecognition {
     }
 
     const eventsToEmit =
-      emitFromIndex && shouldFlush !== undefined ? this.transcriptBuffer.slice(emitFromIndex) : [];
+      emitFromIndex !== null && shouldFlush ? this.transcriptBuffer.slice(emitFromIndex) : [];
 
     this.transcriptBuffer = [];
     this.ignoreUserTranscriptUntil = undefined;

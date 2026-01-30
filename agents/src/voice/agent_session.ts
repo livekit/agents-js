@@ -92,17 +92,17 @@ export interface SessionOptions {
    */
   turnHandling: Partial<TurnHandlingConfig>;
 
-  /** @deprecated Use {@link VoiceOptions.turnHandling}.interruption.mode instead. */
+  /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.mode instead. */
   allowInterruptions?: boolean;
-  /** @deprecated Use {@link VoiceOptions.turnHandling}.interruption.discardAudioIfUninterruptible instead. */
+  /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.discardAudioIfUninterruptible instead. */
   discardAudioIfUninterruptible?: boolean;
-  /** @deprecated Use {@link VoiceOptions.turnHandling}.interruption.minDuration instead. */
+  /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.minDuration instead. */
   minInterruptionDuration?: number;
-  /** @deprecated Use {@link VoiceOptions.turnHandling}.interruption.minWords instead. */
+  /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.minWords instead. */
   minInterruptionWords?: number;
-  /** @deprecated Use {@link VoiceOptions.turnHandling}.endpointing.minDelay instead. */
+  /** @deprecated Use {@link SessionOptions.turnHandling}.endpointing.minDelay instead. */
   minEndpointingDelay?: number;
-  /** @deprecated Use {@link VoiceOptions.turnHandling}.endpointing.maxDelay instead. */
+  /** @deprecated Use {@link SessionOptions.turnHandling}.endpointing.maxDelay instead. */
   maxEndpointingDelay?: number;
 }
 

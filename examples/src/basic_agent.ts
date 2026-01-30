@@ -58,20 +58,19 @@ export default defineAgent({
       // See more at https://docs.livekit.io/agents/build/turns
       vad: ctx.proc.userData.vad! as silero.VAD,
 
-      turnHandling: {
-        turnDetection: new livekit.turnDetector.MultilingualModel(),
-        interruption: {
-          resumeFalseInterruption: true,
-          falseInterruptionTimeout: 1,
-          mode: 'adaptive',
-        },
-        preemptiveGeneration: true,
-      },
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
-      voiceOptions: {
+      options: {
         // allow the LLM to generate a response while waiting for the end of turn
         preemptiveGeneration: true,
+        turnHandling: {
+          turnDetection: new livekit.turnDetector.MultilingualModel(),
+          interruption: {
+            resumeFalseInterruption: true,
+            falseInterruptionTimeout: 1,
+            mode: 'adaptive',
+          },
+        },
       },
       connOptions: {
         // Example of overriding the default connection options for the LLM/TTS/STT
