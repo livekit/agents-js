@@ -1,5 +1,18 @@
 # @livekit/agents
 
+## 1.0.40
+
+### Patch Changes
+
+- Implement health check - [#996](https://github.com/livekit/agents-js/pull/996) ([@andrewnitu](https://github.com/andrewnitu))
+
+  Change the health check from always returning healthy to returning the status of the following two criteria:
+
+  - agent is connected to livekit server
+  - agent's inference executor is running
+
+- fix(tokenize): correct capture group reference in website regex - [#1004](https://github.com/livekit/agents-js/pull/1004) ([@IlyaShelestov](https://github.com/IlyaShelestov))
+
 ## 1.0.39
 
 ### Patch Changes
