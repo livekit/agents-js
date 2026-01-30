@@ -876,6 +876,7 @@ export class AudioRecognition {
           if (!res) break;
           const { value, done } = res;
           if (done) break;
+          this.inputStartedAt = Date.now();
           await stream.pushFrame(value);
         }
       } finally {
