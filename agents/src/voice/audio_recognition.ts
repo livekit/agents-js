@@ -983,6 +983,7 @@ export class AudioRecognition {
     await this.sttTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
     await this.bounceEOUTask?.cancelAndWait();
+    await this.interruptionTask?.cancelAndWait();
     await this.interruptionStreamChannel.close();
   }
 

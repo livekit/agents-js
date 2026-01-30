@@ -919,7 +919,7 @@ export class AgentActivity implements RecognitionHooks {
         this.logger.info(
           {
             wordCount,
-            minInterruptionWords: this.agentSession.options.minInterruptionWords,
+            minInterruptionWords: this.agentSession.options.turnHandling.interruption.minWords,
           },
           'skipping user input, word count below minimum interruption threshold',
         );
