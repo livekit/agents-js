@@ -635,7 +635,7 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.13.22
+        specifier: 'catalog:'
         version: 0.13.24
       '@microsoft/api-extractor':
         specifier: ^7.35.0

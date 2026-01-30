@@ -142,10 +142,10 @@ export class AvatarSession {
     this.agentImageUrl = options.agentImageUrl ?? null;
 
     if (!this.agentId && !this.agentImageUrl) {
-      throw new LemonSliceException('Missing agent_id or agent_image_url');
+      throw new LemonSliceException('Missing agentId or agentImageUrl');
     }
     if (this.agentId && this.agentImageUrl) {
-      throw new LemonSliceException('Only one of agent_id or agent_image_url can be provided');
+      throw new LemonSliceException('Only one of agentId or agentImageUrl can be provided');
     }
 
     this.agentPrompt = options.agentPrompt ?? null;
@@ -198,7 +198,7 @@ export class AvatarSession {
     let localParticipantIdentity: string;
     try {
       const jobCtx = getJobContext();
-      localParticipantIdentity = jobCtx.job.participant?.identity || '';
+      localParticipantIdentity = jobCtx.agent?.identity || '';
       if (!localParticipantIdentity && room.localParticipant) {
         localParticipantIdentity = room.localParticipant.identity;
       }
@@ -243,7 +243,7 @@ export class AvatarSession {
   }
 
   private async startAgent(livekitUrl: string, livekitToken: string): Promise<void> {
-    for (let i = 0; i < this.connOptions.maxRetry; i++) {
+    for (let i = 0; i <= this.connOptions.maxRetry; i++) {
       try {
         const payload: Record<string, any> = {
           transport_type: 'livekit',
@@ -297,7 +297,7 @@ export class AvatarSession {
           this.#logger.error({ error: e }, 'failed to call lemonslice api');
         }
 
-        if (i < this.connOptions.maxRetry - 1) {
+        if (i <= this.connOptions.maxRetry - 1) {
           await new Promise((resolve) =>
             setTimeout(resolve, intervalForRetry(this.connOptions, i)),
           );
