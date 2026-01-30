@@ -4,7 +4,6 @@
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';
 import { log } from '../../log.js';
-import { InterruptionStreamBase } from './InterruptionStream.js';
 import {
   DEFAULT_BASE_URL,
   FRAMES_PER_SECOND,
@@ -12,6 +11,7 @@ import {
   interruptionOptionDefaults,
 } from './defaults.js';
 import type { InterruptionDetectionError } from './errors.js';
+import { InterruptionStreamBase } from './interruption_stream.js';
 import type { InterruptionEvent, InterruptionOptions } from './types.js';
 
 type InterruptionCallbacks = {

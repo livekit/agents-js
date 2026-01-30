@@ -5,8 +5,8 @@ import { AudioFrame } from '@livekit/rtc-node';
 import type { Context, Span } from '@opentelemetry/api';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
-import type { AdaptiveInterruptionDetector } from '../inference/interruption/AdaptiveInterruptionDetector.js';
-import { InterruptionStreamSentinel } from '../inference/interruption/InterruptionStream.js';
+import type { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
+import { InterruptionStreamSentinel } from '../inference/interruption/interruption_stream.js';
 import {
   type InterruptionEvent,
   InterruptionEventType,

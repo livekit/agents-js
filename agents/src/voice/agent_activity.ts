@@ -8,7 +8,7 @@ import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api'
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
-import { AdaptiveInterruptionDetector } from '../inference/interruption/AdaptiveInterruptionDetector.js';
+import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import type { InterruptionEvent } from '../inference/interruption/types.js';
 import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
 import {
@@ -52,7 +52,6 @@ import {
   type EndOfTurnInfo,
   type PreemptiveGenerationInfo,
   type RecognitionHooks,
-  type _TurnDetector,
 } from './audio_recognition.js';
 import {
   AgentSessionEventTypes,

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { ApiConnectOptions } from './InterruptionStream.js';
+import type { ApiConnectOptions } from './interruption_stream.js';
 import type { InterruptionOptions } from './types.js';
 
 export const MIN_INTERRUPTION_DURATION_IN_S = 0.025 * 2; // 25ms per frame, 2 consecutive frames
