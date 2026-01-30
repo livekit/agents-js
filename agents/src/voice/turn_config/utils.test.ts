@@ -1,164 +1,100 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from 'vitest';
-import type { AgentSessionOptions } from '../agent_session.js';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { initializeLogger } from '../../log.js';
 import { defaultEndpointingConfig } from './endpointing.js';
 import { defaultInterruptionConfig } from './interruption.js';
 import { defaultTurnHandlingConfig } from './turn_handling.js';
 import { migrateLegacyOptions } from './utils.js';
 
-describe('migrateLegacyOptions', () => {
-  it('should return default turn handling config when no legacy options provided', () => {
-    const input: AgentSessionOptions = {};
-    const result = migrateLegacyOptions(input);
+beforeAll(() => {
+  initializeLogger({ pretty: true, level: 'info' });
+});
 
-    expect(result.turnHandling).toBeDefined();
-    expect(result.turnHandling!.turnDetection).toBe(defaultTurnHandlingConfig.turnDetection);
-    expect(result.turnHandling!.userAwayTimeout).toBe(defaultTurnHandlingConfig.userAwayTimeout);
-    expect(result.turnHandling!.preemptiveGeneration).toBe(
-      defaultTurnHandlingConfig.preemptiveGeneration,
-    );
-    expect(result.turnHandling!.interruption).toMatchObject(defaultInterruptionConfig);
-    expect(result.turnHandling!.endpointing).toMatchObject(defaultEndpointingConfig);
+describe('migrateLegacyOptions', () => {
+  it('should return all defaults when no options are provided', () => {
+    const result = migrateLegacyOptions({});
+
+    expect(result.options.turnHandling).toEqual({
+      turnDetection: defaultTurnHandlingConfig.turnDetection,
+      endpointing: defaultEndpointingConfig,
+      interruption: defaultInterruptionConfig,
+    });
+    expect(result.options.maxToolSteps).toBe(3);
+    expect(result.options.preemptiveGeneration).toBe(false);
+    expect(result.options.userAwayTimeout).toBe(15.0);
   });
 
-  it('should migrate legacy turnDetection to turnHandling.turnDetection', () => {
-    const input: AgentSessionOptions = {
-      turnDetection: 'vad',
-    };
-    const result = migrateLegacyOptions(input);
+  it('should migrate legacy flat fields into nested turnHandling config', () => {
+    const result = migrateLegacyOptions({
+      voiceOptions: {
+        minInterruptionDuration: 1.0,
+        minInterruptionWords: 3,
+        discardAudioIfUninterruptible: false,
+        minEndpointingDelay: 0.8,
+        maxEndpointingDelay: 5.0,
+      },
+    });
 
-    expect(result.turnHandling!.turnDetection).toBe('vad');
-    expect(result.turnDetection).toBe('vad');
+    expect(result.options.turnHandling.interruption!.minDuration).toBe(1.0);
+    expect(result.options.turnHandling.interruption!.minWords).toBe(3);
+    expect(result.options.turnHandling.interruption!.discardAudioIfUninterruptible).toBe(false);
+    expect(result.options.turnHandling.endpointing!.minDelay).toBe(0.8);
+    expect(result.options.turnHandling.endpointing!.maxDelay).toBe(5.0);
   });
 
   it('should set interruption.mode to false when allowInterruptions is false', () => {
-    const input: AgentSessionOptions = {
-      voiceOptions: {
+    const result = migrateLegacyOptions({
+      options: {
         allowInterruptions: false,
       },
-    };
-    const result = migrateLegacyOptions(input);
+    });
 
-    expect(result.turnHandling!.interruption!.mode).toBe(false);
-    expect(result.voiceOptions?.allowInterruptions).toBe(false);
+    expect(result.options.turnHandling.interruption!.mode).toBe(false);
   });
 
-  it('should not set interruption.mode when allowInterruptions is true', () => {
-    const input: AgentSessionOptions = {
+  it('should give options precedence over voiceOptions when both are provided', () => {
+    const result = migrateLegacyOptions({
       voiceOptions: {
-        allowInterruptions: true,
-      },
-    };
-    const result = migrateLegacyOptions(input);
-
-    // mode should remain undefined (the default) when allowInterruptions is true
-    expect(result.turnHandling!.interruption!.mode).toBe(defaultInterruptionConfig.mode);
-  });
-
-  it('should migrate voiceOptions interruption settings', () => {
-    const input: AgentSessionOptions = {
-      voiceOptions: {
-        minInterruptionDuration: 0.8,
-        minInterruptionWords: 3,
-        discardAudioIfUninterruptible: false,
-      },
-    };
-    const result = migrateLegacyOptions(input);
-
-    expect(result.turnHandling!.interruption!.minDuration).toBe(0.8);
-    expect(result.turnHandling!.interruption!.minWords).toBe(3);
-    expect(result.turnHandling!.interruption!.discardAudioIfUninterruptible).toBe(false);
-  });
-
-  it('should migrate voiceOptions endpointing settings', () => {
-    const input: AgentSessionOptions = {
-      voiceOptions: {
-        minEndpointingDelay: 1.0,
-        maxEndpointingDelay: 5.0,
-      },
-    };
-    const result = migrateLegacyOptions(input);
-
-    expect(result.turnHandling!.endpointing!.minDelay).toBe(1.0);
-    expect(result.turnHandling!.endpointing!.maxDelay).toBe(5.0);
-  });
-
-  it('should migrate voiceOptions.preemptiveGeneration', () => {
-    const input: AgentSessionOptions = {
-      voiceOptions: {
-        preemptiveGeneration: true,
-      },
-    };
-    const result = migrateLegacyOptions(input);
-
-    expect(result.turnHandling!.preemptiveGeneration).toBe(true);
-  });
-
-  it('should migrate voiceOptions.userAwayTimeout', () => {
-    const input: AgentSessionOptions = {
-      voiceOptions: {
-        userAwayTimeout: 30.0,
-      },
-    };
-    const result = migrateLegacyOptions(input);
-
-    expect(result.turnHandling!.userAwayTimeout).toBe(30.0);
-  });
-
-  it('should migrate all legacy options together', () => {
-    const input: AgentSessionOptions = {
-      turnDetection: 'stt',
-      voiceOptions: {
-        allowInterruptions: false,
-        discardAudioIfUninterruptible: false,
         minInterruptionDuration: 1.0,
-        minInterruptionWords: 2,
-        minEndpointingDelay: 0.8,
-        maxEndpointingDelay: 4.0,
-        preemptiveGeneration: true,
-        userAwayTimeout: 20.0,
+        maxEndpointingDelay: 5.0,
+        maxToolSteps: 10,
       },
-    };
-    const result = migrateLegacyOptions(input);
+      options: {
+        minInterruptionDuration: 2.0,
+        maxEndpointingDelay: 8.0,
+        maxToolSteps: 5,
+      },
+    });
 
-    expect(result.turnHandling!.turnDetection).toBe('stt');
-    expect(result.turnHandling!.interruption!.mode).toBe(false);
-    expect(result.turnHandling!.interruption!.discardAudioIfUninterruptible).toBe(false);
-    expect(result.turnHandling!.interruption!.minDuration).toBe(1.0);
-    expect(result.turnHandling!.interruption!.minWords).toBe(2);
-    expect(result.turnHandling!.endpointing!.minDelay).toBe(0.8);
-    expect(result.turnHandling!.endpointing!.maxDelay).toBe(4.0);
-    expect(result.turnHandling!.preemptiveGeneration).toBe(true);
-    expect(result.turnHandling!.userAwayTimeout).toBe(20.0);
-
-    // Legacy options should still be available
-    expect('turnDetection' in result).toBeDefined();
-    expect('voiceOptions' in result).toBeDefined();
+    expect(result.options.turnHandling.interruption!.minDuration).toBe(2.0);
+    expect(result.options.turnHandling.endpointing!.maxDelay).toBe(8.0);
+    expect(result.options.maxToolSteps).toBe(5);
   });
 
-  it('should preserve non-legacy options in the result', () => {
-    const input: AgentSessionOptions = {
+  it('should let explicit turnHandling override legacy flat fields', () => {
+    const result = migrateLegacyOptions({
+      options: {
+        minInterruptionDuration: 1.0,
+        minEndpointingDelay: 0.8,
+        turnHandling: {
+          interruption: { minDuration: 3.0 },
+          endpointing: { minDelay: 2.0 },
+        },
+      },
+    });
+
+    expect(result.options.turnHandling.interruption!.minDuration).toBe(3.0);
+    expect(result.options.turnHandling.endpointing!.minDelay).toBe(2.0);
+  });
+
+  it('should preserve top-level turnDetection in the result', () => {
+    const result = migrateLegacyOptions({
       turnDetection: 'vad',
-      voiceOptions: {
-        minEndpointingDelay: 1.0,
-      },
-      maxToolSteps: 5,
-      connOptions: {
-        maxUnrecoverableErrors: 10,
-      },
-    };
-    const result = migrateLegacyOptions(input);
+    });
 
-    // Non-legacy options should be preserved
-    expect(result.maxToolSteps).toBe(5);
-    expect(result.connOptions).toEqual({ maxUnrecoverableErrors: 10 });
-
-    // Legacy options should still be available and mirror the new options
     expect(result.turnDetection).toBe('vad');
-    expect(result.voiceOptions?.minEndpointingDelay).toBe(1.0);
-    expect(result.turnHandling!.turnDetection).toBe('vad');
-    expect(result.turnHandling!.endpointing!.minDelay).toBe(1.0);
+    expect(result.options.turnHandling.turnDetection).toBe('vad');
   });
 });

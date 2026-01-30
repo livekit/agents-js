@@ -31,27 +31,10 @@ export interface TurnHandlingConfig {
    * Configuration for interruption handling.
    */
   interruption: InterruptionConfig;
-  /**
-   * If set, set the user state as "away" after this amount of time after user and agent are
-   * silent. Set to `undefined` to disable.
-   * @defaultValue 15.0
-   */
-  userAwayTimeout: number;
-  /**
-   * Whether to speculatively begin LLM and TTS requests before an end-of-turn is detected.
-   * When `true`, the agent sends inference calls as soon as a user transcript is received rather
-   * than waiting for a definitive turn boundary. This can reduce response latency by overlapping
-   * model inference with user audio, but may incur extra compute if the user interrupts or
-   * revises mid-utterance.
-   * @defaultValue false
-   */
-  preemptiveGeneration: boolean;
 }
 
 export const defaultTurnHandlingConfig: TurnHandlingConfig = {
   turnDetection: undefined,
   interruption: defaultInterruptionConfig,
   endpointing: defaultEndpointingConfig,
-  userAwayTimeout: 15,
-  preemptiveGeneration: false,
 };

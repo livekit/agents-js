@@ -67,29 +67,51 @@ import type { InterruptionConfig } from './turn_config/interruption.js';
 import type { TurnHandlingConfig } from './turn_config/turn_handling.js';
 import { migrateLegacyOptions } from './turn_config/utils.js';
 
-export interface VoiceOptions {
-  allowInterruptions: boolean;
-  discardAudioIfUninterruptible: boolean;
-  minInterruptionDuration: number;
-  minInterruptionWords: number;
-  minEndpointingDelay: number;
-  maxEndpointingDelay: number;
+export interface SessionOptions {
   maxToolSteps: number;
+  /**
+   * Whether to speculatively begin LLM and TTS requests before an end-of-turn is detected.
+   * When `true`, the agent sends inference calls as soon as a user transcript is received rather
+   * than waiting for a definitive turn boundary. This can reduce response latency by overlapping
+   * model inference with user audio, but may incur extra compute if the user interrupts or
+   * revises mid-utterance.
+   * @defaultValue false
+   */
   preemptiveGeneration: boolean;
-  userAwayTimeout?: number | null;
+  /**
+   * If set, set the user state as "away" after this amount of time after user and agent are
+   * silent. Set to `undefined` to disable.
+   * @defaultValue 15.0
+   */
+  userAwayTimeout: number | null;
+  /**
+   * Configuration for turn handling.
+   */
+  turnHandling: Partial<TurnHandlingConfig>;
+
+  /** @deprecated Use {@link VoiceOptions.turnHandling}.interruption.mode instead. */
+  allowInterruptions?: boolean;
+  /** @deprecated Use {@link VoiceOptions.turnHandling}.interruption.discardAudioIfUninterruptible instead. */
+  discardAudioIfUninterruptible?: boolean;
+  /** @deprecated Use {@link VoiceOptions.turnHandling}.interruption.minDuration instead. */
+  minInterruptionDuration?: number;
+  /** @deprecated Use {@link VoiceOptions.turnHandling}.interruption.minWords instead. */
+  minInterruptionWords?: number;
+  /** @deprecated Use {@link VoiceOptions.turnHandling}.endpointing.minDelay instead. */
+  minEndpointingDelay?: number;
+  /** @deprecated Use {@link VoiceOptions.turnHandling}.endpointing.maxDelay instead. */
+  maxEndpointingDelay?: number;
 }
 
-// const defaultVoiceOptions: VoiceOptions = {
-//   allowInterruptions: true,
-//   discardAudioIfUninterruptible: true,
-//   minInterruptionDuration: 500,
-//   minInterruptionWords: 0,
-//   minEndpointingDelay: 500,
-//   maxEndpointingDelay: 6000,
-//   maxToolSteps: 3,
-//   preemptiveGeneration: false,
-//   userAwayTimeout: 15.0,
-// } as const;
+export const defaultSessionOptions = {
+  maxToolSteps: 3,
+  preemptiveGeneration: false,
+  userAwayTimeout: 15.0,
+  turnHandling: {},
+} as const satisfies SessionOptions;
+
+/** @deprecated {@link VoiceOptions} has been renamed to {@link SessionOptions} */
+export type VoiceOptions = SessionOptions;
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
 
@@ -108,16 +130,18 @@ export type AgentSessionCallbacks = {
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
-  turnDetection?: TurnDetectionMode;
   stt?: STT | STTModelString;
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
-  voiceOptions?: Partial<VoiceOptions>;
+  options?: Partial<SessionOptions>;
   connOptions?: SessionConnectOptions;
-  turnHandling?: Partial<TurnHandlingConfig>;
-  maxToolSteps?: number;
+
+  /** @deprecated use {@link AgentSessionOptions.options}.turnHandling.turnDetection instead */
+  turnDetection?: TurnDetectionMode;
+  /** @deprecated use {@link AgentSessionOptions.options} instead */
+  voiceOptions?: Partial<VoiceOptions>;
 };
 
 export class AgentSession<
@@ -188,7 +212,7 @@ export class AgentSession<
 
     const opts = migrateLegacyOptions<UserData>(options);
 
-    const { vad, stt, llm, tts, userData, connOptions, turnHandling } = opts;
+    const { vad, stt, llm, tts, userData, connOptions, options: sessionOptions } = opts;
     // Merge user-provided connOptions with defaults
     this._connOptions = {
       sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
@@ -219,8 +243,8 @@ export class AgentSession<
       this.tts = tts;
     }
 
-    this.turnDetection = turnHandling?.turnDetection;
-    this._interruptionDetection = turnHandling?.interruption?.mode;
+    this.turnDetection = sessionOptions?.turnHandling?.turnDetection;
+    this._interruptionDetection = sessionOptions?.turnHandling?.interruption?.mode;
     this._userData = userData;
 
     // configurable IO
@@ -230,8 +254,7 @@ export class AgentSession<
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
 
-    // @ts-ignore FIXME the return type of the migration util has all defaults filled
-    this.options = opts.voiceOptions;
+    this.options = opts.options;
 
     this._onUserInputTranscribed = this._onUserInputTranscribed.bind(this);
     this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
