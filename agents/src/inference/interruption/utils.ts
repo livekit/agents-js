@@ -37,29 +37,6 @@ export class BoundedCache<K, V> {
   }
 
   /**
-   * Get existing entry and update it, or create a new one using factory.
-   * Updates the entry with the provided partial fields.
-   */
-  setOrUpdate<T extends V>(
-    key: K,
-    factory: () => T,
-    updates: Partial<{ [P in keyof T]: T[P] }>,
-  ): T {
-    let entry = this.cache.get(key) as T | undefined;
-    if (entry === undefined) {
-      entry = factory();
-      this.set(key, entry);
-    }
-    // Apply updates to the entry
-    for (const [field, value] of Object.entries(updates)) {
-      if (value !== undefined) {
-        (entry as Record<string, unknown>)[field] = value;
-      }
-    }
-    return entry;
-  }
-
-  /**
    * Pop the last entry that matches the predicate, or return undefined.
    * Only removes and returns the matching entry, preserving others.
    */

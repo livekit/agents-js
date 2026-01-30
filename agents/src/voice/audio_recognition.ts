@@ -894,12 +894,10 @@ export class AudioRecognition {
       const abortPromise = waitForAbort(signal);
 
       while (!signal.aborted) {
-        this.logger.warn('waiting for interruption event');
         const res = await Promise.race([eventReader.read(), abortPromise]);
         if (!res) break;
         const { done, value: ev } = res;
         if (done) break;
-        this.logger.warn('got interruption event');
         this.onInterruptionEvent(ev);
       }
     } catch (e) {
