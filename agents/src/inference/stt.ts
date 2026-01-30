@@ -16,7 +16,7 @@ import {
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
-import type { TimedString } from '../voice/io.js';
+import { type TimedString, createTimedString } from '../voice/io.js';
 import {
   type SttServerEvent,
   type SttTranscriptEvent,
@@ -491,13 +491,14 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         confidence: data.confidence,
         text,
         words: data.words.map(
-          (word): TimedString => ({
-            text: word.word,
-            startTime: word.start + this.startTimeOffset,
-            endTime: word.end + this.startTimeOffset,
-            startTimeOffset: this.startTimeOffset,
-            confidence: word.confidence,
-          }),
+          (word): TimedString =>
+            createTimedString({
+              text: word.word,
+              startTime: word.start + this.startTimeOffset,
+              endTime: word.end + this.startTimeOffset,
+              startTimeOffset: this.startTimeOffset,
+              confidence: word.confidence,
+            }),
         ),
       };
 

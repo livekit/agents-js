@@ -60,6 +60,7 @@ export default defineAgent({
       voiceOptions: {
         // allow the LLM to generate a response while waiting for the end of turn
         preemptiveGeneration: true,
+        useTtsAlignedTranscript: true,
       },
       connOptions: {
         // Example of overriding the default connection options for the LLM/TTS/STT

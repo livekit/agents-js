@@ -26,9 +26,11 @@ import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
+import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+import type { TimedString } from './io.js';
 
 export const asyncLocalStorage = new AsyncLocalStorage<{ functionCall?: FunctionCall }>();
 export const STOP_RESPONSE_SYMBOL = Symbol('StopResponse');
@@ -70,6 +72,7 @@ export interface AgentOptions<UserData> {
   tts?: TTS | TTSModelString;
   allowInterruptions?: boolean;
   minConsecutiveSpeechDelay?: number;
+  useTtsAlignedTranscript?: boolean;
 }
 
 export class Agent<UserData = any> {
@@ -79,6 +82,7 @@ export class Agent<UserData = any> {
   private _vad?: VAD;
   private _llm?: LLM | RealtimeModel;
   private _tts?: TTS;
+  private _useTtsAlignedTranscript?: boolean;
 
   /** @internal */
   _agentActivity?: AgentActivity;
@@ -102,6 +106,7 @@ export class Agent<UserData = any> {
     vad,
     llm,
     tts,
+    useTtsAlignedTranscript,
   }: AgentOptions<UserData>) {
     if (id) {
       this._id = id;
@@ -147,6 +152,8 @@ export class Agent<UserData = any> {
       this._tts = tts;
     }
 
+    this._useTtsAlignedTranscript = useTtsAlignedTranscript;
+
     this._agentActivity = undefined;
   }
 
@@ -164,6 +171,10 @@ export class Agent<UserData = any> {
 
   get tts(): TTS | undefined {
     return this._tts;
+  }
+
+  get useTtsAlignedTranscript(): boolean | undefined {
+    return this._useTtsAlignedTranscript;
   }
 
   get chatCtx(): ReadonlyChatContext {
@@ -191,9 +202,9 @@ export class Agent<UserData = any> {
   async onExit(): Promise<void> {}
 
   async transcriptionNode(
-    text: ReadableStream<string>,
+    text: ReadableStream<string | TimedString>,
     modelSettings: ModelSettings,
-  ): Promise<ReadableStream<string> | null> {
+  ): Promise<ReadableStream<string | TimedString> | null> {
     return Agent.default.transcriptionNode(this, text, modelSettings);
   }
 
@@ -395,6 +406,10 @@ export class Agent<UserData = any> {
               if (chunk === SynthesizeStream.END_OF_STREAM) {
                 break;
               }
+              // Attach timed transcripts to frame.userdata
+              if (chunk.timedTranscripts && chunk.timedTranscripts.length > 0) {
+                chunk.frame.userdata[USERDATA_TIMED_TRANSCRIPT] = chunk.timedTranscripts;
+              }
               controller.enqueue(chunk.frame);
             }
             controller.close();
@@ -410,9 +425,9 @@ export class Agent<UserData = any> {
 
     async transcriptionNode(
       agent: Agent,
-      text: ReadableStream<string>,
+      text: ReadableStream<string | TimedString>,
       _modelSettings: ModelSettings,
-    ): Promise<ReadableStream<string> | null> {
+    ): Promise<ReadableStream<string | TimedString> | null> {
       return text;
     },
 
