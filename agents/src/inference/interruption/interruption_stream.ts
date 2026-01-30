@@ -371,6 +371,7 @@ export class InterruptionStreamBase {
 
   async close(): Promise<void> {
     if (!this.inputStream.closed) await this.inputStream.close();
+    this.model.removeStream(this);
   }
 }
 

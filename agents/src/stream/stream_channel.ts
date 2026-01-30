@@ -21,23 +21,35 @@ export function createStreamChannel<T, E extends Error = Error>(): StreamChannel
   return {
     write: (chunk: T) => writer.write(chunk),
     stream: () => transform.readable,
-    abort: (error: E) => {
+    abort: async (error: E) => {
+      if (isClosed) return;
       isClosed = true;
-      return writer.abort(error);
+      try {
+        await writer.abort(error);
+      } catch (e) {
+        if (e instanceof Error && e.name === 'TypeError') return;
+        throw e;
+      }
     },
     addStreamInput: (newInputStream) => {
+      if (isClosed) return;
       const reader = newInputStream.getReader();
       (async () => {
         try {
-          while (true) {
+          while (!isClosed) {
             const { done, value } = await reader.read();
             if (done) break;
             await writer.write(value);
           }
+        } catch (err) {
+          if (!isClosed) {
+            isClosed = true;
+            await writer.abort(err as E);
+          }
         } finally {
           reader.releaseLock();
         }
-      })();
+      })().catch(() => {});
     },
     close: async () => {
       try {
