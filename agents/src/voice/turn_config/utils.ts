@@ -4,7 +4,7 @@
 import { log } from '../../log.js';
 import {
   type AgentSessionOptions,
-  type SessionOptions,
+  type InternalSessionOptions,
   defaultSessionOptions,
 } from '../agent_session.js';
 import { defaultEndpointingConfig } from './endpointing.js';
@@ -13,7 +13,7 @@ import { type TurnHandlingConfig, defaultTurnHandlingConfig } from './turn_handl
 
 export function migrateLegacyOptions<UserData>(
   legacyOptions: AgentSessionOptions<UserData>,
-): AgentSessionOptions<UserData> & { options: SessionOptions } {
+): AgentSessionOptions<UserData> & { options: InternalSessionOptions } {
   const logger = log();
   const { voiceOptions, turnDetection, options: sessionOptions, ...rest } = legacyOptions;
 
@@ -50,7 +50,9 @@ export function migrateLegacyOptions<UserData>(
     turnHandling: mergeWithDefaults(turnHandling),
   };
 
-  const newAgentSessionOptions: AgentSessionOptions<UserData> & { options: SessionOptions } = {
+  const newAgentSessionOptions: AgentSessionOptions<UserData> & {
+    options: InternalSessionOptions;
+  } = {
     ...rest,
     options: optionsWithDefaults,
     voiceOptions: optionsWithDefaults,

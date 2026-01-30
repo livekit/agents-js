@@ -9,34 +9,34 @@ export interface InterruptionConfig {
    * Interruption handling strategy.
    * @defaultValue undefined
    */
-  mode?: 'adaptive' | 'vad' | false;
+  mode: 'adaptive' | 'vad' | false | undefined;
   /**
    * When `true`, buffered audio is dropped while the agent is speaking and cannot be interrupted.
    * @defaultValue true
    */
-  discardAudioIfUninterruptible?: boolean;
+  discardAudioIfUninterruptible: boolean;
   /**
    * Minimum speech length in seconds to register as an interruption.
    * @defaultValue 0.5
    */
-  minDuration?: number;
+  minDuration: number;
   /**
    * Minimum number of words to consider an interruption, only used if STT is enabled.
    * @defaultValue 0
    */
-  minWords?: number;
+  minWords: number;
   /**
    * If set, emit an `agentFalseInterruption` event after this amount of time if the user is
    * silent and no user transcript is detected after the interruption. Set to `undefined` to
    * disable.
    * @defaultValue 2.0
    */
-  falseInterruptionTimeout?: number;
+  falseInterruptionTimeout: number;
   /**
    * Whether to resume the false interruption after the `falseInterruptionTimeout`.
    * @defaultValue true
    */
-  resumeFalseInterruption?: boolean;
+  resumeFalseInterruption: boolean;
 }
 
 export const defaultInterruptionConfig = {

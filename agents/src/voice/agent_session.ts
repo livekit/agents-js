@@ -64,7 +64,10 @@ import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
 import type { InterruptionConfig } from './turn_config/interruption.js';
-import type { TurnHandlingConfig } from './turn_config/turn_handling.js';
+import type {
+  InternalTurnHandlingConfig,
+  TurnHandlingConfig,
+} from './turn_config/turn_handling.js';
 import { migrateLegacyOptions } from './turn_config/utils.js';
 
 export interface SessionOptions {
@@ -101,6 +104,10 @@ export interface SessionOptions {
   minEndpointingDelay?: number;
   /** @deprecated Use {@link VoiceOptions.turnHandling}.endpointing.maxDelay instead. */
   maxEndpointingDelay?: number;
+}
+
+export interface InternalSessionOptions extends SessionOptions {
+  turnHandling: InternalTurnHandlingConfig;
 }
 
 export const defaultSessionOptions = {
@@ -153,7 +160,7 @@ export class AgentSession<
   tts?: TTS;
   turnDetection?: TurnDetectionMode;
 
-  readonly options: VoiceOptions;
+  readonly options: InternalSessionOptions;
 
   private agent?: Agent;
   private activity?: AgentActivity;

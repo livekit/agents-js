@@ -312,8 +312,8 @@ export class AgentActivity implements RecognitionHooks {
         turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
         turnDetectionMode: this.turnDetectionMode,
         interruptionDetection: this.interruptionDetector,
-        minEndpointingDelay: this.agentSession.options.minEndpointingDelay,
-        maxEndpointingDelay: this.agentSession.options.maxEndpointingDelay,
+        minEndpointingDelay: this.agentSession.options.turnHandling.endpointing.minDelay,
+        maxEndpointingDelay: this.agentSession.options.turnHandling.endpointing.maxDelay,
         rootSpanContext: this.agentSession.rootSpanContext,
       });
       this.audioRecognition.start();
@@ -373,7 +373,7 @@ export class AgentActivity implements RecognitionHooks {
 
   get allowInterruptions(): boolean {
     // TODO(AJS-51): Allow options to be defined in Agent class
-    return this.agentSession.options.allowInterruptions;
+    return this.agentSession.options.turnHandling.interruption?.mode !== false;
   }
 
   get turnDetection(): TurnDetectionMode | undefined {
@@ -702,7 +702,7 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    if (ev.speechDuration >= this.agentSession.options.minInterruptionDuration) {
+    if (ev.speechDuration >= this.agentSession.options.turnHandling.interruption?.minDuration) {
       this.interruptByAudioActivity();
     }
   }
@@ -721,7 +721,11 @@ export class AgentActivity implements RecognitionHooks {
     // - Always apply minInterruptionWords filtering when STT is available and minInterruptionWords > 0
     // - Apply check to all STT results: empty string, undefined, or any length
     // - This ensures consistent behavior across all interruption scenarios
-    if (this.stt && this.agentSession.options.minInterruptionWords > 0 && this.audioRecognition) {
+    if (
+      this.stt &&
+      this.agentSession.options.turnHandling.interruption?.minWords > 0 &&
+      this.audioRecognition
+    ) {
       const text = this.audioRecognition.currentTranscript;
       // TODO(shubhra): better word splitting for multi-language
 
@@ -731,7 +735,7 @@ export class AgentActivity implements RecognitionHooks {
 
       // Only allow interruption if word count meets or exceeds minInterruptionWords
       // This applies to all cases: empty strings, partial speech, and full speech
-      if (wordCount < this.agentSession.options.minInterruptionWords) {
+      if (wordCount < this.agentSession.options.turnHandling.interruption?.minWords) {
         return;
       }
     }
@@ -906,10 +910,10 @@ export class AgentActivity implements RecognitionHooks {
       this._currentSpeech &&
       this._currentSpeech.allowInterruptions &&
       !this._currentSpeech.interrupted &&
-      this.agentSession.options.minInterruptionWords > 0
+      this.agentSession.options.turnHandling.interruption?.minWords > 0
     ) {
       const wordCount = splitWords(info.newTranscript, true).length;
-      if (wordCount < this.agentSession.options.minInterruptionWords) {
+      if (wordCount < this.agentSession.options.turnHandling.interruption?.minWords) {
         // avoid interruption if the new_transcript contains fewer words than minInterruptionWords
         this.cancelPreemptiveGeneration();
         this.logger.info(

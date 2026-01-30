@@ -26,14 +26,19 @@ export interface TurnHandlingConfig {
   /**
    * Configuration for endpointing.
    */
-  endpointing: EndpointingConfig;
+  endpointing: Partial<EndpointingConfig>;
   /**
    * Configuration for interruption handling.
    */
+  interruption: Partial<InterruptionConfig>;
+}
+
+export interface InternalTurnHandlingConfig extends TurnHandlingConfig {
+  endpointing: EndpointingConfig;
   interruption: InterruptionConfig;
 }
 
-export const defaultTurnHandlingConfig: TurnHandlingConfig = {
+export const defaultTurnHandlingConfig: InternalTurnHandlingConfig = {
   turnDetection: undefined,
   interruption: defaultInterruptionConfig,
   endpointing: defaultEndpointingConfig,

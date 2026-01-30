@@ -12,12 +12,12 @@ export interface EndpointingConfig {
    * the STT provider's endpointing delay.
    * @defaultValue 0.5
    */
-  minDelay?: number;
+  minDelay: number;
   /**
    * Maximum time in seconds the agent will wait before terminating the turn.
    * @defaultValue 3.0
    */
-  maxDelay?: number;
+  maxDelay: number;
 }
 
 export const defaultEndpointingConfig = {
