@@ -266,17 +266,18 @@ export function createWsTransport(
     }
 
     const state = getState();
-    const createdAt = performance.now();
+    // Use truncated timestamp consistently for both cache key and header
+    // This ensures the server's response created_at matches our cache key
+    const createdAt = Math.floor(performance.now());
 
-    // Store the audio data in cache
+    // Store the audio data in cache with truncated timestamp
     state.cache.set(createdAt, new InterruptionCacheEntry({ createdAt, speechInput: audioSlice }));
 
     // Create header: 8-byte little-endian uint64 timestamp (milliseconds as integer)
     const header = new ArrayBuffer(8);
     const view = new DataView(header);
-    const createdAtInt = Math.floor(createdAt);
-    view.setUint32(0, createdAtInt >>> 0, true);
-    view.setUint32(4, Math.floor(createdAtInt / 0x100000000) >>> 0, true);
+    view.setUint32(0, createdAt >>> 0, true);
+    view.setUint32(4, Math.floor(createdAt / 0x100000000) >>> 0, true);
 
     // Combine header and audio data
     const audioBytes = new Uint8Array(

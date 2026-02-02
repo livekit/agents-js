@@ -8,6 +8,8 @@ import {
   DEFAULT_BASE_URL,
   FRAMES_PER_SECOND,
   SAMPLE_RATE,
+  STAGING_BASE_URL,
+  getDefaultInferenceUrl,
   interruptionOptionDefaults,
 } from './defaults.js';
 import type { InterruptionDetectionError } from './errors.js';
@@ -48,13 +50,14 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
       throw new Error('maxAudioDurationInS must be less than or equal to 3.0 seconds');
     }
 
-    const lkBaseUrl = baseUrl ?? process.env.LIVEKIT_REMOTE_EOT_URL ?? DEFAULT_BASE_URL;
+    const lkBaseUrl = baseUrl ?? process.env.LIVEKIT_REMOTE_EOT_URL ?? getDefaultInferenceUrl();
     let lkApiKey = apiKey ?? '';
     let lkApiSecret = apiSecret ?? '';
     let useProxy: boolean;
 
-    // use LiveKit credentials if using the default base URL (inference)
-    if (lkBaseUrl === DEFAULT_BASE_URL) {
+    // Use LiveKit credentials if using the inference service (production or staging)
+    const isInferenceUrl = lkBaseUrl === DEFAULT_BASE_URL || lkBaseUrl === STAGING_BASE_URL;
+    if (isInferenceUrl) {
       lkApiKey =
         apiKey ?? process.env.LIVEKIT_INFERENCE_API_KEY ?? process.env.LIVEKIT_API_KEY ?? '';
       if (!lkApiKey) {
