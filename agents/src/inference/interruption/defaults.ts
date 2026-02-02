@@ -66,7 +66,9 @@ export function intervalForRetry(
   return exponentialDelay + jitter;
 }
 
-export const interruptionOptionDefaults: InterruptionOptions = {
+// baseUrl and useProxy are resolved dynamically in the constructor
+// to respect LIVEKIT_REMOTE_EOT_URL environment variable
+export const interruptionOptionDefaults: Omit<InterruptionOptions, 'baseUrl' | 'useProxy'> = {
   sampleRate: SAMPLE_RATE,
   threshold: THRESHOLD,
   minFrames: Math.ceil(MIN_INTERRUPTION_DURATION_IN_S * FRAMES_PER_SECOND),
@@ -74,9 +76,7 @@ export const interruptionOptionDefaults: InterruptionOptions = {
   audioPrefixDurationInS: AUDIO_PREFIX_DURATION_IN_S,
   detectionIntervalInS: DETECTION_INTERVAL_IN_S,
   inferenceTimeout: 1_000,
-  baseUrl: DEFAULT_BASE_URL,
   apiKey: process.env.LIVEKIT_API_KEY || '',
   apiSecret: process.env.LIVEKIT_API_SECRET || '',
-  useProxy: false,
   minInterruptionDurationInS: MIN_INTERRUPTION_DURATION_IN_S,
 } as const;
