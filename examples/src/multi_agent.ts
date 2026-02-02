@@ -8,12 +8,10 @@ import {
   cli,
   defineAgent,
   llm,
+  inference,
   voice,
 } from '@livekit/agents';
-import * as deepgram from '@livekit/agents-plugin-deepgram';
-import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
-import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -79,9 +77,9 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad: ctx.proc.userData.vad! as silero.VAD,
-      stt: new deepgram.STT(),
-      tts: new elevenlabs.TTS(),
-      llm: new openai.LLM(),
+      stt: new inference.STT({ model: 'deepgram/flux-general', language: 'en' }),
+      tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
+      llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
       userData: userdata,

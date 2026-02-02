@@ -8,6 +8,7 @@ import {
   cli,
   defineAgent,
   llm,
+  inference,
   voice,
 } from '@livekit/agents';
 import * as livekit from '@livekit/agents-plugin-livekit';
@@ -59,9 +60,9 @@ export default defineAgent({
     });
 
     const session = new voice.AgentSession({
-      stt: 'assemblyai/universal-streaming:en',
-      llm: 'openai/gpt-4.1-mini',
-      tts: 'cartesia/sonic-2:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      stt: new inference.STT({ model: 'deepgram/flux-general', language: 'en' }),
+      llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
       vad: ctx.proc.userData.vad! as silero.VAD,
       turnDetection: new livekit.turnDetector.MultilingualModel(),
       voiceOptions: {
