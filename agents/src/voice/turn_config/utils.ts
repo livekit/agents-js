@@ -23,10 +23,15 @@ export function migrateLegacyOptions<UserData>(
     );
   }
 
+  // Preserve turnDetection before cloning since structuredClone converts class instances to plain objects
+  const originalTurnDetection =
+    sessionOptions?.turnHandling?.turnDetection ??
+    voiceOptions?.turnHandling?.turnDetection ??
+    turnDetection;
+
   const mergedOptions = structuredClone({ ...voiceOptions, ...sessionOptions });
 
   const turnHandling: TurnHandlingConfig = {
-    turnDetection: turnDetection,
     interruption: {
       discardAudioIfUninterruptible: mergedOptions?.discardAudioIfUninterruptible,
       minDuration: mergedOptions?.minInterruptionDuration,
@@ -38,6 +43,9 @@ export function migrateLegacyOptions<UserData>(
     },
 
     ...mergedOptions.turnHandling,
+    // Restore original turnDetection after spread to preserve class instance with methods
+    // (structuredClone converts class instances to plain objects, losing prototype methods)
+    turnDetection: originalTurnDetection,
   } as const;
 
   if (mergedOptions?.allowInterruptions === false) {
