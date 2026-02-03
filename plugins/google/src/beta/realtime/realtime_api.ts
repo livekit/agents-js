@@ -45,6 +45,9 @@ const OUTPUT_AUDIO_SAMPLE_RATE = 24000;
 const OUTPUT_AUDIO_CHANNELS = 1;
 
 const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
+
+// WebSocket close codes (RFC 6455)
+const WS_CLOSE_NORMAL = 1000;
 /**
  * Default image encoding options for Google Realtime API
  */
@@ -823,17 +826,26 @@ export class RealtimeSession extends llm.RealtimeSession {
             },
             onclose: (event: CloseEvent) => {
               // Surface WebSocket close errors to the user instead of silently swallowing them
-              // Close code 1000 = normal closure, anything else is an error
-              if (event.code !== 1000) {
+              if (event.code !== WS_CLOSE_NORMAL) {
+                // Note: WebSocket close reasons are limited to 123 bytes by RFC 6455,
+                // so Google's error messages may be truncated at the protocol level
+                const isTruncated = event.reason && event.reason.length >= 120;
+                const truncationNote = isTruncated
+                  ? ' (message may be truncated - check model name and API permissions)'
+                  : '';
                 const errorMsg = event.reason || `WebSocket closed with code ${event.code}`;
-                this.#logger.error(`Gemini Live session error: ${errorMsg}`);
-                // Map WebSocket close codes to HTTP-like status codes for consistency
-                // 1008 (Policy Violation) maps to 400 (Bad Request) - e.g., invalid model name
-                const statusCode = event.code === 1008 ? 400 : event.code;
+                this.#logger.error(`Gemini Live session error: ${errorMsg}${truncationNote}`);
+
                 this.emitError(
                   new APIStatusError({
-                    message: errorMsg,
-                    options: { statusCode, retryable: false },
+                    message: `${errorMsg}${truncationNote}`,
+                    options: {
+                      statusCode: event.code,
+                      retryable: false,
+                      body: event.reason
+                        ? { reason: event.reason, code: event.code, truncated: isTruncated }
+                        : null,
+                    },
                   }),
                   false,
                 );
