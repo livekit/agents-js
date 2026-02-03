@@ -143,8 +143,8 @@ export const runApp = (opts: ServerOptions) => {
         .default('debug')
         .env('LOG_LEVEL'),
     )
-    .action(() => {
-      const options = program.optsWithGlobals();
+    .action((...[, command]) => {
+      const options = command.optsWithGlobals();
       opts.wsURL = options.url || opts.wsURL;
       opts.apiKey = options.apiKey || opts.apiKey;
       opts.apiSecret = options.apiSecret || opts.apiSecret;
