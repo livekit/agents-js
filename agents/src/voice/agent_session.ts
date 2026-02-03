@@ -446,6 +446,8 @@ export class AgentSession<
       return;
     }
 
+    this._usageCollector = new ModelUsageCollector();
+
     let ctx: JobContext | undefined = undefined;
     try {
       ctx = getJobContext();
@@ -945,7 +947,6 @@ export class AgentSession<
     this.rootSpanContext = undefined;
     this.llmErrorCounts = 0;
     this.ttsErrorCounts = 0;
-    this._usageCollector = new ModelUsageCollector();
 
     this.logger.info({ reason, error }, 'AgentSession closed');
   }
