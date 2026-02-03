@@ -82,11 +82,19 @@ export default defineAgent({
       },
     });
 
-    const usageCollector = new metrics.UsageCollector();
-
+    // Log metrics as they are emitted
     session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
       metrics.logMetrics(ev.metrics);
-      usageCollector.collect(ev.metrics);
+    });
+
+    // Log usage summary when job shuts down
+    ctx.addShutdownCallback(async () => {
+      logger.info(
+        {
+          usage: session.usage,
+        },
+        'Session usage summary',
+      );
     });
 
     session.on(voice.AgentSessionEventTypes.UserInterruptionDetected, (ev) => {
