@@ -7,6 +7,8 @@ import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { AsyncIterableQueue } from '../utils.js';
+import type { SentenceTokenizer } from '../tokenize/index.js';
+import { StreamAdapter } from './stream_adapter.js';
 import {
   ChunkedStream,
   SynthesizeStream,
@@ -59,6 +61,12 @@ export interface FallbackAdapterOptions {
    * Defaults to 3.0 seconds.
    */
   noFallbackAfterAudioDuration?: number;
+  /**
+   * Sentence tokenizer for wrapping non-streaming TTS providers with StreamAdapter.
+   * Required if any TTS provider has streaming=false and you want to use stream() calls.
+   * When provided, non-streaming providers will be automatically wrapped to support streaming.
+   */
+  sentenceTokenizer?: SentenceTokenizer;
 }
 
 /**
@@ -81,6 +89,7 @@ export class FallbackAdapter extends TTS {
   readonly maxRetryPerTts: number;
   readonly retryInterval: number;
   readonly noFallbackAfterAudioDuration: number;
+  readonly sentenceTokenizer?: SentenceTokenizer;
 
   /** @internal */
   _status: TTSStatus[];
@@ -93,8 +102,10 @@ export class FallbackAdapter extends TTS {
       throw new Error('at least one TTS instance must be provided.');
     }
 
-    // Capabilities = intersection of all providers' capabilities
-    const streaming = options.tts.every((t) => t.capabilities.streaming);
+    // Streaming: use any() - true if ANY provider supports streaming
+    // Non-streaming providers will be wrapped with StreamAdapter when needed
+    const streaming = options.tts.some((t) => t.capabilities.streaming);
+    // Aligned transcript: use every() - all must support for consistent behavior
     const alignedTranscript = options.tts.every((t) => t.capabilities.alignedTranscript);
     const capabilities: TTSCapabilities = { streaming, alignedTranscript };
 
@@ -106,6 +117,7 @@ export class FallbackAdapter extends TTS {
     this.maxRetryPerTts = options.maxRetryPerTts ?? 0;
     this.retryInterval = options.retryInterval ?? 0.5;
     this.noFallbackAfterAudioDuration = options.noFallbackAfterAudioDuration ?? 3.0;
+    this.sentenceTokenizer = options.sentenceTokenizer;
 
     // Initialize status for each TTS
     this._status = this.ttsProviders.map(() => ({
@@ -319,6 +331,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
 
   /**
    * Try to stream with a single TTS provider.
+   * If the provider doesn't support streaming natively, wraps it with StreamAdapter.
    */
   private async *tryStream(
     tts: TTS,
@@ -330,7 +343,17 @@ class FallbackSynthesizeStream extends SynthesizeStream {
       retryIntervalMs: this.adapter.retryInterval * 1000,
     };
 
-    const stream = tts.stream({ connOptions });
+    // Wrap non-streaming TTS with StreamAdapter if sentenceTokenizer is provided
+    let actualTts: TTS = tts;
+    if (!tts.capabilities.streaming && this.adapter.sentenceTokenizer) {
+      this._log.debug(
+        { tts: tts.label },
+        'TTS does not support streaming, wrapping with StreamAdapter',
+      );
+      actualTts = new StreamAdapter(tts, this.adapter.sentenceTokenizer);
+    }
+
+    const stream = actualTts.stream({ connOptions });
     this._currentStream = stream;
 
     // Forward input to the underlying stream
