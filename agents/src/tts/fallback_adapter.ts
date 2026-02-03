@@ -155,6 +155,14 @@ class FallbackAdapter extends TTS {
         );
     }
 
+    stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
+        return new FallbackSynthesizeStream(
+            this,
+            options?.connOptions ?? DEFAULT_FALLBACK_API_CONNECT_OPTIONS,
+        );
+    }
+
+
 
 
 }
@@ -164,7 +172,7 @@ class FallbackChunkedStream extends ChunkedStream {
     private connOptions: APIConnectOptions;
     private _logger = log();
 
-    label: string = 'tts.FallbackChunkedStream';  
+    label: string = 'tts.FallbackChunkedStream';
 
     constructor(adapter: FallbackAdapter, text: string, connOptions: APIConnectOptions, abortSignal?: AbortSignal) {
         super(text, adapter, connOptions, abortSignal);
@@ -241,5 +249,14 @@ class FallbackChunkedStream extends ChunkedStream {
         }
 
     }
+
+}
+
+class FallbackSynthesizeStream extends SynthesizeStream {
+    private adapter: FallbackAdapter;
+    private connOptions: APIConnectOptions;
+    private _logger = log();
+
+    label: string = 'tts.FallbackSynthesizeStream';
 
 }
