@@ -6,7 +6,10 @@ import { APIConnectionError, APIError } from '../_exceptions.js';
 import { TTS, type TTSCapabilities, ChunkedStream, SynthesizeStream } from './tts.js';
 import { log } from '../log.js';
 import { DEFAULT_API_CONNECT_OPTIONS, type APIConnectOptions } from '../types.js';
-import { Task } from '../utils.js';
+import { Task, cancelAndWait } from '../utils.js';
+import { basic } from '../tokenize/index.js';
+import { StreamAdapter } from './stream_adapter.js';
+
 
 interface TTSStatus {
     available: boolean;
@@ -92,6 +95,15 @@ class FallbackAdapter extends TTS {
         return this._status;
     }
 
+    getStreamingInstance(index: number): TTS {
+        const tts = this.ttsInstances[index]!;
+        if (tts.capabilities.streaming) {
+            return tts;
+        }
+        // Wrap non-streaming TTS with StreamAdapter  
+        return new StreamAdapter(tts, new basic.SentenceTokenizer());
+    }
+
     private emitAvailabilityChanged(tts: TTS, available: boolean): void {
         const event: AvailabilityChangedEvent = { tts, available };
         (this as unknown as { emit: (event: string, data: AvailabilityChangedEvent) => void }).emit(
@@ -160,6 +172,25 @@ class FallbackAdapter extends TTS {
             this,
             options?.connOptions ?? DEFAULT_FALLBACK_API_CONNECT_OPTIONS,
         );
+    }
+
+    async close(): Promise<void> {
+        // Cancel all recovery tasks  
+        const recoveryTasks = this._status
+            .map(s => s.recoveringTask)
+            .filter((t): t is Task<void> => t !== null);
+
+        if (recoveryTasks.length > 0) {
+            await cancelAndWait(recoveryTasks, 1000);
+        }
+
+        // Remove event listeners  
+        for (const tts of this.ttsInstances) {
+            tts.removeAllListeners('metrics_collected');
+        }
+
+        // Close all TTS instances  
+        await Promise.all(this.ttsInstances.map(tts => tts.close()));
     }
 
 
@@ -254,9 +285,131 @@ class FallbackChunkedStream extends ChunkedStream {
 
 class FallbackSynthesizeStream extends SynthesizeStream {
     private adapter: FallbackAdapter;
-    private connOptions: APIConnectOptions;
+    private tokenBuffer: string[] = [];
+    private audioPushed = false;
     private _logger = log();
 
     label: string = 'tts.FallbackSynthesizeStream';
 
+    constructor(adapter: FallbackAdapter, connOptions: APIConnectOptions) {
+        super(adapter, connOptions);
+        this.adapter = adapter;
+    }
+
+    protected async run(): Promise<void> {
+        const allTTSFailed = this.adapter.status.every(s => !s.available);
+        if (allTTSFailed) {
+            this._logger.warn('All fallback TTS instances failed, retrying From First...');
+        }
+        for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
+            const tts = this.adapter.getStreamingInstance(i);
+            const originalTts = this.adapter.ttsInstances[i]!;
+            const status = this.adapter.status[i]!;
+            let lastRequestId: string = '';
+            let lastSegmentId: string = '';
+
+            if (!status.available && !allTTSFailed) {
+                this.adapter.markUnAvailable(i);
+                continue;
+            }
+
+            try {
+                this._logger.debug({ tts: originalTts.label }, 'attempting TTS stream');
+
+                const connOptions: APIConnectOptions = {
+                    ...this.connOptions,
+                    maxRetry: this.adapter.maxRetryPerTTS,
+                };
+
+                const stream = tts.stream({ connOptions });
+
+                // Push buffered tokens to new stream  
+                for (const token of this.tokenBuffer) {
+                    stream.pushText(token);
+                }
+
+                const forwardInput = async () => {
+                    for await (const input of this.input) {
+                        if (this.abortController.signal.aborted) break;
+
+                        if (input === SynthesizeStream.FLUSH_SENTINEL) {
+                            stream.flush();
+                        } else {
+                            this.tokenBuffer.push(input);
+                            stream.pushText(input);
+                        }
+                    }
+                    stream.endInput();
+                };
+
+                const processOutput = async () => {
+                    for await (const audio of stream) {
+                        if (this.abortController.signal.aborted) {
+                            stream.close();
+                            return;
+                        }
+
+                        if (audio === SynthesizeStream.END_OF_STREAM) {
+                            this.queue.put(audio);
+                            continue;
+                        }
+
+                        // Use cached resampler for this TTS instance  
+                        const resampler = status.resampler;
+                        if (resampler) {
+                            for (const frame of resampler.push(audio.frame)) {
+                                this.queue.put({
+                                    ...audio,
+                                    frame,
+                                });
+                                this.audioPushed = true;
+                            }
+                        } else {
+                            this.queue.put(audio);
+                            this.audioPushed = true;
+                        }
+                        lastRequestId = audio.requestId;
+                        lastSegmentId = audio.segmentId;
+                    }
+
+                    // Flush resampler  
+                    if (status.resampler) {
+                        for (const frame of status.resampler.flush()) {
+                            this.queue.put({
+                                requestId: lastRequestId || '',
+                                segmentId: lastSegmentId || '',
+                                frame,
+                                final: true,
+                            });
+                        }
+                    }
+                };
+
+                await Promise.all([forwardInput(), processOutput()]);
+
+                this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
+                return;
+            } catch (error) {
+                if (this.audioPushed) {
+                    this._logger.error(
+                        { tts: originalTts.label },
+                        'TTS failed after audio pushed, cannot fallback mid-utterance',
+                    );
+                    throw error;
+                }
+
+                if (error instanceof APIError || error instanceof APIConnectionError) {
+                    this._logger.warn({ tts: originalTts.label, error }, 'TTS failed, switching to next instance');
+                    this.adapter.markUnAvailable(i);
+                } else {
+                    throw error;
+                }
+            }
+        }
+
+        const labels = this.adapter.ttsInstances.map(t => t.label).join(', ');
+        throw new APIConnectionError({
+            message: `all TTS instances failed (${labels})`,
+        });
+    }
 }
