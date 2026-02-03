@@ -203,7 +203,7 @@ export class FallbackAdapter extends TTS {
                 });
 
                 // Try to get first audio frame
-                for await (const audio of testStream) {
+                for await (const _audio of testStream) {
                     // Success if we get any audio
                     // Clear recoveringTask first to prevent race conditions
                     status.recoveringTask = null;
@@ -480,8 +480,9 @@ class FallbackSynthesizeStream extends SynthesizeStream {
             }
         };
 
-        // Start forwarding input in background
-        forwardInput();
+        const forwardTask = forwardInput().catch((error) => {
+            this._log.error({ error }, 'Unhandled error in forwardInput');
+        });
 
         try {
             for await (const audio of stream) {
@@ -505,6 +506,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
             throw error;
         } finally {
             stream.close();
+            await forwardTask;
         }
     }
 
@@ -514,17 +516,15 @@ class FallbackSynthesizeStream extends SynthesizeStream {
     protected async run(): Promise<void> {
         const startTime = Date.now();
 
-        // Check if all TTS providers are unavailable
         const allFailed = this.adapter._status.every((s) => !s.available);
         if (allFailed) {
             this._log.error('all TTS providers are unavailable, retrying...');
         }
 
-        // Buffer input so we can replay it to fallback providers
         const inputBuffer: (string | typeof SynthesizeStream.FLUSH_SENTINEL)[] = [];
         let inputEnded = false;
 
-        // Consume and buffer input from this.input
+        
         const bufferInput = async () => {
             for await (const item of this.input) {
                 inputBuffer.push(item);
@@ -532,7 +532,6 @@ class FallbackSynthesizeStream extends SynthesizeStream {
             inputEnded = true;
         };
 
-        // Start buffering input
         const bufferTask = bufferInput();
 
         for (let i = 0; i < this.adapter.ttsProviders.length; i++) {
@@ -547,31 +546,25 @@ class FallbackSynthesizeStream extends SynthesizeStream {
             if (status.available || allFailed) {
                 let audioDurationSent = 0;
 
-                // Create a new queue that replays buffered input and continues with new input
                 const replayQueue = new AsyncIterableQueue<
                     string | typeof SynthesizeStream.FLUSH_SENTINEL
                 >();
 
-                // Replay buffered input and forward new input
                 const replayAndForward = async () => {
-                    // First, replay everything buffered so far
                     for (const item of inputBuffer) {
                         replayQueue.put(item);
                     }
 
-                    // If input hasn't ended, continue forwarding new items
                     if (!inputEnded) {
-                        // Wait for buffer task to complete while forwarding
                         let bufferIndex = inputBuffer.length;
                         while (!inputEnded) {
                             await new Promise((resolve) => setTimeout(resolve, 10));
-                            // Forward any new items that were added to buffer
                             while (bufferIndex < inputBuffer.length) {
                                 replayQueue.put(inputBuffer[bufferIndex]!);
                                 bufferIndex++;
                             }
                         }
-                        // Forward remaining items
+                       
                         while (bufferIndex < inputBuffer.length) {
                             replayQueue.put(inputBuffer[bufferIndex]!);
                             bufferIndex++;
@@ -581,8 +574,9 @@ class FallbackSynthesizeStream extends SynthesizeStream {
                     replayQueue.close();
                 };
 
-                // Start replay in background
-                replayAndForward();
+                const replayTask = replayAndForward().catch((error) => {
+                    this._log.error({ error }, 'Unhandled error in replayAndForward');
+                });
 
                 try {
                     this._log.info({ tts: tts.label }, 'FallbackAdapter: Attempting TTS provider');
@@ -593,7 +587,6 @@ class FallbackSynthesizeStream extends SynthesizeStream {
                             continue;
                         }
 
-                        // Track audio duration sent
                         const frameDurationMs =
                             (audio.frame.samplesPerChannel / audio.frame.sampleRate) * 1000;
                         audioDurationSent += frameDurationMs / 1000;
@@ -602,8 +595,8 @@ class FallbackSynthesizeStream extends SynthesizeStream {
                         this.queue.put(audio);
                     }
 
-                    // Success! Wait for buffer task to complete
-                    await bufferTask;
+          
+                    await Promise.all([bufferTask, replayTask]);
 
                     this._log.info(
                         { tts: tts.label, audioDurationSent: audioDurationSent.toFixed(2) },
@@ -611,20 +604,18 @@ class FallbackSynthesizeStream extends SynthesizeStream {
                     );
                     return;
                 } catch (error) {
-                    // Mark as unavailable if it was available before
                     if (status.available) {
                         status.available = false;
                         this.adapter._emitAvailabilityChanged(tts, false);
                         this.adapter._startRecovery(i);
                     }
 
-                    // Check if we sent significant audio before failing
                     if (audioDurationSent >= this.adapter.noFallbackAfterAudioDuration) {
                         this._log.error(
                             { tts: tts.label, audioDurationSent: audioDurationSent.toFixed(2) },
                             'TTS stream failed after sending significant audio, not retrying',
                         );
-                        await bufferTask;
+                        await Promise.all([bufferTask, replayTask]);
                         throw error;
                     }
 
