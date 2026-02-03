@@ -812,6 +812,8 @@ export class RealtimeSession extends llm.RealtimeSession {
             onmessage: (message: types.LiveServerMessage) => {
               this.onReceiveMessage(session, message);
             },
+            // onerror is called for network-level errors (connection refused, DNS failure, TLS errors).
+            // Application-level errors (e.g., invalid model name) come through onclose with error codes.
             onerror: (error: ErrorEvent) => {
               this.#logger.error('Gemini Live session error:', error);
               if (!this.sessionShouldClose.isSet) {
@@ -819,7 +821,15 @@ export class RealtimeSession extends llm.RealtimeSession {
               }
             },
             onclose: (event: CloseEvent) => {
-              this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
+              // Surface WebSocket close errors to the user instead of silently swallowing them
+              // Close code 1000 = normal closure, anything else is an error
+              if (event.code !== 1000) {
+                const errorMsg = event.reason || `WebSocket closed with code ${event.code}`;
+                this.#logger.error(`Gemini Live session error: ${errorMsg}`);
+                this.emitError(new Error(errorMsg), false);
+              } else {
+                this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
+              }
               this.markCurrentGenerationDone();
             },
           },
