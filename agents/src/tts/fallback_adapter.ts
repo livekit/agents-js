@@ -18,7 +18,7 @@ interface TTSStatus {
 }
 interface FallbackAdapterOptions {
     ttsInstances: TTS[];
-    maxRetryPerTTs?: number;
+    maxRetryPerTTS?: number;
 }
 
 export interface AvailabilityChangedEvent {
@@ -55,7 +55,7 @@ class FallbackAdapter extends TTS {
         const capabilities = FallbackAdapter.aggregateCapabilities(opts.ttsInstances);
         super(sampleRate, numChannels, capabilities);
         this.ttsInstances = opts.ttsInstances;
-        this.maxRetryPerTTS = opts.maxRetryPerTTs ?? 3;
+        this.maxRetryPerTTS = opts.maxRetryPerTTS ?? 3;
 
         // Initialize status for each TTS instance. If a TTS has a lower sample rate than
         // the adapter's output rate, create a resampler to upsample its audio output.
@@ -187,6 +187,7 @@ class FallbackAdapter extends TTS {
         // Remove event listeners  
         for (const tts of this.ttsInstances) {
             tts.removeAllListeners('metrics_collected');
+            tts.removeAllListeners('error');
         }
 
         // Close all TTS instances  
@@ -278,6 +279,10 @@ class FallbackChunkedStream extends ChunkedStream {
                 }
             }
         }
+        const labels = this.adapter.ttsInstances.map(t => t.label).join(', ');
+        throw new APIConnectionError({
+            message: `all TTS instances failed (${labels})`,
+        });
 
     }
 
