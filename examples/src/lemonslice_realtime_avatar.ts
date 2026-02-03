@@ -30,7 +30,7 @@ export default defineAgent({
 
       const session = new voice.AgentSession({
         stt: new inference.STT({
-          model: 'deepgram/flux-general',
+          model: 'deepgram/nova-3',
           language: 'en',
         }),
         llm: new inference.LLM({

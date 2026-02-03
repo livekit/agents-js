@@ -29,7 +29,7 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad: ctx.proc.userData.vad! as silero.VAD,
-      stt: new inference.STT({ model: 'deepgram/flux-general', language: 'en' }),
+      stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
       tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
       // To use OpenAI Realtime API
       llm: new openai.realtime.RealtimeModel({

@@ -43,7 +43,7 @@ export default defineAgent({
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
       // stt: new inference.STT({ model: 'assemblyai/universal-streaming:en', language: 'en' }),
-      stt: new inference.STT({ model: 'deepgram/flux-general', language: 'en' }),
+      stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
       // A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
       // See all available models at https://docs.livekit.io/agents/models/llm/
       // llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),

@@ -45,7 +45,7 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       llm: 'deepseek-ai/deepseek-v3',
-      stt: 'deepgram/flux-general',
+      stt: 'deepgram/nova-3',
       tts: 'cartesia/sonic-3',
     });
     await session.start({ agent, room: ctx.room });
