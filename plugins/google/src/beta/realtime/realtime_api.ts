@@ -15,6 +15,7 @@ import {
 import type { APIConnectOptions } from '@livekit/agents';
 import {
   APIConnectionError,
+  APIStatusError,
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
   Event,
@@ -826,7 +827,16 @@ export class RealtimeSession extends llm.RealtimeSession {
               if (event.code !== 1000) {
                 const errorMsg = event.reason || `WebSocket closed with code ${event.code}`;
                 this.#logger.error(`Gemini Live session error: ${errorMsg}`);
-                this.emitError(new Error(errorMsg), false);
+                // Map WebSocket close codes to HTTP-like status codes for consistency
+                // 1008 (Policy Violation) maps to 400 (Bad Request) - e.g., invalid model name
+                const statusCode = event.code === 1008 ? 400 : event.code;
+                this.emitError(
+                  new APIStatusError({
+                    message: errorMsg,
+                    options: { statusCode, retryable: false },
+                  }),
+                  false,
+                );
               } else {
                 this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
               }
