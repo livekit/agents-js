@@ -1,8 +1,18 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { log } from '../log.js';
 import type { AgentMetrics } from './base.js';
 
+// Ref: python livekit-agents/livekit/agents/metrics/usage_collector.py - lines 10-14 (diff)
+// NOTE: Python uses warnings.warn() for deprecation at runtime.
+// TypeScript uses JSDoc @deprecated which shows in IDE.
+// We also add optional console.warn() in constructor for runtime parity.
+/**
+ * @deprecated Use LLMModelUsage, TTSModelUsage, or STTModelUsage from './model_usage.js' instead.
+ * These new types provide per-model/provider usage aggregation for more detailed tracking.
+ * Ref: python livekit-agents/livekit/agents/metrics/usage_collector.py - lines 10-14 (diff)
+ */
 export interface UsageSummary {
   llmPromptTokens: number;
   llmPromptCachedTokens: number;
@@ -11,10 +21,16 @@ export interface UsageSummary {
   sttAudioDurationMs: number;
 }
 
+/**
+ * @deprecated Use ModelUsageCollector from './model_usage.js' instead.
+ * ModelUsageCollector provides per-model/provider usage aggregation for more detailed tracking.
+ */
 export class UsageCollector {
   private summary: UsageSummary;
+  private logger = log();
 
   constructor() {
+    this.logger.warn('UsageCollector is deprecated. Use ModelUsageCollector instead.');
     this.summary = {
       llmPromptTokens: 0,
       llmPromptCachedTokens: 0,

@@ -68,6 +68,8 @@ export interface AudioRecognitionOptions {
   minEndpointingDelay: number;
   maxEndpointingDelay: number;
   rootSpanContext?: Context;
+  sttModel?: string;
+  sttProvider?: string;
 }
 
 // TODO add ability to update stt/vad/interruption-detection
@@ -81,6 +83,8 @@ export class AudioRecognition {
   private maxEndpointingDelay: number;
   private lastLanguage?: string;
   private rootSpanContext?: Context;
+  private sttModel?: string;
+  private sttProvider?: string;
 
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
@@ -128,6 +132,8 @@ export class AudioRecognition {
     this.maxEndpointingDelay = opts.maxEndpointingDelay;
     this.lastLanguage = undefined;
     this.rootSpanContext = opts.rootSpanContext;
+    this.sttModel = opts.sttModel;
+    this.sttProvider = opts.sttProvider;
 
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     const [vadInputStream, teedInput] = this.deferredInputStream.stream.tee();
@@ -804,6 +810,16 @@ export class AudioRecognition {
                 context: this.rootSpanContext,
                 startTime,
               });
+
+              if (this.sttModel) {
+                this.userTurnSpan.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.sttModel);
+              }
+              if (this.sttProvider) {
+                this.userTurnSpan.setAttribute(
+                  traceTypes.ATTR_GEN_AI_PROVIDER_NAME,
+                  this.sttProvider,
+                );
+              }
             }
 
             // Capture sample rate from the first VAD event if not already set

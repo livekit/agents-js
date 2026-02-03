@@ -24,6 +24,7 @@ import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
 import type { ChatContent, ChatItem } from '../llm/index.js';
 import { enableOtelLogging } from '../log.js';
+import { filterZeroValues } from '../metrics/model_usage.js';
 import type { SessionReport } from '../voice/report.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
@@ -445,6 +446,8 @@ export async function uploadSessionReport(options: {
     'logger.name': 'chat_history',
   };
 
+  const usage = report.modelUsage?.map(filterZeroValues) || null;
+
   logRecords.push({
     body: 'session report',
     timestampMs: report.startedAt || report.timestamp || 0,
@@ -453,6 +456,7 @@ export async function uploadSessionReport(options: {
       'session.options': report.options || {},
       'session.report_timestamp': report.timestamp,
       agent_name: agentName,
+      usage,
     },
   });
 
