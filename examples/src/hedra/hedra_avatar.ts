@@ -8,6 +8,7 @@ import {
   cli,
   defineAgent,
   inference,
+  initializeLogger,
   metrics,
   voice,
 } from '@livekit/agents';
@@ -26,6 +27,8 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
+    initializeLogger({ pretty: true });
+
     const agent = new voice.Agent({
       instructions: 'You are a helpful assistant. Speak clearly and concisely.',
     });

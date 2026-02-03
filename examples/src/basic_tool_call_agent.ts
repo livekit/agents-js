@@ -7,8 +7,8 @@ import {
   ServerOptions,
   cli,
   defineAgent,
-  llm,
   inference,
+  llm,
   voice,
 } from '@livekit/agents';
 import * as livekit from '@livekit/agents-plugin-livekit';
@@ -139,7 +139,10 @@ export default defineAgent({
       vad,
       stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
       llm: new inference.LLM({ model: 'google/gemini-3-flash-preview' }),
-      tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
+      tts: new inference.TTS({
+        model: 'cartesia/sonic-3',
+        voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      }),
       turnDetection: new livekit.turnDetector.MultilingualModel(),
       userData: { number: 0 },
       voiceOptions: {

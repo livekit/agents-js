@@ -33,7 +33,10 @@ export default defineAgent({
       vad,
       llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
       stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
-      tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
+      tts: new inference.TTS({
+        model: 'cartesia/sonic-3',
+        voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      }),
 
       voiceOptions: {
         userAwayTimeout: 12.5,

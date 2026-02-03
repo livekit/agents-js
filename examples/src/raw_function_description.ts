@@ -60,7 +60,10 @@ export default defineAgent({
         model: 'deepgram/nova-3',
         language: 'en',
       }),
-      tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
+      tts: new inference.TTS({
+        model: 'cartesia/sonic-3',
+        voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      }),
       llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
