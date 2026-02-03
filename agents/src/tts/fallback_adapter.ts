@@ -31,7 +31,7 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
   retryIntervalMs: DEFAULT_API_CONNECT_OPTIONS.retryIntervalMs,
 };
 
-class FallbackAdapter extends TTS {
+export class FallbackAdapter extends TTS {
   readonly ttsInstances: TTS[];
   readonly maxRetryPerTTS: number;
 
