@@ -236,7 +236,7 @@ export class FallbackAdapter extends TTS {
    * Start recovery for a failed provider  
    * @internal  
    */
-    private _startRecovery(ttsIndex: number): void {
+    _startRecovery(ttsIndex: number): void {
         const status = this._status[ttsIndex]!;
 
         if (!status.recoveringTask && !status.available) {
@@ -245,6 +245,14 @@ export class FallbackAdapter extends TTS {
     }
 
     override async close(): Promise<void> {
+        // Cancel all recovery tasks  
+        for (const status of this._status) {
+            if (status.recoveringTask) {
+                // Note: We can't actually cancel Promise tasks without AbortController  
+                // This is a limitation - consider using AbortController in future  
+                status.recoveringTask = null;
+            }
+        }
         await Promise.all(this.ttsProviders.map((tts) => tts.close()));
     }
 }
@@ -356,6 +364,7 @@ class FallbackChunkedStream extends ChunkedStream {
                     if (status.available) {
                         status.available = false;
                         this.adapter._emitAvailabilityChanged(tts, false);
+                        this.adapter._startRecovery(i);
                     }
 
                     // Check if we sent significant audio before failing
@@ -581,6 +590,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
                     if (status.available) {
                         status.available = false;
                         this.adapter._emitAvailabilityChanged(tts, false);
+                        this.adapter._startRecovery(i)
                     }
 
                     // Check if we sent significant audio before failing
