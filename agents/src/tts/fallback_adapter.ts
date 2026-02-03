@@ -3,6 +3,7 @@ import { SystemItem } from './../../../plugins/openai/src/realtime/api_proto';
 //  
 // SPDX-License-Identifier: Apache-2.0 
 import { AudioResampler } from '@livekit/rtc-node';
+import { APIConnectionError, APIError } from '../_exceptions.js';  
 import { TTS, type TTSCapabilities, ChunkedStream, SynthesizeStream } from './tts.js';
 import { log } from '../log.js';
 import { options } from 'marked';
@@ -33,7 +34,7 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
 
 class FallbackAdapter extends TTS {
     readonly ttsInstances: TTS[];
-    readonly maxRetryPerTTs: number;
+    readonly maxRetryPerTTS: number;
 
     private _status: TTSStatus[] = [];
     private _logger = log();
@@ -53,7 +54,7 @@ class FallbackAdapter extends TTS {
         const capabilities = FallbackAdapter.aggregateCapabilities(opts.ttsInstances);
         super(sampleRate, numChannels, capabilities);
         this.ttsInstances = opts.ttsInstances;
-        this.maxRetryPerTTs = opts.maxRetryPerTTs ?? 3;
+        this.maxRetryPerTTS = opts.maxRetryPerTTs ?? 3;
 
         // Initialize status for each TTS instance. If a TTS has a lower sample rate than
         // the adapter's output rate, create a resampler to upsample its audio output.
@@ -107,28 +108,28 @@ class FallbackAdapter extends TTS {
         if (status.recoveringTask && !status.recoveringTask.done) {
             return;
         }
-        status.recoveringTask = Task.from(async () => {  
-            try {  
-              const testStream = tts.synthesize('Hello world, this is a recovery test.', {  
-                maxRetry: 0,  
-                timeoutMs: 10000, 
-                retryIntervalMs: 2000, 
-              });  
+        status.recoveringTask = Task.from(async () => {
+            try {
+                const testStream = tts.synthesize('Hello world, this is a recovery test.', {
+                    maxRetry: 0,
+                    timeoutMs: 10000,
+                    retryIntervalMs: 2000,
+                });
 
-              for await (const _ of testStream) {  
-                // Just consume the stream to test connectivity  
-              }  
-              status.available = true;  
-              status.recoveringTask = null;  
-              this._logger.info({ tts: tts.label }, 'TTS recovered');  
-              this.emitAvailabilityChanged(tts, true);  
-            } catch (error) {  
-              this._logger.debug({ tts: tts.label, error }, 'TTS recovery failed, will retry');  
-              status.recoveringTask = null;  
-              // Retry recovery after delay (matches Python's retry behavior)  
-              setTimeout(() => this.tryRecovery(index), 5000);  
-            }  
-          });  
+                for await (const _ of testStream) {
+                    // Just consume the stream to test connectivity  
+                }
+                status.available = true;
+                status.recoveringTask = null;
+                this._logger.info({ tts: tts.label }, 'TTS recovered');
+                this.emitAvailabilityChanged(tts, true);
+            } catch (error) {
+                this._logger.debug({ tts: tts.label, error }, 'TTS recovery failed, will retry');
+                status.recoveringTask = null;
+                // Retry recovery after delay (matches Python's retry behavior)  
+                setTimeout(() => this.tryRecovery(index), 5000);
+            }
+        });
     }
 
     markUnAvailable(index: number): void {
@@ -175,12 +176,61 @@ class FallbackChunkedStream extends ChunkedStream {
         const allTTSFailed = this.adapter.status.every((s) => !s.available);
         if (allTTSFailed) {
             this.logger.warn('All fallback TTS instances failed, retrying From First...');
-            for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
-                const tts = this.adapter.ttsInstances[i]!;
-                const status = this.adapter.status[i]!;
-                if (!status.available && !allTTSFailed) {
+        }
+        for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
+            const tts = this.adapter.ttsInstances[i]!;
+            const status = this.adapter.status[i]!;
+            if (!status.available && !allTTSFailed) {
+                this.adapter.markUnAvailable(i);
+            }
+            try {
+                this.logger.debug({ tts: tts.label }, 'attempting TTS synthesis');
+                const connOptions: APIConnectOptions = {
+                    ...this.connOptions,
+                    maxRetry: this.adapter.maxRetryPerTTS,
+                };
+                const stream = tts.synthesize(this.inputText, connOptions, this.abortSignal);
+                for await (const audio of stream) {
+                    if (this.abortController.signal.aborted) {
+                        stream.close();
+                        return;
+                    }
+
+                    // Use cached resampler for this TTS instance  
+                    const resampler = status.resampler;
+                    if (resampler) {
+                        for (const frame of resampler.push(audio.frame)) {
+                            this.queue.put({
+                                ...audio,
+                                frame,
+                            });
+                        }
+                    } else {
+                        this.queue.put(audio);
+                    }
+                    // Flush any remaining resampled frames  
+                    if (status.resampler) {
+                        for (const frame of status.resampler.flush()) {
+                            this.queue.put({
+                                requestId: audio.requestId || '',
+                                segmentId: audio.segmentId || '',
+                                frame,
+                                final: true,
+                            });
+                        }
+                    }
+                    this.logger.debug({ tts: tts.label }, 'TTS synthesis succeeded');
+                    return;
+
+                }
+
+            }
+            catch (error) {
+                if (error instanceof APIError || error instanceof APIConnectionError) {
+                    this.logger.warn({ tts: tts.label, error }, 'TTS failed, switching to next instance');
                     this.adapter.markUnAvailable(i);
-                    continue;
+                } else {
+                    throw error;
                 }
             }
         }
