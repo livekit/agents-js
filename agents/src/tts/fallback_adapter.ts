@@ -1,21 +1,35 @@
+import { SystemItem } from './../../../plugins/openai/src/realtime/api_proto';
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.  
 //  
 // SPDX-License-Identifier: Apache-2.0 
 import { AudioResampler } from '@livekit/rtc-node';
-import { TTS, type TTSCapabilities } from './tts.js';
+import { TTS, type TTSCapabilities, ChunkedStream, SynthesizeStream } from './tts.js';
 import { log } from '../log.js';
 import { options } from 'marked';
+import { DEFAULT_API_CONNECT_OPTIONS, type APIConnectOptions } from '../types.js';
+import { Task } from '../utils.js';
 
 interface TTSStatus {
     available: boolean;
-    recoveringTask: Promise<void> | null;
+    recoveringTask: Task<void> | null;
     resampler: AudioResampler | null;
 }
-
 interface FallbackAdapterOptions {
     ttsInstances: TTS[];
     maxRetryPerTTs?: number;
 }
+
+export interface AvailabilityChangedEvent {
+    tts: TTS;
+    available: boolean;
+}
+
+const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
+    maxRetry: 0,
+    timeoutMs: DEFAULT_API_CONNECT_OPTIONS.timeoutMs,
+    retryIntervalMs: DEFAULT_API_CONNECT_OPTIONS.retryIntervalMs,
+};
+
 
 class FallbackAdapter extends TTS {
     readonly ttsInstances: TTS[];
@@ -56,6 +70,7 @@ class FallbackAdapter extends TTS {
                 resampler: resampler,
             }
         });
+        this.setupEventForwarding();
     }
     private static aggregateCapabilities(instances: TTS[]): TTSCapabilities {
         const streaming = instances.some(tts => tts.capabilities.streaming);
@@ -63,6 +78,113 @@ class FallbackAdapter extends TTS {
         return { streaming, alignedTranscript };
     }
 
+    private setupEventForwarding(): void {
+        this.ttsInstances.forEach(tts => {
+            tts.on('metrics_collected', (metrics) => {
+                this.emit('metrics_collected', metrics);
+            });
+            tts.on('error', (error) => {
+                this.emit('error', error);
+            });
+        });
+    }
 
+    get status(): TTSStatus[] {
+        return this._status;
+    }
+
+    private emitAvailabilityChanged(tts: TTS, available: boolean): void {
+        const event: AvailabilityChangedEvent = { tts, available };
+        (this as unknown as { emit: (event: string, data: AvailabilityChangedEvent) => void }).emit(
+            'tts_availability_changed',
+            event,
+        );
+    }
+
+    private tryRecovery(index: number): void {
+        const status = this._status[index]!;
+        const tts = this.ttsInstances[index]!;
+        if (status.recoveringTask && !status.recoveringTask.done) {
+            return;
+        }
+        status.recoveringTask = Task.from(async () => {  
+            try {  
+              const testStream = tts.synthesize('Hello world, this is a recovery test.', {  
+                maxRetry: 0,  
+                timeoutMs: 10000, 
+                retryIntervalMs: 2000, 
+              });  
+
+              for await (const _ of testStream) {  
+                // Just consume the stream to test connectivity  
+              }  
+              status.available = true;  
+              status.recoveringTask = null;  
+              this._logger.info({ tts: tts.label }, 'TTS recovered');  
+              this.emitAvailabilityChanged(tts, true);  
+            } catch (error) {  
+              this._logger.debug({ tts: tts.label, error }, 'TTS recovery failed, will retry');  
+              status.recoveringTask = null;  
+              // Retry recovery after delay (matches Python's retry behavior)  
+              setTimeout(() => this.tryRecovery(index), 5000);  
+            }  
+          });  
+    }
+
+    markUnAvailable(index: number): void {
+        const status = this._status[index]!;
+        if (status.recoveringTask && !status.recoveringTask.done) {
+            return;
+        }
+        if (status.available) {
+            status.available = false;
+            this.emitAvailabilityChanged(this.ttsInstances[index]!, false);
+        }
+        this.tryRecovery(index);
+    }
+
+    synthesize(
+        text: string,
+        connOptions?: APIConnectOptions,
+        abortSignal?: AbortSignal,
+    ): ChunkedStream {
+        return new FallbackChunkedStream(
+            this,
+            text,
+            connOptions ?? DEFAULT_FALLBACK_API_CONNECT_OPTIONS,
+            abortSignal,
+        );
+    }
+
+
+
+}
+
+class FallbackChunkedStream extends ChunkedStream {
+    private adapter: FallbackAdapter;
+    private connOptions: APIConnectOptions;
+    private logger = log();
+
+    constructor(adapter: FallbackAdapter, text: string, connOptions: APIConnectOptions, abortSignal?: AbortSignal) {
+        super(text, adapter, connOptions, abortSignal);
+        this.adapter = adapter;
+        this.connOptions = connOptions;
+    }
+
+    protected async run(): Promise<void> {
+        const allTTSFailed = this.adapter.status.every((s) => !s.available);
+        if (allTTSFailed) {
+            this.logger.warn('All fallback TTS instances failed, retrying From First...');
+            for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
+                const tts = this.adapter.ttsInstances[i]!;
+                const status = this.adapter.status[i]!;
+                if (!status.available && !allTTSFailed) {
+                    this.adapter.markUnAvailable(i);
+                    continue;
+                }
+            }
+        }
+
+    }
 
 }
