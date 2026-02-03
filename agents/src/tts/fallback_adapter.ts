@@ -100,6 +100,9 @@ export class FallbackAdapter extends TTS {
     /** @internal */
     _status: TTSStatus[];
 
+    /** Used to cancel recovery tasks when closing */
+    private recoveryAbortController = new AbortController();
+
     private logger = log();
 
     constructor(options: FallbackAdapterOptions) {
@@ -168,31 +171,43 @@ export class FallbackAdapter extends TTS {
         );
     }
 
-    /**  
- * Attempt to recover a failed TTS provider  
- * @internal  
- */
+    /**
+     * Attempt to recover a failed TTS provider
+     * @internal
+     */
     private async recoverProvider(ttsIndex: number): Promise<void> {
         const tts = this.ttsProviders[ttsIndex]!;
         const status = this._status[ttsIndex]!;
         let attempts = 0;
 
         while (attempts < this.maxRecoveryAttempts && !status.available) {
+            // Check if adapter is closing
+            if (this.recoveryAbortController.signal.aborted) {
+                this.logger.debug(
+                    { tts: tts.label },
+                    'FallbackAdapter: Recovery cancelled due to adapter close'
+                );
+                status.recoveringTask = null;
+                return;
+            }
+
             attempts++;
 
+            let testStream: ChunkedStream | null = null;
             try {
-                // Test with a simple synthesis  
-                const testStream = tts.synthesize("test", {
+                // Test with a simple synthesis
+                testStream = tts.synthesize('test', {
                     maxRetry: 0,
                     timeoutMs: 5000,
                     retryIntervalMs: 0,
                 });
 
-                // Try to get first audio frame  
+                // Try to get first audio frame
                 for await (const audio of testStream) {
-                    // Success if we get any audio  
-                    status.available = true;
+                    // Success if we get any audio
+                    // Clear recoveringTask first to prevent race conditions
                     status.recoveringTask = null;
+                    status.available = true;
                     this._emitAvailabilityChanged(tts, true);
                     this.logger.info(
                         { tts: tts.label, attempts },
@@ -205,12 +220,18 @@ export class FallbackAdapter extends TTS {
                     { tts: tts.label, attempts, error },
                     'FallbackAdapter: Recovery attempt failed'
                 );
+            } finally {
+                // Always close the test stream to prevent resource leaks
+                if (testStream) {
+                    testStream.close();
+                }
             }
 
-            // Wait before next attempt (with exponential backoff)  
-            const delay = Math.min(this.recoveryInterval * Math.pow(2, attempts - 1), 300);
-            await new Promise(resolve => setTimeout(resolve, delay * 1000));
+            // Wait before next attempt (with exponential backoff)
+            const delayMs = Math.min(this.recoveryInterval * Math.pow(2, attempts - 1), 300) * 1000;
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
+
         status.recoveringTask = null;
         this.logger.error(
             { tts: tts.label, attempts },
@@ -245,14 +266,18 @@ export class FallbackAdapter extends TTS {
     }
 
     override async close(): Promise<void> {
-        // Cancel all recovery tasks  
-        for (const status of this._status) {
-            if (status.recoveringTask) {
-                // Note: We can't actually cancel Promise tasks without AbortController  
-                // This is a limitation - consider using AbortController in future  
-                status.recoveringTask = null;
-            }
+        // Signal all recovery tasks to stop
+        this.recoveryAbortController.abort();
+
+        // Wait for recovery tasks to complete (they will exit early due to abort signal)
+        const recoveryTasks = this._status
+            .map((s) => s.recoveringTask)
+            .filter((task): task is Promise<void> => task !== null);
+
+        if (recoveryTasks.length > 0) {
+            await Promise.allSettled(recoveryTasks);
         }
+
         await Promise.all(this.ttsProviders.map((tts) => tts.close()));
     }
 }
@@ -590,7 +615,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
                     if (status.available) {
                         status.available = false;
                         this.adapter._emitAvailabilityChanged(tts, false);
-                        this.adapter._startRecovery(i)
+                        this.adapter._startRecovery(i);
                     }
 
                     // Check if we sent significant audio before failing
