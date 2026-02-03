@@ -149,7 +149,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.wsURL = globalOptions.url || opts.wsURL;
       opts.apiKey = globalOptions.apiKey || opts.apiKey;
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
-      opts.logLevel = commandOptions.logLevel || opts.logLevel;
+      opts.logLevel = commandOptions.logLevel || globalOptions.logLevel || opts.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
       runServer({
         opts,
@@ -175,7 +175,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.wsURL = globalOptions.url || opts.wsURL;
       opts.apiKey = globalOptions.apiKey || opts.apiKey;
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
-      opts.logLevel = commandOptions.logLevel || opts.logLevel;
+      opts.logLevel = commandOptions.logLevel || globalOptions.logLevel || opts.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
       runServer({
         opts,
