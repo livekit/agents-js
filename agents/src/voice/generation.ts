@@ -36,7 +36,6 @@ export class _LLMGenerationData {
   generatedText: string = '';
   generatedToolCalls: FunctionCall[];
   id: string;
-  // Time to first token in seconds (for TTFT span attribute)
   ttft?: number;
 
   constructor(
@@ -382,16 +381,14 @@ export function updateInstructions(options: {
   }
 }
 
-// Ref: python livekit-agents/livekit/agents/voice/generation.py - lines 3-7 (diff)
-// Added model and provider parameters to generation functions
 export function performLLMInference(
   node: LLMNode,
   chatCtx: ChatContext,
   toolCtx: ToolContext,
   modelSettings: ModelSettings,
   controller: AbortController,
-  model?: string, // Ref: line 5 (model: str | None = None)
-  provider?: string, // Ref: line 6 (provider: str | None = None)
+  model?: string,
+  provider?: string,
 ): [Task<void>, _LLMGenerationData] {
   const textStream = new IdentityTransform<string>();
   const toolCallStream = new IdentityTransform<FunctionCall>();
@@ -407,20 +404,15 @@ export function performLLMInference(
     );
     span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(Object.keys(toolCtx)));
 
-    // Ref: python livekit-agents/livekit/agents/voice/generation.py - lines 36-48 (diff)
-    // Set model/provider attributes on the span
     if (model) {
-      // Ref: lines 44-45
       span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
     }
     if (provider) {
-      // Ref: lines 46-47
       span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, provider);
     }
 
     let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk> | null = null;
     let llmStream: ReadableStream<string | ChatChunk> | null = null;
-    // Track start time for TTFT calculation
     const startTime = performance.now() / 1000; // Convert to seconds
     let firstTokenReceived = false;
 
@@ -445,7 +437,6 @@ export function performLLMInference(
         const { done, value: chunk } = result;
         if (done) break;
 
-        // Track time to first token
         if (!firstTokenReceived) {
           firstTokenReceived = true;
           data.ttft = performance.now() / 1000 - startTime;
@@ -521,35 +512,28 @@ export function performLLMInference(
   ];
 }
 
-// Ref: python livekit-agents/livekit/agents/voice/generation.py - lines 77-82 (diff)
-// Added model and provider parameters for TTS generation
 export function performTTSInference(
   node: TTSNode,
   text: ReadableStream<string>,
   modelSettings: ModelSettings,
   controller: AbortController,
-  model?: string, // Ref: line 79 (model: str | None = None)
-  provider?: string, // Ref: line 80 (provider: str | None = None)
+  model?: string,
+  provider?: string,
 ): [Task<void>, ReadableStream<AudioFrame>] {
   const audioStream = new IdentityTransform<AudioFrame>();
   const outputWriter = audioStream.writable.getWriter();
   const audioOutputStream = audioStream.readable;
 
   const _performTTSInferenceImpl = async (signal: AbortSignal, span: Span) => {
-    // Ref: python livekit-agents/livekit/agents/voice/generation.py - lines 77-82 (diff)
-    // Set model/provider attributes on the span
     if (model) {
-      // Ref: lines 79-80
       span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
     }
     if (provider) {
-      // Ref: lines 81-82
       span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, provider);
     }
 
     let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
-    // Track start time for TTFB calculation
     const startTime = performance.now() / 1000; // Convert to seconds
     let firstByteReceived = false;
 
@@ -570,7 +554,6 @@ export function performTTSInference(
           break;
         }
 
-        // Track time to first byte and set span attribute
         if (!firstByteReceived) {
           firstByteReceived = true;
           const ttfb = performance.now() / 1000 - startTime;
@@ -663,7 +646,6 @@ export function performTextForwarding(
 
 export interface _AudioOut {
   audio: Array<AudioFrame>;
-  /** Future that will be set with the timestamp of the first frame's capture */
   firstFrameFut: Future<number>;
 }
 
@@ -751,7 +733,6 @@ export function performAudioForwarding(
   ];
 }
 
-// function_tool span is already implemented in tracableToolExecution below (line ~796)
 export function performToolExecutions({
   session,
   speechHandle,

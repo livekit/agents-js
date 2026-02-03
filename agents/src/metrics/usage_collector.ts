@@ -4,14 +4,9 @@
 import { log } from '../log.js';
 import type { AgentMetrics } from './base.js';
 
-// Ref: python livekit-agents/livekit/agents/metrics/usage_collector.py - lines 10-14 (diff)
-// NOTE: Python uses warnings.warn() for deprecation at runtime.
-// TypeScript uses JSDoc @deprecated which shows in IDE.
-// We also add optional console.warn() in constructor for runtime parity.
 /**
- * @deprecated Use LLMModelUsage, TTSModelUsage, or STTModelUsage from './model_usage.js' instead.
+ * @deprecated Use LLMModelUsage, TTSModelUsage, or STTModelUsage instead.
  * These new types provide per-model/provider usage aggregation for more detailed tracking.
- * Ref: python livekit-agents/livekit/agents/metrics/usage_collector.py - lines 10-14 (diff)
  */
 export interface UsageSummary {
   llmPromptTokens: number;
@@ -22,7 +17,7 @@ export interface UsageSummary {
 }
 
 /**
- * @deprecated Use ModelUsageCollector from './model_usage.js' instead.
+ * @deprecated Use ModelUsageCollector instead.
  * ModelUsageCollector provides per-model/provider usage aggregation for more detailed tracking.
  */
 export class UsageCollector {

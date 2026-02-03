@@ -17,7 +17,6 @@ import {
 } from '../inference/index.js';
 import type { InterruptionEvent } from '../inference/interruption/types.js';
 import { type JobContext, getJobContext } from '../job.js';
-// Ref: python livekit-agents/livekit/agents/voice/agent_session.py - lines 5-6 (diff)
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
@@ -72,15 +71,9 @@ import type {
 } from './turn_config/turn_handling.js';
 import { migrateLegacyOptions } from './turn_config/utils.js';
 
-// Ref: python livekit-agents/livekit/agents/voice/agent_session.py - lines 17-19 (diff)
-// NOTE: Python uses @dataclass. TypeScript uses interface.
-/**
- * Usage summary for an AgentSession, aggregated per model/provider combination.
- * Ref: python livekit-agents/livekit/agents/voice/agent_session.py - lines 17-19 (diff)
- */
 export interface AgentSessionUsage {
   /** List of usage summaries, one per model/provider combination. */
-  modelUsage: ModelUsage[]; // Ref: line 18 (model_usage: list[ModelUsage])
+  modelUsage: ModelUsage[];
 }
 
 export interface SessionOptions {
@@ -206,8 +199,6 @@ export class AgentSession<
 
   private _interruptionDetection?: InterruptionConfig['mode'];
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_session.py - line 34 (diff)
-  // Collects and aggregates usage metrics per model/provider combination
   private _usageCollector: ModelUsageCollector = new ModelUsageCollector();
 
   /** @internal */
@@ -290,9 +281,6 @@ export class AgentSession<
   ): boolean {
     const eventData = args[0] as AgentEvent;
     this._recordedEvents.push(eventData);
-    // Ref: python livekit-agents/livekit/agents/voice/agent_session.py - lines 39-40 (diff)
-    // if isinstance(arg, MetricsCollectedEvent):
-    //     self._usage_collector.collect(arg.metrics)
     if (event === AgentSessionEventTypes.MetricsCollected) {
       this._usageCollector.collect((eventData as MetricsCollectedEvent).metrics);
     }
@@ -328,10 +316,8 @@ export class AgentSession<
     return this._interruptionDetection;
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_session.py - lines 45-48 (diff)
   /**
    * Returns usage summaries for this session, one per model/provider combination.
-   * Ref: python livekit-agents/livekit/agents/voice/agent_session.py - lines 45-48 (diff)
    */
   get usage(): AgentSessionUsage {
     return { modelUsage: this._usageCollector.flatten() };
@@ -959,8 +945,6 @@ export class AgentSession<
     this.rootSpanContext = undefined;
     this.llmErrorCounts = 0;
     this.ttsErrorCounts = 0;
-    // Ref: python livekit-agents/livekit/agents/voice/agent_session.py - lines 53-54 (diff)
-    // Reset collector on session reset
     this._usageCollector = new ModelUsageCollector();
 
     this.logger.info({ reason, error }, 'AgentSession closed');
