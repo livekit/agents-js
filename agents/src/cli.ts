@@ -144,12 +144,13 @@ export const runApp = (opts: ServerOptions) => {
         .env('LOG_LEVEL'),
     )
     .action((...[, command]) => {
-      const options = command.optsWithGlobals();
-      opts.wsURL = options.url || opts.wsURL;
-      opts.apiKey = options.apiKey || opts.apiKey;
-      opts.apiSecret = options.apiSecret || opts.apiSecret;
-      opts.logLevel = options.logLevel || opts.logLevel;
-      opts.workerToken = options.workerToken || opts.workerToken;
+      const globalOptions = program.optsWithGlobals();
+      const commandOptions = command.opts();
+      opts.wsURL = globalOptions.url || opts.wsURL;
+      opts.apiKey = globalOptions.apiKey || opts.apiKey;
+      opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
+      opts.logLevel = commandOptions.logLevel || opts.logLevel;
+      opts.workerToken = globalOptions.workerToken || opts.workerToken;
       runServer({
         opts,
         production: false,
@@ -169,18 +170,19 @@ export const runApp = (opts: ServerOptions) => {
         .env('LOG_LEVEL'),
     )
     .action((...[, command]) => {
-      const options = command.optsWithGlobals();
-      opts.wsURL = options.url || opts.wsURL;
-      opts.apiKey = options.apiKey || opts.apiKey;
-      opts.apiSecret = options.apiSecret || opts.apiSecret;
-      opts.logLevel = options.logLevel || opts.logLevel;
-      opts.workerToken = options.workerToken || opts.workerToken;
+      const globalOptions = program.optsWithGlobals();
+      const commandOptions = command.opts();
+      opts.wsURL = globalOptions.url || opts.wsURL;
+      opts.apiKey = globalOptions.apiKey || opts.apiKey;
+      opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
+      opts.logLevel = commandOptions.logLevel || opts.logLevel;
+      opts.workerToken = globalOptions.workerToken || opts.workerToken;
       runServer({
         opts,
         production: false,
         watch: false,
-        room: options.room,
-        participantIdentity: options.participantIdentity,
+        room: commandOptions.room,
+        participantIdentity: commandOptions.participantIdentity,
       });
     });
 
@@ -193,9 +195,9 @@ export const runApp = (opts: ServerOptions) => {
         .default('debug')
         .env('LOG_LEVEL'),
     )
-    .action(() => {
-      const options = program.optsWithGlobals();
-      initializeLogger({ pretty: true, level: options.logLevel });
+    .action((...[, command]) => {
+      const commandOptions = command.opts();
+      initializeLogger({ pretty: true, level: commandOptions.logLevel });
       const logger = log();
 
       const downloadFiles = async () => {
