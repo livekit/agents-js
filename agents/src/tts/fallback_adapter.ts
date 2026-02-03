@@ -1,12 +1,10 @@
-import { SystemItem } from './../../../plugins/openai/src/realtime/api_proto';
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.  
 //  
 // SPDX-License-Identifier: Apache-2.0 
 import { AudioResampler } from '@livekit/rtc-node';
-import { APIConnectionError, APIError } from '../_exceptions.js';  
+import { APIConnectionError, APIError } from '../_exceptions.js';
 import { TTS, type TTSCapabilities, ChunkedStream, SynthesizeStream } from './tts.js';
 import { log } from '../log.js';
-import { options } from 'marked';
 import { DEFAULT_API_CONNECT_OPTIONS, type APIConnectOptions } from '../types.js';
 import { Task } from '../utils.js';
 
@@ -164,7 +162,9 @@ class FallbackAdapter extends TTS {
 class FallbackChunkedStream extends ChunkedStream {
     private adapter: FallbackAdapter;
     private connOptions: APIConnectOptions;
-    private logger = log();
+    private _logger = log();
+
+    label: string = 'tts.FallbackChunkedStream';  
 
     constructor(adapter: FallbackAdapter, text: string, connOptions: APIConnectOptions, abortSignal?: AbortSignal) {
         super(text, adapter, connOptions, abortSignal);
@@ -174,17 +174,20 @@ class FallbackChunkedStream extends ChunkedStream {
 
     protected async run(): Promise<void> {
         const allTTSFailed = this.adapter.status.every((s) => !s.available);
+        let lastRequestId: string = '';
+        let lastSegmentId: string = '';
         if (allTTSFailed) {
-            this.logger.warn('All fallback TTS instances failed, retrying From First...');
+            this._logger.warn('All fallback TTS instances failed, retrying From First...');
         }
         for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
             const tts = this.adapter.ttsInstances[i]!;
             const status = this.adapter.status[i]!;
             if (!status.available && !allTTSFailed) {
                 this.adapter.markUnAvailable(i);
+                continue;
             }
             try {
-                this.logger.debug({ tts: tts.label }, 'attempting TTS synthesis');
+                this._logger.debug({ tts: tts.label }, 'attempting TTS synthesis');
                 const connOptions: APIConnectOptions = {
                     ...this.connOptions,
                     maxRetry: this.adapter.maxRetryPerTTS,
@@ -208,26 +211,28 @@ class FallbackChunkedStream extends ChunkedStream {
                     } else {
                         this.queue.put(audio);
                     }
-                    // Flush any remaining resampled frames  
-                    if (status.resampler) {
-                        for (const frame of status.resampler.flush()) {
-                            this.queue.put({
-                                requestId: audio.requestId || '',
-                                segmentId: audio.segmentId || '',
-                                frame,
-                                final: true,
-                            });
-                        }
-                    }
-                    this.logger.debug({ tts: tts.label }, 'TTS synthesis succeeded');
-                    return;
-
+                    lastRequestId = audio.requestId;
+                    lastSegmentId = audio.segmentId;
                 }
 
+                // Flush any remaining resampled frames  
+                if (status.resampler) {
+                    for (const frame of status.resampler.flush()) {
+                        this.queue.put({
+                            requestId: lastRequestId || '',
+                            segmentId: lastSegmentId || '',
+                            frame,
+                            final: true,
+                        });
+                    }
+                }
+
+                this._logger.debug({ tts: tts.label }, 'TTS synthesis succeeded');
+                return;
             }
             catch (error) {
                 if (error instanceof APIError || error instanceof APIConnectionError) {
-                    this.logger.warn({ tts: tts.label, error }, 'TTS failed, switching to next instance');
+                    this._logger.warn({ tts: tts.label, error }, 'TTS failed, switching to next instance');
                     this.adapter.markUnAvailable(i);
                 } else {
                     throw error;
