@@ -17,7 +17,6 @@ import { ChunkedStream, SynthesizeStream, TTS, type TTSCapabilities } from './tt
 interface TTSStatus {
   available: boolean;
   recoveringTask: Task<void> | null;
-  resampler: AudioResampler | null;
 }
 
 /**
@@ -106,22 +105,10 @@ export class FallbackAdapter extends TTS {
     this.ttsInstances = opts.ttsInstances;
     this.maxRetryPerTTS = opts.maxRetryPerTTS ?? 2;
     this.recoveryDelayMs = opts.recoveryDelayMs ?? 1000;
-
-    // Initialize status for each TTS instance. If a TTS has a lower sample rate than
-    // the adapter's output rate, create a resampler to upsample its audio output.
-    // This ensures consistent audio format regardless of which TTS is active.
-    this._status = this.ttsInstances.map((tts) => {
-      let resampler: AudioResampler | null = null;
-      if (sampleRate !== tts.sampleRate) {
-        this._logger.info(`resampling ${tts.label} from ${tts.sampleRate}Hz to ${sampleRate}Hz`);
-        resampler = new AudioResampler(tts.sampleRate, sampleRate, tts.numChannels);
-      }
-      return {
-        available: true,
-        recoveringTask: null,
-        resampler: resampler,
-      };
-    });
+    this._status = opts.ttsInstances.map(() => ({
+      available: true,
+      recoveringTask: null,
+    }));
     this.setupEventForwarding();
   }
   private static aggregateCapabilities(instances: TTS[]): TTSCapabilities {
@@ -155,6 +142,23 @@ export class FallbackAdapter extends TTS {
     }
     // Wrap non-streaming TTS with StreamAdapter
     return new StreamAdapter(tts, new basic.SentenceTokenizer());
+  }
+
+  /**
+   * Creates a new AudioResampler for the given TTS index if needed.
+   * Returns null if the TTS sample rate matches the adapter's output rate.
+   * Each stream should create its own resampler to avoid concurrency issues.
+   * @internal
+   */
+  createResamplerForTTS(index: number): AudioResampler | null {
+    const tts = this.ttsInstances[index]!;
+    if (this.sampleRate !== tts.sampleRate) {
+      this._logger.debug(
+        `resampling ${tts.label} from ${tts.sampleRate}Hz to ${this.sampleRate}Hz`,
+      );
+      return new AudioResampler(tts.sampleRate, this.sampleRate, tts.numChannels);
+    }
+    return null;
   }
 
   private emitAvailabilityChanged(tts: TTS, available: boolean): void {
@@ -322,14 +326,13 @@ class FallbackChunkedStream extends ChunkedStream {
         };
         const stream = tts.synthesize(this.inputText, connOptions, this.abortSignal);
         let audioReceived = false;
+        const resampler = this.adapter.createResamplerForTTS(i);
         for await (const audio of stream) {
           if (this.abortController.signal.aborted) {
             stream.close();
             return;
           }
 
-          // Use cached resampler for this TTS instance
-          const resampler = status.resampler;
           if (resampler) {
             for (const frame of resampler.push(audio.frame)) {
               this.queue.put({
@@ -347,8 +350,8 @@ class FallbackChunkedStream extends ChunkedStream {
         }
 
         // Flush any remaining resampled frames
-        if (status.resampler) {
-          for (const frame of status.resampler.flush()) {
+        if (resampler) {
+          for (const frame of resampler.flush()) {
             this.queue.put({
               requestId: lastRequestId || '',
               segmentId: lastSegmentId || '',
@@ -428,6 +431,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
           stream.pushText(token);
         }
         let attemptAborted = false;
+        const resampler = this.adapter.createResamplerForTTS(i);
 
         const forwardInput = async () => {
           for await (const input of this.input) {
@@ -455,8 +459,6 @@ class FallbackSynthesizeStream extends SynthesizeStream {
               continue;
             }
 
-            // Use cached resampler for this TTS instance
-            const resampler = status.resampler;
             if (resampler) {
               for (const frame of resampler.push(audio.frame)) {
                 this.queue.put({
@@ -474,8 +476,8 @@ class FallbackSynthesizeStream extends SynthesizeStream {
           }
 
           // Flush resampler
-          if (status.resampler) {
-            for (const frame of status.resampler.flush()) {
+          if (resampler) {
+            for (const frame of resampler.flush()) {
               this.queue.put({
                 requestId: lastRequestId || '',
                 segmentId: lastSegmentId || '',
