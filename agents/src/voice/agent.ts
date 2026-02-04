@@ -26,9 +26,11 @@ import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
+import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+import type { TimedString } from './io.js';
 import type { InterruptionConfig } from './turn_config/interruption.js';
 import type { TurnHandlingConfig } from './turn_config/turn_handling.js';
 
@@ -74,6 +76,7 @@ export interface AgentOptions<UserData> {
   allowInterruptions?: boolean;
   minConsecutiveSpeechDelay?: number;
   turnHandling?: TurnHandlingConfig;
+  useTtsAlignedTranscript?: boolean;
 }
 
 export class Agent<UserData = any> {
@@ -86,6 +89,7 @@ export class Agent<UserData = any> {
   private turnHandling?: TurnHandlingConfig;
   private _interruptionDetection: InterruptionConfig['mode'];
   private _allowInterruptions?: boolean;
+  private _useTtsAlignedTranscript?: boolean;
 
   /** @internal */
   _agentActivity?: AgentActivity;
@@ -99,8 +103,19 @@ export class Agent<UserData = any> {
   /** @internal */
   _tools?: ToolContext<UserData>;
 
-  constructor(options: AgentOptions<UserData>) {
-    const { id, instructions, chatCtx, tools, stt, vad, llm, tts, turnHandling } = options;
+  constructor({
+    id,
+    instructions,
+    chatCtx,
+    tools,
+    turnDetection, // FIXME this appears to need migration to turnHandling for backwards compat
+    stt,
+    vad,
+    llm,
+    tts,
+    turnHandling,
+    useTtsAlignedTranscript,
+  }: AgentOptions<UserData>) {
     if (id) {
       this._id = id;
     } else {
@@ -151,6 +166,7 @@ export class Agent<UserData = any> {
     if (this.turnHandling?.interruption.mode !== undefined) {
       this._allowInterruptions = !!this.turnHandling.interruption.mode;
     }
+    this._useTtsAlignedTranscript = useTtsAlignedTranscript;
 
     this._agentActivity = undefined;
   }
@@ -169,6 +185,10 @@ export class Agent<UserData = any> {
 
   get tts(): TTS | undefined {
     return this._tts;
+  }
+
+  get useTtsAlignedTranscript(): boolean | undefined {
+    return this._useTtsAlignedTranscript;
   }
 
   get chatCtx(): ReadonlyChatContext {
@@ -204,9 +224,9 @@ export class Agent<UserData = any> {
   async onExit(): Promise<void> {}
 
   async transcriptionNode(
-    text: ReadableStream<string>,
+    text: ReadableStream<string | TimedString>,
     modelSettings: ModelSettings,
-  ): Promise<ReadableStream<string> | null> {
+  ): Promise<ReadableStream<string | TimedString> | null> {
     return Agent.default.transcriptionNode(this, text, modelSettings);
   }
 
@@ -408,6 +428,10 @@ export class Agent<UserData = any> {
               if (chunk === SynthesizeStream.END_OF_STREAM) {
                 break;
               }
+              // Attach timed transcripts to frame.userdata
+              if (chunk.timedTranscripts && chunk.timedTranscripts.length > 0) {
+                chunk.frame.userdata[USERDATA_TIMED_TRANSCRIPT] = chunk.timedTranscripts;
+              }
               controller.enqueue(chunk.frame);
             }
             controller.close();
@@ -423,9 +447,9 @@ export class Agent<UserData = any> {
 
     async transcriptionNode(
       agent: Agent,
-      text: ReadableStream<string>,
+      text: ReadableStream<string | TimedString>,
       _modelSettings: ModelSettings,
-    ): Promise<ReadableStream<string> | null> {
+    ): Promise<ReadableStream<string | TimedString> | null> {
       return text;
     },
 

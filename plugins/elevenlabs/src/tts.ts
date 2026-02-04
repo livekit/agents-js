@@ -8,19 +8,18 @@ import {
   APITimeoutError,
   AudioByteStream,
   Future,
+  type TimedString,
+  createTimedString,
   log,
   shortuuid,
   stream,
   tokenize,
   tts,
-  type voice,
 } from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
 import type { TTSEncoding, TTSModels } from './models.js';
-
-type TimedString = voice.TimedString;
 
 const DEFAULT_VOICE_ID = 'bIHbv24MWmeRgasZH58o';
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1';
@@ -118,6 +117,8 @@ interface StreamData {
   textBuffer: string;
   startTimesMs: number[];
   durationsMs: number[];
+  /** First word offset for timestamp normalization (removes leading silence) */
+  firstWordOffsetMs: number | null;
 }
 
 type ConnectionMessage = SynthesizeContent | CloseContext;
@@ -172,12 +173,17 @@ function stripUndefined<T extends object>(obj: T): Partial<T> {
 /**
  * Convert alignment data to timed words.
  * Returns the timed words and remaining text buffer.
+ *
+ * @param firstWordOffsetMs - Optional offset to normalize timestamps (subtract from all).
+ *   ElevenLabs returns absolute timestamps from the start of TTS audio, which may include
+ *   leading silence. By normalizing to 0, we ensure proper sync with the synchronizer.
  */
 function toTimedWords(
   text: string,
   startTimesMs: number[],
   durationsMs: number[],
   flush: boolean = false,
+  firstWordOffsetMs: number = 0,
 ): [TimedString[], string] {
   if (!text || startTimesMs.length === 0 || durationsMs.length === 0) {
     return [[], text || ''];
@@ -202,24 +208,29 @@ function toTimedWords(
     const start = startIndices[i]!;
     const nextStart = startIndices[i + 1]!;
     end = nextStart;
-    const startT = (timestamps[start] ?? 0) / 1000;
-    const endT = (timestamps[nextStart] ?? 0) / 1000;
-    timedWords.push({
-      text: text.slice(start, nextStart),
-      startTime: startT,
-      endTime: endT,
-    });
+    // Normalize timestamps by subtracting the first word offset
+    const startT = Math.max(0, (timestamps[start] ?? 0) - firstWordOffsetMs) / 1000;
+    const endT = Math.max(0, (timestamps[nextStart] ?? 0) - firstWordOffsetMs) / 1000;
+    timedWords.push(
+      createTimedString({
+        text: text.slice(start, nextStart),
+        startTime: startT,
+        endTime: endT,
+      }),
+    );
   }
 
   if (flush && words.length > 0) {
     const lastWordStart = startIndices[startIndices.length - 1]!;
-    const startT = (timestamps[lastWordStart] ?? 0) / 1000;
-    const endT = (timestamps[timestamps.length - 1] ?? 0) / 1000;
-    timedWords.push({
-      text: text.slice(lastWordStart),
-      startTime: startT,
-      endTime: endT,
-    });
+    const startT = Math.max(0, (timestamps[lastWordStart] ?? 0) - firstWordOffsetMs) / 1000;
+    const endT = Math.max(0, (timestamps[timestamps.length - 1] ?? 0) - firstWordOffsetMs) / 1000;
+    timedWords.push(
+      createTimedString({
+        text: text.slice(lastWordStart),
+        startTime: startT,
+        endTime: endT,
+      }),
+    );
     end = text.length;
   } else if (words.length > 0) {
     end = startIndices[startIndices.length - 1]!;
@@ -296,6 +307,7 @@ class Connection {
       textBuffer: '',
       startTimesMs: [],
       durationsMs: [],
+      firstWordOffsetMs: null,
     });
   }
 
@@ -500,6 +512,12 @@ class Connection {
                 const start = starts[i]!;
                 const dur = durs[i]!;
 
+                // Capture the first word's start time for normalization
+                // This removes leading silence from timestamps
+                if (ctx.firstWordOffsetMs === null && start > 0) {
+                  ctx.firstWordOffsetMs = start;
+                }
+
                 if (char.length > 1) {
                   for (let j = 0; j < char.length - 1; j++) {
                     ctx.startTimesMs.push(start);
@@ -514,6 +532,8 @@ class Connection {
                 ctx.textBuffer,
                 ctx.startTimesMs,
                 ctx.durationsMs,
+                false,
+                ctx.firstWordOffsetMs ?? 0,
               );
 
               if (timedWords.length > 0) {
@@ -539,6 +559,7 @@ class Connection {
                 ctx.startTimesMs,
                 ctx.durationsMs,
                 true,
+                ctx.firstWordOffsetMs ?? 0,
               );
               if (timedWords.length > 0) {
                 stream.pushTimedTranscript(timedWords);
@@ -622,9 +643,11 @@ export class TTS extends tts.TTS {
     const autoMode = opts.autoMode ?? true;
     const encoding = opts.encoding ?? DEFAULT_ENCODING;
     const sampleRate = sampleRateFromFormat(encoding);
+    const syncAlignment = opts.syncAlignment ?? true;
 
     super(sampleRate, 1, {
       streaming: true,
+      alignedTranscript: syncAlignment,
     });
 
     const apiKey = opts.apiKey ?? process.env.ELEVEN_API_KEY;
@@ -997,15 +1020,35 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     const audioProcessTask = async () => {
       let lastFrame: AudioFrame | undefined;
+      let pendingTimedTranscripts: TimedString[] = [];
+
+      const sendLastFrame = (final: boolean) => {
+        if (lastFrame) {
+          // Include timedTranscripts with the audio frame
+          this.queue.put({
+            requestId,
+            segmentId,
+            frame: lastFrame,
+            final,
+            timedTranscripts:
+              pendingTimedTranscripts.length > 0 ? pendingTimedTranscripts : undefined,
+          });
+          lastFrame = undefined;
+          pendingTimedTranscripts = [];
+        }
+      };
 
       while (!this.abortController.signal.aborted) {
+        // Drain timed transcript queue
+        while (this.#timedTranscriptQueue.length > 0) {
+          pendingTimedTranscripts.push(this.#timedTranscriptQueue.shift()!);
+        }
+
         // Process audio queue
         while (this.#audioQueue.length > 0) {
           const audioData = this.#audioQueue.shift()!;
           for (const frame of bstream.write(audioData.buffer)) {
-            if (lastFrame) {
-              this.queue.put({ requestId, segmentId, frame: lastFrame, final: false });
-            }
+            sendLastFrame(false);
             lastFrame = frame;
           }
         }
@@ -1019,17 +1062,18 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
 
+      // Drain any remaining timed transcripts
+      while (this.#timedTranscriptQueue.length > 0) {
+        pendingTimedTranscripts.push(this.#timedTranscriptQueue.shift()!);
+      }
+
       // Flush remaining
       for (const frame of bstream.flush()) {
-        if (lastFrame) {
-          this.queue.put({ requestId, segmentId, frame: lastFrame, final: false });
-        }
+        sendLastFrame(false);
         lastFrame = frame;
       }
 
-      if (lastFrame) {
-        this.queue.put({ requestId, segmentId, frame: lastFrame, final: true });
-      }
+      sendLastFrame(true);
     };
 
     try {

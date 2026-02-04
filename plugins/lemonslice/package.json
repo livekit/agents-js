@@ -1,0 +1,51 @@
+{
+  "name": "@livekit/agents-plugin-lemonslice",
+  "version": "1.0.40",
+  "description": "LemonSlice avatar plugin for LiveKit Node Agents",
+  "main": "dist/index.js",
+  "require": "dist/index.cjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    "import": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "require": {
+      "types": "./dist/index.d.cts",
+      "default": "./dist/index.cjs"
+    }
+  },
+  "author": "LiveKit",
+  "type": "module",
+  "repository": "git@github.com:livekit/agents-js.git",
+  "license": "Apache-2.0",
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup --onSuccess \"pnpm build:types\"",
+    "build:types": "tsc --declaration --emitDeclarationOnly && node ../../scripts/copyDeclarationOutput.js",
+    "clean": "rm -rf dist",
+    "clean:build": "pnpm clean && pnpm build",
+    "lint": "eslint -f unix \"src/**/*.{ts,js}\"",
+    "api:check": "api-extractor run --typescript-compiler-folder ../../node_modules/typescript",
+    "api:update": "api-extractor run --local --typescript-compiler-folder ../../node_modules/typescript --verbose"
+  },
+  "devDependencies": {
+    "@livekit/agents": "workspace:*",
+    "@livekit/rtc-node": "catalog:",
+    "@microsoft/api-extractor": "^7.35.0",
+    "pino": "^8.19.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "livekit-server-sdk": "^2.13.3"
+  },
+  "peerDependencies": {
+    "@livekit/agents": "workspace:*",
+    "@livekit/rtc-node": "catalog:"
+  }
+}

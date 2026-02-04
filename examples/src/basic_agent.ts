@@ -71,6 +71,7 @@ export default defineAgent({
             mode: 'adaptive',
           },
         },
+        useTtsAlignedTranscript: true,
       },
       connOptions: {
         // Example of overriding the default connection options for the LLM/TTS/STT

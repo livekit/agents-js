@@ -6,6 +6,7 @@ import {
   AudioByteStream,
   Event,
   calculateAudioDurationSeconds,
+  createTimedString,
   log,
   stt,
 } from '@livekit/agents';
@@ -485,13 +486,15 @@ function parseTranscription(
     // Note: Deepgram V2 (Flux) API does not provide word-level timing (start/end).
     // Words only contain 'word' and 'confidence' fields, so startTime/endTime will be 0.
     // See: https://developers.deepgram.com/docs/flux/nova-3-migration
-    words: wordsData.map((word) => ({
-      text: (word.word as string) ?? '',
-      startTime: ((word.start as number) ?? 0) + startTimeOffset,
-      endTime: ((word.end as number) ?? 0) + startTimeOffset,
-      confidence: (word.confidence as number) ?? 0.0,
-      startTimeOffset,
-    })),
+    words: wordsData.map((word) =>
+      createTimedString({
+        text: (word.word as string) ?? '',
+        startTime: ((word.start as number) ?? 0) + startTimeOffset,
+        endTime: ((word.end as number) ?? 0) + startTimeOffset,
+        confidence: (word.confidence as number) ?? 0.0,
+        startTimeOffset,
+      }),
+    ),
   };
 
   return [sd];

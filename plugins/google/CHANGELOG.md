@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-google
 
+## 1.0.40
+
+### Patch Changes
+
+- Support Gemini realtime text interruptions - [#998](https://github.com/livekit/agents-js/pull/998) ([@tillkolter](https://github.com/tillkolter))
+
+- Updated dependencies [[`f1a3a42ddef645de32bb73bcb72b8a86187381f3`](https://github.com/livekit/agents-js/commit/f1a3a42ddef645de32bb73bcb72b8a86187381f3), [`db4e2594d59d4400867c738d3cb4bd936d99e2bd`](https://github.com/livekit/agents-js/commit/db4e2594d59d4400867c738d3cb4bd936d99e2bd)]:
+  - @livekit/agents@1.0.40
+
 ## 1.0.39
 
 ### Patch Changes

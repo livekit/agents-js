@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-cartesia",
-  "version": "1.0.39",
+  "version": "1.0.40",
   "description": "Cartesia plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -48,6 +48,7 @@
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "catalog:"
+    "@livekit/rtc-node": "catalog:",
+    "zod": "^3.25.76 || ^4.1.8"
   }
 }

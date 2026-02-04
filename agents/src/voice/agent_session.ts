@@ -92,6 +92,8 @@ export interface SessionOptions {
    */
   turnHandling: Partial<TurnHandlingConfig>;
 
+  useTtsAlignedTranscript: boolean;
+
   /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.mode instead. */
   allowInterruptions?: boolean;
   /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.discardAudioIfUninterruptible instead. */
@@ -115,6 +117,7 @@ export const defaultSessionOptions = {
   preemptiveGeneration: false,
   userAwayTimeout: 15.0,
   turnHandling: {},
+  useTtsAlignedTranscript: true,
 } as const satisfies SessionOptions;
 
 /** @deprecated {@link VoiceOptions} has been renamed to {@link SessionOptions} */
@@ -303,6 +306,10 @@ export class AgentSession<
 
   get interruptionDetection() {
     return this._interruptionDetection;
+  }
+
+  get useTtsAlignedTranscript(): boolean {
+    return this.options.useTtsAlignedTranscript;
   }
 
   set userData(value: UserData) {
