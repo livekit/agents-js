@@ -186,7 +186,9 @@ export class FallbackAdapter extends TTS {
 
   async close(): Promise<void> {
     // clear all recovery timeouts so that it does not cause issue
-    this._recoveryTimeouts.forEach((timeoutId) => clearTimeout(timeoutId));
+    this._recoveryTimeouts.forEach((timeoutId) => {
+      clearTimeout(timeoutId);
+    });
     this._recoveryTimeouts.clear();
 
     // Cancel all recovery tasks
