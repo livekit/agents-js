@@ -127,10 +127,14 @@ export class FallbackAdapter extends TTS {
           timeoutMs: 10000,
           retryIntervalMs: 1000,
         });
-
+        let audioReceived = false;
         for await (const _ of testStream) {
-          // Just consume the stream to test connectivity
+          audioReceived = true;
         }
+        if (!audioReceived) {
+          throw new Error('Recovery test completed but no audio was received');
+        }
+
         status.available = true;
         status.recoveringTask = null;
         this._logger.info({ tts: tts.label }, 'TTS recovered');
