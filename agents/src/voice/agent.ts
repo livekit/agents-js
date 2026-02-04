@@ -33,6 +33,7 @@ import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 import type { TimedString } from './io.js';
 import type { InterruptionConfig } from './turn_config/interruption.js';
 import type { TurnHandlingConfig } from './turn_config/turn_handling.js';
+import { migrateLegacyOptions } from './turn_config/utils.js';
 
 export const asyncLocalStorage = new AsyncLocalStorage<{ functionCall?: FunctionCall }>();
 export const STOP_RESPONSE_SYMBOL = Symbol('StopResponse');
@@ -81,7 +82,6 @@ export interface AgentOptions<UserData> {
 
 export class Agent<UserData = any> {
   private _id: string;
-  private turnDetection?: TurnDetectionMode;
   private _stt?: STT;
   private _vad?: VAD;
   private _llm?: LLM | RealtimeModel;
@@ -108,7 +108,7 @@ export class Agent<UserData = any> {
     instructions,
     chatCtx,
     tools,
-    turnDetection, // FIXME this appears to need migration to turnHandling for backwards compat
+    turnDetection,
     stt,
     vad,
     llm,
@@ -139,9 +139,9 @@ export class Agent<UserData = any> {
         })
       : ChatContext.empty();
 
-    this.turnHandling = turnHandling; // TODO migrate legacy options to new turn handling config when turnConfig is unset
+    const migratedOptions = migrateLegacyOptions({ turnDetection, options: { turnHandling } });
+    this.turnHandling = migratedOptions.options.turnHandling;
 
-    this.turnDetection = this.turnHandling?.turnDetection;
     this._vad = vad;
 
     if (typeof stt === 'string') {
