@@ -10,19 +10,35 @@ import { Task, cancelAndWait } from '../utils.js';
 import { StreamAdapter } from './stream_adapter.js';
 import { ChunkedStream, SynthesizeStream, TTS, type TTSCapabilities } from './tts.js';
 
+/**
+ * Internal status tracking for each TTS instance.
+ * @internal
+ */
 interface TTSStatus {
   available: boolean;
   recoveringTask: Task<void> | null;
   resampler: AudioResampler | null;
 }
-interface FallbackAdapterOptions {
+
+/**
+ * Options for creating a FallbackAdapter.
+ */
+export interface FallbackAdapterOptions {
+  /** List of TTS instances to use for fallback (in priority order). At least one is required. */
   ttsInstances: TTS[];
+  /** Number of internal retries per TTS instance before moving to the next one. Defaults to 2. */
   maxRetryPerTTS?: number;
+  /** Delay in milliseconds before attempting to recover a failed TTS instance. Defaults to 1000. */
   recoveryDelayMs?: number;
 }
 
+/**
+ * Event emitted when a TTS instance's availability changes.
+ */
 export interface AvailabilityChangedEvent {
+  /** The TTS instance whose availability changed. */
   tts: TTS;
+  /** Whether the TTS instance is now available. */
   available: boolean;
 }
 
@@ -32,9 +48,41 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
   retryIntervalMs: DEFAULT_API_CONNECT_OPTIONS.retryIntervalMs,
 };
 
+/**
+ * FallbackAdapter is a TTS wrapper that provides automatic failover between multiple TTS providers.
+ *
+ * When the primary TTS fails, it automatically switches to the next available provider in the list.
+ * Failed providers are monitored in the background and restored when they recover.
+ *
+ * Features:
+ * - Automatic failover to backup TTS providers on failure
+ * - Background health checks to restore recovered providers
+ * - Automatic audio resampling when TTS providers have different sample rates
+ * - Support for both streaming and non-streaming TTS providers
+ *
+ * @example
+ * ```typescript
+ * import { FallbackAdapter } from '@livekit/agents';
+ * import { TTS as OpenAITTS } from '@livekit/agents-plugin-openai';
+ * import { TTS as ElevenLabsTTS } from '@livekit/agents-plugin-elevenlabs';
+ *
+ * const fallbackTTS = new FallbackAdapter({
+ *   ttsInstances: [
+ *     new OpenAITTS(),      // Primary
+ *     new ElevenLabsTTS(),  // Fallback
+ *   ],
+ *   maxRetryPerTTS: 2,      // Retry each TTS twice before moving to next
+ *   recoveryDelayMs: 1000,  // Check recovery every 1 second
+ * });
+ *
+ * ```
+ */
 export class FallbackAdapter extends TTS {
+  /** The list of TTS instances used for fallback (in priority order). */
   readonly ttsInstances: TTS[];
+  /** Number of retries per TTS instance before falling back to the next one. */
   readonly maxRetryPerTTS: number;
+  /** Delay in milliseconds before attempting to recover a failed TTS instance. */
   readonly recoveryDelayMs: number;
 
   private _status: TTSStatus[] = [];
@@ -93,6 +141,9 @@ export class FallbackAdapter extends TTS {
     });
   }
 
+  /**
+   * Returns the current status of all TTS instances, including availability and recovery state.
+   */
   get status(): TTSStatus[] {
     return this._status;
   }
@@ -164,6 +215,9 @@ export class FallbackAdapter extends TTS {
     this.tryRecovery(index);
   }
 
+  /**
+   * Receives text and returns synthesis in the form of a {@link ChunkedStream}
+   */
   synthesize(
     text: string,
     connOptions?: APIConnectOptions,
@@ -177,6 +231,11 @@ export class FallbackAdapter extends TTS {
     );
   }
 
+  /**
+   * Returns a {@link SynthesizeStream} that can be used to push text and receive audio data
+   *
+   * @param options - Optional configuration including connection options
+   */
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
     return new FallbackSynthesizeStream(
       this,
@@ -184,6 +243,10 @@ export class FallbackAdapter extends TTS {
     );
   }
 
+  /**
+   * Close the FallbackAdapter and all underlying TTS instances.
+   * This cancels any ongoing recovery tasks and cleans up resources.
+   */
   async close(): Promise<void> {
     // clear all recovery timeouts so that it does not cause issue
     this._recoveryTimeouts.forEach((timeoutId) => {
