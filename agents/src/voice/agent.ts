@@ -115,6 +115,7 @@ export class Agent<UserData = any> {
     tts,
     turnHandling,
     useTtsAlignedTranscript,
+    allowInterruptions,
   }: AgentOptions<UserData>) {
     if (id) {
       this._id = id;
@@ -139,7 +140,10 @@ export class Agent<UserData = any> {
         })
       : ChatContext.empty();
 
-    const migratedOptions = migrateLegacyOptions({ turnDetection, options: { turnHandling } });
+    const migratedOptions = migrateLegacyOptions({
+      turnDetection,
+      options: { turnHandling, allowInterruptions },
+    });
     this.turnHandling = migratedOptions.options.turnHandling;
 
     this._vad = vad;
