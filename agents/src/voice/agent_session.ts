@@ -83,7 +83,7 @@ export interface SessionOptions {
   preemptiveGeneration: boolean;
   /**
    * If set, set the user state as "away" after this amount of time after user and agent are
-   * silent. Set to `undefined` to disable.
+   * silent. Set to `null` to disable.
    * @defaultValue 15.0
    */
   userAwayTimeout: number | null;
