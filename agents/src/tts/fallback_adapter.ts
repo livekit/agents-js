@@ -39,6 +39,7 @@ export class FallbackAdapter extends TTS {
 
   private _status: TTSStatus[] = [];
   private _logger = log();
+  private _recoveryTimeouts: Map<number, NodeJS.Timeout> = new Map();
 
   label: string = `tts.FallbackAdapter`;
 
@@ -138,7 +139,11 @@ export class FallbackAdapter extends TTS {
         this._logger.debug({ tts: tts.label, error }, 'TTS recovery failed, will retry');
         status.recoveringTask = null;
         // Retry recovery after delay (matches Python's retry behavior)
-        setTimeout(() => this.tryRecovery(index), this.recoveryDelayMs);
+        const timeoutId = setTimeout(() => {
+          this._recoveryTimeouts.delete(index);
+          this.tryRecovery(index);
+        }, this.recoveryDelayMs);
+        this._recoveryTimeouts.set(index, timeoutId);
       }
     });
   }
@@ -176,6 +181,10 @@ export class FallbackAdapter extends TTS {
   }
 
   async close(): Promise<void> {
+    // clear all recovery timeouts so that it does not cause issue
+    this._recoveryTimeouts.forEach((timeoutId) => clearTimeout(timeoutId));
+    this._recoveryTimeouts.clear();
+
     // Cancel all recovery tasks
     const recoveryTasks = this._status
       .map((s) => s.recoveringTask)
