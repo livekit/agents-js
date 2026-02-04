@@ -355,6 +355,7 @@ class FallbackChunkedStream extends ChunkedStream {
               frame,
               final: true,
             });
+            audioReceived = true;
           }
         }
 
@@ -480,6 +481,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
                 frame,
                 final: true,
               });
+              this.audioPushed = true;
             }
           }
         };
