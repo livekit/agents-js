@@ -250,6 +250,7 @@ class FallbackChunkedStream extends ChunkedStream {
           maxRetry: this.adapter.maxRetryPerTTS,
         };
         const stream = tts.synthesize(this.inputText, connOptions, this.abortSignal);
+        let audioReceived = false;
         for await (const audio of stream) {
           if (this.abortController.signal.aborted) {
             stream.close();
@@ -264,9 +265,11 @@ class FallbackChunkedStream extends ChunkedStream {
                 ...audio,
                 frame,
               });
+              audioReceived = true;
             }
           } else {
             this.queue.put(audio);
+            audioReceived = true;
           }
           lastRequestId = audio.requestId;
           lastSegmentId = audio.segmentId;
@@ -282,6 +285,13 @@ class FallbackChunkedStream extends ChunkedStream {
               final: true,
             });
           }
+        }
+
+        // Verify audio was actually received - silent failures should trigger fallback
+        if (!audioReceived) {
+          throw new APIConnectionError({
+            message: 'TTS synthesis completed but no audio was received',
+          });
         }
 
         this._logger.debug({ tts: tts.label }, 'TTS synthesis succeeded');
@@ -407,12 +417,9 @@ class FallbackSynthesizeStream extends SynthesizeStream {
 
         // Verify audio was actually received - if not, the TTS failed silently
         if (!this.audioPushed) {
-          this._logger.warn(
-            { tts: originalTts.label },
-            'TTS stream completed but no audio was received, trying next instance',
-          );
-          this.adapter.markUnAvailable(i);
-          continue;
+          throw new APIConnectionError({
+            message: 'TTS stream completed but no audio was received',
+          });
         }
 
         this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
