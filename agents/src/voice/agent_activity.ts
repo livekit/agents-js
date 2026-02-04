@@ -423,9 +423,18 @@ export class AgentActivity implements RecognitionHooks {
       this.realtimeSession.updateOptions({ toolChoice: this.toolChoice });
     }
 
-    this.turnDetectionMode = turnDetection; // TODO fix types
+    this.turnDetectionMode = turnDetection;
     this.isDefaultInterruptionByAudioActivityEnabled =
       this.turnDetectionMode !== 'manual' && this.turnDetectionMode !== 'realtime_llm';
+
+    // sync live flag immediately when not speaking so the change takes effect right away
+    if (this.agentSession.agentState !== 'speaking') {
+      this.isInterruptionByAudioActivityEnabled = this.isDefaultInterruptionByAudioActivityEnabled;
+    }
+
+    if (this.audioRecognition) {
+      this.audioRecognition.updateOptions({ turnDetection: this.turnDetectionMode });
+    }
   }
 
   attachAudioInput(audioStream: ReadableStream<AudioFrame>): void {

@@ -166,6 +166,11 @@ export class AudioRecognition {
     return this.audioTranscript;
   }
 
+  /** @internal */
+  updateOptions(options: { turnDetection: TurnDetectionMode | undefined }): void {
+    this.turnDetectionMode = options.turnDetection;
+  }
+
   async start() {
     this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
     this.vadTask.result.catch((err) => {
