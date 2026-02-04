@@ -15,6 +15,7 @@ import {
 import type { APIConnectOptions } from '@livekit/agents';
 import {
   APIConnectionError,
+  APIStatusError,
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
   Event,
@@ -44,6 +45,9 @@ const OUTPUT_AUDIO_SAMPLE_RATE = 24000;
 const OUTPUT_AUDIO_CHANNELS = 1;
 
 const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
+
+// WebSocket close codes (RFC 6455)
+const WS_CLOSE_NORMAL = 1000;
 /**
  * Default image encoding options for Google Realtime API
  */
@@ -812,6 +816,8 @@ export class RealtimeSession extends llm.RealtimeSession {
             onmessage: (message: types.LiveServerMessage) => {
               this.onReceiveMessage(session, message);
             },
+            // onerror is called for network-level errors (connection refused, DNS failure, TLS errors).
+            // Application-level errors (e.g., invalid model name) come through onclose with error codes.
             onerror: (error: ErrorEvent) => {
               this.#logger.error('Gemini Live session error:', error);
               if (!this.sessionShouldClose.isSet) {
@@ -819,7 +825,33 @@ export class RealtimeSession extends llm.RealtimeSession {
               }
             },
             onclose: (event: CloseEvent) => {
-              this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
+              // Surface WebSocket close errors to the user instead of silently swallowing them
+              if (event.code !== WS_CLOSE_NORMAL) {
+                // Note: WebSocket close reasons are limited to 123 bytes by RFC 6455,
+                // so Google's error messages may be truncated at the protocol level
+                const isTruncated = event.reason && event.reason.length >= 120;
+                const truncationNote = isTruncated
+                  ? ' (message may be truncated - check model name and API permissions)'
+                  : '';
+                const errorMsg = event.reason || `WebSocket closed with code ${event.code}`;
+                this.#logger.error(`Gemini Live session error: ${errorMsg}${truncationNote}`);
+
+                this.emitError(
+                  new APIStatusError({
+                    message: `${errorMsg}${truncationNote}`,
+                    options: {
+                      statusCode: event.code,
+                      retryable: false,
+                      body: event.reason
+                        ? { reason: event.reason, code: event.code, truncated: isTruncated }
+                        : null,
+                    },
+                  }),
+                  false,
+                );
+              } else {
+                this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
+              }
               this.markCurrentGenerationDone();
             },
           },
