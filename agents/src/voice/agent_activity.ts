@@ -61,7 +61,7 @@ import {
   createSpeechCreatedEvent,
   createUserInputTranscribedEvent,
 } from './events.js';
-import type { ToolExecutionOutput } from './generation.js';
+import type { ToolExecutionOutput, _TTSGenerationData } from './generation.js';
 import {
   type _AudioOut,
   type _TextOut,
@@ -73,6 +73,7 @@ import {
   removeInstructions,
   updateInstructions,
 } from './generation.js';
+import type { TimedString } from './io.js';
 import { SpeechHandle } from './speech_handle.js';
 
 const speechHandleStorage = new AsyncLocalStorage<SpeechHandle>();
@@ -378,6 +379,11 @@ export class AgentActivity implements RecognitionHooks {
     return this.agentSession.options.turnHandling.interruption?.mode !== false;
   }
 
+  get useTtsAlignedTranscript(): boolean {
+    // Agent setting takes precedence over session setting
+    return this.agent.useTtsAlignedTranscript ?? this.agentSession.useTtsAlignedTranscript;
+  }
+
   get turnDetection(): TurnDetectionMode | undefined {
     // TODO(brian): prioritize using agent.turn_detection
     return this.agentSession.turnDetection;
@@ -419,9 +425,18 @@ export class AgentActivity implements RecognitionHooks {
       this.realtimeSession.updateOptions({ toolChoice: this.toolChoice });
     }
 
-    this.turnDetectionMode = turnDetection; // TODO fix types
+    this.turnDetectionMode = turnDetection;
     this.isDefaultInterruptionByAudioActivityEnabled =
       this.turnDetectionMode !== 'manual' && this.turnDetectionMode !== 'realtime_llm';
+
+    // sync live flag immediately when not speaking so the change takes effect right away
+    if (this.agentSession.agentState !== 'speaking') {
+      this.isInterruptionByAudioActivityEnabled = this.isDefaultInterruptionByAudioActivityEnabled;
+    }
+
+    if (this.audioRecognition) {
+      this.audioRecognition.updateOptions({ turnDetection: this.turnDetectionMode });
+    }
   }
 
   attachAudioInput(audioStream: ReadableStream<AudioFrame>): void {
@@ -1322,7 +1337,7 @@ export class AgentActivity implements RecognitionHooks {
       let audioOut: _AudioOut | null = null;
       if (!audio) {
         // generate audio using TTS
-        const [ttsTask, ttsStream] = performTTSInference(
+        const [ttsTask, ttsGenData] = performTTSInference(
           (...args) => this.agent.ttsNode(...args),
           audioSource,
           modelSettings,
@@ -1333,7 +1348,7 @@ export class AgentActivity implements RecognitionHooks {
         tasks.push(ttsTask);
 
         const [forwardTask, _audioOut] = performAudioForwarding(
-          ttsStream,
+          ttsGenData.audioStream,
           audioOutput,
           replyAbortController,
         );
@@ -1461,14 +1476,14 @@ export class AgentActivity implements RecognitionHooks {
     tasks.push(llmTask);
 
     let ttsTask: Task<void> | null = null;
-    let ttsStream: ReadableStream<AudioFrame> | null = null;
+    let ttsGenData: _TTSGenerationData | null = null;
     let llmOutput: ReadableStream<string>;
 
     if (audioOutput) {
       // Only tee the stream when we need TTS
       const [ttsTextInput, textOutput] = llmGenData.textStream.tee();
       llmOutput = textOutput;
-      [ttsTask, ttsStream] = performTTSInference(
+      [ttsTask, ttsGenData] = performTTSInference(
         (...args) => this.agent.ttsNode(...args),
         ttsTextInput,
         modelSettings,
@@ -1502,7 +1517,26 @@ export class AgentActivity implements RecognitionHooks {
     speechHandle._clearAuthorization();
 
     const replyStartedAt = Date.now();
-    const trNodeResult = await this.agent.transcriptionNode(llmOutput, modelSettings);
+
+    // Determine the transcription input source
+    let transcriptionInput: ReadableStream<string | TimedString> = llmOutput;
+
+    // Check if we should use TTS aligned transcripts
+    if (this.useTtsAlignedTranscript && this.tts?.capabilities.alignedTranscript && ttsGenData) {
+      // Race timedTextsFut with ttsTask to avoid hanging if TTS fails before resolving the future
+      const timedTextsStream = await Promise.race([
+        ttsGenData.timedTextsFut.await,
+        ttsTask?.result.catch(() =>
+          this.logger.warn('TTS task failed before resolving timedTextsFut'),
+        ) ?? Promise.resolve(),
+      ]);
+      if (timedTextsStream) {
+        this.logger.debug('Using TTS aligned transcripts for transcription node input');
+        transcriptionInput = timedTextsStream;
+      }
+    }
+
+    const trNodeResult = await this.agent.transcriptionNode(transcriptionInput, modelSettings);
     let textOut: _TextOut | null = null;
     if (trNodeResult) {
       const [textForwardTask, _textOut] = performTextForwarding(
@@ -1527,9 +1561,9 @@ export class AgentActivity implements RecognitionHooks {
 
     let audioOut: _AudioOut | null = null;
     if (audioOutput) {
-      if (ttsStream) {
+      if (ttsGenData) {
         const [forwardTask, _audioOut] = performAudioForwarding(
-          ttsStream,
+          ttsGenData.audioStream,
           audioOutput,
           replyAbortController,
         );
@@ -1539,7 +1573,7 @@ export class AgentActivity implements RecognitionHooks {
           .then((ts) => onFirstFrame(ts))
           .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
       } else {
-        throw Error('ttsStream is null when audioOutput is enabled');
+        throw Error('ttsGenData is null when audioOutput is enabled');
       }
     } else {
       textOut?.firstTextFut.await
@@ -1939,8 +1973,8 @@ export class AgentActivity implements RecognitionHooks {
           }
 
           const msgModalities = msg.modalities ? await msg.modalities : undefined;
-          let ttsTextInput: ReadableStream<string> | null = null;
-          let trTextInput: ReadableStream<string>;
+          let ttsTextInput: ReadableStream<string | TimedString> | null = null;
+          let trTextInput: ReadableStream<string | TimedString>;
 
           if (msgModalities && !msgModalities.includes('audio') && this.tts) {
             if (this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput) {
@@ -1972,7 +2006,7 @@ export class AgentActivity implements RecognitionHooks {
             let realtimeAudioResult: ReadableStream<AudioFrame> | null = null;
 
             if (ttsTextInput) {
-              const [ttsTask, ttsStream] = performTTSInference(
+              const [ttsTask, ttsGenData] = performTTSInference(
                 (...args) => this.agent.ttsNode(...args),
                 ttsTextInput,
                 modelSettings,
@@ -1981,7 +2015,7 @@ export class AgentActivity implements RecognitionHooks {
                 this.tts?.provider,
               );
               tasks.push(ttsTask);
-              realtimeAudioResult = ttsStream;
+              realtimeAudioResult = ttsGenData.audioStream;
             } else if (msgModalities && msgModalities.includes('audio')) {
               realtimeAudioResult = await this.agent.realtimeAudioOutputNode(
                 msg.audioStream,

@@ -89,7 +89,7 @@ export interface SessionOptions {
   preemptiveGeneration: boolean;
   /**
    * If set, set the user state as "away" after this amount of time after user and agent are
-   * silent. Set to `undefined` to disable.
+   * silent. Set to `null` to disable.
    * @defaultValue 15.0
    */
   userAwayTimeout: number | null;
@@ -97,6 +97,8 @@ export interface SessionOptions {
    * Configuration for turn handling.
    */
   turnHandling: Partial<TurnHandlingConfig>;
+
+  useTtsAlignedTranscript: boolean;
 
   /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.mode instead. */
   allowInterruptions?: boolean;
@@ -121,6 +123,7 @@ export const defaultSessionOptions = {
   preemptiveGeneration: false,
   userAwayTimeout: 15.0,
   turnHandling: {},
+  useTtsAlignedTranscript: true,
 } as const satisfies SessionOptions;
 
 /** @deprecated {@link VoiceOptions} has been renamed to {@link SessionOptions} */
@@ -322,6 +325,10 @@ export class AgentSession<
   get usage(): AgentSessionUsage {
     // Skip zero fields for more concise usage display (matches python behavior).
     return { modelUsage: this._usageCollector.flatten().map(filterZeroValues) };
+  }
+
+  get useTtsAlignedTranscript(): boolean {
+    return this.options.useTtsAlignedTranscript;
   }
 
   set userData(value: UserData) {

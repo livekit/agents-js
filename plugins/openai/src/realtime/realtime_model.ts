@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { metrics } from '@livekit/agents';
 import {
   type APIConnectOptions,
   APIConnectionError,
@@ -11,11 +10,14 @@ import {
   Future,
   Queue,
   Task,
+  type TimedString,
   cancelAndWait,
+  createTimedString,
   delay,
   isAPIError,
   llm,
   log,
+  type metrics,
   shortuuid,
   stream,
 } from '@livekit/agents';
@@ -60,7 +62,7 @@ interface RealtimeOptions {
 
 interface MessageGeneration {
   messageId: string;
-  textChannel: stream.StreamChannel<string>;
+  textChannel: stream.StreamChannel<string | TimedString>;
   audioChannel: stream.StreamChannel<AudioFrame>;
   audioTranscript: string;
   modalities: Future<('text' | 'audio')[]>;
@@ -1207,7 +1209,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     const modalitiesFut = new Future<Modality[]>();
     const itemGeneration: MessageGeneration = {
       messageId: itemId,
-      textChannel: stream.createStreamChannel<string>(),
+      textChannel: stream.createStreamChannel<string | TimedString>(),
       audioChannel: stream.createStreamChannel<AudioFrame>(),
       audioTranscript: '',
       modalities: modalitiesFut,
@@ -1383,16 +1385,19 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const itemId = event.item_id;
-    const delta = event.delta;
 
-    // TODO (shubhra): add timed string support
+    // When start_time is provided, wrap the delta in a TimedString for aligned transcripts
+    let delta: string | TimedString = event.delta;
+    if (event.start_time !== undefined) {
+      delta = createTimedString({ text: event.delta, startTime: event.start_time });
+    }
 
     const itemGeneration = this.currentGeneration.messages.get(itemId);
     if (!itemGeneration) {
       throw new Error('itemGeneration is not set');
     } else {
       itemGeneration.textChannel.write(delta);
-      itemGeneration.audioTranscript += delta;
+      itemGeneration.audioTranscript += event.delta;
     }
   }
 

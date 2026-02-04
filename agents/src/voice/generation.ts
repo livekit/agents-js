@@ -24,10 +24,19 @@ import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
+import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Future, Task, shortuuid, toError, waitForAbort } from '../utils.js';
 import { type Agent, type ModelSettings, asyncLocalStorage, isStopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
-import { AudioOutput, type LLMNode, type TTSNode, type TextOutput } from './io.js';
+import {
+  AudioOutput,
+  type LLMNode,
+  type TTSNode,
+  type TextOutput,
+  type TimedString,
+  createTimedString,
+  isTimedString,
+} from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 
@@ -45,6 +54,21 @@ export class _LLMGenerationData {
     this.id = shortuuid('item_');
     this.generatedToolCalls = [];
   }
+}
+
+/**
+ * TTS generation data containing audio stream and optional timed transcripts.
+ * @internal
+ */
+export interface _TTSGenerationData {
+  /** Audio frame stream from TTS */
+  audioStream: ReadableStream<AudioFrame>;
+  /**
+   * Future that resolves to a stream of timed transcripts, or null if TTS doesn't support it.
+   */
+  timedTextsFut: Future<ReadableStream<TimedString> | null>;
+  /** Time to first byte (set when first audio frame is received) */
+  ttfb?: number;
 }
 
 // TODO(brian): remove this class in favor of ToolOutput
@@ -514,15 +538,43 @@ export function performLLMInference(
 
 export function performTTSInference(
   node: TTSNode,
-  text: ReadableStream<string>,
+  text: ReadableStream<string | TimedString>,
   modelSettings: ModelSettings,
   controller: AbortController,
   model?: string,
   provider?: string,
-): [Task<void>, ReadableStream<AudioFrame>] {
+): [Task<void>, _TTSGenerationData] {
   const audioStream = new IdentityTransform<AudioFrame>();
   const outputWriter = audioStream.writable.getWriter();
   const audioOutputStream = audioStream.readable;
+
+  const timedTextsFut = new Future<ReadableStream<TimedString> | null>();
+  const timedTextsStream = new IdentityTransform<TimedString>();
+  const timedTextsWriter = timedTextsStream.writable.getWriter();
+
+  // Transform stream to extract text from TimedString objects
+  const textOnlyStream = new IdentityTransform<string>();
+  const textOnlyWriter = textOnlyStream.writable.getWriter();
+  (async () => {
+    const reader = text.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        const textValue = typeof value === 'string' ? value : value.text;
+        await textOnlyWriter.write(textValue);
+      }
+      await textOnlyWriter.close();
+    } catch (e) {
+      await textOnlyWriter.abort(e as Error);
+    } finally {
+      reader.releaseLock();
+    }
+  })();
+
+  let ttfb: number | undefined;
 
   const _performTTSInferenceImpl = async (signal: AbortSignal, span: Span) => {
     if (model) {
@@ -534,33 +586,76 @@ export function performTTSInference(
 
     let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
+    let pushedDuration = 0;
     const startTime = performance.now() / 1000; // Convert to seconds
     let firstByteReceived = false;
 
     try {
-      ttsStream = await node(text, modelSettings);
+      ttsStream = await node(textOnlyStream.readable, modelSettings);
       if (ttsStream === null) {
+        timedTextsFut.resolve(null);
         await outputWriter.close();
+        await timedTextsWriter.close();
         return;
       }
 
+      // This is critical: the future must be resolved with the channel/stream before the loop
+      // so that agent_activity can start reading while we write
+      if (!timedTextsFut.done) {
+        timedTextsFut.resolve(timedTextsStream.readable);
+      }
+
       ttsStreamReader = ttsStream.getReader();
+
+      // In Python, perform_tts_inference has a while loop processing multiple input segments
+      // (separated by FlushSentinel), with pushed_duration accumulating across segments.
+      // JS currently only does single inference, so initialPushedDuration is always 0.
+      // TODO: Add FlushSentinel + multi-segment loop
+      const initialPushedDuration = pushedDuration;
+
       while (true) {
         if (signal.aborted) {
           break;
         }
-        const { done, value: chunk } = await ttsStreamReader.read();
+        const { done, value: frame } = await ttsStreamReader.read();
         if (done) {
           break;
         }
 
         if (!firstByteReceived) {
           firstByteReceived = true;
-          const ttfb = performance.now() / 1000 - startTime;
+          ttfb = performance.now() / 1000 - startTime;
           span.setAttribute(traceTypes.ATTR_RESPONSE_TTFB, ttfb);
         }
 
-        await outputWriter.write(chunk);
+        // Write the audio frame to the output stream
+        await outputWriter.write(frame);
+
+        const timedTranscripts = frame.userdata[USERDATA_TIMED_TRANSCRIPT] as
+          | TimedString[]
+          | undefined;
+        if (timedTranscripts && timedTranscripts.length > 0) {
+          for (const timedText of timedTranscripts) {
+            // Uses the INITIAL value (from previous inferences), not the accumulated value
+            const adjustedTimedText = createTimedString({
+              text: timedText.text,
+              startTime:
+                timedText.startTime !== undefined
+                  ? timedText.startTime + initialPushedDuration
+                  : undefined,
+              endTime:
+                timedText.endTime !== undefined
+                  ? timedText.endTime + initialPushedDuration
+                  : undefined,
+              confidence: timedText.confidence,
+              startTimeOffset: timedText.startTimeOffset,
+            });
+            await timedTextsWriter.write(adjustedTimedText);
+          }
+        }
+
+        const frameDuration = frame.samplesPerChannel / frame.sampleRate;
+        pushedDuration += frameDuration;
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -569,9 +664,14 @@ export function performTTSInference(
       }
       throw error;
     } finally {
+      if (!timedTextsFut.done) {
+        // Ensure downstream consumers don't hang on errors.
+        timedTextsFut.resolve(null);
+      }
       ttsStreamReader?.releaseLock();
       await ttsStream?.cancel();
       await outputWriter.close();
+      await timedTextsWriter.close();
     }
   };
 
@@ -584,9 +684,15 @@ export function performTTSInference(
       context: currentContext,
     });
 
+  const genData: _TTSGenerationData = {
+    audioStream: audioOutputStream,
+    timedTextsFut,
+    ttfb,
+  };
+
   return [
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performTTSInference'),
-    audioOutputStream,
+    genData,
   ];
 }
 
@@ -596,7 +702,7 @@ export interface _TextOut {
 }
 
 async function forwardText(
-  source: ReadableStream<string>,
+  source: ReadableStream<string | TimedString>,
   out: _TextOut,
   signal: AbortSignal,
   textOutput: TextOutput | null,
@@ -609,8 +715,13 @@ async function forwardText(
       }
       const { done, value: delta } = await reader.read();
       if (done) break;
-      out.text += delta;
+
+      const deltaIsTimedString = isTimedString(delta);
+      const textDelta = deltaIsTimedString ? delta.text : delta;
+
+      out.text += textDelta;
       if (textOutput !== null) {
+        // Pass TimedString to textOutput for synchronized transcription
         await textOutput.captureText(delta);
       }
       if (!out.firstTextFut.done) {
@@ -626,7 +737,7 @@ async function forwardText(
 }
 
 export function performTextForwarding(
-  source: ReadableStream<string>,
+  source: ReadableStream<string | TimedString>,
   controller: AbortController,
   textOutput: TextOutput | null,
 ): [Task<void>, _TextOut] {

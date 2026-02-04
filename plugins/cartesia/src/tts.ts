@@ -5,8 +5,11 @@ import {
   type APIConnectOptions,
   AudioByteStream,
   Future,
+  type TimedString,
+  createTimedString,
   log,
   shortuuid,
+  stream,
   tokenize,
   tts,
 } from '@livekit/agents';
@@ -20,6 +23,14 @@ import {
   type TTSVoiceEmotion,
   type TTSVoiceSpeed,
 } from './models.js';
+import {
+  type CartesiaServerMessage,
+  cartesiaMessageSchema,
+  hasWordTimestamps,
+  isChunkMessage,
+  isDoneMessage,
+  isErrorMessage,
+} from './types.js';
 
 const AUTHORIZATION_HEADER = 'X-API-Key';
 const VERSION_HEADER = 'Cartesia-Version';
@@ -42,6 +53,13 @@ export interface TTSOptions {
    * The timeout for the next chunk to be received from the Cartesia API.
    */
   chunkTimeout: number;
+
+  /**
+   * Whether to add word timestamps to the output. When enabled, the TTS will return
+   * timing information for each word in the transcript.
+   * @defaultValue true
+   */
+  wordTimestamps?: boolean;
 }
 
 const defaultTTSOptions: TTSOptions = {
@@ -53,6 +71,7 @@ const defaultTTSOptions: TTSOptions = {
   language: 'en',
   baseUrl: 'https://api.cartesia.ai',
   chunkTimeout: 5000,
+  wordTimestamps: true,
 };
 
 export class TTS extends tts.TTS {
@@ -68,14 +87,17 @@ export class TTS extends tts.TTS {
   }
 
   constructor(opts: Partial<TTSOptions> = {}) {
-    super(opts.sampleRate || defaultTTSOptions.sampleRate, NUM_CHANNELS, {
-      streaming: true,
-    });
-
-    this.#opts = {
+    const resolvedOpts = {
       ...defaultTTSOptions,
       ...opts,
     };
+
+    super(resolvedOpts.sampleRate || defaultTTSOptions.sampleRate, NUM_CHANNELS, {
+      streaming: true,
+      alignedTranscript: resolvedOpts.wordTimestamps ?? true,
+    });
+
+    this.#opts = resolvedOpts;
 
     if (this.#opts.apiKey === undefined) {
       throw new Error(
@@ -225,28 +247,30 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   protected async run() {
     const requestId = shortuuid();
     let closing = false;
+    // Only close WebSocket when both: 1) Cartesia returns done, AND 2) all sentences have been sent
+    let sentenceStreamClosed = false;
 
     const sentenceStreamTask = async (ws: WebSocket) => {
-      const packet = toCartesiaOptions(this.#opts);
+      const packet = toCartesiaOptions(this.#opts, true);
       for await (const event of this.#tokenizer) {
-        ws.send(
-          JSON.stringify({
-            ...packet,
-            context_id: requestId,
-            transcript: event.token + ' ',
-            continue: true,
-          }),
-        );
-      }
-
-      ws.send(
-        JSON.stringify({
+        const msg = {
           ...packet,
           context_id: requestId,
-          transcript: ' ',
-          continue: false,
-        }),
-      );
+          transcript: event.token + ' ',
+          continue: true,
+        };
+        ws.send(JSON.stringify(msg));
+      }
+
+      const endMsg = {
+        ...packet,
+        context_id: requestId,
+        transcript: ' ',
+        continue: false,
+      };
+      ws.send(JSON.stringify(endMsg));
+      // Mark sentence stream as closed
+      sentenceStreamClosed = true;
     };
 
     const inputTask = async () => {
@@ -261,16 +285,30 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       this.#tokenizer.close();
     };
 
+    // Use event channel and set up listeners ONCE to avoid missing messages during listener re-registration
     const recvTask = async (ws: WebSocket) => {
-      let finalReceived = false;
-      let shouldExit = false;
       const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
 
+      // Create event channel to buffer incoming messages
+      // This prevents message loss between listener re-registrations
+      const eventChannel = stream.createStreamChannel<RawData>();
+
       let lastFrame: AudioFrame | undefined;
+      let pendingTimedTranscripts: TimedString[] = [];
+
       const sendLastFrame = (segmentId: string, final: boolean) => {
         if (lastFrame && !this.queue.closed) {
-          this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+          // Include timedTranscripts with the audio frame
+          this.queue.put({
+            requestId,
+            segmentId,
+            frame: lastFrame,
+            final,
+            timedTranscripts:
+              pendingTimedTranscripts.length > 0 ? pendingTimedTranscripts : undefined,
+          });
           lastFrame = undefined;
+          pendingTimedTranscripts = [];
         }
       };
 
@@ -283,49 +321,105 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       };
 
-      while (!this.closed && !this.abortController.signal.aborted && !shouldExit) {
-        try {
-          await new Promise<RawData | null>((resolve, reject) => {
-            ws.removeAllListeners();
-            ws.on('message', (data) => resolve(data));
-            ws.on('close', (code, reason) => {
-              if (!closing) {
-                this.#logger.debug(`WebSocket closed with code ${code}: ${reason}`);
-              }
+      // Set up WebSocket listeners ONCE (not in a loop)
+      const onMessage = (data: RawData) => {
+        void eventChannel.write(data).catch((error: unknown) => {
+          this.#logger.debug({ error }, 'Failed writing Cartesia event to channel (likely closed)');
+        });
+      };
 
-              clearTTSChunkTimeout();
-              if (!finalReceived) {
-                reject(new Error('WebSocket closed'));
-              } else {
-                // If we've received the final message, resolve with empty to exit gracefully
-                resolve(null);
-              }
-            });
-          }).then((msg) => {
-            if (!msg) return;
+      const onClose = (code: number, reason: Buffer) => {
+        if (!closing) {
+          this.#logger.debug(`WebSocket closed with code ${code}: ${reason.toString()}`);
+        }
+        clearTTSChunkTimeout();
+        void eventChannel.close();
+      };
 
-            const json = JSON.parse(msg.toString());
-            const segmentId = json.context_id;
-            if ('data' in json) {
-              const data = new Int8Array(Buffer.from(json.data, 'base64'));
-              for (const frame of bstream.write(data)) {
-                sendLastFrame(segmentId, false);
-                lastFrame = frame;
-              }
+      const onError = (err: Error) => {
+        this.#logger.error({ err }, 'Cartesia WebSocket error');
+        void eventChannel.close();
+      };
 
-              // IMPORTANT: close WS if TTS chunk stream been stuck too long
-              // this allows unblock the current "broken" TTS node so that any future TTS nodes
-              // can continue to process the stream without been blocked by the stuck node
-              clearTTSChunkTimeout();
-              timeout = setTimeout(() => {
-                // cartesia chunk timeout quite often, so we make it a debug log
-                this.#logger.debug(
-                  `Cartesia WebSocket STT chunk stream timeout after ${this.#opts.chunkTimeout}ms`,
+      // Attach listeners ONCE
+      ws.on('message', onMessage);
+      ws.on('close', onClose);
+      ws.on('error', onError);
+
+      try {
+        // Process messages from the channel
+        const reader = eventChannel.stream().getReader();
+
+        while (!this.closed && !this.abortController.signal.aborted) {
+          const result = await reader.read();
+          if (result.done) break;
+
+          const rawMsg = result.value;
+
+          // Parse message with Zod schema for type safety
+          let serverMsg: CartesiaServerMessage;
+          try {
+            const json = JSON.parse(rawMsg.toString());
+            serverMsg = cartesiaMessageSchema.parse(json);
+          } catch (parseErr) {
+            this.#logger.warn({ parseErr }, 'Failed to parse Cartesia message');
+            continue;
+          }
+
+          // Handle error messages
+          if (isErrorMessage(serverMsg)) {
+            this.#logger.error({ error: serverMsg.error }, 'Cartesia returned error');
+            continue;
+          }
+
+          const segmentId = serverMsg.context_id;
+
+          // Process word timestamps if present (typed via Zod schema)
+          if (this.#opts.wordTimestamps !== false && hasWordTimestamps(serverMsg)) {
+            const wordTimestamps = serverMsg.word_timestamps;
+            for (let i = 0; i < wordTimestamps.words.length; i++) {
+              const word = wordTimestamps.words[i];
+              const startTime = wordTimestamps.start[i];
+              const endTime = wordTimestamps.end[i];
+              if (word !== undefined && startTime !== undefined && endTime !== undefined) {
+                pendingTimedTranscripts.push(
+                  createTimedString({
+                    text: word + ' ', // Add space after word for consistency
+                    startTime,
+                    endTime,
+                  }),
                 );
-                ws.close();
-              }, this.#opts.chunkTimeout);
-            } else if ('done' in json) {
-              finalReceived = true;
+              }
+            }
+          }
+
+          // Handle audio chunk messages
+          if (isChunkMessage(serverMsg)) {
+            const audioBuffer = Buffer.from(serverMsg.data, 'base64');
+            // Extract ArrayBuffer from Buffer for AudioByteStream compatibility
+            const audioData = audioBuffer.buffer.slice(
+              audioBuffer.byteOffset,
+              audioBuffer.byteOffset + audioBuffer.byteLength,
+            );
+            for (const frame of bstream.write(audioData)) {
+              sendLastFrame(segmentId, false);
+              lastFrame = frame;
+            }
+
+            // IMPORTANT: close WS if TTS chunk stream been stuck too long
+            // this allows unblock the current "broken" TTS node so that any future TTS nodes
+            // can continue to process the stream without been blocked by the stuck node
+            clearTTSChunkTimeout();
+            timeout = setTimeout(() => {
+              // cartesia chunk timeout quite often, so we make it a debug log
+              this.#logger.debug(
+                `Cartesia WebSocket TTS chunk stream timeout after ${this.#opts.chunkTimeout}ms`,
+              );
+              ws.close();
+            }, this.#opts.chunkTimeout);
+          } else if (isDoneMessage(serverMsg)) {
+            // This ensures all sentences have been sent before closing
+            if (sentenceStreamClosed) {
               for (const frame of bstream.flush()) {
                 sendLastFrame(segmentId, false);
                 lastFrame = frame;
@@ -337,27 +431,35 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
               if (segmentId === requestId) {
                 closing = true;
-                shouldExit = true;
                 clearTTSChunkTimeout();
                 ws.close();
+                break; // Exit the loop
               }
             }
-          });
-        } catch (err) {
-          // skip log error for normal websocket close
-          if (err instanceof Error && !err.message.includes('WebSocket closed')) {
-            if (err.message.includes('Queue is closed')) {
-              this.#logger.warn(
-                { err },
-                'Queue closed during transcript processing (expected during disconnect)',
-              );
-            } else {
-              this.#logger.error({ err }, 'Error in recvTask from Cartesia WebSocket');
-            }
+            // If sentenceStreamClosed is false, continue receiving - more done messages will come
           }
-          clearTTSChunkTimeout();
-          break;
         }
+      } catch (err) {
+        // skip log error for normal websocket close
+        if (err instanceof Error && !err.message.includes('WebSocket closed')) {
+          if (
+            err.message.includes('Queue is closed') ||
+            err.message.includes('Channel is closed')
+          ) {
+            this.#logger.warn(
+              { err },
+              'Channel closed during transcript processing (expected during disconnect)',
+            );
+          } else {
+            this.#logger.error({ err }, 'Error in recvTask from Cartesia WebSocket');
+          }
+        }
+      } finally {
+        // IMPORTANT: Remove listeners so connection can be reused
+        ws.off('message', onMessage);
+        ws.off('close', onClose);
+        ws.off('error', onError);
+        clearTTSChunkTimeout();
       }
     };
 
@@ -379,7 +481,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 }
 
-const toCartesiaOptions = (opts: TTSOptions): { [id: string]: unknown } => {
+/**
+ * Convert TTSOptions to Cartesia API format.
+ *
+ * @param opts - TTS options
+ * @param streaming - Whether this is for streaming (WebSocket) or non-streaming (HTTP)
+ */
+const toCartesiaOptions = (
+  opts: TTSOptions,
+  streaming: boolean = false,
+): { [id: string]: unknown } => {
   const voice: { [id: string]: unknown } = {};
   if (typeof opts.voice === 'string') {
     voice.mode = 'id';
@@ -401,7 +512,7 @@ const toCartesiaOptions = (opts: TTSOptions): { [id: string]: unknown } => {
     voice.__experimental_controls = voiceControls;
   }
 
-  return {
+  const result: { [id: string]: unknown } = {
     model_id: opts.model,
     voice,
     output_format: {
@@ -411,4 +522,10 @@ const toCartesiaOptions = (opts: TTSOptions): { [id: string]: unknown } => {
     },
     language: opts.language,
   };
+
+  if (streaming && opts.wordTimestamps !== false) {
+    result.add_timestamps = true;
+  }
+
+  return result;
 };

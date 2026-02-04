@@ -197,6 +197,7 @@ export class InterruptionStreamBase {
             }
             if (this.options.sampleRate !== chunk.sampleRate) {
               controller.error('the sample rate of the input frames must be consistent');
+              this.logger.error('the sample rate of the input frames must be consistent');
               return;
             }
             const result = writeToInferenceS16Data(

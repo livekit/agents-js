@@ -4,10 +4,10 @@
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 import { log } from './log.js';
 
-const healthCheck = async (res: ServerResponse) => {
-  res.writeHead(200);
-  res.end('OK');
-};
+export interface HealthCheckResult {
+  healthy: boolean;
+  message: string;
+}
 
 interface WorkerResponse {
   agent_name: string;
@@ -23,13 +23,25 @@ export class HTTPServer {
   app: Server;
   #logger = log();
 
-  constructor(host: string, port: number, workerListener: () => WorkerResponse) {
+  constructor(
+    host: string,
+    port: number,
+    healthCheckListener: () => HealthCheckResult,
+    workerListener: () => WorkerResponse,
+  ) {
     this.host = host;
     this.port = port;
 
     this.app = createServer((req: IncomingMessage, res: ServerResponse) => {
       if (req.url === '/') {
-        healthCheck(res);
+        const result = healthCheckListener();
+        if (result.healthy) {
+          res.writeHead(200);
+          res.end(result.message);
+        } else {
+          res.writeHead(503);
+          res.end(result.message);
+        }
       } else if (req.url === '/worker') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(workerListener()));
