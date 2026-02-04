@@ -14,37 +14,6 @@ export const SAMPLE_RATE = 16000;
 export const FRAMES_PER_SECOND = 40;
 export const FRAME_DURATION_IN_S = 0.025; // 25ms per frame
 
-/** Default production inference URL */
-export const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
-
-/** Staging inference URL */
-export const STAGING_BASE_URL = 'https://agent-gateway-staging.livekit.cloud/v1';
-
-/**
- * Get the default inference URL based on the environment.
- *
- * Priority:
- * 1. LIVEKIT_INFERENCE_URL if set
- * 2. If LIVEKIT_URL contains '.staging.livekit.cloud', use staging gateway
- * 3. Otherwise, use production gateway
- */
-export function getDefaultInferenceUrl(): string {
-  // Priority 1: LIVEKIT_INFERENCE_URL
-  const inferenceUrl = process.env.LIVEKIT_INFERENCE_URL;
-  if (inferenceUrl) {
-    return inferenceUrl;
-  }
-
-  // Priority 2: Check LIVEKIT_URL for staging (exact match to Python)
-  const livekitUrl = process.env.LIVEKIT_URL || '';
-  if (livekitUrl.includes('.staging.livekit.cloud')) {
-    return STAGING_BASE_URL;
-  }
-
-  // Priority 3: Default to production
-  return DEFAULT_BASE_URL;
-}
-
 export const apiConnectDefaults: ApiConnectOptions = {
   maxRetries: 3,
   retryInterval: 2_000,

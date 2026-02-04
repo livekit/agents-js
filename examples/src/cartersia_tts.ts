@@ -51,9 +51,7 @@ export default defineAgent({
     ctx.addShutdownCallback(async () => {
       logger.info(
         {
-          usage: {
-            modelUsage: session.usage.modelUsage.map(metrics.filterZeroValues),
-          },
+          usage: session.usage,
         },
         'Session usage summary',
       );

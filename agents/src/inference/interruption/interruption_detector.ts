@@ -4,14 +4,8 @@
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';
 import { log } from '../../log.js';
-import {
-  DEFAULT_BASE_URL,
-  FRAMES_PER_SECOND,
-  SAMPLE_RATE,
-  STAGING_BASE_URL,
-  getDefaultInferenceUrl,
-  interruptionOptionDefaults,
-} from './defaults.js';
+import { DEFAULT_INFERENCE_URL, STAGING_INFERENCE_URL, getDefaultInferenceUrl } from '../utils.js';
+import { FRAMES_PER_SECOND, SAMPLE_RATE, interruptionOptionDefaults } from './defaults.js';
 import type { InterruptionDetectionError } from './errors.js';
 import { InterruptionStreamBase } from './interruption_stream.js';
 import type { InterruptionEvent, InterruptionOptions } from './types.js';
@@ -56,7 +50,8 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
     let useProxy: boolean;
 
     // Use LiveKit credentials if using the inference service (production or staging)
-    const isInferenceUrl = lkBaseUrl === DEFAULT_BASE_URL || lkBaseUrl === STAGING_BASE_URL;
+    const isInferenceUrl =
+      lkBaseUrl === DEFAULT_INFERENCE_URL || lkBaseUrl === STAGING_INFERENCE_URL;
     if (isInferenceUrl) {
       lkApiKey =
         apiKey ?? process.env.LIVEKIT_INFERENCE_API_KEY ?? process.env.LIVEKIT_API_KEY ?? '';

@@ -22,7 +22,7 @@ import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
-import { type ModelUsage, ModelUsageCollector } from '../metrics/model_usage.js';
+import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
@@ -73,7 +73,7 @@ import { migrateLegacyOptions } from './turn_config/utils.js';
 
 export interface AgentSessionUsage {
   /** List of usage summaries, one per model/provider combination. */
-  modelUsage: ModelUsage[];
+  modelUsage: Array<Partial<ModelUsage>>;
 }
 
 export interface SessionOptions {
@@ -320,7 +320,8 @@ export class AgentSession<
    * Returns usage summaries for this session, one per model/provider combination.
    */
   get usage(): AgentSessionUsage {
-    return { modelUsage: this._usageCollector.flatten() };
+    // Skip zero fields for more concise usage display (matches python behavior).
+    return { modelUsage: this._usageCollector.flatten().map(filterZeroValues) };
   }
 
   set userData(value: UserData) {

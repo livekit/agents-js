@@ -12,9 +12,7 @@ import {
 } from '../index.js';
 import * as llm from '../llm/index.js';
 import type { APIConnectOptions } from '../types.js';
-import { type AnyString, createAccessToken } from './utils.js';
-
-const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
+import { type AnyString, createAccessToken, getDefaultInferenceUrl } from './utils.js';
 
 export type OpenAIModels =
   | 'openai/gpt-5.2'
@@ -127,7 +125,7 @@ export class LLM extends llm.LLM {
       strictToolSchema = false,
     } = opts;
 
-    const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
+    const lkBaseURL = baseURL || getDefaultInferenceUrl();
     const lkApiKey = apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
     if (!lkApiKey) {
       throw new Error('apiKey is required: pass apiKey or set LIVEKIT_API_KEY');
