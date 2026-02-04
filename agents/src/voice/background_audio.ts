@@ -63,8 +63,10 @@ export interface BackgroundAudioPlayerOptions {
   thinkingSound?: AudioSourceType | AudioConfig | AudioConfig[];
 
   /**
-   * Stream timeout in milliseconds
-   * @defaultValue 200
+   * Stream timeout in milliseconds for the audio mixer.
+   * Controls how long the mixer waits for a stream to produce data before timing out.
+   * Higher values are more tolerant of network latency and processing delays.
+   * @defaultValue 2000
    */
   streamTimeoutMs?: number;
 }
@@ -78,6 +80,7 @@ export interface BackgroundAudioStartOptions {
 // Queue size for AudioSource buffer (400ms)
 // Kept small to avoid abrupt cutoffs when removing sounds
 const AUDIO_SOURCE_BUFFER_MS = 400;
+const STREAM_TIMEOUT_MS = 2000;
 
 export class PlayHandle {
   private doneFuture = new Future<void>();
@@ -155,7 +158,7 @@ export class BackgroundAudioPlayer {
   #logger = log();
 
   constructor(options?: BackgroundAudioPlayerOptions) {
-    const { ambientSound, thinkingSound, streamTimeoutMs = 200 } = options || {};
+    const { ambientSound, thinkingSound, streamTimeoutMs = STREAM_TIMEOUT_MS } = options || {};
 
     this.ambientSound = ambientSound;
     this.thinkingSound = thinkingSound;
