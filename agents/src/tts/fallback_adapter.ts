@@ -427,10 +427,11 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         for (const token of this.tokenBuffer) {
           stream.pushText(token);
         }
+        let attemptAborted = false;
 
         const forwardInput = async () => {
           for await (const input of this.input) {
-            if (this.abortController.signal.aborted) break;
+            if (this.abortController.signal.aborted || attemptAborted) break;
 
             if (input === SynthesizeStream.FLUSH_SENTINEL) {
               stream.flush();
@@ -485,8 +486,20 @@ class FallbackSynthesizeStream extends SynthesizeStream {
             }
           }
         };
-
-        await Promise.all([forwardInput(), processOutput()]);
+        const forwardInputPromise = forwardInput();
+        const processOutputPromise = processOutput();
+        let outputError: unknown = null;
+        try {
+          await processOutputPromise;
+        } catch (error) {
+          outputError = error;
+          attemptAborted = true;
+          stream.close();
+        }
+        await forwardInputPromise.catch(() => {});
+        if (outputError) {
+          throw outputError;
+        }
 
         // Verify audio was actually received - if not, the TTS failed silently
         if (!this.audioPushed) {
