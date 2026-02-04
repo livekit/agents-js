@@ -15,11 +15,14 @@ import {
   defineAgent,
   delay,
   inference,
+  initializeLogger,
   log,
   voice,
 } from '@livekit/agents';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
+
+initializeLogger({ pretty: true });
 
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
