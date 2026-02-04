@@ -18,6 +18,7 @@ interface TTSStatus {
 interface FallbackAdapterOptions {
   ttsInstances: TTS[];
   maxRetryPerTTS?: number;
+  recoveryDelayMs?: number;
 }
 
 export interface AvailabilityChangedEvent {
@@ -34,6 +35,7 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
 export class FallbackAdapter extends TTS {
   readonly ttsInstances: TTS[];
   readonly maxRetryPerTTS: number;
+  readonly recoveryDelayMs: number;
 
   private _status: TTSStatus[] = [];
   private _logger = log();
@@ -53,7 +55,8 @@ export class FallbackAdapter extends TTS {
     const capabilities = FallbackAdapter.aggregateCapabilities(opts.ttsInstances);
     super(sampleRate, numChannels, capabilities);
     this.ttsInstances = opts.ttsInstances;
-    this.maxRetryPerTTS = opts.maxRetryPerTTS ?? 3;
+    this.maxRetryPerTTS = opts.maxRetryPerTTS ?? 2;
+    this.recoveryDelayMs = opts.recoveryDelayMs ?? 1000;
 
     // Initialize status for each TTS instance. If a TTS has a lower sample rate than
     // the adapter's output rate, create a resampler to upsample its audio output.
@@ -121,7 +124,7 @@ export class FallbackAdapter extends TTS {
         const testStream = tts.synthesize('Hello world, this is a recovery test.', {
           maxRetry: 0,
           timeoutMs: 10000,
-          retryIntervalMs: 2000,
+          retryIntervalMs: 1000,
         });
 
         for await (const _ of testStream) {
@@ -135,7 +138,7 @@ export class FallbackAdapter extends TTS {
         this._logger.debug({ tts: tts.label, error }, 'TTS recovery failed, will retry');
         status.recoveringTask = null;
         // Retry recovery after delay (matches Python's retry behavior)
-        setTimeout(() => this.tryRecovery(index), 5000);
+        setTimeout(() => this.tryRecovery(index), this.recoveryDelayMs);
       }
     });
   }
