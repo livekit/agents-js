@@ -69,6 +69,14 @@ export class STT extends stt.STT {
   label = 'deepgram.STT';
   private abortController = new AbortController();
 
+  get model(): string {
+    return this.#opts.model;
+  }
+
+  get provider(): string {
+    return 'Deepgram';
+  }
+
   constructor(opts: Partial<STTOptions> = defaultSTTOptions) {
     super({
       streaming: true,

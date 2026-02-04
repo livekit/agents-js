@@ -202,6 +202,14 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     return 'inference.TTS';
   }
 
+  get model(): string {
+    return this.opts.model ?? 'unknown';
+  }
+
+  get provider(): string {
+    return 'livekit';
+  }
+
   static fromModelString(modelString: string): TTS<AnyString> {
     if (modelString.includes(':')) {
       const [model, voice] = modelString.split(':') as [TTSModels, string];

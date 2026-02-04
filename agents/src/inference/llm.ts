@@ -163,6 +163,10 @@ export class LLM extends llm.LLM {
     return this.opts.model;
   }
 
+  get provider(): string {
+    return 'livekit';
+  }
+
   static fromModelString(modelString: string): LLM {
     return new LLM({ model: modelString });
   }

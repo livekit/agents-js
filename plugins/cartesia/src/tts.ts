@@ -59,6 +59,14 @@ export class TTS extends tts.TTS {
   #opts: TTSOptions;
   label = 'cartesia.TTS';
 
+  get model(): string {
+    return this.#opts.model;
+  }
+
+  get provider(): string {
+    return 'Cartesia';
+  }
+
   constructor(opts: Partial<TTSOptions> = {}) {
     super(opts.sampleRate || defaultTTSOptions.sampleRate, NUM_CHANNELS, {
       streaming: true,

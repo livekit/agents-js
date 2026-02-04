@@ -171,6 +171,14 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     return 'inference.STT';
   }
 
+  get model(): string {
+    return this.opts.model ?? 'auto';
+  }
+
+  get provider(): string {
+    return 'livekit';
+  }
+
   static fromModelString(modelString: string): STT<AnyString> {
     if (modelString.includes(':')) {
       const [model, language] = modelString.split(':') as [AnyString, STTLanguages];
