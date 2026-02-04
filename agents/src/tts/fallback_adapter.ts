@@ -171,13 +171,17 @@ export class FallbackAdapter extends TTS {
     if (status.recoveringTask && !status.recoveringTask.done) {
       return;
     }
-    status.recoveringTask = Task.from(async () => {
+    status.recoveringTask = Task.from(async (controller) => {
       try {
-        const testStream = tts.synthesize('Hello world, this is a recovery test.', {
-          maxRetry: 0,
-          timeoutMs: 10000,
-          retryIntervalMs: 1000,
-        });
+        const testStream = tts.synthesize(
+          'Hello world, this is a recovery test.',
+          {
+            maxRetry: 0,
+            timeoutMs: 10000,
+            retryIntervalMs: 1000,
+          },
+          controller.signal,
+        );
         let audioReceived = false;
         for await (const _ of testStream) {
           audioReceived = true;
@@ -191,8 +195,12 @@ export class FallbackAdapter extends TTS {
         this._logger.info({ tts: tts.label }, 'TTS recovered');
         this.emitAvailabilityChanged(tts, true);
       } catch (error) {
-        this._logger.debug({ tts: tts.label, error }, 'TTS recovery failed, will retry');
         status.recoveringTask = null;
+        // Don't schedule retry if we're shutting down
+        if (controller.signal.aborted) {
+          return;
+        }
+        this._logger.debug({ tts: tts.label, error }, 'TTS recovery failed, will retry');
         // Retry recovery after delay (matches Python's retry behavior)
         const timeoutId = setTimeout(() => {
           this._recoveryTimeouts.delete(index);
