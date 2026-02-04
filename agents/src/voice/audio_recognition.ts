@@ -116,7 +116,7 @@ export class AudioRecognition {
   private transcriptBuffer: SpeechEvent[];
   private isInterruptionEnabled: boolean;
   private isAgentSpeaking: boolean;
-  private interruptionStreamChannel: StreamChannel<InterruptionSentinel | AudioFrame>;
+  private interruptionStreamChannel?: StreamChannel<InterruptionSentinel | AudioFrame>;
 
   constructor(opts: AudioRecognitionOptions) {
     this.hooks = opts.recognitionHooks;
@@ -130,18 +130,30 @@ export class AudioRecognition {
     this.rootSpanContext = opts.rootSpanContext;
 
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
-    const [vadInputStream, teedInput] = this.deferredInputStream.stream.tee();
-    const [inputStream, sttInputStream] = teedInput.tee();
-    this.vadInputStream = vadInputStream;
-    this.sttInputStream = mergeReadableStreams(sttInputStream, this.silenceAudioTransform.readable);
-    this.silenceAudioWriter = this.silenceAudioTransform.writable.getWriter();
-
     this.interruptionDetection = opts.interruptionDetection;
     this.transcriptBuffer = [];
     this.isInterruptionEnabled = !!(opts.interruptionDetection || opts.vad);
     this.isAgentSpeaking = false;
-    this.interruptionStreamChannel = createStreamChannel();
-    this.interruptionStreamChannel.addStreamInput(inputStream);
+
+    if (opts.interruptionDetection) {
+      const [vadInputStream, teedInput] = this.deferredInputStream.stream.tee();
+      const [inputStream, sttInputStream] = teedInput.tee();
+      this.vadInputStream = vadInputStream;
+      this.sttInputStream = mergeReadableStreams(
+        sttInputStream,
+        this.silenceAudioTransform.readable,
+      );
+      this.interruptionStreamChannel = createStreamChannel();
+      this.interruptionStreamChannel.addStreamInput(inputStream);
+    } else {
+      const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
+      this.vadInputStream = vadInputStream;
+      this.sttInputStream = mergeReadableStreams(
+        sttInputStream,
+        this.silenceAudioTransform.readable,
+      );
+    }
+    this.silenceAudioWriter = this.silenceAudioTransform.writable.getWriter();
   }
 
   /**
@@ -331,7 +343,11 @@ export class AudioRecognition {
   private async trySendInterruptionSentinel(
     frame: AudioFrame | InterruptionSentinel,
   ): Promise<boolean> {
-    if (this.isInterruptionEnabled && !this.interruptionStreamChannel.closed) {
+    if (
+      this.isInterruptionEnabled &&
+      this.interruptionStreamChannel &&
+      !this.interruptionStreamChannel.closed
+    ) {
       try {
         await this.interruptionStreamChannel.write(frame);
         return true;
@@ -852,7 +868,7 @@ export class AudioRecognition {
     interruptionDetection: AdaptiveInterruptionDetector | undefined,
     signal: AbortSignal,
   ) {
-    if (!interruptionDetection) return;
+    if (!interruptionDetection || !this.interruptionStreamChannel) return;
 
     const stream = interruptionDetection.createStream();
     const inputReader = this.interruptionStreamChannel.stream().getReader();
@@ -985,7 +1001,7 @@ export class AudioRecognition {
     await this.vadTask?.cancelAndWait();
     await this.bounceEOUTask?.cancelAndWait();
     await this.interruptionTask?.cancelAndWait();
-    await this.interruptionStreamChannel.close();
+    await this.interruptionStreamChannel?.close();
   }
 
   private _endUserTurnSpan({
