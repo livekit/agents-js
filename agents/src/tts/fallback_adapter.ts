@@ -335,7 +335,6 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         };
 
         const stream = tts.stream({ connOptions });
-
         // Push buffered tokens to new stream
         for (const token of this.tokenBuffer) {
           stream.pushText(token);
@@ -399,6 +398,16 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         };
 
         await Promise.all([forwardInput(), processOutput()]);
+
+        // Verify audio was actually received - if not, the TTS failed silently
+        if (!this.audioPushed) {
+          this._logger.warn(
+            { tts: originalTts.label },
+            'TTS stream completed but no audio was received, trying next instance',
+          );
+          this.adapter.markUnAvailable(i);
+          continue;
+        }
 
         this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
         return;
