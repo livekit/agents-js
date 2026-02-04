@@ -234,7 +234,7 @@ class FallbackChunkedStream extends ChunkedStream {
     let lastRequestId: string = '';
     let lastSegmentId: string = '';
     if (allTTSFailed) {
-      this._logger.warn('All fallback TTS instances failed, retrying From First...');
+      this._logger.warn('All fallback TTS instances failed, retrying from first...');
     }
     for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
       const tts = this.adapter.ttsInstances[i]!;
@@ -328,7 +328,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
   protected async run(): Promise<void> {
     const allTTSFailed = this.adapter.status.every((s) => !s.available);
     if (allTTSFailed) {
-      this._logger.warn('All fallback TTS instances failed, retrying From First...');
+      this._logger.warn('All fallback TTS instances failed, retrying from first...');
     }
     for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
       const tts = this.adapter.getStreamingInstance(i);
