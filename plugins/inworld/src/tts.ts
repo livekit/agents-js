@@ -103,6 +103,7 @@ interface InworldResult {
   contextId?: string;
   contextCreated?: boolean;
   contextClosed?: boolean;
+  flushCompleted?: boolean;
   audioChunk?: AudioChunk;
   audioContent?: string;
   status?: { code: number; message: string };
@@ -477,6 +478,12 @@ class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
   #tts: TTS;
   #contextId: string;
+  // Cumulative timestamp tracking for monotonic timestamps across generations.
+  // When auto_mode is enabled or flush_context() is called, the server resets
+  // timestamps to 0 after each generation. We add cumulativeTime to maintain
+  // monotonically increasing timestamps within an agent turn.
+  #cumulativeTime: number = 0;
+  #generationEndTime: number = 0;
   label = 'inworld.SynthesizeStream';
 
   constructor(ttsInstance: TTS, opts: TTSOptions) {
@@ -505,13 +512,27 @@ class SynthesizeStream extends tts.SynthesizeStream {
       if (result.contextCreated) {
       } else if (result.contextClosed) {
         resolveProcessing();
+      } else if (result.flushCompleted) {
+        // Signals the end of a generation. Subsequent timestamps from the server
+        // will reset offset to 0. Update cumulative time to maintain monotonically
+        // increasing timestamps within the agent turn.
+        this.#cumulativeTime = this.#generationEndTime;
       } else if (result.audioChunk) {
         if (result.audioChunk.timestampInfo) {
           const tsInfo = result.audioChunk.timestampInfo;
           if (tsInfo.wordAlignment) {
             const words = tsInfo.wordAlignment.words || [];
-            const starts = tsInfo.wordAlignment.wordStartTimeSeconds || [];
-            const ends = tsInfo.wordAlignment.wordEndTimeSeconds || [];
+            const rawStarts = tsInfo.wordAlignment.wordStartTimeSeconds || [];
+            const rawEnds = tsInfo.wordAlignment.wordEndTimeSeconds || [];
+
+            // Apply cumulative offset for monotonic timestamps across generations
+            const starts = rawStarts.map((t: number) => t + this.#cumulativeTime);
+            const ends = rawEnds.map((t: number) => t + this.#cumulativeTime);
+
+            // Track generation end time from last word for cumulative offset
+            if (ends.length > 0) {
+              this.#generationEndTime = Math.max(this.#generationEndTime, ends[ends.length - 1]!);
+            }
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (this.#tts as any).emit('alignment', {
@@ -523,8 +544,17 @@ class SynthesizeStream extends tts.SynthesizeStream {
 
           if (tsInfo.characterAlignment) {
             const chars = tsInfo.characterAlignment.characters || [];
-            const starts = tsInfo.characterAlignment.characterStartTimeSeconds || [];
-            const ends = tsInfo.characterAlignment.characterEndTimeSeconds || [];
+            const rawStarts = tsInfo.characterAlignment.characterStartTimeSeconds || [];
+            const rawEnds = tsInfo.characterAlignment.characterEndTimeSeconds || [];
+
+            // Apply cumulative offset for monotonic timestamps across generations
+            const starts = rawStarts.map((t: number) => t + this.#cumulativeTime);
+            const ends = rawEnds.map((t: number) => t + this.#cumulativeTime);
+
+            // Track generation end time from last character for cumulative offset
+            if (ends.length > 0) {
+              this.#generationEndTime = Math.max(this.#generationEndTime, ends[ends.length - 1]!);
+            }
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (this.#tts as any).emit('alignment', {
