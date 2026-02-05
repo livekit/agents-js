@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-google
 
+## 1.0.41
+
+### Patch Changes
+
+- gemini realtime: Log error on invalid model parameters - [#1017](https://github.com/livekit/agents-js/pull/1017) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`1305c301d4d2c1a6f3dc7835fb15ffd85fc345fd`](https://github.com/livekit/agents-js/commit/1305c301d4d2c1a6f3dc7835fb15ffd85fc345fd), [`efa8a4b701a7f115d4246b82bf200a3ece905636`](https://github.com/livekit/agents-js/commit/efa8a4b701a7f115d4246b82bf200a3ece905636), [`8f13d533e00fbba2bce013bf22a059990f3d13c7`](https://github.com/livekit/agents-js/commit/8f13d533e00fbba2bce013bf22a059990f3d13c7)]:
+  - @livekit/agents@1.0.41
+
 ## 1.0.40
 
 ### Patch Changes
