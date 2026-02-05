@@ -22,6 +22,7 @@ import { Task, delay } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
+import { setParticipantSpanAttributes } from './utils.js';
 
 export interface EndOfTurnInfo {
   newTranscript: string;
@@ -68,14 +69,18 @@ export interface AudioRecognitionOptions {
   sttModel?: string;
   /** STT provider name for tracing */
   sttProvider?: string;
-  /** Getter for linked participant info for span attribution */
-  getLinkedParticipant?: () => ParticipantInfo | undefined;
+  /** Getter for linked participant for span attribution */
+  getLinkedParticipant?: () => ParticipantLike | undefined;
 }
 
-export interface ParticipantInfo {
-  id: string;
+/**
+ * Minimal participant shape for span attribution.
+ * Compatible with both `LocalParticipant` and `RemoteParticipant` from `@livekit/rtc-node`.
+ */
+export interface ParticipantLike {
+  sid: string | undefined;
   identity: string;
-  kind?: string | number;
+  kind: number;
 }
 
 export class AudioRecognition {
@@ -90,7 +95,7 @@ export class AudioRecognition {
   private rootSpanContext?: Context;
   private sttModel?: string;
   private sttProvider?: string;
-  private getLinkedParticipant?: () => ParticipantInfo | undefined;
+  private getLinkedParticipant?: () => ParticipantLike | undefined;
 
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
@@ -174,11 +179,7 @@ export class AudioRecognition {
 
     const participant = this.getLinkedParticipant?.();
     if (participant) {
-      this.userTurnSpan.setAttribute(traceTypes.ATTR_PARTICIPANT_ID, participant.id);
-      this.userTurnSpan.setAttribute(traceTypes.ATTR_PARTICIPANT_IDENTITY, participant.identity);
-      if (participant.kind !== undefined) {
-        this.userTurnSpan.setAttribute(traceTypes.ATTR_PARTICIPANT_KIND, String(participant.kind));
-      }
+      setParticipantSpanAttributes(this.userTurnSpan, participant);
     }
 
     if (this.sttModel) {

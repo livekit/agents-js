@@ -62,6 +62,7 @@ import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
+import { setParticipantSpanAttributes } from './utils.js';
 
 export interface VoiceOptions {
   allowInterruptions: boolean;
@@ -701,8 +702,10 @@ export class AgentSession<
           startTime: options?.startTime,
         });
 
-        // TODO(brian): PR4 - Set participant attributes if _roomIO.room.localParticipant is available
-        // (Ref: Python agent_session.py line 1161-1164)
+        const localParticipant = this._roomIO?.localParticipant;
+        if (localParticipant) {
+          setParticipantSpanAttributes(this.agentSpeakingSpan, localParticipant);
+        }
       }
     } else if (this.agentSpeakingSpan !== undefined) {
       // TODO(brian): PR4 - Set ATTR_END_TIME attribute if available
@@ -741,13 +744,7 @@ export class AgentSession<
 
       const linked = this._roomIO?.linkedParticipant;
       if (linked) {
-        this.userSpeakingSpan.setAttributes({
-          [traceTypes.ATTR_PARTICIPANT_ID]: linked.id,
-          [traceTypes.ATTR_PARTICIPANT_IDENTITY]: linked.identity,
-          ...(linked.kind !== undefined
-            ? { [traceTypes.ATTR_PARTICIPANT_KIND]: String(linked.kind) }
-            : {}),
-        });
+        setParticipantSpanAttributes(this.userSpeakingSpan, linked);
       }
     } else if (this.userSpeakingSpan !== undefined) {
       this.userSpeakingSpan.end(lastSpeakingTime);

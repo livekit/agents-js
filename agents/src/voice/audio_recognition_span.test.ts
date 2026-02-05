@@ -126,7 +126,7 @@ describe('AudioRecognition user_turn span parity', () => {
       maxEndpointingDelay: 0,
       sttModel: 'deepgram-nova2',
       sttProvider: 'deepgram',
-      getLinkedParticipant: () => ({ id: 'p1', identity: 'bob', kind: 1 }),
+      getLinkedParticipant: () => ({ sid: 'p1', identity: 'bob', kind: 1 }),
     });
 
     await ar.start();
@@ -145,7 +145,7 @@ describe('AudioRecognition user_turn span parity', () => {
     // creation-time attributes
     expect(userTurn.attributes['lk.participant_id']).toBe('p1');
     expect(userTurn.attributes['lk.participant_identity']).toBe('bob');
-    expect(userTurn.attributes['lk.participant_kind']).toBe('1');
+    expect(userTurn.attributes['lk.participant_kind']).toBe('INGRESS');
     expect(userTurn.attributes['gen_ai.request.model']).toBe('deepgram-nova2');
     expect(userTurn.attributes['gen_ai.provider.name']).toBe('deepgram');
 
@@ -240,7 +240,7 @@ describe('AudioRecognition user_turn span parity', () => {
       maxEndpointingDelay: 0,
       sttModel: 'stt-model',
       sttProvider: 'stt-provider',
-      getLinkedParticipant: () => ({ id: 'p2', identity: 'alice', kind: 2 }),
+      getLinkedParticipant: () => ({ sid: 'p2', identity: 'alice', kind: 2 }),
     });
 
     await ar.start();

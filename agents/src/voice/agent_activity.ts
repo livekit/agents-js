@@ -74,6 +74,7 @@ import {
 } from './generation.js';
 import type { TimedString } from './io.js';
 import { SpeechHandle } from './speech_handle.js';
+import { setParticipantSpanAttributes } from './utils.js';
 
 const speechHandleStorage = new AsyncLocalStorage<SpeechHandle>();
 
@@ -1369,6 +1370,11 @@ export class AgentActivity implements RecognitionHooks {
       span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.textContent || '');
     }
 
+    const localParticipant = this.agentSession._roomIO?.localParticipant;
+    if (localParticipant) {
+      setParticipantSpanAttributes(span, localParticipant);
+    }
+
     speechHandleStorage.enterWith(speechHandle);
 
     const audioOutput = this.agentSession.output.audioEnabled
@@ -1828,6 +1834,11 @@ export class AgentActivity implements RecognitionHooks {
     speechHandle._agentTurnContext = otelContext.active();
 
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
+
+    const localParticipant = this.agentSession._roomIO?.localParticipant;
+    if (localParticipant) {
+      setParticipantSpanAttributes(span, localParticipant);
+    }
 
     speechHandleStorage.enterWith(speechHandle);
 
