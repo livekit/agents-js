@@ -425,7 +425,6 @@ export class AudioRecognition {
 
     switch (ev.type) {
       case SpeechEventType.FINAL_TRANSCRIPT:
-        this.hooks.onFinalTranscript(ev);
         const transcript = ev.alternatives?.[0]?.text;
         const confidence = ev.alternatives?.[0]?.confidence ?? 0;
         this.lastLanguage = ev.alternatives?.[0]?.language;
@@ -434,6 +433,8 @@ export class AudioRecognition {
           // stt final transcript received but no transcript
           return;
         }
+
+        this.hooks.onFinalTranscript(ev);
 
         this.logger.debug(
           {

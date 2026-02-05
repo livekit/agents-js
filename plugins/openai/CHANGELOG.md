@@ -1,5 +1,25 @@
 # @livekit/agents-plugin-openai
 
+## 1.0.42
+
+### Patch Changes
+
+- fix(openai): skip apiKey check when client is provided in LLM and TTS constructors - [#1025](https://github.com/livekit/agents-js/pull/1025) ([@junuMoon](https://github.com/junuMoon))
+
+  When using `LLM.withAzure()` or passing a custom client to `TTS`, the constructors were incorrectly requiring `OPENAI_API_KEY` even though a client was already provided. This fix skips the apiKey validation when a custom client is passed, matching the behavior fixed in RealtimeModel (PR #339).
+
+- Updated dependencies [[`da55c62afc61301a9f3945ac8439995e512b51ea`](https://github.com/livekit/agents-js/commit/da55c62afc61301a9f3945ac8439995e512b51ea)]:
+  - @livekit/agents@1.0.42
+
+## 1.0.41
+
+### Patch Changes
+
+- Implement tts aligned transcripts - [#990](https://github.com/livekit/agents-js/pull/990) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`1305c301d4d2c1a6f3dc7835fb15ffd85fc345fd`](https://github.com/livekit/agents-js/commit/1305c301d4d2c1a6f3dc7835fb15ffd85fc345fd), [`efa8a4b701a7f115d4246b82bf200a3ece905636`](https://github.com/livekit/agents-js/commit/efa8a4b701a7f115d4246b82bf200a3ece905636), [`8f13d533e00fbba2bce013bf22a059990f3d13c7`](https://github.com/livekit/agents-js/commit/8f13d533e00fbba2bce013bf22a059990f3d13c7)]:
+  - @livekit/agents@1.0.41
+
 ## 1.0.40
 
 ### Patch Changes

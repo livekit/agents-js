@@ -66,7 +66,7 @@ export class LLM extends llm.LLM {
 
     this.#opts = { ...defaultLLMOptions, ...opts };
     this.#providerFmt = providerFmt;
-    if (this.#opts.apiKey === undefined) {
+    if (this.#opts.apiKey === undefined && !this.#opts.client) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
 

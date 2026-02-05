@@ -1,5 +1,21 @@
 # @livekit/agents
 
+## 1.0.42
+
+### Patch Changes
+
+- Fix dispatching empty STT final transcript event - [#1024](https://github.com/livekit/agents-js/pull/1024) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.41
+
+### Patch Changes
+
+- fix: dev command now correctly defaults to debug log level - [#1020](https://github.com/livekit/agents-js/pull/1020) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Implement tts aligned transcripts - [#990](https://github.com/livekit/agents-js/pull/990) ([@toubatbrian](https://github.com/toubatbrian))
+
+- increase AudioMixer default timeout in background audio player - [#1021](https://github.com/livekit/agents-js/pull/1021) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.40
 
 ### Patch Changes

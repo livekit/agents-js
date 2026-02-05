@@ -8,6 +8,7 @@ import {
   cli,
   defineAgent,
   inference,
+  initializeLogger,
   log,
   metrics,
   voice,
@@ -27,6 +28,8 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
+    initializeLogger({ pretty: true });
+
     const agent = new voice.Agent({
       instructions: 'You are a helpful assistant. Speak clearly and concisely.',
     });
@@ -42,6 +45,7 @@ export default defineAgent({
       }),
       tts: new inference.TTS({
         model: 'cartesia/sonic-3',
+        voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
       }),
       vad: ctx.proc.userData.vad! as silero.VAD,
       turnDetection: new livekit.turnDetector.MultilingualModel(),
