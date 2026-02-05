@@ -316,6 +316,8 @@ export class AgentActivity implements RecognitionHooks {
         minEndpointingDelay: this.agentSession.options.turnHandling.endpointing.minDelay,
         maxEndpointingDelay: this.agentSession.options.turnHandling.endpointing.maxDelay,
         rootSpanContext: this.agentSession.rootSpanContext,
+        sttModel: this.stt?.model,
+        sttProvider: this.stt?.provider,
       });
       this.audioRecognition.start();
       this.started = true;
@@ -1340,6 +1342,8 @@ export class AgentActivity implements RecognitionHooks {
           audioSource,
           modelSettings,
           replyAbortController,
+          this.tts?.model,
+          this.tts?.provider,
         );
         tasks.push(ttsTask);
 
@@ -1466,6 +1470,8 @@ export class AgentActivity implements RecognitionHooks {
       toolCtx,
       modelSettings,
       replyAbortController,
+      this.llm?.model,
+      this.llm?.provider,
     );
     tasks.push(llmTask);
 
@@ -1482,6 +1488,8 @@ export class AgentActivity implements RecognitionHooks {
         ttsTextInput,
         modelSettings,
         replyAbortController,
+        this.tts?.model,
+        this.tts?.provider,
       );
       tasks.push(ttsTask);
     } else {
@@ -2003,6 +2011,8 @@ export class AgentActivity implements RecognitionHooks {
                 ttsTextInput,
                 modelSettings,
                 abortController,
+                this.tts?.model,
+                this.tts?.provider,
               );
               tasks.push(ttsTask);
               realtimeAudioResult = ttsGenData.audioStream;

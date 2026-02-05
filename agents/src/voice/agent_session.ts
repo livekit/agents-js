@@ -22,6 +22,7 @@ import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
+import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
@@ -69,6 +70,11 @@ import type {
   TurnHandlingConfig,
 } from './turn_config/turn_handling.js';
 import { migrateLegacyOptions } from './turn_config/utils.js';
+
+export interface AgentSessionUsage {
+  /** List of usage summaries, one per model/provider combination. */
+  modelUsage: Array<Partial<ModelUsage>>;
+}
 
 export interface SessionOptions {
   maxToolSteps: number;
@@ -196,6 +202,8 @@ export class AgentSession<
 
   private _interruptionDetection?: InterruptionConfig['mode'];
 
+  private _usageCollector: ModelUsageCollector = new ModelUsageCollector();
+
   /** @internal */
   _recorderIO?: RecorderIO;
 
@@ -276,6 +284,9 @@ export class AgentSession<
   ): boolean {
     const eventData = args[0] as AgentEvent;
     this._recordedEvents.push(eventData);
+    if (event === AgentSessionEventTypes.MetricsCollected) {
+      this._usageCollector.collect((eventData as MetricsCollectedEvent).metrics);
+    }
     return super.emit(event, ...args);
   }
 
@@ -306,6 +317,14 @@ export class AgentSession<
 
   get interruptionDetection() {
     return this._interruptionDetection;
+  }
+
+  /**
+   * Returns usage summaries for this session, one per model/provider combination.
+   */
+  get usage(): AgentSessionUsage {
+    // Skip zero fields for more concise usage display (matches python behavior).
+    return { modelUsage: this._usageCollector.flatten().map(filterZeroValues) };
   }
 
   get useTtsAlignedTranscript(): boolean {
@@ -434,6 +453,8 @@ export class AgentSession<
     if (this.started) {
       return;
     }
+
+    this._usageCollector = new ModelUsageCollector();
 
     let ctx: JobContext | undefined = undefined;
     try {

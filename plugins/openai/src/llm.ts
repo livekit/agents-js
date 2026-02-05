@@ -86,6 +86,15 @@ export class LLM extends llm.LLM {
     return this.#opts.model;
   }
 
+  get provider(): string {
+    try {
+      const url = new URL(this.#client.baseURL);
+      return url.host;
+    } catch {
+      return 'api.openai.com';
+    }
+  }
+
   /**
    * Create a new instance of OpenAI LLM with Azure.
    *

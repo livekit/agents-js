@@ -59,6 +59,10 @@ export interface SpeechData {
 
 export interface RecognitionUsage {
   audioDuration: number;
+  /** Input audio tokens (for token-based STT billing). */
+  inputTokens?: number;
+  /** Output text tokens (for token-based STT billing). */
+  outputTokens?: number;
 }
 
 /** SpeechEvent is a packet of speech-to-text data. */
@@ -121,6 +125,30 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
     return this.#capabilities;
   }
 
+  /**
+   * Get the model name/identifier for this STT instance.
+   *
+   * @returns The model name if available, "unknown" otherwise.
+   *
+   * @remarks
+   * Plugins should override this property to provide their model information.
+   */
+  get model(): string {
+    return 'unknown';
+  }
+
+  /**
+   * Get the provider name for this STT instance.
+   *
+   * @returns The provider name if available, "unknown" otherwise.
+   *
+   * @remarks
+   * Plugins should override this property to provide their provider information.
+   */
+  get provider(): string {
+    return 'unknown';
+  }
+
   /** Receives an audio buffer and returns transcription in the form of a {@link SpeechEvent} */
   async recognize(frame: AudioBuffer, abortSignal?: AbortSignal): Promise<SpeechEvent> {
     const startTime = process.hrtime.bigint();
@@ -134,6 +162,10 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
       label: this.label,
       audioDurationMs: Math.round(calculateAudioDurationSeconds(frame) * 1000),
       streamed: false,
+      metadata: {
+        modelProvider: this.provider,
+        modelName: this.model,
+      },
     });
     return event;
   }
@@ -295,7 +327,13 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         durationMs: 0,
         label: this.#stt.label,
         audioDurationMs: Math.round(event.recognitionUsage!.audioDuration * 1000),
+        inputTokens: event.recognitionUsage!.inputTokens ?? 0,
+        outputTokens: event.recognitionUsage!.outputTokens ?? 0,
         streamed: true,
+        metadata: {
+          modelProvider: this.#stt.provider,
+          modelName: this.#stt.model,
+        },
       };
       this.#stt.emit('metrics_collected', metrics);
     }
