@@ -2,7 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
-import { ROOT_CONTEXT, context as otelContext, trace, type Context, type Span } from '@opentelemetry/api';
+import {
+  type Context,
+  ROOT_CONTEXT,
+  type Span,
+  context as otelContext,
+  trace,
+} from '@opentelemetry/api';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
 import { type ChatContext } from '../llm/chat_context.js';

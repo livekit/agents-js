@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it, vi } from 'vitest';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
-import { AudioRecognition, type _TurnDetector } from './audio_recognition.js';
+import { describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../log.js';
+import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { setTracerProvider } from '../telemetry/index.js';
-import { SpeechEventType, type SpeechEvent } from '../stt/stt.js';
-import { VAD, VADEventType, type VADEvent, type VADStream } from '../vad.js';
+import { VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
+import { AudioRecognition, type _TurnDetector } from './audio_recognition.js';
 
 function setupInMemoryTracing() {
   const exporter = new InMemorySpanExporter();
@@ -258,4 +258,3 @@ describe('AudioRecognition user_turn span parity', () => {
     expect(hooks.onEndOfSpeech).toHaveBeenCalled();
   });
 });
-
