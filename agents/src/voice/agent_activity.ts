@@ -299,6 +299,9 @@ export class AgentActivity implements RecognitionHooks {
         minEndpointingDelay: this.agentSession.options.minEndpointingDelay,
         maxEndpointingDelay: this.agentSession.options.maxEndpointingDelay,
         rootSpanContext: this.agentSession.rootSpanContext,
+        sttModel: this.stt?.label,
+        sttProvider: this.getSttProvider(),
+        getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
       });
       this.audioRecognition.start();
       this.started = true;
@@ -333,6 +336,17 @@ export class AgentActivity implements RecognitionHooks {
 
   get stt(): STT | undefined {
     return this.agent.stt || this.agentSession.stt;
+  }
+
+  private getSttProvider(): string | undefined {
+    const label = this.stt?.label;
+    if (!label) {
+      return undefined;
+    }
+
+    // Heuristic: most labels look like "<provider>-<model>"
+    const [provider] = label.split('-', 1);
+    return provider || label;
   }
 
   get llm(): LLM | RealtimeModel | undefined {

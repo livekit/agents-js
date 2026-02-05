@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
-import type { Context, Span } from '@opentelemetry/api';
+import { ROOT_CONTEXT, context as otelContext, trace, type Context, type Span } from '@opentelemetry/api';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
 import { type ChatContext } from '../llm/chat_context.js';
@@ -58,6 +58,18 @@ export interface AudioRecognitionOptions {
   minEndpointingDelay: number;
   maxEndpointingDelay: number;
   rootSpanContext?: Context;
+  /** STT model name for tracing */
+  sttModel?: string;
+  /** STT provider name for tracing */
+  sttProvider?: string;
+  /** Getter for linked participant info for span attribution */
+  getLinkedParticipant?: () => ParticipantInfo | undefined;
+}
+
+export interface ParticipantInfo {
+  id: string;
+  identity: string;
+  kind?: string | number;
 }
 
 export class AudioRecognition {
@@ -70,6 +82,9 @@ export class AudioRecognition {
   private maxEndpointingDelay: number;
   private lastLanguage?: string;
   private rootSpanContext?: Context;
+  private sttModel?: string;
+  private sttProvider?: string;
+  private getLinkedParticipant?: () => ParticipantInfo | undefined;
 
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
@@ -107,6 +122,9 @@ export class AudioRecognition {
     this.maxEndpointingDelay = opts.maxEndpointingDelay;
     this.lastLanguage = undefined;
     this.rootSpanContext = opts.rootSpanContext;
+    this.sttModel = opts.sttModel;
+    this.sttProvider = opts.sttProvider;
+    this.getLinkedParticipant = opts.getLinkedParticipant;
 
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
@@ -135,6 +153,41 @@ export class AudioRecognition {
     this.sttTask.result.catch((err) => {
       this.logger.error(`Error running STT task: ${err}`);
     });
+  }
+
+  private ensureUserTurnSpan(startTime?: number): Span {
+    if (this.userTurnSpan && this.userTurnSpan.isRecording()) {
+      return this.userTurnSpan;
+    }
+
+    this.userTurnSpan = tracer.startSpan({
+      name: 'user_turn',
+      context: this.rootSpanContext,
+      startTime,
+    });
+
+    const participant = this.getLinkedParticipant?.();
+    if (participant) {
+      this.userTurnSpan.setAttribute(traceTypes.ATTR_PARTICIPANT_ID, participant.id);
+      this.userTurnSpan.setAttribute(traceTypes.ATTR_PARTICIPANT_IDENTITY, participant.identity);
+      if (participant.kind !== undefined) {
+        this.userTurnSpan.setAttribute(traceTypes.ATTR_PARTICIPANT_KIND, String(participant.kind));
+      }
+    }
+
+    if (this.sttModel) {
+      this.userTurnSpan.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.sttModel);
+    }
+    if (this.sttProvider) {
+      this.userTurnSpan.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, this.sttProvider);
+    }
+
+    return this.userTurnSpan;
+  }
+
+  private userTurnContext(span: Span): Context {
+    const base = this.rootSpanContext ?? ROOT_CONTEXT;
+    return trace.setSpan(base, span);
   }
 
   private async onSTTEvent(ev: SpeechEvent) {
@@ -284,19 +337,25 @@ export class AudioRecognition {
         break;
       case SpeechEventType.START_OF_SPEECH:
         if (this.turnDetectionMode !== 'stt') break;
-        this.hooks.onStartOfSpeech({
-          type: VADEventType.START_OF_SPEECH,
-          samplesIndex: 0,
-          timestamp: Date.now(),
-          speechDuration: 0,
-          silenceDuration: 0,
-          frames: [],
-          probability: 0,
-          inferenceDuration: 0,
-          speaking: true,
-          rawAccumulatedSilence: 0,
-          rawAccumulatedSpeech: 0,
-        });
+        {
+          const span = this.ensureUserTurnSpan(Date.now());
+          const ctx = this.userTurnContext(span);
+          otelContext.with(ctx, () => {
+            this.hooks.onStartOfSpeech({
+              type: VADEventType.START_OF_SPEECH,
+              samplesIndex: 0,
+              timestamp: Date.now(),
+              speechDuration: 0,
+              silenceDuration: 0,
+              frames: [],
+              probability: 0,
+              inferenceDuration: 0,
+              speaking: true,
+              rawAccumulatedSilence: 0,
+              rawAccumulatedSpeech: 0,
+            });
+          });
+        }
         this.speaking = true;
         this.lastSpeakingTime = Date.now();
 
@@ -304,19 +363,25 @@ export class AudioRecognition {
         break;
       case SpeechEventType.END_OF_SPEECH:
         if (this.turnDetectionMode !== 'stt') break;
-        this.hooks.onEndOfSpeech({
-          type: VADEventType.END_OF_SPEECH,
-          samplesIndex: 0,
-          timestamp: Date.now(),
-          speechDuration: 0,
-          silenceDuration: 0,
-          frames: [],
-          probability: 0,
-          inferenceDuration: 0,
-          speaking: false,
-          rawAccumulatedSilence: 0,
-          rawAccumulatedSpeech: 0,
-        });
+        {
+          const span = this.ensureUserTurnSpan();
+          const ctx = this.userTurnContext(span);
+          otelContext.with(ctx, () => {
+            this.hooks.onEndOfSpeech({
+              type: VADEventType.END_OF_SPEECH,
+              samplesIndex: 0,
+              timestamp: Date.now(),
+              speechDuration: 0,
+              silenceDuration: 0,
+              frames: [],
+              probability: 0,
+              inferenceDuration: 0,
+              speaking: false,
+              rawAccumulatedSilence: 0,
+              rawAccumulatedSpeech: 0,
+            });
+          });
+        }
         this.speaking = false;
         this.userTurnCommitted = true;
         this.lastSpeakingTime = Date.now();
@@ -361,6 +426,9 @@ export class AudioRecognition {
       async (controller: AbortController) => {
         let endpointingDelay = this.minEndpointingDelay;
 
+        const userTurnSpan = this.ensureUserTurnSpan();
+        const userTurnCtx = this.userTurnContext(userTurnSpan);
+
         if (turnDetector) {
           await tracer.startActiveSpan(
             async (span) => {
@@ -400,7 +468,7 @@ export class AudioRecognition {
             },
             {
               name: 'eou_detection',
-              context: this.rootSpanContext,
+              context: userTurnCtx,
             },
           );
         }
@@ -562,17 +630,13 @@ export class AudioRecognition {
         switch (ev.type) {
           case VADEventType.START_OF_SPEECH:
             this.logger.debug('VAD task: START_OF_SPEECH');
-            this.hooks.onStartOfSpeech(ev);
-            this.speaking = true;
-
-            if (!this.userTurnSpan) {
+            {
               const startTime = Date.now() - ev.speechDuration;
-              this.userTurnSpan = tracer.startSpan({
-                name: 'user_turn',
-                context: this.rootSpanContext,
-                startTime,
-              });
+              const span = this.ensureUserTurnSpan(startTime);
+              const ctx = this.userTurnContext(span);
+              otelContext.with(ctx, () => this.hooks.onStartOfSpeech(ev));
             }
+            this.speaking = true;
 
             // Capture sample rate from the first VAD event if not already set
             if (ev.frames.length > 0 && ev.frames[0]) {
@@ -594,7 +658,11 @@ export class AudioRecognition {
             break;
           case VADEventType.END_OF_SPEECH:
             this.logger.debug('VAD task: END_OF_SPEECH');
-            this.hooks.onEndOfSpeech(ev);
+            {
+              const span = this.ensureUserTurnSpan();
+              const ctx = this.userTurnContext(span);
+              otelContext.with(ctx, () => this.hooks.onEndOfSpeech(ev));
+            }
 
             // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
             this.speaking = false;

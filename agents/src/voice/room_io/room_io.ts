@@ -376,6 +376,27 @@ export class RoomIO {
     return this.participantAvailableFuture.done;
   }
 
+  /**
+   * Returns information about the currently linked participant, if available.
+   * Used for telemetry/span attribution (parity with Python).
+   */
+  get linkedParticipant(): { id: string; identity: string; kind?: number } | undefined {
+    if (!this.participantIdentity) {
+      return undefined;
+    }
+
+    const participant = this.room.remoteParticipants.get(this.participantIdentity);
+    if (!participant) {
+      return undefined;
+    }
+
+    return {
+      id: participant.sid ?? participant.identity,
+      identity: participant.identity,
+      kind: participant.info?.kind,
+    };
+  }
+
   /** Switch to a different participant */
   setParticipant(participantIdentity: string | null) {
     this.logger.debug({ participantIdentity }, 'setting participant');

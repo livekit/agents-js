@@ -20,6 +20,8 @@ export const ATTR_ROOM_NAME = 'lk.room_name';
 export const ATTR_SESSION_OPTIONS = 'lk.session_options';
 
 // assistant turn
+export const ATTR_AGENT_TURN_ID = 'lk.generation_id';
+export const ATTR_AGENT_PARENT_TURN_ID = 'lk.parent_generation_id';
 export const ATTR_USER_INPUT = 'lk.user_input';
 export const ATTR_INSTRUCTIONS = 'lk.instructions';
 export const ATTR_SPEECH_INTERRUPTED = 'lk.interrupted';
@@ -27,10 +29,14 @@ export const ATTR_SPEECH_INTERRUPTED = 'lk.interrupted';
 // llm node
 export const ATTR_CHAT_CTX = 'lk.chat_ctx';
 export const ATTR_FUNCTION_TOOLS = 'lk.function_tools';
+export const ATTR_PROVIDER_TOOLS = 'lk.provider_tools';
+export const ATTR_TOOL_SETS = 'lk.tool_sets';
 export const ATTR_RESPONSE_TEXT = 'lk.response.text';
 export const ATTR_RESPONSE_FUNCTION_CALLS = 'lk.response.function_calls';
+export const ATTR_RESPONSE_TTFT = 'lk.response.ttft';
 
 // function tool
+export const ATTR_FUNCTION_TOOL_ID = 'lk.function_tool.id';
 export const ATTR_FUNCTION_TOOL_NAME = 'lk.function_tool.name';
 export const ATTR_FUNCTION_TOOL_ARGS = 'lk.function_tool.arguments';
 export const ATTR_FUNCTION_TOOL_IS_ERROR = 'lk.function_tool.is_error';
@@ -40,6 +46,7 @@ export const ATTR_FUNCTION_TOOL_OUTPUT = 'lk.function_tool.output';
 export const ATTR_TTS_INPUT_TEXT = 'lk.input_text';
 export const ATTR_TTS_STREAMING = 'lk.tts.streaming';
 export const ATTR_TTS_LABEL = 'lk.tts.label';
+export const ATTR_RESPONSE_TTFB = 'lk.response.ttfb';
 
 // eou detection
 export const ATTR_EOU_PROBABILITY = 'lk.eou.probability';
@@ -56,10 +63,14 @@ export const ATTR_LLM_METRICS = 'lk.llm_metrics';
 export const ATTR_TTS_METRICS = 'lk.tts_metrics';
 export const ATTR_REALTIME_MODEL_METRICS = 'lk.realtime_model_metrics';
 
+// latency span attributes
+export const ATTR_E2E_LATENCY = 'lk.e2e_latency';
+
 // OpenTelemetry GenAI attributes
 // OpenTelemetry specification: https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/
 export const ATTR_GEN_AI_OPERATION_NAME = 'gen_ai.operation.name';
 export const ATTR_GEN_AI_REQUEST_MODEL = 'gen_ai.request.model';
+export const ATTR_GEN_AI_PROVIDER_NAME = 'gen_ai.provider.name';
 export const ATTR_GEN_AI_USAGE_INPUT_TOKENS = 'gen_ai.usage.input_tokens';
 export const ATTR_GEN_AI_USAGE_OUTPUT_TOKENS = 'gen_ai.usage.output_tokens';
 
@@ -86,3 +97,10 @@ export const ATTR_EXCEPTION_MESSAGE = 'exception.message';
 
 // Platform-specific attributes
 export const ATTR_LANGFUSE_COMPLETION_START_TIME = 'langfuse.observation.completion_start_time';
+
+// Adaptive Interruption attributes
+export const ATTR_IS_INTERRUPTION = 'lk.is_interruption';
+export const ATTR_INTERRUPTION_PROBABILITY = 'lk.interruption.probability';
+export const ATTR_INTERRUPTION_TOTAL_DURATION = 'lk.interruption.total_duration';
+export const ATTR_INTERRUPTION_PREDICTION_DURATION = 'lk.interruption.prediction_duration';
+export const ATTR_INTERRUPTION_DETECTION_DELAY = 'lk.interruption.detection_delay';

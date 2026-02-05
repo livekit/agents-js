@@ -131,7 +131,8 @@ export class AgentSession<
   private started = false;
   private userState: UserState = 'listening';
 
-  private roomIO?: RoomIO;
+  /** @internal */
+  _roomIO?: RoomIO;
   private logger = log();
 
   private _chatCtx: ChatContext;
@@ -294,7 +295,7 @@ export class AgentSession<
 
     const tasks: Promise<void>[] = [];
 
-    if (room && !this.roomIO) {
+    if (room && !this._roomIO) {
       // Check for existing input/output configuration and warn if needed
       if (this.input.audio && inputOptions?.audioEnabled !== false) {
         this.logger.warn(
@@ -314,13 +315,13 @@ export class AgentSession<
         );
       }
 
-      this.roomIO = new RoomIO({
+      this._roomIO = new RoomIO({
         agentSession: this,
         room,
         inputOptions,
         outputOptions,
       });
-      this.roomIO.start();
+      this._roomIO.start();
     }
 
     let ctx: JobContext | undefined = undefined;
@@ -700,7 +701,7 @@ export class AgentSession<
           startTime: options?.startTime,
         });
 
-        // TODO(brian): PR4 - Set participant attributes if roomIO.room.localParticipant is available
+        // TODO(brian): PR4 - Set participant attributes if _roomIO.room.localParticipant is available
         // (Ref: Python agent_session.py line 1161-1164)
       }
     } else if (this.agentSpeakingSpan !== undefined) {
@@ -738,8 +739,16 @@ export class AgentSession<
         startTime: lastSpeakingTime,
       });
 
-      // TODO(brian): PR4 - Set participant attributes if roomIO.linkedParticipant is available
-      // (Ref: Python agent_session.py line 1192-1195)
+      const linked = this._roomIO?.linkedParticipant;
+      if (linked) {
+        this.userSpeakingSpan.setAttributes({
+          [traceTypes.ATTR_PARTICIPANT_ID]: linked.id,
+          [traceTypes.ATTR_PARTICIPANT_IDENTITY]: linked.identity,
+          ...(linked.kind !== undefined
+            ? { [traceTypes.ATTR_PARTICIPANT_KIND]: String(linked.kind) }
+            : {}),
+        });
+      }
     } else if (this.userSpeakingSpan !== undefined) {
       this.userSpeakingSpan.end(lastSpeakingTime);
       this.userSpeakingSpan = undefined;
@@ -783,7 +792,7 @@ export class AgentSession<
       return;
     }
 
-    if (this.roomIO && !this.roomIO.isParticipantAvailable) {
+    if (this._roomIO && !this._roomIO.isParticipantAvailable) {
       return;
     }
 
@@ -862,8 +871,8 @@ export class AgentSession<
     this.output.audio = null;
     this.output.transcription = null;
 
-    await this.roomIO?.close();
-    this.roomIO = undefined;
+    await this._roomIO?.close();
+    this._roomIO = undefined;
 
     await this.activity?.close();
     this.activity = undefined;
