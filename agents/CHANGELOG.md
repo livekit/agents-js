@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.42
+
+### Patch Changes
+
+- Fix dispatching empty STT final transcript event - [#1024](https://github.com/livekit/agents-js/pull/1024) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.41
 
 ### Patch Changes
