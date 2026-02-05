@@ -486,7 +486,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     } finally {
       // Ensure we don't leak sockets/tasks across retry attempts.
       if (ws && ws.readyState !== WebSocket.CLOSED) {
-        safeTerminateWebSocket(ws, 'SynthesizeStream.run finally');
+        safeTerminateWebSocket(ws);
       }
     }
   }
@@ -503,19 +503,17 @@ const transientNetworkCodes = new Set([
   'EHOSTUNREACH',
 ]);
 
+const isRecord = (v: unknown): v is Record<string, unknown> => {
+  return v !== null && typeof v === 'object';
+};
+
 const isAggregateErrorLike = (e: unknown): e is { errors: unknown[]; name?: string } => {
-  const anyErr = e as any;
-  return (
-    anyErr !== null &&
-    typeof anyErr === 'object' &&
-    anyErr.name === 'AggregateError' &&
-    Array.isArray(anyErr.errors)
-  );
+  if (!isRecord(e)) return false;
+  return e.name === 'AggregateError' && Array.isArray(e.errors);
 };
 
 const hasErrorCode = (e: unknown, code: string): boolean => {
-  const anyErr = e as any;
-  if (anyErr && typeof anyErr === 'object' && anyErr.code === code) return true;
+  if (isRecord(e) && e.code === code) return true;
   if (isAggregateErrorLike(e)) {
     return e.errors.some((inner) => hasErrorCode(inner, code));
   }
@@ -523,9 +521,8 @@ const hasErrorCode = (e: unknown, code: string): boolean => {
 };
 
 const hasAnyTransientCode = (e: unknown): boolean => {
-  const anyErr = e as any;
-  if (anyErr && typeof anyErr === 'object' && typeof anyErr.code === 'string') {
-    return transientNetworkCodes.has(anyErr.code);
+  if (isRecord(e) && typeof e.code === 'string') {
+    return transientNetworkCodes.has(e.code);
   }
   if (isAggregateErrorLike(e)) {
     return e.errors.some((inner) => hasAnyTransientCode(inner));
@@ -588,7 +585,7 @@ const waitForWsOpen = async ({
   }
 };
 
-const safeTerminateWebSocket = (ws: WebSocket, reason: string) => {
+const safeTerminateWebSocket = (ws: WebSocket) => {
   // `ws` can emit an 'error' event during teardown (especially if CONNECTING).
   // If there is no error listener at that moment, Node will treat it as unhandled and crash the process.
   try {
@@ -624,7 +621,7 @@ const connectCartesiaWebSocket = async ({
       await waitForWsOpen({ ws, timeoutMs, abortSignal });
       return ws;
     } catch (e) {
-      safeTerminateWebSocket(ws, 'connectOnce catch');
+      safeTerminateWebSocket(ws);
       throw e;
     }
   };
