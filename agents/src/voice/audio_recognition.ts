@@ -138,7 +138,7 @@ export class AudioRecognition {
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.interruptionDetection = opts.interruptionDetection;
     this.transcriptBuffer = [];
-    this.isInterruptionEnabled = !!(opts.interruptionDetection || opts.vad);
+    this.isInterruptionEnabled = !!(opts.interruptionDetection && opts.vad);
     this.isAgentSpeaking = false;
 
     if (opts.interruptionDetection) {
