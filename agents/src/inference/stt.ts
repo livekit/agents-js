@@ -121,7 +121,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   #logger = log();
 
   constructor(opts?: {
-    model?: TModel;
+    model?: ModelWithLanguage;
     language?: STTLanguages;
     baseURL?: string;
     encoding?: STTEncoding;
