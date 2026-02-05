@@ -293,10 +293,7 @@ export class AudioRecognition {
         return;
       }
 
-      if (
-        firstAlternative.endTime > 0 &&
-        firstAlternative.endTime + this.inputStartedAt < this.ignoreUserTranscriptUntil
-      ) {
+      if (this.#alternativeEndsBeforeIgnoreWindow(firstAlternative)) {
         emitFromIndex = null;
       } else {
         emitFromIndex = Math.min(emitFromIndex ?? i, i);
@@ -322,6 +319,22 @@ export class AudioRecognition {
     }
   }
 
+  #alternativeEndsBeforeIgnoreWindow(
+    alternative: NonNullable<SpeechEvent['alternatives']>[number],
+  ): boolean {
+    if (
+      this.ignoreUserTranscriptUntil === undefined ||
+      !this.inputStartedAt ||
+      alternative.endTime <= 0
+    ) {
+      return false;
+    }
+
+    // `SpeechData.endTime` is in seconds relative to audio start, while `inputStartedAt` and
+    // `ignoreUserTranscriptUntil` are epoch milliseconds.
+    return alternative.endTime * 1000 + this.inputStartedAt < this.ignoreUserTranscriptUntil;
+  }
+
   private shouldHoldSttEvent(ev: SpeechEvent): boolean {
     if (!this.isInterruptionEnabled) {
       return false;
@@ -341,10 +354,8 @@ export class AudioRecognition {
     const alternative = ev.alternatives[0];
 
     if (
-      this.inputStartedAt &&
       alternative.startTime !== alternative.endTime &&
-      alternative.endTime > 0 &&
-      alternative.endTime + this.inputStartedAt < this.ignoreUserTranscriptUntil
+      this.#alternativeEndsBeforeIgnoreWindow(alternative)
     ) {
       return true;
     }
