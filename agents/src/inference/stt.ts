@@ -273,7 +273,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       params.fallback = {
         models: this.opts.fallback.map((m) => ({
           model: m.model,
-          extra: m.extraKwargs,
+          extra: m.extraKwargs ?? {},
         })),
       };
     }
