@@ -1,11 +1,6 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-/**
- * Ported from Python tests/test_inference_tts_fallback.py
- * Tests for parseTTSModelString, normalizeTTSFallback, and TTS constructor fallback/connOptions.
- */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { initializeLogger } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
