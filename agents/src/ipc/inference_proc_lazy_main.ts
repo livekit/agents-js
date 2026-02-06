@@ -41,6 +41,11 @@ const ORPHANED_TIMEOUT = 15 * 1000;
           await import(v as string).then((m) => {
             // Handle both ESM (m.default is the class) and CJS (m.default.default is the class)
             const Runner = typeof m.default === 'function' ? m.default : m.default?.default;
+            if (typeof Runner !== 'function') {
+              throw new Error(
+                `Unable to load inference runner: Missing or invalid default export in ${v}`,
+              );
+            }
             return new Runner();
           }),
         ];
