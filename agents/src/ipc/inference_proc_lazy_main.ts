@@ -36,7 +36,14 @@ const ORPHANED_TIMEOUT = 15 * 1000;
 
     const runners: { [id: string]: InferenceRunner } = await Promise.all(
       Object.entries(JSON.parse(process.argv[2]!)).map(async ([k, v]) => {
-        return [k, await import(v as string).then((m) => new m.default())];
+        return [
+          k,
+          await import(v as string).then((m) => {
+            // Handle both ESM (m.default is the class) and CJS (m.default.default is the class)
+            const Runner = typeof m.default === 'function' ? m.default : m.default?.default;
+            return new Runner();
+          }),
+        ];
       }),
     ).then(Object.fromEntries);
 
