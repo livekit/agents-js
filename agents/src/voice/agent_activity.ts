@@ -74,6 +74,7 @@ import {
 } from './generation.js';
 import type { TimedString } from './io.js';
 import { SpeechHandle } from './speech_handle.js';
+import { setParticipantSpanAttributes } from './utils.js';
 
 const speechHandleStorage = new AsyncLocalStorage<SpeechHandle>();
 
@@ -299,6 +300,9 @@ export class AgentActivity implements RecognitionHooks {
         minEndpointingDelay: this.agentSession.options.minEndpointingDelay,
         maxEndpointingDelay: this.agentSession.options.maxEndpointingDelay,
         rootSpanContext: this.agentSession.rootSpanContext,
+        sttModel: this.stt?.label,
+        sttProvider: this.getSttProvider(),
+        getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
       });
       this.audioRecognition.start();
       this.started = true;
@@ -333,6 +337,17 @@ export class AgentActivity implements RecognitionHooks {
 
   get stt(): STT | undefined {
     return this.agent.stt || this.agentSession.stt;
+  }
+
+  private getSttProvider(): string | undefined {
+    const label = this.stt?.label;
+    if (!label) {
+      return undefined;
+    }
+
+    // Heuristic: most labels look like "<provider>-<model>"
+    const [provider] = label.split('-', 1);
+    return provider || label;
   }
 
   get llm(): LLM | RealtimeModel | undefined {
@@ -1355,6 +1370,11 @@ export class AgentActivity implements RecognitionHooks {
       span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.textContent || '');
     }
 
+    const localParticipant = this.agentSession._roomIO?.localParticipant;
+    if (localParticipant) {
+      setParticipantSpanAttributes(span, localParticipant);
+    }
+
     speechHandleStorage.enterWith(speechHandle);
 
     const audioOutput = this.agentSession.output.audioEnabled
@@ -1814,6 +1834,11 @@ export class AgentActivity implements RecognitionHooks {
     speechHandle._agentTurnContext = otelContext.active();
 
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
+
+    const localParticipant = this.agentSession._roomIO?.localParticipant;
+    if (localParticipant) {
+      setParticipantSpanAttributes(span, localParticipant);
+    }
 
     speechHandleStorage.enterWith(speechHandle);
 

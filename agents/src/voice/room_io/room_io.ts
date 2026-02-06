@@ -376,6 +376,18 @@ export class RoomIO {
     return this.participantAvailableFuture.done;
   }
 
+  get linkedParticipant(): RemoteParticipant | undefined {
+    if (!this.isParticipantAvailable) {
+      return undefined;
+    }
+
+    return this.participantAvailableFuture.result;
+  }
+
+  get localParticipant(): Participant | undefined {
+    return this.room.localParticipant ?? undefined;
+  }
+
   /** Switch to a different participant */
   setParticipant(participantIdentity: string | null) {
     this.logger.debug({ participantIdentity }, 'setting participant');
