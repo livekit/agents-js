@@ -239,7 +239,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     language?: STTLanguages | string;
     connOptions?: APIConnectOptions;
   }): SpeechStream<TModel> {
-    const { language, connOptions = DEFAULT_API_CONNECT_OPTIONS } = options || {};
+    const { language, connOptions = this.opts.connOptions ?? DEFAULT_API_CONNECT_OPTIONS } =
+      options || {};
     const streamOpts = {
       ...this.opts,
       language: language ?? this.opts.language,

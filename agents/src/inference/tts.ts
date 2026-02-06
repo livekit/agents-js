@@ -267,7 +267,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream<TModel> {
-    const { connOptions = DEFAULT_API_CONNECT_OPTIONS } = options || {};
+    const { connOptions = this.opts.connOptions ?? DEFAULT_API_CONNECT_OPTIONS } = options || {};
     const stream = new SynthesizeStream(this, { ...this.opts }, connOptions);
     this.streams.add(stream);
     return stream;
