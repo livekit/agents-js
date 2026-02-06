@@ -93,6 +93,43 @@ export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
       ? AssemblyAIOptions
       : Record<string, unknown>;
 
+/** A fallback model with optional extra configuration. Extra fields are passed through to the provider. */
+export interface STTFallbackModel {
+  /** Model name (e.g. "deepgram/nova-3", "assemblyai/universal-streaming", "cartesia/ink-whisper"). */
+  model: string;
+  /** Extra configuration for the model. */
+  extraKwargs?: Record<string, unknown>;
+}
+
+export type STTFallbackModelType = STTFallbackModel | string;
+
+/** Parse a model string into [model, language]. Language is undefined if not specified. */
+export function parseSTTModelString(model: string): [string, string | undefined] {
+  const idx = model.lastIndexOf(':');
+  if (idx !== -1) {
+    return [model.slice(0, idx), model.slice(idx + 1)];
+  }
+  return [model, undefined];
+}
+
+/** Normalize a single or list of FallbackModelType into STTFallbackModel[]. */
+export function normalizeSTTFallback(
+  fallback: STTFallbackModelType | STTFallbackModelType[],
+): STTFallbackModel[] {
+  const makeFallback = (model: STTFallbackModelType): STTFallbackModel => {
+    if (typeof model === 'string') {
+      const [name] = parseSTTModelString(model);
+      return { model: name };
+    }
+    return model;
+  };
+
+  if (Array.isArray(fallback)) {
+    return fallback.map(makeFallback);
+  }
+  return [makeFallback(fallback)];
+}
+
 export type STTEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
@@ -109,6 +146,8 @@ export interface InferenceSTTOptions<TModel extends STTModels> {
   apiKey: string;
   apiSecret: string;
   modelOptions: STTOptions<TModel>;
+  fallback?: STTFallbackModel[];
+  connOptions?: APIConnectOptions;
 }
 
 /**
@@ -129,6 +168,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     apiKey?: string;
     apiSecret?: string;
     modelOptions?: STTOptions<TModel>;
+    fallback?: STTFallbackModelType | STTFallbackModelType[];
+    connOptions?: APIConnectOptions;
   }) {
     super({ streaming: true, interimResults: true, alignedTranscript: 'word' });
 
@@ -141,6 +182,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       apiKey,
       apiSecret,
       modelOptions = {} as STTOptions<TModel>,
+      fallback,
+      connOptions,
     } = opts || {};
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
@@ -155,6 +198,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
     }
 
+    const normalizedFallback = fallback ? normalizeSTTFallback(fallback) : undefined;
+
     this.opts = {
       model,
       language,
@@ -164,6 +209,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
       modelOptions,
+      fallback: normalizedFallback,
+      connOptions: connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
     };
   }
 
@@ -172,11 +219,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   }
 
   static fromModelString(modelString: string): STT<AnyString> {
-    if (modelString.includes(':')) {
-      const [model, language] = modelString.split(':') as [AnyString, STTLanguages];
-      return new STT({ model, language });
-    }
-    return new STT({ model: modelString });
+    const [model, language] = parseSTTModelString(modelString);
+    return new STT({ model, language });
   }
 
   protected async _recognize(_: AudioBuffer): Promise<SpeechEvent> {
@@ -195,7 +239,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     language?: STTLanguages | string;
     connOptions?: APIConnectOptions;
   }): SpeechStream<TModel> {
-    const { language, connOptions = DEFAULT_API_CONNECT_OPTIONS } = options || {};
+    const { language, connOptions = this.opts.connOptions ?? DEFAULT_API_CONNECT_OPTIONS } =
+      options || {};
     const streamOpts = {
       ...this.opts,
       language: language ?? this.opts.language,
@@ -222,6 +267,22 @@ export class STT<TModel extends STTModels> extends BaseSTT {
 
     if (this.opts.language) {
       (params.settings as Record<string, unknown>).language = this.opts.language;
+    }
+
+    if (this.opts.fallback?.length) {
+      params.fallback = {
+        models: this.opts.fallback.map((m) => ({
+          model: m.model,
+          extra: m.extraKwargs ?? {},
+        })),
+      };
+    }
+
+    if (this.opts.connOptions) {
+      params.connection = {
+        timeout: this.opts.connOptions.timeoutMs / 1000,
+        retries: this.opts.connOptions.maxRetry,
+      };
     }
 
     let baseURL = this.opts.baseURL;
