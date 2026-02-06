@@ -42,7 +42,6 @@ export default defineAgent({
     const session = new voice.AgentSession({
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
-      // Ref: Python inference/stt.py lines 225-226 - fallback and conn_options on STT constructor
       stt: new inference.STT({
         model: 'deepgram/nova-3',
         language: 'en',
@@ -54,7 +53,6 @@ export default defineAgent({
       llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
       // Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
       // See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
-      // Ref: Python inference/tts.py lines 250-251 - fallback and conn_options on TTS constructor
       tts: new inference.TTS({
         model: 'cartesia/sonic-3',
         voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',

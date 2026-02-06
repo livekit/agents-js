@@ -16,7 +16,6 @@ beforeAll(() => {
 });
 
 /** Helper to create TTS with required credentials. */
-// Ref: Python tests/test_inference_tts_fallback.py lines 14-23 - _make_tts helper
 function makeTts(overrides: Record<string, unknown> = {}) {
   const defaults = {
     model: 'cartesia/sonic' as const,
@@ -27,7 +26,6 @@ function makeTts(overrides: Record<string, unknown> = {}) {
   return new TTS({ ...defaults, ...overrides });
 }
 
-// Ref: Python tests/test_inference_tts_fallback.py lines 26-72 - TestParseModelString
 describe('parseTTSModelString', () => {
   it('simple model without voice', () => {
     const [model, voice] = parseTTSModelString('cartesia');
@@ -72,7 +70,6 @@ describe('parseTTSModelString', () => {
   });
 });
 
-// Ref: Python tests/test_inference_tts_fallback.py lines 74-173 - TestNormalizeFallback
 describe('normalizeTTSFallback', () => {
   it('single string model', () => {
     const result = normalizeTTSFallback('cartesia/sonic');
@@ -172,7 +169,6 @@ describe('normalizeTTSFallback', () => {
   });
 });
 
-// Ref: Python tests/test_inference_tts_fallback.py (constructor tests follow same pattern as STT)
 describe('TTS constructor fallback and connOptions', () => {
   it('fallback not given defaults to undefined', () => {
     const tts = makeTts();

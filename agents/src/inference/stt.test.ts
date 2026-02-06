@@ -16,7 +16,6 @@ beforeAll(() => {
 });
 
 /** Helper to create STT with required credentials. */
-// Ref: Python tests/test_inference_stt_fallback.py lines 19-28 - _make_stt helper
 function makeStt(overrides: Record<string, unknown> = {}) {
   const defaults = {
     model: 'deepgram' as const,
@@ -27,7 +26,6 @@ function makeStt(overrides: Record<string, unknown> = {}) {
   return new STT({ ...defaults, ...overrides });
 }
 
-// Ref: Python tests/test_inference_stt_fallback.py lines 31-83 - TestParseModelString
 describe('parseSTTModelString', () => {
   it('simple model without language', () => {
     const [model, language] = parseSTTModelString('deepgram');
@@ -78,7 +76,6 @@ describe('parseSTTModelString', () => {
   });
 });
 
-// Ref: Python tests/test_inference_stt_fallback.py lines 85-173 - TestNormalizeFallback
 describe('normalizeSTTFallback', () => {
   it('single string model', () => {
     const result = normalizeSTTFallback('deepgram/nova-3');
@@ -158,7 +155,6 @@ describe('normalizeSTTFallback', () => {
   });
 });
 
-// Ref: Python tests/test_inference_stt_fallback.py lines 175-263 - TestSTTConstructorFallbackAndConnectOptions
 describe('STT constructor fallback and connOptions', () => {
   it('fallback not given defaults to undefined', () => {
     const stt = makeStt();
