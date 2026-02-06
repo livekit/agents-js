@@ -49,15 +49,22 @@ export enum SpeechEventType {
 
 /** SpeechData contains metadata about this {@link SpeechEvent}. */
 export interface SpeechData {
+  /** Language code of the speech. */
   language: string;
+  /** Transcribed text. */
   text: string;
+  /** Start time of the speech segment in seconds. */
   startTime: number;
+  /** End time of the speech segment in seconds. */
   endTime: number;
+  /** Confidence score of the transcription (0-1). */
   confidence: number;
+  /** Word-level timing information. */
   words?: TimedString[];
 }
 
 export interface RecognitionUsage {
+  /** Duration of the audio that was recognized in seconds. */
   audioDuration: number;
 }
 

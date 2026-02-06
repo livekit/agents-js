@@ -13,11 +13,17 @@ import { AsyncIterableQueue, Future, shortuuid } from './utils.js';
 const STANDARD_SPEECH_RATE = 3830;
 
 export interface TextSyncOptions {
+  /** Language code for transcription. */
   language: string;
+  /** Speech speed multiplier. */
   speed: number;
+  /** Delay between sentences in milliseconds. */
   newSentenceDelay: number;
+  /** Tokenizer for splitting text into sentences. */
   sentenceTokenizer: SentenceTokenizer;
+  /** Function to hyphenate words. */
   hyphenateWord: (word: string) => string[];
+  /** Function to split text into words with positions. */
   splitWords: (words: string) => [string, number, number][];
 }
 

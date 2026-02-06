@@ -30,9 +30,9 @@ export interface VADEvent {
   samplesIndex: number;
   /** Timestamp when the event was fired. */
   timestamp: number;
-  /** Duration of the speech segment. */
+  /** Duration of the speech segment in seconds. */
   speechDuration: number;
-  /** Duration of the silence segment. */
+  /** Duration of the silence segment in seconds. */
   silenceDuration: number;
   /**
    * List of audio frames associated with the speech.
@@ -56,6 +56,7 @@ export interface VADEvent {
 }
 
 export interface VADCapabilities {
+  /** Update interval for VAD in seconds. */
   updateInterval: number;
 }
 
