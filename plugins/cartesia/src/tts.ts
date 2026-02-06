@@ -78,6 +78,14 @@ export class TTS extends tts.TTS {
   #opts: TTSOptions;
   label = 'cartesia.TTS';
 
+  get model(): string {
+    return this.#opts.model;
+  }
+
+  get provider(): string {
+    return 'Cartesia';
+  }
+
   constructor(opts: Partial<TTSOptions> = {}) {
     const resolvedOpts = {
       ...defaultTTSOptions,

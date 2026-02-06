@@ -66,6 +66,18 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
   }
 
   /**
+   * Get the provider name for this LLM instance.
+   *
+   * @returns The provider name if available, "unknown" otherwise.
+   *
+   * @remarks
+   * Plugins should override this property to provide their provider information.
+   */
+  get provider(): string {
+    return 'unknown';
+  }
+
+  /**
    * Returns a {@link LLMStream} that can be used to push text and receive LLM responses.
    */
   abstract chat({
@@ -248,6 +260,10 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         }
         return (usage?.completionTokens || 0) / (durationMs / 1000);
       })(),
+      metadata: {
+        modelProvider: this.#llm.provider,
+        modelName: this.#llm.model,
+      },
     };
 
     if (this.#llmRequestSpan) {

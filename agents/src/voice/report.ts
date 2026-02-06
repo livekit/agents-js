@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatContext } from '../llm/chat_context.js';
+import { type ModelUsage, filterZeroValues } from '../metrics/model_usage.js';
 import type { VoiceOptions } from './agent_session.js';
 import type { AgentEvent } from './events.js';
 
@@ -23,6 +24,8 @@ export interface SessionReport {
   audioRecordingStartedAt?: number;
   /** Duration of the session in milliseconds */
   duration?: number;
+  /** Usage summaries for the session, one per model/provider combination */
+  modelUsage?: ModelUsage[];
 }
 
 export interface SessionReportOptions {
@@ -41,6 +44,8 @@ export interface SessionReportOptions {
   audioRecordingPath?: string;
   /** Timestamp when the audio recording started (milliseconds) */
   audioRecordingStartedAt?: number;
+  /** Usage summaries for the session, one per model/provider combination */
+  modelUsage?: ModelUsage[];
 }
 
 export function createSessionReport(opts: SessionReportOptions): SessionReport {
@@ -61,6 +66,7 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
     audioRecordingStartedAt,
     duration:
       audioRecordingStartedAt !== undefined ? timestamp - audioRecordingStartedAt : undefined,
+    modelUsage: opts.modelUsage,
   };
 }
 
@@ -96,5 +102,6 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
     chat_history: report.chatHistory.toJSON({ excludeTimestamp: false }),
     enable_user_data_training: report.enableRecording,
     timestamp: report.timestamp,
+    usage: report.modelUsage ? report.modelUsage.map(filterZeroValues) : null,
   };
 }

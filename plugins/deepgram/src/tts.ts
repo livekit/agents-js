@@ -46,6 +46,14 @@ export class TTS extends tts.TTS {
   private opts: TTSOptions;
   label = 'deepgram.TTS';
 
+  get model(): string {
+    return this.opts.model;
+  }
+
+  get provider(): string {
+    return 'Deepgram';
+  }
+
   constructor(opts: Partial<TTSOptions> = {}) {
     super(opts.sampleRate || defaultTTSOptions.sampleRate, NUM_CHANNELS, {
       streaming: opts.capabilities?.streaming ?? defaultTTSOptions.capabilities.streaming,

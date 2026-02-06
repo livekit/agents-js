@@ -7,6 +7,7 @@ import {
   WorkerOptions,
   cli,
   defineAgent,
+  log,
   metrics,
   voice,
 } from '@livekit/agents';
@@ -26,6 +27,7 @@ export default defineAgent({
         "You are a helpful assistant, you can hear the user's message and respond to it in 1-2 short sentences.",
     });
 
+    const logger = log();
     // Create TTS instance
     const tts = new inworld.TTS({
       timestampType: 'WORD',
@@ -96,11 +98,19 @@ export default defineAgent({
       }
     });
 
-    const usageCollector = new metrics.UsageCollector();
-
+    // Log metrics as they are emitted (session.usage is automatically collected)
     session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
       metrics.logMetrics(ev.metrics);
-      usageCollector.collect(ev.metrics);
+    });
+
+    // Log usage summary when job shuts down
+    ctx.addShutdownCallback(async () => {
+      logger.info(
+        {
+          usage: session.usage,
+        },
+        'Session usage summary',
+      );
     });
 
     await session.start({
