@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 import { beforeAll, describe, expect, it } from 'vitest';
 import { initializeLogger } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
