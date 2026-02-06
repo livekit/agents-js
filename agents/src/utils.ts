@@ -127,6 +127,7 @@ export class Future<T = void> {
   #done: boolean = false;
   #rejected: boolean = false;
   #result: T | undefined = undefined;
+  #error: Error | undefined = undefined;
 
   constructor() {
     this.#await = new Promise<T>((resolve, reject) => {
@@ -147,6 +148,11 @@ export class Future<T = void> {
     if (!this.#done) {
       throw new Error('Future is not done');
     }
+
+    if (this.#rejected) {
+      throw this.#error;
+    }
+
     return this.#result!;
   }
 
@@ -164,6 +170,7 @@ export class Future<T = void> {
   reject(error: Error) {
     this.#done = true;
     this.#rejected = true;
+    this.#error = error;
     this.#rejectPromise(error);
   }
 }
