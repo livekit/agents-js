@@ -93,6 +93,47 @@ export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
       ? AssemblyAIOptions
       : Record<string, unknown>;
 
+// Ref: Python inference/stt.py lines 73-86 - FallbackModel TypedDict
+/** A fallback model with optional extra configuration. Extra fields are passed through to the provider. */
+export interface STTFallbackModel {
+  /** Model name (e.g. "deepgram/nova-3", "assemblyai/universal-streaming", "cartesia/ink-whisper"). */
+  model: string;
+  /** Extra configuration for the model. */
+  extraKwargs?: Record<string, unknown>;
+}
+
+// Ref: Python inference/stt.py line 89 - FallbackModelType
+export type STTFallbackModelType = STTFallbackModel | string;
+
+// Ref: Python inference/stt.py lines 92-97 - _parse_model_string
+/** Parse a model string into [model, language]. Language is undefined if not specified. */
+export function parseSTTModelString(model: string): [string, string | undefined] {
+  const idx = model.lastIndexOf(':');
+  if (idx !== -1) {
+    return [model.slice(0, idx), model.slice(idx + 1)];
+  }
+  return [model, undefined];
+}
+
+// Ref: Python inference/stt.py lines 100-112 - _normalize_fallback
+/** Normalize a single or list of FallbackModelType into STTFallbackModel[]. */
+export function normalizeSTTFallback(
+  fallback: STTFallbackModelType | STTFallbackModelType[],
+): STTFallbackModel[] {
+  const makeFallback = (model: STTFallbackModelType): STTFallbackModel => {
+    if (typeof model === 'string') {
+      const [name] = parseSTTModelString(model);
+      return { model: name };
+    }
+    return model;
+  };
+
+  if (Array.isArray(fallback)) {
+    return fallback.map(makeFallback);
+  }
+  return [makeFallback(fallback)];
+}
+
 export type STTEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
@@ -100,6 +141,7 @@ const DEFAULT_SAMPLE_RATE = 16000;
 const DEFAULT_BASE_URL = 'wss://agent-gateway.livekit.cloud/v1';
 const DEFAULT_CANCEL_TIMEOUT = 5000;
 
+// Ref: Python inference/stt.py lines 128-139 - STTOptions dataclass
 export interface InferenceSTTOptions<TModel extends STTModels> {
   model?: TModel;
   language?: STTLanguages;
@@ -109,6 +151,10 @@ export interface InferenceSTTOptions<TModel extends STTModels> {
   apiKey: string;
   apiSecret: string;
   modelOptions: STTOptions<TModel>;
+  /** Ref: Python inference/stt.py line 138 - fallback field in STTOptions */
+  fallback?: STTFallbackModel[];
+  /** Ref: Python inference/stt.py line 139 - conn_options field in STTOptions */
+  connOptions?: APIConnectOptions;
 }
 
 /**
@@ -120,6 +166,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
 
   #logger = log();
 
+  // Ref: Python inference/stt.py lines 211-289 - STT.__init__ with fallback/conn_options
   constructor(opts?: {
     model?: TModel;
     language?: STTLanguages;
@@ -129,6 +176,10 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     apiKey?: string;
     apiSecret?: string;
     modelOptions?: STTOptions<TModel>;
+    /** Ref: Python inference/stt.py line 225 - fallback constructor param */
+    fallback?: STTFallbackModelType | STTFallbackModelType[];
+    /** Ref: Python inference/stt.py line 226 - conn_options constructor param */
+    connOptions?: APIConnectOptions;
   }) {
     super({ streaming: true, interimResults: true, alignedTranscript: 'word' });
 
@@ -141,6 +192,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       apiKey,
       apiSecret,
       modelOptions = {} as STTOptions<TModel>,
+      fallback,
+      connOptions,
     } = opts || {};
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
@@ -155,6 +208,10 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
     }
 
+    // Ref: Python inference/stt.py lines 274-276 - fallback normalization
+    const normalizedFallback = fallback ? normalizeSTTFallback(fallback) : undefined;
+
+    // Ref: Python inference/stt.py lines 278-289 - opts storage with fallback + conn_options
     this.opts = {
       model,
       language,
@@ -164,6 +221,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
       modelOptions,
+      fallback: normalizedFallback,
+      connOptions: connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
     };
   }
 
@@ -171,12 +230,10 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     return 'inference.STT';
   }
 
+  // Ref: Python inference/stt.py lines 294-305 - from_model_string using _parse_model_string
   static fromModelString(modelString: string): STT<AnyString> {
-    if (modelString.includes(':')) {
-      const [model, language] = modelString.split(':') as [AnyString, STTLanguages];
-      return new STT({ model, language });
-    }
-    return new STT({ model: modelString });
+    const [model, language] = parseSTTModelString(modelString);
+    return new STT({ model, language });
   }
 
   protected async _recognize(_: AudioBuffer): Promise<SpeechEvent> {
@@ -207,6 +264,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     return stream;
   }
 
+  // Ref: Python inference/stt.py lines 515-573 - _connect_ws
   async connectWs(timeout: number): Promise<WebSocket> {
     const params = {
       settings: {
@@ -222,6 +280,24 @@ export class STT<TModel extends STTModels> extends BaseSTT {
 
     if (this.opts.language) {
       (params.settings as Record<string, unknown>).language = this.opts.language;
+    }
+
+    // Ref: Python inference/stt.py lines 531-536 - fallback params in session.create
+    if (this.opts.fallback?.length) {
+      params.fallback = {
+        models: this.opts.fallback.map((m) => ({
+          model: m.model,
+          extra: m.extraKwargs,
+        })),
+      };
+    }
+
+    // Ref: Python inference/stt.py lines 538-542 - connection params in session.create
+    if (this.opts.connOptions) {
+      params.connection = {
+        timeout: this.opts.connOptions.timeoutMs / 1000,
+        retries: this.opts.connOptions.maxRetry,
+      };
     }
 
     let baseURL = this.opts.baseURL;

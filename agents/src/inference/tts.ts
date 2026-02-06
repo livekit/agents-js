@@ -16,7 +16,6 @@ import { Event, Future, Task, cancelAndWait, combineSignals, shortuuid } from '.
 import {
   type TtsClientEvent,
   type TtsServerEvent,
-  type TtsSessionCreateEvent,
   ttsClientEventSchema,
   ttsServerEventSchema,
 } from './api_protos.js';
@@ -90,6 +89,49 @@ export type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels
           ? InworldOptions
           : Record<string, unknown>;
 
+// Ref: Python inference/tts.py lines 49-60 - _parse_model_string
+/** Parse a model string into [model, voice]. Voice is undefined if not specified. */
+export function parseTTSModelString(model: string): [string, string | undefined] {
+  const idx = model.lastIndexOf(':');
+  if (idx !== -1) {
+    return [model.slice(0, idx), model.slice(idx + 1)];
+  }
+  return [model, undefined];
+}
+
+// Ref: Python inference/tts.py lines 63-79 - FallbackModel TypedDict
+/** A fallback model with optional extra configuration. Extra fields are passed through to the provider. */
+export interface TTSFallbackModel {
+  /** Model name (e.g. "cartesia/sonic", "elevenlabs/eleven_flash_v2", "rime/arcana"). */
+  model: string;
+  /** Voice to use for the model. */
+  voice: string;
+  /** Extra configuration for the model. */
+  extraKwargs?: Record<string, unknown>;
+}
+
+// Ref: Python inference/tts.py line 82 - FallbackModelType
+export type TTSFallbackModelType = TTSFallbackModel | string;
+
+// Ref: Python inference/tts.py lines 85-97 - _normalize_fallback
+/** Normalize a single or list of FallbackModelType into TTSFallbackModel[]. */
+export function normalizeTTSFallback(
+  fallback: TTSFallbackModelType | TTSFallbackModelType[],
+): TTSFallbackModel[] {
+  const makeFallback = (model: TTSFallbackModelType): TTSFallbackModel => {
+    if (typeof model === 'string') {
+      const [name, voice] = parseTTSModelString(model);
+      return { model: name, voice: voice ?? '' };
+    }
+    return model;
+  };
+
+  if (Array.isArray(fallback)) {
+    return fallback.map(makeFallback);
+  }
+  return [makeFallback(fallback)];
+}
+
 type TTSEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: TTSEncoding = 'pcm_s16le';
@@ -98,6 +140,7 @@ const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 const NUM_CHANNELS = 1;
 const DEFAULT_LANGUAGE = 'en';
 
+// Ref: Python inference/tts.py lines 124-136 - _TTSOptions dataclass
 export interface InferenceTTSOptions<TModel extends TTSModels> {
   model?: TModel;
   voice?: string;
@@ -108,6 +151,10 @@ export interface InferenceTTSOptions<TModel extends TTSModels> {
   apiKey: string;
   apiSecret: string;
   modelOptions: TTSOptions<TModel>;
+  /** Ref: Python inference/tts.py line 135 - fallback field in _TTSOptions */
+  fallback?: TTSFallbackModel[];
+  /** Ref: Python inference/tts.py line 136 - conn_options field in _TTSOptions */
+  connOptions?: APIConnectOptions;
 }
 
 /**
@@ -120,6 +167,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
 
   #logger = log();
 
+  // Ref: Python inference/tts.py lines 235-323 - TTS.__init__ with fallback/conn_options
   constructor(opts: {
     model: TModel;
     voice?: string;
@@ -130,6 +178,10 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     apiKey?: string;
     apiSecret?: string;
     modelOptions?: TTSOptions<TModel>;
+    /** Ref: Python inference/tts.py line 250 - fallback constructor param */
+    fallback?: TTSFallbackModelType | TTSFallbackModelType[];
+    /** Ref: Python inference/tts.py line 251 - conn_options constructor param */
+    connOptions?: APIConnectOptions;
   }) {
     const sampleRate = opts?.sampleRate ?? DEFAULT_SAMPLE_RATE;
     super(sampleRate, 1, { streaming: true });
@@ -143,6 +195,8 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       apiKey,
       apiSecret,
       modelOptions = {} as TTSOptions<TModel>,
+      fallback,
+      connOptions,
     } = opts || {};
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
@@ -176,6 +230,10 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       }
     }
 
+    // Ref: Python inference/tts.py lines 299-301 - fallback normalization
+    const normalizedFallback = fallback ? normalizeTTSFallback(fallback) : undefined;
+
+    // Ref: Python inference/tts.py lines 303-315 - opts storage with fallback + conn_options
     this.opts = {
       model: nextModel,
       voice: nextVoice,
@@ -186,6 +244,8 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
       modelOptions,
+      fallback: normalizedFallback,
+      connOptions: connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
     };
 
     // Initialize connection pool
@@ -202,12 +262,10 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     return 'inference.TTS';
   }
 
+  // Ref: Python inference/tts.py lines 325-336 - from_model_string using _parse_model_string
   static fromModelString(modelString: string): TTS<AnyString> {
-    if (modelString.includes(':')) {
-      const [model, voice] = modelString.split(':') as [TTSModels, string];
-      return new TTS({ model, voice });
-    }
-    return new TTS({ model: modelString });
+    const [model, voice] = parseTTSModelString(modelString);
+    return new TTS({ model, voice: voice || undefined });
   }
 
   updateOptions(opts: Partial<Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language'>>) {
@@ -228,6 +286,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     return stream;
   }
 
+  // Ref: Python inference/tts.py lines 346-406 - _connect_ws
   async connectWs(timeout: number): Promise<WebSocket> {
     let baseURL = this.opts.baseURL;
     if (baseURL.startsWith('http://') || baseURL.startsWith('https://')) {
@@ -243,11 +302,30 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       sample_rate: String(this.opts.sampleRate),
       encoding: this.opts.encoding,
       extra: this.opts.modelOptions,
-    } as TtsSessionCreateEvent;
+    } as Record<string, unknown>;
 
-    if (this.opts.voice) params.voice = this.opts.voice;
-    if (this.opts.model) params.model = this.opts.model;
-    if (this.opts.language) params.language = this.opts.language;
+    if (this.opts.voice) (params as Record<string, unknown>).voice = this.opts.voice;
+    if (this.opts.model) (params as Record<string, unknown>).model = this.opts.model;
+    if (this.opts.language) (params as Record<string, unknown>).language = this.opts.language;
+
+    // Ref: Python inference/tts.py lines 383-392 - fallback params in session.create
+    if (this.opts.fallback?.length) {
+      params.fallback = {
+        models: this.opts.fallback.map((m) => ({
+          model: m.model,
+          voice: m.voice,
+          extra: m.extraKwargs ?? {},
+        })),
+      };
+    }
+
+    // Ref: Python inference/tts.py lines 394-398 - connection params in session.create
+    if (this.opts.connOptions) {
+      params.connection = {
+        timeout: this.opts.connOptions.timeoutMs / 1000,
+        retries: this.opts.connOptions.maxRetry,
+      };
+    }
 
     this.#logger.debug({ url }, 'inference.TTS creating new websocket connection (pool miss)');
     const socket = await connectWs(url, headers, timeout);
