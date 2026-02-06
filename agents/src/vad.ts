@@ -56,7 +56,7 @@ export interface VADEvent {
 }
 
 export interface VADCapabilities {
-  /** Update interval for VAD in seconds. */
+  /** Duration of each VAD inference window in milliseconds. Used to batch metrics emissions to roughly once per second. */
   updateInterval: number;
 }
 
@@ -155,7 +155,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
       switch (value.type) {
         case VADEventType.START_OF_SPEECH:
           inferenceCount++;
-          if (inferenceCount >= 1 / this.#vad.capabilities.updateInterval) {
+          if (inferenceCount >= 1000 / this.#vad.capabilities.updateInterval) {
             this.#vad.emit('metrics_collected', {
               type: 'vad_metrics',
               timestamp: Date.now(),
