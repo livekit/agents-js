@@ -42,29 +42,46 @@ export type AssemblyaiModels =
 export type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
 
 export interface CartesiaOptions {
-  min_volume?: number; // default: not specified
-  max_silence_duration_secs?: number; // default: not specified
+  /** Minimum volume threshold. Default: not specified. */
+  min_volume?: number;
+  /** Maximum silence duration in seconds. Default: not specified. */
+  max_silence_duration_secs?: number;
 }
 
 export interface DeepgramOptions {
-  filler_words?: boolean; // default: true
-  interim_results?: boolean; // default: true
-  endpointing?: number; // default: 25 (ms)
-  punctuate?: boolean; // default: false
+  /** Enable filler words. Default: true. */
+  filler_words?: boolean;
+  /** Enable interim results. Default: true. */
+  interim_results?: boolean;
+  /** Endpointing timeout in milliseconds. Default: 25. */
+  endpointing?: number;
+  /** Enable punctuation. Default: false. */
+  punctuate?: boolean;
+  /** Enable smart formatting. */
   smart_format?: boolean;
+  /** Keywords with boost values. */
   keywords?: Array<[string, number]>;
+  /** Key terms for recognition. */
   keyterms?: string[];
+  /** Enable profanity filter. */
   profanity_filter?: boolean;
+  /** Convert spoken numbers to numerals. */
   numerals?: boolean;
+  /** Opt out of model improvement program. */
   mip_opt_out?: boolean;
 }
 
 export interface AssemblyAIOptions {
-  format_turns?: boolean; // default: false
-  end_of_turn_confidence_threshold?: number; // default: 0.01
-  min_end_of_turn_silence_when_confident?: number; // default: 0
-  max_turn_silence?: number; // default: not specified
-  keyterms_prompt?: string[]; // default: not specified
+  /** Enable turn formatting. Default: false. */
+  format_turns?: boolean;
+  /** End of turn confidence threshold. Default: 0.01. */
+  end_of_turn_confidence_threshold?: number;
+  /** Minimum silence duration in milliseconds when confident about end of turn. Default: 0. */
+  min_end_of_turn_silence_when_confident?: number;
+  /** Maximum turn silence in milliseconds. Default: not specified. */
+  max_turn_silence?: number;
+  /** Key terms prompt for recognition. Default: not specified. */
+  keyterms_prompt?: string[];
 }
 
 export type STTLanguages =

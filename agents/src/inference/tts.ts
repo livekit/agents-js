@@ -45,13 +45,17 @@ export type InworldModels =
 export type RimeModels = 'rime/arcana' | 'rime/mistv2';
 
 export interface CartesiaOptions {
-  duration?: number; // max duration of audio in seconds
-  speed?: 'slow' | 'normal' | 'fast'; // default: not specified
+  /** Maximum duration of audio in seconds. */
+  duration?: number;
+  /** Speech speed. Default: not specified. */
+  speed?: 'slow' | 'normal' | 'fast';
 }
 
 export interface ElevenlabsOptions {
-  inactivity_timeout?: number; // default: 60
-  apply_text_normalization?: 'auto' | 'off' | 'on'; // default: "auto"
+  /** Inactivity timeout in seconds. Default: 60. */
+  inactivity_timeout?: number;
+  /** Text normalization mode. Default: "auto". */
+  apply_text_normalization?: 'auto' | 'off' | 'on';
 }
 
 export interface DeepgramTTSOptions {}

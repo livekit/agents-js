@@ -30,9 +30,9 @@ export interface VADEvent {
   samplesIndex: number;
   /** Timestamp when the event was fired. */
   timestamp: number;
-  /** Duration of the speech segment. */
+  /** Duration of the speech segment in seconds. */
   speechDuration: number;
-  /** Duration of the silence segment. */
+  /** Duration of the silence segment in seconds. */
   silenceDuration: number;
   /**
    * List of audio frames associated with the speech.
@@ -56,6 +56,7 @@ export interface VADEvent {
 }
 
 export interface VADCapabilities {
+  /** Duration of each VAD inference window in milliseconds. Used to batch metrics emissions to roughly once per second. */
   updateInterval: number;
 }
 
@@ -154,7 +155,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
       switch (value.type) {
         case VADEventType.START_OF_SPEECH:
           inferenceCount++;
-          if (inferenceCount >= 1 / this.#vad.capabilities.updateInterval) {
+          if (inferenceCount >= 1000 / this.#vad.capabilities.updateInterval) {
             this.#vad.emit('metrics_collected', {
               type: 'vad_metrics',
               timestamp: Date.now(),
