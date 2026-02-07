@@ -105,6 +105,7 @@ export class RecorderIO {
       await this.outChan.close();
       await this.closeFuture.await;
       await cancelAndWait([this.forwardTask!, this.encodeTask!]);
+      await this.inRecord?.close();
 
       this.started = false;
     } finally {

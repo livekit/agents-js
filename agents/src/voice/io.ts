@@ -90,6 +90,10 @@ export abstract class AudioInput {
     return this.multiStream.stream;
   }
 
+  async close(): Promise<void> {
+    await this.multiStream.close();
+  }
+
   onAttached(): void {}
 
   onDetached(): void {}

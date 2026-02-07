@@ -123,9 +123,7 @@ export class ParticipantAudioInputStream extends AudioInput {
 
   private closeStream() {
     if (this.currentInputId) {
-      this.multiStream.removeInputStream(this.currentInputId).catch((e) => {
-        this.logger.error({ error: e }, 'Error removing input stream');
-      });
+      void this.multiStream.removeInputStream(this.currentInputId);
       this.currentInputId = null;
     }
 
@@ -185,11 +183,11 @@ export class ParticipantAudioInputStream extends AudioInput {
     }) as unknown as ReadableStream<AudioFrame>;
   }
 
-  async close() {
+  override async close() {
     this.room.off(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
     this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
     this.room.off(RoomEvent.TokenRefreshed, this.onTokenRefreshed);
     this.closeStream();
-    await this.multiStream.close();
+    await super.close();
   }
 }
