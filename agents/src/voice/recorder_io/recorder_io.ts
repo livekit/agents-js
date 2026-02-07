@@ -378,7 +378,7 @@ class RecorderAudioInput extends AudioInput {
     this.source = source;
 
     // Set up the intercepting stream
-    this.deferredStream.setSource(this.createInterceptingStream());
+    this.multiStream.addInputStream(this.createInterceptingStream());
   }
 
   /**

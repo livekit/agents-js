@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type AudioFrame, FrameProcessor } from '@livekit/rtc-node';
 import {
+  type AudioFrame,
   AudioStream,
+  FrameProcessor,
   type NoiseCancellationOptions,
   RemoteParticipant,
   type RemoteTrack,
@@ -25,7 +26,9 @@ export class ParticipantAudioInputStream extends AudioInput {
   private frameProcessor?: FrameProcessor<AudioFrame>;
   private publication: RemoteTrackPublication | null = null;
   private participantIdentity: string | null = null;
+  private currentInputId: string | null = null;
   private logger = log();
+
   constructor({
     room,
     sampleRate,
@@ -119,8 +122,11 @@ export class ParticipantAudioInputStream extends AudioInput {
   };
 
   private closeStream() {
-    if (this.deferredStream.isSourceSet) {
-      this.deferredStream.detachSource();
+    if (this.currentInputId) {
+      this.multiStream.removeInputStream(this.currentInputId).catch((e) => {
+        this.logger.error({ error: e }, 'Error removing input stream');
+      });
+      this.currentInputId = null;
     }
 
     this.frameProcessor?.close();
@@ -143,7 +149,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     }
     this.closeStream();
     this.publication = publication;
-    this.deferredStream.setSource(
+    this.currentInputId = this.multiStream.addInputStream(
       resampleStream({
         stream: this.createStream(track),
         outputRate: this.sampleRate,
@@ -184,7 +190,6 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
     this.room.off(RoomEvent.TokenRefreshed, this.onTokenRefreshed);
     this.closeStream();
-    // Ignore errors - stream may be locked by RecorderIO or already cancelled
-    await this.deferredStream.stream.cancel().catch(() => {});
+    await this.multiStream.close();
   }
 }

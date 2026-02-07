@@ -8,7 +8,7 @@ import type { ChatContext } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import type { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
-import { DeferredReadableStream } from '../stream/deferred_stream.js';
+import { MultiInputStream } from '../stream/multi_input_stream.js';
 import type { SpeechEvent } from '../stt/stt.js';
 import { Future } from '../utils.js';
 import type { ModelSettings } from './agent.js';
@@ -84,11 +84,10 @@ export interface AudioOutputCapabilities {
 }
 
 export abstract class AudioInput {
-  protected deferredStream: DeferredReadableStream<AudioFrame> =
-    new DeferredReadableStream<AudioFrame>();
+  protected multiStream: MultiInputStream<AudioFrame> = new MultiInputStream<AudioFrame>();
 
   get stream(): ReadableStream<AudioFrame> {
-    return this.deferredStream.stream;
+    return this.multiStream.stream;
   }
 
   onAttached(): void {}
