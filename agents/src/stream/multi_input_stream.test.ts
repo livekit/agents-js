@@ -15,18 +15,6 @@ function streamFrom<T>(values: T[]): ReadableStream<T> {
   });
 }
 
-async function collectAll<T>(stream: ReadableStream<T>): Promise<T[]> {
-  const reader = stream.getReader();
-  const results: T[] = [];
-  let result = await reader.read();
-  while (!result.done) {
-    results.push(result.value);
-    result = await reader.read();
-  }
-  reader.releaseLock();
-  return results;
-}
-
 describe('MultiInputStream', () => {
   // ---------------------------------------------------------------------------
   // Basic functionality
