@@ -1095,7 +1095,7 @@ export class AgentActivity implements RecognitionHooks {
               toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice),
             },
             abortController,
-            instructions ? `${this.agent.instructions}\n${instructions}` : instructions,
+            instructions,
             userMessage,
           ),
         ),
