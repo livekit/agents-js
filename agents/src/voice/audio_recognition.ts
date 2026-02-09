@@ -74,7 +74,7 @@ export interface AudioRecognitionOptions {
   /** Turn detector for end-of-turn prediction. */
   turnDetector?: _TurnDetector;
   /** Turn detection mode. */
-  turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
+  turnDetectionMode?: TurnDetectionMode;
   interruptionDetection?: AdaptiveInterruptionDetector;
   /** Minimum endpointing delay in milliseconds. */
   minEndpointingDelay: number;
