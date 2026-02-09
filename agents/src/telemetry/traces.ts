@@ -22,7 +22,7 @@ import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
-import type { ChatContent, ChatItem } from '../llm/index.js';
+import type { ChatContent, ChatItem, ChatRole } from '../llm/index.js';
 import { enableOtelLogging } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
 import type { SessionReport } from '../voice/report.js';
@@ -286,24 +286,82 @@ export async function flushOtelLogs(): Promise<void> {
   await flushPinoLogs();
 }
 
+/** Proto-compatible role enum values. */
+type ProtoRole = 'DEVELOPER' | 'SYSTEM' | 'USER' | 'ASSISTANT';
+
+const ROLE_MAP: Record<ChatRole, ProtoRole> = {
+  developer: 'DEVELOPER',
+  system: 'SYSTEM',
+  user: 'USER',
+  assistant: 'ASSISTANT',
+};
+
+/** Proto-compatible metrics with RFC 3339 timestamps and duration fields in seconds. */
+interface ProtoMetricsReport {
+  startedSpeakingAt?: string;
+  stoppedSpeakingAt?: string;
+  transcriptionDelay?: number;
+  endOfTurnDelay?: number;
+  onUserTurnCompletedDelay?: number;
+  llmNodeTtft?: number;
+  ttsNodeTtfb?: number;
+  e2eLatency?: number;
+}
+
+/** Proto-compatible chat message. */
+interface ProtoMessage {
+  id: string;
+  role: ProtoRole;
+  content: { text: ChatContent }[];
+  createdAt: string;
+  interrupted?: boolean;
+  extra?: Record<string, unknown>;
+  transcriptConfidence?: number;
+  metrics?: ProtoMetricsReport;
+}
+
+interface ProtoFunctionCall {
+  id: string;
+  callId: string;
+  arguments: string | Record<string, unknown>;
+  name: string;
+  createdAt: string;
+}
+
+interface ProtoFunctionCallOutput {
+  id: string;
+  name: string;
+  callId: string;
+  output: string;
+  isError: boolean;
+  createdAt: string;
+}
+
+interface ProtoAgentHandoff {
+  id: string;
+  newAgentId: string;
+  createdAt: string;
+  oldAgentId?: string;
+}
+
+interface ProtoChatItem {
+  message?: ProtoMessage;
+  functionCall?: ProtoFunctionCall;
+  functionCallOutput?: ProtoFunctionCallOutput;
+  agentHandoff?: ProtoAgentHandoff;
+}
+
 /**
  * Convert ChatItem to proto-compatible dictionary format.
  * TODO: Use actual agent_session proto types once @livekit/protocol v1.43.1+ is published
  */
-function chatItemToProto(item: ChatItem): Record<string, any> {
-  const itemDict: Record<string, any> = {};
+function chatItemToProto(item: ChatItem): ProtoChatItem {
+  const itemDict: ProtoChatItem = {};
 
   if (item.type === 'message') {
-    const roleMap: Record<string, string> = {
-      developer: 'DEVELOPER',
-      system: 'SYSTEM',
-      user: 'USER',
-      assistant: 'ASSISTANT',
-    };
-
-    const msg: Record<string, any> = {
+    const msg: ProtoMessage = {
       id: item.id,
-      role: roleMap[item.role] || item.role.toUpperCase(),
+      role: ROLE_MAP[item.role] ?? (item.role.toUpperCase() as ProtoRole),
       content: item.content.map((c: ChatContent) => ({ text: c })),
       createdAt: toRFC3339(item.createdAt),
     };
@@ -312,44 +370,47 @@ function chatItemToProto(item: ChatItem): Record<string, any> {
       msg.interrupted = item.interrupted;
     }
 
-    // TODO(brian): Add extra and transcriptConfidence to ChatMessage
-    // if (item.extra && Object.keys(item.extra).length > 0) {
-    //   msg.extra = item.extra;
-    // }
+    // Ref: Python chat_context.py lines 157-158
+    if (item.extra && Object.keys(item.extra).length > 0) {
+      msg.extra = item.extra;
+    }
 
-    // if (item.transcriptConfidence !== undefined && item.transcriptConfidence !== null) {
-    //   msg.transcriptConfidence = item.transcriptConfidence;
-    // }
+    if (item.transcriptConfidence !== undefined) {
+      msg.transcriptConfidence = item.transcriptConfidence;
+    }
 
-    // TODO(brian): Add metrics to ChatMessage
-    // const metrics = item.metrics || {};
-    // if (Object.keys(metrics).length > 0) {
-    //   msg.metrics = {};
-    //   if (metrics.started_speaking_at) {
-    //     msg.metrics.startedSpeakingAt = toRFC3339(metrics.started_speaking_at);
-    //   }
-    //   if (metrics.stopped_speaking_at) {
-    //     msg.metrics.stoppedSpeakingAt = toRFC3339(metrics.stopped_speaking_at);
-    //   }
-    //   if (metrics.transcription_delay !== undefined) {
-    //     msg.metrics.transcriptionDelay = metrics.transcription_delay;
-    //   }
-    //   if (metrics.end_of_turn_delay !== undefined) {
-    //     msg.metrics.endOfTurnDelay = metrics.end_of_turn_delay;
-    //   }
-    //   if (metrics.on_user_turn_completed_delay !== undefined) {
-    //     msg.metrics.onUserTurnCompletedDelay = metrics.on_user_turn_completed_delay;
-    //   }
-    //   if (metrics.llm_node_ttft !== undefined) {
-    //     msg.metrics.llmNodeTtft = metrics.llm_node_ttft;
-    //   }
-    //   if (metrics.tts_node_ttfb !== undefined) {
-    //     msg.metrics.ttsNodeTtfb = metrics.tts_node_ttfb;
-    //   }
-    //   if (metrics.e2e_latency !== undefined) {
-    //     msg.metrics.e2eLatency = metrics.e2e_latency;
-    //   }
-    // }
+    // Ref: Python chat_context.py lines 110-148 (MetricsReport fields)
+    const metrics = item.metrics;
+    if (metrics && Object.keys(metrics).length > 0) {
+      const protoMetrics: ProtoMetricsReport = {};
+      // Timestamp fields: MetricsReport stores seconds, toRFC3339 expects milliseconds
+      if (metrics.startedSpeakingAt !== undefined) {
+        protoMetrics.startedSpeakingAt = toRFC3339(metrics.startedSpeakingAt * 1000);
+      }
+      if (metrics.stoppedSpeakingAt !== undefined) {
+        protoMetrics.stoppedSpeakingAt = toRFC3339(metrics.stoppedSpeakingAt * 1000);
+      }
+      // Duration fields: already in seconds, pass as-is
+      if (metrics.transcriptionDelay !== undefined) {
+        protoMetrics.transcriptionDelay = metrics.transcriptionDelay;
+      }
+      if (metrics.endOfTurnDelay !== undefined) {
+        protoMetrics.endOfTurnDelay = metrics.endOfTurnDelay;
+      }
+      if (metrics.onUserTurnCompletedDelay !== undefined) {
+        protoMetrics.onUserTurnCompletedDelay = metrics.onUserTurnCompletedDelay;
+      }
+      if (metrics.llmNodeTtft !== undefined) {
+        protoMetrics.llmNodeTtft = metrics.llmNodeTtft;
+      }
+      if (metrics.ttsNodeTtfb !== undefined) {
+        protoMetrics.ttsNodeTtfb = metrics.ttsNodeTtfb;
+      }
+      if (metrics.e2eLatency !== undefined) {
+        protoMetrics.e2eLatency = metrics.e2eLatency;
+      }
+      msg.metrics = protoMetrics;
+    }
 
     itemDict.message = msg;
   } else if (item.type === 'function_call') {
@@ -370,7 +431,7 @@ function chatItemToProto(item: ChatItem): Record<string, any> {
       createdAt: toRFC3339(item.createdAt),
     };
   } else if (item.type === 'agent_handoff') {
-    const handoff: Record<string, any> = {
+    const handoff: ProtoAgentHandoff = {
       id: item.id,
       newAgentId: item.newAgentId,
       createdAt: toRFC3339(item.createdAt),
