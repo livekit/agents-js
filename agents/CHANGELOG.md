@@ -1,5 +1,15 @@
 # @livekit/agents
 
+## 1.0.43
+
+### Patch Changes
+
+- Support fallback API for inference STT and TTS - [#1029](https://github.com/livekit/agents-js/pull/1029) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Fix support for CJS runners - [#1031](https://github.com/livekit/agents-js/pull/1031) ([@lukasIO](https://github.com/lukasIO))
+
+- Fix generateReply adding duplicate instructions - [#1033](https://github.com/livekit/agents-js/pull/1033) ([@Fox32](https://github.com/Fox32))
+
 ## 1.0.42
 
 ### Patch Changes

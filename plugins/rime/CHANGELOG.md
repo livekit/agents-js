@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-rime
 
+## 1.0.43
+
+### Patch Changes
+
+- Updated dependencies [[`3a32addfe2240c46a9387accb6490b4575768f1b`](https://github.com/livekit/agents-js/commit/3a32addfe2240c46a9387accb6490b4575768f1b), [`1151c9d1492294580125542cab06b9fcab529a45`](https://github.com/livekit/agents-js/commit/1151c9d1492294580125542cab06b9fcab529a45), [`6fb3280141e7337cc8627bc46b44f8f70c32f744`](https://github.com/livekit/agents-js/commit/6fb3280141e7337cc8627bc46b44f8f70c32f744)]:
+  - @livekit/agents@1.0.43
+
 ## 1.0.42
 
 ### Patch Changes
