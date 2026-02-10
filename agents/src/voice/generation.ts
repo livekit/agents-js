@@ -576,6 +576,12 @@ export function performTTSInference(
 
   let ttfb: number | undefined;
 
+  const genData: _TTSGenerationData = {
+    audioStream: audioOutputStream,
+    timedTextsFut,
+    ttfb: undefined,
+  };
+
   const _performTTSInferenceImpl = async (signal: AbortSignal, span: Span) => {
     if (model) {
       span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
@@ -625,6 +631,7 @@ export function performTTSInference(
         if (!firstByteReceived) {
           firstByteReceived = true;
           ttfb = performance.now() / 1000 - startTime;
+          genData.ttfb = ttfb;
           span.setAttribute(traceTypes.ATTR_RESPONSE_TTFB, ttfb);
         }
 
@@ -683,12 +690,6 @@ export function performTTSInference(
       name: 'tts_node',
       context: currentContext,
     });
-
-  const genData: _TTSGenerationData = {
-    audioStream: audioOutputStream,
-    timedTextsFut,
-    ttfb,
-  };
 
   return [
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performTTSInference'),

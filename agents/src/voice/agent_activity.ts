@@ -1250,6 +1250,15 @@ export class AgentActivity implements RecognitionHooks {
         isSameToolChoice(preemptive.toolChoice, this.toolChoice)
       ) {
         speechHandle = preemptive.speechHandle;
+        // Ref: Python agent_activity.py lines 1556-1572
+        // The preemptive userMessage was created without metrics.
+        // Copy the metrics and transcriptConfidence from the new userMessage
+        // to the preemptive message BEFORE scheduling (so the pipeline inserts
+        // the message with metrics already set).
+        if (preemptive.userMessage && userMessage) {
+          preemptive.userMessage.metrics = userMetricsReport;
+          preemptive.userMessage.transcriptConfidence = userMessage.transcriptConfidence;
+        }
         this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
         this.logger.debug(
           {

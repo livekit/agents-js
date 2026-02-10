@@ -296,7 +296,6 @@ const ROLE_MAP: Record<ChatRole, ProtoRole> = {
   assistant: 'ASSISTANT',
 };
 
-/** Proto-compatible metrics with RFC 3339 timestamps and duration fields in seconds. */
 interface ProtoMetricsReport {
   startedSpeakingAt?: string;
   stoppedSpeakingAt?: string;
@@ -308,7 +307,6 @@ interface ProtoMetricsReport {
   e2eLatency?: number;
 }
 
-/** Proto-compatible chat message. */
 interface ProtoMessage {
   id: string;
   role: ProtoRole;
@@ -379,18 +377,15 @@ function chatItemToProto(item: ChatItem): ProtoChatItem {
       msg.transcriptConfidence = item.transcriptConfidence;
     }
 
-    // Ref: Python chat_context.py lines 110-148 (MetricsReport fields)
     const metrics = item.metrics;
     if (metrics && Object.keys(metrics).length > 0) {
       const protoMetrics: ProtoMetricsReport = {};
-      // Timestamp fields: MetricsReport stores seconds, toRFC3339 expects milliseconds
       if (metrics.startedSpeakingAt !== undefined) {
         protoMetrics.startedSpeakingAt = toRFC3339(metrics.startedSpeakingAt * 1000);
       }
       if (metrics.stoppedSpeakingAt !== undefined) {
         protoMetrics.stoppedSpeakingAt = toRFC3339(metrics.stoppedSpeakingAt * 1000);
       }
-      // Duration fields: already in seconds, pass as-is
       if (metrics.transcriptionDelay !== undefined) {
         protoMetrics.transcriptionDelay = metrics.transcriptionDelay;
       }
@@ -459,9 +454,7 @@ function chatItemToProto(item: ChatItem): ProtoChatItem {
 }
 
 /**
- * Convert timestamp to RFC3339 format matching Python's _to_rfc3339.
- * Note: TypeScript createdAt is in milliseconds (Date.now()), not seconds like Python.
- * @internal
+ * Convert timestamp to RFC3339 format
  */
 function toRFC3339(valueMs: number | Date): string {
   // valueMs is already in milliseconds (from Date.now())
