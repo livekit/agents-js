@@ -368,7 +368,6 @@ function chatItemToProto(item: ChatItem): ProtoChatItem {
       msg.interrupted = item.interrupted;
     }
 
-    // Ref: Python chat_context.py lines 157-158
     if (item.extra && Object.keys(item.extra).length > 0) {
       msg.extra = item.extra;
     }

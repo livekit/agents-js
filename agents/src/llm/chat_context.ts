@@ -80,16 +80,15 @@ export function createAudioContent(params: {
   };
 }
 
-// Ref: Python chat_context.py lines 110-148
 export interface MetricsReport {
-  startedSpeakingAt?: number; // Ref: py line 111
-  stoppedSpeakingAt?: number; // Ref: py line 112
-  transcriptionDelay?: number; // Ref: py line 114
-  endOfTurnDelay?: number; // Ref: py line 120
-  onUserTurnCompletedDelay?: number; // Ref: py line 126
-  llmNodeTtft?: number; // Ref: py line 132
-  ttsNodeTtfb?: number; // Ref: py line 138
-  e2eLatency?: number; // Ref: py line 144
+  startedSpeakingAt?: number;
+  stoppedSpeakingAt?: number;
+  transcriptionDelay?: number;
+  endOfTurnDelay?: number;
+  onUserTurnCompletedDelay?: number;
+  llmNodeTtft?: number;
+  ttsNodeTtfb?: number;
+  e2eLatency?: number;
 }
 
 export class ChatMessage {
@@ -103,13 +102,10 @@ export class ChatMessage {
 
   interrupted: boolean;
 
-  // Ref: Python chat_context.py line 157
   transcriptConfidence?: number;
 
-  // Ref: Python chat_context.py line 158
   extra: Record<string, unknown>;
 
-  // Ref: Python chat_context.py line 159
   metrics: MetricsReport;
 
   hash?: Uint8Array;
@@ -205,7 +201,6 @@ export class ChatMessage {
       result.createdAt = this.createdAt;
     }
 
-    // Ref: Python chat_context.py lines 431-441 (model_dump with exclude_none=True)
     if (this.transcriptConfidence !== undefined) {
       result.transcriptConfidence = this.transcriptConfidence;
     }

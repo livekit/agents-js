@@ -856,7 +856,6 @@ export class AgentActivity implements RecognitionHooks {
       'starting preemptive generation',
     );
 
-    // Ref: Python agent_activity.py lines 1396-1399
     const userMessage = ChatMessage.create({
       role: 'user',
       content: info.newTranscript,
@@ -1187,7 +1186,6 @@ export class AgentActivity implements RecognitionHooks {
       this.realtimeSession?.interrupt();
     }
 
-    // Ref: Python agent_activity.py lines 1507-1510
     let userMessage: ChatMessage | undefined = ChatMessage.create({
       role: 'user',
       content: info.newTranscript,
@@ -1218,7 +1216,6 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    // Ref: Python agent_activity.py lines 1556-1572
     const userMetricsReport: MetricsReport = {};
     if (info.startedSpeakingAt !== undefined) {
       userMetricsReport.startedSpeakingAt = info.startedSpeakingAt / 1000; // ms -> seconds
@@ -1232,7 +1229,6 @@ export class AgentActivity implements RecognitionHooks {
     if (info.endOfUtteranceDelay !== undefined) {
       userMetricsReport.endOfTurnDelay = info.endOfUtteranceDelay / 1000; // ms -> seconds
     }
-    // Ref: Python agent_activity.py lines 1527-1538, 1569
     userMetricsReport.onUserTurnCompletedDelay = callbackDuration / 1000; // ms -> seconds
     if (userMessage) {
       userMessage.metrics = userMetricsReport;
@@ -1250,7 +1246,6 @@ export class AgentActivity implements RecognitionHooks {
         isSameToolChoice(preemptive.toolChoice, this.toolChoice)
       ) {
         speechHandle = preemptive.speechHandle;
-        // Ref: Python agent_activity.py lines 1556-1572
         // The preemptive userMessage was created without metrics.
         // Copy the metrics and transcriptConfidence from the new userMessage
         // to the preemptive message BEFORE scheduling (so the pipeline inserts
@@ -1352,7 +1347,6 @@ export class AgentActivity implements RecognitionHooks {
       tasks.push(textForwardTask);
     }
 
-    // Ref: Python agent_activity.py lines 2034-2036
     let replyStartedSpeakingAt: number | undefined;
     let replyTtsGenData: _TTSGenerationData | null = null;
 
@@ -1427,7 +1421,6 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (addToChatCtx) {
-      // Ref: Python agent_activity.py lines 1832-1845
       const replyStoppedSpeakingAt = Date.now();
       const replyAssistantMetrics: MetricsReport = {};
       if (replyTtsGenData?.ttfb !== undefined) {
@@ -1457,7 +1450,6 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  // Ref: Python agent_activity.py lines 1890-1901
   private _pipelineReplyTaskImpl = async ({
     speechHandle,
     chatCtx,
@@ -1479,7 +1471,7 @@ export class AgentActivity implements RecognitionHooks {
     newMessage?: ChatMessage;
     toolsMessages?: ChatItem[];
     span: Span;
-    _previousUserMetrics?: MetricsReport; // Ref: Python agent_activity.py line 1899
+    _previousUserMetrics?: MetricsReport;
   }): Promise<void> => {
     speechHandle._agentTurnContext = otelContext.active();
 
@@ -1556,7 +1548,6 @@ export class AgentActivity implements RecognitionHooks {
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForScheduled()]);
 
-    // Ref: Python agent_activity.py lines 1977-1981
     let userMetrics: MetricsReport | undefined = _previousUserMetrics;
     // Add new message to actual chat context if the speech is scheduled
     if (newMessage && speechHandle.scheduled) {
@@ -1608,7 +1599,6 @@ export class AgentActivity implements RecognitionHooks {
       textOut = _textOut;
     }
 
-    // Ref: Python agent_activity.py lines 2034-2036
     let agentStartedSpeakingAt: number | undefined;
     const onFirstFrame = (startedSpeakingAt?: number) => {
       agentStartedSpeakingAt = startedSpeakingAt ?? Date.now();
@@ -1676,7 +1666,6 @@ export class AgentActivity implements RecognitionHooks {
       await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
     }
 
-    // Ref: Python agent_activity.py lines 2092-2108
     const agentStoppedSpeakingAt = Date.now();
     const assistantMetrics: MetricsReport = {};
 
@@ -1693,7 +1682,6 @@ export class AgentActivity implements RecognitionHooks {
       if (userMetrics?.stoppedSpeakingAt !== undefined) {
         const e2eLatency = agentStartedSpeakingAt / 1000 - userMetrics.stoppedSpeakingAt;
         assistantMetrics.e2eLatency = e2eLatency;
-        // Ref: Python agent_activity.py line 2108
         span.setAttribute(traceTypes.ATTR_E2E_LATENCY, e2eLatency);
       }
     }
@@ -1754,7 +1742,6 @@ export class AgentActivity implements RecognitionHooks {
 
       if (forwardedText) {
         hasSpeechMessage = true;
-        // Ref: Python agent_activity.py lines 2142-2149
         const message = ChatMessage.create({
           role: 'assistant',
           content: forwardedText,
@@ -1789,7 +1776,6 @@ export class AgentActivity implements RecognitionHooks {
 
     if (textOut && textOut.text) {
       hasSpeechMessage = true;
-      // Ref: Python agent_activity.py lines 2174-2181
       const message = ChatMessage.create({
         role: 'assistant',
         id: llmGenData.id,
@@ -1911,7 +1897,6 @@ export class AgentActivity implements RecognitionHooks {
             instructions,
             undefined,
             toolMessages,
-            // Ref: Python agent_activity.py lines 2269-2271
             hasSpeechMessage ? undefined : userMetrics,
           ),
         ),
@@ -1941,7 +1926,6 @@ export class AgentActivity implements RecognitionHooks {
     }
   };
 
-  // Ref: Python agent_activity.py lines 1860-1870
   private pipelineReplyTask = async (
     speechHandle: SpeechHandle,
     chatCtx: ChatContext,
