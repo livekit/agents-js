@@ -10,7 +10,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import type { InterruptionEvent } from '../inference/interruption/types.js';
-import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
+import { type ChatContext, ChatMessage, type MetricsReport } from '../llm/chat_context.js';
 import {
   type ChatItem,
   type FunctionCall,
@@ -859,6 +859,7 @@ export class AgentActivity implements RecognitionHooks {
     const userMessage = ChatMessage.create({
       role: 'user',
       content: info.newTranscript,
+      transcriptConfidence: info.transcriptConfidence,
     });
     const chatCtx = this.agent.chatCtx.copy();
     const speechHandle = this.generateReply({
@@ -1188,6 +1189,7 @@ export class AgentActivity implements RecognitionHooks {
     let userMessage: ChatMessage | undefined = ChatMessage.create({
       role: 'user',
       content: info.newTranscript,
+      transcriptConfidence: info.transcriptConfidence,
     });
 
     // create a temporary mutable chat context to pass to onUserTurnCompleted
@@ -1214,6 +1216,24 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
+    const userMetricsReport: MetricsReport = {};
+    if (info.startedSpeakingAt !== undefined) {
+      userMetricsReport.startedSpeakingAt = info.startedSpeakingAt / 1000; // ms -> seconds
+    }
+    if (info.stoppedSpeakingAt !== undefined) {
+      userMetricsReport.stoppedSpeakingAt = info.stoppedSpeakingAt / 1000; // ms -> seconds
+    }
+    if (info.transcriptionDelay !== undefined) {
+      userMetricsReport.transcriptionDelay = info.transcriptionDelay / 1000; // ms -> seconds
+    }
+    if (info.endOfUtteranceDelay !== undefined) {
+      userMetricsReport.endOfTurnDelay = info.endOfUtteranceDelay / 1000; // ms -> seconds
+    }
+    userMetricsReport.onUserTurnCompletedDelay = callbackDuration / 1000; // ms -> seconds
+    if (userMessage) {
+      userMessage.metrics = userMetricsReport;
+    }
+
     let speechHandle: SpeechHandle | undefined;
     if (this._preemptiveGeneration !== undefined) {
       const preemptive = this._preemptiveGeneration;
@@ -1226,6 +1246,14 @@ export class AgentActivity implements RecognitionHooks {
         isSameToolChoice(preemptive.toolChoice, this.toolChoice)
       ) {
         speechHandle = preemptive.speechHandle;
+        // The preemptive userMessage was created without metrics.
+        // Copy the metrics and transcriptConfidence from the new userMessage
+        // to the preemptive message BEFORE scheduling (so the pipeline inserts
+        // the message with metrics already set).
+        if (preemptive.userMessage && userMessage) {
+          preemptive.userMessage.metrics = userMetricsReport;
+          preemptive.userMessage.transcriptConfidence = userMessage.transcriptConfidence;
+        }
         this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
         this.logger.debug(
           {
@@ -1319,7 +1347,11 @@ export class AgentActivity implements RecognitionHooks {
       tasks.push(textForwardTask);
     }
 
+    let replyStartedSpeakingAt: number | undefined;
+    let replyTtsGenData: _TTSGenerationData | null = null;
+
     const onFirstFrame = (startedSpeakingAt?: number) => {
+      replyStartedSpeakingAt = startedSpeakingAt ?? Date.now();
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
@@ -1349,6 +1381,7 @@ export class AgentActivity implements RecognitionHooks {
           this.tts?.provider,
         );
         tasks.push(ttsTask);
+        replyTtsGenData = ttsGenData;
 
         const [forwardTask, _audioOut] = performAudioForwarding(
           ttsGenData.audioStream,
@@ -1388,10 +1421,21 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (addToChatCtx) {
+      const replyStoppedSpeakingAt = Date.now();
+      const replyAssistantMetrics: MetricsReport = {};
+      if (replyTtsGenData?.ttfb !== undefined) {
+        replyAssistantMetrics.ttsNodeTtfb = replyTtsGenData.ttfb;
+      }
+      if (replyStartedSpeakingAt !== undefined) {
+        replyAssistantMetrics.startedSpeakingAt = replyStartedSpeakingAt / 1000; // ms -> seconds
+        replyAssistantMetrics.stoppedSpeakingAt = replyStoppedSpeakingAt / 1000; // ms -> seconds
+      }
+
       const message = ChatMessage.create({
         role: 'assistant',
         content: textOut?.text || '',
         interrupted: speechHandle.interrupted,
+        metrics: replyAssistantMetrics,
       });
       this.agent._chatCtx.insert(message);
       this.agentSession._conversationItemAdded(message);
@@ -1416,6 +1460,7 @@ export class AgentActivity implements RecognitionHooks {
     newMessage,
     toolsMessages,
     span,
+    _previousUserMetrics,
   }: {
     speechHandle: SpeechHandle;
     chatCtx: ChatContext;
@@ -1426,6 +1471,7 @@ export class AgentActivity implements RecognitionHooks {
     newMessage?: ChatMessage;
     toolsMessages?: ChatItem[];
     span: Span;
+    _previousUserMetrics?: MetricsReport;
   }): Promise<void> => {
     speechHandle._agentTurnContext = otelContext.active();
 
@@ -1502,10 +1548,12 @@ export class AgentActivity implements RecognitionHooks {
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForScheduled()]);
 
+    let userMetrics: MetricsReport | undefined = _previousUserMetrics;
     // Add new message to actual chat context if the speech is scheduled
     if (newMessage && speechHandle.scheduled) {
       this.agent._chatCtx.insert(newMessage);
       this.agentSession._conversationItemAdded(newMessage);
+      userMetrics = newMessage.metrics;
     }
 
     if (speechHandle.interrupted) {
@@ -1551,7 +1599,9 @@ export class AgentActivity implements RecognitionHooks {
       textOut = _textOut;
     }
 
+    let agentStartedSpeakingAt: number | undefined;
     const onFirstFrame = (startedSpeakingAt?: number) => {
+      agentStartedSpeakingAt = startedSpeakingAt ?? Date.now();
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
@@ -1616,6 +1666,29 @@ export class AgentActivity implements RecognitionHooks {
       await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
     }
 
+    const agentStoppedSpeakingAt = Date.now();
+    const assistantMetrics: MetricsReport = {};
+
+    if (llmGenData.ttft !== undefined) {
+      assistantMetrics.llmNodeTtft = llmGenData.ttft; // already in seconds
+    }
+    if (ttsGenData?.ttfb !== undefined) {
+      assistantMetrics.ttsNodeTtfb = ttsGenData.ttfb; // already in seconds
+    }
+    if (agentStartedSpeakingAt !== undefined) {
+      assistantMetrics.startedSpeakingAt = agentStartedSpeakingAt / 1000; // ms -> seconds
+      assistantMetrics.stoppedSpeakingAt = agentStoppedSpeakingAt / 1000; // ms -> seconds
+
+      if (userMetrics?.stoppedSpeakingAt !== undefined) {
+        const e2eLatency = agentStartedSpeakingAt / 1000 - userMetrics.stoppedSpeakingAt;
+        assistantMetrics.e2eLatency = e2eLatency;
+        span.setAttribute(traceTypes.ATTR_E2E_LATENCY, e2eLatency);
+      }
+    }
+
+    span.setAttribute(traceTypes.ATTR_SPEECH_INTERRUPTED, speechHandle.interrupted);
+    let hasSpeechMessage = false;
+
     // add the tools messages that triggers this reply to the chat context
     if (toolsMessages) {
       for (const msg of toolsMessages) {
@@ -1668,17 +1741,20 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       if (forwardedText) {
+        hasSpeechMessage = true;
         const message = ChatMessage.create({
           role: 'assistant',
           content: forwardedText,
           id: llmGenData.id,
           interrupted: true,
           createdAt: replyStartedAt,
+          metrics: assistantMetrics,
         });
         chatCtx.insert(message);
         this.agent._chatCtx.insert(message);
         speechHandle._itemAdded([message]);
         this.agentSession._conversationItemAdded(message);
+        span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, forwardedText);
       }
 
       if (this.agentSession.agentState === 'speaking') {
@@ -1693,24 +1769,26 @@ export class AgentActivity implements RecognitionHooks {
         { speech_id: speechHandle.id, message: forwardedText },
         'playout completed with interrupt',
       );
-      // TODO(shubhra) add chat message to speech handle
       speechHandle._markGenerationDone();
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       return;
     }
 
     if (textOut && textOut.text) {
+      hasSpeechMessage = true;
       const message = ChatMessage.create({
         role: 'assistant',
         id: llmGenData.id,
         interrupted: false,
         createdAt: replyStartedAt,
         content: textOut.text,
+        metrics: assistantMetrics,
       });
       chatCtx.insert(message);
       this.agent._chatCtx.insert(message);
       speechHandle._itemAdded([message]);
       this.agentSession._conversationItemAdded(message);
+      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, textOut.text);
       this.logger.info(
         { speech_id: speechHandle.id, message: textOut.text },
         'playout completed without interruption',
@@ -1819,6 +1897,7 @@ export class AgentActivity implements RecognitionHooks {
             instructions,
             undefined,
             toolMessages,
+            hasSpeechMessage ? undefined : userMetrics,
           ),
         ),
         ownedSpeechHandle: speechHandle,
@@ -1856,6 +1935,7 @@ export class AgentActivity implements RecognitionHooks {
     instructions?: string,
     newMessage?: ChatMessage,
     toolsMessages?: ChatItem[],
+    _previousUserMetrics?: MetricsReport,
   ): Promise<void> =>
     tracer.startActiveSpan(
       async (span) =>
@@ -1869,6 +1949,7 @@ export class AgentActivity implements RecognitionHooks {
           newMessage,
           toolsMessages,
           span,
+          _previousUserMetrics,
         }),
       {
         name: 'agent_turn',
