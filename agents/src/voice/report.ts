@@ -76,6 +76,22 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
 //   - Uploads to LiveKit Cloud observability endpoint with JWT auth
 export function sessionReportToJSON(report: SessionReport): Record<string, unknown> {
   const events: Record<string, unknown>[] = [];
+  const interruptionConfig = report.options.turnHandling?.interruption;
+  const endpointingConfig = report.options.turnHandling?.endpointing;
+
+  // Keep backwards compatibility with deprecated fields
+  const allowInterruptions =
+    interruptionConfig?.mode !== undefined
+      ? interruptionConfig.mode !== false
+      : report.options.allowInterruptions;
+  const discardAudioIfUninterruptible =
+    interruptionConfig?.discardAudioIfUninterruptible ??
+    report.options.discardAudioIfUninterruptible;
+  const minInterruptionDuration =
+    interruptionConfig?.minDuration ?? report.options.minInterruptionDuration;
+  const minInterruptionWords = interruptionConfig?.minWords ?? report.options.minInterruptionWords;
+  const minEndpointingDelay = endpointingConfig?.minDelay ?? report.options.minEndpointingDelay;
+  const maxEndpointingDelay = endpointingConfig?.maxDelay ?? report.options.maxEndpointingDelay;
 
   for (const event of report.events) {
     if (event.type === 'metrics_collected') {
@@ -91,12 +107,12 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
     room: report.room,
     events,
     options: {
-      allow_interruptions: report.options.allowInterruptions,
-      discard_audio_if_uninterruptible: report.options.discardAudioIfUninterruptible,
-      min_interruption_duration: report.options.minInterruptionDuration,
-      min_interruption_words: report.options.minInterruptionWords,
-      min_endpointing_delay: report.options.minEndpointingDelay,
-      max_endpointing_delay: report.options.maxEndpointingDelay,
+      allow_interruptions: allowInterruptions,
+      discard_audio_if_uninterruptible: discardAudioIfUninterruptible,
+      min_interruption_duration: minInterruptionDuration,
+      min_interruption_words: minInterruptionWords,
+      min_endpointing_delay: minEndpointingDelay,
+      max_endpointing_delay: maxEndpointingDelay,
       max_tool_steps: report.options.maxToolSteps,
     },
     chat_history: report.chatHistory.toJSON({ excludeTimestamp: false }),
