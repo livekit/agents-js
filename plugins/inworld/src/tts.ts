@@ -19,6 +19,7 @@ const DEFAULT_URL = 'https://api.inworld.ai/';
 const DEFAULT_WS_URL = 'wss://api.inworld.ai/';
 const DEFAULT_VOICE = 'Ashley';
 const DEFAULT_TEMPERATURE = 1.1;
+const DEFAULT_TIMESTAMP_TRANSPORT_STRATEGY = 'ASYNC';
 const DEFAULT_SPEAKING_RATE = 1.0;
 const DEFAULT_BUFFER_CHAR_THRESHOLD = 100;
 const DEFAULT_MAX_BUFFER_DELAY_MS = 3000;
@@ -27,6 +28,10 @@ const NUM_CHANNELS = 1;
 export type Encoding = 'LINEAR16' | 'MP3' | 'OGG_OPUS' | 'ALAW' | 'MULAW' | 'FLAC' | string;
 export type TimestampType = 'TIMESTAMP_TYPE_UNSPECIFIED' | 'WORD' | 'CHARACTER';
 export type TextNormalization = 'APPLY_TEXT_NORMALIZATION_UNSPECIFIED' | 'ON' | 'OFF';
+export type TimestampTransportStrategy =
+  | 'TIMESTAMP_TRANSPORT_STRATEGY_UNSPECIFIED'
+  | 'SYNC'
+  | 'ASYNC';
 
 export interface TTSOptions {
   apiKey?: string;
@@ -39,6 +44,7 @@ export interface TTSOptions {
   temperature: number;
   timestampType?: TimestampType;
   textNormalization?: TextNormalization;
+  timestampTransportStrategy?: TimestampTransportStrategy;
   bufferCharThreshold: number;
   maxBufferDelayMs: number;
   baseURL: string;
@@ -63,6 +69,7 @@ interface SynthesizeRequest {
   temperature: number;
   timestampType?: TimestampType;
   applyTextNormalization?: TextNormalization;
+  timestampTransportStrategy?: TimestampTransportStrategy;
 }
 
 interface CreateContextConfig {
@@ -74,6 +81,7 @@ interface CreateContextConfig {
   maxBufferDelayMs: number;
   timestampType?: TimestampType;
   applyTextNormalization?: TextNormalization;
+  timestampTransportStrategy?: TimestampTransportStrategy;
   autoMode?: boolean;
 }
 
@@ -136,6 +144,7 @@ const defaultTTSOptionsBase: Omit<TTSOptions, 'tokenizer'> = {
   sampleRate: DEFAULT_SAMPLE_RATE,
   speakingRate: DEFAULT_SPEAKING_RATE,
   temperature: DEFAULT_TEMPERATURE,
+  timestampTransportStrategy: DEFAULT_TIMESTAMP_TRANSPORT_STRATEGY as TimestampTransportStrategy,
   bufferCharThreshold: DEFAULT_BUFFER_CHAR_THRESHOLD,
   maxBufferDelayMs: DEFAULT_MAX_BUFFER_DELAY_MS,
   baseURL: DEFAULT_URL,
@@ -382,6 +391,7 @@ class ChunkedStream extends tts.ChunkedStream {
       temperature: this.#opts.temperature,
       timestampType: this.#opts.timestampType,
       applyTextNormalization: this.#opts.textNormalization,
+      timestampTransportStrategy: this.#opts.timestampTransportStrategy,
     };
 
     const url = new URL('tts/v1/voice:stream', this.#opts.baseURL);
@@ -666,6 +676,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
       maxBufferDelayMs: this.#opts.maxBufferDelayMs,
       timestampType: this.#opts.timestampType,
       applyTextNormalization: this.#opts.textNormalization,
+      timestampTransportStrategy: this.#opts.timestampTransportStrategy,
       // Always enable auto_mode since we use sentence tokenizer and don't expose
       // mid-stream flush_context control to users yet
       autoMode: true,
