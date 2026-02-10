@@ -24,12 +24,6 @@ import { FrontDeskAgent, type Userdata } from './frontdesk_agent.js';
 
 initializeLogger({ pretty: false, level: 'warn' });
 
-const { AgentSession } = voice;
-
-type TestableAgentSession = InstanceType<typeof AgentSession> & {
-  run(options: { userInput: string }): voice.testing.RunResult;
-};
-
 const TIMEZONE = 'UTC';
 
 function llmModel(): openai.LLM {
@@ -59,7 +53,7 @@ function getTodayUTC(): Date {
 
 describe('FrontDesk Agent Tests', { timeout: 180_000 }, () => {
   describe('test_slot_scheduling', () => {
-    let session: TestableAgentSession;
+    let session: voice.AgentSession;
     let llmInstance: openai.LLM;
     let slots: AvailableSlot[];
     let userdata: Userdata;
@@ -93,10 +87,10 @@ describe('FrontDesk Agent Tests', { timeout: 180_000 }, () => {
       };
 
       llmInstance = llmModel();
-      session = new AgentSession({
+      session = new voice.AgentSession({
         llm: llmInstance,
         userData: userdata,
-      }) as TestableAgentSession;
+      });
       await session.start({ agent: new FrontDeskAgent({ timezone: TIMEZONE }) });
     }, 30_000);
 
@@ -155,7 +149,7 @@ describe('FrontDesk Agent Tests', { timeout: 180_000 }, () => {
   });
 
   describe('test_no_availability', () => {
-    let session: TestableAgentSession;
+    let session: voice.AgentSession;
     let llmInstance: openai.LLM;
     let userdata: Userdata;
 
@@ -166,10 +160,10 @@ describe('FrontDesk Agent Tests', { timeout: 180_000 }, () => {
       };
 
       llmInstance = llmModel();
-      session = new AgentSession({
+      session = new voice.AgentSession({
         llm: llmInstance,
         userData: userdata,
-      }) as TestableAgentSession;
+      });
       await session.start({ agent: new FrontDeskAgent({ timezone: TIMEZONE }) });
     }, 30_000);
 

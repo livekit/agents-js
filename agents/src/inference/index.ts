@@ -15,7 +15,11 @@ export {
 } from './llm.js';
 
 export {
+  normalizeSTTFallback,
+  parseSTTModelString,
   STT,
+  type STTFallbackModel,
+  type STTFallbackModelType,
   type STTLanguages,
   type STTModels,
   type ModelWithLanguage as STTModelString,
@@ -23,7 +27,11 @@ export {
 } from './stt.js';
 
 export {
+  normalizeTTSFallback,
+  parseTTSModelString,
   TTS,
+  type TTSFallbackModel,
+  type TTSFallbackModelType,
   type TTSModels,
   type ModelWithVoice as TTSModelString,
   type TTSOptions,
