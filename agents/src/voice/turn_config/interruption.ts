@@ -16,8 +16,8 @@ export interface InterruptionConfig {
    */
   discardAudioIfUninterruptible: boolean;
   /**
-   * Minimum speech length in seconds to register as an interruption.
-   * @defaultValue 0.5
+   * Minimum speech length in milliseconds to register as an interruption.
+   * @defaultValue 500
    */
   minDuration: number;
   /**
@@ -28,8 +28,8 @@ export interface InterruptionConfig {
   /**
    * If set, emit an `agentFalseInterruption` event after this amount of time if the user is
    * silent and no user transcript is detected after the interruption. Set to `undefined` to
-   * disable.
-   * @defaultValue 2.0
+   * disable. The value is in milliseconds.
+   * @defaultValue 2000
    */
   falseInterruptionTimeout: number;
   /**
@@ -42,8 +42,8 @@ export interface InterruptionConfig {
 export const defaultInterruptionConfig = {
   mode: undefined,
   discardAudioIfUninterruptible: true,
-  minDuration: 0.5,
+  minDuration: 500,
   minWords: 0,
-  falseInterruptionTimeout: 2,
+  falseInterruptionTimeout: 2000,
   resumeFalseInterruption: true,
 } as const satisfies InterruptionConfig;

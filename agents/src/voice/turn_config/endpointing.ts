@@ -6,21 +6,21 @@
  */
 export interface EndpointingConfig {
   /**
-   * Minimum time in seconds since the last detected speech before the agent declares the user's
+   * Minimum time in milliseconds since the last detected speech before the agent declares the user's
    * turn complete. In VAD mode this effectively behaves like `max(VAD silence, minDelay)`;
    * in STT mode it is applied after the STT end-of-speech signal, so it can be additive with
    * the STT provider's endpointing delay.
-   * @defaultValue 0.5
+   * @defaultValue 500
    */
   minDelay: number;
   /**
-   * Maximum time in seconds the agent will wait before terminating the turn.
-   * @defaultValue 3.0
+   * Maximum time in milliseconds the agent will wait before terminating the turn.
+   * @defaultValue 3000
    */
   maxDelay: number;
 }
 
 export const defaultEndpointingConfig = {
-  minDelay: 0.5,
-  maxDelay: 3.0,
+  minDelay: 500,
+  maxDelay: 3000,
 } as const satisfies EndpointingConfig;
