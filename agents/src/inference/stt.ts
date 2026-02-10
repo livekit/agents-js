@@ -236,7 +236,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     const normalizedFallback = fallback ? normalizeSTTFallback(fallback) : undefined;
 
     this.opts = {
-      model: nextModel,
+      model: nextModel as TModel,
       language: nextLanguage,
       encoding,
       sampleRate,
