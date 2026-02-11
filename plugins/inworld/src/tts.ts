@@ -4,11 +4,14 @@
 import {
   type APIConnectOptions,
   AudioByteStream,
+  createTimedString,
+  type TimedString,
   log,
   shortuuid,
   tokenize,
   tts,
 } from '@livekit/agents';
+import type { AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
 
 const DEFAULT_BIT_RATE = 64000;
@@ -285,6 +288,7 @@ export class TTS extends tts.TTS {
 
     super(mergedOpts.sampleRate, NUM_CHANNELS, {
       streaming: true,
+      alignedTranscript: true,
     });
 
     this.#opts = mergedOpts as TTSOptions;
@@ -515,6 +519,24 @@ class SynthesizeStream extends tts.SynthesizeStream {
       rejectProcessing = reject;
     });
 
+    let lastFrame: AudioFrame | undefined;
+    let pendingTimedTranscripts: TimedString[] = [];
+
+    const sendLastFrame = (final: boolean) => {
+      if (lastFrame && !this.queue.closed) {
+        this.queue.put({
+          requestId: this.#contextId,
+          segmentId: this.#contextId,
+          frame: lastFrame,
+          final,
+          timedTranscripts:
+            pendingTimedTranscripts.length > 0 ? pendingTimedTranscripts : undefined,
+        });
+        lastFrame = undefined;
+        pendingTimedTranscripts = [];
+      }
+    };
+
     const handleMessage = (msg: InworldMessage) => {
       const result = msg.result;
       if (!result) return;
@@ -544,6 +566,20 @@ class SynthesizeStream extends tts.SynthesizeStream {
               this.#generationEndTime = Math.max(this.#generationEndTime, ends[ends.length - 1]!);
             }
 
+            // Create TimedString objects for the framework pipeline
+            // Add trailing space to each word for proper transcript rendering
+            for (let i = 0; i < words.length; i++) {
+              if (words[i] !== undefined && starts[i] !== undefined && ends[i] !== undefined) {
+                pendingTimedTranscripts.push(
+                  createTimedString({
+                    text: words[i] + ' ',
+                    startTime: starts[i],
+                    endTime: ends[i],
+                  }),
+                );
+              }
+            }
+
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (this.#tts as any).emit('alignment', {
               requestId: this.#contextId,
@@ -564,6 +600,19 @@ class SynthesizeStream extends tts.SynthesizeStream {
             // Track generation end time from last character for cumulative offset
             if (ends.length > 0) {
               this.#generationEndTime = Math.max(this.#generationEndTime, ends[ends.length - 1]!);
+            }
+
+            // Create TimedString objects for character-level alignment
+            for (let i = 0; i < chars.length; i++) {
+              if (chars[i] !== undefined && starts[i] !== undefined && ends[i] !== undefined) {
+                pendingTimedTranscripts.push(
+                  createTimedString({
+                    text: chars[i]!,
+                    startTime: starts[i],
+                    endTime: ends[i],
+                  }),
+                );
+              }
             }
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -587,12 +636,8 @@ class SynthesizeStream extends tts.SynthesizeStream {
             for (const frame of bstream.write(
               pcmData.buffer.slice(pcmData.byteOffset, pcmData.byteOffset + pcmData.byteLength),
             )) {
-              this.queue.put({
-                requestId: this.#contextId,
-                segmentId: this.#contextId,
-                frame,
-                final: false,
-              });
+              sendLastFrame(false);
+              lastFrame = frame;
             }
           }
         }
@@ -630,13 +675,10 @@ class SynthesizeStream extends tts.SynthesizeStream {
 
       // Flush remaining frames
       for (const frame of bstream.flush()) {
-        this.queue.put({
-          requestId: this.#contextId,
-          segmentId: this.#contextId,
-          frame,
-          final: false,
-        });
+        sendLastFrame(false);
+        lastFrame = frame;
       }
+      sendLastFrame(true);
     } catch (e) {
       log().error({ error: e }, 'Error in SynthesizeStream run');
       throw e;
