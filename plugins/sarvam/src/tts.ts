@@ -4,7 +4,6 @@
 import { type APIConnectOptions, AudioByteStream, shortuuid, tts } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type {
-  TTSAudioCodecs,
   TTSLanguages,
   TTSModels,
   TTSSampleRates,
@@ -32,8 +31,6 @@ interface TTSBaseOptions {
   pace?: number;
   /** Output sample rate in Hz (default 24000) */
   sampleRate?: TTSSampleRates | number;
-  /** Output audio codec (default 'wav') */
-  outputAudioCodec?: TTSAudioCodecs;
   /** Base URL for the Sarvam API */
   baseURL?: string;
 }
@@ -74,7 +71,6 @@ interface ResolvedTTSOptions {
   targetLanguageCode: string;
   pace: number;
   sampleRate: number;
-  outputAudioCodec: TTSAudioCodecs;
   baseURL: string;
   // V2 only
   pitch?: number;
@@ -122,7 +118,6 @@ function resolveOptions(opts: Partial<TTSOptions>): ResolvedTTSOptions {
     targetLanguageCode: opts.targetLanguageCode ?? 'en-IN',
     pace: opts.pace ?? (isV3 ? V3_DEFAULTS.pace : V2_DEFAULTS.pace),
     sampleRate: opts.sampleRate ?? SARVAM_TTS_SAMPLE_RATE,
-    outputAudioCodec: opts.outputAudioCodec ?? 'wav',
     baseURL: opts.baseURL ?? SARVAM_BASE_URL,
   };
 
@@ -150,7 +145,10 @@ function buildRequestBody(text: string, opts: ResolvedTTSOptions): Record<string
     model: opts.model,
     pace: opts.pace,
     speech_sample_rate: String(opts.sampleRate),
-    output_audio_codec: opts.outputAudioCodec,
+    // Always request WAV — AudioByteStream requires raw PCM, which we get by
+    // stripping the 44-byte WAV header. Other codecs produce compressed audio
+    // that cannot be fed into AudioByteStream.
+    output_audio_codec: 'wav',
   };
 
   if (opts.model === 'bulbul:v3') {
