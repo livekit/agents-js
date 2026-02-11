@@ -5,15 +5,9 @@
 /** Supported Sarvam AI TTS models */
 export type TTSModels = 'bulbul:v2' | 'bulbul:v3';
 
-/** Supported speakers for Sarvam AI TTS */
-export type TTSSpeakers =
-  | 'anushka'
-  | 'abhilash'
-  | 'manisha'
-  | 'vidya'
-  | 'arya'
-  | 'karun'
-  | 'hitesh'
+/** Speakers available on bulbul:v3 (30+ voices) */
+export type TTSV3Speakers =
+  | 'shubh'
   | 'aditya'
   | 'ritu'
   | 'priya'
@@ -34,7 +28,6 @@ export type TTSSpeakers =
   | 'roopa'
   | 'kabir'
   | 'aayan'
-  | 'shubh'
   | 'ashutosh'
   | 'advait'
   | 'amelia'
@@ -54,6 +47,19 @@ export type TTSSpeakers =
   | 'soham'
   | 'rupali';
 
+/** Speakers available on bulbul:v2 */
+export type TTSV2Speakers =
+  | 'anushka'
+  | 'manisha'
+  | 'vidya'
+  | 'arya'
+  | 'abhilash'
+  | 'karun'
+  | 'hitesh';
+
+/** All supported speakers across both models */
+export type TTSSpeakers = TTSV2Speakers | TTSV3Speakers;
+
 /** Supported language codes for Sarvam AI TTS (BCP-47) */
 export type TTSLanguages =
   | 'bn-IN'
@@ -67,3 +73,9 @@ export type TTSLanguages =
   | 'pa-IN'
   | 'ta-IN'
   | 'te-IN';
+
+/** Supported output sample rates in Hz */
+export type TTSSampleRates = 8000 | 16000 | 22050 | 24000 | 32000 | 44100 | 48000;
+
+/** Supported output audio codecs */
+export type TTSAudioCodecs = 'mp3' | 'linear16' | 'mulaw' | 'alaw' | 'opus' | 'flac' | 'aac' | 'wav';

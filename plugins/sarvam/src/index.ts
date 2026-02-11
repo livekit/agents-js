@@ -4,7 +4,7 @@
 import { Plugin } from '@livekit/agents';
 
 export * from './models.js';
-export { ChunkedStream, TTS, type TTSOptions } from './tts.js';
+export { ChunkedStream, TTS, type TTSOptions, type TTSV2Options, type TTSV3Options } from './tts.js';
 
 class SarvamPlugin extends Plugin {
   constructor() {

@@ -3,51 +3,173 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type APIConnectOptions, AudioByteStream, shortuuid, tts } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import type { TTSLanguages, TTSModels, TTSSpeakers } from './models.js';
+import type {
+  TTSAudioCodecs,
+  TTSLanguages,
+  TTSModels,
+  TTSSampleRates,
+  TTSSpeakers,
+  TTSV2Speakers,
+  TTSV3Speakers,
+} from './models.js';
 
 const SARVAM_TTS_SAMPLE_RATE = 24000;
 const SARVAM_TTS_CHANNELS = 1;
 const SARVAM_BASE_URL = 'https://api.sarvam.ai';
 
-/** Configuration options for Sarvam AI TTS */
-export interface TTSOptions {
+// ---------------------------------------------------------------------------
+// Model-specific option types
+// V2 supports pitch / loudness / enablePreprocessing
+// V3 supports temperature (pitch, loudness, enablePreprocessing are NOT supported)
+// ---------------------------------------------------------------------------
+
+interface TTSBaseOptions {
   /** Sarvam API key. Defaults to $SARVAM_API_KEY */
   apiKey?: string;
-  /** TTS model to use */
-  model: TTSModels | string;
-  /** Speaker voice */
-  speaker: TTSSpeakers | string;
   /** Target language code (BCP-47) */
-  targetLanguageCode: TTSLanguages | string;
-  /** Pitch adjustment, -0.75 to 0.75 (bulbul:v2 only) */
-  pitch?: number;
-  /** Speech pace, 0.5 to 2.0 */
+  targetLanguageCode?: TTSLanguages | string;
+  /** Speech pace. v2: 0.3–3.0, v3: 0.5–2.0 (default 1.0) */
   pace?: number;
-  /** Loudness, 0.3 to 3.0 (bulbul:v2 only) */
-  loudness?: number;
-  /** Output sample rate in Hz */
-  sampleRate?: number;
-  /** Enable text preprocessing (bulbul:v2 only) */
-  enablePreprocessing?: boolean;
+  /** Output sample rate in Hz (default 24000) */
+  sampleRate?: TTSSampleRates | number;
+  /** Output audio codec (default 'wav') */
+  outputAudioCodec?: TTSAudioCodecs;
   /** Base URL for the Sarvam API */
   baseURL?: string;
 }
 
-const defaultTTSOptions: TTSOptions = {
-  apiKey: process.env.SARVAM_API_KEY,
-  model: 'bulbul:v2',
-  speaker: 'anushka',
-  targetLanguageCode: 'en-IN',
+/** Options specific to bulbul:v2 */
+export interface TTSV2Options extends TTSBaseOptions {
+  model?: 'bulbul:v2';
+  /** Speaker voice (v2 voices). Default: 'anushka' */
+  speaker?: TTSV2Speakers | string;
+  /** Pitch adjustment, -0.75 to 0.75 (v2 only) */
+  pitch?: number;
+  /** Loudness, 0.3 to 3.0 (v2 only) */
+  loudness?: number;
+  /** Enable text preprocessing (v2 only) */
+  enablePreprocessing?: boolean;
+}
+
+/** Options specific to bulbul:v3 */
+export interface TTSV3Options extends TTSBaseOptions {
+  model: 'bulbul:v3';
+  /** Speaker voice (v3 voices). Default: 'shubh' */
+  speaker?: TTSV3Speakers | string;
+  /** Temperature for voice variation, 0.01 to 2.0 (v3 only, default 0.6) */
+  temperature?: number;
+}
+
+/** Combined options — discriminated by `model` field */
+export type TTSOptions = TTSV2Options | TTSV3Options;
+
+// ---------------------------------------------------------------------------
+// Resolved (internal) options — flat union of all fields
+// ---------------------------------------------------------------------------
+
+interface ResolvedTTSOptions {
+  apiKey: string;
+  model: TTSModels;
+  speaker: TTSSpeakers | string;
+  targetLanguageCode: string;
+  pace: number;
+  sampleRate: number;
+  outputAudioCodec: TTSAudioCodecs;
+  baseURL: string;
+  // V2 only
+  pitch?: number;
+  loudness?: number;
+  enablePreprocessing?: boolean;
+  // V3 only
+  temperature?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Defaults per model
+// ---------------------------------------------------------------------------
+
+const V2_DEFAULTS = {
+  speaker: 'anushka' as const,
   pitch: 0,
   pace: 1.0,
   loudness: 1.0,
-  sampleRate: SARVAM_TTS_SAMPLE_RATE,
   enablePreprocessing: false,
-  baseURL: SARVAM_BASE_URL,
 };
 
+const V3_DEFAULTS = {
+  speaker: 'shubh' as const,
+  pace: 1.0,
+  temperature: 0.6,
+};
+
+// ---------------------------------------------------------------------------
+// Resolve caller options into a fully-populated internal struct
+// ---------------------------------------------------------------------------
+
+function resolveOptions(opts: Partial<TTSOptions>): ResolvedTTSOptions {
+  const apiKey = opts.apiKey ?? process.env.SARVAM_API_KEY;
+  if (!apiKey) {
+    throw new Error('Sarvam API key is required, whether as an argument or as $SARVAM_API_KEY');
+  }
+
+  const model: TTSModels = opts.model ?? 'bulbul:v2';
+  const isV3 = model === 'bulbul:v3';
+
+  const base: ResolvedTTSOptions = {
+    apiKey,
+    model,
+    speaker: opts.speaker ?? (isV3 ? V3_DEFAULTS.speaker : V2_DEFAULTS.speaker),
+    targetLanguageCode: opts.targetLanguageCode ?? 'en-IN',
+    pace: opts.pace ?? (isV3 ? V3_DEFAULTS.pace : V2_DEFAULTS.pace),
+    sampleRate: opts.sampleRate ?? SARVAM_TTS_SAMPLE_RATE,
+    outputAudioCodec: opts.outputAudioCodec ?? 'wav',
+    baseURL: opts.baseURL ?? SARVAM_BASE_URL,
+  };
+
+  if (isV3) {
+    base.temperature = (opts as TTSV3Options).temperature ?? V3_DEFAULTS.temperature;
+  } else {
+    const v2 = opts as TTSV2Options;
+    base.pitch = v2.pitch ?? V2_DEFAULTS.pitch;
+    base.loudness = v2.loudness ?? V2_DEFAULTS.loudness;
+    base.enablePreprocessing = v2.enablePreprocessing ?? V2_DEFAULTS.enablePreprocessing;
+  }
+
+  return base;
+}
+
+// ---------------------------------------------------------------------------
+// Build the API request body — only sends model-relevant fields
+// ---------------------------------------------------------------------------
+
+function buildRequestBody(text: string, opts: ResolvedTTSOptions): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    text,
+    target_language_code: opts.targetLanguageCode,
+    speaker: opts.speaker,
+    model: opts.model,
+    pace: opts.pace,
+    speech_sample_rate: String(opts.sampleRate),
+    output_audio_codec: opts.outputAudioCodec,
+  };
+
+  if (opts.model === 'bulbul:v3') {
+    if (opts.temperature != null) body.temperature = opts.temperature;
+  } else {
+    if (opts.pitch != null) body.pitch = opts.pitch;
+    if (opts.loudness != null) body.loudness = opts.loudness;
+    if (opts.enablePreprocessing != null) body.enable_preprocessing = opts.enablePreprocessing;
+  }
+
+  return body;
+}
+
+// ---------------------------------------------------------------------------
+// TTS class
+// ---------------------------------------------------------------------------
+
 export class TTS extends tts.TTS {
-  #opts: TTSOptions;
+  #opts: ResolvedTTSOptions;
   label = 'sarvam.TTS';
 
   /**
@@ -57,20 +179,16 @@ export class TTS extends tts.TTS {
    * `apiKey` must be set to your Sarvam API key, either using the argument or by setting the
    * `SARVAM_API_KEY` environment variable.
    */
-  constructor(opts: Partial<TTSOptions> = defaultTTSOptions) {
-    const sampleRate = opts.sampleRate ?? defaultTTSOptions.sampleRate!;
-    super(sampleRate, SARVAM_TTS_CHANNELS, { streaming: false });
-
-    this.#opts = { ...defaultTTSOptions, ...opts };
-    if (this.#opts.apiKey === undefined) {
-      throw new Error('Sarvam API key is required, whether as an argument or as $SARVAM_API_KEY');
-    }
+  constructor(opts: Partial<TTSOptions> = {}) {
+    const resolved = resolveOptions(opts);
+    super(resolved.sampleRate, SARVAM_TTS_CHANNELS, { streaming: false });
+    this.#opts = resolved;
   }
 
   /**
    * Update TTS options after initialization.
    *
-   * @param opts - Partial options to update
+   * @param opts - Partial options to update. Re-resolves model-specific fields.
    */
   updateOptions(opts: {
     model?: TTSModels | string;
@@ -78,8 +196,9 @@ export class TTS extends tts.TTS {
     pace?: number;
     pitch?: number;
     loudness?: number;
+    temperature?: number;
   }) {
-    this.#opts = { ...this.#opts, ...opts };
+    this.#opts = { ...this.#opts, ...opts } as ResolvedTTSOptions;
   }
 
   /**
@@ -104,16 +223,20 @@ export class TTS extends tts.TTS {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Chunked stream (non-streaming synthesis)
+// ---------------------------------------------------------------------------
+
 /** Chunked stream for Sarvam AI TTS that processes a single synthesis request. */
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'sarvam.ChunkedStream';
-  private opts: TTSOptions;
+  private opts: ResolvedTTSOptions;
 
   /** @internal */
   constructor(
     tts: TTS,
     text: string,
-    opts: TTSOptions,
+    opts: ResolvedTTSOptions,
     connOptions?: APIConnectOptions,
     abortSignal?: AbortSignal,
   ) {
@@ -123,27 +246,14 @@ export class ChunkedStream extends tts.ChunkedStream {
 
   protected async run() {
     const requestId = shortuuid();
-    const sampleRate = this.opts.sampleRate ?? SARVAM_TTS_SAMPLE_RATE;
-    const baseURL = this.opts.baseURL ?? SARVAM_BASE_URL;
 
-    const response = await fetch(`${baseURL}/text-to-speech`, {
+    const response = await fetch(`${this.opts.baseURL}/text-to-speech`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'api-subscription-key': this.opts.apiKey!,
+        'api-subscription-key': this.opts.apiKey,
       },
-      body: JSON.stringify({
-        text: this.inputText,
-        target_language_code: this.opts.targetLanguageCode,
-        speaker: this.opts.speaker,
-        model: this.opts.model,
-        pitch: this.opts.pitch,
-        pace: this.opts.pace,
-        loudness: this.opts.loudness,
-        speech_sample_rate: String(sampleRate),
-        enable_preprocessing: this.opts.enablePreprocessing,
-        output_audio_codec: 'wav',
-      }),
+      body: JSON.stringify(buildRequestBody(this.inputText, this.opts)),
       signal: this.abortSignal,
     });
 
@@ -162,7 +272,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     const raw = Buffer.from(audioBase64, 'base64');
     const pcmData = raw.buffer.slice(raw.byteOffset + 44, raw.byteOffset + raw.byteLength);
 
-    const audioByteStream = new AudioByteStream(sampleRate, SARVAM_TTS_CHANNELS);
+    const audioByteStream = new AudioByteStream(this.opts.sampleRate, SARVAM_TTS_CHANNELS);
     const frames = [...audioByteStream.write(pcmData), ...audioByteStream.flush()];
 
     let lastFrame: AudioFrame | undefined;
