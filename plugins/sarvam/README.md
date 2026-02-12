@@ -24,7 +24,7 @@ const tts = new sarvam.TTS({
 });
 ```
 
-### STT
+### STT (Transcribe)
 
 ```typescript
 import * as sarvam from '@livekit/agents-plugin-sarvam';
@@ -36,7 +36,28 @@ const stt = new sarvam.STT({
 });
 ```
 
+### STT (Translate — Indic to English)
+
+```typescript
+import * as sarvam from '@livekit/agents-plugin-sarvam';
+
+const stt = new sarvam.STT({
+  model: 'saaras:v2.5',
+  prompt: 'Technical interview discussion',
+});
+```
+
 Set the `SARVAM_API_KEY` environment variable or pass `apiKey` directly.
+
+## STT Models
+
+| Model | Endpoint | Languages | Modes | Prompt |
+|-------|----------|-----------|-------|--------|
+| `saaras:v3` (default) | `/speech-to-text` | 22 (BCP-47) | Yes | No |
+| `saaras:v2.5` | `/speech-to-text-translate` | Auto-detect | No | Yes |
+| `saarika:v2.5` | `/speech-to-text` | 12 (BCP-47) | No | No |
+
+`saarika:v2.5` will be deprecated soon — all its languages are available in `saaras:v3`.
 
 ## Supported Languages
 

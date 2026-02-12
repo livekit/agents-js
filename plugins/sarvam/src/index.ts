@@ -4,7 +4,13 @@
 import { Plugin } from '@livekit/agents';
 
 export * from './models.js';
-export { STT, type STTOptions, type STTV2Options, type STTV3Options } from './stt.js';
+export {
+  STT,
+  type STTOptions,
+  type STTV2Options,
+  type STTTranslateOptions,
+  type STTV3Options,
+} from './stt.js';
 export { ChunkedStream, TTS, type TTSOptions, type TTSV2Options, type TTSV3Options } from './tts.js';
 
 class SarvamPlugin extends Plugin {

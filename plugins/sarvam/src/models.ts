@@ -85,12 +85,14 @@ export type TTSSampleRates = 8000 | 16000 | 22050 | 24000 | 32000 | 44100 | 4800
  * Supported Sarvam AI STT models.
  *
  * @remarks
- * `saarika:v2.5` will be deprecated soon. Prefer `saaras:v3` for new integrations.
- * All languages supported by `saarika:v2.5` are also available in `saaras:v3`.
+ * - `saaras:v3` — recommended for new integrations. Supports all 22 languages, modes, and prompts.
+ * - `saaras:v2.5` — dedicated Indic-to-English translation via `/speech-to-text-translate`.
+ *   Auto-detects the source language; supports prompts but not language codes or modes.
+ * - `saarika:v2.5` — will be deprecated soon. All its languages are available in `saaras:v3`.
  *
  * @see {@link https://docs.sarvam.ai/api-reference-docs/getting-started/models/saaras | Saaras model docs}
  */
-export type STTModels = 'saaras:v3' | 'saarika:v2.5';
+export type STTModels = 'saaras:v3' | 'saaras:v2.5' | 'saarika:v2.5';
 
 /** Transcription modes available on saaras:v3 */
 export type STTModes = 'transcribe' | 'translate' | 'verbatim' | 'translit' | 'codemix';
