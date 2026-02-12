@@ -186,17 +186,14 @@ export class TTS extends tts.TTS {
   /**
    * Update TTS options after initialization.
    *
-   * @param opts - Partial options to update. Re-resolves model-specific fields.
+   * @remarks
+   * When the model changes, model-specific defaults are re-applied for any
+   * fields not explicitly provided. This prevents stale v2 fields (e.g.
+   * speaker 'anushka', pitch, loudness) from leaking into v3 requests and
+   * vice-versa.
    */
-  updateOptions(opts: {
-    model?: TTSModels | string;
-    speaker?: TTSSpeakers | string;
-    pace?: number;
-    pitch?: number;
-    loudness?: number;
-    temperature?: number;
-  }) {
-    this.#opts = { ...this.#opts, ...opts } as ResolvedTTSOptions;
+  updateOptions(opts: Partial<TTSOptions>) {
+    this.#opts = resolveOptions({ ...this.#opts, ...opts });
   }
 
   /**
