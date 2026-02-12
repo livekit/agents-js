@@ -13,26 +13,71 @@ import {
   type TTSModelString,
 } from '../inference/index.js';
 import { ReadonlyChatContext } from '../llm/chat_context.js';
-import type { ChatMessage, FunctionCall, RealtimeModel } from '../llm/index.js';
+import type { ChatMessage, FunctionCall } from '../llm/index.js';
 import {
   type ChatChunk,
   ChatContext,
   LLM,
+  RealtimeModel,
   type ToolChoice,
   type ToolContext,
 } from '../llm/index.js';
+import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
+import { Future, Task } from '../utils.js';
 import type { VAD } from '../vad.js';
-import type { AgentActivity } from './agent_activity.js';
+import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 import type { TimedString } from './io.js';
+import type { SpeechHandle } from './speech_handle.js';
 
-export const asyncLocalStorage = new AsyncLocalStorage<{ functionCall?: FunctionCall }>();
+export const functionCallStorage = new AsyncLocalStorage<{ functionCall?: FunctionCall }>();
+export const speechHandleStorage = new AsyncLocalStorage<SpeechHandle>();
+const activityTaskInfoStorage = new WeakMap<Task<any>, _ActivityTaskInfo>();
+
+type _ActivityTaskInfo = {
+  functionCall: FunctionCall | null;
+  speechHandle: SpeechHandle | null;
+  inlineTask: boolean;
+};
+
+/** @internal */
+export function _setActivityTaskInfo<T>(
+  task: Task<T>,
+  options: {
+    functionCall?: FunctionCall | null;
+    speechHandle?: SpeechHandle | null;
+    inlineTask?: boolean;
+  },
+): void {
+  const info = activityTaskInfoStorage.get(task) ?? {
+    functionCall: null,
+    speechHandle: null,
+    inlineTask: false,
+  };
+
+  if (Object.hasOwn(options, 'functionCall')) {
+    info.functionCall = options.functionCall ?? null;
+  }
+  if (Object.hasOwn(options, 'speechHandle')) {
+    info.speechHandle = options.speechHandle ?? null;
+  }
+  if (Object.hasOwn(options, 'inlineTask')) {
+    info.inlineTask = options.inlineTask ?? false;
+  }
+
+  activityTaskInfoStorage.set(task, info);
+}
+
+/** @internal */
+export function _getActivityTaskInfo<T>(task: Task<T>): _ActivityTaskInfo | undefined {
+  return activityTaskInfoStorage.get(task);
+}
 export const STOP_RESPONSE_SYMBOL = Symbol('StopResponse');
 
 export class StopResponse extends Error {
@@ -268,20 +313,20 @@ export class Agent<UserData = any> {
         throw new Error('sttNode called but no STT node is available');
       }
 
-      let wrapped_stt = activity.stt;
+      let wrappedStt = activity.stt;
 
-      if (!wrapped_stt.capabilities.streaming) {
+      if (!wrappedStt.capabilities.streaming) {
         const vad = agent.vad || activity.vad;
         if (!vad) {
           throw new Error(
             'STT does not support streaming, add a VAD to the AgentTask/VoiceAgent to enable streaming',
           );
         }
-        wrapped_stt = new STTStreamAdapter(wrapped_stt, vad);
+        wrappedStt = new STTStreamAdapter(wrappedStt, vad);
       }
 
       const connOptions = activity.agentSession.connOptions.sttConnOptions;
-      const stream = wrapped_stt.stream({ connOptions });
+      const stream = wrappedStt.stream({ connOptions });
 
       // Set startTimeOffset to provide linear timestamps across reconnections
       const audioInputStartedAt =
@@ -382,14 +427,14 @@ export class Agent<UserData = any> {
         throw new Error('ttsNode called but no TTS node is available');
       }
 
-      let wrapped_tts = activity.tts;
+      let wrappedTts = activity.tts;
 
       if (!activity.tts.capabilities.streaming) {
-        wrapped_tts = new TTSStreamAdapter(wrapped_tts, new BasicSentenceTokenizer());
+        wrappedTts = new TTSStreamAdapter(wrappedTts, new BasicSentenceTokenizer());
       }
 
       const connOptions = activity.agentSession.connOptions.ttsConnOptions;
-      const stream = wrapped_tts.stream({ connOptions });
+      const stream = wrappedTts.stream({ connOptions });
       stream.updateInputStream(text);
 
       let cleaned = false;
@@ -439,4 +484,135 @@ export class Agent<UserData = any> {
       return audio;
     },
   };
+}
+
+export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData> {
+  private started = false;
+  private future = new Future<ResultT>();
+
+  #logger = log();
+
+  get done(): boolean {
+    return this.future.done;
+  }
+
+  complete(result: ResultT | Error): void {
+    if (this.future.done) {
+      throw new Error(`${this.constructor.name} is already done`);
+    }
+
+    if (result instanceof Error) {
+      this.future.reject(result);
+    } else {
+      this.future.resolve(result);
+    }
+
+    const speechHandle = speechHandleStorage.getStore();
+    if (speechHandle) {
+      speechHandle._maybeRunFinalOutput = result;
+    }
+  }
+
+  async run(_session?: AgentSession<UserData>): Promise<ResultT> {
+    if (this.started) {
+      throw new Error(
+        `Task ${this.constructor.name} has already started and cannot be awaited multiple times`,
+      );
+    }
+    this.started = true;
+
+    const currentTask = Task.current();
+    if (!currentTask) {
+      throw new Error(`${this.constructor.name} must be executed inside a Task context`);
+    }
+
+    const taskInfo = _getActivityTaskInfo(currentTask);
+    if (!taskInfo || !taskInfo.inlineTask) {
+      throw new Error(
+        `${this.constructor.name} should only be awaited inside function tools or the onEnter/onExit methods of an Agent`,
+      );
+    }
+
+    const speechHandle = speechHandleStorage.getStore();
+    const oldActivity = agentActivityStorage.getStore();
+    if (!oldActivity) {
+      throw new Error(`${this.constructor.name} must be executed inside an AgentActivity context`);
+    }
+
+    currentTask.addDoneCallback(() => {
+      if (this.future.done) return;
+
+      // If the Task finished before the AgentTask was completed, complete the AgentTask with an error.
+      this.#logger.error(`The Task finished before ${this.constructor.name} was completed.`);
+      this.complete(new Error(`The Task finished before ${this.constructor.name} was completed.`));
+    });
+
+    const oldAgent = oldActivity.agent;
+    const session = oldActivity.agentSession;
+
+    const blockedTasks: Task<any>[] = [currentTask];
+    const onEnterTask = oldActivity._onEnterTask;
+
+    if (onEnterTask && !onEnterTask.done && onEnterTask !== currentTask) {
+      blockedTasks.push(onEnterTask);
+    }
+
+    if (
+      taskInfo.functionCall &&
+      oldActivity.llm instanceof RealtimeModel &&
+      !oldActivity.llm.capabilities.manualFunctionCalls
+    ) {
+      this.#logger.error(
+        `Realtime model does not support resuming function calls from chat context, ` +
+          `using AgentTask inside a function tool may have unexpected behavior.`,
+      );
+    }
+
+    await session._updateActivity(this, {
+      previousActivity: 'pause',
+      newActivity: 'start',
+      blockedTasks,
+    });
+
+    // NOTE: _updateActivity is calling the onEnter method, so the RunResult can capture all speeches
+    let runState = session._globalRunState;
+    if (speechHandle && runState && !runState.done()) {
+      // make sure to not deadlock on the current speech handle
+      runState._unwatchHandle(speechHandle);
+      // it is OK to call _markDoneIfNeeded here, the above _updateActivity will call onEnter
+      // so handles added inside the onEnter will make sure we're not completing the runState too early.
+      runState._markDoneIfNeeded();
+    }
+
+    try {
+      return await this.future.await;
+    } finally {
+      // runState could have changed after future resolved
+      runState = session._globalRunState;
+
+      if (session.currentAgent !== this) {
+        this.#logger.warn(
+          `${this.constructor.name} completed, but the agent has changed in the meantime. ` +
+            `Ignoring handoff to the previous agent, likely due to AgentSession.updateAgent being invoked.`,
+        );
+        await oldActivity.close();
+      } else {
+        if (speechHandle && runState && !runState.done()) {
+          runState._watchHandle(speechHandle);
+        }
+
+        const mergedChatCtx = oldAgent._chatCtx.merge(this._chatCtx, {
+          excludeFunctionCall: true,
+          excludeInstructions: true,
+        });
+        oldAgent._chatCtx.items = mergedChatCtx.items;
+
+        await session._updateActivity(oldAgent, {
+          previousActivity: 'close',
+          newActivity: 'resume',
+          waitOnEnter: false,
+        });
+      }
+    }
+  }
 }

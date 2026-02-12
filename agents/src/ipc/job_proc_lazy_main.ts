@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Room, RoomEvent } from '@livekit/rtc-node';
+import { Room, RoomEvent, dispose } from '@livekit/rtc-node';
 import { EventEmitter, once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
@@ -244,6 +244,8 @@ const startJob = (
     process.on('message', messageHandler);
 
     await join.await;
+
+    await dispose();
 
     logger.debug('Job process shutdown');
     process.exit(0);

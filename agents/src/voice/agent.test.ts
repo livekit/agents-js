@@ -1,10 +1,15 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { tool } from '../llm/index.js';
-import { Agent } from './agent.js';
+import { initializeLogger } from '../log.js';
+import { Task } from '../utils.js';
+import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
+import { agentActivityStorage } from './agent_activity.js';
+
+initializeLogger({ pretty: false, level: 'error' });
 
 describe('Agent', () => {
   it('should create agent with basic instructions', () => {
@@ -76,5 +81,138 @@ describe('Agent', () => {
     // Should contain the same set of tools
     expect(tools1).toEqual(tools2);
     expect(tools1).toEqual(tools);
+  });
+
+  it('should require AgentTask to run inside task context', async () => {
+    class TestTask extends AgentTask<string> {
+      constructor() {
+        super({ instructions: 'test task' });
+      }
+    }
+
+    const task = new TestTask();
+    await expect(task.run()).rejects.toThrow('must be executed inside a Task context');
+  });
+
+  it('should require AgentTask to run inside inline task context', async () => {
+    class TestTask extends AgentTask<string> {
+      constructor() {
+        super({ instructions: 'test task' });
+      }
+    }
+
+    const task = new TestTask();
+    const wrapper = Task.from(async () => {
+      return await task.run();
+    });
+
+    await expect(wrapper.result).rejects.toThrow(
+      'should only be awaited inside function tools or the onEnter/onExit methods of an Agent',
+    );
+  });
+
+  it('should allow AgentTask run from inline task context', async () => {
+    class TestTask extends AgentTask<string> {
+      constructor() {
+        super({ instructions: 'test task' });
+      }
+    }
+
+    const task = new TestTask();
+    const oldAgent = new Agent({ instructions: 'old agent' });
+    const mockSession = {
+      currentAgent: oldAgent,
+      _globalRunState: undefined,
+      _updateActivity: async (agent: Agent) => {
+        if (agent === task) {
+          task.complete('ok');
+        }
+      },
+    };
+
+    const mockActivity = {
+      agent: oldAgent,
+      agentSession: mockSession,
+      _onEnterTask: undefined,
+      llm: undefined,
+      close: async () => {},
+    };
+
+    const wrapper = Task.from(async () => {
+      const currentTask = Task.current();
+      if (!currentTask) {
+        throw new Error('expected task context');
+      }
+      _setActivityTaskInfo(currentTask, { inlineTask: true });
+      return await agentActivityStorage.run(mockActivity as any, () => task.run());
+    });
+
+    await expect(wrapper.result).resolves.toBe('ok');
+  });
+
+  it('should require AgentTask to run inside AgentActivity context', async () => {
+    class TestTask extends AgentTask<string> {
+      constructor() {
+        super({ instructions: 'test task' });
+      }
+    }
+
+    const task = new TestTask();
+    const wrapper = Task.from(async () => {
+      const currentTask = Task.current();
+      if (!currentTask) {
+        throw new Error('expected task context');
+      }
+      _setActivityTaskInfo(currentTask, { inlineTask: true });
+      return await task.run();
+    });
+
+    await expect(wrapper.result).rejects.toThrow(
+      'must be executed inside an AgentActivity context',
+    );
+  });
+
+  it('should close old activity when current agent changes while AgentTask is pending', async () => {
+    class TestTask extends AgentTask<string> {
+      constructor() {
+        super({ instructions: 'test task' });
+      }
+    }
+
+    const task = new TestTask();
+    const oldAgent = new Agent({ instructions: 'old agent' });
+    const switchedAgent = new Agent({ instructions: 'switched agent' });
+    const closeOldActivity = vi.fn(async () => {});
+
+    const mockSession = {
+      currentAgent: oldAgent as Agent,
+      _globalRunState: undefined,
+      _updateActivity: async (agent: Agent) => {
+        if (agent === task) {
+          mockSession.currentAgent = switchedAgent;
+          task.complete('ok');
+        }
+      },
+    };
+
+    const mockActivity = {
+      agent: oldAgent,
+      agentSession: mockSession,
+      _onEnterTask: undefined,
+      llm: undefined,
+      close: closeOldActivity,
+    };
+
+    const wrapper = Task.from(async () => {
+      const currentTask = Task.current();
+      if (!currentTask) {
+        throw new Error('expected task context');
+      }
+      _setActivityTaskInfo(currentTask, { inlineTask: true });
+      return await agentActivityStorage.run(mockActivity as any, () => task.run());
+    });
+
+    await expect(wrapper.result).resolves.toBe('ok');
+    expect(closeOldActivity).toHaveBeenCalledTimes(1);
   });
 });

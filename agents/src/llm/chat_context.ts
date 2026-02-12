@@ -510,6 +510,41 @@ export class ChatContext {
     return new ChatContext(items);
   }
 
+  merge(
+    other: ChatContext,
+    options: {
+      excludeFunctionCall?: boolean;
+      excludeInstructions?: boolean;
+    } = {},
+  ): ChatContext {
+    const { excludeFunctionCall = false, excludeInstructions = false } = options;
+    const existingIds = new Set(this._items.map((item) => item.id));
+
+    for (const item of other.items) {
+      if (excludeFunctionCall && ['function_call', 'function_call_output'].includes(item.type)) {
+        continue;
+      }
+
+      if (
+        excludeInstructions &&
+        item.type === 'message' &&
+        (item.role === 'system' || item.role === 'developer')
+      ) {
+        continue;
+      }
+
+      if (existingIds.has(item.id)) {
+        continue;
+      }
+
+      const idx = this.findInsertionIndex(item.createdAt);
+      this._items.splice(idx, 0, item);
+      existingIds.add(item.id);
+    }
+
+    return this;
+  }
+
   truncate(maxItems: number): ChatContext {
     if (maxItems <= 0) return this;
 
