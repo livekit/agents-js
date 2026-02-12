@@ -687,7 +687,7 @@ export class SpeechStream extends stt.SpeechStream {
       });
 
       await Promise.race([listenMessage, waitForAbort(controller.signal)]);
-    }, this.abortController);
+    });
 
     try {
       await Promise.race([
