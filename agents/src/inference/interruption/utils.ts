@@ -86,32 +86,21 @@ export class BoundedCache<K, V> {
 }
 
 /**
- * Estimate probability using sliding window min-max algorithm.
- * Returns a conservative estimate based on the minimum window size.
+ * Estimate probability by finding the n-th maximum value in the probabilities array.
+ * The n-th position is determined by the window size (25ms per frame).
+ * Returns 0 if there are insufficient probabilities.
  */
 export function estimateProbability(
   probabilities: number[],
   windowSizeInS: number = MIN_INTERRUPTION_DURATION_IN_S,
 ): number {
-  const minWindow = Math.ceil(windowSizeInS / FRAME_DURATION_IN_S);
-  if (probabilities.length < minWindow) {
+  const nTh = Math.ceil(windowSizeInS / FRAME_DURATION_IN_S);
+  if (probabilities.length < nTh) {
     return 0;
   }
 
-  return slidingWindowMinMax(probabilities, minWindow);
-}
-
-export function slidingWindowMinMax(probabilities: number[], minWindow: number): number {
-  if (probabilities.length < minWindow) {
-    return -Infinity;
-  }
-
-  let maxOfMins = -Infinity;
-
-  for (let i = 0; i <= probabilities.length - minWindow; i++) {
-    const windowMin = Math.min(...probabilities.slice(i, i + minWindow));
-    maxOfMins = Math.max(maxOfMins, windowMin);
-  }
-
-  return maxOfMins;
+  // Find the n-th maximum value by sorting in descending order
+  // Create a copy to avoid mutating the original array
+  const sorted = [...probabilities].sort((a, b) => b - a);
+  return sorted[nTh - 1]!;
 }

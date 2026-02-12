@@ -160,6 +160,7 @@ export class InterruptionStreamBase {
     let startIdx = 0;
     let accumulatedSamples = 0;
     let overlapSpeechStarted = false;
+    let overlapCount = 0;
     // Use BoundedCache with max_len=10 to prevent unbounded memory growth
     const cache = new BoundedCache<number, InterruptionCacheEntry>(10);
     const inferenceS16Data = new Int16Array(
@@ -171,6 +172,7 @@ export class InterruptionStreamBase {
       overlapSpeechStarted,
       overlapSpeechStartedAt: this.overlapSpeechStartedAt,
       cache,
+      overlapCount,
     });
     const setState = (partial: { overlapSpeechStarted?: boolean }) => {
       if (partial.overlapSpeechStarted !== undefined) {
@@ -232,6 +234,7 @@ export class InterruptionStreamBase {
             agentSpeechStarted = false;
             overlapSpeechStarted = false;
             accumulatedSamples = 0;
+            overlapCount = 0;
             startIdx = 0;
             cache.clear();
           } else if (chunk.type === 'overlap-speech-started' && agentSpeechStarted) {
@@ -239,8 +242,10 @@ export class InterruptionStreamBase {
             this.logger.debug('overlap speech started, starting interruption inference');
             overlapSpeechStarted = true;
             accumulatedSamples = 0;
+            overlapCount += 1;
             // Include both speech duration and audio prefix duration for context
-            const shiftSize = Math.min(
+            const agg = overlapCount > 1 ? Math.max : Math.min;
+            const shiftSize = agg(
               startIdx,
               Math.round(chunk.speechDurationInS * this.options.sampleRate) +
                 Math.round(this.options.audioPrefixDurationInS * this.options.sampleRate),
@@ -278,6 +283,7 @@ export class InterruptionStreamBase {
               };
               controller.enqueue(event);
               overlapSpeechStarted = false;
+              accumulatedSamples = 0;
             }
           } else if (chunk.type === 'flush') {
             // no-op
