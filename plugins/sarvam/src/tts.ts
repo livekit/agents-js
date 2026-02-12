@@ -187,13 +187,26 @@ export class TTS extends tts.TTS {
    * Update TTS options after initialization.
    *
    * @remarks
-   * When the model changes, model-specific defaults are re-applied for any
-   * fields not explicitly provided. This prevents stale v2 fields (e.g.
-   * speaker 'anushka', pitch, loudness) from leaking into v3 requests and
-   * vice-versa.
+   * When the model changes, only truly shared fields (apiKey,
+   * targetLanguageCode, pace, sampleRate, baseURL) carry over.
+   * Model-specific fields (speaker, pitch, loudness, temperature,
+   * enablePreprocessing) are dropped so resolveOptions re-applies
+   * the correct defaults for the new model.
    */
   updateOptions(opts: Partial<TTSOptions>) {
-    this.#opts = resolveOptions({ ...this.#opts, ...opts } as TTSOptions);
+    const modelChanging = opts.model != null && opts.model !== this.#opts.model;
+
+    const base: Partial<TTSOptions> = modelChanging
+      ? {
+          apiKey: this.#opts.apiKey,
+          targetLanguageCode: this.#opts.targetLanguageCode as TTSLanguages,
+          pace: this.#opts.pace,
+          sampleRate: this.#opts.sampleRate as TTSSampleRates,
+          baseURL: this.#opts.baseURL,
+        }
+      : ({ ...this.#opts } as Partial<TTSOptions>);
+
+    this.#opts = resolveOptions({ ...base, ...opts } as TTSOptions);
   }
 
   /**

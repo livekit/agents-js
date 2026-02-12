@@ -77,5 +77,3 @@ export type TTSLanguages =
 /** Supported output sample rates in Hz */
 export type TTSSampleRates = 8000 | 16000 | 22050 | 24000 | 32000 | 44100 | 48000;
 
-/** Supported output audio codecs */
-export type TTSAudioCodecs = 'mp3' | 'linear16' | 'mulaw' | 'alaw' | 'opus' | 'flac' | 'aac' | 'wav';
