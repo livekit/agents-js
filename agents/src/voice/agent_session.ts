@@ -660,8 +660,6 @@ export class AgentSession<
             await prevActivityObj.drain();
             await prevActivityObj.close();
           }
-        } else {
-          throw new Error('Invalid agent activity transition');
         }
 
         this.activity = this.nextActivity;
