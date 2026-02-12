@@ -389,6 +389,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
       }
     }
 
+    if (frame.samplesPerChannel === 0) {
+      this.input.put(frame);
+      return;
+    }
+
     if (this.resampler) {
       const frames = this.resampler.push(frame);
       for (const frame of frames) {

@@ -2,4 +2,4 @@
 "@livekit/agents": patch
 ---
 
-Fix support for CJS runners
+Fix parsing lang from stt ctor 
