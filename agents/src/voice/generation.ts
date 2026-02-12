@@ -935,14 +935,6 @@ export function performToolExecutions({
         'Executing LLM tool call',
       );
 
-      const toolExecution = functionCallStorage.run({ functionCall: toolCall }, async () => {
-        return await tool.execute(parsedArgs, {
-          ctx: new RunContext(session, speechHandle, toolCall),
-          toolCallId: toolCall.callId,
-          abortSignal: signal,
-        });
-      });
-
       const _tracableToolExecutionImpl = async (toolExecTask: Promise<unknown>, span: Span) => {
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
@@ -1001,6 +993,24 @@ export function performToolExecutions({
 
       const toolTask = Task.from(
         async () => {
+          // Ensure this task is marked inline before user tool code executes.
+          const currentTask = Task.current();
+          if (currentTask) {
+            _setActivityTaskInfo(currentTask, {
+              speechHandle,
+              functionCall: toolCall,
+              inlineTask: true,
+            });
+          }
+
+          const toolExecution = functionCallStorage.run({ functionCall: toolCall }, async () => {
+            return await tool.execute(parsedArgs, {
+              ctx: new RunContext(session, speechHandle, toolCall),
+              toolCallId: toolCall.callId,
+              abortSignal: signal,
+            });
+          });
+
           await tracableToolExecution(toolExecution);
         },
         controller,

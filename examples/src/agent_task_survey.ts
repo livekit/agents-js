@@ -20,7 +20,6 @@ type SurveyResult = {
   role: string;
 };
 
-// Ref: python examples/survey/survey_agent.py - 248-274 lines.
 class IntroTask extends voice.AgentTask<SurveyResult> {
   constructor() {
     super({
@@ -84,8 +83,6 @@ export default defineAgent({
       room: ctx.room,
       agent: new SurveyAgent(),
     });
-
-    await ctx.waitForParticipant();
   },
 });
 

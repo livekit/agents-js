@@ -868,6 +868,13 @@ export class AgentActivity implements RecognitionHooks {
 
     const wrappedFn = (ctrl: AbortController) => {
       return agentActivityStorage.run(this, () => {
+        // Mark inline/speech metadata at task runtime to avoid a race where taskFn executes
+        // before post-construction metadata is attached to the Task instance.
+        const currentTask = Task.current();
+        if (currentTask) {
+          _setActivityTaskInfo(currentTask, { speechHandle: ownedSpeechHandle, inlineTask });
+        }
+
         if (ownedSpeechHandle) {
           return speechHandleStorage.run(ownedSpeechHandle, () => taskFn(ctrl));
         }
