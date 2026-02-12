@@ -59,16 +59,17 @@ export class DeferredReadableStream<T> {
       throw new Error('Stream source already set');
     }
 
-    this.sourceReader = source.getReader();
-    this.pump();
+    const sourceReader = source.getReader();
+    this.sourceReader = sourceReader;
+    void this.pump(sourceReader);
   }
 
-  private async pump() {
+  private async pump(sourceReader: ReadableStreamDefaultReader<T>) {
     let sourceError: unknown;
 
     try {
       while (true) {
-        const { done, value } = await this.sourceReader!.read();
+        const { done, value } = await sourceReader.read();
         if (done) break;
         await this.writer.write(value);
       }
@@ -81,7 +82,7 @@ export class DeferredReadableStream<T> {
       // any other error from source will be propagated to the consumer
       if (sourceError) {
         try {
-          this.writer.abort(sourceError);
+          await this.writer.abort(sourceError);
         } catch (e) {
           // ignore if writer is already closed
         }
@@ -118,10 +119,20 @@ export class DeferredReadableStream<T> {
       return;
     }
 
+    const sourceReader = this.sourceReader!;
+    // Clear source first so future setSource() calls can reattach cleanly.
+    this.sourceReader = undefined;
+
     // release lock will make any pending read() throw TypeError
     // which are expected, and we intentionally catch those error
     // using isStreamReaderReleaseError
     // this will unblock any pending read() inside the async for loop
-    this.sourceReader!.releaseLock();
+    try {
+      sourceReader.releaseLock();
+    } catch (e) {
+      if (!isStreamReaderReleaseError(e)) {
+        throw e;
+      }
+    }
   }
 }

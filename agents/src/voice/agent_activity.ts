@@ -441,9 +441,12 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   attachAudioInput(audioStream: ReadableStream<AudioFrame>): void {
-    if (this.audioStream.isSourceSet) {
+    const currentDeferredStream = this.audioStream;
+    if (currentDeferredStream.isSourceSet) {
       this.logger.debug('detaching existing audio input in agent activity');
-      this.audioStream.detachSource();
+      void currentDeferredStream.detachSource().catch((error) => {
+        this.logger.debug({ error }, 'error detaching existing audio input in agent activity');
+      });
     }
 
     /**
@@ -452,6 +455,8 @@ export class AgentActivity implements RecognitionHooks {
      * This is important because teeing the original stream directly makes it very difficult—if not
      * impossible—to implement stream unlock logic cleanly.
      */
+    // Recreate the deferred stream each attach because tee() locks the underlying readable stream.
+    this.audioStream = new DeferredReadableStream<AudioFrame>();
     this.audioStream.setSource(audioStream);
     const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream.tee();
 
@@ -465,7 +470,9 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   detachAudioInput(): void {
-    this.audioStream.detachSource();
+    void this.audioStream.detachSource().catch((error) => {
+      this.logger.debug({ error }, 'error detaching audio input in agent activity');
+    });
   }
 
   commitUserTurn(
