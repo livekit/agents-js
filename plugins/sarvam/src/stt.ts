@@ -692,7 +692,7 @@ export class SpeechStream extends stt.SpeechStream {
     try {
       await Promise.race([
         this.#resetWS.await,
-        Promise.all([sendTask(), listenTask.result, wsMonitor]),
+        Promise.all([sendTask(), listenTask.result, wsMonitor.result]),
       ]);
     } finally {
       closing = true;
