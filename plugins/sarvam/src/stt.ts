@@ -345,7 +345,7 @@ export class STT extends stt.STT {
    * @see {@link https://docs.sarvam.ai/api-reference-docs/speech-to-text-translate/translate | Sarvam STT Translate docs}
    */
   constructor(opts: Partial<STTOptions> = {}) {
-    super({ streaming: true, interimResults: true, alignedTranscript: false });
+    super({ streaming: true, interimResults: false, alignedTranscript: false });
     this.opts = resolveOptions(opts);
   }
 
