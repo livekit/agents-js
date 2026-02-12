@@ -42,7 +42,9 @@ class IntroTask extends voice.AgentTask<SurveyResult> {
   }
 
   async onEnter() {
-    this.session.generateReply();
+    this.session.generateReply({
+      userInput: 'Greet user and ask the user for their name and role',
+    });
   }
 }
 
