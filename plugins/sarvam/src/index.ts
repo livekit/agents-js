@@ -6,6 +6,7 @@ import { Plugin } from '@livekit/agents';
 export * from './models.js';
 export {
   STT,
+  SpeechStream,
   type STTOptions,
   type STTV2Options,
   type STTTranslateOptions,

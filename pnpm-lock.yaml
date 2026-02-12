@@ -812,6 +812,10 @@ importers:
         version: 5.4.5
 
   plugins/sarvam:
+    dependencies:
+      ws:
+        specifier: ^8.16.0
+        version: 8.18.3
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -831,6 +835,9 @@ importers:
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
+      '@types/ws':
+        specifier: ^8.5.10
+        version: 8.5.10
       tsup:
         specifier: ^8.3.5
         version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)
