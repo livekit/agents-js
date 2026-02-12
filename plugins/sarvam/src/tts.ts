@@ -193,7 +193,7 @@ export class TTS extends tts.TTS {
    * vice-versa.
    */
   updateOptions(opts: Partial<TTSOptions>) {
-    this.#opts = resolveOptions({ ...this.#opts, ...opts });
+    this.#opts = resolveOptions({ ...this.#opts, ...opts } as TTSOptions);
   }
 
   /**
