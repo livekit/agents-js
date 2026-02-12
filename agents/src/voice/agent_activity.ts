@@ -2598,10 +2598,7 @@ export class AgentActivity implements RecognitionHooks {
         !(this.llm instanceof RealtimeModel)
       )
     ) {
-      if (
-        typeof interruptionDetection === 'string' &&
-        ['adaptive', 'vad'].includes(interruptionDetection)
-      ) {
+      if (interruptionDetection === 'adaptive') {
         this.logger.warn(
           "interruptionDetection is provided, but it's not compatible with the current configuration and will be disabled",
         );
