@@ -41,7 +41,7 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
     } = { ...interruptionOptionDefaults, ...options };
 
     if (maxAudioDurationInS > 3.0) {
-      throw new Error('maxAudioDurationInS must be less than or equal to 3.0 seconds');
+      throw new RangeError('maxAudioDurationInS must be less than or equal to 3.0 seconds');
     }
 
     const lkBaseUrl = baseUrl ?? process.env.LIVEKIT_REMOTE_EOT_URL ?? getDefaultInferenceUrl();
@@ -56,7 +56,7 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
       lkApiKey =
         apiKey ?? process.env.LIVEKIT_INFERENCE_API_KEY ?? process.env.LIVEKIT_API_KEY ?? '';
       if (!lkApiKey) {
-        throw new Error(
+        throw new TypeError(
           'apiKey is required, either as argument or set LIVEKIT_API_KEY environmental variable',
         );
       }
@@ -67,7 +67,7 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
         process.env.LIVEKIT_API_SECRET ??
         '';
       if (!lkApiSecret) {
-        throw new Error(
+        throw new TypeError(
           'apiSecret is required, either as argument or set LIVEKIT_API_SECRET environmental variable',
         );
       }
