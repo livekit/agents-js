@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type AudioFrame, FrameProcessor } from '@livekit/rtc-node';
+import { type AudioFrame, type FrameProcessor, isAudioFrameProcessor } from '@livekit/rtc-node';
 import {
   AudioStream,
   type NoiseCancellationOptions,
@@ -41,7 +41,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.room = room;
     this.sampleRate = sampleRate;
     this.numChannels = numChannels;
-    if (noiseCancellation instanceof FrameProcessor) {
+    if (isAudioFrameProcessor(noiseCancellation)) {
       this.frameProcessor = noiseCancellation;
     } else {
       this.noiseCancellation = noiseCancellation;
@@ -60,8 +60,10 @@ export class ParticipantAudioInputStream extends AudioInput {
     if (this.participantIdentity === participantIdentity) {
       return;
     }
+    if (this.participantIdentity) {
+      this.closeStream();
+    }
     this.participantIdentity = participantIdentity;
-    this.closeStream();
 
     if (!participantIdentity) {
       return;
@@ -123,8 +125,6 @@ export class ParticipantAudioInputStream extends AudioInput {
       this.deferredStream.detachSource();
     }
 
-    this.frameProcessor?.close();
-
     this.publication = null;
   }
 
@@ -184,6 +184,8 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
     this.room.off(RoomEvent.TokenRefreshed, this.onTokenRefreshed);
     this.closeStream();
+    this.frameProcessor?.close();
+    this.frameProcessor = undefined;
     // Ignore errors - stream may be locked by RecorderIO or already cancelled
     await this.deferredStream.stream.cancel().catch(() => {});
   }
