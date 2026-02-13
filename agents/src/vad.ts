@@ -100,11 +100,12 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
 
   protected vad: VAD;
   protected lastActivityTime = BigInt(0);
-  protected logger = log();
+  protected logger;
   protected deferredInputStream: DeferredReadableStream<AudioFrame>;
 
   private metricsStream: ReadableStream<VADEvent>;
   constructor(vad: VAD) {
+    this.logger = log();
     this.vad = vad;
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
 
