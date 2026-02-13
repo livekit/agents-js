@@ -491,7 +491,6 @@ export class SpeechStream extends stt.SpeechStream {
           );
         });
 
-        retries = 0;
         await this.#runWS(ws);
       } catch (e) {
         // Clean up the WebSocket on failure to prevent listener leaks
