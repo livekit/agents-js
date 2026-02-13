@@ -658,7 +658,7 @@ export class SpeechStream extends stt.SpeechStream {
               const transcript = td.transcript ?? '';
               const language = td.language_code ?? this.#opts.languageCode ?? 'unknown';
               const requestId = td.request_id ?? '';
-              const confidence = td.language_probability ?? 1.0;
+              const confidence = td.language_probability ?? 0;
               this.#requestId = requestId;
 
               // Log metrics when available
