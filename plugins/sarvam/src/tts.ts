@@ -244,6 +244,7 @@ export class TTS extends tts.TTS {
           pace: this.#opts.pace,
           sampleRate: this.#opts.sampleRate as TTSSampleRates,
           baseURL: this.#opts.baseURL,
+          sentenceTokenizer: this.#opts.sentenceTokenizer,
         }
       : ({ ...this.#opts } as Partial<TTSOptions>);
 
