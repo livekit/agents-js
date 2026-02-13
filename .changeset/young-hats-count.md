@@ -2,4 +2,4 @@
 "@livekit/agents": patch
 ---
 
-Fix parsing lang from stt ctor 
+Enable inheritance from VADStream
