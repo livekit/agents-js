@@ -15,7 +15,13 @@ import {
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
-import type { STTModels, STTModes, STTV2Languages, STTV3Languages, STTLanguages } from './models.js';
+import type {
+  STTLanguages,
+  STTModels,
+  STTModes,
+  STTV2Languages,
+  STTV3Languages,
+} from './models.js';
 
 // ---------------------------------------------------------------------------
 // Endpoint URLs
@@ -128,8 +134,18 @@ const SAARAS_TRANSLATE_DEFAULTS = {
 
 /** Runtime set of languages supported by saarika:v2.5 (for validation on model switch) */
 const STTV2_LANGUAGE_SET: ReadonlySet<string> = new Set<STTV2Languages>([
-  'unknown', 'hi-IN', 'bn-IN', 'kn-IN', 'ml-IN', 'mr-IN',
-  'od-IN', 'pa-IN', 'ta-IN', 'te-IN', 'en-IN', 'gu-IN',
+  'unknown',
+  'hi-IN',
+  'bn-IN',
+  'kn-IN',
+  'ml-IN',
+  'mr-IN',
+  'od-IN',
+  'pa-IN',
+  'ta-IN',
+  'te-IN',
+  'en-IN',
+  'gu-IN',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -163,8 +179,7 @@ function resolveOptions(opts: Partial<STTOptions>): ResolvedSTTOptions {
     base.withTimestamps = v3Opts.withTimestamps;
   } else {
     // saarika:v2.5
-    let languageCode =
-      (opts as STTV2Options).languageCode ?? SAARIKA_DEFAULTS.languageCode;
+    let languageCode = (opts as STTV2Options).languageCode ?? SAARIKA_DEFAULTS.languageCode;
     if (!STTV2_LANGUAGE_SET.has(languageCode)) {
       languageCode = SAARIKA_DEFAULTS.languageCode;
     }
@@ -264,11 +279,7 @@ function createWav(frame: AudioFrame): Buffer {
   header.write('data', 36);
   header.writeUInt32LE(frame.data.byteLength, 40);
 
-  const pcm = Buffer.from(
-    frame.data.buffer,
-    frame.data.byteOffset,
-    frame.data.byteLength,
-  );
+  const pcm = Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
   return Buffer.concat([header, pcm]);
 }
 
@@ -355,7 +366,9 @@ export class STT extends stt.STT {
     const base: Partial<STTOptions> = modelChanging
       ? {
           apiKey: this.opts.apiKey,
-          ...(this.opts.highVadSensitivity != null ? { highVadSensitivity: this.opts.highVadSensitivity } : {}),
+          ...(this.opts.highVadSensitivity != null
+            ? { highVadSensitivity: this.opts.highVadSensitivity }
+            : {}),
           ...(this.opts.flushSignal != null ? { flushSignal: this.opts.flushSignal } : {}),
           ...(this.opts.languageCode != null && opts.model !== 'saaras:v2.5'
             ? { languageCode: this.opts.languageCode as STTV3Languages }
@@ -444,7 +457,9 @@ export class SpeechStream extends stt.SpeechStream {
     const base: Partial<STTOptions> = modelChanging
       ? {
           apiKey: this.#opts.apiKey,
-          ...(this.#opts.highVadSensitivity != null ? { highVadSensitivity: this.#opts.highVadSensitivity } : {}),
+          ...(this.#opts.highVadSensitivity != null
+            ? { highVadSensitivity: this.#opts.highVadSensitivity }
+            : {}),
           ...(this.#opts.flushSignal != null ? { flushSignal: this.#opts.flushSignal } : {}),
           ...(this.#opts.languageCode != null && opts.model !== 'saaras:v2.5'
             ? { languageCode: this.#opts.languageCode as STTV3Languages }
@@ -471,7 +486,9 @@ export class SpeechStream extends stt.SpeechStream {
         await new Promise<void>((resolve, reject) => {
           ws.once('open', () => resolve());
           ws.once('error', (err: Error) => reject(err));
-          ws.once('close', (code: number) => reject(new Error(`WebSocket closed with code ${code}`)));
+          ws.once('close', (code: number) =>
+            reject(new Error(`WebSocket closed with code ${code}`)),
+          );
         });
 
         retries = 0;
@@ -505,6 +522,8 @@ export class SpeechStream extends stt.SpeechStream {
   async #runWS(ws: WebSocket) {
     this.#resetWS = new Future();
     let closing = false;
+    // Session-scoped controller: aborted in finally to cancel sendTask on WS reset
+    const sessionController = new AbortController();
 
     // Config message: only supported on translate WS endpoint (saaras:v2.5)
     // @see https://docs.sarvam.ai/api-reference-docs/speech-to-text-translate/translate/ws
@@ -533,10 +552,11 @@ export class SpeechStream extends stt.SpeechStream {
       const samples50Ms = Math.floor(SAMPLE_RATE / 20); // 50ms chunks
       const stream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, samples50Ms);
       const abortPromise = waitForAbort(this.abortSignal);
+      const sessionAbort = waitForAbort(sessionController.signal);
 
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise]);
+          const result = await Promise.race([this.input.next(), abortPromise, sessionAbort]);
           if (result === undefined) return; // aborted
           if (result.done) break;
 
@@ -545,10 +565,7 @@ export class SpeechStream extends stt.SpeechStream {
           let frames: AudioFrame[];
           if (data === SpeechStream.FLUSH_SENTINEL) {
             frames = stream.flush();
-          } else if (
-            data.sampleRate !== SAMPLE_RATE ||
-            data.channels !== NUM_CHANNELS
-          ) {
+          } else if (data.sampleRate !== SAMPLE_RATE || data.channels !== NUM_CHANNELS) {
             throw new Error(
               `Expected ${SAMPLE_RATE}Hz/${NUM_CHANNELS}ch, got ${data.sampleRate}Hz/${data.channels}ch`,
             );
@@ -565,13 +582,15 @@ export class SpeechStream extends stt.SpeechStream {
                 frame.data.byteLength,
               );
               const base64Audio = pcmBuffer.toString('base64');
-              ws.send(JSON.stringify({
-                audio: {
-                  data: base64Audio,
-                  encoding: 'audio/wav',
-                  sample_rate: SAMPLE_RATE,
-                },
-              }));
+              ws.send(
+                JSON.stringify({
+                  audio: {
+                    data: base64Audio,
+                    encoding: 'audio/wav',
+                    sample_rate: SAMPLE_RATE,
+                  },
+                }),
+              );
             }
           }
 
@@ -585,10 +604,12 @@ export class SpeechStream extends stt.SpeechStream {
         // Match Python: end_of_stream includes an empty audio field to avoid
         // "audio must not be None" rejection from the server
         try {
-          ws.send(JSON.stringify({
-            type: 'end_of_stream',
-            audio: { data: '', encoding: 'audio/wav', sample_rate: SAMPLE_RATE },
-          }));
+          ws.send(
+            JSON.stringify({
+              type: 'end_of_stream',
+              audio: { data: '', encoding: 'audio/wav', sample_rate: SAMPLE_RATE },
+            }),
+          );
         } catch {
           // ws may already be closed
         }
@@ -608,6 +629,7 @@ export class SpeechStream extends stt.SpeechStream {
       };
 
       const listenMessage = new Promise<void>((resolve, reject) => {
+        ws.once('close', () => resolve());
         ws.on('message', (msg: RawData) => {
           try {
             const raw = msg.toString();
@@ -616,7 +638,7 @@ export class SpeechStream extends stt.SpeechStream {
             const msgType: string = json['type'] ?? '';
 
             if (msgType === 'events') {
-              const eventData = json['data'] as SarvamWSEventData | undefined ?? {};
+              const eventData = (json['data'] as SarvamWSEventData | undefined) ?? {};
               const signalType = eventData.signal_type;
 
               if (signalType === 'START_SPEECH') {
@@ -631,7 +653,7 @@ export class SpeechStream extends stt.SpeechStream {
                 }
               }
             } else if (msgType === 'data') {
-              const td = json['data'] as SarvamWSTranscriptData | undefined ?? {};
+              const td = (json['data'] as SarvamWSTranscriptData | undefined) ?? {};
               const transcript = td.transcript ?? '';
               const language = td.language_code ?? this.#opts.languageCode ?? 'unknown';
               const requestId = td.request_id ?? '';
@@ -669,7 +691,12 @@ export class SpeechStream extends stt.SpeechStream {
               // Server format: { type: "error", data: { message: "...", code: "..." } }
               // Also check top-level and 'error' field as fallback
               const nested = json['data'] as SarvamWSErrorData | undefined;
-              const errorInfo = nested?.message ?? nested?.error ?? json['error'] ?? json['message'] ?? 'Unknown error';
+              const errorInfo =
+                nested?.message ??
+                nested?.error ??
+                json['error'] ??
+                json['message'] ??
+                'Unknown error';
               const errorCode = nested?.code ?? json['code'] ?? '';
               this.#logger.error(`Sarvam STT WebSocket error [${errorCode}]: ${errorInfo}`);
               reject(new Error(`Sarvam STT API error [${errorCode}]: ${errorInfo}`));
@@ -696,6 +723,7 @@ export class SpeechStream extends stt.SpeechStream {
       ]);
     } finally {
       closing = true;
+      sessionController.abort();
       listenTask.cancel();
       wsMonitor.cancel();
       ws.close();
