@@ -482,6 +482,7 @@ export class SpeechStream extends stt.SpeechStream {
         headers: { 'api-subscription-key': this.#opts.apiKey },
       });
 
+      let sessionStart = 0;
       try {
         await new Promise<void>((resolve, reject) => {
           ws.once('open', () => resolve());
@@ -491,13 +492,21 @@ export class SpeechStream extends stt.SpeechStream {
           );
         });
 
+        sessionStart = Date.now();
         await this.#runWS(ws);
+        retries = 0;
       } catch (e) {
         // Clean up the WebSocket on failure to prevent listener leaks
         ws.removeAllListeners();
         ws.close();
 
         if (!this.closed && !this.input.closed) {
+          // If the session ran for a meaningful duration (>5s), this was a working
+          // session that ended normally (e.g. server idle timeout ~20s). Reset retries
+          // so expected idle-timeout reconnections don't accumulate toward the fatal limit.
+          if (sessionStart > 0 && Date.now() - sessionStart > 5000) {
+            retries = 0;
+          }
           if (retries >= maxRetry) {
             throw new Error(`Failed to connect to Sarvam STT after ${retries} attempts: ${e}`);
           }
@@ -570,7 +579,12 @@ export class SpeechStream extends stt.SpeechStream {
               `Expected ${SAMPLE_RATE}Hz/${NUM_CHANNELS}ch, got ${data.sampleRate}Hz/${data.channels}ch`,
             );
           } else {
-            frames = stream.write(data.data.buffer as ArrayBuffer);
+            frames = stream.write(
+              data.data.buffer.slice(
+                data.data.byteOffset,
+                data.data.byteOffset + data.data.byteLength,
+              ) as ArrayBuffer,
+            );
           }
 
           for (const frame of frames) {
