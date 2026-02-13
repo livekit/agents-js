@@ -325,7 +325,7 @@ interface SarvamWSEventData {
   occured_at?: number;
 }
 
-/** type: "error" — server sends { data: { message: "...", code: "..." } } */
+/** type: "error" — server sends data with message and code fields */
 interface SarvamWSErrorData {
   message?: string;
   error?: string;
