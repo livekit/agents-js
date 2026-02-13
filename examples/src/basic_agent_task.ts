@@ -57,8 +57,8 @@ class SurveyAgent extends voice.Agent {
   }
 
   async onEnter() {
-    // Ref: python examples/survey/survey_agent.py - 284-327 lines.
-    const result = await new IntroTask().run(this.session);
+    const task = new IntroTask();
+    const result = await task.run();
     await this.session.say(
       `Great to meet you ${result.name}. I noted your role as ${result.role}. We can continue now.`,
       { addToChatCtx: true },

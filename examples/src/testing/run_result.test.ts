@@ -230,8 +230,9 @@ describe('RunResult', { timeout: 120_000 }, () => {
       const result = session.run({ userInput: "What's the weather in London?" });
       await result.wait();
 
-      // Skip function_call and function_call_output
-      result.expect.skipNext(2);
+      // Skip all events except the last (assistant message); LLM may emit 1+ function_call pairs
+      const n = result.events.length;
+      result.expect.skipNext(n - 1);
       result.expect.nextEvent().isMessage({ role: 'assistant' });
       result.expect.noMoreEvents();
     });

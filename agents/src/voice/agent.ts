@@ -513,7 +513,7 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
     }
   }
 
-  async run(_session?: AgentSession<UserData>): Promise<ResultT> {
+  async run(): Promise<ResultT> {
     if (this.started) {
       throw new Error(
         `Task ${this.constructor.name} has already started and cannot be awaited multiple times`,

@@ -618,7 +618,23 @@ export class AgentSession<
     });
 
     this._globalRunState = runState;
-    this.generateReply({ userInput });
+
+    // Defer generateReply through the activityLock to ensure any in-progress
+    // activity transition (e.g. AgentTask started from onEnter) completes first.
+    // Unlike Python's asyncio.create_task (which defers onEnter to the event loop),
+    // TS Task.from starts onEnter synchronously, so the transition may already be
+    // mid-flight by the time run() is called after session.start() resolves.
+    // Acquiring and immediately releasing the lock guarantees FIFO ordering:
+    // the transition's lock section finishes before we route generateReply.
+    (async () => {
+      try {
+        const unlock = await this.activityLock.lock();
+        unlock();
+        this.generateReply({ userInput });
+      } catch (e) {
+        runState._reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    })();
 
     return runState;
   }

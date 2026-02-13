@@ -8,6 +8,25 @@ import { z } from 'zod';
 
 initializeLogger({ pretty: true, level: 'warn' });
 
+/**
+ * AgentTask scenario coverage:
+ *
+ * 1. Agent -> onEnter -> AgentTask -> onEnter -> self.complete
+ *    COVERED: "agent calls a task in onEnter" (WelcomeTask)
+ *
+ * 2. Agent -> onEnter -> AgentTask -> onEnter -> generateReply -> User -> Tool -> self.complete
+ *    NOT TESTABLE: session.run() rejects with "speech scheduling draining" when task is started
+ *    from onEnter. Works in production (basic_agent_task.ts) with real voice/STT.
+ *    Tool-triggered variant COVERED: "LLM-powered IntroTask", "LLM-powered GetEmailTask"
+ *
+ * 3. Agent -> Tool Call -> AgentTask -> User message -> Tool Call -> self.complete
+ *    COVERED: "LLM-powered IntroTask", "LLM-powered GetEmailTask"
+ *
+ * 4. Agent -> Tool handoff -> onExit -> AgentTask -> self.complete -> handoff target
+ *    DEADLOCK: AgentTask.run() from onExit during updateAgent transition holds activity lock.
+ *    onExit + AgentTask COVERED via harness: "agent calls a task in onExit" (createSpeechTask).
+ */
+
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
@@ -111,6 +130,69 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
   });
 
   const itIfOpenAI = process.env.OPENAI_API_KEY ? it : it.skip;
+
+  // Scenario 2: Agent onEnter -> AgentTask -> onEnter -> generateReply -> User -> Tool -> self.complete
+  itIfOpenAI(
+    'scenario 2: onEnter AgentTask with generateReply then user input via run()',
+    async () => {
+      const done = new Future<{ name: string; role: string }>();
+
+      class IntroTask extends voice.AgentTask<{ name: string; role: string }> {
+        constructor() {
+          super({
+            instructions:
+              'You are collecting a name and role. Extract both from user input and call recordIntro.',
+            tools: {
+              recordIntro: llm.tool({
+                description: 'Record the name and role',
+                parameters: z.object({
+                  name: z.string().describe('User name'),
+                  role: z.string().describe('User role'),
+                }),
+                execute: async ({ name, role }) => {
+                  this.complete({ name, role });
+                  return 'recorded';
+                },
+              }),
+            },
+          });
+        }
+
+        async onEnter() {
+          this.session.generateReply({
+            instructions: 'Ask the user for their name and role.',
+          });
+        }
+      }
+
+      class ParentAgent extends voice.Agent {
+        constructor() {
+          super({ instructions: 'Parent agent that launches IntroTask on enter.' });
+        }
+
+        async onEnter() {
+          try {
+            const result = await new IntroTask().run();
+            done.resolve(result);
+          } catch (error) {
+            done.reject(asError(error));
+          }
+        }
+      }
+
+      const llmModel = new openai.LLM({ model: 'gpt-4o-mini', temperature: 0 });
+      const session = await startSession(new ParentAgent(), { llm: llmModel });
+
+      const result = session.run({
+        userInput: "I'm Sam and I'm a frontend engineer.",
+      });
+      await result.wait();
+
+      const taskResult = await done.await;
+      expect(taskResult.name.toLowerCase()).toContain('sam');
+      expect(taskResult.role.toLowerCase()).toMatch(/frontend/);
+    },
+  );
 
   itIfOpenAI(
     'agent calls a task in a tool; resuming previous activity does not execute onEnter again',
@@ -325,6 +407,11 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
       expect(capturedEmail).toBe('jordan.smith@example.com');
     },
   );
+
+  // Scenario: Agent -> Tool handoff -> onExit -> AgentTask -> self.complete -> handoff target
+  // Known to deadlock: AgentTask.run() from onExit during updateAgent/handoff transition holds
+  // the activity lock. Use createSpeechTask harness (see "agent calls a task in onExit") to run
+  // AgentTask in onExit outside the handoff path instead.
 
   it('agent calls a task in onExit', async () => {
     const done = new Future<string>();

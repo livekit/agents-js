@@ -208,6 +208,13 @@ export class RunResult<T = unknown> {
     }
   }
 
+  /** @internal – Reject the run with an error (e.g. when deferred generateReply fails). */
+  _reject(error: Error): void {
+    if (!this.doneFut.done) {
+      this.doneFut.reject(error);
+    }
+  }
+
   /** @internal */
   _markDoneIfNeeded(handle?: SpeechHandle | Task<void> | null): void {
     if (isSpeechHandle(handle)) {
