@@ -715,7 +715,7 @@ export class SpeechStream extends stt.SpeechStream {
       });
 
       await Promise.race([listenMessage, waitForAbort(controller.signal)]);
-    });
+    }, this.abortController);
 
     try {
       await Promise.race([
@@ -725,9 +725,14 @@ export class SpeechStream extends stt.SpeechStream {
     } finally {
       closing = true;
       sessionController.abort();
-      listenTask.cancel();
+      // Do NOT call listenTask.cancel() — it would abort this.abortController
+      // (passed to Task.from) and permanently break the stream. Instead, ws.close()
+      // triggers the ws.once('close') handler inside listenMessage, letting listenTask
+      // exit naturally. On close(), the parent abort signal handles it directly.
       wsMonitor.cancel();
       ws.close();
+      // Suppress unhandled rejection from orphaned listenTask on reconnect
+      listenTask.result.catch(() => {});
     }
   }
 }
