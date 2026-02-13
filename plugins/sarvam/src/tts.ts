@@ -397,7 +397,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const segmentId = shortuuid();
 
     // Build WS URL: wss://api.sarvam.ai/text-to-speech/ws?model=...&send_completion_event=true
-    const wsBaseUrl = this.opts.baseURL.replace(/^https?/, 'wss');
+    const wsBaseUrl = this.opts.baseURL.replace(/^http/, 'ws');
     const url = new URL(`${wsBaseUrl}${SARVAM_WS_URL_PATH}`);
     url.searchParams.set('model', this.opts.model);
     url.searchParams.set('send_completion_event', 'true');
