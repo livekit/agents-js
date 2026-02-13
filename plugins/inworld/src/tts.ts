@@ -4,8 +4,8 @@
 import {
   type APIConnectOptions,
   AudioByteStream,
-  createTimedString,
   type TimedString,
+  createTimedString,
   log,
   shortuuid,
   tokenize,
@@ -288,7 +288,7 @@ export class TTS extends tts.TTS {
 
     super(mergedOpts.sampleRate, NUM_CHANNELS, {
       streaming: true,
-      alignedTranscript: true,
+      alignedTranscript: !!mergedOpts.timestampType,
     });
 
     this.#opts = mergedOpts as TTSOptions;
