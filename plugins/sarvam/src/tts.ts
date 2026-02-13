@@ -188,7 +188,6 @@ function buildWsConfigMessage(opts: ResolvedTTSOptions): string {
     speaker: opts.speaker,
     model: opts.model,
     pace: opts.pace,
-    enable_preprocessing: opts.enablePreprocessing ?? false,
     speech_sample_rate: String(opts.sampleRate),
     output_audio_codec: 'linear16',
   };
@@ -198,6 +197,7 @@ function buildWsConfigMessage(opts: ResolvedTTSOptions): string {
   } else {
     if (opts.pitch != null) data.pitch = opts.pitch;
     if (opts.loudness != null) data.loudness = opts.loudness;
+    if (opts.enablePreprocessing != null) data.enable_preprocessing = opts.enablePreprocessing;
   }
 
   return JSON.stringify({ type: 'config', data });
