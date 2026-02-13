@@ -550,6 +550,10 @@ const waitForWsOpen = async ({
   timeoutMs: number;
   abortSignal: AbortSignal;
 }) => {
+  if (abortSignal.aborted) {
+    throw new Error('aborted');
+  }
+
   const fut = new Future<void>();
   let timeout: NodeJS.Timeout | undefined;
 
