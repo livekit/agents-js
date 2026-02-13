@@ -521,6 +521,7 @@ export class SpeechStream extends stt.SpeechStream {
 
   async #runWS(ws: WebSocket) {
     this.#resetWS = new Future();
+    this.#speaking = false;
     let closing = false;
     // Session-scoped controller: aborted in finally to cancel sendTask on WS reset
     const sessionController = new AbortController();
