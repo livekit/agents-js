@@ -526,6 +526,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         }
 
         this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
+        await readInputLLMStream.catch(() => {});
         return;
       } catch (error) {
         if (this.audioPushed) {
