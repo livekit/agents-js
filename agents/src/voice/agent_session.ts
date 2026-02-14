@@ -8,7 +8,7 @@ import type { Context, Span } from '@opentelemetry/api';
 import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
-import { z } from 'zod';
+import type { z } from 'zod';
 import {
   LLM as InferenceLLM,
   STT as InferenceSTT,
@@ -501,7 +501,6 @@ export class AgentSession<
       throw new Error('AgentSession is not running');
     }
 
-    // Ref: python agent_session.py 907-927
     const doSay = (activity: AgentActivity, nextActivity?: AgentActivity) => {
       if (activity.schedulingPaused) {
         if (!nextActivity) {

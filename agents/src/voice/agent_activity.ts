@@ -123,7 +123,6 @@ export class AgentActivity implements RecognitionHooks {
   _onExitTask?: Task<void>;
   _userTurnCompletedTask?: Task<void>;
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 703-739 lines.
   private readonly onRealtimeGenerationCreated = (ev: GenerationCreatedEvent) =>
     this.onGenerationCreated(ev);
   private readonly onRealtimeInputSpeechStarted = (ev: InputSpeechStartedEvent) =>
@@ -2472,7 +2471,6 @@ export class AgentActivity implements RecognitionHooks {
     try {
       if (this._schedulingPaused) return;
 
-      // Ref: python agent_activity.py 629-632
       this._onExitTask = this.createSpeechTask({
         taskFn: () =>
           tracer.startActiveSpan(async () => this.agent.onExit(), {

@@ -251,7 +251,7 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
 
       const llmModel = createOpenAILLM();
       const session = await startSession(new ToolAgent(), { llm: llmModel });
-      let result = await runAndWait(session, 'Please capture my email using your tool.');
+      const result = await runAndWait(session, 'Please capture my email using your tool.');
 
       result.expect.containsFunctionCall({ name: 'captureEmail' });
       result.expect.containsAgentHandoff({ newAgentType: GetEmailAddressTask });
