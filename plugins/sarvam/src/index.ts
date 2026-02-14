@@ -5,6 +5,14 @@ import { Plugin } from '@livekit/agents';
 
 export * from './models.js';
 export {
+  STT,
+  SpeechStream,
+  type STTOptions,
+  type STTV2Options,
+  type STTTranslateOptions,
+  type STTV3Options,
+} from './stt.js';
+export {
   ChunkedStream,
   SynthesizeStream,
   TTS,
