@@ -19,7 +19,6 @@ interface LLMOptions {
   baseURL?: string;
   client?: OpenAI;
   temperature?: number;
-  user?: string;
   parallelToolCalls?: boolean;
   toolChoice?: llm.ToolChoice;
   store?: boolean;
@@ -101,10 +100,6 @@ export class LLM extends llm.LLM {
 
     if (this.#opts.temperature !== undefined) {
       modelOptions.temperature = this.#opts.temperature;
-    }
-
-    if (this.#opts.user) {
-      modelOptions.user = this.#opts.user;
     }
 
     if (this.#opts.store !== undefined) {
@@ -254,8 +249,6 @@ export class LLMStream extends llm.LLMStream {
           options: { retryable },
         });
       }
-    } finally {
-      this.queue.close();
     }
   }
 

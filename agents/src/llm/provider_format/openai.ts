@@ -145,6 +145,35 @@ async function toImageContent(content: ImageContent) {
   };
 }
 
+async function toResponsesImageContent(content: ImageContent) {
+  const cacheKey = 'serialized_image';
+  let serialized: SerializedImage;
+
+  if (content._cache[cacheKey] === undefined) {
+    serialized = await serializeImage(content);
+    content._cache[cacheKey] = serialized;
+  }
+  serialized = content._cache[cacheKey];
+
+  if (serialized.externalUrl) {
+    return {
+      type: 'input_image' as const,
+      image_url: serialized.externalUrl,
+      detail: serialized.inferenceDetail,
+    };
+  }
+
+  if (serialized.base64Data === undefined) {
+    throw new Error('Serialized image has no data bytes');
+  }
+
+  return {
+    type: 'input_image' as const,
+    image_url: `data:${serialized.mimeType};base64,${serialized.base64Data}`,
+    detail: serialized.inferenceDetail,
+  };
+}
+
 export async function toResponsesChatCtx(
   chatCtx: ChatContext,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -187,7 +216,7 @@ async function toResponsesChatItem(item: ChatItem) {
         if (textContent) textContent += '\n';
         textContent += content;
       } else if (content.type === 'image_content') {
-        listContent.push(await toImageContent(content));
+        listContent.push(await toResponsesImageContent(content));
       } else {
         throw new Error(`Unsupported content type: ${content.type}`);
       }
@@ -198,7 +227,7 @@ async function toResponsesChatItem(item: ChatItem) {
         ? textContent
         : textContent.length == 0
           ? listContent
-          : [...listContent, { type: 'text', text: textContent }];
+          : [...listContent, { type: 'input_text', text: textContent }];
 
     return { role: item.role, content };
   } else if (item.type === 'function_call') {
