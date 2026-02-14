@@ -249,8 +249,6 @@ export class RunResult<T = unknown> {
     }
 
     if (this.outputType) {
-      // Python does `isinstance(final_output, output_type)`.
-      // JS uses zod schema validation and takes the parsed value as the typed final output.
       const result = this.outputType.safeParse(finalOutput);
       if (!result.success) {
         this.doneFut.reject(
