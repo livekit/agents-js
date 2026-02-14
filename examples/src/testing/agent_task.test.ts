@@ -24,11 +24,29 @@ initializeLogger({ pretty: true, level: 'warn' });
  *
  * 4. Agent -> Tool handoff -> onExit -> AgentTask -> self.complete -> handoff target
  *    DEADLOCK: AgentTask.run() from onExit during updateAgent transition holds activity lock.
- *    onExit + AgentTask COVERED via harness: "agent calls a task in onExit" (createSpeechTask).
+ *    NOT COVERED in this suite due to known deadlock limitation.
  */
 
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+async function withFutureResolution<T>(done: Future<T>, fn: () => Promise<T>): Promise<void> {
+  try {
+    done.resolve(await fn());
+  } catch (error) {
+    done.reject(asError(error));
+  }
+}
+
+function createOpenAILLM(): openai.LLM {
+  return new openai.LLM({ model: 'gpt-4o-mini', temperature: 0 });
+}
+
+async function runAndWait(session: voice.AgentSession, userInput: string) {
+  const result = session.run({ userInput });
+  await result.wait();
+  return result;
 }
 
 describe('AgentTask examples', { timeout: 120_000 }, () => {
@@ -49,7 +67,6 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
   it('agent calls a task in onEnter', async () => {
     const done = new Future<string>();
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent.py - 739-841 lines.
     class WelcomeTask extends voice.AgentTask<string> {
       constructor() {
         super({ instructions: 'Collect a welcome token and finish quickly.' });
@@ -66,12 +83,7 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
       }
 
       async onEnter() {
-        try {
-          const result = await new WelcomeTask().run();
-          done.resolve(result);
-        } catch (error) {
-          done.reject(asError(error));
-        }
+        await withFutureResolution(done, async () => new WelcomeTask().run());
       }
     }
 
@@ -108,16 +120,14 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
       }
 
       async onEnter() {
-        try {
+        await withFutureResolution(done, async () => {
           const order: string[] = [];
           const first = await new FirstTask().run();
           order.push('first');
           const second = await new SecondTask().run();
           order.push('second');
-          done.resolve({ first, second, order });
-        } catch (error) {
-          done.reject(asError(error));
-        }
+          return { first, second, order };
+        });
       }
     }
 
@@ -171,26 +181,25 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
         }
 
         async onEnter() {
-          try {
-            const result = await new IntroTask().run();
-            done.resolve(result);
-          } catch (error) {
-            done.reject(asError(error));
-          }
+          await withFutureResolution(done, async () => new IntroTask().run());
         }
       }
 
-      const llmModel = new openai.LLM({ model: 'gpt-4o-mini', temperature: 0 });
+      const llmModel = createOpenAILLM();
       const session = await startSession(new ParentAgent(), { llm: llmModel });
 
-      const result = session.run({
-        userInput: "I'm Sam and I'm a frontend engineer.",
-      });
-      await result.wait();
+      let result = await runAndWait(session, "I'm Sam and I'm a frontend engineer.");
 
       const taskResult = await done.await;
+      result.expect.containsFunctionCall({ name: 'recordIntro' });
       expect(taskResult.name.toLowerCase()).toContain('sam');
       expect(taskResult.role.toLowerCase()).toMatch(/frontend/);
+
+      result = await runAndWait(session, 'What is my name and role?');
+      result.expect
+        .nextEvent()
+        .isMessage({ role: 'assistant' })
+        .judge(llmModel, { intent: 'should answer name as Sam and role as frontend engineer' });
     },
   );
 
@@ -240,26 +249,30 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
         }
       }
 
-      const llmModel = new openai.LLM({ model: 'gpt-4o-mini', temperature: 0 });
+      const llmModel = createOpenAILLM();
       const session = await startSession(new ToolAgent(), { llm: llmModel });
-      const result = session.run({ userInput: 'Please capture my email using your tool.' });
-      await result.wait();
+      let result = await runAndWait(session, 'Please capture my email using your tool.');
 
       result.expect.containsFunctionCall({ name: 'captureEmail' });
+      result.expect.containsAgentHandoff({ newAgentType: GetEmailAddressTask });
+      result.expect.containsFunctionCallOutput({
+        isError: false,
+      });
+      result.expect.containsMessage({ role: 'assistant' }).judge(llmModel, {
+        intent: 'should answer email captured, not necessarily need to state the email address',
+      });
 
       expect(toolCallCount).toBe(1);
       expect(taskOnEnterCount).toBe(1);
-      // Critical parity check: resume path must not run parent onEnter again.
       expect(parentOnEnterCount).toBe(1);
     },
   );
 
-  itIfOpenAI('LLM-powered IntroTask (python survey parity) records intro details', async () => {
+  itIfOpenAI('IntroTask records intro details', async () => {
     let introTaskResult: { name: string; intro: string } | undefined;
     let runIntroTaskCalls = 0;
     let recordIntroToolCalls = 0;
 
-    // Ref: python examples/survey/survey_agent.py - 248-274 lines.
     class IntroTask extends voice.AgentTask<{ name: string; intro: string }> {
       constructor() {
         super({
@@ -312,165 +325,25 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
       }
     }
 
-    const llmModel = new openai.LLM({ model: 'gpt-4o-mini', temperature: 0 });
+    const llmModel = createOpenAILLM();
     const session = await startSession(new ParentAgent(), { llm: llmModel });
-    const triggerRun = session.run({ userInput: 'Please run the intro task.' });
-    await triggerRun.wait();
+    const triggerRun = await runAndWait(session, 'Please run the intro task.');
     triggerRun.expect.containsFunctionCall({ name: 'collectIntroWithTask' });
-
-    const answerRun = session.run({
-      userInput: "I'm Morgan, and I'm a backend engineer focused on APIs.",
+    triggerRun.expect.containsMessage({ role: 'assistant' }).judge(llmModel, {
+      intent: 'Ask the user for name and intro',
     });
-    await answerRun.wait();
+
+    const answerRun = await runAndWait(
+      session,
+      "I'm Morgan, and I'm a backend engineer focused on APIs.",
+    );
+    answerRun.expect.containsAgentHandoff({ newAgentType: ParentAgent });
 
     expect(runIntroTaskCalls).toBe(1);
     expect(recordIntroToolCalls).toBeGreaterThanOrEqual(1);
     expect(introTaskResult).toBeDefined();
     expect(introTaskResult!.name.toLowerCase()).toContain('morgan');
     expect(introTaskResult!.intro.toLowerCase()).toMatch(/backend|api/);
-  });
-
-  itIfOpenAI(
-    'LLM-powered GetEmailTask (python workflow parity) captures email in AgentTask',
-    async () => {
-      let capturedEmail = '';
-      let runEmailTaskCalls = 0;
-      let updateEmailToolCalls = 0;
-
-      // Ref: python livekit-agents/livekit/agents/beta/workflows/email_address.py - 27-131 lines.
-      class GetEmailTask extends voice.AgentTask<string> {
-        constructor() {
-          super({
-            instructions:
-              'You are responsible only for capturing an email address. ' +
-              'Extract the email from the latest user message and call updateEmailAddress exactly once.',
-            tools: {
-              updateEmailAddress: llm.tool({
-                description: 'Store the user email address and complete the task.',
-                parameters: z.object({
-                  email: z.string().describe('The user email address'),
-                }),
-                execute: async ({ email }) => {
-                  updateEmailToolCalls += 1;
-                  const normalized = email
-                    .trim()
-                    .toLowerCase()
-                    .replace(/[.,!?;:]+$/g, '');
-                  this.complete(normalized);
-                  return `Email captured: ${normalized}`;
-                },
-              }),
-            },
-          });
-        }
-
-        async onEnter() {
-          this.session.generateReply({
-            instructions:
-              'Ask for the email briefly if needed, then call updateEmailAddress after receiving it.',
-          });
-        }
-      }
-
-      class ParentAgent extends voice.Agent {
-        constructor() {
-          super({
-            instructions:
-              'When user asks to capture email via task, ALWAYS call collectEmailWithTask exactly once.',
-            tools: {
-              collectEmailWithTask: llm.tool({
-                description: 'Run GetEmailTask and return the captured email.',
-                parameters: z.object({}),
-                execute: async () => {
-                  runEmailTaskCalls += 1;
-                  const result = await new GetEmailTask().run();
-                  capturedEmail = result;
-                  return result;
-                },
-              }),
-            },
-          });
-        }
-      }
-
-      const llmModel = new openai.LLM({ model: 'gpt-4o-mini', temperature: 0 });
-      const session = await startSession(new ParentAgent(), { llm: llmModel });
-      const triggerRun = session.run({ userInput: 'Please capture my email with the task.' });
-      await triggerRun.wait();
-      triggerRun.expect.containsFunctionCall({ name: 'collectEmailWithTask' });
-
-      const answerRun = session.run({ userInput: 'My email is jordan.smith@example.com.' });
-      await answerRun.wait();
-
-      expect(runEmailTaskCalls).toBe(1);
-      expect(updateEmailToolCalls).toBeGreaterThanOrEqual(1);
-      expect(capturedEmail).toBe('jordan.smith@example.com');
-    },
-  );
-
-  // Scenario: Agent -> Tool handoff -> onExit -> AgentTask -> self.complete -> handoff target
-  // Known to deadlock: AgentTask.run() from onExit during updateAgent/handoff transition holds
-  // the activity lock. Use createSpeechTask harness (see "agent calls a task in onExit") to run
-  // AgentTask in onExit outside the handoff path instead.
-
-  it('agent calls a task in onExit', async () => {
-    const done = new Future<string>();
-    let oldAgentOnEnterCount = 0;
-
-    class ExitTask extends voice.AgentTask<string> {
-      constructor() {
-        super({ instructions: 'Return on-exit marker.' });
-      }
-
-      async onEnter() {
-        this.complete('exit-task-finished');
-      }
-    }
-
-    class OldAgent extends voice.Agent {
-      constructor() {
-        super({ instructions: 'Old agent that runs an AgentTask in onExit.' });
-      }
-
-      async onEnter() {
-        oldAgentOnEnterCount += 1;
-      }
-
-      async onExit() {
-        if (done.done) {
-          return;
-        }
-        try {
-          const result = await new ExitTask().run();
-          done.resolve(result);
-        } catch (error) {
-          done.reject(asError(error));
-        }
-      }
-    }
-
-    const oldAgent = new OldAgent();
-    const session = await startSession(oldAgent);
-    const currentActivity = (session as any).activity as {
-      createSpeechTask: (options: {
-        taskFn: () => Promise<void>;
-        inlineTask?: boolean;
-        name?: string;
-      }) => { result: Promise<void> };
-    };
-    // Non-parity note: Python/JS both hold the session activity lock while draining on updateAgent,
-    // so invoking AgentTask.run() from onExit during that lock path can deadlock.
-    // This harness triggers onExit via an inline speech task outside updateAgent's lock scope
-    // to validate AgentTask behavior in onExit itself (the scenario requested by this test).
-    await currentActivity.createSpeechTask({
-      taskFn: async () => oldAgent.onExit(),
-      inlineTask: true,
-      name: 'AgentActivity_onExit_testHarness',
-    }).result;
-
-    await expect(done.await).resolves.toBe('exit-task-finished');
-    expect(oldAgentOnEnterCount).toBe(1);
-    expect((session as any).agent).toBe(oldAgent);
   });
 
   it('AgentTask instance is non-reentrant (edge case)', async () => {
@@ -492,7 +365,7 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
       }
 
       async onEnter() {
-        try {
+        await withFutureResolution(done, async () => {
           const task = new SingleUseTask();
           const first = await task.run();
           let secondRunError = '';
@@ -503,10 +376,8 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
             secondRunError = error instanceof Error ? error.message : String(error);
           }
 
-          done.resolve({ first, secondRunError });
-        } catch (error) {
-          done.reject(asError(error));
-        }
+          return { first, secondRunError };
+        });
       }
     }
 

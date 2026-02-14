@@ -574,13 +574,16 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       blockedTasks,
     });
 
-    // NOTE: _updateActivity is calling the onEnter method, so the RunResult can capture all speeches
     let runState = session._globalRunState;
     if (speechHandle && runState && !runState.done()) {
-      // make sure to not deadlock on the current speech handle
-      runState._unwatchHandle(speechHandle);
+      // Only unwatch the parent speech handle if there are other handles keeping the run alive.
+      // When watchedHandleCount is 1 (only the parent), unwatching would drop it to 0 and
+      // mark the run done prematurely — before function_call_output and assistant message arrive.
+      if (runState._watchedHandleCount() > 1) {
+        runState._unwatchHandle(speechHandle);
+      }
       // it is OK to call _markDoneIfNeeded here, the above _updateActivity will call onEnter
-      // so handles added inside the onEnter will make sure we're not completing the runState too early.
+      // and newly added handles keep the run alive.
       runState._markDoneIfNeeded();
     }
 

@@ -208,6 +208,11 @@ export class RunResult<T = unknown> {
     }
   }
 
+  /** @internal */
+  _watchedHandleCount(): number {
+    return this.handles.size;
+  }
+
   /** @internal – Reject the run with an error (e.g. when deferred generateReply fails). */
   _reject(error: Error): void {
     if (!this.doneFut.done) {
@@ -221,7 +226,8 @@ export class RunResult<T = unknown> {
       this.lastSpeechHandle = handle;
     }
 
-    if ([...this.handles].every((h) => (isSpeechHandle(h) ? h.done() : h.done))) {
+    const allDone = [...this.handles].every((h) => (isSpeechHandle(h) ? h.done() : h.done));
+    if (allDone) {
       this._markDone();
     }
   }
