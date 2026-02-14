@@ -231,7 +231,13 @@ export class LLMStream extends llm.LLMStream {
         }
       }
     } catch (error) {
-      if (error instanceof OpenAI.APIConnectionTimeoutError) {
+      if (
+        error instanceof APIStatusError ||
+        error instanceof APITimeoutError ||
+        error instanceof APIConnectionError
+      ) {
+        throw error;
+      } else if (error instanceof OpenAI.APIConnectionTimeoutError) {
         throw new APITimeoutError({ options: { retryable } });
       } else if (error instanceof OpenAI.APIError) {
         throw new APIStatusError({
