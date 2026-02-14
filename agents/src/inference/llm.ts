@@ -17,6 +17,10 @@ import { type AnyString, createAccessToken } from './utils.js';
 const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 
 export type OpenAIModels =
+  | 'openai/gpt-5.2'
+  | 'openai/gpt-5.2-chat-latest'
+  | 'openai/gpt-5.1'
+  | 'openai/gpt-5.1-chat-latest'
   | 'openai/gpt-5'
   | 'openai/gpt-5-mini'
   | 'openai/gpt-5-nano'
@@ -27,13 +31,18 @@ export type OpenAIModels =
   | 'openai/gpt-4o-mini'
   | 'openai/gpt-oss-120b';
 
-export type GoogleModels = 'google/gemini-2.0-flash-lite';
+export type GoogleModels =
+  | 'google/gemini-3-pro'
+  | 'google/gemini-3-flash'
+  | 'google/gemini-2.5-pro'
+  | 'google/gemini-2.5-flash'
+  | 'google/gemini-2.5-flash-lite'
+  | 'google/gemini-2.0-flash'
+  | 'google/gemini-2.0-flash-lite';
 
-export type QwenModels = 'qwen/qwen3-235b-a22b-instruct';
+export type MoonshotModels = 'moonshotai/kimi-k2-instruct';
 
-export type KimiModels = 'moonshotai/kimi-k2-instruct';
-
-export type DeepSeekModels = 'deepseek-ai/deepseek-v3';
+export type DeepSeekModels = 'deepseek-ai/deepseek-v3' | 'deepseek-ai/deepseek-v3.2';
 
 type ChatCompletionPredictionContentParam =
   Expand<OpenAI.Chat.Completions.ChatCompletionPredictionContent>;
@@ -73,13 +82,7 @@ export interface ChatCompletionOptions extends Record<string, unknown> {
   // response_format?: OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format']
 }
 
-export type LLMModels =
-  | OpenAIModels
-  | GoogleModels
-  | QwenModels
-  | KimiModels
-  | DeepSeekModels
-  | AnyString;
+export type LLMModels = OpenAIModels | GoogleModels | MoonshotModels | DeepSeekModels | AnyString;
 
 export interface InferenceLLMOptions {
   model: LLMModels;
@@ -235,6 +238,7 @@ export class LLMStream extends llm.LLMStream {
   private toolIndex?: number;
   private fncName?: string;
   private fncRawArguments?: string;
+  private toolExtra?: Record<string, unknown>;
 
   constructor(
     llm: LLM,
@@ -277,6 +281,7 @@ export class LLMStream extends llm.LLMStream {
     // (defined inside the run method to make sure the state is reset for each run/attempt)
     let retryable = true;
     this.toolCallId = this.fncName = this.fncRawArguments = this.toolIndex = undefined;
+    this.toolExtra = undefined;
 
     try {
       const messages = (await this.chatCtx.toProviderFormat(
@@ -428,6 +433,10 @@ export class LLMStream extends llm.LLMStream {
         if (this.toolCallId && tool.id && tool.index !== this.toolIndex) {
           callChunk = this.createRunningToolCallChunk(id, delta);
           this.toolCallId = this.fncName = this.fncRawArguments = undefined;
+          // Note: We intentionally do NOT reset toolExtra here.
+          // For Gemini 3+, the thought_signature is only provided on the first tool call
+          // in a parallel batch, but must be applied to ALL tool calls in the batch.
+          // We preserve toolExtra so subsequent tool calls inherit the thought_signature.
         }
 
         // Start or continue building the current tool call
@@ -436,6 +445,15 @@ export class LLMStream extends llm.LLMStream {
           this.toolCallId = tool.id;
           this.fncName = tool.function.name;
           this.fncRawArguments = tool.function.arguments || '';
+          // Extract extra from tool call (e.g., Google thought signatures)
+          // Only update toolExtra if this tool call has extra_content.
+          // Otherwise, inherit from previous tool call (for parallel Gemini tool calls).
+          const newToolExtra =
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ((tool as any).extra_content as Record<string, unknown> | undefined) ?? undefined;
+          if (newToolExtra) {
+            this.toolExtra = newToolExtra;
+          }
         } else if (tool.function.arguments) {
           this.fncRawArguments = (this.fncRawArguments || '') + tool.function.arguments;
         }
@@ -454,11 +472,18 @@ export class LLMStream extends llm.LLMStream {
     ) {
       const callChunk = this.createRunningToolCallChunk(id, delta);
       this.toolCallId = this.fncName = this.fncRawArguments = undefined;
+      // Reset toolExtra at the end of the response (not between parallel tool calls)
+      this.toolExtra = undefined;
       return callChunk;
     }
 
+    // Extract extra from delta (e.g., Google thought signatures on text parts)
+    const deltaExtra =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ((delta as any).extra_content as Record<string, unknown> | undefined) ?? undefined;
+
     // Regular content message
-    if (!delta.content) {
+    if (!delta.content && !deltaExtra) {
       return undefined;
     }
 
@@ -466,7 +491,8 @@ export class LLMStream extends llm.LLMStream {
       id,
       delta: {
         role: 'assistant',
-        content: delta.content,
+        content: delta.content || undefined,
+        extra: deltaExtra,
       },
     };
   }
@@ -475,19 +501,37 @@ export class LLMStream extends llm.LLMStream {
     id: string,
     delta: OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta,
   ): llm.ChatChunk {
+    const toolExtra = this.toolExtra ? { ...this.toolExtra } : {};
+    const thoughtSignature = this.extractThoughtSignature(toolExtra);
+    const deltaExtra =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ((delta as any).extra_content as Record<string, unknown> | undefined) ?? undefined;
+
     return {
       id,
       delta: {
         role: 'assistant',
         content: delta.content || undefined,
+        extra: deltaExtra,
         toolCalls: [
           llm.FunctionCall.create({
             callId: this.toolCallId || '',
             name: this.fncName || '',
             args: this.fncRawArguments || '',
+            extra: toolExtra,
+            thoughtSignature,
           }),
         ],
       },
     };
+  }
+
+  private extractThoughtSignature(extra?: Record<string, unknown>): string | undefined {
+    const googleExtra = extra?.google;
+    if (googleExtra && typeof googleExtra === 'object') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (googleExtra as any).thoughtSignature || (googleExtra as any).thought_signature;
+    }
+    return undefined;
   }
 }

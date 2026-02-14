@@ -1,5 +1,113 @@
 # @livekit/agents
 
+## 1.0.44
+
+### Patch Changes
+
+- Fix parsing lang from stt ctor - [#1028](https://github.com/livekit/agents-js/pull/1028) ([@adrian-cowham](https://github.com/adrian-cowham))
+
+- Dispose native FFI resources before process.exit() in job shutdown to prevent libc++abi mutex crash - [#1042](https://github.com/livekit/agents-js/pull/1042) ([@Raysharr](https://github.com/Raysharr))
+
+- Ensure resampling is skipped for empty audio frames - [#1044](https://github.com/livekit/agents-js/pull/1044) ([@lukasIO](https://github.com/lukasIO))
+
+## 1.0.43
+
+### Patch Changes
+
+- Support fallback API for inference STT and TTS - [#1029](https://github.com/livekit/agents-js/pull/1029) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Fix support for CJS runners - [#1031](https://github.com/livekit/agents-js/pull/1031) ([@lukasIO](https://github.com/lukasIO))
+
+- Fix generateReply adding duplicate instructions - [#1033](https://github.com/livekit/agents-js/pull/1033) ([@Fox32](https://github.com/Fox32))
+
+## 1.0.42
+
+### Patch Changes
+
+- Fix dispatching empty STT final transcript event - [#1024](https://github.com/livekit/agents-js/pull/1024) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.41
+
+### Patch Changes
+
+- fix: dev command now correctly defaults to debug log level - [#1020](https://github.com/livekit/agents-js/pull/1020) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Implement tts aligned transcripts - [#990](https://github.com/livekit/agents-js/pull/990) ([@toubatbrian](https://github.com/toubatbrian))
+
+- increase AudioMixer default timeout in background audio player - [#1021](https://github.com/livekit/agents-js/pull/1021) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.40
+
+### Patch Changes
+
+- Implement health check - [#996](https://github.com/livekit/agents-js/pull/996) ([@andrewnitu](https://github.com/andrewnitu))
+
+  Change the health check from always returning healthy to returning the status of the following two criteria:
+
+  - agent is connected to livekit server
+  - agent's inference executor is running
+
+- fix(tokenize): correct capture group reference in website regex - [#1004](https://github.com/livekit/agents-js/pull/1004) ([@IlyaShelestov](https://github.com/IlyaShelestov))
+
+## 1.0.39
+
+### Patch Changes
+
+- update livekit inference model to match latest - [#993](https://github.com/livekit/agents-js/pull/993) ([@davidzhao](https://github.com/davidzhao))
+
+- preserve thought_signature across parallel tool calls for Gemini 3+ for inference gateway - [#1000](https://github.com/livekit/agents-js/pull/1000) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Make agent state transition fixes and add interim transcript interruption support - [#992](https://github.com/livekit/agents-js/pull/992) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix: handle VAD stream closed error during agent handover - [#997](https://github.com/livekit/agents-js/pull/997) ([@toubatbrian](https://github.com/toubatbrian))
+
+  - Fixed a race condition in `StreamAdapter` where `endInput()` could be called on an already-closed VAD stream during agent handover, causing an unrecoverable `stt_error`. This affected non-streaming STTs (like OpenAI STT) that use the StreamAdapter wrapper.
+  - Added `isStreamClosedError()` utility function for consistent error handling.
+  - Upgraded sharp from 0.34.3 to 0.34.5 to fix libvips version conflict (1.2.0 vs 1.2.4) that caused flaky agent behavior and ObjC class collision warnings on macOS.
+  - Fixed pre-existing build error in test plugin (Int16Array to ArrayBuffer conversion).
+
+## 1.0.38
+
+### Patch Changes
+
+- Add support for noiseCancellation frameProcessors - [#966](https://github.com/livekit/agents-js/pull/966) ([@lukasIO](https://github.com/lukasIO))
+
+- refine timestamps in spans and recording alignment - [#982](https://github.com/livekit/agents-js/pull/982) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add aligned transcript support with word-level timing for STT plugins - [#984](https://github.com/livekit/agents-js/pull/984) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.37
+
+### Patch Changes
+
+- Add tests for existing agent implementations in examples - [#978](https://github.com/livekit/agents-js/pull/978) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add advanced test utilities for test framework - [#976](https://github.com/livekit/agents-js/pull/976) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.36
+
+### Patch Changes
+
+- Add connector participant kind to defaults - [#973](https://github.com/livekit/agents-js/pull/973) ([@lukasIO](https://github.com/lukasIO))
+
+- Supports initial set of testing utilities in agent framework - [#965](https://github.com/livekit/agents-js/pull/965) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.35
+
+### Patch Changes
+
+- Fix error logging during shutdown process - [#961](https://github.com/livekit/agents-js/pull/961) ([@Fox32](https://github.com/Fox32))
+
+- Support extra content in inference llm for provider-specific metadata - [#967](https://github.com/livekit/agents-js/pull/967) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.34
+
+### Patch Changes
+
+- Implemented FallbackAdapter for LLM - [#916](https://github.com/livekit/agents-js/pull/916) ([@KrishnaShuk](https://github.com/KrishnaShuk))
+
+- Fix queue closure in LLMStream, STTStream, TTSStream - [#954](https://github.com/livekit/agents-js/pull/954) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.33
 
 ### Patch Changes

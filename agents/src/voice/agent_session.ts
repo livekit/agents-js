@@ -61,6 +61,7 @@ import { RecorderIO } from './recorder_io/index.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { RunResult } from './testing/run_result.js';
 
 export interface VoiceOptions {
   allowInterruptions: boolean;
@@ -72,6 +73,7 @@ export interface VoiceOptions {
   maxToolSteps: number;
   preemptiveGeneration: boolean;
   userAwayTimeout?: number | null;
+  useTtsAlignedTranscript: boolean;
 }
 
 const defaultVoiceOptions: VoiceOptions = {
@@ -84,6 +86,7 @@ const defaultVoiceOptions: VoiceOptions = {
   maxToolSteps: 3,
   preemptiveGeneration: false,
   userAwayTimeout: 15.0,
+  useTtsAlignedTranscript: true,
 } as const;
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
@@ -166,6 +169,9 @@ export class AgentSession<
 
   /** @internal - Timestamp when the session started (milliseconds) */
   _startedAt?: number;
+
+  /** @internal - Current run state for testing */
+  _globalRunState?: RunResult;
 
   constructor(opts: AgentSessionOptions<UserData>) {
     super();
@@ -260,6 +266,10 @@ export class AgentSession<
     return this._connOptions;
   }
 
+  get useTtsAlignedTranscript(): boolean {
+    return this.options.useTtsAlignedTranscript;
+  }
+
   set userData(value: UserData) {
     this._userData = value;
   }
@@ -272,7 +282,7 @@ export class AgentSession<
     span,
   }: {
     agent: Agent;
-    room: Room;
+    room?: Room;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
     span: Span;
@@ -283,41 +293,45 @@ export class AgentSession<
     this._updateAgentState('initializing');
 
     const tasks: Promise<void>[] = [];
-    // Check for existing input/output configuration and warn if needed
-    if (this.input.audio && inputOptions?.audioEnabled !== false) {
-      this.logger.warn('RoomIO audio input is enabled but input.audio is already set, ignoring..');
-    }
 
-    if (this.output.audio && outputOptions?.audioEnabled !== false) {
-      this.logger.warn(
-        'RoomIO audio output is enabled but output.audio is already set, ignoring..',
-      );
-    }
+    if (room && !this.roomIO) {
+      // Check for existing input/output configuration and warn if needed
+      if (this.input.audio && inputOptions?.audioEnabled !== false) {
+        this.logger.warn(
+          'RoomIO audio input is enabled but input.audio is already set, ignoring..',
+        );
+      }
 
-    if (this.output.transcription && outputOptions?.transcriptionEnabled !== false) {
-      this.logger.warn(
-        'RoomIO transcription output is enabled but output.transcription is already set, ignoring..',
-      );
-    }
+      if (this.output.audio && outputOptions?.audioEnabled !== false) {
+        this.logger.warn(
+          'RoomIO audio output is enabled but output.audio is already set, ignoring..',
+        );
+      }
 
-    this.roomIO = new RoomIO({
-      agentSession: this,
-      room,
-      inputOptions,
-      outputOptions,
-    });
-    this.roomIO.start();
+      if (this.output.transcription && outputOptions?.transcriptionEnabled !== false) {
+        this.logger.warn(
+          'RoomIO transcription output is enabled but output.transcription is already set, ignoring..',
+        );
+      }
+
+      this.roomIO = new RoomIO({
+        agentSession: this,
+        room,
+        inputOptions,
+        outputOptions,
+      });
+      this.roomIO.start();
+    }
 
     let ctx: JobContext | undefined = undefined;
     try {
       ctx = getJobContext();
-    } catch (error) {
+    } catch {
       // JobContext is not available in evals
-      this.logger.warn('JobContext is not available');
     }
 
     if (ctx) {
-      if (ctx.room === room && !room.isConnected) {
+      if (room && ctx.room === room && !room.isConnected) {
         this.logger.debug('Auto-connecting to room via job context');
         tasks.push(ctx.connect());
       }
@@ -370,7 +384,7 @@ export class AgentSession<
     record,
   }: {
     agent: Agent;
-    room: Room;
+    room?: Room;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
     record?: boolean;
@@ -497,13 +511,50 @@ export class AgentSession<
 
     // attach to the session span if called outside of the AgentSession
     const activeSpan = trace.getActiveSpan();
+    let handle: SpeechHandle;
     if (!activeSpan && this.rootSpanContext) {
-      return otelContext.with(this.rootSpanContext, () =>
+      handle = otelContext.with(this.rootSpanContext, () =>
         doGenerateReply(this.activity!, this.nextActivity),
       );
+    } else {
+      handle = doGenerateReply(this.activity!, this.nextActivity);
     }
 
-    return doGenerateReply(this.activity!, this.nextActivity);
+    if (this._globalRunState) {
+      this._globalRunState._watchHandle(handle);
+    }
+
+    return handle;
+  }
+
+  /**
+   * Run a test with user input and return a result for assertions.
+   *
+   * This method is primarily used for testing agent behavior without
+   * requiring a real room connection.
+   *
+   * @example
+   * ```typescript
+   * const result = await session.run({ userInput: 'Hello' });
+   * result.expect.nextEvent().isMessage({ role: 'assistant' });
+   * result.expect.noMoreEvents();
+   * ```
+   *
+   * @param options - Run options including user input
+   * @returns A RunResult that resolves when the agent finishes responding
+   *
+   * TODO: Add outputType parameter for typed outputs (parity with Python)
+   */
+  run(options: { userInput: string }): RunResult {
+    if (this._globalRunState && !this._globalRunState.done()) {
+      throw new Error('nested runs are not supported');
+    }
+
+    const runState = new RunResult({ userInput: options.userInput });
+    this._globalRunState = runState;
+    this.generateReply({ userInput: options.userInput });
+
+    return runState;
   }
 
   private async updateActivity(agent: Agent): Promise<void> {
@@ -632,7 +683,7 @@ export class AgentSession<
   }
 
   /** @internal */
-  _updateAgentState(state: AgentState) {
+  _updateAgentState(state: AgentState, options?: { startTime?: number; otelContext?: Context }) {
     if (this._agentState === state) {
       return;
     }
@@ -645,7 +696,8 @@ export class AgentSession<
       if (this.agentSpeakingSpan === undefined) {
         this.agentSpeakingSpan = tracer.startSpan({
           name: 'agent_speaking',
-          context: this.rootSpanContext,
+          context: options?.otelContext ?? this.rootSpanContext,
+          startTime: options?.startTime,
         });
 
         // TODO(brian): PR4 - Set participant attributes if roomIO.room.localParticipant is available
@@ -674,7 +726,7 @@ export class AgentSession<
   }
 
   /** @internal */
-  _updateUserState(state: UserState, _lastSpeakingTime?: number) {
+  _updateUserState(state: UserState, lastSpeakingTime?: number) {
     if (this.userState === state) {
       return;
     }
@@ -683,13 +735,13 @@ export class AgentSession<
       this.userSpeakingSpan = tracer.startSpan({
         name: 'user_speaking',
         context: this.rootSpanContext,
+        startTime: lastSpeakingTime,
       });
 
       // TODO(brian): PR4 - Set participant attributes if roomIO.linkedParticipant is available
       // (Ref: Python agent_session.py line 1192-1195)
     } else if (this.userSpeakingSpan !== undefined) {
-      // TODO(brian): PR4 - Set ATTR_END_TIME attribute with lastSpeakingTime if available
-      this.userSpeakingSpan.end();
+      this.userSpeakingSpan.end(lastSpeakingTime);
       this.userSpeakingSpan = undefined;
     }
 

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { metrics } from '@livekit/agents';
 import {
   type APIConnectOptions,
   APIConnectionError,
@@ -11,11 +10,14 @@ import {
   Future,
   Queue,
   Task,
+  type TimedString,
   cancelAndWait,
+  createTimedString,
   delay,
   isAPIError,
   llm,
   log,
+  type metrics,
   shortuuid,
   stream,
 } from '@livekit/agents';
@@ -61,7 +63,7 @@ interface RealtimeOptions {
 
 interface MessageGeneration {
   messageId: string;
-  textChannel: stream.StreamChannel<string>;
+  textChannel: stream.StreamChannel<string | TimedString>;
   audioChannel: stream.StreamChannel<AudioFrame>;
   audioTranscript: string;
   modalities: Future<('text' | 'audio')[]>;
@@ -1090,16 +1092,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('item.type is not set');
     }
 
-    if (!event.response_id) {
-      throw new Error('response_id is not set');
-    }
-
     const itemType = event.item.type;
-    const responseId = event.response_id;
 
     if (itemType !== 'message') {
-      // emit immediately if it's not a message, otherwise wait response.content_part.added
-      this.resolveGeneration(responseId);
+      // non-message items (e.g. function calls) don't need additional handling here
+      // the generation event was already emitted in handleResponseCreated
       this.textModeRecoveryRetries = 0;
       return;
     }
@@ -1112,7 +1109,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     const modalitiesFut = new Future<Modality[]>();
     const itemGeneration: MessageGeneration = {
       messageId: itemId,
-      textChannel: stream.createStreamChannel<string>(),
+      textChannel: stream.createStreamChannel<string | TimedString>(),
       audioChannel: stream.createStreamChannel<AudioFrame>(),
       audioTranscript: '',
       modalities: modalitiesFut,
@@ -1279,16 +1276,19 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const itemId = event.item_id;
-    const delta = event.delta;
 
-    // TODO (shubhra): add timed string support
+    // When start_time is provided, wrap the delta in a TimedString for aligned transcripts
+    let delta: string | TimedString = event.delta;
+    if (event.start_time !== undefined) {
+      delta = createTimedString({ text: event.delta, startTime: event.start_time });
+    }
 
     const itemGeneration = this.currentGeneration.messages.get(itemId);
     if (!itemGeneration) {
       throw new Error('itemGeneration is not set');
     } else {
       itemGeneration.textChannel.write(delta);
-      itemGeneration.audioTranscript += delta;
+      itemGeneration.audioTranscript += event.delta;
     }
   }
 
@@ -1517,30 +1517,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
 
     return handle;
-  }
-
-  private resolveGeneration(responseId: string): void {
-    if (!this.currentGeneration) {
-      throw new Error('currentGeneration is not set');
-    }
-
-    const generation_ev = {
-      messageStream: this.currentGeneration.messageChannel.stream(),
-      functionStream: this.currentGeneration.functionChannel.stream(),
-      userInitiated: false,
-      responseId,
-    } as llm.GenerationCreatedEvent;
-
-    const handle = this.responseCreatedFutures[responseId];
-    if (handle) {
-      delete this.responseCreatedFutures[responseId];
-      generation_ev.userInitiated = true;
-      if (handle.doneFut.done) {
-        this.#logger.warn({ responseId }, 'response received after timeout');
-      } else {
-        handle.doneFut.resolve(generation_ev);
-      }
-    }
   }
 }
 

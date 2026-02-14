@@ -10,12 +10,19 @@ import { Future } from '../utils.js';
 import type { IPCMessage } from './message.js';
 
 export interface ProcOpts {
+  /** Timeout for process initialization in milliseconds. */
   initializeTimeout: number;
+  /** Timeout for process shutdown in milliseconds. */
   closeTimeout: number;
+  /** Memory usage warning threshold in megabytes. */
   memoryWarnMB: number;
+  /** Memory usage limit in megabytes. */
   memoryLimitMB: number;
+  /** Interval for health check pings in milliseconds. */
   pingInterval: number;
+  /** Timeout waiting for pong response in milliseconds. */
   pingTimeout: number;
+  /** Threshold for warning about unresponsive processes in milliseconds. */
   highPingThreshold: number;
 }
 
@@ -57,6 +64,10 @@ export abstract class SupervisedProc {
 
   get started(): boolean {
     return this.#started;
+  }
+
+  get isAlive(): boolean {
+    return this.#started && !this.#closing && !!this.proc?.connected;
   }
 
   get runningJob(): RunningJobInfo | undefined {
@@ -171,7 +182,7 @@ export abstract class SupervisedProc {
     this.proc.send({
       case: 'initializeRequest',
       value: {
-        loggerOptions,
+        loggerOptions: loggerOptions(),
         pingInterval: this.#opts.pingInterval,
         pingTimeout: this.#opts.pingTimeout,
         highPingThreshold: this.#opts.highPingThreshold,

@@ -7,5 +7,5 @@ import { describe } from 'vitest';
 import { TTS } from './tts.js';
 
 describe('Rime TTS', async () => {
-  await tts(new TTS(), new STT());
+  await tts(new TTS(), new STT(), { streaming: false });
 });

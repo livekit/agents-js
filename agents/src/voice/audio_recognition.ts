@@ -18,11 +18,17 @@ import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
 
 export interface EndOfTurnInfo {
+  /** The new transcript text from the user's speech. */
   newTranscript: string;
+  /** Confidence score of the transcript (0-1). */
   transcriptConfidence: number;
+  /** Delay from speech stop to final transcription in milliseconds. */
   transcriptionDelay: number;
+  /** Delay from speech stop to end of utterance detection in milliseconds. */
   endOfUtteranceDelay: number;
+  /** Timestamp when user started speaking (milliseconds since epoch). */
   startedSpeakingAt: number | undefined;
+  /** Timestamp when user stopped speaking (milliseconds since epoch). */
   stoppedSpeakingAt: number | undefined;
 }
 
@@ -50,13 +56,21 @@ export interface _TurnDetector {
 }
 
 export interface AudioRecognitionOptions {
+  /** Hooks for recognition events. */
   recognitionHooks: RecognitionHooks;
+  /** Speech-to-text node. */
   stt?: STTNode;
+  /** Voice activity detection. */
   vad?: VAD;
+  /** Turn detector for end-of-turn prediction. */
   turnDetector?: _TurnDetector;
+  /** Turn detection mode. */
   turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
+  /** Minimum endpointing delay in milliseconds. */
   minEndpointingDelay: number;
+  /** Maximum endpointing delay in milliseconds. */
   maxEndpointingDelay: number;
+  /** Root span context for tracing. */
   rootSpanContext?: Context;
 }
 
@@ -161,7 +175,6 @@ export class AudioRecognition {
 
     switch (ev.type) {
       case SpeechEventType.FINAL_TRANSCRIPT:
-        this.hooks.onFinalTranscript(ev);
         const transcript = ev.alternatives?.[0]?.text;
         const confidence = ev.alternatives?.[0]?.confidence ?? 0;
         this.lastLanguage = ev.alternatives?.[0]?.language;
@@ -170,6 +183,8 @@ export class AudioRecognition {
           // stt final transcript received but no transcript
           return;
         }
+
+        this.hooks.onFinalTranscript(ev);
 
         this.logger.debug(
           {
@@ -566,9 +581,11 @@ export class AudioRecognition {
             this.speaking = true;
 
             if (!this.userTurnSpan) {
+              const startTime = Date.now() - ev.speechDuration;
               this.userTurnSpan = tracer.startSpan({
                 name: 'user_turn',
                 context: this.rootSpanContext,
+                startTime,
               });
             }
 

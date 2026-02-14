@@ -258,6 +258,46 @@ describe('toChatCtx', () => {
     ]);
   });
 
+  it('should include provider-specific extra content on tool calls', async () => {
+    const ctx = ChatContext.empty();
+    const msg = ctx.addMessage({ role: 'assistant', content: 'Running tool' });
+
+    const toolCall = FunctionCall.create({
+      id: `${msg.id}/tool_1`,
+      callId: 'call_789',
+      name: 'google_call',
+      args: '{}',
+      extra: { google: { thoughtSignature: 'sig-123' } },
+    });
+    const toolOutput = FunctionCallOutput.create({
+      callId: 'call_789',
+      output: '{"result": "ok"}',
+      isError: false,
+    });
+
+    ctx.insert([toolCall, toolOutput]);
+
+    const result = await toChatCtx(ctx);
+
+    expect(result[0]).toEqual({
+      role: 'assistant',
+      content: 'Running tool',
+      tool_calls: [
+        {
+          type: 'function',
+          id: 'call_789',
+          function: { name: 'google_call', arguments: '{}' },
+          extra_content: { google: { thoughtSignature: 'sig-123' } },
+        },
+      ],
+    });
+    expect(result[1]).toEqual({
+      role: 'tool',
+      tool_call_id: 'call_789',
+      content: '{"result": "ok"}',
+    });
+  });
+
   it('should handle multiple tool calls in one message', async () => {
     const ctx = ChatContext.empty();
 

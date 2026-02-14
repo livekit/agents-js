@@ -125,6 +125,7 @@ export class Future<T = void> {
   #resolvePromise!: (value: T) => void;
   #rejectPromise!: (error: Error) => void;
   #done: boolean = false;
+  #rejected: boolean = false;
 
   constructor() {
     this.#await = new Promise<T>((resolve, reject) => {
@@ -141,6 +142,11 @@ export class Future<T = void> {
     return this.#done;
   }
 
+  /** Whether the future was rejected (cancelled) */
+  get rejected() {
+    return this.#rejected;
+  }
+
   resolve(value: T) {
     this.#done = true;
     this.#resolvePromise(value);
@@ -148,6 +154,7 @@ export class Future<T = void> {
 
   reject(error: Error) {
     this.#done = true;
+    this.#rejected = true;
     this.#rejectPromise(error);
   }
 }
@@ -644,14 +651,22 @@ export function resampleStream({
   let resampler: AudioResampler | null = null;
   const transformStream = new TransformStream<AudioFrame, AudioFrame>({
     transform(chunk: AudioFrame, controller: TransformStreamDefaultController<AudioFrame>) {
+      if (chunk.samplesPerChannel === 0) {
+        controller.enqueue(chunk);
+        return;
+      }
       if (!resampler) {
         resampler = new AudioResampler(chunk.sampleRate, outputRate);
       }
       for (const frame of resampler.push(chunk)) {
         controller.enqueue(frame);
       }
-      for (const frame of resampler.flush()) {
-        controller.enqueue(frame);
+    },
+    flush(controller) {
+      if (resampler) {
+        for (const frame of resampler.flush()) {
+          controller.enqueue(frame);
+        }
       }
     },
   });
@@ -666,6 +681,20 @@ export class InvalidErrorType extends Error {
     this.error = error;
     Error.captureStackTrace(this, InvalidErrorType);
   }
+}
+
+/**
+ * Check if an error is a stream closed error that can be safely ignored during cleanup.
+ * This happens during handover/cleanup when close() is called while operations are still running.
+ *
+ * @param error - The error to check.
+ * @returns True if the error is a stream closed error.
+ */
+export function isStreamClosedError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message === 'Stream is closed' || error.message === 'Input is closed')
+  );
 }
 
 /**

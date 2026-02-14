@@ -37,6 +37,8 @@ export interface StartSpanOptions {
   attributes?: Attributes;
   /** Whether to end the span when the function exits (default: true) */
   endOnExit?: boolean;
+  /** Optional start time for the span in milliseconds (Date.now() format) */
+  startTime?: number;
 }
 
 /**
@@ -79,10 +81,12 @@ class DynamicTracer {
    */
   startSpan(options: StartSpanOptions): Span {
     const ctx = options.context || otelContext.active();
+
     const span = this.tracer.startSpan(
       options.name,
       {
         attributes: options.attributes,
+        startTime: options.startTime,
       },
       ctx,
     );
@@ -101,7 +105,7 @@ class DynamicTracer {
   async startActiveSpan<T>(fn: (span: Span) => Promise<T>, options: StartSpanOptions): Promise<T> {
     const ctx = options.context || otelContext.active();
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
-    const opts: SpanOptions = { attributes: options.attributes };
+    const opts: SpanOptions = { attributes: options.attributes, startTime: options.startTime };
 
     // Directly return the tracer's startActiveSpan result - it handles async correctly
     return await this.tracer.startActiveSpan(options.name, opts, ctx, async (span) => {
@@ -125,7 +129,7 @@ class DynamicTracer {
   startActiveSpanSync<T>(fn: (span: Span) => T, options: StartSpanOptions): T {
     const ctx = options.context || otelContext.active();
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
-    const opts: SpanOptions = { attributes: options.attributes };
+    const opts: SpanOptions = { attributes: options.attributes, startTime: options.startTime };
 
     return this.tracer.startActiveSpan(options.name, opts, ctx, (span) => {
       try {

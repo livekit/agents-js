@@ -1,7 +1,16 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, WorkerOptions, cli, defineAgent, llm, log, voice } from '@livekit/agents';
+import {
+  type JobContext,
+  WorkerOptions,
+  cli,
+  defineAgent,
+  initializeLogger,
+  llm,
+  log,
+  voice,
+} from '@livekit/agents';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -18,6 +27,8 @@ import { z } from 'zod';
 
 export default defineAgent({
   entry: async (ctx: JobContext) => {
+    initializeLogger({ pretty: true });
+
     const logger = log();
 
     await ctx.connect();
@@ -46,7 +57,7 @@ export default defineAgent({
     const session = new voice.AgentSession({
       llm: 'deepseek-ai/deepseek-v3',
       stt: 'deepgram/nova-3',
-      tts: 'cartesia',
+      tts: 'cartesia/sonic-3',
     });
     await session.start({ agent, room: ctx.room });
 

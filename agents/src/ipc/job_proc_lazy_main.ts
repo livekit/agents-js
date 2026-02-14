@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Room, RoomEvent } from '@livekit/rtc-node';
+import { Room, RoomEvent, dispose } from '@livekit/rtc-node';
 import { EventEmitter, once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
@@ -136,7 +136,7 @@ const startJob = (
       shutdownTasks.push(callback());
     }
     await Promise.all(shutdownTasks).catch((error) =>
-      logger.error('error while shutting down the job', error),
+      logger.error({ error }, 'error while shutting down the job'),
     );
 
     process.send!({ case: 'done' });
@@ -156,7 +156,11 @@ const startJob = (
     //   [2] import.meta.filename of function containing entry file
     const moduleFile = process.argv[2];
     const agent: Agent = await import(pathToFileURL(moduleFile!).pathname).then((module) => {
-      const agent = module.default;
+      // Handle both ESM (module.default is the agent) and CJS (module.default.default is the agent)
+      const agent =
+        typeof module.default === 'function' || isAgent(module.default)
+          ? module.default
+          : module.default?.default;
       if (agent === undefined || !isAgent(agent)) {
         throw new Error(`Unable to load agent: Missing or invalid default export in ${moduleFile}`);
       }
@@ -240,6 +244,18 @@ const startJob = (
     process.on('message', messageHandler);
 
     await join.await;
+
+    // Dispose native FFI resources (Rust FfiServer, tokio runtimes, libwebrtc)
+    // before process.exit() to prevent libc++abi mutex crash during teardown.
+    // Without this, process.exit() can kill the process while native threads are
+    // still running, causing: "mutex lock failed: Invalid argument"
+    // See: https://github.com/livekit/node-sdks/issues/564
+    try {
+      await dispose();
+      logger.debug('native resources disposed');
+    } catch (error) {
+      logger.warn({ error }, 'failed to dispose native resources');
+    }
 
     logger.debug('Job process shutdown');
     process.exit(0);

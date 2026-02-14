@@ -30,12 +30,52 @@ export type TTSNode = (
 ) => Promise<ReadableStream<AudioFrame> | null>;
 
 /**
- * A string with timing information for word-level alignment.
+ * Symbol used to identify TimedString objects.
+ */
+export const TIMED_STRING_SYMBOL = Symbol.for('lk.TimedString');
+
+/**
+ * A string with optional start and end timestamps for word-level alignment.
  */
 export interface TimedString {
+  readonly [TIMED_STRING_SYMBOL]: true;
   text: string;
   startTime?: number; // seconds
   endTime?: number; // seconds
+  confidence?: number;
+  startTimeOffset?: number;
+}
+
+/**
+ * Factory function to create a TimedString object.
+ */
+export function createTimedString(opts: {
+  text: string;
+  startTime?: number;
+  endTime?: number;
+  confidence?: number;
+  startTimeOffset?: number;
+}): TimedString {
+  return {
+    [TIMED_STRING_SYMBOL]: true,
+    text: opts.text,
+    startTime: opts.startTime,
+    endTime: opts.endTime,
+    confidence: opts.confidence,
+    startTimeOffset: opts.startTimeOffset,
+  };
+}
+
+/**
+ * Type guard to check if a value is a TimedString.
+ */
+export function isTimedString(value: unknown): value is TimedString {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    TIMED_STRING_SYMBOL in value &&
+    (value as TimedString)[TIMED_STRING_SYMBOL] === true
+  );
 }
 
 export interface AudioOutputCapabilities {
@@ -57,6 +97,7 @@ export abstract class AudioInput {
 }
 
 export abstract class AudioOutput extends EventEmitter {
+  static readonly EVENT_PLAYBACK_STARTED = 'playbackStarted';
   static readonly EVENT_PLAYBACK_FINISHED = 'playbackFinished';
 
   private playbackFinishedFuture: Future<void> = new Future();
@@ -77,7 +118,11 @@ export abstract class AudioOutput extends EventEmitter {
   ) {
     super();
     this.capabilities = capabilities;
+
     if (this.nextInChain) {
+      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_STARTED, (ev: PlaybackStartedEvent) =>
+        this.onPlaybackStarted(ev.createdAt),
+      );
       this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_FINISHED, (ev: PlaybackFinishedEvent) =>
         this.onPlaybackFinished(ev),
       );
@@ -115,6 +160,14 @@ export abstract class AudioOutput extends EventEmitter {
     }
 
     return this.lastPlaybackEvent;
+  }
+
+  /**
+   * Called when playback actually starts (first frame is sent to output).
+   * Developers building audio sinks should call this when the first frame is captured.
+   */
+  onPlaybackStarted(createdAt: number): void {
+    this.emit(AudioOutput.EVENT_PLAYBACK_STARTED, { createdAt } as PlaybackStartedEvent);
   }
 
   /**
@@ -174,22 +227,26 @@ export abstract class AudioOutput extends EventEmitter {
 }
 
 export interface PlaybackFinishedEvent {
-  // How much of the audio was played back
+  /** How much of the audio was played back, in seconds */
   playbackPosition: number;
-  // Interrupted is True if playback was interrupted (clearBuffer() was called)
+  /** True if playback was interrupted (clearBuffer() was called) */
   interrupted: boolean;
-  // Transcript synced with playback; may be partial if the audio was interrupted
-  // When null, the transcript is not synchronized with the playback
+  /**
+   * Transcript synced with playback; may be partial if the audio was interrupted.
+   * When undefined, the transcript is not synchronized with the playback.
+   */
   synchronizedTranscript?: string;
+}
+
+export interface PlaybackStartedEvent {
+  /** The timestamp (Date.now()) when the playback started */
+  createdAt: number;
 }
 
 export abstract class TextOutput {
   constructor(protected readonly nextInChain?: TextOutput) {}
 
-  /**
-   * Capture a text segment (Used by the output of LLM nodes)
-   */
-  abstract captureText(text: string): Promise<void>;
+  abstract captureText(text: string | TimedString): Promise<void>;
 
   /**
    * Mark the current text segment as complete (e.g LLM generation is complete)

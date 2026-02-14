@@ -30,9 +30,11 @@ export class STT extends stt.STT {
     super({
       streaming: true,
       interimResults: opts.enablePartialTranscripts ?? defaultSTTOptions.enablePartialTranscripts!,
+      alignedTranscript: 'word',
     });
 
     const apiKey = opts.apiKey ?? process.env.BASETEN_API_KEY;
+    const modelEndpoint = opts.modelEndpoint ?? process.env.BASETEN_MODEL_ENDPOINT;
     const modelId = opts.modelId ?? process.env.BASETEN_STT_MODEL_ID;
 
     if (!apiKey) {
@@ -40,9 +42,9 @@ export class STT extends stt.STT {
         'Baseten API key is required, either pass it as `apiKey` or set $BASETEN_API_KEY',
       );
     }
-    if (!modelId) {
+    if (!modelEndpoint && !modelId) {
       throw new Error(
-        'Baseten model ID is required, either pass it as `modelId` or set $BASETEN_STT_MODEL_ID',
+        'Baseten model endpoint is required, either pass it as `modelEndpoint` or set $BASETEN_MODEL_ENDPOINT',
       );
     }
 
@@ -50,6 +52,7 @@ export class STT extends stt.STT {
       ...defaultSTTOptions,
       ...opts,
       apiKey,
+      modelEndpoint,
       modelId,
     } as BasetenSttOptions;
   }
@@ -82,6 +85,10 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   private getWsUrl(): string {
+    if (this.#opts.modelEndpoint) {
+      return this.#opts.modelEndpoint;
+    }
+    // Fallback to constructing URL from modelId (deprecated)
     return `wss://model-${this.#opts.modelId}.api.baseten.co/environments/${this.#opts.environment}/websocket`;
   }
 
@@ -95,7 +102,7 @@ export class SpeechStream extends stt.SpeechStream {
         Authorization: `Api-Key ${this.#opts.apiKey}`,
       };
 
-      const ws = new WebSocket(url, { headers });
+      const ws = new WebSocket(url, { headers, rejectUnauthorized: false });
 
       try {
         await new Promise((resolve, reject) => {
@@ -133,25 +140,23 @@ export class SpeechStream extends stt.SpeechStream {
     let closing = false;
 
     // Send initial metadata
+    // Note: Baseten server expects 'vad_params' and 'streaming_whisper_params' field names
+    // (not 'streaming_vad_config', 'streaming_params', 'whisper_params' as in older versions)
     const metadata = {
-      streaming_vad_config: {
+      vad_params: {
         threshold: this.#opts.vadThreshold,
         min_silence_duration_ms: this.#opts.vadMinSilenceDurationMs,
         speech_pad_ms: this.#opts.vadSpeechPadMs,
       },
-      streaming_params: {
+      streaming_whisper_params: {
         encoding: this.#opts.encoding ?? 'pcm_s16le',
         sample_rate: this.#opts.sampleRate ?? 16000,
-        enable_partial_transcripts: this.#opts.enablePartialTranscripts,
-        partial_transcript_interval_s: this.#opts.partialTranscriptIntervalS,
-        final_transcript_max_duration_s: this.#opts.finalTranscriptMaxDurationS,
-      },
-      whisper_params: {
-        prompt: this.#opts.prompt,
+        enable_partial_transcripts: false,
         audio_language: this.#opts.audioLanguage ?? 'en',
-        language_detection_only: this.#opts.languageDetectionOnly ?? false,
+        show_word_timestamps: true,
       },
     };
+
     ws.send(JSON.stringify(metadata));
 
     const sendTask = async () => {
@@ -213,8 +218,6 @@ export class SpeechStream extends stt.SpeechStream {
             }
 
             const msg = JSON.parse(jsonString);
-
-            // Parse response format matching Python implementation
             const isFinal = msg.is_final ?? true;
             const segments = msg.segments ?? [];
             const transcript = msg.transcript ?? '';
@@ -233,9 +236,26 @@ export class SpeechStream extends stt.SpeechStream {
               this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
             }
 
-            // Extract timing from segments
-            const startTime = segments.length > 0 ? segments[0].start ?? 0.0 : 0.0;
-            const endTime = segments.length > 0 ? segments[segments.length - 1].end ?? 0.0 : 0.0;
+            // Note: Baseten uses 'start_time' and 'end_time' field names (with underscores)
+            const startTime =
+              segments.length > 0
+                ? (segments[0].start_time ?? 0.0) + this.startTimeOffset
+                : this.startTimeOffset;
+            const endTime =
+              segments.length > 0
+                ? (segments[segments.length - 1].end_time ?? 0.0) + this.startTimeOffset
+                : this.startTimeOffset;
+
+            // Note: Baseten returns segments (chunks) which we treat as words for aligned transcripts
+            const words = segments.map(
+              (segment: { text?: string; start_time?: number; end_time?: number }) => ({
+                text: segment.text ?? '',
+                startTime: (segment.start_time ?? 0.0) + this.startTimeOffset,
+                endTime: (segment.end_time ?? 0.0) + this.startTimeOffset,
+                startTimeOffset: this.startTimeOffset,
+                confidence: confidence,
+              }),
+            );
 
             const speechData: stt.SpeechData = {
               language: languageCode!,
@@ -243,6 +263,7 @@ export class SpeechStream extends stt.SpeechStream {
               startTime,
               endTime,
               confidence,
+              words: words.length > 0 ? words : undefined,
             };
 
             // Handle interim vs final transcripts (matching Python implementation)

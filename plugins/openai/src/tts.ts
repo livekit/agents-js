@@ -43,15 +43,15 @@ export class TTS extends tts.TTS {
     super(OPENAI_TTS_SAMPLE_RATE, OPENAI_TTS_CHANNELS, { streaming: false });
 
     this.#opts = { ...defaultTTSOptions, ...opts };
-    if (this.#opts.apiKey === undefined) {
+    if (this.#opts.apiKey === undefined && !this.#opts.client) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
 
     this.#client =
       this.#opts.client ||
       new OpenAI({
-        baseURL: opts.baseURL,
-        apiKey: opts.apiKey,
+        baseURL: this.#opts.baseURL,
+        apiKey: this.#opts.apiKey,
       });
   }
 

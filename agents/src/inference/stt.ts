@@ -16,47 +16,72 @@ import {
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
+import { type TimedString, createTimedString } from '../voice/io.js';
+import {
+  type SttServerEvent,
+  type SttTranscriptEvent,
+  sttServerEventSchema,
+} from './api_protos.js';
 import { type AnyString, connectWs, createAccessToken } from './utils.js';
 
 export type DeepgramModels =
-  | 'deepgram'
+  | 'deepgram/flux-general'
   | 'deepgram/nova-3'
-  | 'deepgram/nova-3-general'
   | 'deepgram/nova-3-medical'
-  | 'deepgram/nova-2-conversationalai'
   | 'deepgram/nova-2'
-  | 'deepgram/nova-2-general'
   | 'deepgram/nova-2-medical'
+  | 'deepgram/nova-2-conversationalai'
   | 'deepgram/nova-2-phonecall';
 
-export type CartesiaModels = 'cartesia' | 'cartesia/ink-whisper';
+export type CartesiaModels = 'cartesia/ink-whisper';
 
-export type AssemblyaiModels = 'assemblyai' | 'assemblyai/universal-streaming';
+export type AssemblyaiModels =
+  | 'assemblyai/universal-streaming'
+  | 'assemblyai/universal-streaming-multilingual';
+
+export type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
 
 export interface CartesiaOptions {
-  min_volume?: number; // default: not specified
-  max_silence_duration_secs?: number; // default: not specified
+  /** Minimum volume threshold. Default: not specified. */
+  min_volume?: number;
+  /** Maximum silence duration in seconds. Default: not specified. */
+  max_silence_duration_secs?: number;
 }
 
 export interface DeepgramOptions {
-  filler_words?: boolean; // default: true
-  interim_results?: boolean; // default: true
-  endpointing?: number; // default: 25 (ms)
-  punctuate?: boolean; // default: false
+  /** Enable filler words. Default: true. */
+  filler_words?: boolean;
+  /** Enable interim results. Default: true. */
+  interim_results?: boolean;
+  /** Endpointing timeout in milliseconds. Default: 25. */
+  endpointing?: number;
+  /** Enable punctuation. Default: false. */
+  punctuate?: boolean;
+  /** Enable smart formatting. */
   smart_format?: boolean;
+  /** Keywords with boost values. */
   keywords?: Array<[string, number]>;
+  /** Key terms for recognition. */
   keyterms?: string[];
+  /** Enable profanity filter. */
   profanity_filter?: boolean;
+  /** Convert spoken numbers to numerals. */
   numerals?: boolean;
+  /** Opt out of model improvement program. */
   mip_opt_out?: boolean;
 }
 
 export interface AssemblyAIOptions {
-  format_turns?: boolean; // default: false
-  end_of_turn_confidence_threshold?: number; // default: 0.01
-  min_end_of_turn_silence_when_confident?: number; // default: 0
-  max_turn_silence?: number; // default: not specified
-  keyterms_prompt?: string[]; // default: not specified
+  /** Enable turn formatting. Default: false. */
+  format_turns?: boolean;
+  /** End of turn confidence threshold. Default: 0.01. */
+  end_of_turn_confidence_threshold?: number;
+  /** Minimum silence duration in milliseconds when confident about end of turn. Default: 0. */
+  min_end_of_turn_silence_when_confident?: number;
+  /** Maximum turn silence in milliseconds. Default: not specified. */
+  max_turn_silence?: number;
+  /** Key terms prompt for recognition. Default: not specified. */
+  keyterms_prompt?: string[];
 }
 
 export type STTLanguages =
@@ -71,7 +96,7 @@ export type STTLanguages =
   | 'hi'
   | AnyString;
 
-type _STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels;
+type _STTModels = DeepgramModels | CartesiaModels | AssemblyaiModels | ElevenlabsSTTModels;
 
 export type STTModels = _STTModels | 'auto' | AnyString;
 
@@ -84,6 +109,43 @@ export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
     : TModel extends AssemblyaiModels
       ? AssemblyAIOptions
       : Record<string, unknown>;
+
+/** A fallback model with optional extra configuration. Extra fields are passed through to the provider. */
+export interface STTFallbackModel {
+  /** Model name (e.g. "deepgram/nova-3", "assemblyai/universal-streaming", "cartesia/ink-whisper"). */
+  model: string;
+  /** Extra configuration for the model. */
+  extraKwargs?: Record<string, unknown>;
+}
+
+export type STTFallbackModelType = STTFallbackModel | string;
+
+/** Parse a model string into [model, language]. Language is undefined if not specified. */
+export function parseSTTModelString(model: string): [string, string | undefined] {
+  const idx = model.lastIndexOf(':');
+  if (idx !== -1) {
+    return [model.slice(0, idx), model.slice(idx + 1)];
+  }
+  return [model, undefined];
+}
+
+/** Normalize a single or list of FallbackModelType into STTFallbackModel[]. */
+export function normalizeSTTFallback(
+  fallback: STTFallbackModelType | STTFallbackModelType[],
+): STTFallbackModel[] {
+  const makeFallback = (model: STTFallbackModelType): STTFallbackModel => {
+    if (typeof model === 'string') {
+      const [name] = parseSTTModelString(model);
+      return { model: name };
+    }
+    return model;
+  };
+
+  if (Array.isArray(fallback)) {
+    return fallback.map(makeFallback);
+  }
+  return [makeFallback(fallback)];
+}
 
 export type STTEncoding = 'pcm_s16le';
 
@@ -101,6 +163,8 @@ export interface InferenceSTTOptions<TModel extends STTModels> {
   apiKey: string;
   apiSecret: string;
   modelOptions: STTOptions<TModel>;
+  fallback?: STTFallbackModel[];
+  connOptions?: APIConnectOptions;
 }
 
 /**
@@ -113,7 +177,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   #logger = log();
 
   constructor(opts?: {
-    model?: TModel;
+    model?: ModelWithLanguage;
     language?: STTLanguages;
     baseURL?: string;
     encoding?: STTEncoding;
@@ -121,8 +185,10 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     apiKey?: string;
     apiSecret?: string;
     modelOptions?: STTOptions<TModel>;
+    fallback?: STTFallbackModelType | STTFallbackModelType[];
+    connOptions?: APIConnectOptions;
   }) {
-    super({ streaming: true, interimResults: true });
+    super({ streaming: true, interimResults: true, alignedTranscript: 'word' });
 
     const {
       model,
@@ -133,6 +199,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       apiKey,
       apiSecret,
       modelOptions = {} as STTOptions<TModel>,
+      fallback,
+      connOptions,
     } = opts || {};
 
     const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
@@ -147,15 +215,37 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
     }
 
+    // Parse language from model string if provided: "provider/model:language"
+    let nextModel = model;
+    let nextLanguage = language;
+    if (typeof nextModel === 'string') {
+      const idx = nextModel.lastIndexOf(':');
+      if (idx !== -1) {
+        const languageFromModel = nextModel.slice(idx + 1) as STTLanguages;
+        if (nextLanguage && nextLanguage !== languageFromModel) {
+          this.#logger.warn(
+            '`language` is provided via both argument and model, using the one from the argument',
+            { language: nextLanguage, model: nextModel },
+          );
+        } else {
+          nextLanguage = languageFromModel;
+        }
+        nextModel = nextModel.slice(0, idx) as TModel;
+      }
+    }
+    const normalizedFallback = fallback ? normalizeSTTFallback(fallback) : undefined;
+
     this.opts = {
-      model,
-      language,
+      model: nextModel as TModel,
+      language: nextLanguage,
       encoding,
       sampleRate,
       baseURL: lkBaseURL,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
       modelOptions,
+      fallback: normalizedFallback,
+      connOptions: connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
     };
   }
 
@@ -164,11 +254,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   }
 
   static fromModelString(modelString: string): STT<AnyString> {
-    if (modelString.includes(':')) {
-      const [model, language] = modelString.split(':') as [AnyString, STTLanguages];
-      return new STT({ model, language });
-    }
-    return new STT({ model: modelString });
+    const [model, language] = parseSTTModelString(modelString);
+    return new STT({ model, language });
   }
 
   protected async _recognize(_: AudioBuffer): Promise<SpeechEvent> {
@@ -187,7 +274,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     language?: STTLanguages | string;
     connOptions?: APIConnectOptions;
   }): SpeechStream<TModel> {
-    const { language, connOptions = DEFAULT_API_CONNECT_OPTIONS } = options || {};
+    const { language, connOptions = this.opts.connOptions ?? DEFAULT_API_CONNECT_OPTIONS } =
+      options || {};
     const streamOpts = {
       ...this.opts,
       language: language ?? this.opts.language,
@@ -214,6 +302,22 @@ export class STT<TModel extends STTModels> extends BaseSTT {
 
     if (this.opts.language) {
       (params.settings as Record<string, unknown>).language = this.opts.language;
+    }
+
+    if (this.opts.fallback?.length) {
+      params.fallback = {
+        models: this.opts.fallback.map((m) => ({
+          model: m.model,
+          extra: m.extraKwargs ?? {},
+        })),
+      };
+    }
+
+    if (this.opts.connOptions) {
+      params.connection = {
+        timeout: this.opts.connOptions.timeoutMs / 1000,
+        retries: this.opts.connOptions.maxRetry,
+      };
     }
 
     let baseURL = this.opts.baseURL;
@@ -271,7 +375,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let closing = false;
       let finalReceived = false;
 
-      type SttServerEvent = Record<string, any>;
       const eventChannel = createStreamChannel<SttServerEvent>();
 
       const resourceCleanup = () => {
@@ -380,10 +483,19 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             if (signal.aborted) return;
             if (result.done) return;
 
-            const json = result.value;
-            const type = json.type as string | undefined;
+            // Parse and validate with Zod schema
+            const parseResult = await sttServerEventSchema.safeParseAsync(result.value);
+            if (!parseResult.success) {
+              this.#logger.warn(
+                { error: parseResult.error, rawData: result.value },
+                'Failed to parse STT server event',
+              );
+              continue;
+            }
 
-            switch (type) {
+            const event: SttServerEvent = parseResult.data;
+
+            switch (event.type) {
               case 'session.created':
               case 'session.finalized':
                 break;
@@ -392,21 +504,15 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 resourceCleanup();
                 break;
               case 'interim_transcript':
-                this.processTranscript(json, false);
+                this.processTranscript(event, false);
                 break;
               case 'final_transcript':
-                this.processTranscript(json, true);
+                this.processTranscript(event, true);
                 break;
               case 'error':
-                this.#logger.error({ error: json }, 'Received error from LiveKit STT');
+                this.#logger.error({ error: event }, 'Received error from LiveKit STT');
                 resourceCleanup();
-                throw new APIError(`LiveKit STT returned error: ${JSON.stringify(json)}`);
-              default:
-                this.#logger.warn(
-                  { message: json },
-                  'Received unexpected message from LiveKit STT',
-                );
-                break;
+                throw new APIError(`LiveKit STT returned error: ${JSON.stringify(event)}`);
             }
           }
         } finally {
@@ -457,13 +563,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     }
   }
 
-  private processTranscript(data: Record<string, any>, isFinal: boolean) {
+  private processTranscript(data: SttTranscriptEvent, isFinal: boolean) {
     // Check if queue is closed to avoid race condition during disconnect
     if (this.queue.closed) return;
 
-    const requestId = data.request_id ?? this.requestId;
-    const text = data.transcript ?? '';
-    const language = data.language ?? this.opts.language ?? 'en';
+    const requestId = data.session_id || this.requestId;
+    const text = data.transcript;
+    const language = data.language || this.opts.language || 'en';
 
     if (!text && !isFinal) return;
 
@@ -476,10 +582,20 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
       const speechData: SpeechData = {
         language,
-        startTime: data.start ?? 0,
-        endTime: data.duration ?? 0,
-        confidence: data.confidence ?? 1.0,
+        startTime: this.startTimeOffset + data.start,
+        endTime: this.startTimeOffset + data.start + data.duration,
+        confidence: data.confidence,
         text,
+        words: data.words.map(
+          (word): TimedString =>
+            createTimedString({
+              text: word.word,
+              startTime: word.start + this.startTimeOffset,
+              endTime: word.end + this.startTimeOffset,
+              startTimeOffset: this.startTimeOffset,
+              confidence: word.confidence,
+            }),
+        ),
       };
 
       if (isFinal) {

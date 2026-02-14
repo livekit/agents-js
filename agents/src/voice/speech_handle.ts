@@ -1,10 +1,26 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { Context } from '@opentelemetry/api';
 import type { ChatItem } from '../llm/index.js';
-import { Event, Future, shortuuid } from '../utils.js';
 import type { Task } from '../utils.js';
+import { Event, Future, shortuuid } from '../utils.js';
 import { asyncLocalStorage } from './agent.js';
+
+/** Symbol used to identify SpeechHandle instances */
+const SPEECH_HANDLE_SYMBOL = Symbol.for('livekit.agents.SpeechHandle');
+
+/**
+ * Type guard to check if a value is a SpeechHandle.
+ */
+export function isSpeechHandle(value: unknown): value is SpeechHandle {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    SPEECH_HANDLE_SYMBOL in value &&
+    (value as Record<symbol, boolean>)[SPEECH_HANDLE_SYMBOL] === true
+  );
+}
 
 export class SpeechHandle {
   /** Priority for messages that should be played after all other messages in the queue */
@@ -18,15 +34,23 @@ export class SpeechHandle {
   private authorizedEvent = new Event();
   private scheduledFut = new Future<void>();
   private doneFut = new Future<void>();
-
   private generations: Future<void>[] = [];
+  private _chatItems: ChatItem[] = [];
+
   /** @internal */
   _tasks: Task<void>[] = [];
-  private _chatItems: ChatItem[] = [];
-  private _numSteps = 1;
+
+  /** @internal */
+  _numSteps = 1;
+
+  /** @internal - OpenTelemetry context for the agent turn span */
+  _agentTurnContext?: Context;
 
   private itemAddedCallbacks: Set<(item: ChatItem) => void> = new Set();
   private doneCallbacks: Set<(sh: SpeechHandle) => void> = new Set();
+
+  /** @internal Symbol marker for type identification */
+  readonly [SPEECH_HANDLE_SYMBOL] = true;
 
   constructor(
     private _id: string,

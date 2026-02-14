@@ -13,6 +13,7 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
 import type { AudioBuffer } from '../utils.js';
 import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
+import type { TimedString } from '../voice/index.js';
 
 /** Indicates start/middle/end of speech */
 export enum SpeechEventType {
@@ -48,14 +49,22 @@ export enum SpeechEventType {
 
 /** SpeechData contains metadata about this {@link SpeechEvent}. */
 export interface SpeechData {
+  /** Language code of the speech. */
   language: string;
+  /** Transcribed text. */
   text: string;
+  /** Start time of the speech segment in seconds. */
   startTime: number;
+  /** End time of the speech segment in seconds. */
   endTime: number;
+  /** Confidence score of the transcription (0-1). */
   confidence: number;
+  /** Word-level timing information. */
+  words?: TimedString[];
 }
 
 export interface RecognitionUsage {
+  /** Duration of the audio that was recognized in seconds. */
   audioDuration: number;
 }
 
@@ -76,6 +85,13 @@ export interface SpeechEvent {
 export interface STTCapabilities {
   streaming: boolean;
   interimResults: boolean;
+  /**
+   * Whether this STT supports aligned transcripts with word/chunk timestamps.
+   * - 'word': Provider returns word-level timestamps
+   * - 'chunk': Provider returns chunk-level timestamps (e.g., sentence/phrase boundaries)
+   * - false: Provider does not support aligned transcripts
+   */
+  alignedTranscript?: 'word' | 'chunk' | false;
 }
 
 export interface STTError {
@@ -176,6 +192,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
   private _connOptions: APIConnectOptions;
+  private _startTimeOffset: number = 0;
 
   protected abortController = new AbortController();
 
@@ -300,6 +317,17 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     return this.abortController.signal;
   }
 
+  get startTimeOffset(): number {
+    return this._startTimeOffset;
+  }
+
+  set startTimeOffset(value: number) {
+    if (value < 0) {
+      throw new Error('startTimeOffset must be non-negative');
+    }
+    this._startTimeOffset = value;
+  }
+
   updateInputStream(audioStream: ReadableStream<AudioFrame>) {
     this.deferredInputStream.setSource(audioStream);
   }
@@ -321,6 +349,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
       if (!this.resampler) {
         this.resampler = new AudioResampler(frame.sampleRate, this.neededSampleRate);
       }
+    }
+
+    if (frame.samplesPerChannel === 0) {
+      this.input.put(frame);
+      return;
     }
 
     if (this.resampler) {

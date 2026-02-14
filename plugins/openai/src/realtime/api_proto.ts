@@ -167,13 +167,23 @@ export interface TextContent {
   text: string;
 }
 
+export interface OutputTextContent {
+  type: 'output_text';
+  text: string;
+}
+
 export interface AudioContent {
   type: 'audio';
   audio: AudioBase64Bytes;
   transcript: string;
 }
 
-export type Content = InputTextContent | InputAudioContent | TextContent | AudioContent;
+export type Content =
+  | InputTextContent
+  | InputAudioContent
+  | TextContent
+  | OutputTextContent
+  | AudioContent;
 export type ContentPart = {
   type: 'text' | 'audio' | 'output_text' | 'output_audio'; // GA: output_text/output_audio
   audio?: AudioBase64Bytes;
@@ -202,7 +212,7 @@ export interface UserItem extends BaseItem {
 export interface AssistantItem extends BaseItem {
   type: 'message';
   role: 'assistant';
-  content: (TextContent | AudioContent)[];
+  content: (TextContent | OutputTextContent | AudioContent)[];
 }
 
 export interface FunctionCallItem extends BaseItem {
@@ -591,6 +601,8 @@ export interface ResponseAudioTranscriptDeltaEvent extends BaseServerEvent {
   output_index: number;
   content_index: number;
   delta: string;
+  // Start time of this transcript segment in seconds (relative to audio output).
+  start_time?: number;
 }
 
 export interface ResponseAudioTranscriptDoneEvent extends BaseServerEvent {

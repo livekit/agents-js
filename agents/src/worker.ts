@@ -339,13 +339,35 @@ export class AgentServer {
     );
 
     this.#opts = opts;
-    this.#httpServer = new HTTPServer(opts.host, opts.port, () => ({
+
+    const healthCheck = () => {
+      // Check if inference executor exists and is not alive
+      if (this.#inferenceExecutor && !this.#inferenceExecutor.isAlive) {
+        return { healthy: false, message: 'inference process not running' };
+      }
+
+      // Only healthy when fully connected with an active WebSocket
+      if (
+        this.#closed ||
+        this.#connecting ||
+        !this.#session ||
+        this.#session.readyState !== WebSocket.OPEN
+      ) {
+        return { healthy: false, message: 'not connected to livekit' };
+      }
+
+      return { healthy: true, message: 'OK' };
+    };
+
+    const getWorkerInfo = () => ({
       agent_name: opts.agentName,
       worker_type: JobType[opts.serverType],
       active_jobs: this.activeJobs.length,
       sdk_version: version,
       project_type: PROJECT_TYPE,
-    }));
+    });
+
+    this.#httpServer = new HTTPServer(opts.host, opts.port, healthCheck, getWorkerInfo);
   }
 
   /** @throws {@link WorkerError} if worker failed to connect or already running */
