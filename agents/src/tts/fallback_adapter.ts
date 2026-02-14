@@ -440,6 +440,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         const stream = tts.stream({ connOptions });
         const resampler = this.adapter.createResamplerForTTS(i);
         let bufferIndex = 0;
+        let streamOutputCompleted = false;
         const forwardBufferToTTS = async () => {
           while (true) {
             while (bufferIndex < this.tokenBuffer.length) {
@@ -454,7 +455,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
               }
             }
             await new Promise((resolve) => setTimeout(resolve, 10));
-            if (this.abortController.signal.aborted) {
+            if (this.abortController.signal.aborted || streamOutputCompleted) {
               stream.endInput();
               return;
             }
@@ -462,44 +463,54 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         };
 
         const processOutput = async () => {
-          for await (const audio of stream) {
-            if (this.abortController.signal.aborted) {
-              stream.close();
-              return;
+          try {
+            for await (const audio of stream) {
+              if (this.abortController.signal.aborted) {
+                stream.close();
+                return;
+              }
+
+              if (audio === SynthesizeStream.END_OF_STREAM) {
+                this.queue.put(audio);
+                continue;
+              }
+
+              if (resampler) {
+                for (const frame of resampler.push(audio.frame)) {
+                  this.queue.put({
+                    ...audio,
+                    frame,
+                  });
+                  this.audioPushed = true;
+                }
+              } else {
+                this.queue.put(audio);
+                this.audioPushed = true;
+              }
+              lastRequestId = audio.requestId;
+              lastSegmentId = audio.segmentId;
             }
 
-            if (audio === SynthesizeStream.END_OF_STREAM) {
-              this.queue.put(audio);
-              continue;
-            }
-
+            // Flush resampler
             if (resampler) {
-              for (const frame of resampler.push(audio.frame)) {
+              for (const frame of resampler.flush()) {
                 this.queue.put({
-                  ...audio,
+                  requestId: lastRequestId || '',
+                  segmentId: lastSegmentId || '',
                   frame,
+                  final: true,
                 });
                 this.audioPushed = true;
               }
-            } else {
-              this.queue.put(audio);
-              this.audioPushed = true;
             }
-            lastRequestId = audio.requestId;
-            lastSegmentId = audio.segmentId;
-          }
-
-          // Flush resampler
-          if (resampler) {
-            for (const frame of resampler.flush()) {
-              this.queue.put({
-                requestId: lastRequestId || '',
-                segmentId: lastSegmentId || '',
-                frame,
-                final: true,
-              });
-              this.audioPushed = true;
-            }
+          } finally {
+            // processOutput and forwardBufferToTTS run in parallel.
+            // forwardBufferToTTS polls tokenBuffer and only exits when it sees END_OF_STREAM.
+            // But END_OF_STREAM is only added when the LLM finishes streaming (line 417).
+            // If the TTS fails while the LLM is still streaming, forwardBufferToTTS would
+            // keep polling indefinitely, blocking fallback to the next TTS.
+            // This flag tells it to exit early.
+            streamOutputCompleted = true;
           }
         };
         const [outputResult, forwardBufferResult] = await Promise.allSettled([
