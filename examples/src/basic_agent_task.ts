@@ -15,26 +15,20 @@ import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-type SurveyResult = {
-  name: string;
-  role: string;
-};
-
-class IntroTask extends voice.AgentTask<SurveyResult> {
-  constructor() {
+class InfoTask extends voice.AgentTask<string> {
+  constructor(info: string) {
     super({
-      instructions:
-        'Collect the user name and role. Ask concise follow-up questions if information is missing.',
+      instructions: `Collect the user's information. around ${info}`,
+      tts: 'elevenlabs/eleven_turbo_v2_5',
       tools: {
-        completeIntro: llm.tool({
-          description: 'Call this after collecting the user name and role.',
+        saveUserInfo: llm.tool({
+          description: `Save the user's ${info} to database`,
           parameters: z.object({
-            name: z.string().describe('User name'),
-            role: z.string().describe('User role'),
+            [info]: z.string(),
           }),
-          execute: async ({ name, role }) => {
-            this.complete({ name, role });
-            return 'Thanks, collected successfully.';
+          execute: async (args) => {
+            this.complete(args[info] as string);
+            return `Thanks, collected ${info} successfully: ${args[info]}`;
           },
         }),
       },
@@ -43,7 +37,7 @@ class IntroTask extends voice.AgentTask<SurveyResult> {
 
   async onEnter() {
     this.session.generateReply({
-      userInput: 'Greet user and ask the user for their name and role',
+      userInput: 'Ask the user for their ${info}',
     });
   }
 }
@@ -53,15 +47,63 @@ class SurveyAgent extends voice.Agent {
     super({
       instructions:
         'You orchestrate a short intro survey. Speak naturally and keep the interaction brief.',
+      tools: {
+        collectUserInfo: llm.tool({
+          description: 'Call this when user want to provide some information to you',
+          parameters: z.object({
+            key: z
+              .string()
+              .describe(
+                'The key of the information to collect, e.g. "name" or "role" should be no space and underscore separated',
+              ),
+          }),
+          execute: async ({ key }) => {
+            const value = await new InfoTask(key).run();
+            return `Collected ${key} successfully: ${value}`;
+          },
+        }),
+        transferToWeatherAgent: llm.tool({
+          description: 'Call this immediately after user want to know the weather',
+          execute: async () => {
+            const agent = new voice.Agent({
+              instructions:
+                'You are a weather agent. You are responsible for providing the weather information to the user.',
+              tts: 'deepgram/aura-2',
+              tools: {
+                getWeather: llm.tool({
+                  description: 'Get the weather for a given location',
+                  parameters: z.object({
+                    location: z.string().describe('The location to get the weather for'),
+                  }),
+                  execute: async ({ location }) => {
+                    return `The weather in ${location} is sunny today.`;
+                  },
+                }),
+                finishWeatherConversation: llm.tool({
+                  description: 'Call this when you want to finish the weather conversation',
+                  execute: async () => {
+                    return llm.handoff({
+                      agent: new SurveyAgent(),
+                      returns: 'Transfer to survey agent successfully!',
+                    });
+                  },
+                }),
+              },
+            });
+
+            return llm.handoff({ agent, returns: "Let's start the weather conversation!" });
+          },
+        }),
+      },
     });
   }
 
   async onEnter() {
-    const task = new IntroTask();
-    const result = await task.run();
+    const name = await new InfoTask('name').run();
+    const role = await new InfoTask('role').run();
+
     await this.session.say(
-      `Great to meet you ${result.name}. I noted your role as ${result.role}. We can continue now.`,
-      { addToChatCtx: true },
+      `Great to meet you ${name}. I noted your role as ${role}. We can continue now.`,
     );
   }
 }
@@ -74,7 +116,7 @@ export default defineAgent({
     const session = new voice.AgentSession({
       vad: ctx.proc.userData.vad as silero.VAD,
       stt: new inference.STT({ model: 'deepgram/nova-3' }),
-      llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      llm: new inference.LLM({ model: 'openai/gpt-5.2' }),
       tts: new inference.TTS({
         model: 'cartesia/sonic-3',
         voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
