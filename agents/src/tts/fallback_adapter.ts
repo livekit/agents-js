@@ -389,7 +389,11 @@ class FallbackChunkedStream extends ChunkedStream {
 
 class FallbackSynthesizeStream extends SynthesizeStream {
   private adapter: FallbackAdapter;
-  private tokenBuffer: string[] = [];
+  private tokenBuffer: (
+    | string
+    | typeof SynthesizeStream.FLUSH_SENTINEL
+    | typeof SynthesizeStream.END_OF_STREAM
+  )[] = [];
   private audioPushed = false;
   private _logger = log();
 
@@ -405,6 +409,14 @@ class FallbackSynthesizeStream extends SynthesizeStream {
     if (allTTSFailed) {
       this._logger.warn('All fallback TTS instances failed, retrying from first...');
     }
+    const readInputLLMStream = (async () => {
+      for await (const input of this.input) {
+        if (this.abortController.signal.aborted) break;
+        this.tokenBuffer.push(input);
+      }
+      this.tokenBuffer.push(SynthesizeStream.END_OF_STREAM);
+    })();
+
     for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
       const tts = this.adapter.getStreamingInstance(i);
       const originalTts = this.adapter.ttsInstances[i]!;
@@ -426,25 +438,27 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         };
 
         const stream = tts.stream({ connOptions });
-        // Push buffered tokens to new stream
-        for (const token of this.tokenBuffer) {
-          stream.pushText(token);
-        }
-        let attemptAborted = false;
         const resampler = this.adapter.createResamplerForTTS(i);
-
-        const forwardInput = async () => {
-          for await (const input of this.input) {
-            if (this.abortController.signal.aborted || attemptAborted) break;
-
-            if (input === SynthesizeStream.FLUSH_SENTINEL) {
-              stream.flush();
-            } else {
-              this.tokenBuffer.push(input);
-              stream.pushText(input);
+        let bufferIndex = 0;
+        const forwardBufferToTTS = async () => {
+          while (true) {
+            while (bufferIndex < this.tokenBuffer.length) {
+              const token = this.tokenBuffer[bufferIndex++]!;
+              if (token === SynthesizeStream.FLUSH_SENTINEL) {
+                stream.flush();
+              } else if (token === SynthesizeStream.END_OF_STREAM) {
+                stream.endInput();
+                return;
+              } else {
+                stream.pushText(token);
+              }
+            }
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            if (this.abortController.signal.aborted) {
+              stream.endInput();
+              return;
             }
           }
-          stream.endInput();
         };
 
         const processOutput = async () => {
@@ -488,19 +502,20 @@ class FallbackSynthesizeStream extends SynthesizeStream {
             }
           }
         };
-        const forwardInputPromise = forwardInput();
-        const processOutputPromise = processOutput();
-        let outputError: unknown = null;
-        try {
-          await processOutputPromise;
-        } catch (error) {
-          outputError = error;
-          attemptAborted = true;
+        const [outputResult, forwardBufferResult] = await Promise.allSettled([
+          processOutput(),
+          forwardBufferToTTS().catch((err) => {
+            stream.close(); // Close stream so processOutput can exit
+            throw err;
+          }),
+        ]);
+        if (outputResult.status === 'rejected') {
           stream.close();
+          throw outputResult.reason;
         }
-        await forwardInputPromise.catch(() => {});
-        if (outputError) {
-          throw outputError;
+        if (forwardBufferResult.status === 'rejected') {
+          stream.close();
+          throw forwardBufferResult.reason;
         }
 
         // Verify audio was actually received - if not, the TTS failed silently
@@ -532,7 +547,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         }
       }
     }
-
+    await readInputLLMStream.catch(() => {});
     const labels = this.adapter.ttsInstances.map((t) => t.label).join(', ');
     throw new APIConnectionError({
       message: `all TTS instances failed (${labels})`,
