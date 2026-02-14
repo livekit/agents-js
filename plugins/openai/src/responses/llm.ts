@@ -96,7 +96,7 @@ export class LLM extends llm.LLM {
       toolChoice !== undefined ? toolChoice : (this.#opts.toolChoice as llm.ToolChoice | undefined);
 
     if (toolChoice) {
-      modelOptions.toolChoice = toolChoice;
+      modelOptions.tool_choice = toolChoice;
     }
 
     if (this.#opts.temperature !== undefined) {
