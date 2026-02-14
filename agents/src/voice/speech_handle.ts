@@ -170,6 +170,10 @@ export class SpeechHandle {
   }
 
   addDoneCallback(callback: (sh: SpeechHandle) => void) {
+    if (this.done()) {
+      queueMicrotask(() => callback(this));
+      return;
+    }
     this.doneCallbacks.add(callback);
   }
 
