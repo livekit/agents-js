@@ -156,22 +156,18 @@ export async function toResponsesChatCtx(
   for (const group of itemGroups) {
     if (group.isEmpty) continue;
 
-    const message: Record<string, any> = group.message // eslint-disable-line @typescript-eslint/no-explicit-any
-      ? await toResponsesChatItem(group.message)
-      : { role: 'assistant' };
-
-    const toolCalls = group.toolCalls.map((toolCall) => ({
-      type: 'function',
-      id: toolCall.callId,
-      name: toolCall.name,
-      arguments: toolCall.args,
-    }));
-
-    if (toolCalls.length > 0) {
-      message['tool_calls'] = toolCalls;
+    if (group.message) {
+      messages.push(await toResponsesChatItem(group.message));
     }
 
-    messages.push(message);
+    for (const toolCall of group.toolCalls) {
+      messages.push({
+        type: 'function_call',
+        call_id: toolCall.callId,
+        name: toolCall.name,
+        arguments: toolCall.args,
+      });
+    }
 
     for (const toolOutput of group.toolOutputs) {
       messages.push(await toResponsesChatItem(toolOutput));
@@ -207,14 +203,10 @@ async function toResponsesChatItem(item: ChatItem) {
     return { role: item.role, content };
   } else if (item.type === 'function_call') {
     return {
-      role: 'assistant',
-      tool_calls: [
-        {
-          id: item.callId,
-          type: 'function',
-          function: { name: item.name, arguments: item.args },
-        },
-      ],
+      type: 'function_call',
+      call_id: item.callId,
+      name: item.name,
+      arguments: item.args,
     };
   } else if (item.type === 'function_call_output') {
     return {

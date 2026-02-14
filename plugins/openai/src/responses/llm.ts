@@ -286,7 +286,7 @@ export class LLMStream extends llm.LLMStream {
           content: undefined,
           toolCalls: [
             llm.FunctionCall.create({
-              callId: event.item.id || '',
+              callId: event.item.call_id || '',
               name: event.item.name,
               args: event.item.arguments,
             }),
