@@ -37,6 +37,13 @@ export class LLM extends llm.LLM {
   #client: OpenAI;
   #opts: LLMOptions;
 
+  /**
+   * Create a new instance of OpenAI Responses LLM.
+   *
+   * @remarks
+   * `apiKey` must be set to your OpenAI API key, either using the argument or by setting the
+   * `OPENAI_API_KEY` environment variable.
+   */
   constructor(opts: Partial<LLMOptions> = defaultLLMOptions) {
     super();
 
@@ -76,7 +83,7 @@ export class LLM extends llm.LLM {
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
   }): LLMStream {
-    let modelOptions: Record<string, unknown> = { ...(extraKwargs || {}) };
+    const modelOptions: Record<string, unknown> = { ...(extraKwargs || {}) };
 
     parallelToolCalls =
       parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
@@ -91,7 +98,22 @@ export class LLM extends llm.LLM {
     if (toolChoice) {
       modelOptions.toolChoice = toolChoice;
     }
-    modelOptions = { ...modelOptions, ...this.#opts };
+
+    if (this.#opts.temperature !== undefined) {
+      modelOptions.temperature = this.#opts.temperature;
+    }
+
+    if (this.#opts.user) {
+      modelOptions.user = this.#opts.user;
+    }
+
+    if (this.#opts.store !== undefined) {
+      modelOptions.store = this.#opts.store;
+    }
+
+    if (this.#opts.metadata) {
+      modelOptions.metadata = this.#opts.metadata;
+    }
 
     return new LLMStream(this, {
       model: this.#opts.model,
