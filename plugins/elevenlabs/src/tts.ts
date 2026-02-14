@@ -458,7 +458,7 @@ class Connection {
           if (result.done || this.#closed) break;
 
           const data = result.value;
-          const contextId = data.contextId as string | undefined;
+          const contextId = (data.contextId ?? data.context_id) as string | undefined;
           const ctx = contextId ? this.#contextData.get(contextId) : undefined;
 
           if (data.error) {
