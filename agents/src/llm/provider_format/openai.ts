@@ -218,9 +218,9 @@ async function toResponsesChatItem(item: ChatItem) {
     };
   } else if (item.type === 'function_call_output') {
     return {
-      role: 'function_call_output',
-      tool_call_id: item.callId,
-      content: item.output,
+      type: 'function_call_output',
+      call_id: item.callId,
+      output: item.output,
     };
   }
 
