@@ -651,14 +651,22 @@ export function resampleStream({
   let resampler: AudioResampler | null = null;
   const transformStream = new TransformStream<AudioFrame, AudioFrame>({
     transform(chunk: AudioFrame, controller: TransformStreamDefaultController<AudioFrame>) {
+      if (chunk.samplesPerChannel === 0) {
+        controller.enqueue(chunk);
+        return;
+      }
       if (!resampler) {
         resampler = new AudioResampler(chunk.sampleRate, outputRate);
       }
       for (const frame of resampler.push(chunk)) {
         controller.enqueue(frame);
       }
-      for (const frame of resampler.flush()) {
-        controller.enqueue(frame);
+    },
+    flush(controller) {
+      if (resampler) {
+        for (const frame of resampler.flush()) {
+          controller.enqueue(frame);
+        }
       }
     },
   });

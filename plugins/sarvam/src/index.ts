@@ -14,6 +14,7 @@ export {
 } from './stt.js';
 export {
   ChunkedStream,
+  SynthesizeStream,
   TTS,
   type TTSOptions,
   type TTSV2Options,

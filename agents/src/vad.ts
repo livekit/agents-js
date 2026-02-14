@@ -98,14 +98,15 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected closed = false;
   protected inputClosed = false;
 
-  #vad: VAD;
-  #lastActivityTime = BigInt(0);
-  private logger = log();
-  private deferredInputStream: DeferredReadableStream<AudioFrame>;
+  protected vad: VAD;
+  protected lastActivityTime = BigInt(0);
+  protected logger;
+  protected deferredInputStream: DeferredReadableStream<AudioFrame>;
 
   private metricsStream: ReadableStream<VADEvent>;
   constructor(vad: VAD) {
-    this.#vad = vad;
+    this.logger = log();
+    this.vad = vad;
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
 
     this.inputWriter = this.input.writable.getWriter();
@@ -155,16 +156,16 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
       switch (value.type) {
         case VADEventType.START_OF_SPEECH:
           inferenceCount++;
-          if (inferenceCount >= 1000 / this.#vad.capabilities.updateInterval) {
-            this.#vad.emit('metrics_collected', {
+          if (inferenceCount >= 1000 / this.vad.capabilities.updateInterval) {
+            this.vad.emit('metrics_collected', {
               type: 'vad_metrics',
               timestamp: Date.now(),
               idleTimeMs: Math.trunc(
-                Number((process.hrtime.bigint() - this.#lastActivityTime) / BigInt(1000000)),
+                Number((process.hrtime.bigint() - this.lastActivityTime) / BigInt(1000000)),
               ),
               inferenceDurationTotalMs,
               inferenceCount,
-              label: this.#vad.label,
+              label: this.vad.label,
             });
 
             inferenceCount = 0;
@@ -173,10 +174,10 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
           break;
         case VADEventType.INFERENCE_DONE:
           inferenceDurationTotalMs += Math.round(value.inferenceDuration);
-          this.#lastActivityTime = process.hrtime.bigint();
+          this.lastActivityTime = process.hrtime.bigint();
           break;
         case VADEventType.END_OF_SPEECH:
-          this.#lastActivityTime = process.hrtime.bigint();
+          this.lastActivityTime = process.hrtime.bigint();
           break;
       }
     }
