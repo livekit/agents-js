@@ -145,9 +145,9 @@ async function toImageContent(content: ImageContent) {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function toResponsesChatCtx(
   chatCtx: ChatContext,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   injectDummyUserMessage: boolean = true,
 ) {
   const itemGroups = groupToolCalls(chatCtx);
