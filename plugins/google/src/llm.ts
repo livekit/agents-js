@@ -408,7 +408,7 @@ export class LLMStream extends llm.LLMStream {
           }
         }
 
-        if (finishReason === 'STOP' && !chunksYielded) {
+        if (finishReason === 'STOP' && !chunksYielded && retryable) {
           throw new APIStatusError({
             message: 'Google LLM: no response generated',
             options: {
