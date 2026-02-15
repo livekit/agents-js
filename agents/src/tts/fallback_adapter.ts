@@ -47,6 +47,8 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
   retryIntervalMs: DEFAULT_API_CONNECT_OPTIONS.retryIntervalMs,
 };
 
+const FORWARD_POLL_MS = 10;
+
 /**
  * FallbackAdapter is a TTS wrapper that provides automatic failover between multiple TTS providers.
  *
@@ -416,7 +418,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
           this.tokenBuffer.push(input);
         }
       } catch (error) {
-        this._logger.error({ error }, 'Error reading input LLM stream');
+        this._logger.debug({ error }, 'Error reading input LLM stream');
         throw error;
       } finally {
         this.tokenBuffer.push(SynthesizeStream.END_OF_STREAM);
@@ -460,7 +462,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
                 stream.pushText(token);
               }
             }
-            await new Promise((resolve) => setTimeout(resolve, 10));
+            await new Promise((resolve) => setTimeout(resolve, FORWARD_POLL_MS));
             if (this.abortController.signal.aborted || streamOutputCompleted) {
               stream.endInput();
               return;
