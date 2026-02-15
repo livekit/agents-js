@@ -385,13 +385,16 @@ export class LLMStream extends llm.LLMStream {
 
         if (!chunk.candidates || !chunk.candidates[0]?.content?.parts) {
           this.logger.warn(`No content in the response: ${JSON.stringify(chunk)}`);
-          throw new APIStatusError({
-            message: 'Google LLM: no content in the response',
-            options: {
-              retryable: true,
-              requestId,
-            },
-          });
+          if (retryable) {
+            throw new APIStatusError({
+              message: 'Google LLM: no content in the response',
+              options: {
+                retryable: true,
+                requestId,
+              },
+            });
+          }
+          continue;
         }
 
         if (chunk.candidates.length > 1) {
