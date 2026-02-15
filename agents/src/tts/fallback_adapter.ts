@@ -479,7 +479,9 @@ class FallbackSynthesizeStream extends SynthesizeStream {
               }
 
               if (audio === SynthesizeStream.END_OF_STREAM) {
-                this.queue.put(audio);
+                // Don't forward END_OF_STREAM yet — only emit after we verify audio
+                // was received. Otherwise a silent failure would signal completion
+                // to consumers before fallback can try the next TTS.
                 continue;
               }
 
@@ -544,6 +546,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
           });
         }
 
+        this.queue.put(SynthesizeStream.END_OF_STREAM);
         this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
         await readInputLLMStream.catch(() => {});
         return;
