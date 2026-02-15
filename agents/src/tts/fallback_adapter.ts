@@ -410,11 +410,17 @@ class FallbackSynthesizeStream extends SynthesizeStream {
       this._logger.warn('All fallback TTS instances failed, retrying from first...');
     }
     const readInputLLMStream = (async () => {
-      for await (const input of this.input) {
-        if (this.abortController.signal.aborted) break;
-        this.tokenBuffer.push(input);
+      try {
+        for await (const input of this.input) {
+          if (this.abortController.signal.aborted) break;
+          this.tokenBuffer.push(input);
+        }
+      } catch (error) {
+        this._logger.error({ error }, 'Error reading input LLM stream');
+        throw error;
+      } finally {
+        this.tokenBuffer.push(SynthesizeStream.END_OF_STREAM);
       }
-      this.tokenBuffer.push(SynthesizeStream.END_OF_STREAM);
     })();
 
     for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
