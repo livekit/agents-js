@@ -29,9 +29,9 @@ import { Future, Task, shortuuid, toError, waitForAbort } from '../utils.js';
 import {
   type Agent,
   type ModelSettings,
-  _setActivityTaskInfo,
-  functionCallStorage,
+  currentTaskContext,
   isStopResponse,
+  setTaskContext,
 } from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import {
@@ -838,6 +838,8 @@ export function performToolExecutions({
     toolOutput.output.push(out);
   };
 
+  const parentContext = currentTaskContext();
+
   const executeToolsTask = async (controller: AbortController) => {
     const signal = controller.signal;
     const reader = toolCallStream.getReader();
@@ -993,22 +995,17 @@ export function performToolExecutions({
 
       const toolTask = Task.from(
         async () => {
-          // Ensure this task is marked inline before user tool code executes.
-          const currentTask = Task.current();
-          if (currentTask) {
-            _setActivityTaskInfo(currentTask, {
-              speechHandle,
-              functionCall: toolCall,
-              inlineTask: true,
-            });
-          }
+          setTaskContext(Task.current()!, {
+            agentActivity: parentContext?.agentActivity ?? null,
+            speechHandle,
+            functionCall: toolCall,
+            inlineTask: true,
+          });
 
-          const toolExecution = functionCallStorage.run({ functionCall: toolCall }, async () => {
-            return await tool.execute(parsedArgs, {
-              ctx: new RunContext(session, speechHandle, toolCall),
-              toolCallId: toolCall.callId,
-              abortSignal: signal,
-            });
+          const toolExecution = tool.execute(parsedArgs, {
+            ctx: new RunContext(session, speechHandle, toolCall),
+            toolCallId: toolCall.callId,
+            abortSignal: signal,
           });
 
           await tracableToolExecution(toolExecution);
@@ -1016,12 +1013,6 @@ export function performToolExecutions({
         controller,
         `performToolExecution:${toolCall.name}`,
       );
-
-      _setActivityTaskInfo(toolTask, {
-        speechHandle,
-        functionCall: toolCall,
-        inlineTask: true,
-      });
       // wait, not cancelling all tool calling tasks
       tasks.push(toolTask);
     }

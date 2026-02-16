@@ -6,8 +6,7 @@ import { z } from 'zod';
 import { tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import { Task } from '../utils.js';
-import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
-import { agentActivityStorage } from './agent_activity.js';
+import { Agent, AgentTask, setTaskContext } from './agent.js';
 
 initializeLogger({ pretty: false, level: 'error' });
 
@@ -143,8 +142,8 @@ describe('Agent', () => {
       if (!currentTask) {
         throw new Error('expected task context');
       }
-      _setActivityTaskInfo(currentTask, { inlineTask: true });
-      return await agentActivityStorage.run(mockActivity as any, () => task.run());
+      setTaskContext(currentTask, { inlineTask: true, agentActivity: mockActivity as any });
+      return await task.run();
     });
 
     await expect(wrapper.result).resolves.toBe('ok');
@@ -163,7 +162,7 @@ describe('Agent', () => {
       if (!currentTask) {
         throw new Error('expected task context');
       }
-      _setActivityTaskInfo(currentTask, { inlineTask: true });
+      setTaskContext(currentTask, { inlineTask: true });
       return await task.run();
     });
 
@@ -208,8 +207,8 @@ describe('Agent', () => {
       if (!currentTask) {
         throw new Error('expected task context');
       }
-      _setActivityTaskInfo(currentTask, { inlineTask: true });
-      return await agentActivityStorage.run(mockActivity as any, () => task.run());
+      setTaskContext(currentTask, { inlineTask: true, agentActivity: mockActivity as any });
+      return await task.run();
     });
 
     await expect(wrapper.result).resolves.toBe('ok');

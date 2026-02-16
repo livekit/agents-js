@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
 import {
   LLM as InferenceLLM,
@@ -31,52 +30,48 @@ import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/inde
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Future, Task } from '../utils.js';
 import type { VAD } from '../vad.js';
-import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
+import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 import type { TimedString } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
 
-export const functionCallStorage = new AsyncLocalStorage<{ functionCall?: FunctionCall }>();
-export const speechHandleStorage = new AsyncLocalStorage<SpeechHandle>();
-const activityTaskInfoStorage = new WeakMap<Task<any>, _ActivityTaskInfo>();
-
-type _ActivityTaskInfo = {
+export type TaskContext = {
+  agentActivity: AgentActivity | null;
   functionCall: FunctionCall | null;
   speechHandle: SpeechHandle | null;
   inlineTask: boolean;
 };
 
-/** @internal */
-export function _setActivityTaskInfo<T>(
-  task: Task<T>,
-  options: {
-    functionCall?: FunctionCall | null;
-    speechHandle?: SpeechHandle | null;
-    inlineTask?: boolean;
-  },
-): void {
-  const info = activityTaskInfoStorage.get(task) ?? {
+const taskContextRegistry = new Map<string, TaskContext>();
+
+/** Set or merge context for a task. Auto-registers cleanup on first call per task. */
+export function setTaskContext(task: Task<any>, partial: Partial<TaskContext>): void {
+  const existing = taskContextRegistry.get(task.id);
+  if (!existing) {
+    task.addDoneCallback(() => taskContextRegistry.delete(task.id));
+  }
+  const ctx = existing ?? {
+    agentActivity: null,
     functionCall: null,
     speechHandle: null,
     inlineTask: false,
   };
-
-  if (Object.hasOwn(options, 'functionCall')) {
-    info.functionCall = options.functionCall ?? null;
-  }
-  if (Object.hasOwn(options, 'speechHandle')) {
-    info.speechHandle = options.speechHandle ?? null;
-  }
-  if (Object.hasOwn(options, 'inlineTask')) {
-    info.inlineTask = options.inlineTask ?? false;
-  }
-
-  activityTaskInfoStorage.set(task, info);
+  if ('agentActivity' in partial) ctx.agentActivity = partial.agentActivity ?? null;
+  if ('functionCall' in partial) ctx.functionCall = partial.functionCall ?? null;
+  if ('speechHandle' in partial) ctx.speechHandle = partial.speechHandle ?? null;
+  if ('inlineTask' in partial) ctx.inlineTask = partial.inlineTask ?? false;
+  taskContextRegistry.set(task.id, ctx);
 }
 
-/** @internal */
-export function _getActivityTaskInfo<T>(task: Task<T>): _ActivityTaskInfo | undefined {
-  return activityTaskInfoStorage.get(task);
+/** Get context for any task by reference (uses task.id). */
+export function getTaskContext(task: Task<any>): TaskContext | undefined {
+  return taskContextRegistry.get(task.id);
+}
+
+/** Get context for the currently executing task. */
+export function currentTaskContext(): TaskContext | undefined {
+  const task = Task.current();
+  return task ? taskContextRegistry.get(task.id) : undefined;
 }
 export const STOP_RESPONSE_SYMBOL = Symbol('StopResponse');
 
@@ -507,7 +502,7 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       this.future.resolve(result);
     }
 
-    const speechHandle = speechHandleStorage.getStore();
+    const speechHandle = currentTaskContext()?.speechHandle;
     if (speechHandle) {
       speechHandle._maybeRunFinalOutput = result;
     }
@@ -526,15 +521,15 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       throw new Error(`${this.constructor.name} must be executed inside a Task context`);
     }
 
-    const taskInfo = _getActivityTaskInfo(currentTask);
-    if (!taskInfo || !taskInfo.inlineTask) {
+    const ctx = getTaskContext(currentTask);
+    if (!ctx || !ctx.inlineTask) {
       throw new Error(
         `${this.constructor.name} should only be awaited inside function tools or the onEnter/onExit methods of an Agent`,
       );
     }
 
-    const speechHandle = speechHandleStorage.getStore();
-    const oldActivity = agentActivityStorage.getStore();
+    const speechHandle = ctx.speechHandle;
+    const oldActivity = ctx.agentActivity;
     if (!oldActivity) {
       throw new Error(`${this.constructor.name} must be executed inside an AgentActivity context`);
     }
@@ -558,7 +553,7 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
     }
 
     if (
-      taskInfo.functionCall &&
+      ctx.functionCall &&
       oldActivity.llm instanceof RealtimeModel &&
       !oldActivity.llm.capabilities.manualFunctionCalls
     ) {

@@ -6,7 +6,6 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
 import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
 import {
@@ -43,13 +42,7 @@ import { TTS, type TTSError } from '../tts/tts.js';
 import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
-import {
-  StopResponse,
-  _getActivityTaskInfo,
-  _setActivityTaskInfo,
-  functionCallStorage,
-  speechHandleStorage,
-} from './agent.js';
+import { StopResponse, currentTaskContext, getTaskContext, setTaskContext } from './agent.js';
 import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
 import {
   AudioRecognition,
@@ -80,8 +73,6 @@ import {
 } from './generation.js';
 import type { TimedString } from './io.js';
 import { SpeechHandle } from './speech_handle.js';
-
-export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
 
 interface PreemptiveGeneration {
   speechHandle: SpeechHandle;
@@ -561,7 +552,7 @@ export class AgentActivity implements RecognitionHooks {
   private onMetricsCollected = (
     ev: STTMetrics | TTSMetrics | VADMetrics | LLMMetrics | RealtimeModelMetrics,
   ) => {
-    const speechHandle = speechHandleStorage.getStore();
+    const speechHandle = currentTaskContext()?.speechHandle;
     if (speechHandle && (ev.type === 'llm_metrics' || ev.type === 'tts_metrics')) {
       ev.speechId = speechHandle.id;
     }
@@ -873,23 +864,15 @@ export class AgentActivity implements RecognitionHooks {
     const { taskFn, controller, ownedSpeechHandle, inlineTask, name } = options;
 
     const wrappedFn = (ctrl: AbortController) => {
-      return agentActivityStorage.run(this, () => {
-        // Mark inline/speech metadata at task runtime to avoid a race where taskFn executes
-        // before post-construction metadata is attached to the Task instance.
-        const currentTask = Task.current();
-        if (currentTask) {
-          _setActivityTaskInfo(currentTask, { speechHandle: ownedSpeechHandle, inlineTask });
-        }
-
-        if (ownedSpeechHandle) {
-          return speechHandleStorage.run(ownedSpeechHandle, () => taskFn(ctrl));
-        }
-        return taskFn(ctrl);
+      setTaskContext(Task.current()!, {
+        agentActivity: this,
+        speechHandle: ownedSpeechHandle ?? null,
+        inlineTask: inlineTask ?? false,
       });
+      return taskFn(ctrl);
     };
 
     const task = Task.from(wrappedFn, controller, name);
-    _setActivityTaskInfo(task, { speechHandle: ownedSpeechHandle, inlineTask });
 
     this.speechTasks.add(task);
     task.addDoneCallback(() => {
@@ -1006,7 +989,7 @@ export class AgentActivity implements RecognitionHooks {
     const blockedHandles: SpeechHandle[] = [];
 
     for (const task of this._drainBlockedTasks) {
-      const info = _getActivityTaskInfo(task);
+      const info = getTaskContext(task);
       if (!info) {
         this.logger.error('blocked task without activity info; skipping.');
         continue;
@@ -1025,7 +1008,7 @@ export class AgentActivity implements RecognitionHooks {
         continue;
       }
 
-      const info = _getActivityTaskInfo(task);
+      const info = getTaskContext(task);
       if (info && info.speechHandle && blockedHandles.includes(info.speechHandle)) {
         continue;
       }
@@ -1076,7 +1059,7 @@ export class AgentActivity implements RecognitionHooks {
       throw new Error('trying to generate reply without an LLM model');
     }
 
-    const functionCall = functionCallStorage.getStore()?.functionCall;
+    const functionCall = currentTaskContext()?.functionCall;
     if (toolChoice === undefined && functionCall !== undefined) {
       // when generateReply is called inside a tool, set toolChoice to 'none' by default
       toolChoice = 'none';
@@ -1313,7 +1296,7 @@ export class AgentActivity implements RecognitionHooks {
   ): Promise<void> {
     speechHandle._agentTurnContext = otelContext.active();
 
-    speechHandleStorage.enterWith(speechHandle);
+    setTaskContext(Task.current()!, { speechHandle });
 
     const transcriptionOutput = this.agentSession.output.transcriptionEnabled
       ? this.agentSession.output.transcription
@@ -1465,7 +1448,7 @@ export class AgentActivity implements RecognitionHooks {
       span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.textContent || '');
     }
 
-    speechHandleStorage.enterWith(speechHandle);
+    setTaskContext(Task.current()!, { speechHandle });
 
     const audioOutput = this.agentSession.output.audioEnabled
       ? this.agentSession.output.audio
@@ -1891,7 +1874,7 @@ export class AgentActivity implements RecognitionHooks {
 
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
 
-    speechHandleStorage.enterWith(speechHandle);
+    setTaskContext(Task.current()!, { speechHandle });
 
     if (!this.realtimeSession) {
       throw new Error('realtime session is not initialized');
@@ -2357,7 +2340,7 @@ export class AgentActivity implements RecognitionHooks {
     userInput?: string;
     instructions?: string;
   }): Promise<void> {
-    speechHandleStorage.enterWith(speechHandle);
+    setTaskContext(Task.current()!, { speechHandle });
 
     if (!this.realtimeSession) {
       throw new Error('realtime session is not available');

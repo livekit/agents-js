@@ -5,7 +5,7 @@ import type { Context } from '@opentelemetry/api';
 import type { ChatItem } from '../llm/index.js';
 import type { Task } from '../utils.js';
 import { Event, Future, shortuuid } from '../utils.js';
-import { functionCallStorage } from './agent.js';
+import { currentTaskContext } from './agent.js';
 
 /** Symbol used to identify SpeechHandle instances */
 const SPEECH_HANDLE_SYMBOL = Symbol.for('livekit.agents.SpeechHandle');
@@ -151,10 +151,10 @@ export class SpeechHandle {
    * has entirely played out, including any tool calls and response follow-ups.
    */
   async waitForPlayout(): Promise<void> {
-    const store = functionCallStorage.getStore();
-    if (store && store?.functionCall) {
+    const ctx = currentTaskContext();
+    if (ctx?.functionCall) {
       throw new Error(
-        `Cannot call 'SpeechHandle.waitForPlayout()' from inside the function tool '${store.functionCall.name}'. ` +
+        `Cannot call 'SpeechHandle.waitForPlayout()' from inside the function tool '${ctx.functionCall.name}'. ` +
           'This creates a circular wait: the speech handle is waiting for the function tool to complete, ' +
           'while the function tool is simultaneously waiting for the speech handle.\n' +
           "To wait for the assistant's spoken response prior to running this tool, use RunContext.wait_for_playout() instead.",

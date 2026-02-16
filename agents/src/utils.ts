@@ -425,11 +425,14 @@ export class Task<T> {
 
   #logger = log();
 
+  readonly id: string;
+
   constructor(
     private readonly fn: (controller: AbortController) => Promise<T>,
     private readonly controller: AbortController,
     readonly name?: string,
   ) {
+    this.id = shortuuid('task_');
     this.resultFuture = new Future();
     void this.resultFuture.await
       .then(
