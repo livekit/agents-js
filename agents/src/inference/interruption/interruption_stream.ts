@@ -243,18 +243,18 @@ export class InterruptionStreamBase {
             overlapSpeechStarted = true;
             accumulatedSamples = 0;
             overlapCount += 1;
-            // Include both speech duration and audio prefix duration for context
-            const agg = overlapCount > 1 ? Math.max : Math.min;
-            const shiftSize = agg(
-              startIdx,
-              Math.round(chunk.speechDurationInS * this.options.sampleRate) +
-                Math.round(this.options.audioPrefixDurationInS * this.options.sampleRate),
-            );
-            // Shift the buffer: copy the last `shiftSize` samples before startIdx
-            // to the beginning of the buffer. This preserves recent audio context
-            // (the user's speech that occurred just before overlap was detected).
-            inferenceS16Data.copyWithin(0, startIdx - shiftSize, startIdx);
-            startIdx = shiftSize;
+            // Include the audio prefix in the window and only shift (remove
+            // leading silence) when the first overlap speech started.
+            // Otherwise, keep the existing data.
+            if (overlapCount <= 1) {
+              const shiftSize = Math.min(
+                startIdx,
+                Math.round(chunk.speechDurationInS * this.options.sampleRate) +
+                  Math.round(this.options.audioPrefixDurationInS * this.options.sampleRate),
+              );
+              inferenceS16Data.copyWithin(0, startIdx - shiftSize, startIdx);
+              startIdx = shiftSize;
+            }
             cache.clear();
           } else if (chunk.type === 'overlap-speech-ended') {
             this.logger.debug('overlap speech ended');
