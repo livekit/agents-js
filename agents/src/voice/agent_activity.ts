@@ -393,6 +393,11 @@ export class AgentActivity implements RecognitionHooks {
     return this.agent.toolCtx;
   }
 
+  /** @internal */
+  get inputStartedAt() {
+    return this.audioRecognition?.inputStartedAt;
+  }
+
   async updateChatCtx(chatCtx: ChatContext): Promise<void> {
     chatCtx = chatCtx.copy({ toolCtx: this.toolCtx });
 
