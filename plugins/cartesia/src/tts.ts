@@ -60,6 +60,8 @@ export interface TTSOptions {
    * @defaultValue true
    */
   wordTimestamps?: boolean;
+
+  pronunciationDictId?: string;
 }
 
 const defaultTTSOptions: TTSOptions = {
@@ -513,6 +515,7 @@ const toCartesiaOptions = (
       sample_rate: opts.sampleRate,
     },
     language: opts.language,
+    pronunciation_dict_id: opts.pronunciationDictId,
   };
 
   if (streaming && opts.wordTimestamps !== false) {
