@@ -311,7 +311,8 @@ export class Agent<UserData = any> {
 
       // Set startTimeOffset to provide linear timestamps across reconnections
       const audioInputStartedAt =
-        activity.agentSession._recorderIO?.recordingStartedAt ?? // Use recording start time if available
+        activity.inputStartedAt ?? // Use input started at proxied from AudioRecognition if available
+        activity.agentSession._recorderIO?.recordingStartedAt ?? // Fallback to recording start time if available
         activity.agentSession._startedAt ?? // Fallback to session start time
         Date.now(); // Fallback to current time
 

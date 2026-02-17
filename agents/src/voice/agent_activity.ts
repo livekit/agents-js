@@ -393,6 +393,11 @@ export class AgentActivity implements RecognitionHooks {
     return this.agent.toolCtx;
   }
 
+  /** @internal */
+  get inputStartedAt() {
+    return this.audioRecognition?.inputStartedAt;
+  }
+
   async updateChatCtx(chatCtx: ChatContext): Promise<void> {
     chatCtx = chatCtx.copy({ toolCtx: this.toolCtx });
 
@@ -2598,12 +2603,9 @@ export class AgentActivity implements RecognitionHooks {
         !(this.llm instanceof RealtimeModel)
       )
     ) {
-      if (
-        typeof interruptionDetection === 'string' &&
-        ['adaptive', 'vad'].includes(interruptionDetection)
-      ) {
+      if (interruptionDetection === 'adaptive') {
         this.logger.warn(
-          "interruption_detection is provided, but it's not compatible with the current configuration and will be disabled",
+          "interruptionDetection is provided, but it's not compatible with the current configuration and will be disabled",
         );
         return undefined;
       }
@@ -2616,17 +2618,22 @@ export class AgentActivity implements RecognitionHooks {
       return undefined;
     }
 
-    const detector = new AdaptiveInterruptionDetector();
+    try {
+      const detector = new AdaptiveInterruptionDetector();
 
-    // TODO cleanup these listeners
-    detector.on('user_interruption_detected', (ev) =>
-      this.agentSession.emit(AgentSessionEventTypes.UserInterruptionDetected, ev),
-    );
-    detector.on('user_non_interruption_detected', (ev) =>
-      this.agentSession.emit(AgentSessionEventTypes.UserNonInterruptionDetected, ev),
-    );
+      // TODO cleanup these listeners
+      detector.on('user_interruption_detected', (ev) =>
+        this.agentSession.emit(AgentSessionEventTypes.UserInterruptionDetected, ev),
+      );
+      detector.on('user_non_interruption_detected', (ev) =>
+        this.agentSession.emit(AgentSessionEventTypes.UserNonInterruptionDetected, ev),
+      );
 
-    return detector;
+      return detector;
+    } catch (error: unknown) {
+      this.logger.warn({ error }, 'could not instantiate AdaptiveInterruptionDetector');
+    }
+    return undefined;
   }
 
   private restoreInterruptionByAudioActivity(): void {

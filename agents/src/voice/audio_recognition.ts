@@ -129,7 +129,7 @@ export class AudioRecognition {
 
   // interruption detection
   private interruptionDetection?: AdaptiveInterruptionDetector;
-  private inputStartedAt?: number;
+  private _inputStartedAt?: number;
   private ignoreUserTranscriptUntil?: number;
   private transcriptBuffer: SpeechEvent[];
   private isInterruptionEnabled: boolean;
@@ -184,6 +184,11 @@ export class AudioRecognition {
       return `${this.audioTranscript} ${this.audioInterimTranscript}`.trim();
     }
     return this.audioTranscript;
+  }
+
+  /** @internal */
+  get inputStartedAt() {
+    return this._inputStartedAt;
   }
 
   /** @internal */
@@ -282,7 +287,7 @@ export class AudioRecognition {
       return;
     }
 
-    if (!this.inputStartedAt) {
+    if (!this._inputStartedAt) {
       this.transcriptBuffer = [];
       this.ignoreUserTranscriptUntil = undefined;
       return;
@@ -338,15 +343,15 @@ export class AudioRecognition {
   ): boolean {
     if (
       this.ignoreUserTranscriptUntil === undefined ||
-      !this.inputStartedAt ||
-      alternative.endTime <= 0
+      !this._inputStartedAt ||
+      alternative.startTime <= 0
     ) {
       return false;
     }
 
-    // `SpeechData.endTime` is in seconds relative to audio start, while `inputStartedAt` and
+    // `SpeechData.startTime` is in seconds relative to audio start, while `inputStartedAt` and
     // `ignoreUserTranscriptUntil` are epoch milliseconds.
-    return alternative.endTime * 1000 + this.inputStartedAt < this.ignoreUserTranscriptUntil;
+    return alternative.startTime * 1000 + this._inputStartedAt < this.ignoreUserTranscriptUntil;
   }
 
   private shouldHoldSttEvent(ev: SpeechEvent): boolean {
@@ -355,6 +360,14 @@ export class AudioRecognition {
     }
     if (this.isAgentSpeaking) {
       return true;
+    }
+
+    // reset when the user starts speaking after the agent speech
+    if (ev.type === SpeechEventType.START_OF_SPEECH) {
+      this.ignoreUserTranscriptUntil = undefined;
+      this.transcriptBuffer = [];
+      return false;
+    }
     }
 
     if (this.ignoreUserTranscriptUntil === undefined) {
@@ -939,7 +952,7 @@ export class AudioRecognition {
           if (!res) break;
           const { value, done } = res;
           if (done) break;
-          this.inputStartedAt ??= Date.now();
+          this._inputStartedAt ??= Date.now();
           await stream.pushFrame(value);
         }
       } finally {
