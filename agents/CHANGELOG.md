@@ -1,5 +1,41 @@
 # @livekit/agents
 
+## 1.0.44
+
+### Patch Changes
+
+- Fix parsing lang from stt ctor - [#1028](https://github.com/livekit/agents-js/pull/1028) ([@adrian-cowham](https://github.com/adrian-cowham))
+
+- Dispose native FFI resources before process.exit() in job shutdown to prevent libc++abi mutex crash - [#1042](https://github.com/livekit/agents-js/pull/1042) ([@Raysharr](https://github.com/Raysharr))
+
+- Ensure resampling is skipped for empty audio frames - [#1044](https://github.com/livekit/agents-js/pull/1044) ([@lukasIO](https://github.com/lukasIO))
+
+## 1.0.43
+
+### Patch Changes
+
+- Support fallback API for inference STT and TTS - [#1029](https://github.com/livekit/agents-js/pull/1029) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Fix support for CJS runners - [#1031](https://github.com/livekit/agents-js/pull/1031) ([@lukasIO](https://github.com/lukasIO))
+
+- Fix generateReply adding duplicate instructions - [#1033](https://github.com/livekit/agents-js/pull/1033) ([@Fox32](https://github.com/Fox32))
+
+## 1.0.42
+
+### Patch Changes
+
+- Fix dispatching empty STT final transcript event - [#1024](https://github.com/livekit/agents-js/pull/1024) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.41
+
+### Patch Changes
+
+- fix: dev command now correctly defaults to debug log level - [#1020](https://github.com/livekit/agents-js/pull/1020) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Implement tts aligned transcripts - [#990](https://github.com/livekit/agents-js/pull/990) ([@toubatbrian](https://github.com/toubatbrian))
+
+- increase AudioMixer default timeout in background audio player - [#1021](https://github.com/livekit/agents-js/pull/1021) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.40
 
 ### Patch Changes

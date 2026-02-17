@@ -22,16 +22,10 @@ import { z } from 'zod';
 
 initializeLogger({ pretty: false, level: 'warn' });
 
-const { AgentSession, Agent } = voice;
-
-type TestableAgentSession = InstanceType<typeof AgentSession> & {
-  run(options: { userInput: string }): voice.testing.RunResult;
-};
-
 /**
  * Test agent with diverse tools for comprehensive test scenarios.
  */
-class TestAgent extends Agent {
+class TestAgent extends voice.Agent {
   constructor() {
     super({
       instructions: `You are a helpful assistant named Max for a restaurant ordering system.
@@ -140,12 +134,12 @@ Response rules:
 }
 
 describe('RunResult', { timeout: 120_000 }, () => {
-  let session: TestableAgentSession;
+  let session: voice.AgentSession;
   let llmInstance: openai.LLM;
 
   beforeAll(async () => {
     llmInstance = new openai.LLM({ model: 'gpt-4o-mini', temperature: 0 });
-    session = new AgentSession({ llm: llmInstance }) as TestableAgentSession;
+    session = new voice.AgentSession({ llm: llmInstance });
     await session.start({ agent: new TestAgent() });
   });
 

@@ -7,6 +7,7 @@ import {
   WorkerOptions,
   cli,
   defineAgent,
+  inference,
   voice,
 } from '@livekit/agents';
 import * as livekit from '@livekit/agents-plugin-livekit';
@@ -51,9 +52,12 @@ export default defineAgent({
 
     const session = new voice.AgentSession({
       vad,
-      stt: 'cartesia/ink-whisper:en',
-      llm: 'openai/gpt-4.1-mini',
-      tts: 'cartesia/sonic-2:794f9389-aac1-45b6-b726-9d9369183238',
+      stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
+      llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      tts: new inference.TTS({
+        model: 'cartesia/sonic-3',
+        voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      }),
       turnDetection: new livekit.turnDetector.MultilingualModel(),
     });
 

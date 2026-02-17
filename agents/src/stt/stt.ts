@@ -49,15 +49,22 @@ export enum SpeechEventType {
 
 /** SpeechData contains metadata about this {@link SpeechEvent}. */
 export interface SpeechData {
+  /** Language code of the speech. */
   language: string;
+  /** Transcribed text. */
   text: string;
+  /** Start time of the speech segment in seconds. */
   startTime: number;
+  /** End time of the speech segment in seconds. */
   endTime: number;
+  /** Confidence score of the transcription (0-1). */
   confidence: number;
+  /** Word-level timing information. */
   words?: TimedString[];
 }
 
 export interface RecognitionUsage {
+  /** Duration of the audio that was recognized in seconds. */
   audioDuration: number;
 }
 
@@ -229,8 +236,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
             // Don't emit error event for recoverable errors during retry loop
             // to avoid ERR_UNHANDLED_ERROR or premature session termination
             this.logger.warn(
-              { tts: this.#stt.label, attempt: i + 1, error },
-              `failed to recognize speech, retrying in ${retryInterval}s`,
+              { stt: this.#stt.label, attempt: i + 1, error },
+              `failed to recognize speech, retrying in ${retryInterval}ms`,
             );
           }
 
@@ -342,6 +349,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
       if (!this.resampler) {
         this.resampler = new AudioResampler(frame.sampleRate, this.neededSampleRate);
       }
+    }
+
+    if (frame.samplesPerChannel === 0) {
+      this.input.put(frame);
+      return;
     }
 
     if (this.resampler) {

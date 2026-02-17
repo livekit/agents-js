@@ -13,17 +13,27 @@ export type LoggerOptions = {
   level?: string;
 };
 
-/** @internal */
-export let loggerOptions: LoggerOptions;
+// Use Symbol.for() + globalThis to create process-wide singletons.
+// This avoids the "dual package hazard". Symbol.for() returns the same Symbol
+// across all module instances, and globalThis is shared process-wide.
+const LOGGER_KEY = Symbol.for('@livekit/agents:logger');
+const LOGGER_OPTIONS_KEY = Symbol.for('@livekit/agents:loggerOptions');
+const OTEL_ENABLED_KEY = Symbol.for('@livekit/agents:otelEnabled');
+
+type GlobalState = {
+  [LOGGER_KEY]?: Logger;
+  [LOGGER_OPTIONS_KEY]?: LoggerOptions;
+  [OTEL_ENABLED_KEY]?: boolean;
+};
+
+const globals = globalThis as typeof globalThis & GlobalState;
 
 /** @internal */
-let logger: Logger | undefined = undefined;
-
-/** @internal */
-let otelEnabled = false;
+export const loggerOptions = (): LoggerOptions | undefined => globals[LOGGER_OPTIONS_KEY];
 
 /** @internal */
 export const log = () => {
+  const logger = globals[LOGGER_KEY];
   if (!logger) {
     throw new TypeError('logger not initialized. did you forget to run initializeLogger()?');
   }
@@ -32,8 +42,8 @@ export const log = () => {
 
 /** @internal */
 export const initializeLogger = ({ pretty, level }: LoggerOptions) => {
-  loggerOptions = { pretty, level };
-  logger = pino(
+  globals[LOGGER_OPTIONS_KEY] = { pretty, level };
+  globals[LOGGER_KEY] = pino(
     { level: level || 'info' },
     pretty ? pinoPretty({ colorize: true }) : process.stdout,
   );
@@ -65,13 +75,14 @@ class OtelDestination extends Writable {
  * @internal
  */
 export const enableOtelLogging = () => {
-  if (otelEnabled || !logger) {
+  if (globals[OTEL_ENABLED_KEY] || !globals[LOGGER_KEY]) {
     console.warn('OTEL logging already enabled or logger not initialized');
     return;
   }
-  otelEnabled = true;
+  globals[OTEL_ENABLED_KEY] = true;
 
-  const { pretty, level } = loggerOptions;
+  const opts = globals[LOGGER_OPTIONS_KEY]!;
+  const { pretty, level } = opts;
 
   const logLevel = level || 'info';
   const streams: { stream: DestinationStream; level: string }[] = [
@@ -79,5 +90,5 @@ export const enableOtelLogging = () => {
     { stream: new OtelDestination(), level: 'debug' },
   ];
 
-  logger = pino({ level: logLevel }, multistream(streams));
+  globals[LOGGER_KEY] = pino({ level: logLevel }, multistream(streams));
 };

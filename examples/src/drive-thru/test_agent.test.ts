@@ -24,12 +24,6 @@ import { DriveThruAgent, type UserData, newUserData } from './drivethru_agent.js
 
 initializeLogger({ pretty: false, level: 'warn' });
 
-const { AgentSession } = voice;
-
-type TestableAgentSession = InstanceType<typeof AgentSession> & {
-  run(options: { userInput: string }): voice.testing.RunResult;
-};
-
 function mainLLM(): openai.LLM {
   return new openai.LLM({
     model: 'gpt-4.1',
@@ -46,17 +40,17 @@ function judgeLLM(): openai.LLM {
 
 describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
   describe('test_item_ordering', () => {
-    let session: TestableAgentSession;
+    let session: voice.AgentSession;
     let llmInstance: openai.LLM;
     let userdata: UserData;
 
     beforeAll(async () => {
       userdata = await newUserData();
       llmInstance = mainLLM();
-      session = new AgentSession({
+      session = new voice.AgentSession({
         llm: llmInstance,
         userData: userdata,
-      }) as TestableAgentSession;
+      });
       await session.start({ agent: new DriveThruAgent(userdata) });
     }, 30_000);
 
@@ -107,7 +101,7 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
   });
 
   describe('test_meal_order', () => {
-    let session: TestableAgentSession;
+    let session: voice.AgentSession;
     let llmInstance: openai.LLM;
     let judgeInstance: openai.LLM;
     let userdata: UserData;
@@ -116,10 +110,10 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
       userdata = await newUserData();
       llmInstance = mainLLM();
       judgeInstance = judgeLLM();
-      session = new AgentSession({
+      session = new voice.AgentSession({
         llm: llmInstance,
         userData: userdata,
-      }) as TestableAgentSession;
+      });
       await session.start({ agent: new DriveThruAgent(userdata) });
     }, 30_000);
 
@@ -163,7 +157,7 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
   });
 
   describe('test_unavailable_item', () => {
-    let session: TestableAgentSession;
+    let session: voice.AgentSession;
     let llmInstance: openai.LLM;
     let judgeInstance: openai.LLM;
     let userdata: UserData;
@@ -180,10 +174,10 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
 
       llmInstance = mainLLM();
       judgeInstance = judgeLLM();
-      session = new AgentSession({
+      session = new voice.AgentSession({
         llm: llmInstance,
         userData: userdata,
-      }) as TestableAgentSession;
+      });
       await session.start({ agent: new DriveThruAgent(userdata) });
     }, 30_000);
 
@@ -216,7 +210,7 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
   });
 
   describe('test_ask_for_size', () => {
-    let session: TestableAgentSession;
+    let session: voice.AgentSession;
     let llmInstance: openai.LLM;
     let judgeInstance: openai.LLM;
     let userdata: UserData;
@@ -225,10 +219,10 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
       userdata = await newUserData();
       llmInstance = mainLLM();
       judgeInstance = judgeLLM();
-      session = new AgentSession({
+      session = new voice.AgentSession({
         llm: llmInstance,
         userData: userdata,
-      }) as TestableAgentSession;
+      });
       await session.start({ agent: new DriveThruAgent(userdata) });
     }, 30_000);
 
@@ -268,10 +262,10 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
       const userdata = await newUserData();
       const llmInstance = mainLLM();
       const judgeInstance = judgeLLM();
-      const session = new AgentSession({
+      const session = new voice.AgentSession({
         llm: llmInstance,
         userData: userdata,
-      }) as TestableAgentSession;
+      });
       await session.start({ agent: new DriveThruAgent(userdata) });
 
       try {
@@ -301,10 +295,10 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
       const userdata = await newUserData();
       const llmInstance = mainLLM();
       const judgeInstance = judgeLLM();
-      const session = new AgentSession({
+      const session = new voice.AgentSession({
         llm: llmInstance,
         userData: userdata,
-      }) as TestableAgentSession;
+      });
       await session.start({ agent: new DriveThruAgent(userdata) });
 
       try {
@@ -331,7 +325,7 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
   });
 
   describe('test_conv', () => {
-    let session: TestableAgentSession;
+    let session: voice.AgentSession;
     let llmInstance: openai.LLM;
     let judgeInstance: openai.LLM;
     let userdata: UserData;
@@ -342,10 +336,10 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
       llmInstance = mainLLM();
       judgeInstance = judgeLLM();
       agent = new DriveThruAgent(userdata);
-      session = new AgentSession({
+      session = new voice.AgentSession({
         llm: llmInstance,
         userData: userdata,
-      }) as TestableAgentSession;
+      });
       await session.start({ agent });
     }, 30_000);
 
@@ -414,10 +408,10 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
       const userdata = await newUserData();
       const llmInstance = mainLLM();
       const judgeInstance = judgeLLM();
-      const session = new AgentSession({
+      const session = new voice.AgentSession({
         llm: llmInstance,
         userData: userdata,
-      }) as TestableAgentSession;
+      });
       const agent = new DriveThruAgent(userdata);
       await session.start({ agent });
 
@@ -438,10 +432,10 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
       const userdata = await newUserData();
       const llmInstance = mainLLM();
       const judgeInstance = judgeLLM();
-      const session = new AgentSession({
+      const session = new voice.AgentSession({
         llm: llmInstance,
         userData: userdata,
-      }) as TestableAgentSession;
+      });
       const agent = new DriveThruAgent(userdata);
       await session.start({ agent });
 
