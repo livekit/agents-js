@@ -146,7 +146,7 @@ describe('AudioRecognition user_turn span parity', () => {
     // creation-time attributes
     expect(userTurn.attributes['lk.participant_id']).toBe('p1');
     expect(userTurn.attributes['lk.participant_identity']).toBe('bob');
-    expect(userTurn.attributes['lk.participant_kind']).toBe('INGRESS');
+    expect(userTurn.attributes['lk.participant_kind']).toBe('AGENT');
     expect(userTurn.attributes['gen_ai.request.model']).toBe('deepgram-nova2');
     expect(userTurn.attributes['gen_ai.provider.name']).toBe('deepgram');
 
