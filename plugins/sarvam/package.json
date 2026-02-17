@@ -1,7 +1,7 @@
 {
-  "name": "@livekit/agents-plugin-xai",
-  "version": "1.0.44",
-  "description": "xAI plugin for LiveKit Node Agents",
+  "name": "@livekit/agents-plugin-sarvam",
+  "version": "1.0.40",
+  "description": "Sarvam AI plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",
@@ -36,17 +36,19 @@
   "devDependencies": {
     "@livekit/agents": "workspace:*",
     "@livekit/agents-plugin-openai": "workspace:*",
+    "@livekit/agents-plugin-silero": "workspace:*",
+    "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
+    "@types/ws": "^8.5.10",
     "@microsoft/api-extractor": "^7.35.0",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "openai": "^6.8.1"
+    "ws": "^8.16.0"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/rtc-node": "catalog:"
   }
 }

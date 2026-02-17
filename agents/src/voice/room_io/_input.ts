@@ -63,8 +63,10 @@ export class ParticipantAudioInputStream extends AudioInput {
     if (this.participantIdentity === participantIdentity) {
       return;
     }
+    if (this.participantIdentity) {
+      this.closeStream();
+    }
     this.participantIdentity = participantIdentity;
-    this.closeStream();
 
     if (!participantIdentity) {
       return;
@@ -127,8 +129,6 @@ export class ParticipantAudioInputStream extends AudioInput {
       this.currentInputId = null;
     }
 
-    this.frameProcessor?.close();
-
     this.publication = null;
   }
 
@@ -189,5 +189,8 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.room.off(RoomEvent.TokenRefreshed, this.onTokenRefreshed);
     this.closeStream();
     await super.close();
+
+    this.frameProcessor?.close();
+    this.frameProcessor = undefined;
   }
 }

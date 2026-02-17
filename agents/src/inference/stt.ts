@@ -177,7 +177,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   #logger = log();
 
   constructor(opts?: {
-    model?: TModel;
+    model?: ModelWithLanguage;
     language?: STTLanguages;
     baseURL?: string;
     encoding?: STTEncoding;
@@ -215,11 +215,29 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
     }
 
+    // Parse language from model string if provided: "provider/model:language"
+    let nextModel = model;
+    let nextLanguage = language;
+    if (typeof nextModel === 'string') {
+      const idx = nextModel.lastIndexOf(':');
+      if (idx !== -1) {
+        const languageFromModel = nextModel.slice(idx + 1) as STTLanguages;
+        if (nextLanguage && nextLanguage !== languageFromModel) {
+          this.#logger.warn(
+            '`language` is provided via both argument and model, using the one from the argument',
+            { language: nextLanguage, model: nextModel },
+          );
+        } else {
+          nextLanguage = languageFromModel;
+        }
+        nextModel = nextModel.slice(0, idx) as TModel;
+      }
+    }
     const normalizedFallback = fallback ? normalizeSTTFallback(fallback) : undefined;
 
     this.opts = {
-      model,
-      language,
+      model: nextModel as TModel,
+      language: nextLanguage,
       encoding,
       sampleRate,
       baseURL: lkBaseURL,
