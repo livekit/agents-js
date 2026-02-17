@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APITimeoutError,
   AudioByteStream,
   Future,
   type TimedString,
@@ -128,8 +130,8 @@ export class TTS extends tts.TTS {
     return new ChunkedStream(this, text, this.#opts, connOptions, abortSignal);
   }
 
-  stream(): SynthesizeStream {
-    return new SynthesizeStream(this, this.#opts);
+  stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
+    return new SynthesizeStream(this, this.#opts, options?.connOptions);
   }
 }
 
@@ -193,11 +195,12 @@ export class ChunkedStream extends tts.ChunkedStream {
             });
           }
           this.queue.close();
-          doneFut.resolve();
+          if (!doneFut.done) doneFut.resolve();
         });
         res.on('error', (err) => {
           if (err.message === 'aborted') return;
           this.#logger.error({ err }, 'Cartesia TTS response error');
+          if (!doneFut.done) doneFut.reject(err);
         });
       },
     );
@@ -205,12 +208,21 @@ export class ChunkedStream extends tts.ChunkedStream {
     req.on('error', (err) => {
       if (err.name === 'AbortError') return;
       this.#logger.error({ err }, 'Cartesia TTS request error');
+      if (!doneFut.done) doneFut.reject(err);
     });
-    req.on('close', () => doneFut.resolve());
+    req.on('close', () => {
+      if (!doneFut.done) doneFut.resolve();
+    });
     req.write(JSON.stringify(json));
     req.end();
 
-    await doneFut.await;
+    try {
+      await doneFut.await;
+    } catch (e) {
+      if (this.abortSignal.aborted) return;
+      if (!this.queue.closed) this.queue.close();
+      throw toRetryableConnectionError(e);
+    }
   }
 }
 
@@ -222,8 +234,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }).stream();
   label = 'cartesia.SynthesizeStream';
 
-  constructor(tts: TTS, opts: TTSOptions) {
-    super(tts);
+  constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
+    super(tts, connOptions);
     this.#opts = opts;
   }
 
@@ -459,21 +471,185 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     const wsUrl = this.#opts.baseUrl.replace(/^http/, 'ws');
     const url = `${wsUrl}/tts/websocket?api_key=${this.#opts.apiKey}&cartesia_version=${VERSION}`;
-    const ws = new WebSocket(url);
 
+    let ws: WebSocket | undefined;
     try {
-      await new Promise((resolve, reject) => {
-        ws.on('open', resolve);
-        ws.on('error', (error) => reject(error));
-        ws.on('close', (code) => reject(`WebSocket returned ${code}`));
+      ws = await connectCartesiaWebSocket({
+        url,
+        timeoutMs: this.connOptions.timeoutMs,
+        abortSignal: this.abortSignal,
       });
-
       await Promise.all([inputTask(), sentenceStreamTask(ws), recvTask(ws)]);
     } catch (e) {
-      throw new Error(`failed to connect to Cartesia: ${e}`);
+      if (this.abortSignal.aborted) {
+        return;
+      }
+      throw toRetryableConnectionError(e);
+    } finally {
+      // Ensure we don't leak sockets/tasks across retry attempts.
+      if (ws && ws.readyState !== WebSocket.CLOSED) {
+        safeTerminateWebSocket(ws);
+      }
     }
   }
 }
+
+const asError = (e: unknown): Error => (e instanceof Error ? e : new Error(String(e)));
+
+const transientNetworkCodes = new Set([
+  'ETIMEDOUT',
+  'ECONNRESET',
+  'EAI_AGAIN',
+  'ENETUNREACH',
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+]);
+
+const isRecord = (v: unknown): v is Record<string, unknown> => {
+  return v !== null && typeof v === 'object';
+};
+
+const isAggregateErrorLike = (e: unknown): e is { errors: unknown[]; name?: string } => {
+  if (!isRecord(e)) return false;
+  return e.name === 'AggregateError' && Array.isArray(e.errors);
+};
+
+const hasErrorCode = (e: unknown, code: string): boolean => {
+  if (isRecord(e) && e.code === code) return true;
+  if (isAggregateErrorLike(e)) {
+    return e.errors.some((inner) => hasErrorCode(inner, code));
+  }
+  return false;
+};
+
+const hasAnyTransientCode = (e: unknown): boolean => {
+  if (isRecord(e) && typeof e.code === 'string') {
+    return transientNetworkCodes.has(e.code);
+  }
+  if (isAggregateErrorLike(e)) {
+    return e.errors.some((inner) => hasAnyTransientCode(inner));
+  }
+  return false;
+};
+
+const toRetryableConnectionError = (e: unknown): APIConnectionError => {
+  const err = asError(e);
+  const isTimeout =
+    hasErrorCode(e, 'ETIMEDOUT') ||
+    (typeof err.message === 'string' && err.message.includes('ETIMEDOUT'));
+  const message = isTimeout
+    ? `Cartesia connection timed out`
+    : `Cartesia connection failed: ${err.message || 'unknown error'}`;
+  return isTimeout ? new APITimeoutError({ message }) : new APIConnectionError({ message });
+};
+
+const waitForWsOpen = async ({
+  ws,
+  timeoutMs,
+  abortSignal,
+}: {
+  ws: WebSocket;
+  timeoutMs: number;
+  abortSignal: AbortSignal;
+}) => {
+  if (abortSignal.aborted) {
+    throw new Error('aborted');
+  }
+
+  const fut = new Future<void>();
+  let timeout: NodeJS.Timeout | undefined;
+
+  const cleanup = () => {
+    if (timeout) clearTimeout(timeout);
+    ws.off('open', onOpen);
+    ws.off('error', onError);
+    ws.off('close', onClose);
+    abortSignal.removeEventListener('abort', onAbort);
+  };
+
+  const onOpen = () => fut.resolve();
+  const onError = (err: Error) => fut.reject(asError(err));
+  const onClose = (code: number, reason: Buffer) =>
+    fut.reject(
+      new Error(`WebSocket closed before open (code=${code}, reason=${reason.toString()})`),
+    );
+  const onAbort = () => fut.reject(new Error('aborted'));
+
+  ws.on('open', onOpen);
+  ws.on('error', onError);
+  ws.on('close', onClose);
+  abortSignal.addEventListener('abort', onAbort, { once: true });
+
+  if (timeoutMs > 0) {
+    timeout = setTimeout(() => fut.reject(new Error('connect timeout')), timeoutMs);
+  }
+
+  try {
+    await fut.await;
+  } finally {
+    cleanup();
+  }
+};
+
+const safeTerminateWebSocket = (ws: WebSocket) => {
+  // `ws` can emit an 'error' event during teardown (especially if CONNECTING).
+  // If there is no error listener at that moment, Node will treat it as unhandled and crash the process.
+  try {
+    ws.on('error', () => {});
+  } catch {
+    // ignore
+  }
+
+  try {
+    // `terminate()` can throw if the socket was never established; `close()` is safer in CONNECTING.
+    if (ws.readyState === WebSocket.CONNECTING) {
+      ws.close();
+    } else {
+      ws.terminate();
+    }
+  } catch {
+    // ignore
+  }
+};
+
+const connectCartesiaWebSocket = async ({
+  url,
+  timeoutMs,
+  abortSignal,
+}: {
+  url: string;
+  timeoutMs: number;
+  abortSignal: AbortSignal;
+}): Promise<WebSocket> => {
+  const connectOnce = async (family?: number): Promise<WebSocket> => {
+    const ws = new WebSocket(url, { handshakeTimeout: timeoutMs, family });
+    try {
+      await waitForWsOpen({ ws, timeoutMs, abortSignal });
+      return ws;
+    } catch (e) {
+      safeTerminateWebSocket(ws);
+      throw e;
+    }
+  };
+
+  try {
+    return await connectOnce();
+  } catch (e) {
+    // Mitigation for Node.js dual-stack (IPv6/IPv4) connect flakiness ("happy eyeballs"):
+    // some environments surface `AggregateError` with nested `ETIMEDOUT` during the initial
+    // WebSocket open. In that case we do a one-off retry forcing IPv4 (`family: 4`) before
+    // letting the outer framework retry loop handle further attempts.
+    //
+    // If you still see `AggregateError`/`ETIMEDOUT`:
+    // - Increase the session TTS connect timeout (`connOptions.ttsConnOptions.timeoutMs`)
+    // - Or adjust Node's family autoselection behavior via `NODE_OPTIONS`, e.g.
+    //   `--network-family-autoselection-attempt-timeout=5000` (or disable it entirely).
+    if (hasAnyTransientCode(e) || isAggregateErrorLike(e)) {
+      return await connectOnce(4);
+    }
+    throw e;
+  }
+};
 
 /**
  * Convert TTSOptions to Cartesia API format.
