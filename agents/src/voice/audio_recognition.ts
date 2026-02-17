@@ -368,7 +368,6 @@ export class AudioRecognition {
       this.transcriptBuffer = [];
       return false;
     }
-    }
 
     if (this.ignoreUserTranscriptUntil === undefined) {
       return false;
