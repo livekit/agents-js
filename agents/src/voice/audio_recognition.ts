@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, ParticipantKind } from '@livekit/rtc-node';
 import {
   type Context,
   ROOT_CONTEXT,
@@ -94,7 +94,7 @@ export interface AudioRecognitionOptions {
 export interface ParticipantLike {
   sid: string | undefined;
   identity: string;
-  kind: number;
+  kind: ParticipantKind;
 }
 
 export class AudioRecognition {

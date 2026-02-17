@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ParticipantKind } from '@livekit/rtc-node';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { describe, expect, it, vi } from 'vitest';
@@ -126,7 +127,7 @@ describe('AudioRecognition user_turn span parity', () => {
       maxEndpointingDelay: 0,
       sttModel: 'deepgram-nova2',
       sttProvider: 'deepgram',
-      getLinkedParticipant: () => ({ sid: 'p1', identity: 'bob', kind: 1 }),
+      getLinkedParticipant: () => ({ sid: 'p1', identity: 'bob', kind: ParticipantKind.AGENT }),
     });
 
     await ar.start();
@@ -240,7 +241,7 @@ describe('AudioRecognition user_turn span parity', () => {
       maxEndpointingDelay: 0,
       sttModel: 'stt-model',
       sttProvider: 'stt-provider',
-      getLinkedParticipant: () => ({ sid: 'p2', identity: 'alice', kind: 2 }),
+      getLinkedParticipant: () => ({ sid: 'p2', identity: 'alice', kind: ParticipantKind.AGENT }),
     });
 
     await ar.start();
