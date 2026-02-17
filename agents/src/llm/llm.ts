@@ -174,7 +174,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
             this.emitError({ error, recoverable: true });
             this.logger.warn(
               { llm: this.#llm.label(), attempt: i + 1, error },
-              `failed to generate LLM completion, retrying in ${retryInterval}s`,
+              `failed to generate LLM completion, retrying in ${retryInterval}ms`,
             );
           }
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Room, RoomEvent } from '@livekit/rtc-node';
+import { Room, RoomEvent, dispose } from '@livekit/rtc-node';
 import { EventEmitter, once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
@@ -244,6 +244,18 @@ const startJob = (
     process.on('message', messageHandler);
 
     await join.await;
+
+    // Dispose native FFI resources (Rust FfiServer, tokio runtimes, libwebrtc)
+    // before process.exit() to prevent libc++abi mutex crash during teardown.
+    // Without this, process.exit() can kill the process while native threads are
+    // still running, causing: "mutex lock failed: Invalid argument"
+    // See: https://github.com/livekit/node-sdks/issues/564
+    try {
+      await dispose();
+      logger.debug('native resources disposed');
+    } catch (error) {
+      logger.warn({ error }, 'failed to dispose native resources');
+    }
 
     logger.debug('Job process shutdown');
     process.exit(0);
