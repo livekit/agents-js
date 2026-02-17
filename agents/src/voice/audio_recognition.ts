@@ -365,7 +365,9 @@ export class AudioRecognition {
     // reset when the user starts speaking after the agent speech
     if (ev.type === SpeechEventType.START_OF_SPEECH) {
       this.ignoreUserTranscriptUntil = undefined;
+      this.transcriptBuffer = [];
       return false;
+    }
     }
 
     if (this.ignoreUserTranscriptUntil === undefined) {
