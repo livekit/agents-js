@@ -35,6 +35,12 @@ const MIN_SENTENCE_LENGTH = 8;
 interface TTSBaseOptions {
   /** Sarvam API key. Defaults to $SARVAM_API_KEY */
   apiKey?: string;
+  /**
+   * Whether to use native WebSocket streaming for `stream()`.
+   * Set to `false` to prefer non-streaming REST synthesis (used by Agent via TTS StreamAdapter).
+   * Default: `true`.
+   */
+  streaming?: boolean;
   /** Target language code (BCP-47) */
   targetLanguageCode?: TTSLanguages | string;
   /** Speech pace. v2: 0.3–3.0, v3: 0.5–2.0 (default 1.0) */
@@ -78,6 +84,7 @@ export type TTSOptions = TTSV2Options | TTSV3Options;
 
 interface ResolvedTTSOptions {
   apiKey: string;
+  streaming: boolean;
   model: TTSModels;
   speaker: TTSSpeakers | string;
   targetLanguageCode: string;
@@ -126,6 +133,7 @@ function resolveOptions(opts: Partial<TTSOptions>): ResolvedTTSOptions {
 
   const base: ResolvedTTSOptions = {
     apiKey,
+    streaming: opts.streaming ?? true,
     model,
     speaker: opts.speaker ?? (isV3 ? V3_DEFAULTS.speaker : V2_DEFAULTS.speaker),
     targetLanguageCode: opts.targetLanguageCode ?? 'en-IN',
@@ -220,7 +228,7 @@ export class TTS extends tts.TTS {
    */
   constructor(opts: Partial<TTSOptions> = {}) {
     const resolved = resolveOptions(opts);
-    super(resolved.sampleRate, SARVAM_TTS_CHANNELS, { streaming: true });
+    super(resolved.sampleRate, SARVAM_TTS_CHANNELS, { streaming: resolved.streaming });
     this.#opts = resolved;
   }
 
@@ -240,6 +248,7 @@ export class TTS extends tts.TTS {
     const base: Partial<TTSOptions> = modelChanging
       ? {
           apiKey: this.#opts.apiKey,
+          streaming: this.#opts.streaming,
           targetLanguageCode: this.#opts.targetLanguageCode as TTSLanguages,
           pace: this.#opts.pace,
           sampleRate: this.#opts.sampleRate as TTSSampleRates,
@@ -268,6 +277,11 @@ export class TTS extends tts.TTS {
   }
 
   stream(): tts.SynthesizeStream {
+    if (!this.capabilities.streaming) {
+      throw new Error(
+        'Sarvam TTS streaming is disabled (`streaming: false`). Use synthesize() for REST or wrap with tts.StreamAdapter for streaming behavior.',
+      );
+    }
     return new SynthesizeStream(this, this.#opts);
   }
 }
