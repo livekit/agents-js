@@ -6,6 +6,7 @@ import type {
   ReadableStreamDefaultReader,
   WritableStreamDefaultWriter,
 } from 'node:stream/web';
+import { log } from '../log.js';
 import { isStreamReaderReleaseError } from './deferred_stream.js';
 import { IdentityTransform } from './identity_transform.js';
 
@@ -30,6 +31,7 @@ export class MultiInputStream<T> {
   private pumpPromises: Map<string, Promise<void>> = new Map();
   private nextId = 0;
   private _closed = false;
+  private logger = log();
 
   constructor() {
     this.transform = new IdentityTransform<T>();
@@ -154,8 +156,17 @@ export class MultiInputStream<T> {
       if (!isStreamReaderReleaseError(e)) {
         // For any other error we silently remove the input — the output stays alive.
         // (Contrast with DeferredReadableStream which propagates errors to the output.)
+        return;
       }
+
+      this.logger.error({ error: e }, 'Error pumping input stream from MultiInputStream');
     } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        // ignore if already released
+      }
+
       this.inputs.delete(id);
       this.pumpPromises.delete(id);
     }
