@@ -153,9 +153,7 @@ export class MultiInputStream<T> {
       }
     } catch (e) {
       // TypeErrors from releaseLock() during removeInputStream / close are expected.
-      if (!isStreamReaderReleaseError(e)) {
-        // For any other error we silently remove the input — the output stays alive.
-        // (Contrast with DeferredReadableStream which propagates errors to the output.)
+      if (isStreamReaderReleaseError(e)) {
         return;
       }
 
