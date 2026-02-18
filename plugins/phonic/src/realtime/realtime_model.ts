@@ -259,6 +259,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
+  // TODO @Phonic-Co: Implement generateReply
   async generateReply(_instructions?: string): Promise<llm.GenerationCreatedEvent> {
     throw new Error('generateReply is not supported by the Phonic realtime model.');
   }
