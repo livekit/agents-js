@@ -188,7 +188,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private currentGeneration?: GenerationState;
   private conversationId?: string;
-  private conversationStartedAt?: number;
 
   private client: PhonicClient;
   private socket?: Awaited<ReturnType<PhonicClient['conversations']['connect']>>;
@@ -282,19 +281,6 @@ export class RealtimeSession extends llm.RealtimeSession {
   async close(): Promise<void> {
     this.closed = true;
     this.closeCurrentGeneration({ interrupted: false });
-
-    if (this.conversationStartedAt) {
-      this.emit('metrics_collected', {
-        type: 'stt_metrics',
-        label: 'phonic_realtime',
-        requestId: this.conversationId,
-        timestamp: Date.now(),
-        durationMs: 0,
-        audioDurationMs: Date.now() - this.conversationStartedAt,
-        streamed: true,
-      });
-    }
-
     this.socket?.close();
     await this.connectTask;
     await super.close();
@@ -383,7 +369,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         break;
       case 'conversation_created':
         this.conversationId = message.conversation_id;
-        this.conversationStartedAt = Date.now();
         this.logger.info(`Phonic Conversation began with ID: ${this.conversationId}`);
         break;
       case 'assistant_chose_not_to_respond':
@@ -516,9 +501,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.emit('error', {
       timestamp: Date.now(),
       label: 'phonic_realtime',
+      type: 'realtime_model_error',
       error,
       recoverable,
-    });
+    } satisfies llm.RealtimeModelError);
   }
 
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
