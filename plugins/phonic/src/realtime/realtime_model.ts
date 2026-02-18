@@ -250,7 +250,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       voice_id: this.options.voice,
       input_format: 'pcm_44100',
       output_format: 'pcm_44100',
-      tools: ['natural_conversation_ending'],
     });
   }
 
