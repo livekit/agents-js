@@ -344,8 +344,15 @@ export class RealtimeSession extends llm.RealtimeSession {
           false,
         );
         break;
-      case 'assistant_chose_not_to_respond':
       case 'assistant_ended_conversation':
+        this.emitError(
+          new Error(
+            'assistant_ended_conversation is not supported by the Phonic realtime model with Livekit Agents.',
+          ),
+          false,
+        );
+        break;
+      case 'assistant_chose_not_to_respond':
       case 'ready_to_start_conversation':
       case 'input_cancelled':
       case 'conversation_created':
@@ -358,6 +365,10 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleAudioChunk(message: Phonic.AudioChunkResponsePayload): void {
+    /**
+     * Although Phonic sends audio chunks when the assistant is not speaking (i.e. containing silence or background noise),
+     * we only process the chunks when the assistant is speaking to align with the generations model, whereby new streams are created for each turn.
+     */
     const gen = this.currentGeneration;
     if (!gen) return;
 
