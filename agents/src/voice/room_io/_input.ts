@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type AudioFrame, FrameProcessor } from '@livekit/rtc-node';
+import { type AudioFrame, type FrameProcessor, isFrameProcessor } from '@livekit/rtc-node';
 import {
   AudioStream,
   type NoiseCancellationOptions,
@@ -41,7 +41,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.room = room;
     this.sampleRate = sampleRate;
     this.numChannels = numChannels;
-    if (noiseCancellation instanceof FrameProcessor) {
+    if (isFrameProcessor(noiseCancellation)) {
       this.frameProcessor = noiseCancellation;
     } else {
       this.noiseCancellation = noiseCancellation;
