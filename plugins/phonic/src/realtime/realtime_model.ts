@@ -31,6 +31,14 @@ export interface RealtimeModelOptions {
   project?: string;
   connOptions: APIConnectOptions;
   baseUrl?: string;
+  languages?: string[];
+  audioSpeed?: number;
+  phonicTools?: string[];
+  boostedKeywords?: string[];
+  generateNoInputPokeText?: boolean;
+  noInputPokeSec?: number;
+  noInputPokeText?: string;
+  noInputEndConversationSec?: number;
 }
 
 export class RealtimeModel extends llm.RealtimeModel {
@@ -68,6 +76,38 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       project?: string;
       /**
+       * ISO 639-1 language codes the agent should recognize and speak
+       */
+      languages?: string[];
+      /**
+       * Audio playback speed
+       */
+      audioSpeed?: number;
+      /**
+       * Phonic tool names available to the assistant
+       */
+      phonicTools?: string[];
+      /**
+       * Keywords to boost in speech recognition
+       */
+      boostedKeywords?: string[];
+      /**
+       * Auto-generate poke text when user is silent
+       */
+      generateNoInputPokeText?: boolean;
+      /**
+       * Seconds of silence before sending poke message
+       */
+      noInputPokeSec?: number;
+      /**
+       * Poke message text (ignored when generateNoInputPokeText is true)
+       */
+      noInputPokeText?: string;
+      /**
+       * Seconds of silence before ending conversation
+       */
+      noInputEndConversationSec?: number;
+      /**
        * Connection options for the API connection
        */
       connOptions?: APIConnectOptions;
@@ -94,6 +134,14 @@ export class RealtimeModel extends llm.RealtimeModel {
       voice: options.voice,
       instructions: options.instructions,
       project: options.project,
+      languages: options.languages,
+      audioSpeed: options.audioSpeed,
+      phonicTools: options.phonicTools,
+      boostedKeywords: options.boostedKeywords,
+      generateNoInputPokeText: options.generateNoInputPokeText,
+      noInputPokeSec: options.noInputPokeSec,
+      noInputPokeText: options.noInputPokeText,
+      noInputEndConversationSec: options.noInputEndConversationSec,
       connOptions: options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
       model: options.model ?? DEFAULT_MODEL,
       baseUrl: options.baseUrl,
@@ -250,6 +298,14 @@ export class RealtimeSession extends llm.RealtimeSession {
       voice_id: this.options.voice,
       input_format: 'pcm_44100',
       output_format: 'pcm_44100',
+      recognized_languages: this.options.languages,
+      audio_speed: this.options.audioSpeed,
+      tools: this.options.phonicTools,
+      boosted_keywords: this.options.boostedKeywords,
+      generate_no_input_poke_text: this.options.generateNoInputPokeText,
+      no_input_poke_sec: this.options.noInputPokeSec,
+      no_input_poke_text: this.options.noInputPokeText,
+      no_input_end_conversation_sec: this.options.noInputEndConversationSec,
     });
   }
 
