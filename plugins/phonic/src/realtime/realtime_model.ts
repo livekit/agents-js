@@ -227,9 +227,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
-    this.logger.warn(
-      'updateChatCtx is not supported by the Phonic realtime model. chatCtx: ${chatCtx}',
-    );
+    this.logger.warn('updateChatCtx is not supported by the Phonic realtime model.');
   }
 
   async updateTools(tools: llm.ToolContext): Promise<void> {
