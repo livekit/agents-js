@@ -25,6 +25,7 @@ const WS_CLOSE_NORMAL = 1000;
 export interface RealtimeModelOptions {
   apiKey: string;
   model: string;
+  phonicAgent?: string;
   voice?: Voice | string;
   instructions?: string;
   welcomeMessage?: string;
@@ -63,6 +64,10 @@ export class RealtimeModel extends llm.RealtimeModel {
        * The name of the model to use. Defaults to 'merritt'
        */
       model?: Phonic.ConfigPayload['model'] | string;
+      /**
+       * Phonic agent to use for the conversation. Options explicitly set here will override the agent settings.
+       */
+      phonicAgent?: string;
       /**
        * Voice ID for agent outputs
        */
@@ -132,8 +137,10 @@ export class RealtimeModel extends llm.RealtimeModel {
     this._options = {
       apiKey,
       voice: options.voice,
+      phonicAgent: options.phonicAgent,
       instructions: options.instructions,
       project: options.project,
+      welcomeMessage: options.welcomeMessage,
       languages: options.languages,
       audioSpeed: options.audioSpeed,
       phonicTools: options.phonicTools,
@@ -181,16 +188,17 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private currentGeneration?: GenerationState;
 
-  #client: PhonicClient;
-  #socket?: Awaited<ReturnType<PhonicClient['conversations']['connect']>>;
-  #logger = log();
-  #closed = false;
-  #connectTask: Promise<void>;
+  private client: PhonicClient;
+  private socket?: Awaited<ReturnType<PhonicClient['conversations']['connect']>>;
+  private logger = log();
+  private closed = false;
+  private connectTask: Promise<void>;
+  private openedAt?: number;
 
   constructor(realtimeModel: RealtimeModel) {
     super(realtimeModel);
     this.options = realtimeModel._options;
-    this.#client = new PhonicClient({
+    this.client = new PhonicClient({
       apiKey: this.options.apiKey,
       baseUrl: this.options.baseUrl,
     });
@@ -199,7 +207,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       PHONIC_NUM_CHANNELS,
       (PHONIC_INPUT_SAMPLE_RATE * PHONIC_INPUT_FRAME_MS) / 1000,
     );
-    this.#connectTask = this.connect().catch((error: unknown) => {
+    this.connectTask = this.connect().catch((error: unknown) => {
       const normalizedError = error instanceof Error ? error : new Error(String(error));
       this.emitError(normalizedError, false);
     });
@@ -214,7 +222,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateInstructions(_instructions: string): Promise<void> {
-    this.#logger.error(`updateInstructions is not supported by the Phonic realtime model.`);
+    this.logger.error(`updateInstructions is not supported by the Phonic realtime model.`);
   }
 
   async updateChatCtx(chatCtx: llm.ChatContext): Promise<void> {
@@ -223,15 +231,15 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async updateTools(tools: llm.ToolContext): Promise<void> {
     this._tools = { ...tools };
-    this.#logger.error(`Tool use is not supported by the Phonic realtime model.`);
+    this.logger.error(`Tool use is not supported by the Phonic realtime model.`);
   }
 
   updateOptions(_options: { toolChoice?: llm.ToolChoice | null }): void {
-    this.#logger.error(`updateOptions is not supported by the Phonic realtime model.`);
+    this.logger.error(`updateOptions is not supported by the Phonic realtime model.`);
   }
 
   pushAudio(frame: AudioFrame): void {
-    if (this.#closed) {
+    if (this.closed) {
       return;
     }
 
@@ -243,10 +251,10 @@ export class RealtimeSession extends llm.RealtimeSession {
           audio: bytes.toString('base64'),
         };
 
-        if (!this.#socket) {
+        if (!this.socket) {
           continue;
         }
-        this.#socket.sendAudioChunk(payload);
+        this.socket.sendAudioChunk(payload);
       }
     }
   }
@@ -263,37 +271,53 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async truncate(_options: { messageId: string; audioEndMs: number; audioTranscript?: string }) {
-    this.#logger.warn('truncate is not supported by the Phonic realtime model.');
+    this.logger.warn('truncate is not supported by the Phonic realtime model.');
   }
 
   async close(): Promise<void> {
     this.closeCurrentGeneration();
-    this.#closed = true;
-    this.#socket?.close();
-    await this.#connectTask;
+    this.closed = true;
+
+    if (this.openedAt) {
+      this.emit('metrics_collected', {
+        type: 'stt_metrics',
+        label: 'phonic_realtime',
+        requestId: '',
+        timestamp: Date.now(),
+        durationMs: 0,
+        audioDurationMs: Date.now() - this.openedAt,
+        streamed: true,
+      });
+    }
+
+    this.socket?.close();
+    await this.connectTask;
     await super.close();
   }
 
   private async connect(): Promise<void> {
-    this.#socket = await this.#client.conversations.connect({
+    this.socket = await this.client.conversations.connect({
       reconnectAttempts: this.options.connOptions.maxRetry,
     });
 
-    this.#socket.on('message', (message: unknown) =>
+    this.socket.on('message', (message: unknown) =>
       this.handleServerMessage(message as ServerEvent),
     );
-    this.#socket.on('error', (error: Error) => this.emitError(error, true));
-    this.#socket.on('close', (event: { code?: number }) => {
+    this.socket.on('error', (error: Error) => this.emitError(error, true));
+    this.socket.on('close', (event: { code?: number }) => {
       this.closeCurrentGeneration();
-      if (!this.#closed && event.code !== WS_CLOSE_NORMAL) {
+      if (!this.closed && event.code !== WS_CLOSE_NORMAL) {
         this.emitError(new Error(`Phonic STS socket closed with code ${event.code ?? -1}`), true);
       }
     });
 
-    await this.#socket.waitForOpen();
-    this.#socket.sendConfig({
+    await this.socket.waitForOpen();
+    this.openedAt = Date.now();
+    this.socket.sendConfig({
       type: 'config',
+      agent: this.options.phonicAgent,
       project: this.options.project,
+      welcome_message: this.options.welcomeMessage,
       system_prompt: this.options.instructions,
       voice_id: this.options.voice,
       input_format: 'pcm_44100',
@@ -310,7 +334,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleServerMessage(message: ServerEvent): void {
-    if (this.#closed) {
+    if (this.closed) {
       return;
     }
 
