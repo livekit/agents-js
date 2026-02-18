@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-google
 
+## 1.0.45
+
+### Patch Changes
+
+- fix(google): handle empty Gemini API responses with retryable errors instead of silently dropping them - [#1055](https://github.com/livekit/agents-js/pull/1055) ([@Raysharr](https://github.com/Raysharr))
+
+- Updated dependencies [[`cf3409507eff603242bfd80841687e265706e579`](https://github.com/livekit/agents-js/commit/cf3409507eff603242bfd80841687e265706e579), [`5c7af556a770ac786568673d723c496c35c4d42d`](https://github.com/livekit/agents-js/commit/5c7af556a770ac786568673d723c496c35c4d42d), [`f29d308b4d5f2bfa5c5d9b2e3f645aeb23519930`](https://github.com/livekit/agents-js/commit/f29d308b4d5f2bfa5c5d9b2e3f645aeb23519930), [`f79c7794dfe382e24291febc924955222f018e8b`](https://github.com/livekit/agents-js/commit/f79c7794dfe382e24291febc924955222f018e8b)]:
+  - @livekit/agents@1.0.45
+
 ## 1.0.44
 
 ### Patch Changes
