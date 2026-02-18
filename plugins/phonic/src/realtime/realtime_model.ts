@@ -399,9 +399,14 @@ export class RealtimeSession extends llm.RealtimeSession {
       const bytes = Buffer.from(message.audio, 'base64');
       const sampleCount = Math.floor(bytes.byteLength / Int16Array.BYTES_PER_ELEMENT);
       if (sampleCount > 0) {
-        const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, sampleCount);
+        const pcm = new Int16Array(
+          bytes.buffer.slice(
+            bytes.byteOffset,
+            bytes.byteOffset + sampleCount * Int16Array.BYTES_PER_ELEMENT,
+          ),
+        );
         const frame = new AudioFrame(
-          new Int16Array(pcm),
+          pcm,
           PHONIC_OUTPUT_SAMPLE_RATE,
           PHONIC_NUM_CHANNELS,
           sampleCount / PHONIC_NUM_CHANNELS,
