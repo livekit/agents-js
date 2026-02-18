@@ -5,7 +5,15 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../src/log.js';
-import { Event, Task, TaskResult, delay, isPending, resampleStream } from '../src/utils.js';
+import {
+  Event,
+  Task,
+  TaskResult,
+  delay,
+  isPending,
+  makeAwaitable,
+  resampleStream,
+} from '../src/utils.js';
 
 describe('utils', () => {
   // initialize logger
@@ -646,6 +654,165 @@ describe('utils', () => {
       const outputFrames = await streamToArray(outputStream);
 
       expect(outputFrames).toEqual([]);
+    });
+  });
+
+  describe('makeAwaitable', () => {
+    class BaseTask {
+      value: string;
+      constructor(value: string) {
+        this.value = value;
+      }
+      run(): Promise<string> {
+        return Promise.resolve(`result:${this.value}`);
+      }
+    }
+
+    const AwaitableTask = makeAwaitable(BaseTask, (instance) => instance.run());
+
+    it('should resolve with handler result when awaited', async () => {
+      const result = await new AwaitableTask('hello');
+      expect(result).toBe('result:hello');
+    });
+
+    it('should preserve instance properties and methods', () => {
+      const task = new AwaitableTask('test');
+      expect(task.value).toBe('test');
+      expect(typeof task.run).toBe('function');
+    });
+
+    it('should support instanceof for the base class', () => {
+      const task = new AwaitableTask('test');
+      expect(task).toBeInstanceOf(BaseTask);
+    });
+
+    it('should work with extends (subclass)', async () => {
+      class DerivedTask extends AwaitableTask {
+        constructor(value: string) {
+          super(value.toUpperCase());
+        }
+      }
+
+      const result = await new DerivedTask('hello');
+      expect(result).toBe('result:HELLO');
+
+      const task = new DerivedTask('test');
+      expect(task).toBeInstanceOf(DerivedTask);
+      expect(task).toBeInstanceOf(BaseTask);
+      expect(task.value).toBe('TEST');
+    });
+
+    it('should call handler only once even if .then is accessed multiple times', async () => {
+      let callCount = 0;
+
+      class CountedTask {
+        run(): Promise<number> {
+          callCount++;
+          return Promise.resolve(callCount);
+        }
+      }
+      const AwaitableCounted = makeAwaitable(CountedTask, (t) => t.run());
+
+      const task = new AwaitableCounted();
+      const p1 = task.then((v) => v);
+      const p2 = task.then((v) => v);
+      const [r1, r2] = await Promise.all([p1, p2]);
+
+      expect(r1).toBe(1);
+      expect(r2).toBe(1);
+      expect(callCount).toBe(1);
+    });
+
+    it('should propagate handler rejections', async () => {
+      class FailingTask {
+        run(): Promise<never> {
+          return Promise.reject(new Error('task failed'));
+        }
+      }
+      const AwaitableFailing = makeAwaitable(FailingTask, (t) => t.run());
+
+      await expect(new AwaitableFailing()).rejects.toThrow('task failed');
+    });
+
+    it('should not trigger handler until awaited', () => {
+      let triggered = false;
+      class LazyTask {
+        run(): Promise<void> {
+          triggered = true;
+          return Promise.resolve();
+        }
+      }
+      const AwaitableLazy = makeAwaitable(LazyTask, (t) => t.run());
+
+      new AwaitableLazy();
+      expect(triggered).toBe(false);
+    });
+
+    it('should have separate promises per instance', async () => {
+      const t1 = new AwaitableTask('a');
+      const t2 = new AwaitableTask('b');
+
+      const [r1, r2] = await Promise.all([t1, t2]);
+      expect(r1).toBe('result:a');
+      expect(r2).toBe('result:b');
+    });
+
+    it('should call methods and return correct results', async () => {
+      const task = new AwaitableTask('world');
+      const result = await task.run();
+      expect(result).toBe('result:world');
+    });
+
+    it('should support property mutation', () => {
+      const task = new AwaitableTask('initial');
+      expect(task.value).toBe('initial');
+      task.value = 'changed';
+      expect(task.value).toBe('changed');
+    });
+
+    it('should preserve correct this inside methods', () => {
+      class Greeter {
+        name: string;
+        constructor(name: string) {
+          this.name = name;
+        }
+        greet(): string {
+          return `hello ${this.name}`;
+        }
+      }
+      const AwaitableGreeter = makeAwaitable(Greeter, async (g) => g.greet());
+
+      const g = new AwaitableGreeter('world');
+      expect(g.greet()).toBe('hello world');
+      g.name = 'proxy';
+      expect(g.greet()).toBe('hello proxy');
+    });
+
+    it('should expose static members of the original class', () => {
+      class WithStatic {
+        static defaultName = 'agent';
+        static create(): WithStatic {
+          return new WithStatic();
+        }
+      }
+      const AwaitableWithStatic = makeAwaitable(WithStatic, async () => 'done');
+
+      expect(AwaitableWithStatic.defaultName).toBe('agent');
+      expect(typeof AwaitableWithStatic.create).toBe('function');
+      expect(AwaitableWithStatic.create()).toBeInstanceOf(WithStatic);
+    });
+
+    it('should call overridden methods in subclass', async () => {
+      class DerivedTask extends AwaitableTask {
+        override run(): Promise<string> {
+          return Promise.resolve(`overridden:${this.value}`);
+        }
+      }
+
+      const task = new DerivedTask('sub');
+      expect(await task.run()).toBe('overridden:sub');
+      // await the instance itself — handler calls instance.run(), which is the override
+      expect(await new DerivedTask('sub')).toBe('overridden:sub');
     });
   });
 });

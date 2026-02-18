@@ -898,3 +898,59 @@ export const isCloud = (url: URL) => {
   const hostname = url.hostname;
   return hostname.endsWith('.livekit.cloud') || hostname.endsWith('.livekit.run');
 };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AwaitableConstructor<C extends new (...args: any[]) => any, R> = {
+  [K in keyof C]: C[K];
+} & {
+  new (...args: ConstructorParameters<C>): InstanceType<C> & PromiseLike<R>;
+};
+
+/**
+ * Wraps a class constructor so that instances are both fully functional
+ * (all original properties/methods) and awaitable via a user-provided handler.
+ *
+ * This mirrors Python's `__await__` protocol. In JS, `await` works on any
+ * "thenable" (object with a `.then()` method), so the returned constructor
+ * produces instances with a transparent `.then` that delegates to the handler.
+ *
+ * The returned class is safe to `extends` — subclass prototype chains are
+ * preserved via `Reflect.construct` with `newTarget` forwarding.
+ *
+ * @example
+ * ```ts
+ * class BaseTask {
+ *   run(): Promise<string> { return Promise.resolve('done'); }
+ * }
+ * const Task = makeAwaitable(BaseTask, (instance) => instance.run());
+ *
+ * const result = await new Task();          // 'done'
+ *
+ * class MyTask extends Task { ... }
+ * const r = await new MyTask();             // also works
+ * ```
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function makeAwaitable<C extends new (...args: any[]) => any, R>(
+  Cls: C,
+  handler: (instance: InstanceType<C>) => Promise<R>,
+): AwaitableConstructor<C, R> {
+  return new Proxy(Cls, {
+    construct(target, args, newTarget) {
+      const instance = Reflect.construct(target, args, newTarget);
+      let promise: Promise<R> | undefined;
+
+      return new Proxy(instance, {
+        get(obj, prop, receiver) {
+          if (prop === 'then') {
+            if (!promise) {
+              promise = handler(obj);
+            }
+            return promise.then.bind(promise);
+          }
+          return Reflect.get(obj, prop, receiver);
+        },
+      });
+    },
+  }) as AwaitableConstructor<C, R>;
+}
