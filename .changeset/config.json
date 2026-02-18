@@ -8,13 +8,7 @@
   ],
   "commit": false,
   "ignore": ["livekit-agents-examples"],
-  "fixed": [
-    [
-      "@livekit/agents",
-      "@livekit/agents-plugin-*",
-      "@livekit/agents-plugins-test"
-    ]
-  ],
+  "fixed": [["@livekit/agents", "@livekit/agents-plugin-*", "@livekit/agents-plugins-test"]],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",

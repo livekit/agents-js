@@ -9,6 +9,7 @@ import {
   defineAgent,
   inference,
   initializeLogger,
+  log,
   metrics,
   voice,
 } from '@livekit/agents';
@@ -33,6 +34,7 @@ export default defineAgent({
       instructions: 'You are a helpful assistant. Speak clearly and concisely.',
     });
 
+    const logger = log();
     const session = new voice.AgentSession({
       stt: new inference.STT({
         model: 'deepgram/nova-3',
@@ -68,11 +70,19 @@ export default defineAgent({
     });
     await avatar.start(session, ctx.room);
 
-    const usageCollector = new metrics.UsageCollector();
-
+    // Log metrics as they are emitted (session.usage is automatically collected)
     session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
       metrics.logMetrics(ev.metrics);
-      usageCollector.collect(ev.metrics);
+    });
+
+    // Log usage summary when job shuts down
+    ctx.addShutdownCallback(async () => {
+      logger.info(
+        {
+          usage: session.usage,
+        },
+        'Session usage summary',
+      );
     });
 
     session.generateReply({

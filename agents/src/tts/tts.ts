@@ -97,6 +97,30 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
   }
 
   /**
+   * Get the model name/identifier for this TTS instance.
+   *
+   * @returns The model name if available, "unknown" otherwise.
+   *
+   * @remarks
+   * Plugins should override this property to provide their model information.
+   */
+  get model(): string {
+    return 'unknown';
+  }
+
+  /**
+   * Get the provider name for this TTS instance.
+   *
+   * @returns The provider name if available, "unknown" otherwise.
+   *
+   * @remarks
+   * Plugins should override this property to provide their provider information.
+   */
+  get provider(): string {
+    return 'unknown';
+  }
+
+  /**
    * Receives text and returns synthesis in the form of a {@link ChunkedStream}
    */
   abstract synthesize(
@@ -159,6 +183,8 @@ export abstract class SynthesizeStream
   #metricsText = '';
   #monitorMetricsTask?: Promise<void>;
   #ttsRequestSpan?: Span;
+  #inputTokens = 0;
+  #outputTokens = 0;
 
   constructor(tts: TTS, connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS) {
     this.#tts = tts;
@@ -284,6 +310,18 @@ export abstract class SynthesizeStream
     }
   }
 
+  /**
+   * Set token usage for token-based TTS billing (e.g., OpenAI TTS).
+   * Plugins should call this method to report token usage.
+   */
+  protected setTokenUsage({
+    inputTokens = 0,
+    outputTokens = 0,
+  }: { inputTokens?: number; outputTokens?: number } = {}): void {
+    this.#inputTokens = inputTokens;
+    this.#outputTokens = outputTokens;
+  }
+
   protected async monitorMetrics() {
     const startTime = process.hrtime.bigint();
     let audioDurationMs = 0;
@@ -305,12 +343,22 @@ export abstract class SynthesizeStream
           audioDurationMs: roundedAudioDurationMs,
           cancelled: this.abortController.signal.aborted,
           label: this.#tts.label,
-          streamed: false,
+          inputTokens: this.#inputTokens,
+          outputTokens: this.#outputTokens,
+          streamed: true,
+          metadata: {
+            modelProvider: this.#tts.provider,
+            modelName: this.#tts.model,
+          },
         };
         if (this.#ttsRequestSpan) {
           this.#ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
         }
         this.#tts.emit('metrics_collected', metrics);
+
+        // Reset token usage after emitting metrics for the next segment
+        this.#inputTokens = 0;
+        this.#outputTokens = 0;
       }
     };
 
@@ -434,6 +482,8 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   #ttsRequestSpan?: Span;
   private _connOptions: APIConnectOptions;
   private logger = log();
+  #inputTokens = 0;
+  #outputTokens = 0;
 
   protected abortController = new AbortController();
 
@@ -541,6 +591,18 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     return this.abortController.signal;
   }
 
+  /**
+   * Set token usage for token-based TTS billing (e.g., OpenAI TTS).
+   * Plugins should call this method to report token usage.
+   */
+  protected setTokenUsage({
+    inputTokens = 0,
+    outputTokens = 0,
+  }: { inputTokens?: number; outputTokens?: number } = {}): void {
+    this.#inputTokens = inputTokens;
+    this.#outputTokens = outputTokens;
+  }
+
   protected async monitorMetrics() {
     const startTime = process.hrtime.bigint();
     let audioDurationMs = 0;
@@ -568,7 +630,13 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       audioDurationMs: Math.round(audioDurationMs),
       cancelled: false, // TODO(AJS-186): support ChunkedStream with 1.0 - add this.abortController.signal.aborted here
       label: this.#tts.label,
+      inputTokens: this.#inputTokens,
+      outputTokens: this.#outputTokens,
       streamed: false,
+      metadata: {
+        modelProvider: this.#tts.provider,
+        modelName: this.#tts.model,
+      },
     };
 
     if (this.#ttsRequestSpan) {

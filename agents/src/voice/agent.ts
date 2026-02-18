@@ -31,6 +31,9 @@ import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 import type { TimedString } from './io.js';
+import type { InterruptionConfig } from './turn_config/interruption.js';
+import type { TurnHandlingConfig } from './turn_config/turn_handling.js';
+import { migrateLegacyOptions } from './turn_config/utils.js';
 
 export const asyncLocalStorage = new AsyncLocalStorage<{ functionCall?: FunctionCall }>();
 export const STOP_RESPONSE_SYMBOL = Symbol('StopResponse');
@@ -65,6 +68,7 @@ export interface AgentOptions<UserData> {
   instructions: string;
   chatCtx?: ChatContext;
   tools?: ToolContext<UserData>;
+  /** @deprecated use turnHandling instead */
   turnDetection?: TurnDetectionMode;
   stt?: STT | STTModelString;
   vad?: VAD;
@@ -72,16 +76,19 @@ export interface AgentOptions<UserData> {
   tts?: TTS | TTSModelString;
   allowInterruptions?: boolean;
   minConsecutiveSpeechDelay?: number;
+  turnHandling?: TurnHandlingConfig;
   useTtsAlignedTranscript?: boolean;
 }
 
 export class Agent<UserData = any> {
   private _id: string;
-  private turnDetection?: TurnDetectionMode;
   private _stt?: STT;
   private _vad?: VAD;
   private _llm?: LLM | RealtimeModel;
   private _tts?: TTS;
+  private turnHandling?: TurnHandlingConfig;
+  private _interruptionDetection: InterruptionConfig['mode'];
+  private _allowInterruptions?: boolean;
   private _useTtsAlignedTranscript?: boolean;
 
   /** @internal */
@@ -106,7 +113,9 @@ export class Agent<UserData = any> {
     vad,
     llm,
     tts,
+    turnHandling,
     useTtsAlignedTranscript,
+    allowInterruptions,
   }: AgentOptions<UserData>) {
     if (id) {
       this._id = id;
@@ -131,7 +140,12 @@ export class Agent<UserData = any> {
         })
       : ChatContext.empty();
 
-    this.turnDetection = turnDetection;
+    const migratedOptions = migrateLegacyOptions({
+      turnDetection,
+      options: { turnHandling, allowInterruptions },
+    });
+    this.turnHandling = migratedOptions.options.turnHandling;
+
     this._vad = vad;
 
     if (typeof stt === 'string') {
@@ -152,6 +166,10 @@ export class Agent<UserData = any> {
       this._tts = tts;
     }
 
+    this._interruptionDetection = this.turnHandling?.interruption.mode;
+    if (this.turnHandling?.interruption.mode !== undefined) {
+      this._allowInterruptions = !!this.turnHandling.interruption.mode;
+    }
     this._useTtsAlignedTranscript = useTtsAlignedTranscript;
 
     this._agentActivity = undefined;
@@ -195,6 +213,14 @@ export class Agent<UserData = any> {
 
   get session(): AgentSession<UserData> {
     return this.getActivityOrThrow().agentSession as AgentSession<UserData>;
+  }
+
+  get interruptionDetection(): InterruptionConfig['mode'] {
+    return this._interruptionDetection;
+  }
+
+  get allowInterruptions(): boolean | undefined {
+    return this._allowInterruptions;
   }
 
   async onEnter(): Promise<void> {}
@@ -285,7 +311,8 @@ export class Agent<UserData = any> {
 
       // Set startTimeOffset to provide linear timestamps across reconnections
       const audioInputStartedAt =
-        activity.agentSession._recorderIO?.recordingStartedAt ?? // Use recording start time if available
+        activity.inputStartedAt ?? // Use input started at proxied from AudioRecognition if available
+        activity.agentSession._recorderIO?.recordingStartedAt ?? // Fallback to recording start time if available
         activity.agentSession._startedAt ?? // Fallback to session start time
         Date.now(); // Fallback to current time
 

@@ -32,6 +32,19 @@ export class TTS extends tts.TTS {
   label = 'openai.TTS';
   private abortController = new AbortController();
 
+  get model(): string {
+    return this.#opts.model;
+  }
+
+  get provider(): string {
+    try {
+      const url = new URL(this.#client.baseURL);
+      return url.host;
+    } catch {
+      return 'api.openai.com';
+    }
+  }
+
   /**
    * Create a new instance of OpenAI TTS.
    *

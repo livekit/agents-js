@@ -144,6 +144,15 @@ export class RealtimeModel extends llm.RealtimeModel {
     return this._options.model;
   }
 
+  get provider(): string {
+    try {
+      const url = new URL(this._options.baseURL);
+      return url.host;
+    } catch {
+      return 'api.openai.com';
+    }
+  }
+
   constructor(
     options: {
       model?: string;

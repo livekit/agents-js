@@ -19,7 +19,7 @@ import {
   ttsClientEventSchema,
   ttsServerEventSchema,
 } from './api_protos.js';
-import { type AnyString, connectWs, createAccessToken } from './utils.js';
+import { type AnyString, connectWs, createAccessToken, getDefaultInferenceUrl } from './utils.js';
 
 export type CartesiaModels =
   | 'cartesia/sonic-3'
@@ -136,7 +136,6 @@ type TTSEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: TTSEncoding = 'pcm_s16le';
 const DEFAULT_SAMPLE_RATE = 16000;
-const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 const NUM_CHANNELS = 1;
 const DEFAULT_LANGUAGE = 'en';
 
@@ -193,7 +192,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       connOptions,
     } = opts || {};
 
-    const lkBaseURL = baseURL || process.env.LIVEKIT_INFERENCE_URL || DEFAULT_BASE_URL;
+    const lkBaseURL = baseURL || getDefaultInferenceUrl();
     const lkApiKey = apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
     if (!lkApiKey) {
       throw new Error('apiKey is required: pass apiKey or set LIVEKIT_API_KEY');
@@ -252,6 +251,14 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
 
   get label() {
     return 'inference.TTS';
+  }
+
+  get model(): string {
+    return this.opts.model ?? 'unknown';
+  }
+
+  get provider(): string {
+    return 'livekit';
   }
 
   static fromModelString(modelString: string): TTS<AnyString> {

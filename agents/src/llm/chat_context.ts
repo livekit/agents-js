@@ -80,6 +80,17 @@ export function createAudioContent(params: {
   };
 }
 
+export interface MetricsReport {
+  startedSpeakingAt?: number;
+  stoppedSpeakingAt?: number;
+  transcriptionDelay?: number;
+  endOfTurnDelay?: number;
+  onUserTurnCompletedDelay?: number;
+  llmNodeTtft?: number;
+  ttsNodeTtfb?: number;
+  e2eLatency?: number;
+}
+
 export class ChatMessage {
   readonly id: string;
 
@@ -91,6 +102,12 @@ export class ChatMessage {
 
   interrupted: boolean;
 
+  transcriptConfidence?: number;
+
+  extra: Record<string, unknown>;
+
+  metrics: MetricsReport;
+
   hash?: Uint8Array;
 
   createdAt: number;
@@ -101,6 +118,9 @@ export class ChatMessage {
     id?: string;
     interrupted?: boolean;
     createdAt?: number;
+    transcriptConfidence?: number;
+    metrics?: MetricsReport;
+    extra?: Record<string, unknown>;
   }) {
     const {
       role,
@@ -108,12 +128,18 @@ export class ChatMessage {
       id = shortuuid('item_'),
       interrupted = false,
       createdAt = Date.now(),
+      transcriptConfidence,
+      metrics = {},
+      extra = {},
     } = params;
     this.id = id;
     this.role = role;
     this.content = Array.isArray(content) ? content : [content];
     this.interrupted = interrupted;
     this.createdAt = createdAt;
+    this.transcriptConfidence = transcriptConfidence;
+    this.metrics = metrics;
+    this.extra = extra;
   }
 
   static create(params: {
@@ -122,6 +148,9 @@ export class ChatMessage {
     id?: string;
     interrupted?: boolean;
     createdAt?: number;
+    transcriptConfidence?: number;
+    metrics?: MetricsReport;
+    extra?: Record<string, unknown>;
   }) {
     return new ChatMessage(params);
   }
@@ -170,6 +199,16 @@ export class ChatMessage {
 
     if (!excludeTimestamp) {
       result.createdAt = this.createdAt;
+    }
+
+    if (this.transcriptConfidence !== undefined) {
+      result.transcriptConfidence = this.transcriptConfidence;
+    }
+    if (Object.keys(this.metrics).length > 0) {
+      result.metrics = { ...this.metrics };
+    }
+    if (Object.keys(this.extra).length > 0) {
+      result.extra = this.extra as JSONValue;
     }
 
     return result;
@@ -431,6 +470,9 @@ export class ChatContext {
     id?: string;
     interrupted?: boolean;
     createdAt?: number;
+    transcriptConfidence?: number;
+    metrics?: MetricsReport;
+    extra?: Record<string, unknown>;
   }): ChatMessage {
     const msg = new ChatMessage(params);
     if (params.createdAt !== undefined) {
@@ -571,6 +613,9 @@ export class ChatContext {
           id: item.id,
           interrupted: item.interrupted,
           createdAt: item.createdAt,
+          transcriptConfidence: item.transcriptConfidence,
+          metrics: item.metrics,
+          extra: item.extra,
         });
 
         // Filter content based on options

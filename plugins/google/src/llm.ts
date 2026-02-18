@@ -51,6 +51,13 @@ export class LLM extends llm.LLM {
     return this.#opts.model;
   }
 
+  get provider(): string {
+    if (this.#opts.vertexai) {
+      return 'Vertex AI';
+    }
+    return 'Gemini';
+  }
+
   /**
    * Create a new instance of Google GenAI LLM.
    *
