@@ -187,13 +187,14 @@ export class RealtimeSession extends llm.RealtimeSession {
   private inputResamplerInputRate?: number;
 
   private currentGeneration?: GenerationState;
+  private conversationId?: string;
+  private conversationStartedAt?: number;
 
   private client: PhonicClient;
   private socket?: Awaited<ReturnType<PhonicClient['conversations']['connect']>>;
   private logger = log();
   private closed = false;
   private connectTask: Promise<void>;
-  private openedAt?: number;
 
   constructor(realtimeModel: RealtimeModel) {
     super(realtimeModel);
@@ -222,7 +223,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateInstructions(_instructions: string): Promise<void> {
-    this.logger.error(`updateInstructions is not supported by the Phonic realtime model.`);
+    this.logger.warn('updateInstructions is not supported by the Phonic realtime model.');
   }
 
   async updateChatCtx(chatCtx: llm.ChatContext): Promise<void> {
@@ -230,12 +231,13 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateTools(tools: llm.ToolContext): Promise<void> {
-    this._tools = { ...tools };
-    this.logger.error(`Tool use is not supported by the Phonic realtime model.`);
+    if (Object.keys(tools).length > 0) {
+      this.logger.warn('Tool use is not supported by the Phonic realtime model.');
+    }
   }
 
   updateOptions(_options: { toolChoice?: llm.ToolChoice | null }): void {
-    this.logger.error(`updateOptions is not supported by the Phonic realtime model.`);
+    this.logger.warn('updateOptions is not supported by the Phonic realtime model.');
   }
 
   pushAudio(frame: AudioFrame): void {
@@ -268,7 +270,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   async clearAudio(): Promise<void> {}
 
   async interrupt(): Promise<void> {
-    this.closeCurrentGeneration();
+    this.closeCurrentGeneration({ interrupted: true });
   }
 
   async truncate(_options: { messageId: string; audioEndMs: number; audioTranscript?: string }) {
@@ -276,17 +278,17 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async close(): Promise<void> {
-    this.closeCurrentGeneration();
     this.closed = true;
+    this.closeCurrentGeneration({ interrupted: false });
 
-    if (this.openedAt) {
+    if (this.conversationStartedAt) {
       this.emit('metrics_collected', {
         type: 'stt_metrics',
         label: 'phonic_realtime',
-        requestId: '',
+        requestId: this.conversationId,
         timestamp: Date.now(),
         durationMs: 0,
-        audioDurationMs: Date.now() - this.openedAt,
+        audioDurationMs: Date.now() - this.conversationStartedAt,
         streamed: true,
       });
     }
@@ -304,18 +306,18 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.socket.on('message', (message: unknown) =>
       this.handleServerMessage(message as ServerEvent),
     );
-    this.socket.on('error', (error: Error) => this.emitError(error, true));
+    this.socket.on('error', (error: Error) => this.emitError(error, false));
     this.socket.on('close', (event: { code?: number }) => {
-      this.closeCurrentGeneration();
+      this.closeCurrentGeneration({ interrupted: false });
       if (!this.closed && event.code !== WS_CLOSE_NORMAL) {
-        this.emitError(new Error(`Phonic STS socket closed with code ${event.code ?? -1}`), true);
+        this.emitError(new Error(`Phonic STS socket closed with code ${event.code ?? -1}`), false);
       }
     });
 
     await this.socket.waitForOpen();
-    this.openedAt = Date.now();
     this.socket.sendConfig({
       type: 'config',
+      model: this.options.model as Phonic.ConfigPayload['model'],
       agent: this.options.phonicAgent,
       project: this.options.project,
       welcome_message: this.options.welcomeMessage,
@@ -377,10 +379,14 @@ export class RealtimeSession extends llm.RealtimeSession {
           false,
         );
         break;
+      case 'conversation_created':
+        this.conversationId = message.conversation_id;
+        this.conversationStartedAt = Date.now();
+        this.logger.info(`Phonic Conversation began with ID: ${this.conversationId}`);
+        break;
       case 'assistant_chose_not_to_respond':
       case 'ready_to_start_conversation':
       case 'input_cancelled':
-      case 'conversation_created':
       case 'tool_call_output_processed':
       case 'tool_call_interrupted':
       case 'dtmf':
@@ -419,10 +425,17 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleInputText(message: Phonic.InputTextPayload): void {
+    const itemId = shortuuid('PI_');
     this.emit('input_audio_transcription_completed', {
-      itemId: shortuuid('PI_'),
+      itemId,
       transcript: message.text,
       isFinal: true,
+    });
+
+    this._chatCtx.addMessage({
+      role: 'user',
+      content: message.text,
+      id: itemId,
     });
   }
 
@@ -438,6 +451,10 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private startNewAssistantTurn(): void {
+    if (this.currentGeneration) {
+      this.closeCurrentGeneration({ interrupted: true });
+    }
+
     const responseId = shortuuid('PS_');
 
     const textChannel = stream.createStreamChannel<string>();
@@ -470,6 +487,10 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private finishAssistantTurn(): void {
+    this.closeCurrentGeneration({ interrupted: false });
+  }
+
+  private closeCurrentGeneration({ interrupted }: { interrupted: boolean }): void {
     const gen = this.currentGeneration;
     if (!gen) return;
 
@@ -478,15 +499,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         role: 'assistant',
         content: gen.outputText,
         id: gen.responseId,
+        interrupted,
       });
     }
-
-    this.closeCurrentGeneration();
-  }
-
-  private closeCurrentGeneration(): void {
-    const gen = this.currentGeneration;
-    if (!gen) return;
 
     gen.textChannel.close();
     gen.audioChannel.close();
