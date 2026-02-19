@@ -291,6 +291,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       reconnectAttempts: this.options.connOptions.maxRetry,
     });
 
+    if (this.closed) {
+      this.socket.close();
+      return;
+    }
+
     this.socket.on('message', (message: unknown) =>
       this.handleServerMessage(message as ServerEvent),
     );
