@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import type { Phonic } from 'phonic';
 
 export type ServerEvent =

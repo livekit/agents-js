@@ -266,6 +266,9 @@ importers:
       '@livekit/agents-plugin-openai':
         specifier: workspace:*
         version: link:../plugins/openai
+      '@livekit/agents-plugin-phonic':
+        specifier: workspace:*
+        version: link:../plugins/phonic
       '@livekit/agents-plugin-resemble':
         specifier: workspace:*
         version: link:../plugins/resemble

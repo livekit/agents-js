@@ -27,8 +27,8 @@ export interface RealtimeModelOptions {
   model: string;
   phonicAgent?: string;
   voice?: Voice | string;
-  instructions?: string;
   welcomeMessage?: string;
+  generateWelcomeMessage?: boolean;
   project?: string;
   connOptions: APIConnectOptions;
   baseUrl?: string;
@@ -40,6 +40,8 @@ export interface RealtimeModelOptions {
   noInputPokeSec?: number;
   noInputPokeText?: string;
   noInputEndConversationSec?: number;
+  /** Set by `updateInstructions` via `voice.Agent` rather than the RealtimeModel constructor */
+  instructions?: string;
 }
 
 export class RealtimeModel extends llm.RealtimeModel {
@@ -52,10 +54,6 @@ export class RealtimeModel extends llm.RealtimeModel {
 
   constructor(
     options: {
-      /**
-       * System instructions for the model
-       */
-      instructions?: string;
       /**
        * Phonic API key. If not provided, will attempt to read from PHONIC_API_KEY environment variable
        */
@@ -73,9 +71,13 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       voice?: Voice;
       /**
-       * Welcome message for the agent to say when the conversation starts
+       * Welcome message for the agent to say when the conversation starts. Ignored when generateWelcomeMessage is true
        */
       welcomeMessage?: string;
+      /**
+       * When true, the welcome message will be automatically generated and welcomeMessage will be ignored
+       */
+      generateWelcomeMessage?: boolean;
       /**
        * Project name to use for the conversation. Defaults to `main`
        */
@@ -124,7 +126,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       turnDetection: true,
       userTranscription: true,
       // TODO @Phonic-Co: Implement tool support
-      // Phonic has automatic tool reply generation, but tools are not supported with Livekit Agents yet.
+      // Phonic has automatic tool reply generation, but tools are not supported with LiveKit Agents yet.
       autoToolReplyGeneration: true,
       audioOutput: true,
     });
@@ -138,9 +140,9 @@ export class RealtimeModel extends llm.RealtimeModel {
       apiKey,
       voice: options.voice,
       phonicAgent: options.phonicAgent,
-      instructions: options.instructions,
       project: options.project,
       welcomeMessage: options.welcomeMessage,
+      generateWelcomeMessage: options.generateWelcomeMessage,
       languages: options.languages,
       audioSpeed: options.audioSpeed,
       phonicTools: options.phonicTools,
@@ -193,11 +195,20 @@ export class RealtimeSession extends llm.RealtimeSession {
   private socket?: Awaited<ReturnType<PhonicClient['conversations']['connect']>>;
   private logger = log();
   private closed = false;
+  private configSent = false;
+  private instructionsReady: Promise<void>;
+  private resolveInstructionsReady: () => void;
   private connectTask: Promise<void>;
 
   constructor(realtimeModel: RealtimeModel) {
     super(realtimeModel);
     this.options = realtimeModel._options;
+
+    this.resolveInstructionsReady = () => {};
+    this.instructionsReady = new Promise<void>((resolve) => {
+      this.resolveInstructionsReady = resolve;
+    });
+
     this.client = new PhonicClient({
       apiKey: this.options.apiKey,
       baseUrl: this.options.baseUrl,
@@ -221,8 +232,15 @@ export class RealtimeSession extends llm.RealtimeSession {
     return { ...this._tools };
   }
 
-  async updateInstructions(_instructions: string): Promise<void> {
-    this.logger.warn('updateInstructions is not supported by the Phonic realtime model.');
+  async updateInstructions(instructions: string): Promise<void> {
+    if (this.configSent) {
+      this.logger.warn(
+        'updateInstructions called after config was already sent. Phonic does not support updating instructions mid-session.',
+      );
+      return;
+    }
+    this.options.instructions = instructions;
+    this.resolveInstructionsReady();
   }
 
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
@@ -267,11 +285,15 @@ export class RealtimeSession extends llm.RealtimeSession {
     );
   }
 
-  async commitAudio(): Promise<void> {}
-  async clearAudio(): Promise<void> {}
+  async commitAudio(): Promise<void> {
+    this.logger.warn('commitAudio is not supported by the Phonic realtime model.');
+  }
+  async clearAudio(): Promise<void> {
+    this.logger.warn('clearAudio is not supported by the Phonic realtime model.');
+  }
 
   async interrupt(): Promise<void> {
-    this.closeCurrentGeneration({ interrupted: true });
+    this.logger.warn('interrupt is not supported by the Phonic realtime model.');
   }
 
   async truncate(_options: { messageId: string; audioEndMs: number; audioTranscript?: string }) {
@@ -308,12 +330,15 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
 
     await this.socket.waitForOpen();
+    await this.instructionsReady;
+    this.configSent = true;
     this.socket.sendConfig({
       type: 'config',
       model: this.options.model as Phonic.ConfigPayload['model'],
       agent: this.options.phonicAgent,
       project: this.options.project,
       welcome_message: this.options.welcomeMessage,
+      generate_welcome_message: this.options.generateWelcomeMessage,
       system_prompt: this.options.instructions,
       voice_id: this.options.voice,
       input_format: 'pcm_44100',
@@ -359,7 +384,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       case 'tool_call':
         this.emitError(
           new Error(
-            `WebSocket tool calls are not yet supported by the Phonic realtime model with Livekit Agents.`,
+            `WebSocket tool calls are not yet supported by the Phonic realtime model with LiveKit Agents.`,
           ),
           false,
         );
@@ -367,7 +392,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       case 'assistant_ended_conversation':
         this.emitError(
           new Error(
-            'assistant_ended_conversation is not supported by the Phonic realtime model with Livekit Agents.',
+            'assistant_ended_conversation is not supported by the Phonic realtime model with LiveKit Agents.',
           ),
           false,
         );
@@ -438,7 +463,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private handleInputSpeechStarted(): void {
     this.emit('input_speech_started', {});
-    this.interrupt();
+    this.closeCurrentGeneration({ interrupted: true });
   }
 
   private handleInputSpeechStopped(): void {
