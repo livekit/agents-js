@@ -42,6 +42,12 @@ const NUM_CHANNELS = 1;
 interface STTBaseOptions {
   /** Sarvam API key. Defaults to $SARVAM_API_KEY */
   apiKey?: string;
+  /**
+   * Whether to use native WebSocket streaming for `stream()`.
+   * Set to `false` to prefer non-streaming REST recognition (used by Agent via StreamAdapter + VAD).
+   * Default: `true`.
+   */
+  streaming?: boolean;
   /** Increase VAD sensitivity (WS only). Maps to `high_vad_sensitivity` query param. */
   highVadSensitivity?: boolean;
   /** Enable flush signal events from server (WS only). Maps to `flush_signal` query param. */
@@ -102,6 +108,7 @@ export type STTOptions = STTV2Options | STTTranslateOptions | STTV3Options;
 interface ResolvedSTTOptions {
   apiKey: string;
   model: STTModels;
+  streaming: boolean;
   // saarika:v2.5 and saaras:v3 only — not used by saaras:v2.5 (translate auto-detects)
   languageCode?: STTLanguages | string;
   // saaras:v3 and saaras:v2.5 (translate)
@@ -163,6 +170,7 @@ function resolveOptions(opts: Partial<STTOptions>): ResolvedSTTOptions {
   const base: ResolvedSTTOptions = {
     apiKey,
     model,
+    streaming: opts.streaming ?? true,
     highVadSensitivity: opts.highVadSensitivity,
     flushSignal: opts.flushSignal,
   };
@@ -356,8 +364,13 @@ export class STT extends stt.STT {
    * @see {@link https://docs.sarvam.ai/api-reference-docs/speech-to-text-translate/translate | Sarvam STT Translate docs}
    */
   constructor(opts: Partial<STTOptions> = {}) {
-    super({ streaming: true, interimResults: false, alignedTranscript: false });
-    this.opts = resolveOptions(opts);
+    const resolved = resolveOptions(opts);
+    super({
+      streaming: resolved.streaming,
+      interimResults: false,
+      alignedTranscript: false,
+    });
+    this.opts = resolved;
   }
 
   updateOptions(opts: Partial<STTOptions>) {
@@ -366,6 +379,7 @@ export class STT extends stt.STT {
     const base: Partial<STTOptions> = modelChanging
       ? {
           apiKey: this.opts.apiKey,
+          streaming: this.opts.streaming,
           ...(this.opts.highVadSensitivity != null
             ? { highVadSensitivity: this.opts.highVadSensitivity }
             : {}),
@@ -427,6 +441,11 @@ export class STT extends stt.STT {
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
+    if (!this.capabilities.streaming) {
+      throw new Error(
+        'Sarvam STT streaming is disabled (`streaming: false`). Use recognize() for REST or wrap with stt.StreamAdapter + VAD for streaming behavior.',
+      );
+    }
     return new SpeechStream(this, this.opts, options?.connOptions);
   }
 }

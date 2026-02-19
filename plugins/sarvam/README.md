@@ -24,6 +24,20 @@ const tts = new sarvam.TTS({
 });
 ```
 
+### TTS (Prefer non-streaming REST over WebSocket)
+
+```typescript
+import * as sarvam from '@livekit/agents-plugin-sarvam';
+
+const tts = new sarvam.TTS({
+  model: 'bulbul:v2',
+  streaming: false,
+});
+```
+
+Setting `streaming: false` disables the plugin's native WebSocket streaming path.
+In an `AgentSession`, LiveKit will use sentence chunking + non-streaming `synthesize()` calls instead.
+
 ### STT (Transcribe)
 
 ```typescript
@@ -35,6 +49,20 @@ const stt = new sarvam.STT({
   mode: 'transcribe',
 });
 ```
+
+### STT (Prefer non-streaming REST over WebSocket)
+
+```typescript
+import * as sarvam from '@livekit/agents-plugin-sarvam';
+
+const stt = new sarvam.STT({
+  model: 'saaras:v3',
+  streaming: false,
+});
+```
+
+Setting `streaming: false` disables the plugin's native WebSocket streaming path.
+In an `AgentSession`, LiveKit will use VAD + non-streaming `recognize()` calls instead.
 
 ### STT (Translate — Indic to English)
 
@@ -51,11 +79,11 @@ Set the `SARVAM_API_KEY` environment variable or pass `apiKey` directly.
 
 ## STT Models
 
-| Model | Endpoint | Languages | Modes | Prompt |
-|-------|----------|-----------|-------|--------|
-| `saaras:v3` (default) | `/speech-to-text` | 22 (BCP-47) | Yes | No |
-| `saaras:v2.5` | `/speech-to-text-translate` | Auto-detect | No | Yes |
-| `saarika:v2.5` | `/speech-to-text` | 12 (BCP-47) | No | No |
+| Model                 | Endpoint                    | Languages   | Modes | Prompt |
+| --------------------- | --------------------------- | ----------- | ----- | ------ |
+| `saaras:v3` (default) | `/speech-to-text`           | 22 (BCP-47) | Yes   | No     |
+| `saaras:v2.5`         | `/speech-to-text-translate` | Auto-detect | No    | Yes    |
+| `saarika:v2.5`        | `/speech-to-text`           | 12 (BCP-47) | No    | No     |
 
 `saarika:v2.5` will be deprecated soon — all its languages are available in `saaras:v3`.
 
@@ -73,10 +101,10 @@ Set `languageCode` to `'unknown'` for automatic language detection.
 
 ## STT Modes (Saaras v3)
 
-| Mode | Description |
-|------|-------------|
+| Mode         | Description                                                        |
+| ------------ | ------------------------------------------------------------------ |
 | `transcribe` | Standard transcription with formatting and normalization (default) |
-| `translate` | Direct speech-to-English translation |
-| `verbatim` | Exact word-for-word transcription |
-| `translit` | Romanization to Latin script |
-| `codemix` | Mixed script (English words in English, Indic in native script) |
+| `translate`  | Direct speech-to-English translation                               |
+| `verbatim`   | Exact word-for-word transcription                                  |
+| `translit`   | Romanization to Latin script                                       |
+| `codemix`    | Mixed script (English words in English, Indic in native script)    |
