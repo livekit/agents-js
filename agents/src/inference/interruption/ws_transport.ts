@@ -37,20 +37,31 @@ export interface WsTransportState {
   cache: BoundedCache<number, InterruptionCacheEntry>;
 }
 
-const wsMessageSchema = z.union([
+const wsMessageSchema = z.discriminatedUnion('type', [
   z.object({
-    type: z.literal(MSG_SESSION_CREATED).or(z.literal(MSG_SESSION_CLOSED)),
+    type: z.literal(MSG_SESSION_CREATED),
   }),
   z.object({
-    type: z.literal(MSG_INTERRUPTION_DETECTED).or(z.literal(MSG_INFERENCE_DONE)),
-    created_at: z.number().optional(),
-    probabilities: z.array(z.number()).optional(),
-    prediction_duration: z.number().optional(),
+    type: z.literal(MSG_SESSION_CLOSED),
+  }),
+  z.object({
+    type: z.literal(MSG_INTERRUPTION_DETECTED),
+    created_at: z.number(),
+    probabilities: z.array(z.number()).default([]),
+    prediction_duration: z.number().default(0),
+  }),
+  z.object({
+    type: z.literal(MSG_INFERENCE_DONE),
+    created_at: z.number(),
+    probabilities: z.array(z.number()).default([]),
+    prediction_duration: z.number().default(0),
     is_bargein: z.boolean().optional(),
   }),
   z.object({
-    type: z.literal('error'),
+    type: z.literal(MSG_ERROR),
     message: z.string(),
+    code: z.number().optional(),
+    session_id: z.string().optional(),
   }),
 ]);
 
@@ -177,19 +188,32 @@ export function createWsTransport(
         break;
 
       case MSG_INTERRUPTION_DETECTED: {
-        const createdAt = message.created_at ?? 0;
-        if (state.overlapSpeechStarted && state.overlapSpeechStartedAt !== undefined) {
+        const createdAt = message.created_at;
+        const overlapSpeechStartedAt = state.overlapSpeechStartedAt;
+        if (state.overlapSpeechStarted && overlapSpeechStartedAt !== undefined) {
           const existing = state.cache.get(createdAt);
-          const entry = new InterruptionCacheEntry({
+
+          // prediction_duration in WS payload is seconds.
+          // total_duration should be measured from local send-time to avoid unit ambiguity
+          // of created_at across runtimes/protocol variants.
+          const totalDurationInS =
+            existing?.requestStartedAt !== undefined
+              ? (performance.now() - existing.requestStartedAt) / 1000
+              : (performance.now() - createdAt) / 1000;
+
+          const entry = state.cache.setOrUpdate(
             createdAt,
-            speechInput: existing?.speechInput,
-            totalDurationInS: (performance.now() - createdAt) / 1000,
-            probabilities: message.probabilities,
-            isInterruption: true,
-            predictionDurationInS: message.prediction_duration ?? 0,
-            detectionDelayInS: (Date.now() - state.overlapSpeechStartedAt) / 1000,
-          });
-          state.cache.set(createdAt, entry);
+            () => new InterruptionCacheEntry({ createdAt }),
+            {
+              speechInput: existing?.speechInput,
+              requestStartedAt: existing?.requestStartedAt,
+              totalDurationInS,
+              probabilities: message.probabilities,
+              isInterruption: true,
+              predictionDurationInS: message.prediction_duration,
+              detectionDelayInS: (Date.now() - overlapSpeechStartedAt) / 1000,
+            },
+          );
 
           if (updateUserSpeakingSpan) {
             updateUserSpeakingSpan(entry);
@@ -211,7 +235,7 @@ export function createWsTransport(
             isInterruption: true,
             totalDurationInS: entry.totalDurationInS,
             predictionDurationInS: entry.predictionDurationInS,
-            overlapSpeechStartedAt: state.overlapSpeechStartedAt,
+            overlapSpeechStartedAt,
             speechInput: entry.speechInput,
             probabilities: entry.probabilities,
             detectionDelayInS: entry.detectionDelayInS,
@@ -225,19 +249,27 @@ export function createWsTransport(
       }
 
       case MSG_INFERENCE_DONE: {
-        const createdAt = message.created_at ?? 0;
-        if (state.overlapSpeechStartedAt !== undefined) {
+        const createdAt = message.created_at;
+        const overlapSpeechStartedAt = state.overlapSpeechStartedAt;
+        if (state.overlapSpeechStarted && overlapSpeechStartedAt !== undefined) {
           const existing = state.cache.get(createdAt);
-          const entry = new InterruptionCacheEntry({
+          const totalDurationInS =
+            existing?.requestStartedAt !== undefined
+              ? (performance.now() - existing.requestStartedAt) / 1000
+              : (performance.now() - createdAt) / 1000;
+          const entry = state.cache.setOrUpdate(
             createdAt,
-            speechInput: existing?.speechInput,
-            totalDurationInS: (performance.now() - createdAt) / 1000,
-            predictionDurationInS: message.prediction_duration ?? 0,
-            probabilities: message.probabilities,
-            isInterruption: message.is_bargein ?? false,
-            detectionDelayInS: (Date.now() - state.overlapSpeechStartedAt) / 1000,
-          });
-          state.cache.set(createdAt, entry);
+            () => new InterruptionCacheEntry({ createdAt }),
+            {
+              speechInput: existing?.speechInput,
+              requestStartedAt: existing?.requestStartedAt,
+              totalDurationInS,
+              predictionDurationInS: message.prediction_duration,
+              probabilities: message.probabilities,
+              isInterruption: message.is_bargein ?? false,
+              detectionDelayInS: (Date.now() - overlapSpeechStartedAt) / 1000,
+            },
+          );
 
           logger.debug(
             {
@@ -255,7 +287,13 @@ export function createWsTransport(
         break;
 
       case MSG_ERROR:
-        outputController?.error(new Error(`LiveKit Interruption error: ${message.message}`));
+        outputController?.error(
+          new Error(
+            `LiveKit Adaptive Interruption error${
+              message.code !== undefined ? ` (${message.code})` : ''
+            }: ${message.message}`,
+          ),
+        );
         break;
     }
   }
@@ -271,7 +309,14 @@ export function createWsTransport(
     const createdAt = Math.floor(performance.now());
 
     // Store the audio data in cache with truncated timestamp
-    state.cache.set(createdAt, new InterruptionCacheEntry({ createdAt, speechInput: audioSlice }));
+    state.cache.set(
+      createdAt,
+      new InterruptionCacheEntry({
+        createdAt,
+        requestStartedAt: performance.now(),
+        speechInput: audioSlice,
+      }),
+    );
 
     // Create header: 8-byte little-endian uint64 timestamp (milliseconds as integer)
     const header = new ArrayBuffer(8);

@@ -9,6 +9,7 @@ import { estimateProbability } from './utils.js';
  */
 export class InterruptionCacheEntry {
   createdAt: number;
+  requestStartedAt?: number;
   totalDurationInS: number;
   predictionDurationInS: number;
   detectionDelayInS: number;
@@ -18,6 +19,7 @@ export class InterruptionCacheEntry {
 
   constructor(params: {
     createdAt: number;
+    requestStartedAt?: number;
     speechInput?: Int16Array;
     totalDurationInS?: number;
     predictionDurationInS?: number;
@@ -26,6 +28,7 @@ export class InterruptionCacheEntry {
     isInterruption?: boolean;
   }) {
     this.createdAt = params.createdAt;
+    this.requestStartedAt = params.requestStartedAt;
     this.totalDurationInS = params.totalDurationInS ?? 0;
     this.predictionDurationInS = params.predictionDurationInS ?? 0;
     this.detectionDelayInS = params.detectionDelayInS ?? 0;

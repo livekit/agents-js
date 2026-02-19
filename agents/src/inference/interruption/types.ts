@@ -66,12 +66,17 @@ export interface AgentSpeechEnded {
 
 export interface OverlapSpeechStarted {
   type: 'overlap-speech-started';
-  speechDurationInS: number;
+  /** Duration of the speech segment in milliseconds (matches VADEvent.speechDuration units). */
+  speechDuration: number;
+  /** Absolute timestamp (ms) when overlap speech started, computed at call-site. */
+  startedAt: number;
   userSpeakingSpan?: Span;
 }
 
 export interface OverlapSpeechEnded {
   type: 'overlap-speech-ended';
+  /** Absolute timestamp (ms) when overlap speech ended, used as the non-interruption event timestamp. */
+  endedAt: number;
 }
 
 export interface Flush {

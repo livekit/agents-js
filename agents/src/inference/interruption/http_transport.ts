@@ -120,7 +120,8 @@ export function createHttpTransport(
         }
 
         const state = getState();
-        if (!state.overlapSpeechStartedAt) return;
+        const overlapSpeechStartedAt = state.overlapSpeechStartedAt;
+        if (overlapSpeechStartedAt === undefined || !state.overlapSpeechStarted) return;
 
         try {
           const resp = await predictHTTP(
@@ -135,16 +136,18 @@ export function createHttpTransport(
           );
 
           const { createdAt, isBargein, probabilities, predictionDurationInS } = resp;
-          const entry = new InterruptionCacheEntry({
+          const entry = state.cache.setOrUpdate(
             createdAt,
-            probabilities,
-            isInterruption: isBargein,
-            speechInput: chunk,
-            totalDurationInS: (performance.now() - createdAt) / 1000,
-            detectionDelayInS: (Date.now() - state.overlapSpeechStartedAt) / 1000,
-            predictionDurationInS,
-          });
-          state.cache.set(createdAt, entry);
+            () => new InterruptionCacheEntry({ createdAt }),
+            {
+              probabilities,
+              isInterruption: isBargein,
+              speechInput: chunk,
+              totalDurationInS: (performance.now() - createdAt) / 1000,
+              detectionDelayInS: (Date.now() - overlapSpeechStartedAt) / 1000,
+              predictionDurationInS,
+            },
+          );
 
           if (state.overlapSpeechStarted && entry.isInterruption) {
             if (updateUserSpeakingSpan) {
@@ -153,7 +156,7 @@ export function createHttpTransport(
             const event: InterruptionEvent = {
               type: InterruptionEventType.INTERRUPTION,
               timestamp: Date.now(),
-              overlapSpeechStartedAt: state.overlapSpeechStartedAt,
+              overlapSpeechStartedAt,
               isInterruption: entry.isInterruption,
               speechInput: entry.speechInput,
               probabilities: entry.probabilities,
