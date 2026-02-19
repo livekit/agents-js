@@ -302,6 +302,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.resolveInstructionsReady();
     this.closeCurrentGeneration({ interrupted: false });
     this.socket?.close();
     await this.connectTask;
@@ -331,6 +332,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     await this.socket.waitForOpen();
     await this.instructionsReady;
+    if (this.closed) return;
     this.configSent = true;
     this.socket.sendConfig({
       type: 'config',
