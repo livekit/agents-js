@@ -488,7 +488,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       messageId: responseId,
       textStream: textChannel.stream(),
       audioStream: audioChannel.stream(),
-      modalities: Promise.resolve(['audio']),
+      modalities: Promise.resolve(['audio', 'text']),
     });
 
     this.currentGeneration = {
