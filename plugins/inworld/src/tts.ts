@@ -12,7 +12,10 @@ import {
   tts,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
+import { randomUUID } from 'node:crypto';
 import { type RawData, WebSocket } from 'ws';
+
+const USER_AGENT = 'livekit-agents-js';
 
 const DEFAULT_BIT_RATE = 64000;
 const DEFAULT_ENCODING = 'LINEAR16';
@@ -216,13 +219,19 @@ class WSConnectionPool {
       if (wsUrl.protocol === 'https:') wsUrl.protocol = 'wss:';
       else if (wsUrl.protocol === 'http:') wsUrl.protocol = 'ws:';
 
+      const requestId = randomUUID();
       const ws = new WebSocket(wsUrl.toString(), {
-        headers: { Authorization: this.#auth },
+        headers: {
+          Authorization: this.#auth,
+          'X-User-Agent': USER_AGENT,
+          'X-Request-Id': requestId,
+        },
       });
 
       ws.on('open', () => {
         this.#ws = ws;
         this.#connecting = undefined;
+        this.#logger.debug({ requestId }, 'Established Inworld TTS WebSocket connection');
         resolve(ws);
       });
 
@@ -230,7 +239,7 @@ class WSConnectionPool {
         if (this.#connecting) {
           reject(err);
         } else {
-          this.#logger.error({ err }, 'Inworld WebSocket error');
+          this.#logger.error({ err, requestId }, 'Inworld WebSocket error');
         }
       });
 
@@ -317,17 +326,20 @@ export class TTS extends tts.TTS {
       url.searchParams.set('filter', `language=${language}`);
     }
 
+    const requestId = randomUUID();
     const response = await fetch(url.toString(), {
       method: 'GET',
       headers: {
         Authorization: this.#authorization,
+        'X-User-Agent': USER_AGENT,
+        'X-Request-Id': requestId,
       },
     });
 
     if (!response.ok) {
       const errorBody = await response.json().catch(() => ({}));
       throw new Error(
-        `Inworld API error: ${response.status} ${response.statusText}${errorBody.message ? ` - ${errorBody.message}` : ''}`,
+        `Inworld API error: ${response.status} ${response.statusText}${errorBody.message ? ` - ${errorBody.message}` : ''} (request_id=${requestId})`,
       );
     }
 
@@ -400,6 +412,7 @@ class ChunkedStream extends tts.ChunkedStream {
 
     const url = new URL('tts/v1/voice:stream', this.#opts.baseURL);
 
+    const requestId = randomUUID();
     let response: Response;
     try {
       response = await fetch(url.toString(), {
@@ -407,6 +420,8 @@ class ChunkedStream extends tts.ChunkedStream {
         headers: {
           Authorization: this.#tts.authorization,
           'Content-Type': 'application/json',
+          'X-User-Agent': USER_AGENT,
+          'X-Request-Id': requestId,
         },
         body: JSON.stringify(bodyParams),
         signal: this.abortSignal,
@@ -419,7 +434,9 @@ class ChunkedStream extends tts.ChunkedStream {
     }
 
     if (!response.ok) {
-      throw new Error(`Inworld API error: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `Inworld API error: ${response.status} ${response.statusText} (request_id=${requestId})`,
+      );
     }
 
     if (!response.body) {
@@ -430,7 +447,7 @@ class ChunkedStream extends tts.ChunkedStream {
     const decoder = new TextDecoder();
     let buffer = '';
 
-    const requestId = shortuuid();
+    const segmentId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
 
     while (true) {
@@ -459,8 +476,8 @@ class ChunkedStream extends tts.ChunkedStream {
                   pcmData.buffer.slice(pcmData.byteOffset, pcmData.byteOffset + pcmData.byteLength),
                 )) {
                   this.queue.put({
-                    requestId,
-                    segmentId: requestId,
+                    requestId: segmentId,
+                    segmentId,
                     frame,
                     final: false,
                   });
@@ -479,8 +496,8 @@ class ChunkedStream extends tts.ChunkedStream {
     // Flush remaining frames
     for (const frame of bstream.flush()) {
       this.queue.put({
-        requestId,
-        segmentId: requestId,
+        requestId: segmentId,
+        segmentId,
         frame,
         final: false,
       });

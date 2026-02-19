@@ -62,6 +62,7 @@ import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
+import { setParticipantSpanAttributes } from './utils.js';
 
 export interface VoiceOptions {
   allowInterruptions: boolean;
@@ -131,7 +132,8 @@ export class AgentSession<
   private started = false;
   private userState: UserState = 'listening';
 
-  private roomIO?: RoomIO;
+  /** @internal */
+  _roomIO?: RoomIO;
   private logger = log();
 
   private _chatCtx: ChatContext;
@@ -294,7 +296,7 @@ export class AgentSession<
 
     const tasks: Promise<void>[] = [];
 
-    if (room && !this.roomIO) {
+    if (room && !this._roomIO) {
       // Check for existing input/output configuration and warn if needed
       if (this.input.audio && inputOptions?.audioEnabled !== false) {
         this.logger.warn(
@@ -314,13 +316,13 @@ export class AgentSession<
         );
       }
 
-      this.roomIO = new RoomIO({
+      this._roomIO = new RoomIO({
         agentSession: this,
         room,
         inputOptions,
         outputOptions,
       });
-      this.roomIO.start();
+      this._roomIO.start();
     }
 
     let ctx: JobContext | undefined = undefined;
@@ -700,8 +702,10 @@ export class AgentSession<
           startTime: options?.startTime,
         });
 
-        // TODO(brian): PR4 - Set participant attributes if roomIO.room.localParticipant is available
-        // (Ref: Python agent_session.py line 1161-1164)
+        const localParticipant = this._roomIO?.localParticipant;
+        if (localParticipant) {
+          setParticipantSpanAttributes(this.agentSpeakingSpan, localParticipant);
+        }
       }
     } else if (this.agentSpeakingSpan !== undefined) {
       // TODO(brian): PR4 - Set ATTR_END_TIME attribute if available
@@ -738,8 +742,10 @@ export class AgentSession<
         startTime: lastSpeakingTime,
       });
 
-      // TODO(brian): PR4 - Set participant attributes if roomIO.linkedParticipant is available
-      // (Ref: Python agent_session.py line 1192-1195)
+      const linked = this._roomIO?.linkedParticipant;
+      if (linked) {
+        setParticipantSpanAttributes(this.userSpeakingSpan, linked);
+      }
     } else if (this.userSpeakingSpan !== undefined) {
       this.userSpeakingSpan.end(lastSpeakingTime);
       this.userSpeakingSpan = undefined;
@@ -783,7 +789,7 @@ export class AgentSession<
       return;
     }
 
-    if (this.roomIO && !this.roomIO.isParticipantAvailable) {
+    if (this._roomIO && !this._roomIO.isParticipantAvailable) {
       return;
     }
 
@@ -862,8 +868,8 @@ export class AgentSession<
     this.output.audio = null;
     this.output.transcription = null;
 
-    await this.roomIO?.close();
-    this.roomIO = undefined;
+    await this._roomIO?.close();
+    this._roomIO = undefined;
 
     await this.activity?.close();
     this.activity = undefined;
