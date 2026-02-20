@@ -14,7 +14,7 @@ class OpenAIPlugin extends Plugin {
     super({
       title: 'openai',
       version: __PACKAGE_VERSION__,
-      package: '@livekit/agents-plugin-openai',
+      package: __PACKAGE_NAME__,
     });
   }
 }

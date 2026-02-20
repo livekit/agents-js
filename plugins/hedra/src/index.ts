@@ -10,7 +10,7 @@ class HedraPlugin extends Plugin {
     super({
       title: 'hedra',
       version: __PACKAGE_VERSION__,
-      package: '@livekit/agents-plugin-hedra',
+      package: __PACKAGE_NAME__,
     });
   }
 }

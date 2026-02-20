@@ -16,6 +16,7 @@ const defaultOptions: Options = {
   bundle: false,
   shims: true,
   define: {
+    __PACKAGE_NAME__: JSON.stringify(pkg.name),
     __PACKAGE_VERSION__: JSON.stringify(pkg.version),
   },
   esbuildOptions: (options, context) => {

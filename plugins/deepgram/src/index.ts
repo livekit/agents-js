@@ -12,7 +12,7 @@ class DeepgramPlugin extends Plugin {
     super({
       title: 'deepgram',
       version: __PACKAGE_VERSION__,
-      package: '@livekit/agents-plugin-deepgram',
+      package: __PACKAGE_NAME__,
     });
   }
 }

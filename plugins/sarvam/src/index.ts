@@ -26,7 +26,7 @@ class SarvamPlugin extends Plugin {
     super({
       title: 'sarvam',
       version: __PACKAGE_VERSION__,
-      package: '@livekit/agents-plugin-sarvam',
+      package: __PACKAGE_NAME__,
     });
   }
 }

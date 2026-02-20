@@ -11,7 +11,7 @@ class RimePlugin extends Plugin {
     super({
       title: 'rime',
       version: __PACKAGE_VERSION__,
-      package: '@livekit/agents-plugin-rime',
+      package: __PACKAGE_NAME__,
     });
   }
 }

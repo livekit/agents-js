@@ -10,7 +10,7 @@ class LemonSlicePlugin extends Plugin {
     super({
       title: 'lemonslice',
       version: __PACKAGE_VERSION__,
-      package: '@livekit/agents-plugin-lemonslice',
+      package: __PACKAGE_NAME__,
     });
   }
 }

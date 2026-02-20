@@ -12,7 +12,7 @@ class GooglePlugin extends Plugin {
     super({
       title: 'google',
       version: __PACKAGE_VERSION__,
-      package: '@livekit/agents-plugin-google',
+      package: __PACKAGE_NAME__,
     });
   }
 }

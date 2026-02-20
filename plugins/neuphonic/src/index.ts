@@ -10,7 +10,7 @@ class NeurophonicPlugin extends Plugin {
     super({
       title: 'neuphonic',
       version: __PACKAGE_VERSION__,
-      package: '@livekit/agents-plugin-neuphonic',
+      package: __PACKAGE_NAME__,
     });
   }
 }

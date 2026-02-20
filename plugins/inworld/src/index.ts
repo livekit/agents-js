@@ -11,7 +11,7 @@ class InworldPlugin extends Plugin {
     super({
       title: 'Inworld',
       version: __PACKAGE_VERSION__,
-      package: '@livekit/agents-plugin-inworld',
+      package: __PACKAGE_NAME__,
     });
   }
 }

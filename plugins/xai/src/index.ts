@@ -10,7 +10,7 @@ class XAIPlugin extends Plugin {
     super({
       title: 'xai',
       version: __PACKAGE_VERSION__,
-      package: '@livekit/agents-plugin-xai',
+      package: __PACKAGE_NAME__,
     });
   }
 }

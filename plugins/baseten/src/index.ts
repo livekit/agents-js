@@ -12,7 +12,7 @@ class BasetenPlugin extends Plugin {
     super({
       title: 'baseten',
       version: __PACKAGE_VERSION__,
-      package: 'livekit-plugin-baseten',
+      package: __PACKAGE_NAME__,
     });
   }
 }

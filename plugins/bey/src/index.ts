@@ -10,7 +10,7 @@ class BeyPlugin extends Plugin {
     super({
       title: 'bey',
       version: __PACKAGE_VERSION__,
-      package: '@livekit/agents-plugin-bey',
+      package: __PACKAGE_NAME__,
     });
   }
 }
