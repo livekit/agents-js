@@ -241,6 +241,7 @@ export class InterruptionStreamBase {
             startIdx = 0;
             cache.clear();
           } else if (chunk.type === 'overlap-speech-started' && agentSpeechStarted) {
+            this.overlapSpeechStartedAt = chunk.startedAt;
             this.userSpeakingSpan = chunk.userSpeakingSpan;
             this.logger.debug('overlap speech started, starting interruption inference');
             overlapSpeechStarted = true;
@@ -265,14 +266,14 @@ export class InterruptionStreamBase {
               this.userSpeakingSpan = undefined;
               // Use pop with predicate to get only completed requests (matching Python behavior)
               // This ensures we don't return incomplete/in-flight requests as the "final" result
-              let latestEntry = cache.popIf(
+              let latestEntry = cache.pop(
                 (entry) => entry.totalDurationInS !== undefined && entry.totalDurationInS > 0,
               );
-              if (!latestEntry[1]) {
+              if (!latestEntry) {
                 this.logger.debug('no request made for overlap speech');
-                latestEntry = [undefined, InterruptionCacheEntry.default()];
+                latestEntry = InterruptionCacheEntry.default();
               }
-              const latestEntryValue = latestEntry[1] ?? InterruptionCacheEntry.default();
+              const latestEntryValue = latestEntry ?? InterruptionCacheEntry.default();
               const event: InterruptionEvent = {
                 type: InterruptionEventType.OVERLAP_SPEECH_ENDED,
                 timestamp: chunk.endedAt,
@@ -354,11 +355,6 @@ export class InterruptionStreamBase {
   async pushFrame(frame: InterruptionSentinel | AudioFrame): Promise<void> {
     this.ensureStreamsNotEnded();
     if (!(frame instanceof AudioFrame)) {
-      if (frame.type === 'overlap-speech-started') {
-        // Use the absolute startedAt timestamp from the sentinel directly (computed at call-site).
-        // Ref: python livekit-agents/.../inference/interruption.py _OverlapSpeechStartedSentinel._started_at
-        this.overlapSpeechStartedAt = frame.startedAt;
-      }
       return this.inputStream.write(frame);
     } else if (this.options.sampleRate !== frame.sampleRate) {
       const resampler = this.getResamplerFor(frame.sampleRate);

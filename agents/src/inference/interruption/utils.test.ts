@@ -76,7 +76,7 @@ describe('BoundedCache', () => {
     expect(result?.predictionDurationInS).toBe(0.1);
   });
 
-  it('pop without predicate removes the last inserted entry', () => {
+  it('pop without predicate removes the oldest entry (python parity)', () => {
     const cache = new BoundedCache<number, Entry>(10);
     cache.set(1, new Entry(1));
     cache.set(2, new Entry(2));
@@ -84,8 +84,8 @@ describe('BoundedCache', () => {
 
     const popped = cache.pop();
 
-    expect(popped?.createdAt).toBe(3);
-    expect([...cache.keys()]).toEqual([1, 2]);
+    expect(popped?.createdAt).toBe(1);
+    expect([...cache.keys()]).toEqual([2, 3]);
   });
 
   it('pop with predicate removes the most recent matching entry', () => {
@@ -116,50 +116,6 @@ describe('BoundedCache', () => {
     const popped = cache.pop((entry) => (entry.totalDurationInS ?? 0) > 10);
 
     expect(popped).toBeUndefined();
-    expect(cache.size).toBe(1);
-  });
-
-  it('popIf without predicate removes the oldest entry (python parity)', () => {
-    const cache = new BoundedCache<number, Entry>(10);
-    cache.set(1, new Entry(1));
-    cache.set(2, new Entry(2));
-    cache.set(3, new Entry(3));
-
-    const [key, value] = cache.popIf();
-
-    expect(key).toBe(1);
-    expect(value?.createdAt).toBe(1);
-    expect([...cache.keys()]).toEqual([2, 3]);
-  });
-
-  it('popIf with predicate removes the most recent matching entry', () => {
-    const cache = new BoundedCache<number, Entry>(10);
-    const e1 = new Entry(1);
-    e1.totalDurationInS = 0;
-    const e2 = new Entry(2);
-    e2.totalDurationInS = 1;
-    const e3 = new Entry(3);
-    e3.totalDurationInS = 2;
-    cache.set(1, e1);
-    cache.set(2, e2);
-    cache.set(3, e3);
-
-    const [key, value] = cache.popIf((entry) => (entry.totalDurationInS ?? 0) > 0);
-
-    expect(key).toBe(3);
-    expect(value?.createdAt).toBe(3);
-    expect(value?.totalDurationInS).toBe(2);
-    expect([...cache.keys()]).toEqual([1, 2]);
-  });
-
-  it('popIf with predicate returns [undefined, undefined] when no match exists', () => {
-    const cache = new BoundedCache<number, Entry>(10);
-    cache.set(1, new Entry(1));
-
-    const [key, value] = cache.popIf((entry) => (entry.totalDurationInS ?? 0) > 0);
-
-    expect(key).toBeUndefined();
-    expect(value).toBeUndefined();
     expect(cache.size).toBe(1);
   });
 

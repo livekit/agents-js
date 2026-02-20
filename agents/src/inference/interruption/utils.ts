@@ -70,21 +70,19 @@ export class BoundedCache<K, V extends object> {
   }
 
   /**
-   * Pop the last entry that matches the predicate, or return undefined.
-   * Only removes and returns the matching entry, preserving others.
+   * Pop an entry if it satisfies the predicate.
+   * - No predicate: pop oldest (FIFO)
+   * - With predicate: search in reverse order and pop first match
    */
   pop(predicate?: (value: V) => boolean): V | undefined {
     if (predicate === undefined) {
-      // Pop the last (most recent) entry
-      const keys = Array.from(this.cache.keys());
-      if (keys.length === 0) return undefined;
-      const lastKey = keys[keys.length - 1]!;
-      const value = this.cache.get(lastKey);
-      this.cache.delete(lastKey);
+      const first = this.cache.entries().next().value as [K, V] | undefined;
+      if (!first) return undefined;
+      const [key, value] = first;
+      this.cache.delete(key);
       return value;
     }
 
-    // Find the last entry matching the predicate (iterating in reverse)
     const keys = Array.from(this.cache.keys());
     for (let i = keys.length - 1; i >= 0; i--) {
       const key = keys[i]!;
@@ -95,31 +93,6 @@ export class BoundedCache<K, V extends object> {
       }
     }
     return undefined;
-  }
-
-  /**
-   * Pop a key/value pair if it satisfies the predicate.
-   * Mirrors python BoundedDict.pop_if behavior.
-   */
-  popIf(predicate?: (value: V) => boolean): [K | undefined, V | undefined] {
-    if (predicate === undefined) {
-      const first = this.cache.entries().next().value as [K, V] | undefined;
-      if (!first) return [undefined, undefined];
-      const [key, value] = first;
-      this.cache.delete(key);
-      return [key, value];
-    }
-
-    const keys = Array.from(this.cache.keys());
-    for (let i = keys.length - 1; i >= 0; i--) {
-      const key = keys[i]!;
-      const value = this.cache.get(key)!;
-      if (predicate(value)) {
-        this.cache.delete(key);
-        return [key, value];
-      }
-    }
-    return [undefined, undefined];
   }
 
   clear(): void {
