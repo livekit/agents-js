@@ -10,8 +10,8 @@ class ElevenLabsPlugin extends Plugin {
   constructor() {
     super({
       title: 'elevenlabs',
-      version: '0.6.2',
-      package: '@livekit/agents-plugin-elevenlabs',
+      version: __PACKAGE_VERSION__,
+      package: __PACKAGE_NAME__,
     });
   }
 }

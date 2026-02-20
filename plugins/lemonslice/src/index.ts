@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Plugin } from '@livekit/agents';
-import { version } from './version.js';
 
 export * from './avatar.js';
 
@@ -10,8 +9,8 @@ class LemonSlicePlugin extends Plugin {
   constructor() {
     super({
       title: 'lemonslice',
-      version,
-      package: '@livekit/agents-plugin-lemonslice',
+      version: __PACKAGE_VERSION__,
+      package: __PACKAGE_NAME__,
     });
   }
 }

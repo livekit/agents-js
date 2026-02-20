@@ -11,8 +11,8 @@ class DeepgramPlugin extends Plugin {
   constructor() {
     super({
       title: 'deepgram',
-      version: '0.5.6',
-      package: '@livekit/agents-plugin-deepgram',
+      version: __PACKAGE_VERSION__,
+      package: __PACKAGE_NAME__,
     });
   }
 }

@@ -9,8 +9,8 @@ class NeurophonicPlugin extends Plugin {
   constructor() {
     super({
       title: 'neuphonic',
-      version: '0.1.0',
-      package: '@livekit/agents-plugin-neuphonic',
+      version: __PACKAGE_VERSION__,
+      package: __PACKAGE_NAME__,
     });
   }
 }
