@@ -1,5 +1,15 @@
 # @livekit/agents
 
+## 1.0.46
+
+### Patch Changes
+
+- feat: Create MultiInputStream API primitive - [#1036](https://github.com/livekit/agents-js/pull/1036) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add comprehensive user span instrumentations - [#1027](https://github.com/livekit/agents-js/pull/1027) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add phonic realtime model - [#1062](https://github.com/livekit/agents-js/pull/1062) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.45
 
 ### Patch Changes
