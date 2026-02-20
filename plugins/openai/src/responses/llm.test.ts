@@ -9,8 +9,9 @@ describe('OpenAI Responses', async () => {
   await llm(
     new LLM({
       temperature: 0,
+      strictToolSchema: false,
     }),
-    false,
+    true,
   );
 });
 
