@@ -377,8 +377,9 @@ export function createWsTransport(
           return;
         }
 
+        // Only forwards buffered audio while overlap speech is actively on.
         const state = getState();
-        if (!state.overlapSpeechStartedAt) return;
+        if (!state.overlapSpeechStartedAt || !state.overlapSpeechStarted) return;
 
         try {
           sendAudioData(chunk);

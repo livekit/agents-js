@@ -1107,5 +1107,7 @@ export class AudioRecognition {
     if (this.turnDetectionMode === undefined || this.turnDetectionMode === 'vad') {
       return true;
     }
+
+    return false;
   }
 }
