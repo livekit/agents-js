@@ -1,7 +1,7 @@
 {
-  "name": "@livekit/agents-plugin-resemble",
+  "name": "@livekit/agents-plugin-phonic",
   "version": "1.0.46",
-  "description": "Resemble plugin for LiveKit Node Agents",
+  "description": "Phonic STS plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",
@@ -34,17 +34,14 @@
     "api:update": "api-extractor run --local --typescript-compiler-folder ../../node_modules/typescript --verbose"
   },
   "devDependencies": {
-    "@livekit/agents": "workspace:^",
-    "@livekit/agents-plugin-openai": "workspace:^",
-    "@livekit/agents-plugins-test": "workspace:^",
+    "@livekit/agents": "workspace:*",
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
-    "@types/ws": "^8.5.10",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "ws": "^8.16.0"
+    "phonic": "^0.30.37"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",

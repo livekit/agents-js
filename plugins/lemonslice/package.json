@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-lemonslice",
-  "version": "1.0.44",
+  "version": "1.0.46",
   "description": "LemonSlice avatar plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

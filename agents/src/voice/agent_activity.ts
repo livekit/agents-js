@@ -80,6 +80,7 @@ import {
 } from './generation.js';
 import type { TimedString } from './io.js';
 import { SpeechHandle } from './speech_handle.js';
+import { setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
 
@@ -371,6 +372,17 @@ export class AgentActivity implements RecognitionHooks {
 
   get stt(): STT | undefined {
     return this.agent.stt || this.agentSession.stt;
+  }
+
+  private getSttProvider(): string | undefined {
+    const label = this.stt?.label;
+    if (!label) {
+      return undefined;
+    }
+
+    // Heuristic: most labels look like "<provider>-<model>"
+    const [provider] = label.split('-', 1);
+    return provider || label;
   }
 
   get llm(): LLM | RealtimeModel | undefined {
@@ -1465,6 +1477,11 @@ export class AgentActivity implements RecognitionHooks {
       span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.textContent || '');
     }
 
+    const localParticipant = this.agentSession._roomIO?.localParticipant;
+    if (localParticipant) {
+      setParticipantSpanAttributes(span, localParticipant);
+    }
+
     speechHandleStorage.enterWith(speechHandle);
 
     const audioOutput = this.agentSession.output.audioEnabled
@@ -1890,6 +1907,11 @@ export class AgentActivity implements RecognitionHooks {
     speechHandle._agentTurnContext = otelContext.active();
 
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
+
+    const localParticipant = this.agentSession._roomIO?.localParticipant;
+    if (localParticipant) {
+      setParticipantSpanAttributes(span, localParticipant);
+    }
 
     speechHandleStorage.enterWith(speechHandle);
 
