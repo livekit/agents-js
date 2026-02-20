@@ -2208,6 +2208,10 @@ export class AgentActivity implements RecognitionHooks {
     if (!ignoreTaskSwitch && newAgentTask !== null) {
       this.agentSession.updateAgent(newAgentTask);
       draining = true;
+      // Skip chat context update and reply creation - the new agent will handle this.
+      // The old realtime session is being closed by updateAgent(), so we cannot
+      // continue using this.realtimeSession after this point.
+      return;
     }
 
     if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
