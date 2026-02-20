@@ -12,7 +12,7 @@ class EOUPlugin extends Plugin {
   constructor() {
     super({
       title: 'turn-detector',
-      version: '0.1.1',
+      version: __PACKAGE_VERSION__,
       package: '@livekit/agents-plugin-livekit',
     });
   }

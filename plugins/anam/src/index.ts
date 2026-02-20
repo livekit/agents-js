@@ -11,7 +11,7 @@ class AnamPlugin extends Plugin {
   constructor() {
     super({
       title: 'anam',
-      version: '0.0.1',
+      version: __PACKAGE_VERSION__,
       package: '@livekit/agents-plugin-anam',
     });
   }

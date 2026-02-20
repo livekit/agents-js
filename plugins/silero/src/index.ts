@@ -9,7 +9,7 @@ class SileroPlugin extends Plugin {
   constructor() {
     super({
       title: 'silero',
-      version: '0.5.6',
+      version: __PACKAGE_VERSION__,
       package: '@livekit/agents-plugin-silero',
     });
   }

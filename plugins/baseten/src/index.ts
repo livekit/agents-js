@@ -11,7 +11,7 @@ class BasetenPlugin extends Plugin {
   constructor() {
     super({
       title: 'baseten',
-      version: '1.0.0',
+      version: __PACKAGE_VERSION__,
       package: 'livekit-plugin-baseten',
     });
   }
