@@ -183,7 +183,15 @@ export class RoomIO {
       return;
     }
 
-    const participant = await this.participantAvailableFuture.await;
+    const onAbort = new Promise<void>((resolve) => {
+      signal.addEventListener('abort', () => resolve(), { once: true });
+    });
+    const participant = await Promise.race([this.participantAvailableFuture.await, onAbort]);
+
+    if (!participant) {
+      return;
+    }
+
     this.setParticipant(participant.identity);
 
     // init agent outputs
