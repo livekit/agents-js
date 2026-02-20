@@ -128,6 +128,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       // TODO @Phonic-Co: Implement tool support
       // Phonic has automatic tool reply generation, but tools are not supported with LiveKit Agents yet.
       autoToolReplyGeneration: true,
+      manualFunctionCalls: false,
       audioOutput: true,
     });
 

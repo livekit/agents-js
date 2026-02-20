@@ -35,7 +35,7 @@ import type {
   TTSMetrics,
   VADMetrics,
 } from '../metrics/base.js';
-import { DeferredReadableStream } from '../stream/deferred_stream.js';
+import { MultiInputStream } from '../stream/multi_input_stream.js';
 import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
@@ -113,7 +113,9 @@ export class AgentActivity implements RecognitionHooks {
   private q_updated: Future;
   private speechTasks: Set<Task<void>> = new Set();
   private lock = new Mutex();
-  private audioStream = new DeferredReadableStream<AudioFrame>();
+  private audioStream = new MultiInputStream<AudioFrame>();
+  private audioStreamId?: string;
+
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
   private _preemptiveGeneration?: PreemptiveGeneration;
@@ -452,23 +454,10 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   attachAudioInput(audioStream: ReadableStream<AudioFrame>): void {
-    const currentDeferredStream = this.audioStream;
-    if (currentDeferredStream.isSourceSet) {
-      this.logger.debug('detaching existing audio input in agent activity');
-      void currentDeferredStream.detachSource().catch((error) => {
-        this.logger.debug({ error }, 'error detaching existing audio input in agent activity');
-      });
-    }
+    void this.audioStream.close();
+    this.audioStream = new MultiInputStream<AudioFrame>();
 
-    /**
-     * We need to add a deferred ReadableStream layer on top of the audioStream from the agent session.
-     * The tee() operation should be applied to the deferred stream, not the original audioStream.
-     * This is important because teeing the original stream directly makes it very difficult—if not
-     * impossible—to implement stream unlock logic cleanly.
-     */
-    // Recreate the deferred stream each attach because tee() locks the underlying readable stream.
-    this.audioStream = new DeferredReadableStream<AudioFrame>();
-    this.audioStream.setSource(audioStream);
+    this.audioStreamId = this.audioStream.addInputStream(audioStream);
     const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream.tee();
 
     if (this.realtimeSession) {
@@ -481,9 +470,13 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   detachAudioInput(): void {
-    void this.audioStream.detachSource().catch((error) => {
-      this.logger.debug({ error }, 'error detaching audio input in agent activity');
-    });
+    if (this.audioStreamId === undefined) {
+      return;
+    }
+
+    void this.audioStream.close();
+    this.audioStream = new MultiInputStream<AudioFrame>();
+    this.audioStreamId = undefined;
   }
 
   commitUserTurn(
