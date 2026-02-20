@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame, ParticipantKind } from '@livekit/rtc-node';
+import type { ParticipantKind } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import {
   type Context,
   ROOT_CONTEXT,
