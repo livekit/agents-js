@@ -44,7 +44,7 @@ export const log = () => {
 export const initializeLogger = ({ pretty, level }: LoggerOptions) => {
   globals[LOGGER_OPTIONS_KEY] = { pretty, level };
   globals[LOGGER_KEY] = pino(
-    { level: level || 'info' },
+    { level: level || 'info', serializers: { error: pino.stdSerializers.err } },
     pretty ? pinoPretty({ colorize: true }) : process.stdout,
   );
 };
@@ -90,5 +90,8 @@ export const enableOtelLogging = () => {
     { stream: new OtelDestination(), level: 'debug' },
   ];
 
-  globals[LOGGER_KEY] = pino({ level: logLevel }, multistream(streams));
+  globals[LOGGER_KEY] = pino(
+    { level: logLevel, serializers: { error: pino.stdSerializers.err } },
+    multistream(streams),
+  );
 };

@@ -10,8 +10,8 @@ class InworldPlugin extends Plugin {
   constructor() {
     super({
       title: 'Inworld',
-      version: '0.1.0',
-      package: '@livekit/agents-plugin-inworld',
+      version: __PACKAGE_VERSION__,
+      package: __PACKAGE_NAME__,
     });
   }
 }

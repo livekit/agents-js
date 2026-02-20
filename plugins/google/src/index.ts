@@ -11,8 +11,8 @@ class GooglePlugin extends Plugin {
   constructor() {
     super({
       title: 'google',
-      version: '0.1.0',
-      package: '@livekit/agents-plugin-google',
+      version: __PACKAGE_VERSION__,
+      package: __PACKAGE_NAME__,
     });
   }
 }

@@ -1,4 +1,5 @@
 {
+  "files": ["globals.d.ts"],
   "compilerOptions": {
     "rootDir": ".",
     "baseUrl": ".",
