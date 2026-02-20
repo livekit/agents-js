@@ -360,7 +360,7 @@ export function createWsTransport(
    */
   async function reconnect(): Promise<void> {
     close();
-    // Connection will be re-established on next ensureConnection call
+    await ensureConnection();
   }
 
   const transport = new TransformStream<Int16Array | InterruptionEvent, InterruptionEvent>(
