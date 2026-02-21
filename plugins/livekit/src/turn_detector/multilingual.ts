@@ -135,12 +135,11 @@ export class MultilingualModel extends EOUModel {
 }
 
 function remoteInferenceUrl() {
-  return undefined;
-  // const urlBase = process.env.LIVEKIT_REMOTE_EOT_URL;
-  // if (!urlBase) {
-  //   return undefined;
-  // }
-  // return `${urlBase}/eot/multi`;
+  const urlBase = process.env.LIVEKIT_REMOTE_EOT_URL;
+  if (!urlBase) {
+    return undefined;
+  }
+  return `${urlBase}/eot/multi`;
 }
 
 export default EUORunnerMultilingual;
