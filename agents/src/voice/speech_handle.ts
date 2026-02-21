@@ -5,7 +5,7 @@ import type { Context } from '@opentelemetry/api';
 import type { ChatItem } from '../llm/index.js';
 import type { Task } from '../utils.js';
 import { Event, Future, shortuuid } from '../utils.js';
-import { asyncLocalStorage } from './agent.js';
+import { functionCallStorage } from './agent.js';
 
 /** Symbol used to identify SpeechHandle instances */
 const SPEECH_HANDLE_SYMBOL = Symbol.for('livekit.agents.SpeechHandle');
@@ -45,6 +45,9 @@ export class SpeechHandle {
 
   /** @internal - OpenTelemetry context for the agent turn span */
   _agentTurnContext?: Context;
+
+  /** @internal - used by AgentTask/RunResult final output plumbing */
+  _maybeRunFinalOutput?: unknown;
 
   private itemAddedCallbacks: Set<(item: ChatItem) => void> = new Set();
   private doneCallbacks: Set<(sh: SpeechHandle) => void> = new Set();
@@ -148,7 +151,7 @@ export class SpeechHandle {
    * has entirely played out, including any tool calls and response follow-ups.
    */
   async waitForPlayout(): Promise<void> {
-    const store = asyncLocalStorage.getStore();
+    const store = functionCallStorage.getStore();
     if (store && store?.functionCall) {
       throw new Error(
         `Cannot call 'SpeechHandle.waitForPlayout()' from inside the function tool '${store.functionCall.name}'. ` +
@@ -167,6 +170,10 @@ export class SpeechHandle {
   }
 
   addDoneCallback(callback: (sh: SpeechHandle) => void) {
+    if (this.done()) {
+      queueMicrotask(() => callback(this));
+      return;
+    }
     this.doneCallbacks.add(callback);
   }
 

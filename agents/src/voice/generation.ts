@@ -26,7 +26,13 @@ import { IdentityTransform } from '../stream/identity_transform.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Future, Task, shortuuid, toError, waitForAbort } from '../utils.js';
-import { type Agent, type ModelSettings, asyncLocalStorage, isStopResponse } from './agent.js';
+import {
+  type Agent,
+  type ModelSettings,
+  _setActivityTaskInfo,
+  functionCallStorage,
+  isStopResponse,
+} from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import {
   AudioOutput,
@@ -719,7 +725,7 @@ export interface _AudioOut {
 
 async function forwardAudio(
   ttsStream: ReadableStream<AudioFrame>,
-  audioOuput: AudioOutput,
+  audioOutput: AudioOutput,
   out: _AudioOut,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -733,8 +739,8 @@ async function forwardAudio(
   };
 
   try {
-    audioOuput.on(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
-    audioOuput.resume();
+    audioOutput.on(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
+    audioOutput.resume();
 
     while (true) {
       if (signal?.aborted) {
@@ -748,36 +754,36 @@ async function forwardAudio(
 
       if (
         !out.firstFrameFut.done &&
-        audioOuput.sampleRate &&
-        audioOuput.sampleRate !== frame.sampleRate &&
+        audioOutput.sampleRate &&
+        audioOutput.sampleRate !== frame.sampleRate &&
         !resampler
       ) {
-        resampler = new AudioResampler(frame.sampleRate, audioOuput.sampleRate, 1);
+        resampler = new AudioResampler(frame.sampleRate, audioOutput.sampleRate, 1);
       }
 
       if (resampler) {
         for (const f of resampler.push(frame)) {
-          await audioOuput.captureFrame(f);
+          await audioOutput.captureFrame(f);
         }
       } else {
-        await audioOuput.captureFrame(frame);
+        await audioOutput.captureFrame(frame);
       }
     }
 
     if (resampler) {
       for (const f of resampler.flush()) {
-        await audioOuput.captureFrame(f);
+        await audioOutput.captureFrame(f);
       }
     }
   } finally {
-    audioOuput.off(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
+    audioOutput.off(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
 
     if (!out.firstFrameFut.done) {
       out.firstFrameFut.reject(new Error('audio forwarding cancelled before playback started'));
     }
 
     reader?.releaseLock();
-    audioOuput.flush();
+    audioOutput.flush();
   }
 }
 
@@ -836,7 +842,7 @@ export function performToolExecutions({
     const signal = controller.signal;
     const reader = toolCallStream.getReader();
 
-    const tasks: Promise<any>[] = [];
+    const tasks: Task<void>[] = [];
     while (!signal.aborted) {
       const { done, value: toolCall } = await reader.read();
       if (signal.aborted) break;
@@ -929,14 +935,6 @@ export function performToolExecutions({
         'Executing LLM tool call',
       );
 
-      const toolExecution = asyncLocalStorage.run({ functionCall: toolCall }, async () => {
-        return await tool.execute(parsedArgs, {
-          ctx: new RunContext(session, speechHandle, toolCall),
-          toolCallId: toolCall.callId,
-          abortSignal: signal,
-        });
-      });
-
       const _tracableToolExecutionImpl = async (toolExecTask: Promise<unknown>, span: Span) => {
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
@@ -993,11 +991,42 @@ export function performToolExecutions({
           name: 'function_tool',
         });
 
+      const toolTask = Task.from(
+        async () => {
+          // Ensure this task is marked inline before user tool code executes.
+          const currentTask = Task.current();
+          if (currentTask) {
+            _setActivityTaskInfo(currentTask, {
+              speechHandle,
+              functionCall: toolCall,
+              inlineTask: true,
+            });
+          }
+
+          const toolExecution = functionCallStorage.run({ functionCall: toolCall }, async () => {
+            return await tool.execute(parsedArgs, {
+              ctx: new RunContext(session, speechHandle, toolCall),
+              toolCallId: toolCall.callId,
+              abortSignal: signal,
+            });
+          });
+
+          await tracableToolExecution(toolExecution);
+        },
+        controller,
+        `performToolExecution:${toolCall.name}`,
+      );
+
+      _setActivityTaskInfo(toolTask, {
+        speechHandle,
+        functionCall: toolCall,
+        inlineTask: true,
+      });
       // wait, not cancelling all tool calling tasks
-      tasks.push(tracableToolExecution(toolExecution));
+      tasks.push(toolTask);
     }
 
-    await Promise.allSettled(tasks);
+    await Promise.allSettled(tasks.map((task) => task.result));
     if (toolOutput.output.length > 0) {
       logger.debug(
         {

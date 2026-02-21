@@ -768,6 +768,10 @@ export class AudioRecognition {
         this.logger.debug('User turn committed');
       })
       .catch((err: unknown) => {
+        if (err instanceof Error && err.name === 'AbortError') {
+          this.logger.debug('User turn commit task cancelled');
+          return;
+        }
         this.logger.error(err, 'Error in user turn commit task:');
       });
   }

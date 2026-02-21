@@ -15,6 +15,14 @@ import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
 
+const safeSend = (msg: IPCMessage): boolean => {
+  if (process.connected && process.send) {
+    process.send(msg);
+    return true;
+  }
+  return false;
+};
+
 type JobTask = {
   ctx: JobContext;
   task: Promise<void>;
@@ -50,7 +58,10 @@ class InfClient implements InferenceExecutor {
 
   async doInference(method: string, data: unknown): Promise<unknown> {
     const requestId = shortuuid('inference_job_');
-    process.send!({ case: 'inferenceRequest', value: { requestId, method, data } });
+    if (!safeSend({ case: 'inferenceRequest', value: { requestId, method, data } })) {
+      throw new Error('IPC channel closed');
+    }
+
     this.#requests[requestId] = new PendingInference();
     const resp = await this.#requests[requestId]!.promise;
     if (resp.error) {
@@ -117,7 +128,7 @@ const startJob = (
     await once(closeEvent, 'close').then((close) => {
       logger.debug('shutting down');
       shutdown = true;
-      process.send!({ case: 'exiting', value: { reason: close[1] } });
+      safeSend({ case: 'exiting', value: { reason: close[1] } });
     });
 
     // Close the primary agent session if it exists
@@ -139,7 +150,7 @@ const startJob = (
       logger.error({ error }, 'error while shutting down the job'),
     );
 
-    process.send!({ case: 'done' });
+    safeSend({ case: 'done', value: undefined });
     joinFuture.resolve();
   })();
 
@@ -199,7 +210,7 @@ const startJob = (
     logger.debug('initializing job runner');
     await agent.prewarm(proc);
     logger.debug('job runner initialized');
-    process.send({ case: 'initializeResponse' });
+    safeSend({ case: 'initializeResponse', value: undefined });
 
     let job: JobTask | undefined = undefined;
     const closeEvent = new EventEmitter();
@@ -213,7 +224,7 @@ const startJob = (
       switch (msg.case) {
         case 'pingRequest': {
           orphanedTimeout.refresh();
-          process.send!({
+          safeSend({
             case: 'pongResponse',
             value: { lastTimestamp: msg.value.timestamp, timestamp: Date.now() },
           });

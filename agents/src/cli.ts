@@ -77,16 +77,16 @@ const runServer = async (args: CliArgs) => {
  * ```
  */
 export const runApp = (opts: ServerOptions) => {
+  const logLevelOption = (defaultLevel: string) =>
+    new Option('--log-level <level>', 'Set the logging level')
+      .choices(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
+      .default(defaultLevel)
+      .env('LOG_LEVEL');
+
   const program = new Command()
     .name('agents')
     .description('LiveKit Agents CLI')
     .version(version)
-    .addOption(
-      new Option('--log-level <level>', 'Set the logging level')
-        .choices(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
-        .default('info')
-        .env('LOG_LEVEL'),
-    )
     .addOption(
       new Option('--url <string>', 'LiveKit server or Cloud project websocket URL').env(
         'LIVEKIT_URL',
@@ -120,13 +120,15 @@ export const runApp = (opts: ServerOptions) => {
   program
     .command('start')
     .description('Start the worker in production mode')
-    .action(() => {
-      const options = program.optsWithGlobals();
-      opts.wsURL = options.url || opts.wsURL;
-      opts.apiKey = options.apiKey || opts.apiKey;
-      opts.apiSecret = options.apiSecret || opts.apiSecret;
-      opts.logLevel = options.logLevel || opts.logLevel;
-      opts.workerToken = options.workerToken || opts.workerToken;
+    .addOption(logLevelOption('info'))
+    .action((...[, command]) => {
+      const globalOptions = program.optsWithGlobals();
+      const commandOptions = command.opts();
+      opts.wsURL = globalOptions.url || opts.wsURL;
+      opts.apiKey = globalOptions.apiKey || opts.apiKey;
+      opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
+      opts.logLevel = commandOptions.logLevel;
+      opts.workerToken = globalOptions.workerToken || opts.workerToken;
       runServer({
         opts,
         production: true,
@@ -137,19 +139,14 @@ export const runApp = (opts: ServerOptions) => {
   program
     .command('dev')
     .description('Start the worker in development mode')
-    .addOption(
-      new Option('--log-level <level>', 'Set the logging level')
-        .choices(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
-        .default('debug')
-        .env('LOG_LEVEL'),
-    )
+    .addOption(logLevelOption('debug'))
     .action((...[, command]) => {
       const globalOptions = program.optsWithGlobals();
       const commandOptions = command.opts();
       opts.wsURL = globalOptions.url || opts.wsURL;
       opts.apiKey = globalOptions.apiKey || opts.apiKey;
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
-      opts.logLevel = commandOptions.logLevel || globalOptions.logLevel || opts.logLevel;
+      opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
       runServer({
         opts,
@@ -163,19 +160,14 @@ export const runApp = (opts: ServerOptions) => {
     .description('Connect to a specific room')
     .requiredOption('--room <string>', 'Room name to connect to')
     .option('--participant-identity <string>', 'Identity of user to listen to')
-    .addOption(
-      new Option('--log-level <level>', 'Set the logging level')
-        .choices(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
-        .default('debug')
-        .env('LOG_LEVEL'),
-    )
+    .addOption(logLevelOption('info'))
     .action((...[, command]) => {
       const globalOptions = program.optsWithGlobals();
       const commandOptions = command.opts();
       opts.wsURL = globalOptions.url || opts.wsURL;
       opts.apiKey = globalOptions.apiKey || opts.apiKey;
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
-      opts.logLevel = commandOptions.logLevel || globalOptions.logLevel || opts.logLevel;
+      opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
       runServer({
         opts,
@@ -189,12 +181,7 @@ export const runApp = (opts: ServerOptions) => {
   program
     .command('download-files')
     .description('Download plugin dependency files')
-    .addOption(
-      new Option('--log-level <level>', 'Set the logging level')
-        .choices(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
-        .default('debug')
-        .env('LOG_LEVEL'),
-    )
+    .addOption(logLevelOption('debug'))
     .action((...[, command]) => {
       const commandOptions = command.opts();
       initializeLogger({ pretty: true, level: commandOptions.logLevel });

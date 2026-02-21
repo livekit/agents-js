@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { Mutex } from '@livekit/mutex';
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
 import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
+import type { z } from 'zod';
 import {
   LLM as InferenceLLM,
   STT as InferenceSTT,
@@ -31,6 +33,7 @@ import {
   type ResolvedSessionConnectOptions,
   type SessionConnectOptions,
 } from '../types.js';
+import { Task } from '../utils.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
@@ -115,6 +118,13 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   connOptions?: SessionConnectOptions;
 };
 
+type ActivityTransitionOptions = {
+  previousActivity?: 'close' | 'pause';
+  newActivity?: 'start' | 'resume';
+  blockedTasks?: Task<any>[];
+  waitOnEnter?: boolean;
+};
+
 export class AgentSession<
   UserData = UnknownUserData,
 > extends (EventEmitter as new () => TypedEmitter<AgentSessionCallbacks>) {
@@ -129,8 +139,10 @@ export class AgentSession<
   private agent?: Agent;
   private activity?: AgentActivity;
   private nextActivity?: AgentActivity;
+  private updateActivityTask?: Task<void>;
   private started = false;
   private userState: UserState = 'listening';
+  private readonly activityLock = new Mutex();
 
   /** @internal */
   _roomIO?: RoomIO;
@@ -360,7 +372,8 @@ export class AgentSession<
     }
 
     // TODO(AJS-265): add shutdown callback to job context
-    tasks.push(this.updateActivity(this.agent));
+    // Initial start does not wait on onEnter
+    tasks.push(this._updateActivity(this.agent, { waitOnEnter: false }));
 
     await Promise.allSettled(tasks);
 
@@ -432,8 +445,34 @@ export class AgentSession<
   updateAgent(agent: Agent): void {
     this.agent = agent;
 
-    if (this.started) {
-      this.updateActivity(agent);
+    if (!this.started) {
+      return;
+    }
+
+    const _updateActivityTask = async (oldTask: Task<void> | undefined, agent: Agent) => {
+      if (oldTask) {
+        try {
+          await oldTask.result;
+        } catch (error) {
+          this.logger.error(error, 'previous updateAgent transition failed');
+        }
+      }
+
+      await this._updateActivity(agent);
+    };
+
+    const oldTask = this.updateActivityTask;
+    this.updateActivityTask = Task.from(
+      async () => _updateActivityTask(oldTask, agent),
+      undefined,
+      'AgentSession_updateActivityTask',
+    );
+
+    const runState = this._globalRunState;
+    if (runState) {
+      // Don't mark the RunResult as done, if there is currently an agent transition happening.
+      // (used to make sure we're correctly adding the AgentHandoffResult before completion)
+      runState._watchHandle(this.updateActivityTask);
     }
   }
 
@@ -464,24 +503,42 @@ export class AgentSession<
       throw new Error('AgentSession is not running');
     }
 
-    const doSay = (activity: AgentActivity) => {
+    const doSay = (activity: AgentActivity, nextActivity?: AgentActivity) => {
+      if (activity.schedulingPaused) {
+        if (!nextActivity) {
+          throw new Error('AgentSession is closing, cannot use say()');
+        }
+        return nextActivity.say(text, options);
+      }
       return activity.say(text, options);
     };
+
+    const runState = this._globalRunState;
+    let handle: SpeechHandle;
 
     // attach to the session span if called outside of the AgentSession
     const activeSpan = trace.getActiveSpan();
     if (!activeSpan && this.rootSpanContext) {
-      return otelContext.with(this.rootSpanContext, () => doSay(this.activity!));
+      handle = otelContext.with(this.rootSpanContext, () =>
+        doSay(this.activity!, this.nextActivity),
+      );
+    } else {
+      handle = doSay(this.activity, this.nextActivity);
     }
 
-    return doSay(this.activity);
+    if (runState) {
+      runState._watchHandle(handle);
+    }
+
+    return handle;
   }
 
-  interrupt() {
+  interrupt(options?: { force?: boolean }) {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
-    return this.activity.interrupt();
+
+    return this.activity.interrupt(options);
   }
 
   generateReply(options?: {
@@ -502,7 +559,7 @@ export class AgentSession<
       : undefined;
 
     const doGenerateReply = (activity: AgentActivity, nextActivity?: AgentActivity) => {
-      if (activity.draining) {
+      if (activity.schedulingPaused) {
         if (!nextActivity) {
           throw new Error('AgentSession is closing, cannot use generateReply()');
         }
@@ -542,53 +599,128 @@ export class AgentSession<
    * result.expect.noMoreEvents();
    * ```
    *
-   * @param options - Run options including user input
+   * @param options - Run options including user input and optional output type
    * @returns A RunResult that resolves when the agent finishes responding
-   *
-   * TODO: Add outputType parameter for typed outputs (parity with Python)
    */
-  run(options: { userInput: string }): RunResult {
+  run<T = unknown>({
+    userInput,
+    outputType,
+  }: {
+    userInput: string;
+    outputType?: z.ZodType<T>;
+  }): RunResult<T> {
     if (this._globalRunState && !this._globalRunState.done()) {
       throw new Error('nested runs are not supported');
     }
 
-    const runState = new RunResult({ userInput: options.userInput });
+    const runState = new RunResult<T>({
+      userInput,
+      outputType,
+    });
+
     this._globalRunState = runState;
-    this.generateReply({ userInput: options.userInput });
+
+    // Defer generateReply through the activityLock to ensure any in-progress
+    // activity transition (e.g. AgentTask started from onEnter) completes first.
+    // TS Task.from starts onEnter synchronously, so the transition may already be
+    // mid-flight by the time run() is called after session.start() resolves.
+    // Acquiring and immediately releasing the lock guarantees FIFO ordering:
+    // the transition's lock section finishes before we route generateReply.
+    (async () => {
+      try {
+        const unlock = await this.activityLock.lock();
+        unlock();
+        this.generateReply({ userInput });
+      } catch (e) {
+        runState._reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    })();
 
     return runState;
   }
 
-  private async updateActivity(agent: Agent): Promise<void> {
+  /** @internal */
+  async _updateActivity(agent: Agent, options: ActivityTransitionOptions = {}): Promise<void> {
+    const { previousActivity = 'close', newActivity = 'start', blockedTasks = [] } = options;
+    const waitOnEnter = options.waitOnEnter ?? newActivity === 'start';
+
     const runWithContext = async () => {
-      // TODO(AJS-129): add lock to agent activity core lifecycle
-      this.nextActivity = new AgentActivity(agent, this);
+      const unlock = await this.activityLock.lock();
+      let onEnterTask: Task<void> | undefined;
 
-      const previousActivity = this.activity;
+      try {
+        this.agent = agent;
+        const prevActivityObj = this.activity;
 
-      if (this.activity) {
-        await this.activity.drain();
-        await this.activity.close();
+        if (newActivity === 'start') {
+          const prevAgent = prevActivityObj?.agent;
+          if (
+            agent._agentActivity &&
+            // allow updating the same agent that is running
+            (agent !== prevAgent || previousActivity !== 'close')
+          ) {
+            throw new Error('Cannot start agent: an activity is already running');
+          }
+          this.nextActivity = new AgentActivity(agent, this);
+        } else if (newActivity === 'resume') {
+          if (!agent._agentActivity) {
+            throw new Error('Cannot resume agent: no existing activity to resume');
+          }
+          this.nextActivity = agent._agentActivity;
+        }
+
+        if (prevActivityObj && prevActivityObj !== this.nextActivity) {
+          if (previousActivity === 'pause') {
+            await prevActivityObj.pause({ blockedTasks });
+          } else {
+            await prevActivityObj.drain();
+            await prevActivityObj.close();
+          }
+        }
+
+        this.activity = this.nextActivity;
+        this.nextActivity = undefined;
+
+        const runState = this._globalRunState;
+        const handoffItem = new AgentHandoffItem({
+          oldAgentId: prevActivityObj?.agent.id,
+          newAgentId: agent.id,
+        });
+
+        if (runState) {
+          runState._agentHandoff({
+            item: handoffItem,
+            oldAgent: prevActivityObj?.agent,
+            newAgent: this.activity!.agent,
+          });
+        }
+
+        this._chatCtx.insert(handoffItem);
+        this.logger.debug(
+          { previousAgentId: prevActivityObj?.agent.id, newAgentId: agent.id },
+          'Agent handoff inserted into chat context',
+        );
+
+        if (newActivity === 'start') {
+          await this.activity!.start();
+        } else {
+          await this.activity!.resume();
+        }
+
+        onEnterTask = this.activity!._onEnterTask;
+
+        if (this._input.audio) {
+          this.activity!.attachAudioInput(this._input.audio.stream);
+        }
+      } finally {
+        unlock();
       }
 
-      this.activity = this.nextActivity;
-      this.nextActivity = undefined;
-
-      this._chatCtx.insert(
-        new AgentHandoffItem({
-          oldAgentId: previousActivity?.agent.id,
-          newAgentId: agent.id,
-        }),
-      );
-      this.logger.debug(
-        { previousAgentId: previousActivity?.agent.id, newAgentId: agent.id },
-        'Agent handoff inserted into chat context',
-      );
-
-      await this.activity.start();
-
-      if (this._input.audio) {
-        this.activity.attachAudioInput(this._input.audio.stream);
+      if (waitOnEnter) {
+        if (!onEnterTask) {
+          throw new Error('expected onEnter task to be available while waitOnEnter=true');
+        }
+        await onEnterTask.result;
       }
     };
 
@@ -842,15 +974,21 @@ export class AgentSession<
     if (this.activity) {
       if (!drain) {
         try {
-          this.activity.interrupt();
+          await this.activity.interrupt({ force: true }).await;
         } catch (error) {
-          // TODO(shubhra): force interrupt or wait for it to finish?
-          // it might be an audio played from the error callback
+          // Uninterruptible speech can throw during forced interruption.
+          this.logger.warn({ error }, 'Error interrupting activity');
         }
       }
+
       await this.activity.drain();
       // wait any uninterruptible speech to finish
       await this.activity.currentSpeech?.waitForPlayout();
+
+      if (reason !== CloseReason.ERROR) {
+        this.activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
+      }
+
       try {
         this.activity.detachAudioInput();
       } catch (error) {

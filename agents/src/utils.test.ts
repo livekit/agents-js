@@ -469,6 +469,93 @@ describe('utils', () => {
         expect((error as Error).name).toBe('TypeError');
       }
     });
+
+    it('should return undefined for Task.current outside task context', () => {
+      expect(Task.current()).toBeUndefined();
+    });
+
+    it('should preserve Task.current inside a task across awaits', async () => {
+      const task = Task.from(
+        async () => {
+          const currentAtStart = Task.current();
+          await delay(5);
+          const currentAfterAwait = Task.current();
+
+          expect(currentAtStart).toBeDefined();
+          expect(currentAfterAwait).toBe(currentAtStart);
+
+          return currentAtStart;
+        },
+        undefined,
+        'current-context-test',
+      );
+
+      const currentFromResult = await task.result;
+      expect(currentFromResult).toBe(task);
+    });
+
+    it('should isolate nested Task.current context and restore parent context', async () => {
+      const parentTask = Task.from(
+        async (controller) => {
+          const parentCurrent = Task.current();
+          expect(parentCurrent).toBeDefined();
+
+          const childTask = Task.from(
+            async () => {
+              const childCurrentStart = Task.current();
+              await delay(5);
+              const childCurrentAfterAwait = Task.current();
+
+              expect(childCurrentStart).toBeDefined();
+              expect(childCurrentAfterAwait).toBe(childCurrentStart);
+              expect(childCurrentStart).not.toBe(parentCurrent);
+
+              return childCurrentStart;
+            },
+            controller,
+            'child-current-context-test',
+          );
+
+          const childCurrent = await childTask.result;
+          const parentCurrentAfterChild = Task.current();
+
+          expect(parentCurrentAfterChild).toBe(parentCurrent);
+
+          return { parentCurrent, childCurrent };
+        },
+        undefined,
+        'parent-current-context-test',
+      );
+
+      const { parentCurrent, childCurrent } = await parentTask.result;
+      expect(parentCurrent).toBe(parentTask);
+      expect(childCurrent).not.toBe(parentCurrent);
+      expect(Task.current()).toBeUndefined();
+    });
+
+    it('should always expose Task.current for concurrent task callbacks', async () => {
+      const tasks = Array.from({ length: 25 }, (_, idx) =>
+        Task.from(
+          async () => {
+            const currentAtStart = Task.current();
+            await delay(1);
+            const currentAfterAwait = Task.current();
+
+            expect(currentAtStart).toBeDefined();
+            expect(currentAfterAwait).toBe(currentAtStart);
+
+            return currentAtStart;
+          },
+          undefined,
+          `current-context-stress-${idx}`,
+        ),
+      );
+
+      const currentTasks = await Promise.all(tasks.map((task) => task.result));
+      currentTasks.forEach((currentTask, idx) => {
+        expect(currentTask).toBe(tasks[idx]);
+      });
+    });
   });
 
   describe('Event', () => {
