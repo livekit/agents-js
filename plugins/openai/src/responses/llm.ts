@@ -14,7 +14,7 @@ import OpenAI from 'openai';
 import type { ChatModels } from '../models.js';
 
 interface LLMOptions {
-  model: ChatModels;
+  model: string | ChatModels;
   apiKey?: string;
   baseURL?: string;
   client?: OpenAI;
@@ -140,7 +140,7 @@ export class LLMStream extends llm.LLMStream {
       modelOptions,
       strictToolSchema,
     }: {
-      model: ChatModels;
+      model: string | ChatModels;
       client: OpenAI;
       chatCtx: llm.ChatContext;
       toolCtx?: llm.ToolContext;
