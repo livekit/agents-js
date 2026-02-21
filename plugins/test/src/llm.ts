@@ -112,7 +112,7 @@ const toolCtxStrict: llmlib.ToolContext = {
   }),
 };
 
-export const llm = async (llm: llmlib.LLM, isGoogle: boolean) => {
+export const llm = async (llm: llmlib.LLM, skipOptionalArgs: boolean) => {
   initializeLogger({ pretty: false });
 
   describe('LLM', async () => {
@@ -175,7 +175,7 @@ export const llm = async (llm: llmlib.LLM, isGoogle: boolean) => {
         expect(calls.length).toStrictEqual(1);
         expect(JSON.parse(calls[0]!.args).unit).toStrictEqual('celsius');
       });
-      it.skipIf(isGoogle)('should handle optional arguments', async () => {
+      it.skipIf(skipOptionalArgs)('should handle optional arguments', async () => {
         const calls = await requestFncCall(
           llm,
           'Use a tool call to update the user info to name Theo. Leave email and address blank.',

@@ -11,7 +11,7 @@ import {
   FunctionCallOutput,
 } from '../chat_context.js';
 import { serializeImage } from '../utils.js';
-import { toChatCtx } from './openai.js';
+import { toChatCtx, toResponsesChatCtx } from './openai.js';
 
 // Mock the serializeImage function
 vi.mock('../utils.js', () => ({
@@ -671,5 +671,389 @@ describe('toChatCtx', () => {
       { role: 'assistant', content: 'Response from agent 2' },
       { role: 'assistant', content: 'Response from agent 3' },
     ]);
+  });
+});
+
+describe('toResponsesChatCtx', () => {
+  const serializeImageMock = vi.mocked(serializeImage);
+
+  initializeLogger({ level: 'silent', pretty: false });
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+  });
+
+  it('should convert simple text messages', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'user', content: 'Hello' });
+    ctx.addMessage({ role: 'assistant', content: 'Hi there!' });
+
+    const result = await toResponsesChatCtx(ctx);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ role: 'user', content: 'Hello' });
+    expect(result[1]).toEqual({ role: 'assistant', content: 'Hi there!' });
+  });
+
+  it('should handle system messages', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'system', content: 'You are a helpful assistant' });
+    ctx.addMessage({ role: 'user', content: 'Hello' });
+
+    const result = await toResponsesChatCtx(ctx);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ role: 'system', content: 'You are a helpful assistant' });
+    expect(result[1]).toEqual({ role: 'user', content: 'Hello' });
+  });
+
+  it('should handle multi-line text content', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'user', content: ['Line 1', 'Line 2', 'Line 3'] });
+
+    const result = await toResponsesChatCtx(ctx);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ role: 'user', content: 'Line 1\nLine 2\nLine 3' });
+  });
+
+  it('should convert images to input_image format with external URL', async () => {
+    serializeImageMock.mockResolvedValue({
+      inferenceDetail: 'high',
+      externalUrl: 'https://example.com/image.jpg',
+    });
+
+    const ctx = ChatContext.empty();
+    ctx.addMessage({
+      role: 'user',
+      content: [
+        {
+          id: 'img1',
+          type: 'image_content',
+          image: 'https://example.com/image.jpg',
+          inferenceDetail: 'high',
+          _cache: {},
+        },
+      ],
+    });
+
+    const result = await toResponsesChatCtx(ctx);
+
+    expect(result).toEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_image',
+            image_url: 'https://example.com/image.jpg',
+            detail: 'high',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('should convert images to input_image format with base64 data', async () => {
+    serializeImageMock.mockResolvedValue({
+      inferenceDetail: 'auto',
+      mimeType: 'image/png',
+      base64Data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB',
+    });
+
+    const ctx = ChatContext.empty();
+    ctx.addMessage({
+      role: 'user',
+      content: [
+        {
+          id: 'img1',
+          type: 'image_content',
+          image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB',
+          inferenceDetail: 'auto',
+          _cache: {},
+        },
+      ],
+    });
+
+    const result = await toResponsesChatCtx(ctx);
+
+    expect(result).toEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_image',
+            image_url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB',
+            detail: 'auto',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('should handle mixed content with text and image using input_text', async () => {
+    serializeImageMock.mockResolvedValue({
+      inferenceDetail: 'high',
+      externalUrl: 'https://example.com/image.jpg',
+    });
+
+    const ctx = ChatContext.empty();
+    ctx.addMessage({
+      role: 'user',
+      content: [
+        'Check this out:',
+        {
+          id: 'img1',
+          type: 'image_content',
+          image: 'https://example.com/image.jpg',
+          inferenceDetail: 'high',
+          _cache: {},
+        },
+      ],
+    });
+
+    const result = await toResponsesChatCtx(ctx);
+
+    expect(result).toEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_image',
+            image_url: 'https://example.com/image.jpg',
+            detail: 'high',
+          },
+          { type: 'input_text', text: 'Check this out:' },
+        ],
+      },
+    ]);
+  });
+
+  it('should handle tool calls as top-level function_call items', async () => {
+    const ctx = ChatContext.empty();
+
+    const msg = ctx.addMessage({ role: 'assistant', content: 'Let me help you.' });
+    const toolCall = FunctionCall.create({
+      id: msg.id + '/tool_1',
+      callId: 'call_123',
+      name: 'get_weather',
+      args: '{"location": "Paris"}',
+    });
+    const toolOutput = FunctionCallOutput.create({
+      callId: 'call_123',
+      output: '{"temperature": 20}',
+      isError: false,
+    });
+
+    ctx.insert([toolCall, toolOutput]);
+
+    const result = await toResponsesChatCtx(ctx);
+
+    expect(result).toEqual([
+      { role: 'assistant', content: 'Let me help you.' },
+      {
+        type: 'function_call',
+        call_id: 'call_123',
+        name: 'get_weather',
+        arguments: '{"location": "Paris"}',
+      },
+      {
+        type: 'function_call_output',
+        call_id: 'call_123',
+        output: '{"temperature": 20}',
+      },
+    ]);
+  });
+
+  it('should handle tool calls without an accompanying message', async () => {
+    const ctx = ChatContext.empty();
+
+    const toolCall = new FunctionCall({
+      id: 'func_1',
+      callId: 'call_456',
+      name: 'calculate',
+      args: '{"a": 5, "b": 3}',
+    });
+    const toolOutput = new FunctionCallOutput({
+      callId: 'call_456',
+      output: '{"result": 8}',
+      isError: false,
+    });
+
+    ctx.insert([toolCall, toolOutput]);
+
+    const result = await toResponsesChatCtx(ctx);
+
+    expect(result).toEqual([
+      {
+        type: 'function_call',
+        call_id: 'call_456',
+        name: 'calculate',
+        arguments: '{"a": 5, "b": 3}',
+      },
+      {
+        type: 'function_call_output',
+        call_id: 'call_456',
+        output: '{"result": 8}',
+      },
+    ]);
+  });
+
+  it('should handle multiple tool calls as separate function_call items', async () => {
+    const ctx = ChatContext.empty();
+
+    const msg = ctx.addMessage({ role: 'assistant', content: "I'll check both." });
+    const toolCall1 = new FunctionCall({
+      id: msg.id + '/tool_1',
+      callId: 'call_1',
+      name: 'get_weather',
+      args: '{"location": "NYC"}',
+    });
+    const toolCall2 = new FunctionCall({
+      id: msg.id + '/tool_2',
+      callId: 'call_2',
+      name: 'get_weather',
+      args: '{"location": "LA"}',
+    });
+    const toolOutput1 = new FunctionCallOutput({
+      callId: 'call_1',
+      output: '{"temperature": 65}',
+      isError: false,
+    });
+    const toolOutput2 = new FunctionCallOutput({
+      callId: 'call_2',
+      output: '{"temperature": 78}',
+      isError: false,
+    });
+
+    ctx.insert([toolCall1, toolCall2, toolOutput1, toolOutput2]);
+
+    const result = await toResponsesChatCtx(ctx);
+
+    expect(result).toEqual([
+      { role: 'assistant', content: "I'll check both." },
+      {
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'get_weather',
+        arguments: '{"location": "NYC"}',
+      },
+      {
+        type: 'function_call',
+        call_id: 'call_2',
+        name: 'get_weather',
+        arguments: '{"location": "LA"}',
+      },
+      {
+        type: 'function_call_output',
+        call_id: 'call_1',
+        output: '{"temperature": 65}',
+      },
+      {
+        type: 'function_call_output',
+        call_id: 'call_2',
+        output: '{"temperature": 78}',
+      },
+    ]);
+  });
+
+  it('should skip empty groups', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'user', content: 'Hello', createdAt: 1000 });
+
+    const orphanOutput = new FunctionCallOutput({
+      callId: 'orphan_call',
+      output: 'This should be ignored',
+      isError: false,
+      createdAt: 2000,
+    });
+    ctx.insert(orphanOutput);
+
+    ctx.addMessage({ role: 'assistant', content: 'Hi!', createdAt: 3000 });
+
+    const result = await toResponsesChatCtx(ctx);
+
+    expect(result).toHaveLength(2);
+    expect(result).toContainEqual({ role: 'user', content: 'Hello' });
+    expect(result).toContainEqual({ role: 'assistant', content: 'Hi!' });
+  });
+
+  it('should filter out agent handoff items', async () => {
+    const ctx = ChatContext.empty();
+
+    ctx.addMessage({ role: 'user', content: 'Hello' });
+    ctx.insert(new AgentHandoffItem({ oldAgentId: 'agent_1', newAgentId: 'agent_2' }));
+    ctx.addMessage({ role: 'assistant', content: 'Hi there!' });
+
+    const result = await toResponsesChatCtx(ctx);
+
+    expect(result).toEqual([
+      { role: 'user', content: 'Hello' },
+      { role: 'assistant', content: 'Hi there!' },
+    ]);
+  });
+
+  it('should cache serialized images', async () => {
+    serializeImageMock.mockResolvedValue({
+      inferenceDetail: 'high',
+      mimeType: 'image/png',
+      base64Data: 'cached-data',
+    });
+
+    const imageContent = {
+      id: 'img1',
+      type: 'image_content' as const,
+      image: 'https://example.com/image.jpg',
+      inferenceDetail: 'high' as const,
+      _cache: {},
+    };
+
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'user', content: [imageContent] });
+
+    await toResponsesChatCtx(ctx);
+    await toResponsesChatCtx(ctx);
+
+    expect(serializeImageMock).toHaveBeenCalledTimes(1);
+    expect(imageContent._cache).toHaveProperty('serialized_image');
+  });
+
+  it('should throw error for unsupported content type', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({
+      role: 'user',
+      content: [
+        {
+          type: 'audio_content',
+          frame: [],
+        },
+      ],
+    });
+
+    await expect(toResponsesChatCtx(ctx)).rejects.toThrow(
+      'Unsupported content type: audio_content',
+    );
+  });
+
+  it('should throw error when serialized image has no data', async () => {
+    serializeImageMock.mockResolvedValue({
+      inferenceDetail: 'high',
+      // No base64Data or externalUrl
+    });
+
+    const ctx = ChatContext.empty();
+    ctx.addMessage({
+      role: 'user',
+      content: [
+        {
+          id: 'img1',
+          type: 'image_content',
+          image: 'invalid-image',
+          inferenceDetail: 'high',
+          _cache: {},
+        },
+      ],
+    });
+
+    await expect(toResponsesChatCtx(ctx)).rejects.toThrow('Serialized image has no data bytes');
   });
 });
