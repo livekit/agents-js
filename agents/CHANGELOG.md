@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.0.48
+
+### Patch Changes
+
+- Handle participant disconnect during init - [#1065](https://github.com/livekit/agents-js/pull/1065) ([@Fox32](https://github.com/Fox32))
+
 ## 1.0.47
 
 ### Patch Changes
