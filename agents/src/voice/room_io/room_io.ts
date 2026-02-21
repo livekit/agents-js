@@ -19,7 +19,7 @@ import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ATTRIBUTE_PUBLISH_ON_BEHALF, TOPIC_CHAT } from '../../constants.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
-import { Future, Task } from '../../utils.js';
+import { Future, Task, waitForAbort } from '../../utils.js';
 import { type AgentSession } from '../agent_session.js';
 import {
   AgentSessionEventTypes,
@@ -174,7 +174,10 @@ export class RoomIO {
       : this.inputOptions.participantIdentity ?? null;
   }
   private async init(signal: AbortSignal): Promise<void> {
-    await this.roomConnectedFuture.await;
+    await Promise.race([this.roomConnectedFuture.await, waitForAbort(signal)]);
+    if (signal.aborted) {
+      return;
+    }
 
     for (const participant of this.room.remoteParticipants.values()) {
       this.onParticipantConnected(participant);
@@ -183,10 +186,10 @@ export class RoomIO {
       return;
     }
 
-    const onAbort = new Promise<void>((resolve) => {
-      signal.addEventListener('abort', () => resolve(), { once: true });
-    });
-    const participant = await Promise.race([this.participantAvailableFuture.await, onAbort]);
+    const participant = await Promise.race([
+      this.participantAvailableFuture.await,
+      waitForAbort(signal),
+    ]);
 
     if (!participant) {
       return;
