@@ -14,7 +14,7 @@ import OpenAI from 'openai';
 import type { ChatModels } from '../models.js';
 
 interface LLMOptions {
-  model: ChatModels;
+  model: string | ChatModels;
   apiKey?: string;
   baseURL?: string;
   client?: OpenAI;
