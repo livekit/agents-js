@@ -3,9 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatContext } from '../chat_context.js';
 import { toChatCtx as toChatCtxGoogle } from './google.js';
-import { toChatCtx as toChatCtxOpenai } from './openai.js';
+import {
+  toChatCtx as toChatCtxOpenai,
+  toResponsesChatCtx as toResponsesChatCtxOpenai,
+} from './openai.js';
 
-export type ProviderFormat = 'openai' | 'google';
+export type ProviderFormat = 'openai' | 'openai.responses' | 'google';
 
 export async function toChatCtx(
   format: ProviderFormat,
@@ -15,6 +18,8 @@ export async function toChatCtx(
   switch (format) {
     case 'openai':
       return await toChatCtxOpenai(chatCtx, injectDummyUserMessage);
+    case 'openai.responses':
+      return await toResponsesChatCtxOpenai(chatCtx, injectDummyUserMessage);
     case 'google':
       return await toChatCtxGoogle(chatCtx, injectDummyUserMessage);
     default:
