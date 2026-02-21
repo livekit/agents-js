@@ -602,7 +602,11 @@ export class AgentActivity implements RecognitionHooks {
     if (!this.vad) {
       this.agentSession._updateUserState('speaking');
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfOverlapSpeech(0, this.agentSession._userSpeakingSpan);
+        this.audioRecognition.onStartOfOverlapSpeech(
+          0,
+          Date.now(),
+          this.agentSession._userSpeakingSpan,
+        );
       }
     }
 
@@ -623,7 +627,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (!this.vad) {
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onEndOfOverlapSpeech(this.agentSession._userSpeakingSpan);
+        this.audioRecognition.onEndOfOverlapSpeech(Date.now(), this.agentSession._userSpeakingSpan);
       }
       this.agentSession._updateUserState('listening');
     }
@@ -699,12 +703,15 @@ export class AgentActivity implements RecognitionHooks {
   onStartOfSpeech(ev: VADEvent): void {
     let speechStartTime = Date.now();
     if (ev) {
-      speechStartTime = speechStartTime - ev.speechDuration;
+      // Subtract both speechDuration and inferenceDuration to correct for VAD model latency.
+      speechStartTime = speechStartTime - ev.speechDuration - ev.inferenceDuration;
     }
     this.agentSession._updateUserState('speaking', speechStartTime);
     if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+      // Pass speechStartTime as the absolute startedAt timestamp.
       this.audioRecognition.onStartOfOverlapSpeech(
         ev.speechDuration,
+        speechStartTime,
         this.agentSession._userSpeakingSpan,
       );
     }
@@ -713,10 +720,15 @@ export class AgentActivity implements RecognitionHooks {
   onEndOfSpeech(ev: VADEvent): void {
     let speechEndTime = Date.now();
     if (ev) {
-      speechEndTime = speechEndTime - ev.silenceDuration;
+      // Subtract both silenceDuration and inferenceDuration to correct for VAD model latency.
+      speechEndTime = speechEndTime - ev.silenceDuration - ev.inferenceDuration;
     }
     if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-      this.audioRecognition.onEndOfOverlapSpeech(this.agentSession._userSpeakingSpan);
+      // Pass speechEndTime as the absolute endedAt timestamp.
+      this.audioRecognition.onEndOfOverlapSpeech(
+        speechEndTime,
+        this.agentSession._userSpeakingSpan,
+      );
     }
     this.agentSession._updateUserState('listening', speechEndTime);
   }

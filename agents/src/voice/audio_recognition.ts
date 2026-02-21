@@ -242,7 +242,7 @@ export class AudioRecognition {
 
     if (this.isAgentSpeaking) {
       if (this.ignoreUserTranscriptUntil === undefined) {
-        this.onEndOfOverlapSpeech();
+        this.onEndOfOverlapSpeech(Date.now());
       }
       this.ignoreUserTranscriptUntil = this.ignoreUserTranscriptUntil
         ? Math.min(ignoreUserTranscriptUntil, this.ignoreUserTranscriptUntil)
@@ -255,15 +255,20 @@ export class AudioRecognition {
   }
 
   /** Start interruption inference when agent is speaking and overlap speech starts. */
-  async onStartOfOverlapSpeech(speechDurationInS: number, userSpeakingSpan?: Span) {
+  async onStartOfOverlapSpeech(speechDuration: number, startedAt: number, userSpeakingSpan?: Span) {
     if (this.isAgentSpeaking) {
       this.trySendInterruptionSentinel(
-        InterruptionStreamSentinel.overlapSpeechStarted(speechDurationInS, userSpeakingSpan),
+        InterruptionStreamSentinel.overlapSpeechStarted(
+          speechDuration,
+          startedAt,
+          userSpeakingSpan,
+        ),
       );
     }
   }
 
-  async onEndOfOverlapSpeech(userSpeakingSpan?: Span) {
+  /** End interruption inference when overlap speech ends. */
+  async onEndOfOverlapSpeech(endedAt: number, userSpeakingSpan?: Span) {
     if (!this.isInterruptionEnabled) {
       return;
     }
@@ -271,7 +276,7 @@ export class AudioRecognition {
       userSpeakingSpan.setAttribute(traceTypes.ATTR_IS_INTERRUPTION, 'false');
     }
 
-    return this.trySendInterruptionSentinel(InterruptionStreamSentinel.overlapSpeechEnded());
+    return this.trySendInterruptionSentinel(InterruptionStreamSentinel.overlapSpeechEnded(endedAt));
   }
 
   /**
@@ -895,7 +900,9 @@ export class AudioRecognition {
               this.lastSpeakingTime = Date.now();
 
               if (this.speechStartTime === undefined) {
-                this.speechStartTime = Date.now();
+                // Backdate speechStartTime to the actual start of accumulated speech.
+                // ev.rawAccumulatedSpeech is in ms (VADEvent durations are all ms in TS).
+                this.speechStartTime = Date.now() - ev.rawAccumulatedSpeech;
               }
             }
             break;
@@ -951,7 +958,13 @@ export class AudioRecognition {
           if (!res) break;
           const { value, done } = res;
           if (done) break;
-          this._inputStartedAt ??= Date.now();
+          // Backdate to the actual start of the audio frame, not when it was received.
+          if (value instanceof AudioFrame) {
+            const frameDurationMs = (value.samplesPerChannel / value.sampleRate) * 1000;
+            this._inputStartedAt ??= Date.now() - frameDurationMs;
+          } else {
+            this._inputStartedAt ??= Date.now();
+          }
           await stream.pushFrame(value);
         }
       } finally {
@@ -1094,5 +1107,7 @@ export class AudioRecognition {
     if (this.turnDetectionMode === undefined || this.turnDetectionMode === 'vad') {
       return true;
     }
+
+    return false;
   }
 }

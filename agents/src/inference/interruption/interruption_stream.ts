@@ -48,14 +48,15 @@ export class InterruptionStreamSentinel {
   }
 
   static overlapSpeechStarted(
-    speechDurationInS: number,
+    speechDuration: number,
+    startedAt: number,
     userSpeakingSpan?: Span,
   ): OverlapSpeechStarted {
-    return { type: 'overlap-speech-started', speechDurationInS, userSpeakingSpan };
+    return { type: 'overlap-speech-started', speechDuration, startedAt, userSpeakingSpan };
   }
 
-  static overlapSpeechEnded(): OverlapSpeechEnded {
-    return { type: 'overlap-speech-ended' };
+  static overlapSpeechEnded(endedAt: number): OverlapSpeechEnded {
+    return { type: 'overlap-speech-ended', endedAt };
   }
 
   static flush(): Flush {
@@ -226,6 +227,7 @@ export class InterruptionStreamBase {
             this.logger.debug('agent speech started');
             agentSpeechStarted = true;
             overlapSpeechStarted = false;
+            this.overlapSpeechStartedAt = undefined;
             accumulatedSamples = 0;
             startIdx = 0;
             cache.clear();
@@ -233,11 +235,13 @@ export class InterruptionStreamBase {
             this.logger.debug('agent speech ended');
             agentSpeechStarted = false;
             overlapSpeechStarted = false;
+            this.overlapSpeechStartedAt = undefined;
             accumulatedSamples = 0;
             overlapCount = 0;
             startIdx = 0;
             cache.clear();
           } else if (chunk.type === 'overlap-speech-started' && agentSpeechStarted) {
+            this.overlapSpeechStartedAt = chunk.startedAt;
             this.userSpeakingSpan = chunk.userSpeakingSpan;
             this.logger.debug('overlap speech started, starting interruption inference');
             overlapSpeechStarted = true;
@@ -247,13 +251,13 @@ export class InterruptionStreamBase {
             // leading silence) when the first overlap speech started.
             // Otherwise, keep the existing data.
             if (overlapCount <= 1) {
-              const shiftSize = Math.min(
-                startIdx,
-                Math.round(chunk.speechDurationInS * this.options.sampleRate) +
-                  Math.round(this.options.audioPrefixDurationInS * this.options.sampleRate),
-              );
-              inferenceS16Data.copyWithin(0, startIdx - shiftSize, startIdx);
-              startIdx = shiftSize;
+              const keepSize =
+                // Convert speechDuration (ms) → samples; audioPrefixDurationInS (s) → samples
+                Math.round((chunk.speechDuration / 1000) * this.options.sampleRate) +
+                Math.round(this.options.audioPrefixDurationInS * this.options.sampleRate);
+              const shiftCount = Math.max(0, startIdx - keepSize);
+              inferenceS16Data.copyWithin(0, shiftCount, startIdx);
+              startIdx -= shiftCount;
             }
             cache.clear();
           } else if (chunk.type === 'overlap-speech-ended') {
@@ -269,22 +273,24 @@ export class InterruptionStreamBase {
                 this.logger.debug('no request made for overlap speech');
                 latestEntry = InterruptionCacheEntry.default();
               }
+              const latestEntryValue = latestEntry ?? InterruptionCacheEntry.default();
               const event: InterruptionEvent = {
                 type: InterruptionEventType.OVERLAP_SPEECH_ENDED,
-                timestamp: Date.now(),
+                timestamp: chunk.endedAt,
                 isInterruption: false,
                 overlapSpeechStartedAt: this.overlapSpeechStartedAt,
-                speechInput: latestEntry.speechInput,
-                probabilities: latestEntry.probabilities,
-                totalDurationInS: latestEntry.totalDurationInS,
-                detectionDelayInS: latestEntry.detectionDelayInS,
-                predictionDurationInS: latestEntry.predictionDurationInS,
-                probability: latestEntry.probability,
+                speechInput: latestEntryValue.speechInput,
+                probabilities: latestEntryValue.probabilities,
+                totalDurationInS: latestEntryValue.totalDurationInS,
+                detectionDelayInS: latestEntryValue.detectionDelayInS,
+                predictionDurationInS: latestEntryValue.predictionDurationInS,
+                probability: latestEntryValue.probability,
               };
               controller.enqueue(event);
               overlapSpeechStarted = false;
               accumulatedSamples = 0;
             }
+            this.overlapSpeechStartedAt = undefined;
           } else if (chunk.type === 'flush') {
             // no-op
           }
@@ -349,9 +355,6 @@ export class InterruptionStreamBase {
   async pushFrame(frame: InterruptionSentinel | AudioFrame): Promise<void> {
     this.ensureStreamsNotEnded();
     if (!(frame instanceof AudioFrame)) {
-      if (frame.type === 'overlap-speech-started') {
-        this.overlapSpeechStartedAt = Date.now() - frame.speechDurationInS * 1000;
-      }
       return this.inputStream.write(frame);
     } else if (this.options.sampleRate !== frame.sampleRate) {
       const resampler = this.getResamplerFor(frame.sampleRate);

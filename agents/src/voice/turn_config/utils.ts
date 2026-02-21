@@ -29,7 +29,26 @@ export function migrateLegacyOptions<UserData>(
     voiceOptions?.turnHandling?.turnDetection ??
     turnDetection;
 
-  const mergedOptions = structuredClone({ ...voiceOptions, ...sessionOptions });
+  // Exclude potentially non-cloneable turnDetection objects before structuredClone.
+  // They are restored from originalTurnDetection below.
+  const cloneableVoiceOptions = voiceOptions
+    ? {
+        ...voiceOptions,
+        turnHandling: voiceOptions.turnHandling
+          ? { ...voiceOptions.turnHandling, turnDetection: undefined }
+          : voiceOptions.turnHandling,
+      }
+    : voiceOptions;
+  const cloneableSessionOptions = sessionOptions
+    ? {
+        ...sessionOptions,
+        turnHandling: sessionOptions.turnHandling
+          ? { ...sessionOptions.turnHandling, turnDetection: undefined }
+          : sessionOptions.turnHandling,
+      }
+    : sessionOptions;
+
+  const mergedOptions = structuredClone({ ...cloneableVoiceOptions, ...cloneableSessionOptions });
 
   const turnHandling: TurnHandlingConfig = {
     interruption: {
