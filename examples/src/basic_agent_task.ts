@@ -18,7 +18,7 @@ import { z } from 'zod';
 class InfoTask extends voice.AgentTask<string> {
   constructor(info: string) {
     super({
-      instructions: `Collect the user's information. around ${info}`,
+      instructions: `Collect the user's information. around ${info}. Once you have the information, call the saveUserInfo tool to save the information to the database IMMEDIATELY. DO NOT have chitchat with the user, just collect the information and call the saveUserInfo tool.`,
       tts: 'elevenlabs/eleven_turbo_v2_5',
       tools: {
         saveUserInfo: llm.tool({

@@ -1651,13 +1651,15 @@ export class AgentActivity implements RecognitionHooks {
       for (const msg of toolsMessages) {
         msg.createdAt = replyStartedAt;
       }
-      this.agent._chatCtx.insert(toolsMessages);
-      // Only add FunctionCallOutput items to session history since FunctionCall items
-      // were already added by onToolExecutionStarted when the tool execution began
+      // Only insert FunctionCallOutput items into agent._chatCtx since FunctionCall items
+      // were already added by onToolExecutionStarted when the tool execution began.
+      // Inserting function_calls again would create duplicates that break provider APIs
+      // (e.g. Google's "function response parts != function call parts" error).
       const toolCallOutputs = toolsMessages.filter(
         (m): m is FunctionCallOutput => m.type === 'function_call_output',
       );
       if (toolCallOutputs.length > 0) {
+        this.agent._chatCtx.insert(toolCallOutputs);
         this.agentSession._toolItemsAdded(toolCallOutputs);
       }
     }
@@ -1819,15 +1821,12 @@ export class AgentActivity implements RecognitionHooks {
         msg.createdAt = replyStartedAt;
       }
 
-      this.agent._chatCtx.insert(toolMessages);
-
-      // Only add FunctionCallOutput items to session history since FunctionCall items
-      // were already added by onToolExecutionStarted when the tool execution began
       const toolCallOutputs = toolMessages.filter(
         (m): m is FunctionCallOutput => m.type === 'function_call_output',
       );
 
       if (toolCallOutputs.length > 0) {
+        this.agent._chatCtx.insert(toolCallOutputs);
         this.agentSession._toolItemsAdded(toolCallOutputs);
       }
     }
