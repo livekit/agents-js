@@ -140,7 +140,7 @@ export class LLMStream extends llm.LLMStream {
       modelOptions,
       strictToolSchema,
     }: {
-      model: ChatModels;
+      model: string | ChatModels;
       client: OpenAI;
       chatCtx: llm.ChatContext;
       toolCtx?: llm.ToolContext;
