@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-cartesia
 
+## 1.0.47
+
+### Patch Changes
+
+- Ensure registered plugin versions stay up to date - [#1064](https://github.com/livekit/agents-js/pull/1064) ([@lukasIO](https://github.com/lukasIO))
+
+- Updated dependencies [[`6ce09d5b583ae92e0fa3c162eb30851babffeb1f`](https://github.com/livekit/agents-js/commit/6ce09d5b583ae92e0fa3c162eb30851babffeb1f), [`923e35078f14b2515379bcc83be5a387450eadc9`](https://github.com/livekit/agents-js/commit/923e35078f14b2515379bcc83be5a387450eadc9), [`0df9dc43e83b5abfa5e0f16db09167a4037f1345`](https://github.com/livekit/agents-js/commit/0df9dc43e83b5abfa5e0f16db09167a4037f1345), [`b1f054ebeaa660ef2b10a10c0b3daf36893ddde5`](https://github.com/livekit/agents-js/commit/b1f054ebeaa660ef2b10a10c0b3daf36893ddde5)]:
+  - @livekit/agents@1.0.47
+
 ## 1.0.46
 
 ### Patch Changes

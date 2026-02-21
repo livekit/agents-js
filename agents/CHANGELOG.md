@@ -1,5 +1,17 @@
 # @livekit/agents
 
+## 1.0.47
+
+### Patch Changes
+
+- Change logger to use error serializer - [#1063](https://github.com/livekit/agents-js/pull/1063) ([@qionghuang6](https://github.com/qionghuang6))
+
+- Implement AgentTask feature - [#1045](https://github.com/livekit/agents-js/pull/1045) ([@toubatbrian](https://github.com/toubatbrian))
+
+- add openai responses api llm - [#958](https://github.com/livekit/agents-js/pull/958) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- Ensure registered plugin versions stay up to date - [#1064](https://github.com/livekit/agents-js/pull/1064) ([@lukasIO](https://github.com/lukasIO))
+
 ## 1.0.46
 
 ### Patch Changes
