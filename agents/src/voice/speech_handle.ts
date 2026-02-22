@@ -222,7 +222,7 @@ export class SpeechHandle {
     if (!generation) {
       throw new Error(`Generation at index ${index} not found.`);
     }
-    return generation.await;
+    return Promise.race([generation.await, this.interruptFut.await]);
   }
 
   /** @internal */
