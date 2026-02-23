@@ -33,6 +33,25 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Verify all packages exist on npm
+        run: |
+          MISSING=()
+          for pkg in $(pnpm -r --silent exec -- node -e "
+            const p = require('./package.json');
+            if (!p.private) process.stdout.write(p.name + '\n');
+          "); do
+            if ! npm view "$pkg" > /dev/null 2>&1; then
+              MISSING+=("$pkg")
+            fi
+          done
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "::error::The following packages are not yet published on npm:"
+            for pkg in "${MISSING[@]}"; do
+              echo "::error::  - $pkg"
+            done
+            exit 1
+          fi
+          echo "All packages exist on npm."
       - name: Create Release Pull Request or Publish to npm
         id: changesets
         uses: changesets/action@v1
