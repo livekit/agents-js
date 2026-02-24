@@ -822,6 +822,7 @@ export class ChatContext {
       return this;
     }
 
+    // TODO: refactor this into LLMStream.collect API.
     const promptCtx = new ChatContext();
     promptCtx.addMessage({
       role: 'system',
