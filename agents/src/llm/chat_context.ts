@@ -401,6 +401,7 @@ export class AgentHandoffItem {
   }
 }
 
+// TODO(parity): Add AgentConfigUpdate type to ChatItem union
 export type ChatItem = ChatMessage | FunctionCall | FunctionCallOutput | AgentHandoffItem;
 
 export class ChatContext {
@@ -463,6 +464,7 @@ export class ChatContext {
     return idx !== -1 ? idx : undefined;
   }
 
+  // TODO(parity): Add excludeHandoff and excludeConfigUpdate options
   copy(
     options: {
       excludeFunctionCall?: boolean;
@@ -510,6 +512,7 @@ export class ChatContext {
     return new ChatContext(items);
   }
 
+  // TODO(parity): Add excludeConfigUpdate option (merge with exclude_config_update)
   merge(
     other: ChatContext,
     options: {

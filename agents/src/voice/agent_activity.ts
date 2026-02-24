@@ -23,6 +23,7 @@ import {
   type RealtimeSession,
   type ToolChoice,
   type ToolContext,
+  ToolFlag,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
@@ -83,6 +84,12 @@ import { SpeechHandle } from './speech_handle.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
+export const onEnterStorage = new AsyncLocalStorage<OnEnterData>();
+
+interface OnEnterData {
+  session: AgentSession;
+  agent: Agent;
+}
 
 interface PreemptiveGeneration {
   speechHandle: SpeechHandle;
@@ -312,6 +319,8 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
+    // TODO(parity): Record initial AgentConfigUpdate in chat context
+
     // metrics and error handling
     if (this.llm instanceof LLM) {
       this.llm.on('metrics_collected', this.onMetricsCollected);
@@ -354,11 +363,13 @@ export class AgentActivity implements RecognitionHooks {
     if (runOnEnter) {
       this._onEnterTask = this.createSpeechTask({
         taskFn: () =>
-          tracer.startActiveSpan(async () => this.agent.onEnter(), {
-            name: 'on_enter',
-            context: trace.setSpan(ROOT_CONTEXT, startSpan),
-            attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
-          }),
+          onEnterStorage.run({ session: this.agentSession, agent: this.agent }, () =>
+            tracer.startActiveSpan(async () => this.agent.onEnter(), {
+              name: 'on_enter',
+              context: trace.setSpan(ROOT_CONTEXT, startSpan),
+              attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
+            }),
+          ),
         inlineTask: true,
         name: 'AgentActivity_onEnter',
       });
@@ -443,6 +454,20 @@ export class AgentActivity implements RecognitionHooks {
         instructions: this.agent.instructions,
         addIfMissing: true,
       });
+    }
+  }
+
+  // TODO: Add when AgentConfigUpdate is ported to ChatContext.
+  async updateTools(tools: ToolContext): Promise<void> {
+    this.agent._tools = { ...tools };
+
+    if (this.realtimeSession) {
+      await this.realtimeSession.updateTools(tools);
+    }
+
+    if (this.llm instanceof LLM) {
+      // for realtime LLM, we assume the server will remove unvalid tool messages
+      await this.updateChatCtx(this.agent._chatCtx.copy({ toolCtx: tools }));
     }
   }
 
@@ -1129,12 +1154,25 @@ export class AgentActivity implements RecognitionHooks {
         instructions = `${this.agent.instructions}\n${instructions}`;
       }
 
+      // Filter out tools with IGNORE_ON_ENTER flag when generateReply is called inside onEnter
+      const onEnterData = onEnterStorage.getStore();
+      const shouldFilterTools =
+        onEnterData?.agent === this.agent && onEnterData?.session === this.agentSession;
+
+      const tools = shouldFilterTools
+        ? Object.fromEntries(
+            Object.entries(this.agent.toolCtx).filter(
+              ([, fnTool]) => !(fnTool.flags & ToolFlag.IGNORE_ON_ENTER),
+            ),
+          )
+        : this.agent.toolCtx;
+
       const task = this.createSpeechTask({
         taskFn: (abortController: AbortController) =>
           this.pipelineReplyTask(
             handle,
             chatCtx ?? this.agent.chatCtx,
-            this.agent.toolCtx,
+            tools,
             {
               toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice),
             },

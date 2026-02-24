@@ -302,6 +302,17 @@ export class Agent<UserData = any> {
     this._agentActivity.updateChatCtx(chatCtx);
   }
 
+  // TODO(parity): Add when AgentConfigUpdate is ported to ChatContext.
+  async updateTools(tools: ToolContext): Promise<void> {
+    if (!this._agentActivity) {
+      this._tools = { ...tools };
+      this._chatCtx = this._chatCtx.copy({ toolCtx: this._tools });
+      return;
+    }
+
+    await this._agentActivity.updateTools(tools);
+  }
+
   static default = {
     async sttNode(
       agent: Agent,

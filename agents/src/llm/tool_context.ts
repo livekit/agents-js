@@ -80,6 +80,13 @@ export class ToolError extends Error {
   }
 }
 
+export const ToolFlag = {
+  NONE: 0,
+  IGNORE_ON_ENTER: 1 << 0,
+} as const;
+
+export type ToolFlag = (typeof ToolFlag)[keyof typeof ToolFlag];
+
 export interface AgentHandoff {
   /**
    * The agent to handoff to.
@@ -178,6 +185,8 @@ export interface FunctionTool<
    */
   execute: ToolExecuteFunction<Parameters, UserData, Result>;
 
+  flags: number;
+
   [FUNCTION_TOOL_SYMBOL]: true;
 }
 
@@ -242,10 +251,12 @@ export function tool<
   description,
   parameters,
   execute,
+  flags,
 }: {
   description: string;
   parameters: Schema;
   execute: ToolExecuteFunction<InferToolInput<Schema>, UserData, Result>;
+  flags?: number;
 }): FunctionTool<InferToolInput<Schema>, UserData, Result>;
 
 /**
@@ -254,10 +265,12 @@ export function tool<
 export function tool<UserData = UnknownUserData, Result = unknown>({
   description,
   execute,
+  flags,
 }: {
   description: string;
   parameters?: never;
   execute: ToolExecuteFunction<Record<string, never>, UserData, Result>;
+  flags?: number;
 }): FunctionTool<Record<string, never>, UserData, Result>;
 
 /**
@@ -295,6 +308,7 @@ export function tool(tool: any): any {
       description: tool.description,
       parameters,
       execute: tool.execute,
+      flags: tool.flags ?? ToolFlag.NONE,
       [TOOL_SYMBOL]: true,
       [FUNCTION_TOOL_SYMBOL]: true,
     };
