@@ -372,7 +372,6 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
   it('summarizeChatCtx condenses history', async () => {
     const done = new Future<TaskGroupResult>();
     let taskReady = new Future<void>();
-    let parentAgent: voice.Agent | undefined;
 
     class ChattyTaskA extends voice.AgentTask<string> {
       constructor() {
@@ -423,7 +422,6 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
     class ParentAgent extends voice.Agent {
       constructor() {
         super({ instructions: 'Summarize test parent.' });
-        parentAgent = this;
       }
 
       async onEnter() {
@@ -471,7 +469,7 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
     expect(tgResult.taskResults['color']).toBeDefined();
     expect(tgResult.taskResults['food']).toBeDefined();
 
-    const items = parentAgent!.chatCtx.items;
+    const items = session.currentAgent.chatCtx.items;
     const summaryMsg = items.find(
       (item) =>
         item.type === 'message' && item.role === 'assistant' && item.extra?.is_summary === true,

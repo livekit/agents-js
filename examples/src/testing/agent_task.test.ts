@@ -11,18 +11,18 @@ initializeLogger({ pretty: true, level: 'warn' });
 /**
  * AgentTask scenario coverage:
  *
- * 1. Agent -> onEnter -> AgentTask -> onEnter -> self.complete
+ * 1. Agent -\> onEnter -\> AgentTask -\> onEnter -\> self.complete
  *    COVERED: "agent calls a task in onEnter" (WelcomeTask)
  *
- * 2. Agent -> onEnter -> AgentTask -> onEnter -> generateReply -> User -> Tool -> self.complete
+ * 2. Agent -\> onEnter -\> AgentTask -\> onEnter -\> generateReply -\> User -\> Tool -\> self.complete
  *    NOT TESTABLE: session.run() rejects with "speech scheduling draining" when task is started
  *    from onEnter. Works in production (basic_agent_task.ts) with real voice/STT.
  *    Tool-triggered variant COVERED: "LLM-powered IntroTask", "LLM-powered GetEmailTask"
  *
- * 3. Agent -> Tool Call -> AgentTask -> User message -> Tool Call -> self.complete
+ * 3. Agent -\> Tool Call -\> AgentTask -\> User message -\> Tool Call -\> self.complete
  *    COVERED: "LLM-powered IntroTask", "LLM-powered GetEmailTask"
  *
- * 4. Agent -> Tool handoff -> onExit -> AgentTask -> self.complete -> handoff target
+ * 4. Agent -\> Tool handoff -\> onExit -\> AgentTask -\> self.complete -\> handoff target
  *    DEADLOCK: AgentTask.run() from onExit during updateAgent transition holds activity lock.
  *    NOT COVERED in this suite due to known deadlock limitation.
  */
