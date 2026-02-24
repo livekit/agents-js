@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
 import { createImmutableArray, shortuuid } from '../utils.js';
+import type { LLM } from './llm.js';
 import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
 import type { JSONObject, JSONValue, ToolContext } from './tool_context.js';
 
@@ -95,12 +96,15 @@ export class ChatMessage {
 
   createdAt: number;
 
+  extra: Record<string, unknown>;
+
   constructor(params: {
     role: ChatRole;
     content: ChatContent[] | string;
     id?: string;
     interrupted?: boolean;
     createdAt?: number;
+    extra?: Record<string, unknown>;
   }) {
     const {
       role,
@@ -108,12 +112,14 @@ export class ChatMessage {
       id = shortuuid('item_'),
       interrupted = false,
       createdAt = Date.now(),
+      extra = {},
     } = params;
     this.id = id;
     this.role = role;
     this.content = Array.isArray(content) ? content : [content];
     this.interrupted = interrupted;
     this.createdAt = createdAt;
+    this.extra = extra;
   }
 
   static create(params: {
@@ -122,6 +128,7 @@ export class ChatMessage {
     id?: string;
     interrupted?: boolean;
     createdAt?: number;
+    extra?: Record<string, unknown>;
   }) {
     return new ChatMessage(params);
   }
@@ -432,6 +439,7 @@ export class ChatContext {
     id?: string;
     interrupted?: boolean;
     createdAt?: number;
+    extra?: Record<string, unknown>;
   }): ChatMessage {
     const msg = new ChatMessage(params);
     if (params.createdAt !== undefined) {
@@ -464,12 +472,13 @@ export class ChatContext {
     return idx !== -1 ? idx : undefined;
   }
 
-  // TODO(parity): Add excludeHandoff and excludeConfigUpdate options
+  // TODO(parity): Add excludeConfigUpdate option when AgentConfigUpdate is ported
   copy(
     options: {
       excludeFunctionCall?: boolean;
       excludeInstructions?: boolean;
       excludeEmptyMessage?: boolean;
+      excludeHandoff?: boolean;
       toolCtx?: ToolContext<any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     } = {},
   ): ChatContext {
@@ -477,6 +486,7 @@ export class ChatContext {
       excludeFunctionCall = false,
       excludeInstructions = false,
       excludeEmptyMessage = false,
+      excludeHandoff = false,
       toolCtx,
     } = options;
     const items: ChatItem[] = [];
@@ -502,6 +512,10 @@ export class ChatContext {
         continue;
       }
 
+      if (excludeHandoff && item.type === 'agent_handoff') {
+        continue;
+      }
+
       if (toolCtx !== undefined && isToolCallOrOutput(item) && toolCtx[item.name] === undefined) {
         continue;
       }
@@ -512,7 +526,7 @@ export class ChatContext {
     return new ChatContext(items);
   }
 
-  // TODO(parity): Add excludeConfigUpdate option (merge with exclude_config_update)
+  // TODO(parity): Add excludeConfigUpdate option when AgentConfigUpdate is ported
   merge(
     other: ChatContext,
     options: {
@@ -763,6 +777,111 @@ export class ChatContext {
     }
 
     return true;
+  }
+
+  async _summarize(llm: LLM, options: { keepLastTurns?: number } = {}): Promise<ChatContext> {
+    const { keepLastTurns = 2 } = options;
+
+    const toSummarize: ChatMessage[] = [];
+    for (const item of this._items) {
+      if (item.type !== 'message') continue;
+      if (item.role !== 'user' && item.role !== 'assistant') continue;
+      if (item.extra?.is_summary === true) continue;
+
+      const text = (item.textContent ?? '').trim();
+      if (text) {
+        toSummarize.push(item);
+      }
+    }
+
+    if (toSummarize.length === 0) {
+      return this;
+    }
+
+    const tailN = Math.max(0, Math.min(toSummarize.length, keepLastTurns * 2));
+    let head: ChatMessage[];
+    let tail: ChatMessage[];
+    if (tailN === 0) {
+      head = toSummarize;
+      tail = [];
+    } else {
+      head = toSummarize.slice(0, -tailN);
+      tail = toSummarize.slice(-tailN);
+    }
+
+    if (head.length === 0) {
+      return this;
+    }
+
+    const sourceText = head
+      .map((m) => `${m.role}: ${(m.textContent ?? '').trim()}`)
+      .join('\n')
+      .trim();
+
+    if (!sourceText) {
+      return this;
+    }
+
+    const promptCtx = new ChatContext();
+    promptCtx.addMessage({
+      role: 'system',
+      content:
+        'Compress older chat history into a short, faithful summary.\n' +
+        'Focus on user goals, constraints, decisions, key facts/preferences/entities, and pending tasks.\n' +
+        'Exclude chit-chat and greetings. Be concise.',
+    });
+    promptCtx.addMessage({
+      role: 'user',
+      content: `Conversation to summarize:\n\n${sourceText}`,
+    });
+
+    const chunks: string[] = [];
+    for await (const chunk of llm.chat({ chatCtx: promptCtx })) {
+      if (chunk.delta?.content) {
+        chunks.push(chunk.delta.content);
+      }
+    }
+
+    const summary = chunks.join('').trim();
+    if (!summary) {
+      return this;
+    }
+
+    const tailStartTs = tail.length > 0 ? tail[0]!.createdAt : Infinity;
+
+    const preserved: ChatItem[] = [];
+    for (const it of this._items) {
+      if (
+        (it.type === 'function_call' || it.type === 'function_call_output') &&
+        it.createdAt < tailStartTs
+      ) {
+        continue;
+      }
+
+      if (it.type === 'message' && (it.role === 'user' || it.role === 'assistant')) {
+        continue;
+      }
+
+      preserved.push(it);
+    }
+
+    this._items = preserved;
+
+    const createdAtHint =
+      tail.length > 0 ? tail[0]!.createdAt - 1e-6 : head[head.length - 1]!.createdAt + 1e-6;
+
+    this.addMessage({
+      role: 'assistant',
+      content: `[history summary]\n${summary}`,
+      createdAt: createdAtHint,
+      extra: { is_summary: true },
+    });
+
+    for (const msg of tail) {
+      this._items.push(msg);
+    }
+
+    return this;
   }
 
   /**
