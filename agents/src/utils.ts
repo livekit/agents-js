@@ -173,6 +173,11 @@ export class Future<T = void> {
     this.#rejected = true;
     this.#error = error;
     this.#rejectPromise(error);
+    // Python calls Future.exception() right after set_exception() to silence
+    // "exception was never retrieved" warnings. In JS, consume the rejection
+    // immediately so Node does not emit unhandled-rejection noise before a
+    // later await/catch observes it.
+    void this.#await.catch(() => undefined);
   }
 }
 
