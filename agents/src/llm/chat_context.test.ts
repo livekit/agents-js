@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../log.js';
+import { FakeLLM } from '../voice/testing/fake_llm.js';
 import {
   type AudioContent,
   ChatContext,
@@ -13,7 +14,6 @@ import {
   type ImageContent,
   ReadonlyChatContext,
 } from './chat_context.js';
-import { FakeLLM } from '../voice/testing/fake_llm.js';
 
 initializeLogger({ pretty: false, level: 'error' });
 
@@ -315,7 +315,8 @@ describe('ChatContext._summarize', () => {
     await ctx._summarize(fake, { keepLastTurns: 1 });
 
     const summary = ctx.items.find(
-      (item) => item.type === 'message' && item.role === 'assistant' && item.extra?.is_summary === true,
+      (item) =>
+        item.type === 'message' && item.role === 'assistant' && item.extra?.is_summary === true,
     );
     expect(summary).toBeDefined();
     if (!summary || summary.type !== 'message') {
