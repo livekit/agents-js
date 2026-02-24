@@ -868,7 +868,7 @@ export class ChatContext {
     this._items = preserved;
 
     const createdAtHint =
-      tail.length > 0 ? tail[0]!.createdAt - 1e-6 : head[head.length - 1]!.createdAt + 1e-6;
+      tail.length > 0 ? tail[0]!.createdAt - 1e-3 : head[head.length - 1]!.createdAt + 1e-3;
 
     this.addMessage({
       role: 'assistant',
@@ -878,7 +878,7 @@ export class ChatContext {
     });
 
     for (const msg of tail) {
-      this._items.push(msg);
+      this.insert(msg);
     }
 
     return this;
