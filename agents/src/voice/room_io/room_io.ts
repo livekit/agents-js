@@ -12,17 +12,16 @@ import {
   type RemoteParticipant,
   type Room,
   RoomEvent,
-  type TextStreamInfo,
-  type TextStreamReader,
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
-import { ATTRIBUTE_PUBLISH_ON_BEHALF, TOPIC_CHAT } from '../../constants.js';
+import { ATTRIBUTE_PUBLISH_ON_BEHALF } from '../../constants.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { Future, Task } from '../../utils.js';
 import { type AgentSession } from '../agent_session.js';
+import type { TextInputCallback } from '../client_events.js';
 import {
   AgentSessionEventTypes,
   type AgentStateChangedEvent,
@@ -39,15 +38,7 @@ import {
   ParticipantTranscriptionOutput,
 } from './_output.js';
 
-export interface TextInputEvent {
-  text: string;
-  info: TextStreamInfo;
-  participant: RemoteParticipant;
-}
-
-export type TextInputCallback = (sess: AgentSession, ev: TextInputEvent) => void | Promise<void>;
-
-const DEFAULT_TEXT_INPUT_CALLBACK: TextInputCallback = (sess: AgentSession, ev: TextInputEvent) => {
+export const DEFAULT_TEXT_INPUT_CALLBACK: TextInputCallback = (sess, ev) => {
   sess.interrupt();
   sess.generateReply({ userInput: ev.text });
 };
@@ -145,8 +136,6 @@ export class RoomIO {
   private userTranscriptWriter: WritableStreamDefaultWriter<UserInputTranscribedEvent>;
   private forwardUserTranscriptTask?: Task<void>;
   private initTask?: Task<void>;
-
-  private textStreamHandlerRegistered = false;
 
   private logger = log();
 
@@ -271,37 +260,6 @@ export class RoomIO {
     }
   };
 
-  private onUserTextInput = (reader: TextStreamReader, participantInfo: { identity: string }) => {
-    if (participantInfo.identity !== this.participantIdentity) {
-      return;
-    }
-
-    const participant = this.room.remoteParticipants.get(participantInfo.identity);
-    if (!participant) {
-      this.logger.warn('participant not found, ignoring text input');
-      return;
-    }
-
-    const readText = async () => {
-      const text = await reader.readAll();
-
-      const textInputResult = this.inputOptions.textInputCallback!(this.agentSession, {
-        text,
-        info: reader.info,
-        participant,
-      });
-
-      // check if callback is a Promise
-      if (textInputResult instanceof Promise) {
-        await textInputResult;
-      }
-    };
-
-    readText().catch((error) => {
-      this.logger.error({ error }, 'Error reading text input');
-    });
-  };
-
   private async forwardUserTranscript(signal: AbortSignal): Promise<void> {
     const reader = this.userTranscriptStream.readable.getReader();
     try {
@@ -376,6 +334,17 @@ export class RoomIO {
     return this.participantAvailableFuture.done;
   }
 
+  get linkedParticipant(): RemoteParticipant | null {
+    if (!this.participantIdentity) {
+      return null;
+    }
+    return this.room.remoteParticipants.get(this.participantIdentity) ?? null;
+  }
+
+  get rtcRoom(): Room {
+    return this.room;
+  }
+
   /** Switch to a different participant */
   setParticipant(participantIdentity: string | null) {
     this.logger.debug({ participantIdentity }, 'setting participant');
@@ -416,17 +385,6 @@ export class RoomIO {
   }
 
   start() {
-    if (this.inputOptions.textEnabled) {
-      try {
-        this.room.registerTextStreamHandler(TOPIC_CHAT, this.onUserTextInput);
-        this.textStreamHandlerRegistered = true;
-      } catch (error) {
-        if (this.inputOptions.textEnabled) {
-          this.logger.warn(`text stream handler for topic "${TOPIC_CHAT}" already set, ignoring`);
-        }
-      }
-    }
-
     // -- create inputs --
     if (this.inputOptions.audioEnabled) {
       this.audioInput = new ParticipantAudioInputStream({
@@ -501,11 +459,6 @@ export class RoomIO {
     this.room.off(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
     this.agentSession.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
     this.agentSession.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
-
-    if (this.textStreamHandlerRegistered) {
-      this.room.unregisterTextStreamHandler(TOPIC_CHAT);
-      this.textStreamHandlerRegistered = false;
-    }
 
     await this.initTask?.cancelAndWait();
 

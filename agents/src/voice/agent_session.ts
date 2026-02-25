@@ -37,6 +37,7 @@ import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
+import { ClientEventsHandler } from './client_events.js';
 import {
   type AgentEvent,
   AgentSessionEventTypes,
@@ -60,7 +61,12 @@ import {
 } from './events.js';
 import { AgentInput, AgentOutput } from './io.js';
 import { RecorderIO } from './recorder_io/index.js';
-import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
+import {
+  DEFAULT_TEXT_INPUT_CALLBACK,
+  RoomIO,
+  type RoomInputOptions,
+  type RoomOutputOptions,
+} from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
@@ -175,10 +181,10 @@ export class AgentSession<
   private activity?: AgentActivity;
   private nextActivity?: AgentActivity;
   private started = false;
-  private userState: UserState = 'listening';
+  private _userState: UserState = 'listening';
 
   private roomIO?: RoomIO;
-  private logger = log();
+  private clientEventsHandler?: ClientEventsHandler;
 
   private _chatCtx: ChatContext;
   private _userData: UserData | undefined;
@@ -224,6 +230,8 @@ export class AgentSession<
 
   /** @internal */
   _userSpeakingSpan?: Span;
+
+  private logger = log();
 
   constructor(options: AgentSessionOptions<UserData>) {
     super();
@@ -382,6 +390,13 @@ export class AgentSession<
         outputOptions,
       });
       this.roomIO.start();
+
+      this.clientEventsHandler = new ClientEventsHandler(this, this.roomIO);
+      if (inputOptions?.textEnabled !== false) {
+        this.clientEventsHandler.registerTextInput(
+          inputOptions?.textInputCallback ?? DEFAULT_TEXT_INPUT_CALLBACK,
+        );
+      }
     }
 
     let ctx: JobContext | undefined = undefined;
@@ -422,6 +437,10 @@ export class AgentSession<
     tasks.push(this.updateActivity(this.agent));
 
     await Promise.allSettled(tasks);
+
+    if (this.clientEventsHandler) {
+      await this.clientEventsHandler.start();
+    }
 
     // Log used IO configuration
     this.logger.debug(
@@ -669,6 +688,10 @@ export class AgentSession<
     return this._agentState;
   }
 
+  get userState(): UserState {
+    return this._userState;
+  }
+
   get currentAgent(): Agent {
     if (!this.agent) {
       throw new Error('AgentSession is not running');
@@ -776,7 +799,7 @@ export class AgentSession<
     this._agentState = state;
 
     // Handle user away timer based on state changes
-    if (state === 'listening' && this.userState === 'listening') {
+    if (state === 'listening' && this._userState === 'listening') {
       this._setUserAwayTimer();
     } else {
       this._cancelUserAwayTimer();
@@ -790,7 +813,7 @@ export class AgentSession<
 
   /** @internal */
   _updateUserState(state: UserState, lastSpeakingTime?: number) {
-    if (this.userState === state) {
+    if (this._userState === state) {
       return;
     }
 
@@ -808,8 +831,8 @@ export class AgentSession<
       this._userSpeakingSpan = undefined;
     }
 
-    const oldState = this.userState;
-    this.userState = state;
+    const oldState = this._userState;
+    this._userState = state;
 
     // Handle user away timer based on state changes
     if (state === 'listening' && this._agentState === 'listening') {
@@ -864,7 +887,7 @@ export class AgentSession<
   }
 
   private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {
-    if (this.userState === 'away' && ev.isFinal) {
+    if (this._userState === 'away' && ev.isFinal) {
       this.logger.debug('User returned from away state due to speech input');
       this._updateUserState('listening');
     }
@@ -925,6 +948,9 @@ export class AgentSession<
     this.output.audio = null;
     this.output.transcription = null;
 
+    await this.clientEventsHandler?.close();
+    this.clientEventsHandler = undefined;
+
     await this.roomIO?.close();
     this.roomIO = undefined;
 
@@ -950,7 +976,7 @@ export class AgentSession<
 
     this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
 
-    this.userState = 'listening';
+    this._userState = 'listening';
     this._agentState = 'initializing';
     this.rootSpanContext = undefined;
     this.llmErrorCounts = 0;
