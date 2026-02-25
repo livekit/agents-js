@@ -44,7 +44,7 @@ import {
   type clientMetricsCollectedSchema,
   type clientSessionUsageSchema,
   type clientUserInputTranscribedSchema,
-  type clientUserInterruptionSchema,
+  type clientUserOverlappingSpeechSchema,
   type clientUserStateChangedSchema,
   functionCallOutputToWire,
   functionCallToWire,
@@ -67,7 +67,7 @@ export type ClientUserInputTranscribedEvent = z.infer<typeof clientUserInputTran
 export type ClientFunctionToolsExecutedEvent = z.infer<typeof clientFunctionToolsExecutedSchema>;
 export type ClientMetricsCollectedEvent = z.infer<typeof clientMetricsCollectedSchema>;
 export type ClientErrorEvent = z.infer<typeof clientErrorSchema>;
-export type ClientUserInterruptionEvent = z.infer<typeof clientUserInterruptionSchema>;
+export type ClientUserOverlappingSpeechEvent = z.infer<typeof clientUserOverlappingSpeechSchema>;
 export type ClientSessionUsageEvent = z.infer<typeof clientSessionUsageSchema>;
 export type ClientEvent = z.infer<typeof clientEventSchema>;
 export type ClientEventType = ClientEvent['type'];
@@ -125,7 +125,7 @@ export type RemoteSessionEventTypes =
   | 'user_input_transcribed'
   | 'function_tools_executed'
   | 'metrics_collected'
-  | 'user_interruption'
+  | 'user_overlapping_speech'
   | 'session_usage'
   | 'error';
 
@@ -136,7 +136,7 @@ export type RemoteSessionCallbacks = {
   user_input_transcribed: (ev: ClientUserInputTranscribedEvent) => void;
   function_tools_executed: (ev: ClientFunctionToolsExecutedEvent) => void;
   metrics_collected: (ev: ClientMetricsCollectedEvent) => void;
-  user_interruption: (ev: ClientUserInterruptionEvent) => void;
+  user_overlapping_speech: (ev: ClientUserOverlappingSpeechEvent) => void;
   session_usage: (ev: ClientSessionUsageEvent) => void;
   error: (ev: ClientErrorEvent) => void;
 };
@@ -406,11 +406,11 @@ export class ClientEventsHandler {
   }
 
   private onUserOverlapSpeech = (event: InterruptionEvent): void => {
-    const clientEvent: ClientUserInterruptionEvent = {
-      type: 'user_interruption',
+    const clientEvent: ClientUserOverlappingSpeechEvent = {
+      type: 'user_overlapping_speech',
       is_interruption: event.isInterruption,
       created_at: msToS(event.timestamp),
-      overlap_speech_started_at:
+      overlap_started_at:
         event.overlapSpeechStartedAt != null ? msToS(event.overlapSpeechStartedAt) : null,
       detection_delay: event.detectionDelayInS,
       sent_at: msToS(Date.now()),

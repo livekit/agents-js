@@ -326,46 +326,46 @@ export function agentMetricsToWire(m: AgentMetrics): WireObject {
 }
 
 function llmModelUsageToWire(u: Partial<LLMModelUsage>): WireObject {
-  return omitUndefined({
+  return {
     type: u.type,
-    provider: u.provider,
-    model: u.model,
-    input_tokens: u.inputTokens,
-    input_cached_tokens: u.inputCachedTokens,
-    input_audio_tokens: u.inputAudioTokens,
-    input_cached_audio_tokens: u.inputCachedAudioTokens,
-    input_text_tokens: u.inputTextTokens,
-    input_cached_text_tokens: u.inputCachedTextTokens,
-    input_image_tokens: u.inputImageTokens,
-    input_cached_image_tokens: u.inputCachedImageTokens,
-    output_tokens: u.outputTokens,
-    output_audio_tokens: u.outputAudioTokens,
-    output_text_tokens: u.outputTextTokens,
-    session_duration: u.sessionDurationMs !== undefined ? msToS(u.sessionDurationMs) : undefined,
-  });
+    provider: u.provider ?? '',
+    model: u.model ?? '',
+    input_tokens: u.inputTokens ?? 0,
+    input_cached_tokens: u.inputCachedTokens ?? 0,
+    input_audio_tokens: u.inputAudioTokens ?? 0,
+    input_cached_audio_tokens: u.inputCachedAudioTokens ?? 0,
+    input_text_tokens: u.inputTextTokens ?? 0,
+    input_cached_text_tokens: u.inputCachedTextTokens ?? 0,
+    input_image_tokens: u.inputImageTokens ?? 0,
+    input_cached_image_tokens: u.inputCachedImageTokens ?? 0,
+    output_tokens: u.outputTokens ?? 0,
+    output_audio_tokens: u.outputAudioTokens ?? 0,
+    output_text_tokens: u.outputTextTokens ?? 0,
+    session_duration: msToS(u.sessionDurationMs ?? 0),
+  };
 }
 
 function ttsModelUsageToWire(u: Partial<TTSModelUsage>): WireObject {
-  return omitUndefined({
+  return {
     type: u.type,
-    provider: u.provider,
-    model: u.model,
-    input_tokens: u.inputTokens,
-    output_tokens: u.outputTokens,
-    characters_count: u.charactersCount,
-    audio_duration: u.audioDurationMs !== undefined ? msToS(u.audioDurationMs) : undefined,
-  });
+    provider: u.provider ?? '',
+    model: u.model ?? '',
+    input_tokens: u.inputTokens ?? 0,
+    output_tokens: u.outputTokens ?? 0,
+    characters_count: u.charactersCount ?? 0,
+    audio_duration: msToS(u.audioDurationMs ?? 0),
+  };
 }
 
 function sttModelUsageToWire(u: Partial<STTModelUsage>): WireObject {
-  return omitUndefined({
+  return {
     type: u.type,
-    provider: u.provider,
-    model: u.model,
-    input_tokens: u.inputTokens,
-    output_tokens: u.outputTokens,
-    audio_duration: u.audioDurationMs !== undefined ? msToS(u.audioDurationMs) : undefined,
-  });
+    provider: u.provider ?? '',
+    model: u.model ?? '',
+    input_tokens: u.inputTokens ?? 0,
+    output_tokens: u.outputTokens ?? 0,
+    audio_duration: msToS(u.audioDurationMs ?? 0),
+  };
 }
 
 export function modelUsageToWire(u: Partial<ModelUsage>): WireObject {
@@ -582,6 +582,10 @@ export const realtimeModelMetricsWireSchema = z.object({
   metadata: metadataWireSchema,
 });
 
+// TODO(interruption): add interruption_metrics schema when backend support is implemented.
+// The playground expects: { type: 'interruption_metrics', model_name, model_provider, timestamp,
+//   total_duration, prediction_duration, detection_delay, num_interruptions, num_backchannels,
+//   num_requests, room, pid, job_id, room_id }
 export const agentMetricsWireSchema = z.discriminatedUnion('type', [
   llmMetricsWireSchema,
   sttMetricsWireSchema,
@@ -632,6 +636,8 @@ export const sttModelUsageWireSchema = z.object({
   audio_duration: z.number().optional(),
 });
 
+// TODO(interruption): add interruption_usage schema when backend support is implemented.
+// The playground expects: { type: 'interruption_usage', provider, model, total_requests }
 export const modelUsageWireSchema = z.discriminatedUnion('type', [
   llmModelUsageWireSchema,
   ttsModelUsageWireSchema,
@@ -696,13 +702,13 @@ export const clientErrorSchema = z.object({
   created_at: z.number(),
 });
 
-export const clientUserInterruptionSchema = z.object({
-  type: z.literal('user_interruption'),
+export const clientUserOverlappingSpeechSchema = z.object({
+  type: z.literal('user_overlapping_speech'),
   is_interruption: z.boolean(),
   created_at: z.number(),
   sent_at: z.number(),
   detection_delay: z.number(),
-  overlap_speech_started_at: z.number().nullable(),
+  overlap_started_at: z.number().nullable(),
 });
 
 export const clientSessionUsageSchema = z.object({
@@ -719,7 +725,7 @@ export const clientEventSchema = z.discriminatedUnion('type', [
   clientFunctionToolsExecutedSchema,
   clientMetricsCollectedSchema,
   clientErrorSchema,
-  clientUserInterruptionSchema,
+  clientUserOverlappingSpeechSchema,
   clientSessionUsageSchema,
 ]);
 
