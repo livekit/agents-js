@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-// Ref: python client_events.py lines 1-50 (imports)
 import type { Room, RpcInvocationData, TextStreamInfo, TextStreamReader } from '@livekit/rtc-node';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';

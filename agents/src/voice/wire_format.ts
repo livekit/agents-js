@@ -59,10 +59,6 @@ function omitUndefined(obj: WireObject): WireObject {
   return result;
 }
 
-// ---------------------------------------------------------------------------
-// Chat items  (Ref: Python llm/chat_context.py)
-// ---------------------------------------------------------------------------
-
 function imageContentToWire(img: ImageContent): WireObject {
   return omitUndefined({
     id: img.id,
@@ -123,7 +119,6 @@ export function chatMessageToWire(msg: ChatMessage): WireObject {
   return result;
 }
 
-// Ref: Python FunctionCall model — field is "arguments", not "args"
 export function functionCallToWire(fc: FunctionCall): WireObject {
   const result: WireObject = {
     id: fc.id,
@@ -180,11 +175,6 @@ export function chatItemToWire(item: ChatItem): WireObject {
       return agentHandoffToWire(item);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Metrics  (Ref: Python metrics/base.py)
-// JS stores durations in ms; Python (and the playground) expect seconds.
-// ---------------------------------------------------------------------------
 
 function metadataToWire(m: MetricsMetadata | undefined): WireObject | null {
   if (!m) return null;
@@ -335,11 +325,6 @@ export function agentMetricsToWire(m: AgentMetrics): WireObject {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Model usage  (Ref: Python metrics/usage.py)
-// JS stores durations in ms; Python (and the playground) expect seconds.
-// ---------------------------------------------------------------------------
-
 function llmModelUsageToWire(u: Partial<LLMModelUsage>): WireObject {
   return omitUndefined({
     type: u.type,
@@ -484,10 +469,6 @@ export const chatItemWireSchema = z.discriminatedUnion('type', [
   functionCallOutputWireSchema,
   agentHandoffWireSchema,
 ]);
-
-// ---------------------------------------------------------------------------
-// Metrics schemas  (Ref: Python metrics/base.py)
-// ---------------------------------------------------------------------------
 
 const metadataWireSchema = z
   .object({
