@@ -733,7 +733,7 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
       throw new Error('RemoteSession room has no local participant');
     }
 
-    localParticipant.sendText(JSON.stringify(request), {
+    await localParticipant.sendText(JSON.stringify(request), {
       topic: TOPIC_AGENT_REQUEST,
       destinationIdentities: [this.agentIdentity],
     });
