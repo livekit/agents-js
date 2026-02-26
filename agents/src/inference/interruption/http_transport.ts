@@ -8,7 +8,7 @@ import { log } from '../../log.js';
 import { createAccessToken } from '../utils.js';
 import { intervalForRetry } from './defaults.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
-import { type InterruptionEvent, InterruptionEventType } from './types.js';
+import type { OverlappingSpeechEvent } from './types.js';
 import type { BoundedCache } from './utils.js';
 
 export interface PostOptions {
@@ -107,13 +107,13 @@ export function createHttpTransport(
   getState: () => HttpTransportState,
   setState: (partial: Partial<HttpTransportState>) => void,
   updateUserSpeakingSpan?: (entry: InterruptionCacheEntry) => void,
-): TransformStream<Int16Array | InterruptionEvent, InterruptionEvent> {
+  getAndResetNumRequests?: () => number,
+): TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent> {
   const logger = log();
 
-  return new TransformStream<Int16Array | InterruptionEvent, InterruptionEvent>(
+  return new TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent>(
     {
       async transform(chunk, controller) {
-        // Pass through InterruptionEvents unchanged
         if (!(chunk instanceof Int16Array)) {
           controller.enqueue(chunk);
           return;
@@ -153,10 +153,11 @@ export function createHttpTransport(
             if (updateUserSpeakingSpan) {
               updateUserSpeakingSpan(entry);
             }
-            const event: InterruptionEvent = {
-              type: InterruptionEventType.INTERRUPTION,
+            // Ref: python inference/interruption.py lines 363-378
+            const event: OverlappingSpeechEvent = {
+              type: 'user_overlapping_speech',
               timestamp: Date.now(),
-              overlapSpeechStartedAt,
+              overlapStartedAt: overlapSpeechStartedAt,
               isInterruption: entry.isInterruption,
               speechInput: entry.speechInput,
               probabilities: entry.probabilities,
@@ -164,6 +165,7 @@ export function createHttpTransport(
               predictionDurationInS: entry.predictionDurationInS,
               detectionDelayInS: entry.detectionDelayInS,
               probability: entry.probability,
+              numRequests: getAndResetNumRequests?.() ?? 0,
             };
             logger.debug(
               {

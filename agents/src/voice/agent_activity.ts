@@ -9,7 +9,7 @@ import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
-import type { InterruptionEvent } from '../inference/interruption/types.js';
+import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { type ChatContext, ChatMessage, type MetricsReport } from '../llm/chat_context.js';
 import {
   type ChatItem,
@@ -793,11 +793,12 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  onInterruption(ev: InterruptionEvent) {
+  // Ref: python voice/agent_activity.py on_interruption
+  onInterruption(ev: OverlappingSpeechEvent) {
     this.restoreInterruptionByAudioActivity();
     this.interruptByAudioActivity();
     if (this.audioRecognition) {
-      this.audioRecognition.onEndOfAgentSpeech(ev.overlapSpeechStartedAt || ev.timestamp);
+      this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.timestamp);
     }
   }
 
@@ -2633,13 +2634,21 @@ export class AgentActivity implements RecognitionHooks {
     try {
       const detector = new AdaptiveInterruptionDetector();
 
-      // TODO cleanup these listeners
-      detector.on('user_interruption_detected', (ev) =>
-        this.agentSession.emit(AgentSessionEventTypes.UserInterruptionDetected, ev),
+      // Ref: python voice/agent_activity.py resolve_interruption_detector
+      detector.on('user_overlapping_speech', (ev) =>
+        this.agentSession.emit(AgentSessionEventTypes.UserOverlappingSpeech, ev),
       );
-      detector.on('user_non_interruption_detected', (ev) =>
-        this.agentSession.emit(AgentSessionEventTypes.UserNonInterruptionDetected, ev),
+      detector.on('metrics_collected', (ev) =>
+        this.agentSession.emit(
+          AgentSessionEventTypes.MetricsCollected,
+          createMetricsCollectedEvent({ metrics: ev }),
+        ),
       );
+      detector.on('error', (ev) => {
+        const errorEvent = createErrorEvent(ev, this.interruptionDetector);
+        this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+        this.agentSession._onError(ev);
+      });
 
       return detector;
     } catch (error: unknown) {

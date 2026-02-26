@@ -15,7 +15,7 @@ import {
   TOPIC_CHAT,
   TOPIC_CLIENT_EVENTS,
 } from '../constants.js';
-import type { InterruptionEvent } from '../inference/interruption/types.js';
+import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import type { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import { Future, Task, cancelAndWait, shortuuid } from '../utils.js';
@@ -267,11 +267,7 @@ export class ClientEventsHandler {
       this.session.off(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
       this.session.off(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       this.session.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
-      this.session.off(AgentSessionEventTypes.UserInterruptionDetected, this.onUserOverlapSpeech);
-      this.session.off(
-        AgentSessionEventTypes.UserNonInterruptionDetected,
-        this.onUserOverlapSpeech,
-      );
+      this.session.off(AgentSessionEventTypes.UserOverlappingSpeech, this.onUserOverlapSpeech);
       this.session.off(AgentSessionEventTypes.Error, this.onError);
       this.eventHandlersRegistered = false;
     }
@@ -324,8 +320,7 @@ export class ClientEventsHandler {
     this.session.on(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
     this.session.on(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
     this.session.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
-    this.session.on(AgentSessionEventTypes.UserInterruptionDetected, this.onUserOverlapSpeech);
-    this.session.on(AgentSessionEventTypes.UserNonInterruptionDetected, this.onUserOverlapSpeech);
+    this.session.on(AgentSessionEventTypes.UserOverlappingSpeech, this.onUserOverlapSpeech);
     this.session.on(AgentSessionEventTypes.Error, this.onError);
     this.eventHandlersRegistered = true;
   }
@@ -451,13 +446,13 @@ export class ClientEventsHandler {
     });
   }
 
-  private onUserOverlapSpeech = (event: InterruptionEvent): void => {
+  // Ref: python voice/client_events.py on_user_overlapping_speech
+  private onUserOverlapSpeech = (event: OverlappingSpeechEvent): void => {
     const clientEvent: ClientUserOverlappingSpeechEvent = {
       type: 'user_overlapping_speech',
       is_interruption: event.isInterruption,
       created_at: msToS(event.timestamp),
-      overlap_started_at:
-        event.overlapSpeechStartedAt != null ? msToS(event.overlapSpeechStartedAt) : null,
+      overlap_started_at: event.overlapStartedAt != null ? msToS(event.overlapStartedAt) : null,
       detection_delay: event.detectionDelayInS,
       sent_at: msToS(Date.now()),
     };

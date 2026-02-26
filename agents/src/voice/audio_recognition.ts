@@ -8,9 +8,8 @@ import { ReadableStream } from 'node:stream/web';
 import type { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import { InterruptionStreamSentinel } from '../inference/interruption/interruption_stream.js';
 import {
-  type InterruptionEvent,
-  InterruptionEventType,
   type InterruptionSentinel,
+  type OverlappingSpeechEvent,
 } from '../inference/interruption/types.js';
 import { type ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
@@ -46,7 +45,8 @@ export interface PreemptiveGenerationInfo {
 }
 
 export interface RecognitionHooks {
-  onInterruption: (ev: InterruptionEvent) => void;
+  // Ref: python voice/audio_recognition.py RecognitionHooks
+  onInterruption: (ev: OverlappingSpeechEvent) => void;
   onStartOfSpeech: (ev: VADEvent) => void;
   onVADInferenceDone: (ev: VADEvent) => void;
   onEndOfSpeech: (ev: VADEvent) => void;
@@ -625,8 +625,9 @@ export class AudioRecognition {
     }
   }
 
-  private onInterruptionEvent(ev: InterruptionEvent) {
-    if (ev.type === InterruptionEventType.INTERRUPTION) {
+  // Ref: python voice/audio_recognition.py on_overlapping_speech_event
+  private onOverlapSpeechEvent(ev: OverlappingSpeechEvent) {
+    if (ev.isInterruption) {
       this.hooks.onInterruption(ev);
     }
   }
@@ -987,7 +988,7 @@ export class AudioRecognition {
         if (!res) break;
         const { done, value: ev } = res;
         if (done) break;
-        this.onInterruptionEvent(ev);
+        this.onOverlapSpeechEvent(ev);
       }
     } catch (e) {
       if (!signal.aborted) {

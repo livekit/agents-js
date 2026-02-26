@@ -8,7 +8,7 @@ import { log } from '../../log.js';
 import { createAccessToken } from '../utils.js';
 import { intervalForRetry } from './defaults.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
-import { type InterruptionEvent, InterruptionEventType } from './types.js';
+import type { OverlappingSpeechEvent } from './types.js';
 import type { BoundedCache } from './utils.js';
 
 // WebSocket message types
@@ -99,7 +99,7 @@ async function connectWebSocket(options: WsTransportOptions): Promise<WebSocket>
 }
 
 export interface WsTransportResult {
-  transport: TransformStream<Int16Array | InterruptionEvent, InterruptionEvent>;
+  transport: TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent>;
   reconnect: () => Promise<void>;
 }
 
@@ -110,15 +110,18 @@ export interface WsTransportResult {
  * It maintains a persistent WebSocket connection with automatic retry on failure.
  * Returns both the transport and a reconnect function for option updates.
  */
+// Ref: python inference/interruption.py lines 318-320
 export function createWsTransport(
   options: WsTransportOptions,
   getState: () => WsTransportState,
   setState: (partial: Partial<WsTransportState>) => void,
   updateUserSpeakingSpan?: (entry: InterruptionCacheEntry) => void,
+  onRequestSent?: () => void,
+  getAndResetNumRequests?: () => number,
 ): WsTransportResult {
   const logger = log();
   let ws: WebSocket | null = null;
-  let outputController: TransformStreamDefaultController<InterruptionEvent> | null = null;
+  let outputController: TransformStreamDefaultController<OverlappingSpeechEvent> | null = null;
 
   function setupMessageHandler(socket: WebSocket): void {
     socket.on('message', (data: WebSocket.Data) => {
@@ -193,9 +196,6 @@ export function createWsTransport(
         if (state.overlapSpeechStarted && overlapSpeechStartedAt !== undefined) {
           const existing = state.cache.get(createdAt);
 
-          // prediction_duration in WS payload is seconds.
-          // total_duration should be measured from local send-time to avoid unit ambiguity
-          // of created_at across runtimes/protocol variants.
           const totalDurationInS =
             existing?.requestStartedAt !== undefined
               ? (performance.now() - existing.requestStartedAt) / 1000
@@ -221,25 +221,27 @@ export function createWsTransport(
 
           logger.debug(
             {
-              totalDurationInS: entry.totalDurationInS,
-              predictionDurationInS: entry.predictionDurationInS,
-              detectionDelayInS: entry.detectionDelayInS,
+              totalDuration: entry.totalDurationInS,
+              predictionDuration: entry.predictionDurationInS,
+              detectionDelay: entry.detectionDelayInS,
               probability: entry.probability,
             },
             'interruption detected',
           );
 
-          const event: InterruptionEvent = {
-            type: InterruptionEventType.INTERRUPTION,
+          // Ref: python inference/interruption.py lines 363-378
+          const event: OverlappingSpeechEvent = {
+            type: 'user_overlapping_speech',
             timestamp: Date.now(),
             isInterruption: true,
             totalDurationInS: entry.totalDurationInS,
             predictionDurationInS: entry.predictionDurationInS,
-            overlapSpeechStartedAt,
+            overlapStartedAt: overlapSpeechStartedAt,
             speechInput: entry.speechInput,
             probabilities: entry.probabilities,
             detectionDelayInS: entry.detectionDelayInS,
             probability: entry.probability,
+            numRequests: getAndResetNumRequests?.() ?? 0,
           };
 
           outputController?.enqueue(event);
@@ -336,6 +338,8 @@ export function createWsTransport(
 
     try {
       ws.send(combined);
+      // Ref: python inference/interruption.py lines 318-320
+      onRequestSent?.();
     } catch (e: unknown) {
       logger.error(e, `failed to send audio via websocket`);
     }
@@ -362,7 +366,10 @@ export function createWsTransport(
     close();
   }
 
-  const transport = new TransformStream<Int16Array | InterruptionEvent, InterruptionEvent>(
+  const transport = new TransformStream<
+    Int16Array | OverlappingSpeechEvent,
+    OverlappingSpeechEvent
+  >(
     {
       async start(controller) {
         outputController = controller;
@@ -370,7 +377,6 @@ export function createWsTransport(
       },
 
       transform(chunk, controller) {
-        // Pass through InterruptionEvents unchanged
         if (!(chunk instanceof Int16Array)) {
           controller.enqueue(chunk);
           return;

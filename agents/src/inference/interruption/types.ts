@@ -3,28 +3,19 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Span } from '@opentelemetry/api';
 
-/**
- * Event types for interruption detection.
- */
-export enum InterruptionEventType {
-  INTERRUPTION = 'interruption',
-  OVERLAP_SPEECH_ENDED = 'overlap_speech_ended',
-}
-
-/**
- * Event emitted when an interruption is detected or overlap speech ends.
- */
-export interface InterruptionEvent {
-  type: InterruptionEventType;
+// Ref: python inference/interruption.py lines 125-138
+export interface OverlappingSpeechEvent {
+  type: 'user_overlapping_speech';
   timestamp: number;
   isInterruption: boolean;
   totalDurationInS: number;
   predictionDurationInS: number;
   detectionDelayInS: number;
-  overlapSpeechStartedAt?: number;
+  overlapStartedAt?: number;
   speechInput?: Int16Array;
   probabilities?: number[];
   probability: number;
+  numRequests: number;
 }
 
 /**

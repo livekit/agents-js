@@ -15,7 +15,8 @@ import {
   type STTModelString,
   type TTSModelString,
 } from '../inference/index.js';
-import type { InterruptionEvent } from '../inference/interruption/types.js';
+import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
+import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { type JobContext, getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
@@ -137,6 +138,7 @@ export type VoiceOptions = SessionOptions;
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
 
+// Ref: python voice/agent_session.py AgentSessionCallbacks
 export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
   [AgentSessionEventTypes.AgentStateChanged]: (ev: AgentStateChangedEvent) => void;
@@ -147,8 +149,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
-  [AgentSessionEventTypes.UserInterruptionDetected]: (ev: InterruptionEvent) => void;
-  [AgentSessionEventTypes.UserNonInterruptionDetected]: (ev: InterruptionEvent) => void;
+  [AgentSessionEventTypes.UserOverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
@@ -202,6 +203,8 @@ export class AgentSession<
   // Unrecoverable error counts, reset after agent speaking
   private llmErrorCounts = 0;
   private ttsErrorCounts = 0;
+  // Ref: python voice/agent_session.py interruption_detection_error_counts
+  private interruptionDetectionErrorCounts = 0;
 
   private sessionSpan?: Span;
   private agentSpeakingSpan?: Span;
@@ -730,7 +733,10 @@ export class AgentSession<
   }
 
   /** @internal */
-  _onError(error: RealtimeModelError | STTError | TTSError | LLMError): void {
+  // Ref: python voice/agent_session.py _on_error
+  _onError(
+    error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError,
+  ): void {
     if (this.closingTask || error.recoverable) {
       return;
     }
@@ -744,6 +750,11 @@ export class AgentSession<
     } else if (error.type === 'tts_error') {
       this.ttsErrorCounts += 1;
       if (this.ttsErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
+        return;
+      }
+    } else if (error.type === 'interruption_detection_error') {
+      this.interruptionDetectionErrorCounts += 1;
+      if (this.interruptionDetectionErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
         return;
       }
     }
@@ -775,9 +786,9 @@ export class AgentSession<
     }
 
     if (state === 'speaking') {
-      // Reset error counts when agent starts speaking
       this.llmErrorCounts = 0;
       this.ttsErrorCounts = 0;
+      this.interruptionDetectionErrorCounts = 0;
 
       if (this.agentSpeakingSpan === undefined) {
         this.agentSpeakingSpan = tracer.startSpan({
@@ -895,7 +906,13 @@ export class AgentSession<
 
   private async closeImpl(
     reason: ShutdownReason,
-    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
+    error:
+      | RealtimeModelError
+      | LLMError
+      | TTSError
+      | STTError
+      | InterruptionDetectionError
+      | null = null,
     drain: boolean = false,
   ): Promise<void> {
     if (this.rootSpanContext) {
@@ -909,7 +926,13 @@ export class AgentSession<
 
   private async closeImplInner(
     reason: ShutdownReason,
-    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
+    error:
+      | RealtimeModelError
+      | LLMError
+      | TTSError
+      | STTError
+      | InterruptionDetectionError
+      | null = null,
     drain: boolean = false,
   ): Promise<void> {
     if (!this.started) {
@@ -981,6 +1004,7 @@ export class AgentSession<
     this.rootSpanContext = undefined;
     this.llmErrorCounts = 0;
     this.ttsErrorCounts = 0;
+    this.interruptionDetectionErrorCounts = 0;
 
     this.logger.info({ reason, error }, 'AgentSession closed');
   }

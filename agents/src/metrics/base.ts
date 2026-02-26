@@ -9,13 +9,15 @@ export type MetricsMetadata = {
   modelName?: string;
 };
 
+// Ref: python metrics/base.py lines 144-173
 export type AgentMetrics =
   | STTMetrics
   | LLMMetrics
   | TTSMetrics
   | VADMetrics
   | EOUMetrics
-  | RealtimeModelMetrics;
+  | RealtimeModelMetrics
+  | InterruptionMetrics;
 
 export type LLMMetrics = {
   type: 'llm_metrics';
@@ -192,5 +194,24 @@ export type RealtimeModelMetrics = {
    */
   outputTokenDetails: RealtimeModelMetricsOutputTokenDetails;
   /** Metadata for model provider and name tracking. */
+  metadata?: MetricsMetadata;
+};
+
+// Ref: python metrics/base.py lines 144-173
+export type InterruptionMetrics = {
+  type: 'interruption_metrics';
+  timestamp: number;
+  /** Latest RTT time taken to perform inference, in milliseconds. */
+  totalDuration: number;
+  /** Latest time taken by the model side, in milliseconds. */
+  predictionDuration: number;
+  /** Latest total time from onset of speech to final prediction, in milliseconds. */
+  detectionDelay: number;
+  /** Number of interruptions detected (incremental). */
+  numInterruptions: number;
+  /** Number of backchannels detected (incremental). */
+  numBackchannels: number;
+  /** Number of requests sent to the model (incremental). */
+  numRequests: number;
   metadata?: MetricsMetadata;
 };

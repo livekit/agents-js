@@ -5,6 +5,7 @@ import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
 import { type ReadableStream, TransformStream } from 'stream/web';
 import { log } from '../../log.js';
+import type { InterruptionMetrics } from '../../metrics/base.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { traceTypes } from '../../telemetry/index.js';
 import { FRAMES_PER_SECOND, apiConnectDefaults } from './defaults.js';
@@ -17,12 +18,11 @@ import {
   type AgentSpeechStarted,
   type ApiConnectOptions,
   type Flush,
-  type InterruptionEvent,
-  InterruptionEventType,
   type InterruptionOptions,
   type InterruptionSentinel,
   type OverlapSpeechEnded,
   type OverlapSpeechStarted,
+  type OverlappingSpeechEvent,
 } from './types.js';
 import { BoundedCache } from './utils.js';
 import { createWsTransport } from './ws_transport.js';
@@ -78,9 +78,12 @@ function updateUserSpeakingSpan(span: Span, entry: InterruptionCacheEntry) {
 export class InterruptionStreamBase {
   private inputStream: StreamChannel<InterruptionSentinel | AudioFrame, InterruptionDetectionError>;
 
-  private eventStream: ReadableStream<InterruptionEvent>;
+  private eventStream: ReadableStream<OverlappingSpeechEvent>;
 
   private resampler?: AudioResampler;
+
+  // Ref: python inference/interruption.py lines 293-294
+  private numRequests = 0;
 
   private userSpeakingSpan: Span | undefined;
 
@@ -156,13 +159,12 @@ export class InterruptionStreamBase {
     }
   }
 
-  private setupTransform(): ReadableStream<InterruptionEvent> {
+  private setupTransform(): ReadableStream<OverlappingSpeechEvent> {
     let agentSpeechStarted = false;
     let startIdx = 0;
     let accumulatedSamples = 0;
     let overlapSpeechStarted = false;
     let overlapCount = 0;
-    // Use BoundedCache with max_len=10 to prevent unbounded memory growth
     const cache = new BoundedCache<number, InterruptionCacheEntry>(10);
     const inferenceS16Data = new Int16Array(
       Math.ceil(this.options.maxAudioDurationInS * this.options.sampleRate),
@@ -187,10 +189,21 @@ export class InterruptionStreamBase {
       }
     };
 
+    // Ref: python inference/interruption.py lines 318-320
+    const onRequestSent = () => {
+      this.numRequests++;
+    };
+
+    const getAndResetNumRequests = (): number => {
+      const n = this.numRequests;
+      this.numRequests = 0;
+      return n;
+    };
+
     // First transform: process input frames/sentinels and output audio slices or events
     const audioTransformer = new TransformStream<
       InterruptionSentinel | AudioFrame,
-      Int16Array | InterruptionEvent
+      Int16Array | OverlappingSpeechEvent
     >(
       {
         transform: (chunk, controller) => {
@@ -212,13 +225,11 @@ export class InterruptionStreamBase {
             startIdx = result.startIdx;
             accumulatedSamples += result.samplesWritten;
 
-            // Send data for inference when enough samples accumulated during overlap
             if (
               accumulatedSamples >=
                 Math.floor(this.options.detectionIntervalInS * this.options.sampleRate) &&
               overlapSpeechStarted
             ) {
-              // Send a copy of the audio data up to startIdx for inference
               const audioSlice = inferenceS16Data.slice(0, startIdx);
               accumulatedSamples = 0;
               controller.enqueue(audioSlice);
@@ -229,7 +240,9 @@ export class InterruptionStreamBase {
             overlapSpeechStarted = false;
             this.overlapSpeechStartedAt = undefined;
             accumulatedSamples = 0;
+            overlapCount = 0;
             startIdx = 0;
+            this.numRequests = 0;
             cache.clear();
           } else if (chunk.type === 'agent-speech-ended') {
             this.logger.debug('agent speech ended');
@@ -239,6 +252,7 @@ export class InterruptionStreamBase {
             accumulatedSamples = 0;
             overlapCount = 0;
             startIdx = 0;
+            this.numRequests = 0;
             cache.clear();
           } else if (chunk.type === 'overlap-speech-started' && agentSpeechStarted) {
             this.overlapSpeechStartedAt = chunk.startedAt;
@@ -247,12 +261,8 @@ export class InterruptionStreamBase {
             overlapSpeechStarted = true;
             accumulatedSamples = 0;
             overlapCount += 1;
-            // Include the audio prefix in the window and only shift (remove
-            // leading silence) when the first overlap speech started.
-            // Otherwise, keep the existing data.
             if (overlapCount <= 1) {
               const keepSize =
-                // Convert speechDuration (ms) → samples; audioPrefixDurationInS (s) → samples
                 Math.round((chunk.speechDuration / 1000) * this.options.sampleRate) +
                 Math.round(this.options.audioPrefixDurationInS * this.options.sampleRate);
               const shiftCount = Math.max(0, startIdx - keepSize);
@@ -264,8 +274,6 @@ export class InterruptionStreamBase {
             this.logger.debug('overlap speech ended');
             if (overlapSpeechStarted) {
               this.userSpeakingSpan = undefined;
-              // Use pop with predicate to get only completed requests (matching Python behavior)
-              // This ensures we don't return incomplete/in-flight requests as the "final" result
               let latestEntry = cache.pop(
                 (entry) => entry.totalDurationInS !== undefined && entry.totalDurationInS > 0,
               );
@@ -273,18 +281,20 @@ export class InterruptionStreamBase {
                 this.logger.debug('no request made for overlap speech');
                 latestEntry = InterruptionCacheEntry.default();
               }
-              const latestEntryValue = latestEntry ?? InterruptionCacheEntry.default();
-              const event: InterruptionEvent = {
-                type: InterruptionEventType.OVERLAP_SPEECH_ENDED,
+              const e = latestEntry ?? InterruptionCacheEntry.default();
+              // Ref: python inference/interruption.py lines 363-378
+              const event: OverlappingSpeechEvent = {
+                type: 'user_overlapping_speech',
                 timestamp: chunk.endedAt,
                 isInterruption: false,
-                overlapSpeechStartedAt: this.overlapSpeechStartedAt,
-                speechInput: latestEntryValue.speechInput,
-                probabilities: latestEntryValue.probabilities,
-                totalDurationInS: latestEntryValue.totalDurationInS,
-                detectionDelayInS: latestEntryValue.detectionDelayInS,
-                predictionDurationInS: latestEntryValue.predictionDurationInS,
-                probability: latestEntryValue.probability,
+                overlapStartedAt: this.overlapSpeechStartedAt,
+                speechInput: e.speechInput,
+                probabilities: e.probabilities,
+                totalDurationInS: e.totalDurationInS,
+                detectionDelayInS: e.detectionDelayInS,
+                predictionDurationInS: e.predictionDurationInS,
+                probability: e.probability,
+                numRequests: getAndResetNumRequests(),
               };
               controller.enqueue(event);
               overlapSpeechStarted = false;
@@ -303,27 +313,54 @@ export class InterruptionStreamBase {
     // Second transform: transport layer (HTTP or WebSocket based on useProxy)
     const transportOptions = this.transportOptions;
 
-    let transport: TransformStream<Int16Array | InterruptionEvent, InterruptionEvent>;
+    let transport: TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent>;
     if (this.options.useProxy) {
-      const wsResult = createWsTransport(transportOptions, getState, setState, handleSpanUpdate);
+      const wsResult = createWsTransport(
+        transportOptions,
+        getState,
+        setState,
+        handleSpanUpdate,
+        onRequestSent,
+        getAndResetNumRequests,
+      );
       transport = wsResult.transport;
       this.wsReconnect = wsResult.reconnect;
     } else {
-      transport = createHttpTransport(transportOptions, getState, setState, handleSpanUpdate);
+      transport = createHttpTransport(
+        transportOptions,
+        getState,
+        setState,
+        handleSpanUpdate,
+        getAndResetNumRequests,
+      );
     }
 
-    const eventEmitter = new TransformStream<InterruptionEvent, InterruptionEvent>({
+    // Ref: python inference/interruption.py lines 380-412
+    const eventEmitter = new TransformStream<OverlappingSpeechEvent, OverlappingSpeechEvent>({
       transform: (chunk, controller) => {
-        if (chunk.type === InterruptionEventType.INTERRUPTION) {
-          this.model.emit('user_interruption_detected', chunk);
-        } else if (chunk.type === InterruptionEventType.OVERLAP_SPEECH_ENDED) {
-          this.model.emit('user_non_interruption_detected', chunk);
-        }
+        this.model.emit('user_overlapping_speech', chunk);
+
+        const metrics: InterruptionMetrics = {
+          type: 'interruption_metrics',
+          timestamp: chunk.timestamp,
+          totalDuration: chunk.totalDurationInS * 1000,
+          predictionDuration: chunk.predictionDurationInS * 1000,
+          detectionDelay: chunk.detectionDelayInS * 1000,
+          numInterruptions: chunk.isInterruption ? 1 : 0,
+          numBackchannels: chunk.isInterruption ? 0 : 1,
+          numRequests: chunk.numRequests,
+          metadata: {
+            modelProvider: this.model.provider,
+            modelName: this.model.model,
+          },
+        };
+        this.model.emit('metrics_collected', metrics);
+
         controller.enqueue(chunk);
       },
     });
 
-    // Pipeline: input -> audioTransformer -> transport -> eventStream
+    // Pipeline: input -> audioTransformer -> transport -> eventEmitter -> eventStream
     return this.inputStream
       .stream()
       .pipeThrough(audioTransformer)
@@ -348,7 +385,7 @@ export class InterruptionStreamBase {
     return this.resampler;
   }
 
-  stream(): ReadableStream<InterruptionEvent> {
+  stream(): ReadableStream<OverlappingSpeechEvent> {
     return this.eventStream;
   }
 

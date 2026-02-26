@@ -4,15 +4,17 @@
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';
 import { log } from '../../log.js';
+import type { InterruptionMetrics } from '../../metrics/base.js';
 import { DEFAULT_INFERENCE_URL, STAGING_INFERENCE_URL, getDefaultInferenceUrl } from '../utils.js';
 import { FRAMES_PER_SECOND, SAMPLE_RATE, interruptionOptionDefaults } from './defaults.js';
 import type { InterruptionDetectionError } from './errors.js';
 import { InterruptionStreamBase } from './interruption_stream.js';
-import type { InterruptionEvent, InterruptionOptions } from './types.js';
+import type { InterruptionOptions, OverlappingSpeechEvent } from './types.js';
 
+// Ref: python inference/interruption.py lines 147-165
 type InterruptionCallbacks = {
-  user_interruption_detected: (event: InterruptionEvent) => void;
-  user_non_interruption_detected: (event: InterruptionEvent) => void;
+  user_overlapping_speech: (event: OverlappingSpeechEvent) => void;
+  metrics_collected: (metrics: InterruptionMetrics) => void;
   error: (error: InterruptionDetectionError) => void;
 };
 
