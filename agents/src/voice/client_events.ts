@@ -60,40 +60,82 @@ import {
   streamResponseSchema,
 } from './wire_format.js';
 
+/** @experimental */
 export type ClientAgentStateChangedEvent = z.infer<typeof clientAgentStateChangedSchema>;
+
+/** @experimental */
 export type ClientUserStateChangedEvent = z.infer<typeof clientUserStateChangedSchema>;
+
+/** @experimental */
 export type ClientConversationItemAddedEvent = z.infer<typeof clientConversationItemAddedSchema>;
+
+/** @experimental */
 export type ClientUserInputTranscribedEvent = z.infer<typeof clientUserInputTranscribedSchema>;
+
+/** @experimental */
 export type ClientFunctionToolsExecutedEvent = z.infer<typeof clientFunctionToolsExecutedSchema>;
+
+/** @experimental */
 export type ClientMetricsCollectedEvent = z.infer<typeof clientMetricsCollectedSchema>;
+
+/** @experimental */
 export type ClientErrorEvent = z.infer<typeof clientErrorSchema>;
+
+/** @experimental */
 export type ClientUserOverlappingSpeechEvent = z.infer<typeof clientUserOverlappingSpeechSchema>;
+
+/** @experimental */
 export type ClientSessionUsageEvent = z.infer<typeof clientSessionUsageSchema>;
+
+/** @experimental */
 export type ClientEvent = z.infer<typeof clientEventSchema>;
+
+/** @experimental */
 export type ClientEventType = ClientEvent['type'];
 
+/** @experimental */
 export type StreamRequest = z.infer<typeof streamRequestSchema>;
+
+/** @experimental */
 export type StreamResponse = z.infer<typeof streamResponseSchema>;
 
+/** @experimental */
 export type GetSessionStateRequest = Record<string, never>;
+
+/** @experimental */
 export type GetSessionStateResponse = z.infer<typeof getSessionStateResponseSchema>;
 
+/** @experimental */
 export type GetChatHistoryRequest = Record<string, never>;
+
+/** @experimental */
 export type GetChatHistoryResponse = z.infer<typeof getChatHistoryResponseSchema>;
 
+/** @experimental */
 export type GetAgentInfoRequest = Record<string, never>;
+
+/** @experimental */
 export type GetAgentInfoResponse = z.infer<typeof getAgentInfoResponseSchema>;
 
+/** @experimental */
 export type SendMessageRequest = z.infer<typeof sendMessageRequestSchema>;
+
+/** @experimental */
 export type SendMessageResponse = z.infer<typeof sendMessageResponseSchema>;
 
+/** @experimental */
 export type GetRTCStatsRequest = Record<string, never>;
+
+/** @experimental */
 export type GetRTCStatsResponse = z.infer<typeof getRTCStatsResponseSchema>;
 
+/** @experimental */
 export type GetSessionUsageRequest = Record<string, never>;
+
+/** @experimental */
 export type GetSessionUsageResponse = z.infer<typeof getSessionUsageResponseSchema>;
 
-export function serializeOptions(opts: {
+function serializeOptions(opts: {
   turnHandling?: {
     endpointing?: unknown;
     interruption?: unknown;
@@ -113,11 +155,12 @@ export function serializeOptions(opts: {
   };
 }
 
-export function toolNames(toolCtx: ToolContext | undefined): string[] {
+function toolNames(toolCtx: ToolContext | undefined): string[] {
   if (!toolCtx) return [];
   return Object.keys(toolCtx);
 }
 
+/** @experimental */
 export type RemoteSessionEventTypes =
   | 'agent_state_changed'
   | 'user_state_changed'
@@ -129,6 +172,7 @@ export type RemoteSessionEventTypes =
   | 'session_usage'
   | 'error';
 
+/** @experimental */
 export type RemoteSessionCallbacks = {
   agent_state_changed: (ev: ClientAgentStateChangedEvent) => void;
   user_state_changed: (ev: ClientUserStateChangedEvent) => void;
@@ -157,6 +201,8 @@ export type TextInputCallback = (session: AgentSession, ev: TextInputEvent) => v
  * - RPC handlers: Allows clients to request state, chat history, and agent info on demand
  * - Text input handling: Receives text messages from clients and generates agent replies
  */
+
+/** @experimental */
 export class ClientEventsHandler {
   private readonly session: AgentSession;
   private readonly roomIO: RoomIO;
@@ -621,6 +667,8 @@ export class ClientEventsHandler {
  * console.log('Response:', response);
  * ```
  */
+// TODO: expose this class
+/** @experimental */
 export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<RemoteSessionCallbacks>) {
   private readonly room: Room;
   private readonly agentIdentity: string;

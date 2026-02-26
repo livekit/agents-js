@@ -5,7 +5,7 @@ export { Agent, StopResponse, type AgentOptions, type ModelSettings } from './ag
 export { AgentSession, type AgentSessionOptions, type VoiceOptions } from './agent_session.js';
 export * from './avatar/index.js';
 export * from './background_audio.js';
-export * from './client_events.js';
+export { type TextInputCallback, type TextInputEvent } from './client_events.js';
 export * from './events.js';
 export { type TimedString } from './io.js';
 export * from './report.js';
