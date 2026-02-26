@@ -173,7 +173,8 @@ class TriageAgent extends voice.Agent<ConversationData> {
             const currentAgent = ctx.session.currentAgent;
             const chatCtx = currentAgent.chatCtx.copy();
             const llmInstance = ctx.session.llm;
-            if (llmInstance) {
+            // _summarize requires an LLM (not a RealtimeModel), so check the type
+            if (llmInstance && llmInstance instanceof llm.LLM) {
               console.log('Summarizing conversation before handoff...');
               await chatCtx._summarize(llmInstance, { keepLastTurns: 2 });
               await currentAgent.updateChatCtx(chatCtx);
