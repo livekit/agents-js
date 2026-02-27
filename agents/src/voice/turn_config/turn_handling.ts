@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { TurnDetectionMode } from '../agent_session.js';
-import { type EndpointingConfig, defaultEndpointingConfig } from './endpointing.js';
-import { type InterruptionConfig, defaultInterruptionConfig } from './interruption.js';
+import { type EndpointingOptions, defaultEndpointingOptions } from './endpointing.js';
+import { type InterruptionOptions, defaultInterruptionOptions } from './interruption.js';
 
 /**
  * Configuration for the turn handling system. Used to configure the turn taking behavior of the
  * session.
  */
-export interface TurnHandlingConfig {
+export interface TurnHandlingOptions {
   /**
    * Strategy for deciding when the user has finished speaking.
    *
@@ -26,20 +26,20 @@ export interface TurnHandlingConfig {
   /**
    * Configuration for endpointing.
    */
-  endpointing: Partial<EndpointingConfig>;
+  endpointing: Partial<EndpointingOptions>;
   /**
    * Configuration for interruption handling.
    */
-  interruption: Partial<InterruptionConfig>;
+  interruption: Partial<InterruptionOptions>;
 }
 
-export interface InternalTurnHandlingConfig extends TurnHandlingConfig {
-  endpointing: EndpointingConfig;
-  interruption: InterruptionConfig;
+export interface InternalTurnHandlingOptions extends TurnHandlingOptions {
+  endpointing: EndpointingOptions;
+  interruption: InterruptionOptions;
 }
 
-export const defaultTurnHandlingConfig: InternalTurnHandlingConfig = {
+export const defaultTurnHandlingOptions: InternalTurnHandlingOptions = {
   turnDetection: undefined,
-  interruption: defaultInterruptionConfig,
-  endpointing: defaultEndpointingConfig,
+  interruption: defaultInterruptionOptions,
+  endpointing: defaultEndpointingOptions,
 };

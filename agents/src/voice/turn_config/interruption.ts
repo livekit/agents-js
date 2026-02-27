@@ -4,9 +4,15 @@
 /**
  * Configuration for interruption handling.
  */
-export interface InterruptionConfig {
+export interface InterruptionOptions {
   /**
-   * Interruption handling strategy.
+   * Whether interruptions are enabled.
+   * @defaultValue true
+   */
+  enabled: boolean;
+  /**
+   * Interruption handling strategy. `"adaptive"` for ML-based detection, `"vad"` for simple
+   * voice-activity detection. `undefined` means auto-detect.
    * @defaultValue undefined
    */
   mode: 'adaptive' | 'vad' | false | undefined;
@@ -39,11 +45,12 @@ export interface InterruptionConfig {
   resumeFalseInterruption: boolean;
 }
 
-export const defaultInterruptionConfig = {
+export const defaultInterruptionOptions = {
+  enabled: true,
   mode: undefined,
   discardAudioIfUninterruptible: true,
   minDuration: 500,
   minWords: 0,
   falseInterruptionTimeout: 2000,
   resumeFalseInterruption: true,
-} as const satisfies InterruptionConfig;
+} as const satisfies InterruptionOptions;
