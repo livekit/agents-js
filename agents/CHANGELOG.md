@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.48
+
+### Patch Changes
+
+- Handle participant disconnect during init - [#1065](https://github.com/livekit/agents-js/pull/1065) ([@Fox32](https://github.com/Fox32))
+
+- Add TaskGroup feature - [#1072](https://github.com/livekit/agents-js/pull/1072) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.47
 
 ### Patch Changes
