@@ -1,6 +1,5 @@
 ---
-"@livekit/agents": patch
-"livekit-agents-examples": patch
+'@livekit/agents': patch
 ---
 
 Add TaskGroup feature
