@@ -113,8 +113,6 @@ export class ChatMessage {
 
   createdAt: number;
 
-  extra: Record<string, unknown>;
-
   constructor(params: {
     role: ChatRole;
     content: ChatContent[] | string;
