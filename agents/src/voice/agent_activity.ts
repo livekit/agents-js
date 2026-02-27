@@ -134,26 +134,34 @@ export class AgentActivity implements RecognitionHooks {
   private isInterruptionDetectionEnabled: boolean;
   private isInterruptionByAudioActivityEnabled: boolean;
   private isDefaultInterruptionByAudioActivityEnabled: boolean;
+
   private readonly onRealtimeGenerationCreated = (ev: GenerationCreatedEvent): void =>
     this.onGenerationCreated(ev);
+
   private readonly onRealtimeInputSpeechStarted = (ev: InputSpeechStartedEvent): void =>
     this.onInputSpeechStarted(ev);
+
   private readonly onRealtimeInputSpeechStopped = (ev: InputSpeechStoppedEvent): void =>
     this.onInputSpeechStopped(ev);
+
   private readonly onRealtimeInputAudioTranscriptionCompleted = (
     ev: InputTranscriptionCompleted,
   ): void => this.onInputAudioTranscriptionCompleted(ev);
+
   private readonly onModelError = (ev: RealtimeModelError | STTError | TTSError | LLMError): void =>
     this.onError(ev);
+
   private readonly onInterruptionOverlappingSpeech = (ev: OverlappingSpeechEvent): void => {
     this.agentSession.emit(AgentSessionEventTypes.UserOverlappingSpeech, ev);
   };
+
   private readonly onInterruptionMetricsCollected = (ev: InterruptionMetrics): void => {
     this.agentSession.emit(
       AgentSessionEventTypes.MetricsCollected,
       createMetricsCollectedEvent({ metrics: ev }),
     );
   };
+  
   private readonly onInterruptionError = (ev: InterruptionDetectionError): void => {
     const errorEvent = createErrorEvent(ev, this.interruptionDetector);
     this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
@@ -166,16 +174,6 @@ export class AgentActivity implements RecognitionHooks {
   _onExitTask?: Task<void>;
   _userTurnCompletedTask?: Task<void>;
 
-  private readonly onRealtimeGenerationCreated = (ev: GenerationCreatedEvent) =>
-    this.onGenerationCreated(ev);
-  private readonly onRealtimeInputSpeechStarted = (ev: InputSpeechStartedEvent) =>
-    this.onInputSpeechStarted(ev);
-  private readonly onRealtimeInputSpeechStopped = (ev: InputSpeechStoppedEvent) =>
-    this.onInputSpeechStopped(ev);
-  private readonly onRealtimeInputAudioTranscriptionCompleted = (ev: InputTranscriptionCompleted) =>
-    this.onInputAudioTranscriptionCompleted(ev);
-  private readonly onModelError = (ev: RealtimeModelError | STTError | TTSError | LLMError) =>
-    this.onError(ev);
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
     this.agentSession = agentSession;
