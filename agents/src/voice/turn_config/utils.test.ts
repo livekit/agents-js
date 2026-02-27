@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { beforeAll, describe, expect, it } from 'vitest';
 import { initializeLogger } from '../../log.js';
-import { defaultEndpointingConfig } from './endpointing.js';
-import { defaultInterruptionConfig } from './interruption.js';
-import { defaultTurnHandlingConfig } from './turn_handling.js';
+import { defaultEndpointingOptions } from './endpointing.js';
+import { defaultInterruptionOptions } from './interruption.js';
+import { defaultTurnHandlingOptions } from './turn_handling.js';
 import { migrateLegacyOptions } from './utils.js';
 
 beforeAll(() => {
@@ -17,9 +17,9 @@ describe('migrateLegacyOptions', () => {
     const result = migrateLegacyOptions({});
 
     expect(result.options.turnHandling).toEqual({
-      turnDetection: defaultTurnHandlingConfig.turnDetection,
-      endpointing: defaultEndpointingConfig,
-      interruption: defaultInterruptionConfig,
+      turnDetection: defaultTurnHandlingOptions.turnDetection,
+      endpointing: defaultEndpointingOptions,
+      interruption: defaultInterruptionOptions,
     });
     expect(result.options.maxToolSteps).toBe(3);
     expect(result.options.preemptiveGeneration).toBe(false);
@@ -44,14 +44,14 @@ describe('migrateLegacyOptions', () => {
     expect(result.options.turnHandling.endpointing!.maxDelay).toBe(5000);
   });
 
-  it('should set interruption.mode to false when allowInterruptions is false', () => {
+  it('should set interruption.enabled to false when allowInterruptions is false', () => {
     const result = migrateLegacyOptions({
       options: {
         allowInterruptions: false,
       },
     });
 
-    expect(result.options.turnHandling.interruption!.mode).toBe(false);
+    expect(result.options.turnHandling.interruption!.enabled).toBe(false);
   });
 
   it('should give options precedence over voiceOptions when both are provided', () => {

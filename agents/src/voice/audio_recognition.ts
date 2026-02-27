@@ -59,9 +59,13 @@ export interface RecognitionHooks {
 }
 
 export interface _TurnDetector {
+  /** The model name used by this turn detector. */
+  readonly model: string;
+  /** The provider name for this turn detector. */
+  readonly provider: string;
   unlikelyThreshold: (language?: string) => Promise<number | undefined>;
   supportsLanguage: (language?: string) => Promise<boolean>;
-  predictEndOfTurn(chatCtx: ChatContext): Promise<number>;
+  predictEndOfTurn(chatCtx: ChatContext, timeout?: number): Promise<number>;
 }
 
 export interface AudioRecognitionOptions {
