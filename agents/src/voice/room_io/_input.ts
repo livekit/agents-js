@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type AudioFrame, FrameProcessor } from '@livekit/rtc-node';
 import {
+  type AudioFrame,
   AudioStream,
+  FrameProcessor,
   type NoiseCancellationOptions,
   RemoteParticipant,
   type RemoteTrack,
@@ -25,7 +26,9 @@ export class ParticipantAudioInputStream extends AudioInput {
   private frameProcessor?: FrameProcessor<AudioFrame>;
   private publication: RemoteTrackPublication | null = null;
   private participantIdentity: string | null = null;
+  private currentInputId: string | null = null;
   private logger = log();
+
   constructor({
     room,
     sampleRate,
@@ -60,8 +63,10 @@ export class ParticipantAudioInputStream extends AudioInput {
     if (this.participantIdentity === participantIdentity) {
       return;
     }
+    if (this.participantIdentity) {
+      this.closeStream();
+    }
     this.participantIdentity = participantIdentity;
-    this.closeStream();
 
     if (!participantIdentity) {
       return;
@@ -119,11 +124,10 @@ export class ParticipantAudioInputStream extends AudioInput {
   };
 
   private closeStream() {
-    if (this.deferredStream.isSourceSet) {
-      this.deferredStream.detachSource();
+    if (this.currentInputId) {
+      void this.multiStream.removeInputStream(this.currentInputId);
+      this.currentInputId = null;
     }
-
-    this.frameProcessor?.close();
 
     this.publication = null;
   }
@@ -143,7 +147,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     }
     this.closeStream();
     this.publication = publication;
-    this.deferredStream.setSource(
+    this.currentInputId = this.multiStream.addInputStream(
       resampleStream({
         stream: this.createStream(track),
         outputRate: this.sampleRate,
@@ -179,12 +183,14 @@ export class ParticipantAudioInputStream extends AudioInput {
     }) as unknown as ReadableStream<AudioFrame>;
   }
 
-  async close() {
+  override async close() {
     this.room.off(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
     this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
     this.room.off(RoomEvent.TokenRefreshed, this.onTokenRefreshed);
     this.closeStream();
-    // Ignore errors - stream may be locked by RecorderIO or already cancelled
-    await this.deferredStream.stream.cancel().catch(() => {});
+    await super.close();
+
+    this.frameProcessor?.close();
+    this.frameProcessor = undefined;
   }
 }

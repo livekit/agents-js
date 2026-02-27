@@ -48,6 +48,7 @@ export interface RealtimeCapabilities {
   userTranscription: boolean;
   autoToolReplyGeneration: boolean;
   audioOutput: boolean;
+  manualFunctionCalls: boolean;
 }
 
 export interface InputTranscriptionCompleted {

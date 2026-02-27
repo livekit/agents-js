@@ -48,3 +48,5 @@ export {
   type MessageAssertOptions,
   type RunEvent,
 } from './types.js';
+
+export { FakeLLM, type FakeLLMResponse } from './fake_llm.js';

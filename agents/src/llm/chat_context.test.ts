@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
+import { initializeLogger } from '../log.js';
+import { FakeLLM } from '../voice/testing/fake_llm.js';
 import {
   type AudioContent,
   ChatContext,
@@ -12,6 +14,8 @@ import {
   type ImageContent,
   ReadonlyChatContext,
 } from './chat_context.js';
+
+initializeLogger({ pretty: false, level: 'error' });
 
 describe('ChatContext.toJSON', () => {
   it('should match snapshot for empty context', () => {
@@ -280,6 +284,50 @@ describe('ChatContext.toJSON', () => {
         excludeTimestamp: false,
       }),
     ).toMatchSnapshot('message-properties-full');
+  });
+});
+
+describe('ChatContext._summarize', () => {
+  it('keeps chronological timestamps with summary + tail', async () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({ role: 'system', content: 'System prompt', createdAt: 0 });
+    ctx.addMessage({ role: 'user', content: 'hello', createdAt: 1000 });
+    ctx.addMessage({ role: 'assistant', content: 'hi there', createdAt: 2000 });
+    ctx.insert(
+      new FunctionCallOutput({
+        callId: 'call_1',
+        name: 'lookup',
+        output: '{"ok":true}',
+        isError: false,
+        createdAt: 3500,
+      }),
+    );
+    ctx.addMessage({ role: 'user', content: 'my color is blue', createdAt: 3000 });
+    ctx.addMessage({ role: 'assistant', content: 'noted', createdAt: 4000 });
+
+    const fake = new FakeLLM([
+      {
+        input: 'Conversation to summarize:\n\nuser: hello\nassistant: hi there',
+        content: 'condensed head',
+      },
+    ]);
+
+    await ctx._summarize(fake, { keepLastTurns: 1 });
+
+    const summary = ctx.items.find(
+      (item) =>
+        item.type === 'message' && item.role === 'assistant' && item.extra?.is_summary === true,
+    );
+    expect(summary).toBeDefined();
+    if (!summary || summary.type !== 'message') {
+      throw new Error('summary message is missing');
+    }
+
+    expect(summary.createdAt).toBeCloseTo(2999.999, 6);
+
+    const createdAts = ctx.items.map((item) => item.createdAt);
+    const sorted = [...createdAts].sort((a, b) => a - b);
+    expect(createdAts).toEqual(sorted);
   });
 });
 

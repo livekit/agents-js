@@ -1,4 +1,8 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import type { Options } from 'tsup';
+
+const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf-8'));
 
 const defaultOptions: Options = {
   entry: ['src/**/*.ts'],
@@ -11,6 +15,10 @@ const defaultOptions: Options = {
   target: 'node16',
   bundle: false,
   shims: true,
+  define: {
+    __PACKAGE_NAME__: JSON.stringify(pkg.name),
+    __PACKAGE_VERSION__: JSON.stringify(pkg.version),
+  },
   esbuildOptions: (options, context) => {
     if (context.format === 'esm') {
       options.packages = 'external';

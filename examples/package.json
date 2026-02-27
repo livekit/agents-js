@@ -37,6 +37,7 @@
     "@livekit/agents-plugin-livekit": "workspace:*",
     "@livekit/agents-plugin-neuphonic": "workspace:*",
     "@livekit/agents-plugin-openai": "workspace:*",
+    "@livekit/agents-plugin-phonic": "workspace:*",
     "@livekit/agents-plugin-resemble": "workspace:*",
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugin-xai": "workspace:*",

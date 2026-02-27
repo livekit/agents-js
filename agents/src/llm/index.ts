@@ -6,6 +6,7 @@ export {
   isFunctionTool,
   tool,
   ToolError,
+  ToolFlag,
   type AgentHandoff,
   type FunctionTool,
   type ProviderDefinedTool,

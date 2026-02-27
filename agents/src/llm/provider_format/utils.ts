@@ -56,12 +56,14 @@ class ChatItemGroup {
   }
 
   removeInvalidToolCalls() {
-    if (this.toolCalls.length === this.toolOutputs.length) {
-      return;
-    }
-
     const toolCallIds = new Set(this.toolCalls.map((call) => call.callId));
     const toolOutputIds = new Set(this.toolOutputs.map((output) => output.callId));
+    const sameIds =
+      toolCallIds.size === toolOutputIds.size &&
+      [...toolCallIds].every((id) => toolOutputIds.has(id));
+    if (this.toolCalls.length === this.toolOutputs.length && sameIds) {
+      return;
+    }
 
     // intersection of tool call ids and tool output ids
     const validCallIds = intersection(toolCallIds, toolOutputIds);

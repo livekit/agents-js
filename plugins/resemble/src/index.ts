@@ -10,8 +10,8 @@ class ResemblePlugin extends Plugin {
   constructor() {
     super({
       title: 'resemble',
-      version: '0.1.0',
-      package: '@livekit/agents-plugin-resemble',
+      version: __PACKAGE_VERSION__,
+      package: __PACKAGE_NAME__,
     });
   }
 }

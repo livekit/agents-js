@@ -30,6 +30,8 @@ import {
 // Type for agent constructor (used in assertions)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentConstructor = new (...args: any[]) => Agent;
+// In JS we use a zod schema so runtime validation and TS generic inference stay aligned.
+type OutputSchema<T> = z.ZodType<T>;
 
 // Environment variable for verbose output
 const evalsVerbose = parseInt(process.env.LIVEKIT_EVALS_VERBOSE || '0', 10);
@@ -48,19 +50,21 @@ export class RunResult<T = unknown> {
   private _events: RunEvent[] = [];
   private doneFut = new Future<void>();
   private userInput?: string;
+  private outputType?: OutputSchema<T>;
+  private finalOutputValue?: T;
+  private hasFinalOutput = false;
 
   private handles: Set<SpeechHandle | Task<void>> = new Set();
   private lastSpeechHandle?: SpeechHandle;
   private runAssert?: RunAssert;
+  // Store per-handle closures so _unwatchHandle can remove callbacks symmetrically.
+  private doneCallbacks = new Map<SpeechHandle | Task<void>, () => void>();
 
-  // TODO(brian): Add typed output support for parity with Python
-  // - Add outputType?: new (...args: unknown[]) => T
-  // - Add finalOutput?: T
-  // - Implement markDone() to extract final_output from SpeechHandle.maybeRunFinalOutput
-  // - See Python: run_result.py lines 182-201
+  private readonly itemAddedCallback = (item: ChatItem) => this._itemAdded(item);
 
-  constructor(options?: { userInput?: string }) {
+  constructor(options?: { userInput?: string; outputType?: OutputSchema<T> }) {
     this.userInput = options?.userInput;
+    this.outputType = options?.outputType;
   }
 
   /**
@@ -92,12 +96,17 @@ export class RunResult<T = unknown> {
 
   /**
    * Returns the final output of the run after completion.
-   *
-   * @throws Error - Not implemented yet.
    */
   get finalOutput(): T {
-    // TODO(brian): Implement typed output support after AgentTask is implemented.
-    throw new Error('finalOutput is not yet implemented in JS.');
+    if (!this.doneFut.done) {
+      throw new Error('cannot retrieve finalOutput, RunResult is not done');
+    }
+
+    if (!this.hasFinalOutput) {
+      throw new Error('no final output');
+    }
+
+    return this.finalOutputValue as T;
   }
 
   /**
@@ -167,15 +176,18 @@ export class RunResult<T = unknown> {
    * Watch a speech handle or task for completion.
    */
   _watchHandle(handle: SpeechHandle | Task<void>): void {
+    if (this.handles.has(handle)) return;
+
     this.handles.add(handle);
 
     if (isSpeechHandle(handle)) {
-      handle._addItemAddedCallback(this._itemAdded.bind(this));
+      handle._addItemAddedCallback(this.itemAddedCallback);
     }
 
-    handle.addDoneCallback(() => {
-      this._markDoneIfNeeded(handle);
-    });
+    const doneCallback = () => this._markDoneIfNeeded(handle);
+
+    this.doneCallbacks.set(handle, doneCallback);
+    handle.addDoneCallback(doneCallback);
   }
 
   /**
@@ -184,31 +196,77 @@ export class RunResult<T = unknown> {
    */
   _unwatchHandle(handle: SpeechHandle | Task<void>): void {
     this.handles.delete(handle);
+    const doneCallback = this.doneCallbacks.get(handle);
+
+    if (doneCallback) {
+      handle.removeDoneCallback(doneCallback);
+      this.doneCallbacks.delete(handle);
+    }
 
     if (isSpeechHandle(handle)) {
-      handle._removeItemAddedCallback(this._itemAdded.bind(this));
+      handle._removeItemAddedCallback(this.itemAddedCallback);
     }
   }
 
-  private _markDoneIfNeeded(handle: SpeechHandle | Task<void>): void {
+  /** @internal */
+  _watchedHandleCount(): number {
+    return this.handles.size;
+  }
+
+  /** @internal – Reject the run with an error (e.g. when deferred generateReply fails). */
+  _reject(error: Error): void {
+    if (!this.doneFut.done) {
+      this.doneFut.reject(error);
+    }
+  }
+
+  /** @internal */
+  _markDoneIfNeeded(handle?: SpeechHandle | Task<void> | null): void {
     if (isSpeechHandle(handle)) {
       this.lastSpeechHandle = handle;
     }
 
-    if ([...this.handles].every((h) => (isSpeechHandle(h) ? h.done() : h.done))) {
+    const allDone = [...this.handles].every((h) => (isSpeechHandle(h) ? h.done() : h.done));
+    if (allDone) {
       this._markDone();
     }
   }
 
   private _markDone(): void {
-    // TODO(brian): Implement final output support after AgentTask is implemented.
-    // See Python run_result.py _mark_done() for reference:
-    // - Check lastSpeechHandle._maybeRunFinalOutput
-    // - Validate output type matches expected type
-    // - Set exception or resolve based on output
-    if (!this.doneFut.done) {
-      this.doneFut.resolve();
+    if (this.doneFut.done) {
+      return;
     }
+
+    if (!this.lastSpeechHandle) {
+      this.doneFut.resolve();
+      return;
+    }
+
+    const finalOutput = this.lastSpeechHandle._maybeRunFinalOutput;
+    if (finalOutput instanceof Error) {
+      this.doneFut.reject(finalOutput);
+      return;
+    }
+
+    if (this.outputType) {
+      const result = this.outputType.safeParse(finalOutput);
+      if (!result.success) {
+        this.doneFut.reject(
+          new Error(`Expected output matching provided zod schema: ${result.error.message}`),
+        );
+        return;
+      }
+      this.finalOutputValue = result.data;
+      this.hasFinalOutput = true;
+      this.doneFut.resolve();
+      return;
+    }
+
+    if (finalOutput !== undefined) {
+      this.finalOutputValue = finalOutput as T;
+      this.hasFinalOutput = true;
+    }
+    this.doneFut.resolve();
   }
 
   /**

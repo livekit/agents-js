@@ -1,5 +1,57 @@
 # @livekit/agents
 
+## 1.0.48
+
+### Patch Changes
+
+- Handle participant disconnect during init - [#1065](https://github.com/livekit/agents-js/pull/1065) ([@Fox32](https://github.com/Fox32))
+
+- Add TaskGroup feature - [#1072](https://github.com/livekit/agents-js/pull/1072) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.47
+
+### Patch Changes
+
+- Change logger to use error serializer - [#1063](https://github.com/livekit/agents-js/pull/1063) ([@qionghuang6](https://github.com/qionghuang6))
+
+- Implement AgentTask feature - [#1045](https://github.com/livekit/agents-js/pull/1045) ([@toubatbrian](https://github.com/toubatbrian))
+
+- add openai responses api llm - [#958](https://github.com/livekit/agents-js/pull/958) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- Ensure registered plugin versions stay up to date - [#1064](https://github.com/livekit/agents-js/pull/1064) ([@lukasIO](https://github.com/lukasIO))
+
+## 1.0.46
+
+### Patch Changes
+
+- feat: Create MultiInputStream API primitive - [#1036](https://github.com/livekit/agents-js/pull/1036) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add comprehensive user span instrumentations - [#1027](https://github.com/livekit/agents-js/pull/1027) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add phonic realtime model - [#1062](https://github.com/livekit/agents-js/pull/1062) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.0.45
+
+### Patch Changes
+
+- Only shutdown processor when closing input - [#1051](https://github.com/livekit/agents-js/pull/1051) ([@lukasIO](https://github.com/lukasIO))
+
+- Fix Cartesia TTS first-connect timeouts (happy-eyeballs) and prevent ws teardown crashes - [#1023](https://github.com/livekit/agents-js/pull/1023) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add FallbackAdapter for TTS failover support - [#1022](https://github.com/livekit/agents-js/pull/1022) ([@gokuljs](https://github.com/gokuljs))
+
+- Enable inheritance from VADStream - [#1048](https://github.com/livekit/agents-js/pull/1048) ([@lukasIO](https://github.com/lukasIO))
+
+## 1.0.44
+
+### Patch Changes
+
+- Fix parsing lang from stt ctor - [#1028](https://github.com/livekit/agents-js/pull/1028) ([@adrian-cowham](https://github.com/adrian-cowham))
+
+- Dispose native FFI resources before process.exit() in job shutdown to prevent libc++abi mutex crash - [#1042](https://github.com/livekit/agents-js/pull/1042) ([@Raysharr](https://github.com/Raysharr))
+
+- Ensure resampling is skipped for empty audio frames - [#1044](https://github.com/livekit/agents-js/pull/1044) ([@lukasIO](https://github.com/lukasIO))
+
 ## 1.0.43
 
 ### Patch Changes

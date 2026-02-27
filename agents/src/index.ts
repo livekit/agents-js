@@ -9,6 +9,7 @@
  * @see {@link https://docs.livekit.io/agents/overview | LiveKit Agents documentation}
  * @packageDocumentation
  */
+import * as beta from './beta/index.js';
 import * as cli from './cli.js';
 import * as inference from './inference/index.js';
 import * as ipc from './ipc/index.js';
@@ -37,4 +38,4 @@ export * from './version.js';
 export { createTimedString, isTimedString, type TimedString } from './voice/io.js';
 export * from './worker.js';
 
-export { cli, inference, ipc, llm, metrics, stream, stt, telemetry, tokenize, tts, voice };
+export { beta, cli, inference, ipc, llm, metrics, stream, stt, telemetry, tokenize, tts, voice };

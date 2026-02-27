@@ -105,6 +105,7 @@ export class RecorderIO {
       await this.outChan.close();
       await this.closeFuture.await;
       await cancelAndWait([this.forwardTask!, this.encodeTask!]);
+      await this.inRecord?.close();
 
       this.started = false;
     } finally {
@@ -378,7 +379,7 @@ class RecorderAudioInput extends AudioInput {
     this.source = source;
 
     // Set up the intercepting stream
-    this.deferredStream.setSource(this.createInterceptingStream());
+    this.multiStream.addInputStream(this.createInterceptingStream());
   }
 
   /**

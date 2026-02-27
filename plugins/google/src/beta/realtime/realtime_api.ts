@@ -309,6 +309,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       userTranscription: inputAudioTranscription !== null,
       autoToolReplyGeneration: true,
       audioOutput: options.modalities?.includes(Modality.AUDIO) ?? true,
+      manualFunctionCalls: false,
     });
 
     // Environment variable fallbacks

@@ -280,6 +280,15 @@ export class LLM extends llm.LLM {
   }
 }
 
+const BLOCKED_REASONS = [
+  'SAFETY',
+  'SPII',
+  'PROHIBITED_CONTENT',
+  'BLOCKLIST',
+  'LANGUAGE',
+  'RECITATION',
+];
+
 export class LLMStream extends llm.LLMStream {
   #client: GoogleGenAI;
   #model: string;
@@ -366,8 +375,32 @@ export class LLMStream extends llm.LLMStream {
           });
         }
 
+        // Check for blocked reasons first — safety-blocked responses often lack content.parts,
+        // so this must run before the no-content guard to avoid wasting retries.
+        if (
+          chunk.candidates?.[0]?.finishReason &&
+          BLOCKED_REASONS.includes(chunk.candidates[0].finishReason)
+        ) {
+          throw new APIStatusError({
+            message: `Google LLM: generation blocked - ${chunk.candidates[0].finishReason}`,
+            options: {
+              retryable: false,
+              requestId,
+            },
+          });
+        }
+
         if (!chunk.candidates || !chunk.candidates[0]?.content?.parts) {
-          this.logger.warn(`No candidates in the response: ${JSON.stringify(chunk)}`);
+          this.logger.warn(`No content in the response: ${JSON.stringify(chunk)}`);
+          if (retryable) {
+            throw new APIStatusError({
+              message: 'Google LLM: no content in the response',
+              options: {
+                retryable: true,
+                requestId,
+              },
+            });
+          }
           continue;
         }
 
@@ -377,12 +410,27 @@ export class LLMStream extends llm.LLMStream {
           );
         }
 
-        for (const part of chunk.candidates[0].content.parts) {
+        const candidate = chunk.candidates[0];
+        const finishReason = candidate.finishReason;
+
+        let chunksYielded = false;
+        for (const part of candidate.content!.parts!) {
           const chatChunk = this.#parsePart(requestId, part);
           if (chatChunk) {
+            chunksYielded = true;
             retryable = false;
             this.queue.put(chatChunk);
           }
+        }
+
+        if (finishReason === 'STOP' && !chunksYielded && retryable) {
+          throw new APIStatusError({
+            message: 'Google LLM: no response generated',
+            options: {
+              retryable,
+              requestId,
+            },
+          });
         }
 
         if (chunk.usageMetadata) {
@@ -399,6 +447,10 @@ export class LLMStream extends llm.LLMStream {
         }
       }
     } catch (error: unknown) {
+      if (error instanceof APIStatusError || error instanceof APIConnectionError) {
+        throw error;
+      }
+
       const err = error as {
         code?: number;
         message?: string;
@@ -462,6 +514,10 @@ export class LLMStream extends llm.LLMStream {
           ],
         },
       };
+    }
+
+    if (!part.text) {
+      return null;
     }
 
     return {

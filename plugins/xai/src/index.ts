@@ -9,8 +9,8 @@ class XAIPlugin extends Plugin {
   constructor() {
     super({
       title: 'xai',
-      version: '0.1.0',
-      package: '@livekit/agents-plugin-xai',
+      version: __PACKAGE_VERSION__,
+      package: __PACKAGE_NAME__,
     });
   }
 }

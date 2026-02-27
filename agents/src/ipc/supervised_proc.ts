@@ -182,7 +182,7 @@ export abstract class SupervisedProc {
     this.proc.send({
       case: 'initializeRequest',
       value: {
-        loggerOptions,
+        loggerOptions: loggerOptions(),
         pingInterval: this.#opts.pingInterval,
         pingTimeout: this.#opts.pingTimeout,
         highPingThreshold: this.#opts.highPingThreshold,

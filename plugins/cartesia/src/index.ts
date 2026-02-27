@@ -9,8 +9,8 @@ class CartesiaPlugin extends Plugin {
   constructor() {
     super({
       title: 'cartesia',
-      version: '0.1.3',
-      package: '@livekit/agents-plugin-cartesia',
+      version: __PACKAGE_VERSION__,
+      package: __PACKAGE_NAME__,
     });
   }
 }
