@@ -61,7 +61,6 @@ export const logMetrics = (metrics: AgentMetrics) => {
       })
       .info('STT metrics');
   } else if (metrics.type === 'interruption_metrics') {
-    // Ref: python metrics/utils.py lines 91-106
     logger
       .child({
         totalDurationMs: roundTwoDecimals(metrics.totalDuration),

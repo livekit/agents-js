@@ -310,7 +310,6 @@ function realtimeModelMetricsToWire(m: RealtimeModelMetrics): WireObject {
   });
 }
 
-// Ref: python metrics/base.py InterruptionMetrics
 function interruptionMetricsToWire(m: InterruptionMetrics): WireObject {
   return omitUndefined({
     type: m.type,
@@ -387,7 +386,6 @@ function sttModelUsageToWire(u: Partial<STTModelUsage>): WireObject {
   };
 }
 
-// Ref: python metrics/usage.py InterruptionModelUsage
 function interruptionModelUsageToWire(u: Partial<InterruptionModelUsage>): WireObject {
   return {
     type: u.type,

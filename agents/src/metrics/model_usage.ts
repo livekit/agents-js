@@ -74,7 +74,6 @@ export type STTModelUsage = {
   audioDurationMs: number;
 };
 
-// Ref: python metrics/usage.py lines 96-114
 export type InterruptionModelUsage = {
   type: 'interruption_usage';
   /** The provider name (e.g., 'livekit'). */
@@ -102,7 +101,6 @@ export class ModelUsageCollector {
   private ttsUsage: Map<string, TTSModelUsage> = new Map();
   private sttUsage: Map<string, STTModelUsage> = new Map();
 
-  // Ref: python metrics/usage.py lines 162-174
   private interruptionUsage: Map<string, InterruptionModelUsage> = new Map();
 
   /** Extract provider and model from metrics metadata. */
@@ -182,7 +180,6 @@ export class ModelUsageCollector {
     return usage;
   }
 
-  // Ref: python metrics/usage.py lines 162-174
   private getInterruptionUsage(provider: string, model: string): InterruptionModelUsage {
     const key = `${provider}:${model}`;
     let usage = this.interruptionUsage.get(key);
@@ -239,7 +236,6 @@ export class ModelUsageCollector {
       sttUsage.outputTokens += metrics.outputTokens ?? 0;
       sttUsage.audioDurationMs += metrics.audioDurationMs;
     } else if (metrics.type === 'interruption_metrics') {
-      // Ref: python metrics/usage.py lines 221-230
       const [provider, model] = this.extractProviderModel(metrics);
       const usage = this.getInterruptionUsage(provider, model);
       usage.totalRequests += metrics.numRequests;
@@ -258,7 +254,6 @@ export class ModelUsageCollector {
     for (const u of this.sttUsage.values()) {
       result.push({ ...u });
     }
-    // Ref: python metrics/usage.py line 232
     for (const u of this.interruptionUsage.values()) {
       result.push({ ...u });
     }

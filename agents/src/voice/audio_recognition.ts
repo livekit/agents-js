@@ -5,6 +5,7 @@ import { AudioFrame } from '@livekit/rtc-node';
 import type { Context, Span } from '@opentelemetry/api';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
+import { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import type { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import { InterruptionStreamSentinel } from '../inference/interruption/interruption_stream.js';
 import {
@@ -45,7 +46,6 @@ export interface PreemptiveGenerationInfo {
 }
 
 export interface RecognitionHooks {
-  // Ref: python voice/audio_recognition.py RecognitionHooks
   onInterruption: (ev: OverlappingSpeechEvent) => void;
   onStartOfSpeech: (ev: VADEvent) => void;
   onVADInferenceDone: (ev: VADEvent) => void;
@@ -625,7 +625,6 @@ export class AudioRecognition {
     }
   }
 
-  // Ref: python voice/audio_recognition.py on_overlapping_speech_event
   private onOverlapSpeechEvent(ev: OverlappingSpeechEvent) {
     if (ev.isInterruption) {
       this.hooks.onInterruption(ev);
@@ -992,6 +991,15 @@ export class AudioRecognition {
       }
     } catch (e) {
       if (!signal.aborted) {
+        const cause = e instanceof Error ? e : new Error(String(e));
+        interruptionDetection.emitError(
+          new InterruptionDetectionError(
+            cause.message,
+            Date.now(),
+            interruptionDetection.label,
+            false,
+          ),
+        );
         this.logger.error(e, 'Error in interruption task');
       }
     } finally {

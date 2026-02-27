@@ -110,7 +110,6 @@ export interface WsTransportResult {
  * It maintains a persistent WebSocket connection with automatic retry on failure.
  * Returns both the transport and a reconnect function for option updates.
  */
-// Ref: python inference/interruption.py lines 318-320
 export function createWsTransport(
   options: WsTransportOptions,
   getState: () => WsTransportState,
@@ -229,7 +228,6 @@ export function createWsTransport(
             'interruption detected',
           );
 
-          // Ref: python inference/interruption.py lines 363-378
           const event: OverlappingSpeechEvent = {
             type: 'user_overlapping_speech',
             timestamp: Date.now(),
@@ -338,7 +336,6 @@ export function createWsTransport(
 
     try {
       ws.send(combined);
-      // Ref: python inference/interruption.py lines 318-320
       onRequestSent?.();
     } catch (e: unknown) {
       logger.error(e, `failed to send audio via websocket`);
@@ -364,6 +361,7 @@ export function createWsTransport(
    */
   async function reconnect(): Promise<void> {
     close();
+    await ensureConnection();
   }
 
   const transport = new TransformStream<

@@ -9,7 +9,6 @@ export type MetricsMetadata = {
   modelName?: string;
 };
 
-// Ref: python metrics/base.py lines 144-173
 export type AgentMetrics =
   | STTMetrics
   | LLMMetrics
@@ -197,7 +196,6 @@ export type RealtimeModelMetrics = {
   metadata?: MetricsMetadata;
 };
 
-// Ref: python metrics/base.py lines 144-173
 export type InterruptionMetrics = {
   type: 'interruption_metrics';
   timestamp: number;

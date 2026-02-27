@@ -82,7 +82,6 @@ export class InterruptionStreamBase {
 
   private resampler?: AudioResampler;
 
-  // Ref: python inference/interruption.py lines 293-294
   private numRequests = 0;
 
   private userSpeakingSpan: Span | undefined;
@@ -189,7 +188,6 @@ export class InterruptionStreamBase {
       }
     };
 
-    // Ref: python inference/interruption.py lines 318-320
     const onRequestSent = () => {
       this.numRequests++;
     };
@@ -282,7 +280,6 @@ export class InterruptionStreamBase {
                 latestEntry = InterruptionCacheEntry.default();
               }
               const e = latestEntry ?? InterruptionCacheEntry.default();
-              // Ref: python inference/interruption.py lines 363-378
               const event: OverlappingSpeechEvent = {
                 type: 'user_overlapping_speech',
                 timestamp: chunk.endedAt,
@@ -335,7 +332,6 @@ export class InterruptionStreamBase {
       );
     }
 
-    // Ref: python inference/interruption.py lines 380-412
     const eventEmitter = new TransformStream<OverlappingSpeechEvent, OverlappingSpeechEvent>({
       transform: (chunk, controller) => {
         this.model.emit('user_overlapping_speech', chunk);

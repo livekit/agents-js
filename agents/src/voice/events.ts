@@ -19,7 +19,6 @@ import type { TTS } from '../tts/index.js';
 import type { TTSError } from '../tts/tts.js';
 import type { SpeechHandle } from './speech_handle.js';
 
-// Ref: python voice/events.py
 export enum AgentSessionEventTypes {
   UserInputTranscribed = 'user_input_transcribed',
   AgentStateChanged = 'agent_state_changed',
@@ -217,7 +216,6 @@ export const createSpeechCreatedEvent = ({
   createdAt,
 });
 
-// Ref: python voice/events.py error unions
 export type ErrorEvent = {
   type: 'error';
   error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError | unknown;
@@ -226,13 +224,7 @@ export type ErrorEvent = {
 };
 
 export const createErrorEvent = (
-  error:
-    | RealtimeModelError
-    | STTError
-    | TTSError
-    | LLMError
-    | InterruptionDetectionError
-    | unknown,
+  error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError | unknown,
   source: LLM | STT | TTS | RealtimeModel | unknown,
   createdAt: number = Date.now(),
 ): ErrorEvent => ({

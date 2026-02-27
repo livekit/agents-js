@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Span } from '@opentelemetry/api';
 
-// Ref: python inference/interruption.py lines 125-138
 export interface OverlappingSpeechEvent {
   type: 'user_overlapping_speech';
   timestamp: number;

@@ -138,7 +138,6 @@ export type VoiceOptions = SessionOptions;
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
 
-// Ref: python voice/agent_session.py AgentSessionCallbacks
 export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
   [AgentSessionEventTypes.AgentStateChanged]: (ev: AgentStateChangedEvent) => void;
@@ -203,7 +202,6 @@ export class AgentSession<
   // Unrecoverable error counts, reset after agent speaking
   private llmErrorCounts = 0;
   private ttsErrorCounts = 0;
-  // Ref: python voice/agent_session.py interruption_detection_error_counts
   private interruptionDetectionErrorCounts = 0;
 
   private sessionSpan?: Span;
@@ -733,7 +731,6 @@ export class AgentSession<
   }
 
   /** @internal */
-  // Ref: python voice/agent_session.py _on_error
   _onError(
     error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError,
   ): void {

@@ -153,7 +153,6 @@ export function createHttpTransport(
             if (updateUserSpeakingSpan) {
               updateUserSpeakingSpan(entry);
             }
-            // Ref: python inference/interruption.py lines 363-378
             const event: OverlappingSpeechEvent = {
               type: 'user_overlapping_speech',
               timestamp: Date.now(),

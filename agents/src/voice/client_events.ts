@@ -446,7 +446,6 @@ export class ClientEventsHandler {
     });
   }
 
-  // Ref: python voice/client_events.py on_user_overlapping_speech
   private onUserOverlapSpeech = (event: OverlappingSpeechEvent): void => {
     const clientEvent: ClientUserOverlappingSpeechEvent = {
       type: 'user_overlapping_speech',

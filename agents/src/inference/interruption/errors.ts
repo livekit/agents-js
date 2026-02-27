@@ -4,7 +4,6 @@
 /**
  * Error thrown during interruption detection.
  */
-// Ref: python inference/interruption.py InterruptionDetectionError
 export class InterruptionDetectionError extends Error {
   readonly type = 'interruption_detection_error' as const;
 

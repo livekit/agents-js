@@ -8,6 +8,7 @@ import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api'
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
+import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { type ChatContext, ChatMessage, type MetricsReport } from '../llm/chat_context.js';
@@ -31,6 +32,7 @@ import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
   EOUMetrics,
+  InterruptionMetrics,
   LLMMetrics,
   RealtimeModelMetrics,
   STTMetrics,
@@ -111,6 +113,31 @@ export class AgentActivity implements RecognitionHooks {
   private isInterruptionDetectionEnabled: boolean;
   private isInterruptionByAudioActivityEnabled: boolean;
   private isDefaultInterruptionByAudioActivityEnabled: boolean;
+  private readonly onRealtimeGenerationCreated = (ev: GenerationCreatedEvent): void =>
+    this.onGenerationCreated(ev);
+  private readonly onRealtimeInputSpeechStarted = (ev: InputSpeechStartedEvent): void =>
+    this.onInputSpeechStarted(ev);
+  private readonly onRealtimeInputSpeechStopped = (ev: InputSpeechStoppedEvent): void =>
+    this.onInputSpeechStopped(ev);
+  private readonly onRealtimeInputAudioTranscriptionCompleted = (
+    ev: InputTranscriptionCompleted,
+  ): void => this.onInputAudioTranscriptionCompleted(ev);
+  private readonly onModelError = (ev: RealtimeModelError | STTError | TTSError | LLMError): void =>
+    this.onError(ev);
+  private readonly onInterruptionOverlappingSpeech = (ev: OverlappingSpeechEvent): void => {
+    this.agentSession.emit(AgentSessionEventTypes.UserOverlappingSpeech, ev);
+  };
+  private readonly onInterruptionMetricsCollected = (ev: InterruptionMetrics): void => {
+    this.agentSession.emit(
+      AgentSessionEventTypes.MetricsCollected,
+      createMetricsCollectedEvent({ metrics: ev }),
+    );
+  };
+  private readonly onInterruptionError = (ev: InterruptionDetectionError): void => {
+    const errorEvent = createErrorEvent(ev, this.interruptionDetector);
+    this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+    this.agentSession._onError(ev);
+  };
 
   agent: Agent;
   agentSession: AgentSession;
@@ -238,14 +265,15 @@ export class AgentActivity implements RecognitionHooks {
       if (this.llm instanceof RealtimeModel) {
         this.realtimeSession = this.llm.session();
         this.realtimeSpans = new Map<string, Span>();
-        this.realtimeSession.on('generation_created', (ev) => this.onGenerationCreated(ev));
-        this.realtimeSession.on('input_speech_started', (ev) => this.onInputSpeechStarted(ev));
-        this.realtimeSession.on('input_speech_stopped', (ev) => this.onInputSpeechStopped(ev));
-        this.realtimeSession.on('input_audio_transcription_completed', (ev) =>
-          this.onInputAudioTranscriptionCompleted(ev),
+        this.realtimeSession.on('generation_created', this.onRealtimeGenerationCreated);
+        this.realtimeSession.on('input_speech_started', this.onRealtimeInputSpeechStarted);
+        this.realtimeSession.on('input_speech_stopped', this.onRealtimeInputSpeechStopped);
+        this.realtimeSession.on(
+          'input_audio_transcription_completed',
+          this.onRealtimeInputAudioTranscriptionCompleted,
         );
-        this.realtimeSession.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
-        this.realtimeSession.on('error', (ev) => this.onError(ev));
+        this.realtimeSession.on('metrics_collected', this.onMetricsCollected);
+        this.realtimeSession.on('error', this.onModelError);
 
         removeInstructions(this.agent._chatCtx);
         try {
@@ -287,22 +315,22 @@ export class AgentActivity implements RecognitionHooks {
 
       // metrics and error handling
       if (this.llm instanceof LLM) {
-        this.llm.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
-        this.llm.on('error', (ev) => this.onError(ev));
+        this.llm.on('metrics_collected', this.onMetricsCollected);
+        this.llm.on('error', this.onModelError);
       }
 
       if (this.stt instanceof STT) {
-        this.stt.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
-        this.stt.on('error', (ev) => this.onError(ev));
+        this.stt.on('metrics_collected', this.onMetricsCollected);
+        this.stt.on('error', this.onModelError);
       }
 
       if (this.tts instanceof TTS) {
-        this.tts.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
-        this.tts.on('error', (ev) => this.onError(ev));
+        this.tts.on('metrics_collected', this.onMetricsCollected);
+        this.tts.on('error', this.onModelError);
       }
 
       if (this.vad instanceof VAD) {
-        this.vad.on('metrics_collected', (ev) => this.onMetricsCollected(ev));
+        this.vad.on('metrics_collected', this.onMetricsCollected);
       }
 
       this.audioRecognition = new AudioRecognition({
@@ -793,7 +821,6 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  // Ref: python voice/agent_activity.py on_interruption
   onInterruption(ev: OverlappingSpeechEvent) {
     this.restoreInterruptionByAudioActivity();
     this.interruptByAudioActivity();
@@ -2571,25 +2598,37 @@ export class AgentActivity implements RecognitionHooks {
       // Unregister event handlers to prevent duplicate metrics
       if (this.llm instanceof LLM) {
         this.llm.off('metrics_collected', this.onMetricsCollected);
+        this.llm.off('error', this.onModelError);
       }
       if (this.realtimeSession) {
-        this.realtimeSession.off('generation_created', this.onGenerationCreated);
-        this.realtimeSession.off('input_speech_started', this.onInputSpeechStarted);
-        this.realtimeSession.off('input_speech_stopped', this.onInputSpeechStopped);
+        this.realtimeSession.off('generation_created', this.onRealtimeGenerationCreated);
+        this.realtimeSession.off('input_speech_started', this.onRealtimeInputSpeechStarted);
+        this.realtimeSession.off('input_speech_stopped', this.onRealtimeInputSpeechStopped);
         this.realtimeSession.off(
           'input_audio_transcription_completed',
-          this.onInputAudioTranscriptionCompleted,
+          this.onRealtimeInputAudioTranscriptionCompleted,
         );
         this.realtimeSession.off('metrics_collected', this.onMetricsCollected);
+        this.realtimeSession.off('error', this.onModelError);
       }
       if (this.stt instanceof STT) {
         this.stt.off('metrics_collected', this.onMetricsCollected);
+        this.stt.off('error', this.onModelError);
       }
       if (this.tts instanceof TTS) {
         this.tts.off('metrics_collected', this.onMetricsCollected);
+        this.tts.off('error', this.onModelError);
       }
       if (this.vad instanceof VAD) {
         this.vad.off('metrics_collected', this.onMetricsCollected);
+      }
+      if (this.interruptionDetector) {
+        this.interruptionDetector.off(
+          'user_overlapping_speech',
+          this.onInterruptionOverlappingSpeech,
+        );
+        this.interruptionDetector.off('metrics_collected', this.onInterruptionMetricsCollected);
+        this.interruptionDetector.off('error', this.onInterruptionError);
       }
 
       this.detachAudioInput();
@@ -2634,21 +2673,9 @@ export class AgentActivity implements RecognitionHooks {
     try {
       const detector = new AdaptiveInterruptionDetector();
 
-      // Ref: python voice/agent_activity.py resolve_interruption_detector
-      detector.on('user_overlapping_speech', (ev) =>
-        this.agentSession.emit(AgentSessionEventTypes.UserOverlappingSpeech, ev),
-      );
-      detector.on('metrics_collected', (ev) =>
-        this.agentSession.emit(
-          AgentSessionEventTypes.MetricsCollected,
-          createMetricsCollectedEvent({ metrics: ev }),
-        ),
-      );
-      detector.on('error', (ev) => {
-        const errorEvent = createErrorEvent(ev, this.interruptionDetector);
-        this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
-        this.agentSession._onError(ev);
-      });
+      detector.on('user_overlapping_speech', this.onInterruptionOverlappingSpeech);
+      detector.on('metrics_collected', this.onInterruptionMetricsCollected);
+      detector.on('error', this.onInterruptionError);
 
       return detector;
     } catch (error: unknown) {
