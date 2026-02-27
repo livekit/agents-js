@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type {
   AgentMetrics,
+  InterruptionMetrics,
   LLMMetrics,
   RealtimeModelMetrics,
   STTMetrics,
@@ -73,7 +74,17 @@ export type STTModelUsage = {
   audioDurationMs: number;
 };
 
-export type ModelUsage = LLMModelUsage | TTSModelUsage | STTModelUsage;
+export type InterruptionModelUsage = {
+  type: 'interruption_usage';
+  /** The provider name (e.g., 'livekit'). */
+  provider: string;
+  /** The model name (e.g., 'adaptive interruption'). */
+  model: string;
+  /** Total number of requests sent. */
+  totalRequests: number;
+};
+
+export type ModelUsage = LLMModelUsage | TTSModelUsage | STTModelUsage | InterruptionModelUsage;
 
 export function filterZeroValues<T extends ModelUsage>(usage: T): Partial<T> {
   const result: Partial<T> = {} as Partial<T>;
@@ -90,9 +101,11 @@ export class ModelUsageCollector {
   private ttsUsage: Map<string, TTSModelUsage> = new Map();
   private sttUsage: Map<string, STTModelUsage> = new Map();
 
+  private interruptionUsage: Map<string, InterruptionModelUsage> = new Map();
+
   /** Extract provider and model from metrics metadata. */
   private extractProviderModel(
-    metrics: LLMMetrics | STTMetrics | TTSMetrics | RealtimeModelMetrics,
+    metrics: LLMMetrics | STTMetrics | TTSMetrics | RealtimeModelMetrics | InterruptionMetrics,
   ): [string, string] {
     let provider = '';
     let model = '';
@@ -167,6 +180,21 @@ export class ModelUsageCollector {
     return usage;
   }
 
+  private getInterruptionUsage(provider: string, model: string): InterruptionModelUsage {
+    const key = `${provider}:${model}`;
+    let usage = this.interruptionUsage.get(key);
+    if (!usage) {
+      usage = {
+        type: 'interruption_usage',
+        provider,
+        model,
+        totalRequests: 0,
+      };
+      this.interruptionUsage.set(key, usage);
+    }
+    return usage;
+  }
+
   /** Collect metrics and aggregate usage by model/provider. */
   collect(metrics: AgentMetrics): void {
     if (metrics.type === 'llm_metrics') {
@@ -207,6 +235,10 @@ export class ModelUsageCollector {
       sttUsage.inputTokens += metrics.inputTokens ?? 0;
       sttUsage.outputTokens += metrics.outputTokens ?? 0;
       sttUsage.audioDurationMs += metrics.audioDurationMs;
+    } else if (metrics.type === 'interruption_metrics') {
+      const [provider, model] = this.extractProviderModel(metrics);
+      const usage = this.getInterruptionUsage(provider, model);
+      usage.totalRequests += metrics.numRequests;
     }
     // VAD and EOU metrics are not aggregated for usage tracking.
   }
@@ -220,6 +252,9 @@ export class ModelUsageCollector {
       result.push({ ...u });
     }
     for (const u of this.sttUsage.values()) {
+      result.push({ ...u });
+    }
+    for (const u of this.interruptionUsage.values()) {
       result.push({ ...u });
     }
     return result;

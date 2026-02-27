@@ -5,6 +5,7 @@
 export type {
   AgentMetrics,
   EOUMetrics,
+  InterruptionMetrics,
   LLMMetrics,
   MetricsMetadata,
   RealtimeModelMetrics,
@@ -15,6 +16,7 @@ export type {
 export {
   filterZeroValues,
   ModelUsageCollector,
+  type InterruptionModelUsage,
   type LLMModelUsage,
   type ModelUsage,
   type STTModelUsage,

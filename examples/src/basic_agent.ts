@@ -108,12 +108,8 @@ export default defineAgent({
       );
     });
 
-    session.on(voice.AgentSessionEventTypes.UserInterruptionDetected, (ev) => {
-      logger.warn({ type: ev.type }, 'interruption detected');
-    });
-
-    session.on(voice.AgentSessionEventTypes.UserNonInterruptionDetected, (ev) => {
-      logger.warn({ type: ev.type }, 'non interruption detected');
+    session.on(voice.AgentSessionEventTypes.UserOverlappingSpeech, (ev) => {
+      logger.warn({ type: ev.type, isInterruption: ev.isInterruption }, 'user overlapping speech');
     });
 
     await session.start({

@@ -5,7 +5,7 @@
  * Error thrown during interruption detection.
  */
 export class InterruptionDetectionError extends Error {
-  readonly type = 'InterruptionDetectionError';
+  readonly type = 'interruption_detection_error' as const;
 
   readonly timestamp: number;
   readonly label: string;

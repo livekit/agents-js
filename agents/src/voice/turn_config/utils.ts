@@ -7,9 +7,9 @@ import {
   type InternalSessionOptions,
   defaultSessionOptions,
 } from '../agent_session.js';
-import { defaultEndpointingConfig } from './endpointing.js';
-import { defaultInterruptionConfig } from './interruption.js';
-import { type TurnHandlingConfig, defaultTurnHandlingConfig } from './turn_handling.js';
+import { defaultEndpointingOptions } from './endpointing.js';
+import { defaultInterruptionOptions } from './interruption.js';
+import { type TurnHandlingOptions, defaultTurnHandlingOptions } from './turn_handling.js';
 
 export function migrateLegacyOptions<UserData>(
   legacyOptions: AgentSessionOptions<UserData>,
@@ -50,7 +50,7 @@ export function migrateLegacyOptions<UserData>(
 
   const mergedOptions = structuredClone({ ...cloneableVoiceOptions, ...cloneableSessionOptions });
 
-  const turnHandling: TurnHandlingConfig = {
+  const turnHandling: TurnHandlingOptions = {
     interruption: {
       discardAudioIfUninterruptible: mergedOptions?.discardAudioIfUninterruptible,
       minDuration: mergedOptions?.minInterruptionDuration,
@@ -68,7 +68,7 @@ export function migrateLegacyOptions<UserData>(
   } as const;
 
   if (mergedOptions?.allowInterruptions === false) {
-    turnHandling.interruption.mode = false;
+    turnHandling.interruption.enabled = false;
   }
 
   const optionsWithDefaults = {
@@ -94,10 +94,10 @@ export function stripUndefined<T extends object>(obj: T): Partial<T> {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
 }
 
-export function mergeWithDefaults(config: TurnHandlingConfig) {
+export function mergeWithDefaults(config: TurnHandlingOptions) {
   return {
-    turnDetection: config.turnDetection ?? defaultTurnHandlingConfig.turnDetection,
-    endpointing: { ...defaultEndpointingConfig, ...stripUndefined(config.endpointing) },
-    interruption: { ...defaultInterruptionConfig, ...stripUndefined(config.interruption) },
+    turnDetection: config.turnDetection ?? defaultTurnHandlingOptions.turnDetection,
+    endpointing: { ...defaultEndpointingOptions, ...stripUndefined(config.endpointing) },
+    interruption: { ...defaultInterruptionOptions, ...stripUndefined(config.interruption) },
   } as const;
 }

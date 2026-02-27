@@ -8,8 +8,9 @@ import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api'
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
+import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
-import type { InterruptionEvent } from '../inference/interruption/types.js';
+import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { type ChatContext, ChatMessage, type MetricsReport } from '../llm/chat_context.js';
 import {
   type ChatItem,
@@ -32,6 +33,7 @@ import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
   EOUMetrics,
+  InterruptionMetrics,
   LLMMetrics,
   RealtimeModelMetrics,
   STTMetrics,
@@ -132,6 +134,31 @@ export class AgentActivity implements RecognitionHooks {
   private isInterruptionDetectionEnabled: boolean;
   private isInterruptionByAudioActivityEnabled: boolean;
   private isDefaultInterruptionByAudioActivityEnabled: boolean;
+  private readonly onRealtimeGenerationCreated = (ev: GenerationCreatedEvent): void =>
+    this.onGenerationCreated(ev);
+  private readonly onRealtimeInputSpeechStarted = (ev: InputSpeechStartedEvent): void =>
+    this.onInputSpeechStarted(ev);
+  private readonly onRealtimeInputSpeechStopped = (ev: InputSpeechStoppedEvent): void =>
+    this.onInputSpeechStopped(ev);
+  private readonly onRealtimeInputAudioTranscriptionCompleted = (
+    ev: InputTranscriptionCompleted,
+  ): void => this.onInputAudioTranscriptionCompleted(ev);
+  private readonly onModelError = (ev: RealtimeModelError | STTError | TTSError | LLMError): void =>
+    this.onError(ev);
+  private readonly onInterruptionOverlappingSpeech = (ev: OverlappingSpeechEvent): void => {
+    this.agentSession.emit(AgentSessionEventTypes.UserOverlappingSpeech, ev);
+  };
+  private readonly onInterruptionMetricsCollected = (ev: InterruptionMetrics): void => {
+    this.agentSession.emit(
+      AgentSessionEventTypes.MetricsCollected,
+      createMetricsCollectedEvent({ metrics: ev }),
+    );
+  };
+  private readonly onInterruptionError = (ev: InterruptionDetectionError): void => {
+    const errorEvent = createErrorEvent(ev, this.interruptionDetector);
+    this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+    this.agentSession._onError(ev);
+  };
 
   /** @internal */
   _mainTask?: Task<void>;
@@ -874,11 +901,11 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  onInterruption(ev: InterruptionEvent) {
+  onInterruption(ev: OverlappingSpeechEvent) {
     this.restoreInterruptionByAudioActivity();
     this.interruptByAudioActivity();
     if (this.audioRecognition) {
-      this.audioRecognition.onEndOfAgentSpeech(ev.overlapSpeechStartedAt || ev.timestamp);
+      this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.timestamp);
     }
   }
 
@@ -2752,6 +2779,14 @@ export class AgentActivity implements RecognitionHooks {
       if (this._mainTask) {
         await this._mainTask.cancelAndWait();
       }
+      if (this.interruptionDetector) {
+        this.interruptionDetector.off(
+          'user_overlapping_speech',
+          this.onInterruptionOverlappingSpeech,
+        );
+        this.interruptionDetector.off('metrics_collected', this.onInterruptionMetricsCollected);
+        this.interruptionDetector.off('error', this.onInterruptionError);
+      }
 
       this.agent._agentActivity = undefined;
     } finally {
@@ -2791,13 +2826,9 @@ export class AgentActivity implements RecognitionHooks {
     try {
       const detector = new AdaptiveInterruptionDetector();
 
-      // TODO cleanup these listeners
-      detector.on('user_interruption_detected', (ev) =>
-        this.agentSession.emit(AgentSessionEventTypes.UserInterruptionDetected, ev),
-      );
-      detector.on('user_non_interruption_detected', (ev) =>
-        this.agentSession.emit(AgentSessionEventTypes.UserNonInterruptionDetected, ev),
-      );
+      detector.on('user_overlapping_speech', this.onInterruptionOverlappingSpeech);
+      detector.on('metrics_collected', this.onInterruptionMetricsCollected);
+      detector.on('error', this.onInterruptionError);
 
       return detector;
     } catch (error: unknown) {
