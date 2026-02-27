@@ -31,8 +31,8 @@ import type { VAD } from '../vad.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 import type { TimedString } from './io.js';
-import type { InterruptionConfig } from './turn_config/interruption.js';
-import type { TurnHandlingConfig } from './turn_config/turn_handling.js';
+import type { InterruptionOptions } from './turn_config/interruption.js';
+import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
 import { migrateLegacyOptions } from './turn_config/utils.js';
 
 export const asyncLocalStorage = new AsyncLocalStorage<{ functionCall?: FunctionCall }>();
@@ -76,7 +76,7 @@ export interface AgentOptions<UserData> {
   tts?: TTS | TTSModelString;
   allowInterruptions?: boolean;
   minConsecutiveSpeechDelay?: number;
-  turnHandling?: TurnHandlingConfig;
+  turnHandling?: TurnHandlingOptions;
   useTtsAlignedTranscript?: boolean;
 }
 
@@ -86,8 +86,8 @@ export class Agent<UserData = any> {
   private _vad?: VAD;
   private _llm?: LLM | RealtimeModel;
   private _tts?: TTS;
-  private turnHandling?: TurnHandlingConfig;
-  private _interruptionDetection: InterruptionConfig['mode'];
+  private turnHandling?: TurnHandlingOptions;
+  private _interruptionDetection: InterruptionOptions['mode'];
   private _allowInterruptions?: boolean;
   private _useTtsAlignedTranscript?: boolean;
 
@@ -215,7 +215,7 @@ export class Agent<UserData = any> {
     return this.getActivityOrThrow().agentSession as AgentSession<UserData>;
   }
 
-  get interruptionDetection(): InterruptionConfig['mode'] {
+  get interruptionDetection(): InterruptionOptions['mode'] {
     return this._interruptionDetection;
   }
 

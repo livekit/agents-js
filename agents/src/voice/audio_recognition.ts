@@ -5,12 +5,12 @@ import { AudioFrame } from '@livekit/rtc-node';
 import type { Context, Span } from '@opentelemetry/api';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
+import { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import type { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import { InterruptionStreamSentinel } from '../inference/interruption/interruption_stream.js';
 import {
-  type InterruptionEvent,
-  InterruptionEventType,
   type InterruptionSentinel,
+  type OverlappingSpeechEvent,
 } from '../inference/interruption/types.js';
 import { type ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
@@ -46,7 +46,7 @@ export interface PreemptiveGenerationInfo {
 }
 
 export interface RecognitionHooks {
-  onInterruption: (ev: InterruptionEvent) => void;
+  onInterruption: (ev: OverlappingSpeechEvent) => void;
   onStartOfSpeech: (ev: VADEvent) => void;
   onVADInferenceDone: (ev: VADEvent) => void;
   onEndOfSpeech: (ev: VADEvent) => void;
@@ -59,9 +59,13 @@ export interface RecognitionHooks {
 }
 
 export interface _TurnDetector {
+  /** The model name used by this turn detector. */
+  readonly model: string;
+  /** The provider name for this turn detector. */
+  readonly provider: string;
   unlikelyThreshold: (language?: string) => Promise<number | undefined>;
   supportsLanguage: (language?: string) => Promise<boolean>;
-  predictEndOfTurn(chatCtx: ChatContext): Promise<number>;
+  predictEndOfTurn(chatCtx: ChatContext, timeout?: number): Promise<number>;
 }
 
 export interface AudioRecognitionOptions {
@@ -625,8 +629,8 @@ export class AudioRecognition {
     }
   }
 
-  private onInterruptionEvent(ev: InterruptionEvent) {
-    if (ev.type === InterruptionEventType.INTERRUPTION) {
+  private onOverlapSpeechEvent(ev: OverlappingSpeechEvent) {
+    if (ev.isInterruption) {
       this.hooks.onInterruption(ev);
     }
   }
@@ -987,10 +991,19 @@ export class AudioRecognition {
         if (!res) break;
         const { done, value: ev } = res;
         if (done) break;
-        this.onInterruptionEvent(ev);
+        this.onOverlapSpeechEvent(ev);
       }
     } catch (e) {
       if (!signal.aborted) {
+        const cause = e instanceof Error ? e : new Error(String(e));
+        interruptionDetection.emitError(
+          new InterruptionDetectionError(
+            cause.message,
+            Date.now(),
+            interruptionDetection.label,
+            false,
+          ),
+        );
         this.logger.error(e, 'Error in interruption task');
       }
     } finally {

@@ -21,6 +21,7 @@ import type {
 import type {
   AgentMetrics,
   EOUMetrics,
+  InterruptionMetrics,
   LLMMetrics,
   MetricsMetadata,
   RealtimeModelMetrics,
@@ -32,6 +33,7 @@ import type {
   VADMetrics,
 } from '../metrics/base.js';
 import type {
+  InterruptionModelUsage,
   LLMModelUsage,
   ModelUsage,
   STTModelUsage,
@@ -308,6 +310,20 @@ function realtimeModelMetricsToWire(m: RealtimeModelMetrics): WireObject {
   });
 }
 
+function interruptionMetricsToWire(m: InterruptionMetrics): WireObject {
+  return omitUndefined({
+    type: m.type,
+    timestamp: msToS(m.timestamp),
+    total_duration: msToS(m.totalDuration),
+    prediction_duration: msToS(m.predictionDuration),
+    detection_delay: msToS(m.detectionDelay),
+    num_interruptions: m.numInterruptions,
+    num_backchannels: m.numBackchannels,
+    num_requests: m.numRequests,
+    metadata: metadataToWire(m.metadata),
+  });
+}
+
 export function agentMetricsToWire(m: AgentMetrics): WireObject {
   switch (m.type) {
     case 'llm_metrics':
@@ -322,6 +338,8 @@ export function agentMetricsToWire(m: AgentMetrics): WireObject {
       return eouMetricsToWire(m);
     case 'realtime_model_metrics':
       return realtimeModelMetricsToWire(m);
+    case 'interruption_metrics':
+      return interruptionMetricsToWire(m);
   }
 }
 
@@ -368,6 +386,15 @@ function sttModelUsageToWire(u: Partial<STTModelUsage>): WireObject {
   };
 }
 
+function interruptionModelUsageToWire(u: Partial<InterruptionModelUsage>): WireObject {
+  return {
+    type: u.type,
+    provider: u.provider ?? '',
+    model: u.model ?? '',
+    total_requests: u.totalRequests ?? 0,
+  };
+}
+
 export function modelUsageToWire(u: Partial<ModelUsage>): WireObject {
   switch (u.type) {
     case 'llm_usage':
@@ -376,6 +403,8 @@ export function modelUsageToWire(u: Partial<ModelUsage>): WireObject {
       return ttsModelUsageToWire(u as Partial<TTSModelUsage>);
     case 'stt_usage':
       return sttModelUsageToWire(u as Partial<STTModelUsage>);
+    case 'interruption_usage':
+      return interruptionModelUsageToWire(u as Partial<InterruptionModelUsage>);
     default:
       return u as WireObject;
   }
@@ -582,10 +611,18 @@ export const realtimeModelMetricsWireSchema = z.object({
   metadata: metadataWireSchema,
 });
 
-// TODO(interruption): add interruption_metrics schema when backend support is implemented.
-// The playground expects: { type: 'interruption_metrics', model_name, model_provider, timestamp,
-//   total_duration, prediction_duration, detection_delay, num_interruptions, num_backchannels,
-//   num_requests, room, pid, job_id, room_id }
+export const interruptionMetricsWireSchema = z.object({
+  type: z.literal('interruption_metrics'),
+  timestamp: z.number(),
+  total_duration: z.number(),
+  prediction_duration: z.number(),
+  detection_delay: z.number(),
+  num_interruptions: z.number(),
+  num_backchannels: z.number(),
+  num_requests: z.number(),
+  metadata: metadataWireSchema,
+});
+
 export const agentMetricsWireSchema = z.discriminatedUnion('type', [
   llmMetricsWireSchema,
   sttMetricsWireSchema,
@@ -593,6 +630,7 @@ export const agentMetricsWireSchema = z.discriminatedUnion('type', [
   vadMetricsWireSchema,
   eouMetricsWireSchema,
   realtimeModelMetricsWireSchema,
+  interruptionMetricsWireSchema,
 ]);
 
 // ---------------------------------------------------------------------------
@@ -636,12 +674,18 @@ export const sttModelUsageWireSchema = z.object({
   audio_duration: z.number().optional(),
 });
 
-// TODO(interruption): add interruption_usage schema when backend support is implemented.
-// The playground expects: { type: 'interruption_usage', provider, model, total_requests }
+export const interruptionModelUsageWireSchema = z.object({
+  type: z.literal('interruption_usage'),
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  total_requests: z.number().optional(),
+});
+
 export const modelUsageWireSchema = z.discriminatedUnion('type', [
   llmModelUsageWireSchema,
   ttsModelUsageWireSchema,
   sttModelUsageWireSchema,
+  interruptionModelUsageWireSchema,
 ]);
 
 export const agentSessionUsageWireSchema = z.object({

@@ -4,7 +4,13 @@
 /**
  * Configuration for endpointing, which determines when the user's turn is complete.
  */
-export interface EndpointingConfig {
+export interface EndpointingOptions {
+  /**
+   * Endpointing mode. `"fixed"` uses a fixed delay, `"dynamic"` adjusts delay based on
+   * end-of-utterance prediction.
+   * @defaultValue "fixed"
+   */
+  mode: 'fixed' | 'dynamic';
   /**
    * Minimum time in milliseconds since the last detected speech before the agent declares the user's
    * turn complete. In VAD mode this effectively behaves like `max(VAD silence, minDelay)`;
@@ -20,7 +26,8 @@ export interface EndpointingConfig {
   maxDelay: number;
 }
 
-export const defaultEndpointingConfig = {
+export const defaultEndpointingOptions = {
+  mode: 'fixed',
   minDelay: 500,
   maxDelay: 3000,
-} as const satisfies EndpointingConfig;
+} as const satisfies EndpointingOptions;
