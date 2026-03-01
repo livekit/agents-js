@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { AudioFrame } from '@livekit/rtc-node';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import type { AudioBuffer } from '../utils.js';
 import { Task, cancelAndWait, combineSignals } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { StreamAdapter } from './stream_adapter.js';
@@ -252,4 +254,190 @@ export class FallbackAdapter extends STT {
   }
 }
 
-class FallbackSpeechStream extends SpeechStream {}
+class FallbackSpeechStream extends SpeechStream {
+  label = 'stt.FallbackSpeechStream';
+
+  private adapter: FallbackAdapter;
+  private connOptions: APIConnectOptions;
+  private _logger = log();
+  private recoveringStreams: SpeechStream[] = [];
+
+  constructor(adapter: FallbackAdapter, connOptions: APIConnectOptions) {
+    super(adapter, undefined, connOptions);
+    this.adapter = adapter;
+    this.connOptions = connOptions;
+  }
+
+  async monitorMetrics(): Promise<void> {
+    return;
+  }
+
+  protected async run(): Promise<void> {
+    const startTime = Date.now();
+
+    const allFailed = this.adapter.status.every((s) => !s.available);
+    if (allFailed) {
+      this._logger.error('all STTs are unavailable, retrying...');
+    }
+
+    let mainStream: SpeechStream | null = null;
+    let forwardInputDone = false;
+
+    const forwardInput = async () => {
+      try {
+        for await (const data of this.input) {
+          try {
+            for (const stream of this.recoveringStreams) {
+              if (data === SpeechStream.FLUSH_SENTINEL) {
+                stream.flush();
+              } else {
+                stream.pushFrame(data as AudioFrame);
+              }
+            }
+
+            if (mainStream) {
+              if (data === SpeechStream.FLUSH_SENTINEL) {
+                mainStream.flush();
+              } else {
+                mainStream.pushFrame(data as AudioFrame);
+              }
+            }
+          } catch (e) {
+            if (e instanceof Error && e.message.includes('closed')) {
+              // stream already closed, safe to ignore
+            } else {
+              this._logger.error({ error: e }, 'error forwarding input');
+            }
+          }
+        }
+      } finally {
+        forwardInputDone = true;
+        if (mainStream) {
+          try {
+            mainStream.endInput();
+          } catch {
+            // ignore if already closed
+          }
+        }
+      }
+    };
+
+    let forwardInputTask: Promise<void> | null = null;
+
+    for (let i = 0; i < this.adapter.sttInstances.length; i++) {
+      const stt = this.adapter.sttInstances[i]!;
+      const sttStatus = this.adapter.status[i]!;
+
+      if (sttStatus.available || allFailed) {
+        try {
+          const streamConnOptions: APIConnectOptions = {
+            ...this.connOptions,
+            maxRetry: this.adapter.maxRetryPerSTT,
+            timeoutMs: this.adapter.attemptTimeoutMs,
+            retryIntervalMs: this.adapter.retryIntervalMs,
+          };
+
+          mainStream = stt.stream({ connOptions: streamConnOptions });
+
+          if (!forwardInputTask || forwardInputDone) {
+            forwardInputTask = forwardInput();
+          }
+
+          try {
+            for await (const ev of mainStream) {
+              this.output.put(ev);
+            }
+          } catch (e) {
+            if (e instanceof APIError) {
+              this._logger.warn({ stt: stt.label, error: e }, 'failed, switching to next STT');
+            } else {
+              this._logger.warn(
+                { stt: stt.label, error: e },
+                'unexpected error, switching to next STT',
+              );
+            }
+            throw e;
+          }
+
+          return;
+        } catch {
+          if (sttStatus.available) {
+            sttStatus.available = false;
+            (
+              this.adapter as unknown as {
+                emit: (event: string, data: AvailabilityChangedEvent) => void;
+              }
+            ).emit('stt_availability_changed', { stt, available: false });
+          }
+        }
+      }
+
+      this.tryStreamRecovery(stt);
+    }
+
+    for (const stream of this.recoveringStreams) {
+      stream.close();
+    }
+
+    const labels = this.adapter.sttInstances.map((s) => s.label).join(', ');
+    throw new APIConnectionError({
+      message: `all STTs failed (${labels}) after ${Date.now() - startTime}ms`,
+    });
+  }
+
+  private tryStreamRecovery(stt: STT): void {
+    const index = this.adapter.sttInstances.indexOf(stt);
+    const sttStatus = this.adapter.status[index]!;
+
+    if (sttStatus.recoveringStreamTask && !sttStatus.recoveringStreamTask.done) {
+      return;
+    }
+
+    const streamConnOptions: APIConnectOptions = {
+      ...this.connOptions,
+      maxRetry: 0,
+      timeoutMs: this.adapter.attemptTimeoutMs,
+    };
+
+    const stream = stt.stream({ connOptions: streamConnOptions });
+    this.recoveringStreams.push(stream);
+
+    sttStatus.recoveringStreamTask = Task.from(async () => {
+      try {
+        let transcriptCount = 0;
+        for await (const ev of stream) {
+          if (ev.type === SpeechEventType.FINAL_TRANSCRIPT) {
+            if (!ev.alternatives || !ev.alternatives[0].text) {
+              continue;
+            }
+            transcriptCount++;
+            break;
+          }
+        }
+
+        if (transcriptCount === 0) {
+          return;
+        }
+
+        sttStatus.available = true;
+        this._logger.info({ stt: stt.label }, 'recovered');
+        (
+          this.adapter as unknown as {
+            emit: (event: string, data: AvailabilityChangedEvent) => void;
+          }
+        ).emit('stt_availability_changed', { stt, available: true });
+      } catch (e) {
+        if (e instanceof APIError) {
+          this._logger.warn({ stt: stt.label, error: e }, 'stream recovery failed');
+        } else {
+          this._logger.warn({ stt: stt.label, error: e }, 'stream recovery unexpected error');
+        }
+      } finally {
+        const idx = this.recoveringStreams.indexOf(stream);
+        if (idx !== -1) {
+          this.recoveringStreams.splice(idx, 1);
+        }
+      }
+    });
+  }
+}
