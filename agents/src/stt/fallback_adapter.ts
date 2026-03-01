@@ -24,11 +24,11 @@ interface FallbackAdapterOptions {
 export class FallbackAdapter extends STT {
   label = 'sst.FallbackAdapter';
 
-  readonly sstInstances: STT[];
+  readonly sttInstances: STT[];
   readonly attemptTimeoutMs: number;
   readonly maxRetryPerSTT: number;
   readonly retryIntervalMs: number;
-  
+
   private _status: STTStatus[];
   private _logger = log();
 
@@ -36,11 +36,11 @@ export class FallbackAdapter extends STT {
     if (!opts.sstInstances || opts.sstInstances.length < 1) {
       throw new Error('At least one STT instance must be provided.');
     }
-    let sttInstances = opts.sttInstances;
-    const nonStreaming = sttInstances.filter((s) => !s.capabilities.streaming);
+    let sttInstances = opts.sstInstances!;
+    const nonStreaming = sttInstances.filter((s: STT) => !s.capabilities.streaming);
     if (nonStreaming.length > 0) {
       if (!opts.vad) {
-        const labels = nonStreaming.map((s) => s.label).join(', ');
+        const labels = nonStreaming.map((s: STT) => s.label).join(', ');
         throw new Error(
           `STTs do not support streaming: ${labels}. ` +
             'Provide a VAD to enable stt.StreamAdapter automatically ' +
@@ -48,9 +48,36 @@ export class FallbackAdapter extends STT {
         );
       }
       const vad = opts.vad;
-      sttInstances = sttInstances.map((s) =>
+      sttInstances = sttInstances.map((s: STT) =>
         s.capabilities.streaming ? s : new StreamAdapter(s, vad),
       );
     }
+
+    super({
+      streaming: true,
+      interimResults: sttInstances.every((s) => s.capabilities.interimResults),
+    });
+
+    this.sttInstances = sttInstances;
+    this.attemptTimeoutMs = opts.attemptTimeoutMs ?? 10000;
+    this.maxRetryPerSTT = opts.maxRetryPerSTT ?? 1;
+    this.retryIntervalMs = opts.retryIntervalMs ?? 5000;
+    this._status = sttInstances.map(() => ({
+      available: true,
+      recoveringSynthesizeTask: null,
+      recoveringStreamTask: null,
+    }));
+    this.setupEventForwarding();
+  }
+
+  get status(): STTStatus[] {
+    return this._status;
+  }
+
+  private setupEventForwarding(): void {
+    this.sttInstances.forEach((stt: STT) => {
+      stt.on('metrics_collected', (metrics) => this.emit('metrics_collected', metrics));
+      stt.on('error', (error) => this.emit('error', error));
+    });
   }
 }
