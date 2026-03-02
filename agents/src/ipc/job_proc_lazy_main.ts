@@ -134,7 +134,10 @@ const startJob = (
     } catch (error) {
       logger.error({ error }, 'error in entry function');
       shutdown = true;
-      safeSend({ case: 'exiting', value: { reason: String(error) } });
+      safeSend({
+        case: 'exiting',
+        value: { reason: error instanceof Error ? error.message : String(error) },
+      });
     }
 
     // Close the primary agent session if it exists
