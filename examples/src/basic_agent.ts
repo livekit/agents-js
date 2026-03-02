@@ -71,6 +71,7 @@ export default defineAgent({
         // allow the LLM to generate a response while waiting for the end of turn
         preemptiveGeneration: true,
         useTtsAlignedTranscript: true,
+        aecWarmupDuration: 3000,
       },
       connOptions: {
         // Example of overriding the default connection options for the LLM/TTS/STT

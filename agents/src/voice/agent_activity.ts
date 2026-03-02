@@ -7,7 +7,7 @@ import type { Span } from '@opentelemetry/api';
 import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { ReadableStream } from 'node:stream/web';
+import { ReadableStream, TransformStream } from 'node:stream/web';
 import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
 import {
   type ChatItem,
@@ -485,8 +485,24 @@ export class AgentActivity implements RecognitionHooks {
     void this.audioStream.close();
     this.audioStream = new MultiInputStream<AudioFrame>();
 
+    // Filter is applied on this.audioStream.stream (downstream of MultiInputStream) rather
+    // than on the source audioStream via pipeThrough. pipeThrough locks its source stream, so
+    // if it were applied directly on audioStream, that lock would survive MultiInputStream.close()
+    // and make audioStream permanently locked for subsequent attachAudioInput calls (e.g. handoff).
+    const aecWarmupAudioFilter = new TransformStream<AudioFrame, AudioFrame>({
+      transform: (frame, controller) => {
+        const shouldDiscardForAecWarmup =
+          this.agentSession.agentState === 'speaking' && this.agentSession._aecWarmupRemaining > 0;
+        if (!shouldDiscardForAecWarmup) {
+          controller.enqueue(frame);
+        }
+      },
+    });
+
     this.audioStreamId = this.audioStream.addInputStream(audioStream);
-    const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream.tee();
+    const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream
+      .pipeThrough(aecWarmupAudioFilter)
+      .tee();
 
     if (this.realtimeSession) {
       this.realtimeSession.setInputAudioStream(realtimeAudioStream);
@@ -755,6 +771,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private interruptByAudioActivity(): void {
+    if (this.agentSession._aecWarmupRemaining > 0) {
+      // Disable interruption from audio activity while AEC warmup is active.
+      return;
+    }
+
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
       // skip speech handle interruption if server side turn detection is enabled
       return;
