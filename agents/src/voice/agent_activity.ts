@@ -1014,6 +1014,16 @@ export class AgentActivity implements RecognitionHooks {
           throw new Error('Speech queue is empty');
         }
         const speechHandle = heapItem[2];
+
+        // Skip speech handles that were already interrupted/done before being
+        // picked up from the queue (e.g. interrupted during shutdown before the
+        // main loop had a chance to process them). Calling _authorizeGeneration
+        // on a done handle would create a generation Future that nobody resolves,
+        // causing the main loop to hang forever.
+        if (speechHandle.interrupted || speechHandle.done()) {
+          continue;
+        }
+
         this._currentSpeech = speechHandle;
         speechHandle._authorizeGeneration();
         await speechHandle._waitForGeneration();
