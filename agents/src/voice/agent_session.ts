@@ -222,9 +222,9 @@ export class AgentSession<
 
   private _usageCollector: ModelUsageCollector = new ModelUsageCollector();
 
-    /** @internal */
-    _roomIO?: RoomIO;
-    
+  /** @internal */
+  _roomIO?: RoomIO;
+
   /** @internal */
   _recorderIO?: RecorderIO;
 
@@ -404,7 +404,7 @@ export class AgentSession<
         inputOptions,
         outputOptions,
       });
-      
+
       this._roomIO.start();
 
       this.clientEventsHandler = new ClientEventsHandler(this, this._roomIO);
