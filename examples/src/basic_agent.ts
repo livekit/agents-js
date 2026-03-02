@@ -82,6 +82,7 @@ export default defineAgent({
           },
         },
         useTtsAlignedTranscript: true,
+        aecWarmupDuration: 3000,
       },
       connOptions: {
         // Example of overriding the default connection options for the LLM/TTS/STT
