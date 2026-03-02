@@ -25,7 +25,7 @@ interface STTStatus {
 }
 
 interface FallbackAdapterOptions {
-  sstInstances: STT[];
+  sttInstances: STT[];
   vad?: VAD;
   attemptTimeoutMs: number;
   maxRetryPerSTT: number;
@@ -38,7 +38,7 @@ export interface AvailabilityChangedEvent {
 }
 
 export class FallbackAdapter extends STT {
-  label = 'sst.FallbackAdapter';
+  label = 'stt.FallbackAdapter';
 
   readonly sttInstances: STT[];
   readonly attemptTimeoutMs: number;
@@ -49,10 +49,10 @@ export class FallbackAdapter extends STT {
   private _logger = log();
 
   constructor(opts: FallbackAdapterOptions) {
-    if (!opts.sstInstances || opts.sstInstances.length < 1) {
+    if (!opts.sttInstances || opts.sttInstances.length < 1) {
       throw new Error('At least one STT instance must be provided.');
     }
-    let sttInstances = opts.sstInstances!;
+    let sttInstances = opts.sttInstances!;
     const nonStreaming = sttInstances.filter((s: STT) => !s.capabilities.streaming);
     if (nonStreaming.length > 0) {
       if (!opts.vad) {
