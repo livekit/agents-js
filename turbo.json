@@ -62,6 +62,9 @@
     "LIVEKIT_EVALS_VERBOSE",
     "OVHCLOUD_API_KEY",
     "INWORLD_API_KEY",
+    "TRUGEN_API_KEY",
+    "TRUGEN_API_URL",
+    "TRUGEN_AVATAR_ID",
     "VITEST"
   ],
   "pipeline": {
