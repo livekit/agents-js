@@ -14,14 +14,11 @@ import {
 } from '@livekit/agents';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
-import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
+import * as aic from '@livekit/plugins-ai-coustics';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const agent = new voice.Agent({
       instructions:
@@ -63,7 +60,7 @@ export default defineAgent({
       }),
       // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
       // See more at https://docs.livekit.io/agents/build/turns
-      vad: ctx.proc.userData.vad! as silero.VAD,
+      vad: aic.vad(),
       turnDetection: new livekit.turnDetector.MultilingualModel(),
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
@@ -93,7 +90,7 @@ export default defineAgent({
       agent,
       room: ctx.room,
       inputOptions: {
-        noiseCancellation: BackgroundVoiceCancellation(),
+        noiseCancellation: aic.audioEnhancement(),
       },
     });
 
