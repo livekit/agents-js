@@ -594,13 +594,11 @@ async function connectWs(url: string, apiKey: string, timeoutMs: number): Promis
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (code !== 1000) {
-        reject(
-          new APIConnectionError({
-            message: 'OpenAI Responses WebSocket closed unexpectedly during connect',
-          }),
-        );
-      }
+      reject(
+        new APIConnectionError({
+          message: `OpenAI Responses WebSocket closed unexpectedly during connect (code ${code})`,
+        }),
+      );
     });
   });
 }
