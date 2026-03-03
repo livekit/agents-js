@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.5.5",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.19.2",
     "typescript": "^5.0.0",
     "vitest": "^3.2.2",
@@ -48,8 +49,8 @@
     "@opentelemetry/exporter-logs-otlp-http": "^0.54.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.54.0",
     "@opentelemetry/otlp-exporter-base": "^0.54.0",
-    "@opentelemetry/sdk-logs": "^0.54.0",
     "@opentelemetry/resources": "^1.28.0",
+    "@opentelemetry/sdk-logs": "^0.54.0",
     "@opentelemetry/sdk-trace-base": "^1.28.0",
     "@opentelemetry/sdk-trace-node": "^1.28.0",
     "@opentelemetry/semantic-conventions": "^1.28.0",
