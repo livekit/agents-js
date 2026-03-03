@@ -81,20 +81,21 @@ export class ResponsesWebSocket {
     });
 
     ws.on('close', () => {
-      // If the WebSocket closes while a request is still in flight, synthesise
-      // a typed error event so the reader can handle it cleanly.
-      const current = this.#outputQueue[0];
-      if (current && !current.closed) {
-        const closeError: WsServerEvent = {
-          type: 'error',
-          error: {
-            code: 'websocket_closed',
-            message: 'OpenAI Responses WebSocket closed unexpectedly',
-          },
-        };
-        void current.write(closeError).then(() => current.close());
-        this.#outputQueue.shift();
+      // If the WebSocket closes while requests are still in flight, synthesise
+      // a typed error event so all readers can handle it cleanly.
+      for (const current of this.#outputQueue) {
+        if (!current.closed) {
+          const closeError: WsServerEvent = {
+            type: 'error',
+            error: {
+              code: 'websocket_closed',
+              message: 'OpenAI Responses WebSocket closed unexpectedly',
+            },
+          };
+          void current.write(closeError).then(() => current.close());
+        }
       }
+      this.#outputQueue = [];
     });
   }
 
@@ -201,9 +202,11 @@ export class LLM extends llm.LLM {
     await this.#pool.close();
   }
 
-  /** Called by WsLLMStream once response.created fires to persist the ID for the next turn. */
-  _onResponseCreated(responseId: string): void {
+  /** Called by LLMStream once response.created fires to atomically persist both the
+   *  response ID and its corresponding chat context for the next turn's diff. */
+  _onResponseCreated(responseId: string, chatCtx: llm.ChatContext): void {
     this.#prevResponseId = responseId;
+    this.#prevChatCtx = chatCtx;
   }
 
   chat({
@@ -269,8 +272,6 @@ export class LLM extends llm.LLM {
       // Otherwise: items were removed or inserted mid-history — fall back to
       // sending the full context with no previous_response_id.
     }
-
-    this.#prevChatCtx = chatCtx;
 
     return new LLMStream(this, {
       pool: this.#pool,
@@ -474,13 +475,13 @@ export class LLMStream extends llm.LLMStream {
       return true;
     }
 
-    if (code === 'websocket_connection_limit_reached') {
-      // 60-minute connection limit reached. Evict this connection so the pool
-      // opens a fresh one on the next turn.
+    if (code === 'websocket_connection_limit_reached' || code === 'websocket_closed') {
+      // Transient connection issue (timeout, network drop, or 60-min limit).
+      // Evict this connection so the pool opens a fresh one on retry.
       conn.close();
       this.#pool.invalidate();
       throw new APIConnectionError({
-        message: event.error?.message ?? 'WebSocket connection limit reached',
+        message: event.error?.message ?? `WebSocket closed (${code})`,
         options: { retryable: true },
       });
     }
@@ -496,7 +497,7 @@ export class LLMStream extends llm.LLMStream {
 
   #handleResponseCreated(event: WsResponseCreatedEvent): void {
     this.#responseId = event.response.id;
-    this.#parentLlm._onResponseCreated(event.response.id);
+    this.#parentLlm._onResponseCreated(event.response.id, this.#fullChatCtx);
   }
 
   #handleOutputItemDone(event: WsOutputItemDoneEvent): llm.ChatChunk | undefined {
