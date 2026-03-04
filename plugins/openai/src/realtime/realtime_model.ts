@@ -461,7 +461,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
     const unlock = await this.updateChatCtxLock.lock();
-    const events = this.createChatCtxUpdateEvents(_chatCtx);
+    const events = await this.createChatCtxUpdateEvents(_chatCtx);
     const futures: Future<void>[] = [];
 
     for (const event of events) {
@@ -498,10 +498,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private createChatCtxUpdateEvents(
+  private async createChatCtxUpdateEvents(
     chatCtx: llm.ChatContext,
     addMockAudio: boolean = false,
-  ): (api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[] {
+  ): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]> {
     const newChatCtx = chatCtx.copy();
     if (addMockAudio) {
       newChatCtx.items.push(createMockAudioItem());
@@ -533,7 +533,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       events.push({
         type: 'conversation.item.create',
-        item: livekitItemToOpenAIItem(chatItem),
+        item: await livekitItemToOpenAIItem(chatItem),
         previous_item_id: previousId ?? undefined,
         event_id: shortuuid('chat_ctx_create_'),
       } as api_proto.ConversationItemCreateEvent);
@@ -704,7 +704,7 @@ export class RealtimeSession extends llm.RealtimeSession {
             content: [_options.audioTranscript],
           });
           chatCtx.items[idx] = newItem;
-          const events = this.createChatCtxUpdateEvents(chatCtx);
+          const events = await this.createChatCtxUpdateEvents(chatCtx);
           for (const ev of events) {
             this.sendEvent(ev);
           }
@@ -845,7 +845,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       const oldChatCtx = this.remoteChatCtx;
       this.remoteChatCtx = new llm.RemoteChatContext();
-      events.push(...this.createChatCtxUpdateEvents(chatCtx));
+      events.push(...(await this.createChatCtxUpdateEvents(chatCtx)));
 
       try {
         for (const ev of events) {
@@ -1560,7 +1560,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (event.error.message.startsWith('Cancellation failed')) {
       return;
     }
-
     this.#logger.error({ error: event.error }, 'OpenAI Realtime API returned an error');
     this.emitError({
       error: new APIError(event.error.message, {
@@ -1622,7 +1621,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 }
 
 /** @internal Exported for testing purposes */
-export function livekitItemToOpenAIItem(item: llm.ChatItem): api_proto.ItemResource {
+export async function livekitItemToOpenAIItem(item: llm.ChatItem): Promise<api_proto.ItemResource> {
   switch (item.type) {
     case 'function_call':
       return {
@@ -1649,8 +1648,19 @@ export function livekitItemToOpenAIItem(item: llm.ChatItem): api_proto.ItemResou
             text: c,
           } as api_proto.InputTextContent | api_proto.OutputTextContent);
         } else if (c.type === 'image_content') {
-          // not supported for now
-          continue;
+          const serialized = await llm.serializeImage(c);
+          if (serialized.externalUrl) {
+            log().warn('External URL is not supported for input_image in realtime API');
+            continue;
+          }
+          if (!serialized.base64Data) {
+            log().warn('Serialized image has no data bytes');
+            continue;
+          }
+          contentList.push({
+            type: 'input_image',
+            image_url: `data:${serialized.mimeType};base64,${serialized.base64Data}`,
+          } as api_proto.InputImageContent);
         } else if (c.type === 'audio_content') {
           if (role === 'user') {
             const encodedAudio = Buffer.from(combineAudioFrames(c.frame).data).toString('base64');
@@ -1699,6 +1709,10 @@ function openAIItemToLivekitItem(item: api_proto.ItemResource): llm.ChatItem {
       for (const c of contents) {
         if (c.type === 'text' || c.type === 'input_text') {
           content.push(c.text);
+        } else if (c.type === 'input_image' && (c as api_proto.InputImageContent).image_url) {
+          content.push(
+            llm.createImageContent({ image: (c as api_proto.InputImageContent).image_url }),
+          );
         }
       }
       return llm.ChatMessage.create({
