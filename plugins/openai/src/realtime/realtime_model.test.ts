@@ -117,6 +117,69 @@ describe('livekitItemToOpenAIItem', () => {
       );
     });
 
+    it('should ignore image content for assistant messages', async () => {
+      const base64Data =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+      const imageContent = llm.createImageContent({
+        image: `data:image/png;base64,${base64Data}`,
+        mimeType: 'image/png',
+      });
+
+      const assistantMessage = new llm.ChatMessage({
+        role: 'assistant',
+        content: [imageContent],
+        id: 'test-assistant-image-msg',
+      });
+
+      const result = (await livekitItemToOpenAIItem(assistantMessage)) as api_proto.AssistantItem;
+
+      expect(result.type).toBe('message');
+      expect(result.role).toBe('assistant');
+      expect(result.content).toHaveLength(0);
+    });
+
+    it('should ignore image content for system messages', async () => {
+      const base64Data =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+      const imageContent = llm.createImageContent({
+        image: `data:image/png;base64,${base64Data}`,
+        mimeType: 'image/png',
+      });
+
+      const systemMessage = new llm.ChatMessage({
+        role: 'system',
+        content: [imageContent],
+        id: 'test-system-image-msg',
+      });
+
+      const result = (await livekitItemToOpenAIItem(systemMessage)) as api_proto.SystemItem;
+
+      expect(result.type).toBe('message');
+      expect(result.role).toBe('system');
+      expect(result.content).toHaveLength(0);
+    });
+
+    it('should ignore image content for developer messages mapped to system', async () => {
+      const base64Data =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+      const imageContent = llm.createImageContent({
+        image: `data:image/png;base64,${base64Data}`,
+        mimeType: 'image/png',
+      });
+
+      const developerMessage = new llm.ChatMessage({
+        role: 'developer',
+        content: [imageContent],
+        id: 'test-developer-image-msg',
+      });
+
+      const result = (await livekitItemToOpenAIItem(developerMessage)) as api_proto.SystemItem;
+
+      expect(result.type).toBe('message');
+      expect(result.role).toBe('system');
+      expect(result.content).toHaveLength(0);
+    });
+
     it('should handle mixed text and image content', async () => {
       const base64Data =
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';

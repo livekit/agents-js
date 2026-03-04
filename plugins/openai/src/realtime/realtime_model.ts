@@ -461,28 +461,27 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
     const unlock = await this.updateChatCtxLock.lock();
-    const events = await this.createChatCtxUpdateEvents(_chatCtx);
-    const futures: Future<void>[] = [];
+    try {
+      const events = await this.createChatCtxUpdateEvents(_chatCtx);
+      const futures: Future<void>[] = [];
 
-    for (const event of events) {
-      const future = new Future<void>();
-      futures.push(future);
+      for (const event of events) {
+        const future = new Future<void>();
+        futures.push(future);
 
-      if (event.type === 'conversation.item.create') {
-        this.itemCreateFutures[event.item.id] = future;
-      } else if (event.type == 'conversation.item.delete') {
-        this.itemDeleteFutures[event.item_id] = future;
+        if (event.type === 'conversation.item.create') {
+          this.itemCreateFutures[event.item.id] = future;
+        } else if (event.type == 'conversation.item.delete') {
+          this.itemDeleteFutures[event.item_id] = future;
+        }
+
+        this.sendEvent(event);
       }
 
-      this.sendEvent(event);
-    }
+      if (futures.length === 0) {
+        return;
+      }
 
-    if (futures.length === 0) {
-      unlock();
-      return;
-    }
-
-    try {
       // wait for futures to resolve or timeout
       await Promise.race([
         Promise.all(futures),
@@ -1648,6 +1647,9 @@ export async function livekitItemToOpenAIItem(item: llm.ChatItem): Promise<api_p
             text: c,
           } as api_proto.InputTextContent | api_proto.OutputTextContent);
         } else if (c.type === 'image_content') {
+          // only user can send image
+          if (role !== 'user') continue;
+
           const serialized = await llm.serializeImage(c);
           if (serialized.externalUrl) {
             log().warn('External URL is not supported for input_image in realtime API');
