@@ -164,7 +164,7 @@ export class AvatarSession {
   }
 
   private async startAgent(livekitUrl: string, livekitToken: string): Promise<void> {
-    for (let i = 0; i <= this.connOptions.maxRetry; i++) {
+    for (let i = 0; i < this.connOptions.maxRetry; i++) {
       try {
         const response = await fetch(`${this.apiUrl}/v1/sessions`, {
           method: 'POST',
