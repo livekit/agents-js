@@ -500,16 +500,15 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     this.audioStreamId = this.audioStream.addInputStream(audioStream);
-    const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream
-      .pipeThrough(aecWarmupAudioFilter)
-      .tee();
 
-    if (this.realtimeSession) {
+    if (this.realtimeSession && this.audioRecognition) {
+      const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream.tee();
       this.realtimeSession.setInputAudioStream(realtimeAudioStream);
-    }
-
-    if (this.audioRecognition) {
       this.audioRecognition.setInputAudioStream(recognitionAudioStream);
+    } else if (this.realtimeSession) {
+      this.realtimeSession.setInputAudioStream(this.audioStream.stream);
+    } else if (this.audioRecognition) {
+      this.audioRecognition.setInputAudioStream(this.audioStream.stream);
     }
   }
 
