@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { ReadableStream } from 'node:stream/web';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { initializeLogger } from '../log.js';
 import { delay } from '../utils.js';
 import { MultiInputStream } from './multi_input_stream.js';
 
@@ -16,6 +17,10 @@ function streamFrom<T>(values: T[]): ReadableStream<T> {
 }
 
 describe('MultiInputStream', () => {
+  beforeAll(() => {
+    initializeLogger({ pretty: false });
+  });
+
   // ---------------------------------------------------------------------------
   // Basic functionality
   // ---------------------------------------------------------------------------

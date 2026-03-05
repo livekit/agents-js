@@ -2,13 +2,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+export type MetricsMetadata = {
+  /** The provider name (e.g., 'openai', 'anthropic'). */
+  modelProvider?: string;
+  /** The model name (e.g., 'gpt-4o', 'claude-3-5-sonnet'). */
+  modelName?: string;
+};
+
 export type AgentMetrics =
   | STTMetrics
   | LLMMetrics
   | TTSMetrics
   | VADMetrics
   | EOUMetrics
-  | RealtimeModelMetrics;
+  | RealtimeModelMetrics
+  | InterruptionMetrics;
 
 export type LLMMetrics = {
   type: 'llm_metrics';
@@ -26,6 +34,8 @@ export type LLMMetrics = {
   totalTokens: number;
   tokensPerSecond: number;
   speechId?: string;
+  /** Metadata for model provider and name tracking. */
+  metadata?: MetricsMetadata;
 };
 
 export type STTMetrics = {
@@ -41,10 +51,16 @@ export type STTMetrics = {
    * The duration of the pushed audio in milliseconds.
    */
   audioDurationMs: number;
+  /** Input audio tokens (for token-based billing). */
+  inputTokens?: number;
+  /** Output text tokens (for token-based billing). */
+  outputTokens?: number;
   /**
    * Whether the STT is streaming (e.g using websocket).
    */
   streamed: boolean;
+  /** Metadata for model provider and name tracking. */
+  metadata?: MetricsMetadata;
 };
 
 export type TTSMetrics = {
@@ -59,10 +75,17 @@ export type TTSMetrics = {
   /** Generated audio duration in milliseconds. */
   audioDurationMs: number;
   cancelled: boolean;
+  /** Number of characters synthesized (for character-based billing). */
   charactersCount: number;
+  /** Input text tokens (for token-based billing, e.g., OpenAI TTS). */
+  inputTokens?: number;
+  /** Output audio tokens (for token-based billing, e.g., OpenAI TTS). */
+  outputTokens?: number;
   streamed: boolean;
   segmentId?: string;
   speechId?: string;
+  /** Metadata for model provider and name tracking. */
+  metadata?: MetricsMetadata;
 };
 
 export type VADMetrics = {
@@ -134,6 +157,10 @@ export type RealtimeModelMetrics = {
    */
   durationMs: number;
   /**
+   * The duration of the session connection in milliseconds (for session-based billing like xAI).
+   */
+  sessionDurationMs?: number;
+  /**
    * Time to first audio token in milliseconds. -1 if no audio token was sent.
    */
   ttftMs: number;
@@ -165,4 +192,24 @@ export type RealtimeModelMetrics = {
    * Details about the output tokens used in the Response.
    */
   outputTokenDetails: RealtimeModelMetricsOutputTokenDetails;
+  /** Metadata for model provider and name tracking. */
+  metadata?: MetricsMetadata;
+};
+
+export type InterruptionMetrics = {
+  type: 'interruption_metrics';
+  timestamp: number;
+  /** Latest RTT time taken to perform inference, in milliseconds. */
+  totalDuration: number;
+  /** Latest time taken by the model side, in milliseconds. */
+  predictionDuration: number;
+  /** Latest total time from onset of speech to final prediction, in milliseconds. */
+  detectionDelay: number;
+  /** Number of interruptions detected (incremental). */
+  numInterruptions: number;
+  /** Number of backchannels detected (incremental). */
+  numBackchannels: number;
+  /** Number of requests sent to the model (incremental). */
+  numRequests: number;
+  metadata?: MetricsMetadata;
 };

@@ -17,12 +17,15 @@ import {
   type STTModelString,
   type TTSModelString,
 } from '../inference/index.js';
+import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
+import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { type JobContext, getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
+import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
@@ -38,6 +41,7 @@ import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
+import { ClientEventsHandler } from './client_events.js';
 import {
   type AgentEvent,
   AgentSessionEventTypes,
@@ -61,39 +65,90 @@ import {
 } from './events.js';
 import { AgentInput, AgentOutput } from './io.js';
 import { RecorderIO } from './recorder_io/index.js';
-import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
+import {
+  DEFAULT_TEXT_INPUT_CALLBACK,
+  RoomIO,
+  type RoomInputOptions,
+  type RoomOutputOptions,
+} from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
+import type { InterruptionOptions } from './turn_config/interruption.js';
+import type {
+  InternalTurnHandlingOptions,
+  TurnHandlingOptions,
+} from './turn_config/turn_handling.js';
+import { migrateLegacyOptions } from './turn_config/utils.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
-export interface VoiceOptions {
-  allowInterruptions: boolean;
-  discardAudioIfUninterruptible: boolean;
-  minInterruptionDuration: number;
-  minInterruptionWords: number;
-  minEndpointingDelay: number;
-  maxEndpointingDelay: number;
-  maxToolSteps: number;
-  preemptiveGeneration: boolean;
-  userAwayTimeout?: number | null;
-  aecWarmupDuration: number | null;
-  useTtsAlignedTranscript: boolean;
+export interface AgentSessionUsage {
+  /** List of usage summaries, one per model/provider combination. */
+  modelUsage: Array<Partial<ModelUsage>>;
 }
 
-const defaultVoiceOptions: VoiceOptions = {
-  allowInterruptions: true,
-  discardAudioIfUninterruptible: true,
-  minInterruptionDuration: 500,
-  minInterruptionWords: 0,
-  minEndpointingDelay: 500,
-  maxEndpointingDelay: 6000,
+export interface SessionOptions {
+  maxToolSteps: number;
+  /**
+   * Whether to speculatively begin LLM and TTS requests before an end-of-turn is detected.
+   * When `true`, the agent sends inference calls as soon as a user transcript is received rather
+   * than waiting for a definitive turn boundary. This can reduce response latency by overlapping
+   * model inference with user audio, but may incur extra compute if the user interrupts or
+   * revises mid-utterance.
+   * @defaultValue false
+   */
+  preemptiveGeneration: boolean;
+
+  /**
+   * If set, set the user state as "away" after this amount of time after user and agent are
+   * silent. Set to `null` to disable.
+   * @defaultValue 15.0
+   */
+  userAwayTimeout: number | null;
+
+  /**
+   * Duration in milliseconds for AEC (Acoustic Echo Cancellation) warmup, during which
+   * interruptions from audio activity are suppressed. Set to `null` to disable.
+   * @defaultValue 3000
+   */
+  aecWarmupDuration: number | null;
+
+  /**
+   * Configuration for turn handling.
+   */
+  turnHandling: Partial<TurnHandlingOptions>;
+
+  useTtsAlignedTranscript: boolean;
+
+  /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.mode instead. */
+  allowInterruptions?: boolean;
+  /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.discardAudioIfUninterruptible instead. */
+  discardAudioIfUninterruptible?: boolean;
+  /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.minDuration instead. */
+  minInterruptionDuration?: number;
+  /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.minWords instead. */
+  minInterruptionWords?: number;
+  /** @deprecated Use {@link SessionOptions.turnHandling}.endpointing.minDelay instead. */
+  minEndpointingDelay?: number;
+  /** @deprecated Use {@link SessionOptions.turnHandling}.endpointing.maxDelay instead. */
+  maxEndpointingDelay?: number;
+}
+
+export interface InternalSessionOptions extends SessionOptions {
+  turnHandling: InternalTurnHandlingOptions;
+}
+
+export const defaultSessionOptions = {
   maxToolSteps: 3,
   preemptiveGeneration: false,
   userAwayTimeout: 15.0,
   aecWarmupDuration: 3000,
+  turnHandling: {},
   useTtsAlignedTranscript: true,
-} as const;
+} as const satisfies SessionOptions;
+
+/** @deprecated {@link VoiceOptions} has been renamed to {@link SessionOptions} */
+export type VoiceOptions = SessionOptions;
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
 
@@ -107,17 +162,22 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
+  [AgentSessionEventTypes.UserOverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
-  turnDetection?: TurnDetectionMode;
   stt?: STT | STTModelString;
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
-  voiceOptions?: Partial<VoiceOptions>;
+  options?: Partial<SessionOptions>;
   connOptions?: SessionConnectOptions;
+
+  /** @deprecated use {@link AgentSessionOptions.options}.turnHandling.turnDetection instead */
+  turnDetection?: TurnDetectionMode;
+  /** @deprecated use {@link AgentSessionOptions.options} instead */
+  voiceOptions?: Partial<VoiceOptions>;
 };
 
 type ActivityTransitionOptions = {
@@ -136,22 +196,19 @@ export class AgentSession<
   tts?: TTS;
   turnDetection?: TurnDetectionMode;
 
-  readonly options: VoiceOptions;
+  readonly options: InternalSessionOptions;
+  private readonly activityLock = new Mutex();
 
   private agent?: Agent;
   private activity?: AgentActivity;
   private nextActivity?: AgentActivity;
   private updateActivityTask?: Task<void>;
   private started = false;
-  private userState: UserState = 'listening';
-  private readonly activityLock = new Mutex();
-
-  /** @internal */
-  _roomIO?: RoomIO;
-  private logger = log();
+  private clientEventsHandler?: ClientEventsHandler;
 
   private _chatCtx: ChatContext;
   private _userData: UserData | undefined;
+  private _userState: UserState = 'listening';
   private _agentState: AgentState = 'initializing';
 
   private _input: AgentInput;
@@ -168,10 +225,17 @@ export class AgentSession<
   // Unrecoverable error counts, reset after agent speaking
   private llmErrorCounts = 0;
   private ttsErrorCounts = 0;
+  private interruptionDetectionErrorCounts = 0;
 
   private sessionSpan?: Span;
-  private userSpeakingSpan?: Span;
   private agentSpeakingSpan?: Span;
+
+  private _interruptionDetection?: InterruptionOptions['mode'];
+
+  private _usageCollector: ModelUsageCollector = new ModelUsageCollector();
+
+  /** @internal */
+  _roomIO?: RoomIO;
 
   /** @internal */
   _aecWarmupRemaining = 0;
@@ -194,20 +258,17 @@ export class AgentSession<
   /** @internal - Current run state for testing */
   _globalRunState?: RunResult;
 
-  constructor(opts: AgentSessionOptions<UserData>) {
+  /** @internal */
+  _userSpeakingSpan?: Span;
+
+  private logger = log();
+
+  constructor(options: AgentSessionOptions<UserData>) {
     super();
 
-    const {
-      vad,
-      stt,
-      llm,
-      tts,
-      turnDetection,
-      userData,
-      voiceOptions = defaultVoiceOptions,
-      connOptions,
-    } = opts;
+    const opts = migrateLegacyOptions<UserData>(options);
 
+    const { vad, stt, llm, tts, userData, connOptions, options: sessionOptions } = opts;
     // Merge user-provided connOptions with defaults
     this._connOptions = {
       sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
@@ -238,7 +299,8 @@ export class AgentSession<
       this.tts = tts;
     }
 
-    this.turnDetection = turnDetection;
+    this.turnDetection = sessionOptions?.turnHandling?.turnDetection;
+    this._interruptionDetection = sessionOptions?.turnHandling?.interruption?.mode;
     this._userData = userData;
 
     // configurable IO
@@ -247,7 +309,7 @@ export class AgentSession<
 
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
-    this.options = { ...defaultVoiceOptions, ...voiceOptions };
+    this.options = opts.options;
     this._aecWarmupRemaining = this.options.aecWarmupDuration ?? 0;
 
     this._onUserInputTranscribed = this._onUserInputTranscribed.bind(this);
@@ -260,6 +322,9 @@ export class AgentSession<
   ): boolean {
     const eventData = args[0] as AgentEvent;
     this._recordedEvents.push(eventData);
+    if (event === AgentSessionEventTypes.MetricsCollected) {
+      this._usageCollector.collect((eventData as MetricsCollectedEvent).metrics);
+    }
     return super.emit(event, ...args);
   }
 
@@ -286,6 +351,18 @@ export class AgentSession<
   /** Connection options for STT, LLM, and TTS. */
   get connOptions(): ResolvedSessionConnectOptions {
     return this._connOptions;
+  }
+
+  get interruptionDetection() {
+    return this._interruptionDetection;
+  }
+
+  /**
+   * Returns usage summaries for this session, one per model/provider combination.
+   */
+  get usage(): AgentSessionUsage {
+    // Skip zero fields for more concise usage display (matches python behavior).
+    return { modelUsage: this._usageCollector.flatten().map(filterZeroValues) };
   }
 
   get useTtsAlignedTranscript(): boolean {
@@ -342,7 +419,15 @@ export class AgentSession<
         inputOptions,
         outputOptions,
       });
+
       this._roomIO.start();
+
+      this.clientEventsHandler = new ClientEventsHandler(this, this._roomIO);
+      if (inputOptions?.textEnabled !== false) {
+        this.clientEventsHandler.registerTextInput(
+          inputOptions?.textInputCallback ?? DEFAULT_TEXT_INPUT_CALLBACK,
+        );
+      }
     }
 
     let ctx: JobContext | undefined = undefined;
@@ -385,6 +470,10 @@ export class AgentSession<
 
     await Promise.allSettled(tasks);
 
+    if (this.clientEventsHandler) {
+      await this.clientEventsHandler.start();
+    }
+
     // Log used IO configuration
     this.logger.debug(
       `using audio io: ${this.input.audio ? '`' + this.input.audio.constructor.name + '`' : '(none)'} -> \`AgentSession\` -> ${this.output.audio ? '`' + this.output.audio.constructor.name + '`' : '(none)'}`,
@@ -415,6 +504,8 @@ export class AgentSession<
     if (this.started) {
       return;
     }
+
+    this._usageCollector = new ModelUsageCollector();
 
     let ctx: JobContext | undefined = undefined;
     try {
@@ -748,6 +839,10 @@ export class AgentSession<
     return this._agentState;
   }
 
+  get userState(): UserState {
+    return this._userState;
+  }
+
   get currentAgent(): Agent {
     if (!this.agent) {
       throw new Error('AgentSession is not running');
@@ -786,7 +881,9 @@ export class AgentSession<
   }
 
   /** @internal */
-  _onError(error: RealtimeModelError | STTError | TTSError | LLMError): void {
+  _onError(
+    error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError,
+  ): void {
     if (this.closingTask || error.recoverable) {
       return;
     }
@@ -800,6 +897,11 @@ export class AgentSession<
     } else if (error.type === 'tts_error') {
       this.ttsErrorCounts += 1;
       if (this.ttsErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
+        return;
+      }
+    } else if (error.type === 'interruption_detection_error') {
+      this.interruptionDetectionErrorCounts += 1;
+      if (this.interruptionDetectionErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
         return;
       }
     }
@@ -831,9 +933,9 @@ export class AgentSession<
     }
 
     if (state === 'speaking') {
-      // Reset error counts when agent starts speaking
       this.llmErrorCounts = 0;
       this.ttsErrorCounts = 0;
+      this.interruptionDetectionErrorCounts = 0;
 
       if (this.agentSpeakingSpan === undefined) {
         this.agentSpeakingSpan = tracer.startSpan({
@@ -865,7 +967,7 @@ export class AgentSession<
     this._agentState = state;
 
     // Handle user away timer based on state changes
-    if (state === 'listening' && this.userState === 'listening') {
+    if (state === 'listening' && this._userState === 'listening') {
       this._setUserAwayTimer();
     } else {
       this._cancelUserAwayTimer();
@@ -879,12 +981,12 @@ export class AgentSession<
 
   /** @internal */
   _updateUserState(state: UserState, lastSpeakingTime?: number) {
-    if (this.userState === state) {
+    if (this._userState === state) {
       return;
     }
 
-    if (state === 'speaking' && this.userSpeakingSpan === undefined) {
-      this.userSpeakingSpan = tracer.startSpan({
+    if (state === 'speaking' && this._userSpeakingSpan === undefined) {
+      this._userSpeakingSpan = tracer.startSpan({
         name: 'user_speaking',
         context: this.rootSpanContext,
         startTime: lastSpeakingTime,
@@ -892,15 +994,15 @@ export class AgentSession<
 
       const linked = this._roomIO?.linkedParticipant;
       if (linked) {
-        setParticipantSpanAttributes(this.userSpeakingSpan, linked);
+        setParticipantSpanAttributes(this._userSpeakingSpan, linked);
       }
-    } else if (this.userSpeakingSpan !== undefined) {
-      this.userSpeakingSpan.end(lastSpeakingTime);
-      this.userSpeakingSpan = undefined;
+    } else if (this._userSpeakingSpan !== undefined) {
+      this._userSpeakingSpan.end(lastSpeakingTime);
+      this._userSpeakingSpan = undefined;
     }
 
-    const oldState = this.userState;
-    this.userState = state;
+    const oldState = this._userState;
+    this._userState = state;
 
     // Handle user away timer based on state changes
     if (state === 'listening' && this._agentState === 'listening') {
@@ -968,7 +1070,7 @@ export class AgentSession<
   }
 
   private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {
-    if (this.userState === 'away' && ev.isFinal) {
+    if (this._userState === 'away' && ev.isFinal) {
       this.logger.debug('User returned from away state due to speech input');
       this._updateUserState('listening');
     }
@@ -976,7 +1078,13 @@ export class AgentSession<
 
   private async closeImpl(
     reason: ShutdownReason,
-    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
+    error:
+      | RealtimeModelError
+      | LLMError
+      | TTSError
+      | STTError
+      | InterruptionDetectionError
+      | null = null,
     drain: boolean = false,
   ): Promise<void> {
     if (this.rootSpanContext) {
@@ -990,7 +1098,13 @@ export class AgentSession<
 
   private async closeImplInner(
     reason: ShutdownReason,
-    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
+    error:
+      | RealtimeModelError
+      | LLMError
+      | TTSError
+      | STTError
+      | InterruptionDetectionError
+      | null = null,
     drain: boolean = false,
   ): Promise<void> {
     if (!this.started) {
@@ -1036,6 +1150,9 @@ export class AgentSession<
     this.output.audio = null;
     this.output.transcription = null;
 
+    await this.clientEventsHandler?.close();
+    this.clientEventsHandler = undefined;
+
     await this._roomIO?.close();
     this._roomIO = undefined;
 
@@ -1047,9 +1164,9 @@ export class AgentSession<
       this.sessionSpan = undefined;
     }
 
-    if (this.userSpeakingSpan) {
-      this.userSpeakingSpan.end();
-      this.userSpeakingSpan = undefined;
+    if (this._userSpeakingSpan) {
+      this._userSpeakingSpan.end();
+      this._userSpeakingSpan = undefined;
     }
 
     if (this.agentSpeakingSpan) {
@@ -1061,11 +1178,12 @@ export class AgentSession<
 
     this.emit(AgentSessionEventTypes.Close, createCloseEvent(reason, error));
 
-    this.userState = 'listening';
+    this._userState = 'listening';
     this._agentState = 'initializing';
     this.rootSpanContext = undefined;
     this.llmErrorCounts = 0;
     this.ttsErrorCounts = 0;
+    this.interruptionDetectionErrorCounts = 0;
 
     this.logger.info({ reason, error }, 'AgentSession closed');
   }

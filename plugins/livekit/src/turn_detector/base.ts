@@ -170,6 +170,14 @@ export abstract class EOUModel {
 
   #logger = log();
 
+  get model(): string {
+    return MODEL_REVISIONS[this.modelType];
+  }
+
+  get provider(): string {
+    return 'livekit';
+  }
+
   constructor(opts: EOUModelOptions) {
     const {
       modelType = 'en',

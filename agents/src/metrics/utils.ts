@@ -60,5 +60,16 @@ export const logMetrics = (metrics: AgentMetrics) => {
         audioDurationMs: Math.round(metrics.audioDurationMs),
       })
       .info('STT metrics');
+  } else if (metrics.type === 'interruption_metrics') {
+    logger
+      .child({
+        totalDurationMs: roundTwoDecimals(metrics.totalDuration),
+        predictionDurationMs: roundTwoDecimals(metrics.predictionDuration),
+        detectionDelayMs: roundTwoDecimals(metrics.detectionDelay),
+        numInterruptions: metrics.numInterruptions,
+        numBackchannels: metrics.numBackchannels,
+        numRequests: metrics.numRequests,
+      })
+      .info('Interruption metrics');
   }
 };
