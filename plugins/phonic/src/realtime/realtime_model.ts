@@ -261,7 +261,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         'updateChatCtx called but no new tool call outputs to send. Phonic does not support general chat context updates.',
       );
     } else {
-      this.startNewAssistantTurn();
+      this.startNewAssistantTurn({ userInitiated: false });
     }
   }
 
@@ -322,11 +322,20 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  // TODO @Phonic-Co: Implement generateReply
-  async generateReply(_instructions?: string): Promise<llm.GenerationCreatedEvent> {
-    throw new Error(
-      'generateReply is not yet supported by the Phonic realtime model. Consider using `welcomeMessage` instead.',
-    );
+  async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
+    const systemMessage = instructions ?? 'Please say something.'
+    const payload = { type: 'generate_reply' as const, system_message: systemMessage };
+
+    // temp
+    if (this.socket) {
+      const ws = this.socket.socket;
+      ws?.send(JSON.stringify(payload));
+    } else {
+      this.logger.warn('Cannot send generate_reply: WebSocket not available');
+    }
+
+    this.closeCurrentGeneration({ interrupted: false });
+    return this.startNewAssistantTurn({ userInitiated: true });
   }
 
   async commitAudio(): Promise<void> {
@@ -412,7 +421,9 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     switch (message.type) {
       case 'assistant_started_speaking':
-        this.startNewAssistantTurn();
+        if (this.currentGeneration === undefined) {
+          this.startNewAssistantTurn({ userInitiated: false });
+        }
         break;
       case 'assistant_finished_speaking':
         this.finishAssistantTurn();
@@ -469,7 +480,7 @@ export class RealtimeSession extends llm.RealtimeSession {
      */
     if (this.currentGeneration === undefined && message.text) {
       this.logger.debug('Starting new generation due to text in audio chunk');
-      this.startNewAssistantTurn();
+      this.startNewAssistantTurn({ userInitiated: false });
     }
 
     const gen = this.currentGeneration;
@@ -521,7 +532,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     if (this.currentGeneration === undefined) {
       this.logger.warn('Encountered tool call but no active generation. Starting new turn.');
-      this.startNewAssistantTurn();
+      this.startNewAssistantTurn({ userInitiated: false });
     }
 
     this.currentGeneration!.functionChannel.write(
@@ -553,11 +564,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
   }
 
-  private startNewAssistantTurn(): void {
-    if (this.currentGeneration) {
-      this.closeCurrentGeneration({ interrupted: true });
-    }
-
+  private startNewAssistantTurn(options: {
+    userInitiated: boolean;
+  }): llm.GenerationCreatedEvent {
     const responseId = shortuuid('PS_');
 
     const textChannel = stream.createStreamChannel<string>();
@@ -581,12 +590,15 @@ export class RealtimeSession extends llm.RealtimeSession {
       outputText: '',
     };
 
-    this.emit('generation_created', {
+    const generationEvent: llm.GenerationCreatedEvent = {
       messageStream: messageChannel.stream(),
       functionStream: functionChannel.stream(),
-      userInitiated: false,
+      userInitiated: options.userInitiated,
       responseId,
-    });
+    };
+
+    this.emit('generation_created', generationEvent);
+    return generationEvent;
   }
 
   private finishAssistantTurn(): void {

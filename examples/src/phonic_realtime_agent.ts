@@ -32,8 +32,9 @@ export default defineAgent({
       // Uses PHONIC_API_KEY environment variable when apiKey is not provided
       llm: new phonic.realtime.RealtimeModel({
         voice: 'sabrina',
-        welcomeMessage: 'Hey there, how can I help you today?',
+        // welcomeMessage: 'Hey there, how can I help you today?',
         audioSpeed: 1.2,
+        baseUrl: 'http://localhost:3520',
       }),
     });
 
@@ -43,7 +44,17 @@ export default defineAgent({
     });
 
     await ctx.connect();
+
+    // await session.generateReply({
+    //   instructions: 'greet the user and ask about their day',
+    // });
+
+    // setInterval(async () => {
+    //   await session.generateReply({
+    //     instructions: 'tell the user that you like Port of Parity Parity, which is a restaurant in san francisco',
+    //   });
+    // }, 15 * 1000);
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: "qiong-generate-1" }));
