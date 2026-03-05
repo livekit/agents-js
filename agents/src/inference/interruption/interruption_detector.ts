@@ -76,6 +76,15 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
     } else {
       useProxy = false;
     }
+    const transport = useProxy ? 'websocket' : 'http';
+    this.logger.debug(
+      {
+        baseUrl: lkBaseUrl,
+        useProxy,
+        transport,
+      },
+      '=== Resolved interruption detector transport configuration',
+    );
 
     this.options = {
       sampleRate: SAMPLE_RATE,
@@ -104,8 +113,9 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
         threshold: this.options.threshold,
         inferenceTimeout: this.options.inferenceTimeout,
         useProxy: this.options.useProxy,
+        transport,
       },
-      'adaptive interruption detector initialized',
+      '=== Adaptive interruption detector initialized',
     );
   }
 
