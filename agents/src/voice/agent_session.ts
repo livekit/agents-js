@@ -77,6 +77,7 @@ export interface VoiceOptions {
   maxToolSteps: number;
   preemptiveGeneration: boolean;
   userAwayTimeout?: number | null;
+  aecWarmupDuration: number | null;
   useTtsAlignedTranscript: boolean;
 }
 
@@ -90,6 +91,7 @@ const defaultVoiceOptions: VoiceOptions = {
   maxToolSteps: 3,
   preemptiveGeneration: false,
   userAwayTimeout: 15.0,
+  aecWarmupDuration: 3000,
   useTtsAlignedTranscript: true,
 } as const;
 
@@ -158,6 +160,8 @@ export class AgentSession<
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
 
+  private _aecWarmupTimer: NodeJS.Timeout | null = null;
+
   // Connection options for STT, LLM, and TTS
   private _connOptions: ResolvedSessionConnectOptions;
 
@@ -168,6 +172,9 @@ export class AgentSession<
   private sessionSpan?: Span;
   private userSpeakingSpan?: Span;
   private agentSpeakingSpan?: Span;
+
+  /** @internal */
+  _aecWarmupRemaining = 0;
 
   /** @internal */
   _recorderIO?: RecorderIO;
@@ -241,6 +248,7 @@ export class AgentSession<
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
     this.options = { ...defaultVoiceOptions, ...voiceOptions };
+    this._aecWarmupRemaining = this.options.aecWarmupDuration ?? 0;
 
     this._onUserInputTranscribed = this._onUserInputTranscribed.bind(this);
     this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
@@ -845,6 +853,14 @@ export class AgentSession<
       this.agentSpeakingSpan = undefined;
     }
 
+    if (state === 'speaking' && this._aecWarmupRemaining > 0 && this._aecWarmupTimer === null) {
+      this._aecWarmupTimer = setTimeout(() => this._onAecWarmupExpired(), this._aecWarmupRemaining);
+      this.logger.debug(
+        { warmupDurationMs: this._aecWarmupRemaining },
+        'aec warmup active, disabling interruptions',
+      );
+    }
+
     const oldState = this._agentState;
     this._agentState = state;
 
@@ -938,6 +954,19 @@ export class AgentSession<
     }
   }
 
+  /** @internal */
+  _onAecWarmupExpired(): void {
+    if (this._aecWarmupRemaining > 0) {
+      this.logger.debug('aec warmup expired, re-enabling interruptions');
+    }
+
+    this._aecWarmupRemaining = 0;
+    if (this._aecWarmupTimer !== null) {
+      clearTimeout(this._aecWarmupTimer);
+      this._aecWarmupTimer = null;
+    }
+  }
+
   private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {
     if (this.userState === 'away' && ev.isFinal) {
       this.logger.debug('User returned from away state due to speech input');
@@ -969,6 +998,7 @@ export class AgentSession<
     }
 
     this._cancelUserAwayTimer();
+    this._onAecWarmupExpired();
     this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
 
     if (this.activity) {

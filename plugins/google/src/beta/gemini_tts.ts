@@ -213,13 +213,13 @@ export class ChunkedStream extends tts.ChunkedStream {
       },
     ];
 
-    const responseStream = await this.#tts.client.models.generateContentStream({
-      model: this.#tts.opts.model,
-      contents,
-      config,
-    });
-
     try {
+      const responseStream = await this.#tts.client.models.generateContentStream({
+        model: this.#tts.opts.model,
+        contents,
+        config,
+      });
+
       for await (const response of responseStream) {
         await this.#processResponse(response, bstream, requestId);
       }
