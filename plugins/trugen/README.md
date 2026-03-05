@@ -33,7 +33,7 @@ export TRUGEN_API_KEY=<your-trugen-api-key>
 ## Usage
 
 ```typescript
-import { AvatarSession } from '@livekit/agent-plugin-trugen';
+import { AvatarSession } from '@livekit/agents-plugin-trugen';
                                                                                                                                                  
   // inside your existing defineAgent entry function:                                                                                            
 
