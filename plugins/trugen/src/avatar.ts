@@ -200,7 +200,7 @@ export class AvatarSession {
         } else {
           this.#logger.warn({ error: String(e) }, 'failed to call trugen api');
         }
-        if (i < this.connOptions.maxRetry) {
+        if (i < this.connOptions.maxRetry - 1) {
           await new Promise((resolve) =>
             setTimeout(resolve, intervalForRetry(this.connOptions, i)),
           );
