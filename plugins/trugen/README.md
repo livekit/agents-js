@@ -13,7 +13,7 @@ See [https://docs.trugen.ai](https://docs.trugen.ai) for more information.
 ## Installation
 
 ```bash
-npm install @livekit/agent-plugin-trugen
+npm install @livekit/agents-plugin-trugen
 ```
 
 or
