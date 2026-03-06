@@ -202,7 +202,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   private connectTask: Promise<void>;
   private toolDefinitions: Record<string, unknown>[] = [];
   private pendingToolCallIds = new Set<string>();
+  private lastAgentChatCtx = llm.ChatContext.empty();
   private readyToStart = false;
+  private systemPromptPostfix = '';
 
   constructor(realtimeModel: RealtimeModel) {
     super(realtimeModel);
@@ -243,9 +245,21 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateChatCtx(chatCtx: llm.ChatContext): Promise<void> {
-    let sent = false;
-    for (const item of chatCtx.items) {
-      if (item.type === 'function_call_output' && this.pendingToolCallIds.has(item.callId)) {
+    if (!this.configSent) {
+      if (chatCtx.items.length > 0) {
+        this.logger.debug("updateChatCtx called prior to config being sent to Phonic. Including conversation state in system instructions.")
+        const turnHistory = chatCtx.items.filter((item) => item.type === 'message').map((item) => `${item.role}: ${item.content.join('\n')}`).join('\n');
+        this.systemPromptPostfix = "This conversation is being continued from an existing conversation. The following is the conversation history. You are the assistant speaking to the user." + turnHistory
+      }
+    }
+
+    const diffOps = llm.computeChatCtxDiff(this._chatCtx, chatCtx);
+    let sentToolCallOutput = false;
+    let sentAddSystemMessage = false;
+  
+    for (const [, itemId] of diffOps.toCreate) {
+      const item = chatCtx.getById(itemId);
+      if (item?.type === 'function_call_output' && this.pendingToolCallIds.has(item.callId)) {
         this.pendingToolCallIds.delete(item.callId);
         this.logger.info(`Sending tool call output for ${item.name} (call_id: ${item.callId})`);
         this.socket?.sendToolCallOutput({
@@ -253,14 +267,25 @@ export class RealtimeSession extends llm.RealtimeSession {
           tool_call_id: item.callId,
           output: item.output,
         });
-        sent = true;
+        sentToolCallOutput = true;
+      }
+      if (item?.type === 'message' && item.role === 'system' && typeof item.content === 'string') {
+        this.socket?.sendAddSystemMessage({
+          type: 'add_system_message',
+          system_message: item.content,
+        });
+        sentAddSystemMessage = true;
       }
     }
-    if (!sent) {
+
+    this._chatCtx = chatCtx.copy()
+
+    if (!sentToolCallOutput && !sentAddSystemMessage) {
       this.logger.warn(
         'updateChatCtx called but no new tool call outputs to send. Phonic does not support general chat context updates.',
       );
-    } else {
+    }
+    if (sentToolCallOutput) {
       this.startNewAssistantTurn({ userInitiated: false });
     }
   }
@@ -394,7 +419,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       project: this.options.project,
       welcome_message: this.options.welcomeMessage,
       generate_welcome_message: this.options.generateWelcomeMessage,
-      system_prompt: this.options.instructions,
+      system_prompt: this.options.instructions + this.systemPromptPostfix,
       voice_id: this.options.voice,
       input_format: 'pcm_44100',
       output_format: 'pcm_44100',
