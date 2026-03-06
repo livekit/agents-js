@@ -247,9 +247,22 @@ export class RealtimeSession extends llm.RealtimeSession {
   async updateChatCtx(chatCtx: llm.ChatContext): Promise<void> {
     if (!this.configSent) {
       if (chatCtx.items.length > 0) {
-        this.logger.debug("updateChatCtx called prior to config being sent to Phonic. Including conversation state in system instructions.")
-        const turnHistory = chatCtx.items.filter((item) => item.type === 'message' && 'textContent' in item).map((item) => `${item.role}: ${item.textContent}`).join('\n');
-        this.systemPromptPostfix = "\n\nThis conversation is being continued from an existing conversation. You are the assistant speaking to the user. The following is the conversation history:\n" + turnHistory
+        this.logger.debug(
+          'updateChatCtx called prior to config being sent to Phonic. Including conversation state in system instructions.',
+        );
+        const turnHistory = chatCtx.items
+          .filter(
+            (item): item is llm.ChatMessage =>
+              item.type === 'message' &&
+              'textContent' in item &&
+              item.textContent !== undefined &&
+              item.textContent.trim() !== '',
+          )
+          .map((item) => `${item.role}: ${item.textContent}`)
+          .join('\n');
+        this.systemPromptPostfix =
+          '\n\nThis conversation is being continued from an existing conversation. You are the assistant speaking to the user. The following is the conversation history:\n' +
+          turnHistory;
       }
       return;
     }
@@ -257,7 +270,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     const diffOps = llm.computeChatCtxDiff(this._chatCtx, chatCtx);
     let sentToolCallOutput = false;
     let sentAddSystemMessage = false;
-  
+
     for (const [, itemId] of diffOps.toCreate) {
       const item = chatCtx.getById(itemId);
       if (item?.type === 'function_call_output' && this.pendingToolCallIds.has(item.callId)) {
@@ -282,7 +295,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }
 
-    this._chatCtx = chatCtx.copy()
+    this._chatCtx = chatCtx.copy();
 
     if (!sentToolCallOutput && !sentAddSystemMessage) {
       this.logger.warn(
