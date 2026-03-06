@@ -269,7 +269,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         });
         sentToolCallOutput = true;
       }
-      if (item?.type === 'message' && item.role === 'system' && typeof item.content === 'string') {
+      if (item?.type === 'message' && (item.role === 'system' || item.role === 'developer') && typeof item.content === 'string') {
         this.socket?.sendAddSystemMessage({
           type: 'add_system_message',
           system_message: item.content,
