@@ -4,6 +4,7 @@
 
 export type ChatModels =
   | 'gpt-5.4'
+  | 'gpt-5.3-chat-latest'
   | 'gpt-5.2'
   | 'gpt-5.2-chat-latest'
   | 'gpt-5.1'
@@ -217,6 +218,7 @@ export type MetaChatModels =
 export function supportsReasoningEffort(model: ChatModels | string): boolean {
   return [
     'gpt-5.4',
+    'gpt-5.3-chat-latest',
     'gpt-5.2',
     'gpt-5.2-chat-latest',
     'gpt-5.1',

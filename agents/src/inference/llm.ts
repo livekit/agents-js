@@ -17,6 +17,8 @@ import { type AnyString, createAccessToken } from './utils.js';
 const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 
 export type OpenAIModels =
+  | 'openai/gpt-5.4'
+  | 'openai/gpt-5.3-chat-latest'
   | 'openai/gpt-5.2'
   | 'openai/gpt-5.2-chat-latest'
   | 'openai/gpt-5.1'
