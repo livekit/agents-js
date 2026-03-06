@@ -2591,10 +2591,7 @@ export class AgentActivity implements RecognitionHooks {
     try {
       this.cancelPreemptiveGeneration();
 
-      await cancelAndWait(
-        Array.from(this.speechTasks),
-        AgentActivity.REPLY_TASK_CANCEL_TIMEOUT,
-      );
+      await cancelAndWait(Array.from(this.speechTasks), AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
 
       if (this._currentSpeech && !this._currentSpeech.done()) {
         this._currentSpeech._markDone();
