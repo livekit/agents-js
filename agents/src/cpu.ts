@@ -60,16 +60,20 @@ export class CGroupV2CpuMonitor implements CpuMonitor {
   }
 
   cpuPercent(intervalMs: number): Promise<number> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const usageStart = this.#readCpuUsage();
       const timer = setTimeout(() => {
-        const usageEnd = this.#readCpuUsage();
-        const usageDiffUsec = usageEnd - usageStart;
-        const usageSeconds = usageDiffUsec / 1_000_000;
-        const numCpus = this.cpuCount();
-        const intervalSeconds = intervalMs / 1000;
-        const percent = usageSeconds / (intervalSeconds * numCpus);
-        resolve(Math.min(percent, 1));
+        try {
+          const usageEnd = this.#readCpuUsage();
+          const usageDiffUsec = usageEnd - usageStart;
+          const usageSeconds = usageDiffUsec / 1_000_000;
+          const numCpus = this.cpuCount();
+          const intervalSeconds = intervalMs / 1000;
+          const percent = usageSeconds / (intervalSeconds * numCpus);
+          resolve(Math.max(Math.min(percent, 1), 0));
+        } catch (e) {
+          reject(e);
+        }
       }, intervalMs);
       timer.unref();
     });
@@ -111,16 +115,20 @@ export class CGroupV1CpuMonitor implements CpuMonitor {
   }
 
   cpuPercent(intervalMs: number): Promise<number> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const usageStart = this.#readCpuacctUsage();
       const timer = setTimeout(() => {
-        const usageEnd = this.#readCpuacctUsage();
-        const usageDiffNs = usageEnd - usageStart;
-        const usageSeconds = usageDiffNs / 1_000_000_000;
-        const numCpus = this.cpuCount();
-        const intervalSeconds = intervalMs / 1000;
-        const percent = usageSeconds / (intervalSeconds * numCpus);
-        resolve(Math.max(Math.min(percent, 1.0), 0.0));
+        try {
+          const usageEnd = this.#readCpuacctUsage();
+          const usageDiffNs = usageEnd - usageStart;
+          const usageSeconds = usageDiffNs / 1_000_000_000;
+          const numCpus = this.cpuCount();
+          const intervalSeconds = intervalMs / 1000;
+          const percent = usageSeconds / (intervalSeconds * numCpus);
+          resolve(Math.max(Math.min(percent, 1.0), 0.0));
+        } catch (e) {
+          reject(e);
+        }
       }, intervalMs);
       timer.unref();
     });
@@ -155,11 +163,7 @@ function isCGroupV2(): boolean {
 }
 
 function isCGroupV1(): boolean {
-  return [
-    '/sys/fs/cgroup/cpu/cpu.cfs_quota_us',
-    '/sys/fs/cgroup/cpu/cpu.cfs_period_us',
-    '/sys/fs/cgroup/cpuacct/cpuacct.usage',
-  ].some((p) => existsSync(p));
+  return existsSync('/sys/fs/cgroup/cpuacct/cpuacct.usage');
 }
 
 export function getCpuMonitor(): CpuMonitor {

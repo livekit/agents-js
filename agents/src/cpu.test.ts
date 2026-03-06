@@ -32,11 +32,7 @@ describe('cpu', () => {
     });
 
     it('returns CGroupV1CpuMonitor when cgroup v1 paths exist', () => {
-      mockExistsSync.mockImplementation(
-        (p) =>
-          p === '/sys/fs/cgroup/cpu/cpu.cfs_quota_us' ||
-          p === '/sys/fs/cgroup/cpu/cpu.cfs_period_us',
-      );
+      mockExistsSync.mockImplementation((p) => p === '/sys/fs/cgroup/cpuacct/cpuacct.usage');
       const monitor = getCpuMonitor();
       expect(monitor).toBeInstanceOf(CGroupV1CpuMonitor);
     });

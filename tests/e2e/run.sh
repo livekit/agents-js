@@ -69,7 +69,13 @@ RESPONSE=$(curl -sf -X POST "$LK_URL/twirp/livekit.RoomService/CreateRoom" \
     t.addGrant({ roomCreate: true, roomJoin: true, room: '${ROOM_NAME}' });
     console.log(t.toJwt());
   ")" \
-  -d "{\"name\": \"${ROOM_NAME}\"}" 2>&1) || true
+  -d "{\"name\": \"${ROOM_NAME}\"}" 2>&1)
+
+if [ $? -ne 0 ] || [ -z "$RESPONSE" ]; then
+  echo "FAIL: Room creation request failed"
+  echo "Response: $RESPONSE"
+  exit 1
+fi
 
 echo "Room creation response: $RESPONSE"
 
