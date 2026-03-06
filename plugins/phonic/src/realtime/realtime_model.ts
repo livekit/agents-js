@@ -564,6 +564,10 @@ export class RealtimeSession extends llm.RealtimeSession {
   }: {
     userInitiated: boolean;
   }): llm.GenerationCreatedEvent {
+    if (this.currentGeneration) {
+      this.closeCurrentGeneration({ interrupted: true });
+    }
+
     const responseId = shortuuid('PS_');
 
     const textChannel = stream.createStreamChannel<string>();
