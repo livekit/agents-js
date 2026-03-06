@@ -1241,17 +1241,17 @@ export class AgentActivity implements RecognitionHooks {
       // don't block on I/O that will never complete (e.g. audioOutput.waitForPlayout()
       // when the room is disconnected). Mark the current speech as done immediately
       // so the interrupt future resolves without waiting for tasks to finish.
+      // Clear the queue so mainTask doesn't dequeue already-interrupted handles
+      // and hang on _waitForGeneration() (the generation future created by
+      // _authorizeGeneration would never resolve since _markDone is a no-op
+      // once doneFut is already settled).
       for (const task of this.speechTasks) {
         task.cancel();
       }
       if (currentSpeech && !currentSpeech.done()) {
         currentSpeech._markDone();
       }
-      for (const [_, __, speech] of this.speechQueue) {
-        if (!speech.done()) {
-          speech._markDone();
-        }
-      }
+      this.speechQueue.clear();
       future.resolve();
     } else if (currentSpeech === undefined) {
       future.resolve();
