@@ -323,13 +323,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
-    const systemMessage = instructions ?? 'Please say something.'
-    const payload = { type: 'generate_reply' as const, system_message: systemMessage };
-
-    // temp
     if (this.socket) {
-      const ws = this.socket.socket;
-      ws?.send(JSON.stringify(payload));
+      this.socket.sendGenerateReply({ type: 'generate_reply', system_message: instructions });
     } else {
       this.logger.warn('Cannot send generate_reply: WebSocket not available');
     }

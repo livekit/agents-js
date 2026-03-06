@@ -45,15 +45,9 @@ export default defineAgent({
 
     await ctx.connect();
 
-    // await session.generateReply({
-    //   instructions: 'greet the user and ask about their day',
-    // });
-
-    // setInterval(async () => {
-    //   await session.generateReply({
-    //     instructions: 'tell the user that you like Port of Parity Parity, which is a restaurant in san francisco',
-    //   });
-    // }, 15 * 1000);
+    await session.generateReply({
+      instructions: 'Greet the user, asking about their day.',
+    });
   },
 });
 
