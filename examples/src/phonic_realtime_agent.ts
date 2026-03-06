@@ -32,9 +32,7 @@ export default defineAgent({
       // Uses PHONIC_API_KEY environment variable when apiKey is not provided
       llm: new phonic.realtime.RealtimeModel({
         voice: 'sabrina',
-        // welcomeMessage: 'Hey there, how can I help you today?',
         audioSpeed: 1.2,
-        baseUrl: 'http://localhost:3520',
       }),
     });
 
@@ -51,4 +49,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: "qiong-generate-1" }));
+cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));

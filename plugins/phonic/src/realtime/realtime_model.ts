@@ -559,7 +559,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
   }
 
-  private startNewAssistantTurn(options: {
+  private startNewAssistantTurn({
+    userInitiated,
+  }: {
     userInitiated: boolean;
   }): llm.GenerationCreatedEvent {
     const responseId = shortuuid('PS_');
@@ -588,7 +590,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     const generationEvent: llm.GenerationCreatedEvent = {
       messageStream: messageChannel.stream(),
       functionStream: functionChannel.stream(),
-      userInitiated: options.userInitiated,
+      userInitiated,
       responseId,
     };
 
