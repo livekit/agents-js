@@ -248,9 +248,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!this.configSent) {
       if (chatCtx.items.length > 0) {
         this.logger.debug("updateChatCtx called prior to config being sent to Phonic. Including conversation state in system instructions.")
-        const turnHistory = chatCtx.items.filter((item) => item.type === 'message').map((item) => `${item.role}: ${item.content.join('\n')}`).join('\n');
-        this.systemPromptPostfix = "This conversation is being continued from an existing conversation. The following is the conversation history. You are the assistant speaking to the user." + turnHistory
+        const turnHistory = chatCtx.items.filter((item) => item.type === 'message' && 'textContent' in item).map((item) => `${item.role}: ${item.textContent}`).join('\n');
+        this.systemPromptPostfix = "\n\nThis conversation is being continued from an existing conversation. You are the assistant speaking to the user. The following is the conversation history:\n" + turnHistory
       }
+      return;
     }
 
     const diffOps = llm.computeChatCtxDiff(this._chatCtx, chatCtx);
@@ -269,12 +270,15 @@ export class RealtimeSession extends llm.RealtimeSession {
         });
         sentToolCallOutput = true;
       }
-      if (item?.type === 'message' && (item.role === 'system' || item.role === 'developer') && typeof item.content === 'string') {
-        this.socket?.sendAddSystemMessage({
-          type: 'add_system_message',
-          system_message: item.content,
-        });
-        sentAddSystemMessage = true;
+      if (item?.type === 'message') {
+        if ((item.role === 'system' || item.role === 'developer') && item.textContent) {
+          this.logger.debug(`Sending add system message: ${item.textContent}`);
+          this.socket?.sendAddSystemMessage({
+            type: 'add_system_message',
+            system_message: item.textContent,
+          });
+          sentAddSystemMessage = true;
+        }
       }
     }
 

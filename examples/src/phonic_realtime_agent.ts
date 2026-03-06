@@ -46,6 +46,20 @@ export default defineAgent({
     await session.generateReply({
       instructions: 'Greet the user, asking about their day.',
     });
+
+    setTimeout(async () => {
+      const agent = session.currentAgent;
+      const chatCtx = agent.chatCtx.copy();
+      chatCtx.addMessage({
+        role: 'system',
+        content:
+          'You really like the Port of Peri Peri (restaurant in San Francisco). Let the user know that.',
+      });
+      await agent.updateChatCtx(chatCtx);
+      // session.generateReply({
+      //   instructions: 'Mention to the user that you really like the Port of Peri Peri restaurant.',
+      // });
+    }, 10000);
   },
 });
 
