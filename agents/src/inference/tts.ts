@@ -62,7 +62,14 @@ export interface DeepgramTTSOptions {}
 
 export interface RimeOptions {}
 
-export interface InworldOptions {}
+export interface InworldOptions {
+  /** Controls how fast the voice speaks. 1.0 is normal speed, 0.5 is half, 1.5 is 1.5x. Default: 1.0. */
+  speaking_rate?: number;
+  /** Controls randomness in the output. Recommended between 0.6 and 1.1. Default: 1.1. */
+  temperature?: number;
+  /** Controls text normalization. "ON" expands numbers, dates, abbreviations. "OFF" reads text as written. Default: "ON". */
+  text_normalization?: 'ON' | 'OFF';
+}
 
 type _TTSModels =
   | CartesiaModels
