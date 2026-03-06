@@ -56,9 +56,6 @@ export default defineAgent({
           'You really like the Port of Peri Peri (restaurant in San Francisco). Let the user know that.',
       });
       await agent.updateChatCtx(chatCtx);
-      // session.generateReply({
-      //   instructions: 'Mention to the user that you really like the Port of Peri Peri restaurant.',
-      // });
     }, 10000);
   },
 });
