@@ -32,7 +32,6 @@ export default defineAgent({
       // Uses PHONIC_API_KEY environment variable when apiKey is not provided
       llm: new phonic.realtime.RealtimeModel({
         voice: 'sabrina',
-        welcomeMessage: 'Hey there, how can I help you today?',
         audioSpeed: 1.2,
       }),
     });
@@ -43,6 +42,10 @@ export default defineAgent({
     });
 
     await ctx.connect();
+
+    await session.generateReply({
+      instructions: 'Greet the user, asking about their day.',
+    });
   },
 });
 

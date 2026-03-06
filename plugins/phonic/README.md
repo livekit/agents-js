@@ -5,6 +5,9 @@ Realtime voice AI integration for [Phonic](https://phonic.co/) with LiveKit Agen
 ## Usage
 
 ```typescript
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import { type JobContext, ServerOptions, cli, defineAgent, llm, voice } from '@livekit/agents';
 import * as phonic from '@livekit/agents-plugin-phonic';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +21,7 @@ const toggleLight = llm.tool({
   }),
   execute: async ({ light_id, state }) => {
     console.log(`Turning ${state} light ${light_id}`);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
     return `Light ${light_id} turned ${state}`;
   },
 });
@@ -35,7 +39,6 @@ export default defineAgent({
       // Uses PHONIC_API_KEY environment variable when apiKey is not provided
       llm: new phonic.realtime.RealtimeModel({
         voice: 'sabrina',
-        welcomeMessage: 'Hey there, how can I help you today?',
         audioSpeed: 1.2,
       }),
     });
@@ -46,10 +49,15 @@ export default defineAgent({
     });
 
     await ctx.connect();
+
+    await session.generateReply({
+      instructions: 'Greet the user, asking about their day.',
+    });
   },
 });
 
 cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+
 ```
 
 ## Configuration
