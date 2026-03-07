@@ -13,8 +13,8 @@ import {
 import type { ParticipantInfo } from 'livekit-server-sdk';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
-import os from 'node:os';
 import { WebSocket } from 'ws';
+import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
 import { InferenceRunner } from './inference_runner.js';
 import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
@@ -79,32 +79,11 @@ const defaultRequestFunc = async (ctx: JobRequest) => {
   await ctx.accept();
 };
 
+const cpuMonitor = getCpuMonitor();
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const defaultCpuLoad = async (worker: AgentServer): Promise<number> => {
-  return new Promise((resolve) => {
-    const cpus1 = os.cpus();
-
-    setTimeout(() => {
-      const cpus2 = os.cpus();
-
-      let idle = 0;
-      let total = 0;
-
-      for (let i = 0; i < cpus1.length; i++) {
-        const cpu1 = cpus1[i]!.times;
-        const cpu2 = cpus2[i]!.times;
-
-        idle += cpu2.idle - cpu1.idle;
-
-        const total1 = Object.values(cpu1).reduce((acc, i) => acc + i, 0);
-        const total2 = Object.values(cpu2).reduce((acc, i) => acc + i, 0);
-
-        total += total2 - total1;
-      }
-
-      resolve(+(1 - idle / total).toFixed(2));
-    }, UPDATE_LOAD_INTERVAL);
-  });
+const defaultCpuLoad = async (_worker: AgentServer): Promise<number> => {
+  return cpuMonitor.cpuPercent(UPDATE_LOAD_INTERVAL);
 };
 
 /** Participant permissions to pass to every agent spun up by this worker. */
@@ -651,33 +630,38 @@ export class AgentServer {
       if (closingWS) clearInterval(loadMonitor);
 
       const oldStatus = currentStatus;
-      this.#opts.loadFunc(this).then((currentLoad: number) => {
-        const isFull = currentLoad >= this.#opts.loadThreshold;
-        const currentlyAvailable = !isFull;
-        currentStatus = currentlyAvailable ? WorkerStatus.WS_AVAILABLE : WorkerStatus.WS_FULL;
+      this.#opts
+        .loadFunc(this)
+        .then((currentLoad: number) => {
+          const isFull = currentLoad >= this.#opts.loadThreshold;
+          const currentlyAvailable = !isFull;
+          currentStatus = currentlyAvailable ? WorkerStatus.WS_AVAILABLE : WorkerStatus.WS_FULL;
 
-        if (oldStatus != currentStatus) {
-          const extra = { load: currentLoad, loadThreshold: this.#opts.loadThreshold };
-          if (isFull) {
-            this.#logger.child(extra).info('worker is at full capacity, marking as unavailable');
-          } else {
-            this.#logger.child(extra).info('worker is below capacity, marking as available');
+          if (oldStatus != currentStatus) {
+            const extra = { load: currentLoad, loadThreshold: this.#opts.loadThreshold };
+            if (isFull) {
+              this.#logger.child(extra).info('worker is at full capacity, marking as unavailable');
+            } else {
+              this.#logger.child(extra).info('worker is below capacity, marking as available');
+            }
           }
-        }
 
-        this.event.emit(
-          'worker_msg',
-          new WorkerMessage({
-            message: {
-              case: 'updateWorker',
-              value: {
-                load: currentLoad,
-                status: currentStatus,
+          this.event.emit(
+            'worker_msg',
+            new WorkerMessage({
+              message: {
+                case: 'updateWorker',
+                value: {
+                  load: currentLoad,
+                  status: currentStatus,
+                },
               },
-            },
-          }),
-        );
-      });
+            }),
+          );
+        })
+        .catch((e) => {
+          this.#logger.warn({ error: e }, 'failed to measure CPU load');
+        });
     }, UPDATE_LOAD_INTERVAL);
 
     await close;
