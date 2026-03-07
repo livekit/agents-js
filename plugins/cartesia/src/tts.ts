@@ -732,6 +732,7 @@ const toCartesiaOptions = (
       sample_rate: opts.sampleRate,
     },
     language: opts.language,
+    max_buffer_delay_ms: 0,
   };
 
   if (opts.pronunciationDictId) {
