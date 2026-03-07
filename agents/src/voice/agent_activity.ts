@@ -1236,7 +1236,24 @@ export class AgentActivity implements RecognitionHooks {
 
     this.realtimeSession?.interrupt();
 
-    if (currentSpeech === undefined) {
+    if (force) {
+      // Force-interrupt (used during shutdown): cancel all speech tasks so they
+      // don't block on I/O that will never complete (e.g. audioOutput.waitForPlayout()
+      // when the room is disconnected). Mark the current speech as done immediately
+      // so the interrupt future resolves without waiting for tasks to finish.
+      // Clear the queue so mainTask doesn't dequeue already-interrupted handles
+      // and hang on _waitForGeneration() (the generation future created by
+      // _authorizeGeneration would never resolve since _markDone is a no-op
+      // once doneFut is already settled).
+      for (const task of this.speechTasks) {
+        task.cancel();
+      }
+      if (currentSpeech && !currentSpeech.done()) {
+        currentSpeech._markDone();
+      }
+      this.speechQueue.clear();
+      future.resolve();
+    } else if (currentSpeech === undefined) {
       future.resolve();
     } else {
       currentSpeech.addDoneCallback(() => {
@@ -1744,9 +1761,7 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       replyAbortController.abort();
-      await Promise.allSettled(
-        tasks.map((task) => task.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT)),
-      );
+      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
 
       let forwardedText = textOut?.text || '';
 
@@ -2575,6 +2590,13 @@ export class AgentActivity implements RecognitionHooks {
     const unlock = await this.lock.lock();
     try {
       this.cancelPreemptiveGeneration();
+
+      await cancelAndWait(Array.from(this.speechTasks), AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+
+      if (this._currentSpeech && !this._currentSpeech.done()) {
+        this._currentSpeech._markDone();
+      }
+
       await this._closeSessionResources();
 
       if (this._mainTask) {
