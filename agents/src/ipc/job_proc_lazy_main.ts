@@ -16,11 +16,22 @@ import type { IPCMessage } from './message.js';
 const ORPHANED_TIMEOUT = 15 * 1000;
 
 const safeSend = (msg: IPCMessage): boolean => {
-  if (process.connected && process.send) {
-    process.send(msg);
-    return true;
+  try {
+    if (process.connected && process.send) {
+      process.send(msg);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    // Channel closed is expected during graceful shutdown
+    // Log at debug level to avoid noise in production logs
+    if (error instanceof Error && error.message.includes('Channel closed')) {
+      log().debug({ msgCase: msg.case }, 'IPC channel closed, message not sent');
+    } else {
+      log().error({ error, msgCase: msg.case }, 'IPC send failed unexpectedly');
+    }
+    return false;
   }
-  return false;
 };
 
 type JobTask = {
