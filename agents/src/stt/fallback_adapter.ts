@@ -298,27 +298,31 @@ class FallbackSpeechStream extends SpeechStream {
     const forwardInput = async () => {
       try {
         for await (const data of this.input) {
-          try {
-            for (const stream of this.recoveringStreams) {
+          for (const stream of this.recoveringStreams) {
+            try {
               if (data === SpeechStream.FLUSH_SENTINEL) {
                 stream.flush();
               } else {
                 stream.pushFrame(data as AudioFrame);
               }
+            } catch (e) {
+              if (!(e instanceof Error && e.message.includes('closed'))) {
+                this._logger.warn({ error: e }, 'error forwarding input to recovering stream');
+              }
             }
+          }
 
-            if (mainStream) {
+          if (mainStream) {
+            try {
               if (data === SpeechStream.FLUSH_SENTINEL) {
                 mainStream.flush();
               } else {
                 mainStream.pushFrame(data as AudioFrame);
               }
-            }
-          } catch (e) {
-            if (e instanceof Error && e.message.includes('closed')) {
-              // stream already closed, safe to ignore
-            } else {
-              this._logger.error({ error: e }, 'error forwarding input');
+            } catch (e) {
+              if (!(e instanceof Error && e.message.includes('closed'))) {
+                this._logger.error({ error: e }, 'error forwarding input to main stream');
+              }
             }
           }
         }
@@ -456,6 +460,7 @@ class FallbackSpeechStream extends SpeechStream {
         if (idx !== -1) {
           this.recoveringStreams.splice(idx, 1);
         }
+        stream.close();
       }
     });
   }
