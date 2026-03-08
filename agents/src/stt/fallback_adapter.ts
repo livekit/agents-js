@@ -376,6 +376,8 @@ class FallbackSpeechStream extends SpeechStream {
                   'unexpected error, switching to next STT',
                 );
               }
+              mainStream.close();
+              mainStream = null;
               throw e;
             }
 
