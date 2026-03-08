@@ -20,16 +20,16 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
 
 interface STTStatus {
   available: boolean;
-  recoveringSynthesizeTask: Task<void> | null;
+  recoveringRecognizeTask: Task<void> | null;
   recoveringStreamTask: Task<void> | null;
 }
 
 interface FallbackAdapterOptions {
   sttInstances: STT[];
   vad?: VAD;
-  attemptTimeoutMs: number;
-  maxRetryPerSTT: number;
-  retryIntervalMs: number;
+  attemptTimeoutMs?: number;
+  maxRetryPerSTT?: number;
+  retryIntervalMs?: number;
 }
 
 export interface AvailabilityChangedEvent {
@@ -52,7 +52,7 @@ export class FallbackAdapter extends STT {
     if (!opts.sttInstances || opts.sttInstances.length < 1) {
       throw new Error('At least one STT instance must be provided.');
     }
-    let sttInstances = opts.sttInstances!;
+    let sttInstances = opts.sttInstances;
     const nonStreaming = sttInstances.filter((s: STT) => !s.capabilities.streaming);
     if (nonStreaming.length > 0) {
       if (!opts.vad) {
@@ -80,7 +80,7 @@ export class FallbackAdapter extends STT {
     this.retryIntervalMs = opts.retryIntervalMs ?? 5000;
     this._status = sttInstances.map(() => ({
       available: true,
-      recoveringSynthesizeTask: null,
+      recoveringRecognizeTask: null,
       recoveringStreamTask: null,
     }));
     this.setupEventForwarding();
@@ -97,7 +97,7 @@ export class FallbackAdapter extends STT {
     });
   }
 
-  private emitAvailabilityChanged(stt: STT, available: boolean): void {
+  emitAvailabilityChanged(stt: STT, available: boolean): void {
     const event: AvailabilityChangedEvent = { stt, available };
     (this as unknown as { emit: (event: string, data: AvailabilityChangedEvent) => void }).emit(
       'stt_availability_changed',
@@ -126,7 +126,7 @@ export class FallbackAdapter extends STT {
       : timeoutController.signal;
 
     try {
-      return await stt.recognize(buffer as AudioBuffer, effectiveSignal);
+      return await stt.recognize(buffer, effectiveSignal);
     } catch (e) {
       if (recovering) {
         if (e instanceof APIError) {
@@ -162,11 +162,11 @@ export class FallbackAdapter extends STT {
     const index = this.sttInstances.indexOf(stt);
     const sttStatus = this._status[index]!;
 
-    if (sttStatus.recoveringSynthesizeTask && !sttStatus.recoveringSynthesizeTask.done) {
+    if (sttStatus.recoveringRecognizeTask && !sttStatus.recoveringRecognizeTask.done) {
       return;
     }
 
-    sttStatus.recoveringSynthesizeTask = Task.from(async () => {
+    sttStatus.recoveringRecognizeTask = Task.from(async () => {
       try {
         await this.tryRecognize({
           stt,
@@ -234,9 +234,10 @@ export class FallbackAdapter extends STT {
       options?.connOptions ?? DEFAULT_FALLBACK_API_CONNECT_OPTIONS,
     );
   }
+
   async close(): Promise<void> {
     const tasks = this._status.flatMap((s) =>
-      [s.recoveringSynthesizeTask, s.recoveringStreamTask].filter(
+      [s.recoveringRecognizeTask, s.recoveringStreamTask].filter(
         (t): t is Task<void> => t !== null,
       ),
     );
@@ -270,6 +271,17 @@ class FallbackSpeechStream extends SpeechStream {
 
   async monitorMetrics(): Promise<void> {
     return;
+  }
+
+  private cleanupRecoveringStreams(): void {
+    for (const stream of this.recoveringStreams) {
+      try {
+        stream.close();
+      } catch {
+        // safe to ignore if already closed
+      }
+    }
+    this.recoveringStreams = [];
   }
 
   protected async run(): Promise<void> {
@@ -319,70 +331,78 @@ class FallbackSpeechStream extends SpeechStream {
             // ignore if already closed
           }
         }
+        for (const stream of this.recoveringStreams) {
+          try {
+            stream.endInput();
+          } catch {
+            // ignore if already closed
+          }
+        }
       }
     };
 
     let forwardInputTask: Promise<void> | null = null;
 
-    for (let i = 0; i < this.adapter.sttInstances.length; i++) {
-      const stt = this.adapter.sttInstances[i]!;
-      const sttStatus = this.adapter.status[i]!;
+    try {
+      for (let i = 0; i < this.adapter.sttInstances.length; i++) {
+        const stt = this.adapter.sttInstances[i]!;
+        const sttStatus = this.adapter.status[i]!;
 
-      if (sttStatus.available || allFailed) {
-        try {
-          const streamConnOptions: APIConnectOptions = {
-            ...this.connOptions,
-            maxRetry: this.adapter.maxRetryPerSTT,
-            timeoutMs: this.adapter.attemptTimeoutMs,
-            retryIntervalMs: this.adapter.retryIntervalMs,
-          };
-
-          mainStream = stt.stream({ connOptions: streamConnOptions });
-
-          if (!forwardInputTask || forwardInputDone) {
-            forwardInputTask = forwardInput();
-          }
-
+        if (sttStatus.available || allFailed) {
           try {
-            for await (const ev of mainStream) {
-              this.output.put(ev);
-            }
-          } catch (e) {
-            if (e instanceof APIError) {
-              this._logger.warn({ stt: stt.label, error: e }, 'failed, switching to next STT');
-            } else {
-              this._logger.warn(
-                { stt: stt.label, error: e },
-                'unexpected error, switching to next STT',
-              );
-            }
-            throw e;
-          }
+            const streamConnOptions: APIConnectOptions = {
+              ...this.connOptions,
+              maxRetry: this.adapter.maxRetryPerSTT,
+              timeoutMs: this.adapter.attemptTimeoutMs,
+              retryIntervalMs: this.adapter.retryIntervalMs,
+            };
 
-          return;
-        } catch {
-          if (sttStatus.available) {
-            sttStatus.available = false;
-            (
-              this.adapter as unknown as {
-                emit: (event: string, data: AvailabilityChangedEvent) => void;
+            mainStream = stt.stream({ connOptions: streamConnOptions });
+
+            if (!forwardInputTask || forwardInputDone) {
+              forwardInputTask = forwardInput();
+            }
+
+            try {
+              for await (const ev of mainStream) {
+                this.output.put(ev);
               }
-            ).emit('stt_availability_changed', { stt, available: false });
+            } catch (e) {
+              if (e instanceof APIError) {
+                this._logger.warn({ stt: stt.label, error: e }, 'failed, switching to next STT');
+              } else {
+                this._logger.warn(
+                  { stt: stt.label, error: e },
+                  'unexpected error, switching to next STT',
+                );
+              }
+              throw e;
+            }
+
+            this.cleanupRecoveringStreams();
+            return;
+          } catch {
+            if (sttStatus.available) {
+              sttStatus.available = false;
+              this.adapter.emitAvailabilityChanged(stt, false);
+            }
           }
         }
+
+        this.tryStreamRecovery(stt);
       }
 
-      this.tryStreamRecovery(stt);
-    }
+      this.cleanupRecoveringStreams();
 
-    for (const stream of this.recoveringStreams) {
-      stream.close();
+      const labels = this.adapter.sttInstances.map((s) => s.label).join(', ');
+      throw new APIConnectionError({
+        message: `all STTs failed (${labels}) after ${Date.now() - startTime}ms`,
+      });
+    } finally {
+      if (forwardInputTask) {
+        forwardInputTask.catch(() => {});
+      }
     }
-
-    const labels = this.adapter.sttInstances.map((s) => s.label).join(', ');
-    throw new APIConnectionError({
-      message: `all STTs failed (${labels}) after ${Date.now() - startTime}ms`,
-    });
   }
 
   private tryStreamRecovery(stt: STT): void {
@@ -397,6 +417,7 @@ class FallbackSpeechStream extends SpeechStream {
       ...this.connOptions,
       maxRetry: 0,
       timeoutMs: this.adapter.attemptTimeoutMs,
+      retryIntervalMs: this.adapter.retryIntervalMs,
     };
 
     const stream = stt.stream({ connOptions: streamConnOptions });
@@ -421,11 +442,7 @@ class FallbackSpeechStream extends SpeechStream {
 
         sttStatus.available = true;
         this._logger.info({ stt: stt.label }, 'recovered');
-        (
-          this.adapter as unknown as {
-            emit: (event: string, data: AvailabilityChangedEvent) => void;
-          }
-        ).emit('stt_availability_changed', { stt, available: true });
+        this.adapter.emitAvailabilityChanged(stt, true);
       } catch (e) {
         if (e instanceof APIError) {
           this._logger.warn({ stt: stt.label, error: e }, 'stream recovery failed');
