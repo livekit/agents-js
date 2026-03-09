@@ -246,9 +246,6 @@ export class RealtimeSession extends llm.RealtimeSession {
   async updateChatCtx(chatCtx: llm.ChatContext): Promise<void> {
     if (!this.configSent) {
       if (chatCtx.items.length > 0) {
-        this.logger.debug(
-          'updateChatCtx called prior to config being sent to Phonic. Including conversation state in system instructions.',
-        );
         const turnHistory = chatCtx.items
           .filter(
             (item): item is llm.ChatMessage =>
@@ -259,9 +256,14 @@ export class RealtimeSession extends llm.RealtimeSession {
           )
           .map((item) => `${item.role}: ${item.textContent}`)
           .join('\n');
-        this.systemPromptPostfix =
-          '\n\nThis conversation is being continued from an existing conversation. You are the assistant speaking to the user. The following is the conversation history:\n' +
-          turnHistory;
+        if (turnHistory.trim() !== '') {
+          this.logger.debug(
+            'updateChatCtx called with messages prior to config being sent to Phonic. Including conversation state in system instructions.',
+          );
+          this.systemPromptPostfix =
+            '\n\nThis conversation is being continued from an existing conversation. You are the assistant speaking to the user. The following is the conversation history:\n' +
+            turnHistory;
+        }
         this._chatCtx = chatCtx.copy();
       }
       return;
