@@ -428,6 +428,14 @@ export class RealtimeSession extends llm.RealtimeSession {
     await this.toolsReady.await;
     if (this.closed) return;
 
+    if (this.options.instructions === undefined) {
+      this.emitError(
+        new Error('Instructions are required to start a conversation with Phonic.'),
+        false,
+      );
+      return;
+    }
+
     this.configSent = true;
     this.socket.sendConfig({
       type: 'config',
