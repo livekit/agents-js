@@ -296,7 +296,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
       }
 
       // If we broke above, we don't process data. If not, 'result' is IteratorResult
-      if (hasEnded && !('value' in result)) {
+      if (hasEnded && result.value === undefined) {
         // Process flush below
       } else if ('value' in result) {
         const data = result.value;
