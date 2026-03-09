@@ -202,7 +202,6 @@ export class RealtimeSession extends llm.RealtimeSession {
   private connectTask: Promise<void>;
   private toolDefinitions: Record<string, unknown>[] = [];
   private pendingToolCallIds = new Set<string>();
-  private lastAgentChatCtx = llm.ChatContext.empty();
   private readyToStart = false;
   private systemPromptPostfix = '';
 
@@ -263,6 +262,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.systemPromptPostfix =
           '\n\nThis conversation is being continued from an existing conversation. You are the assistant speaking to the user. The following is the conversation history:\n' +
           turnHistory;
+        this._chatCtx = chatCtx.copy();
       }
       return;
     }
