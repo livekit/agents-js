@@ -18,8 +18,6 @@ import { WebSocket } from 'ws';
 import { PeriodicCollector } from './_utils.js';
 import type { STTLanguages, STTModels } from './models.js';
 
-const API_BASE_URL_V1 = 'wss://api.deepgram.com/v1/listen';
-
 export interface STTOptions {
   apiKey?: string;
   language?: STTLanguages | string;
@@ -40,6 +38,7 @@ export interface STTOptions {
   diarize: boolean;
   numerals: boolean;
   mipOptOut: boolean;
+  baseUrl: string;
 }
 
 const defaultSTTOptions: STTOptions = {
@@ -62,6 +61,7 @@ const defaultSTTOptions: STTOptions = {
   diarize: false,
   numerals: false,
   mipOptOut: false,
+  baseUrl: 'wss://api.deepgram.com',
 };
 
 export class STT extends stt.STT {
@@ -154,7 +154,7 @@ export class SpeechStream extends stt.SpeechStream {
     let ws: WebSocket;
 
     while (!this.input.closed && !this.closed) {
-      const streamURL = new URL(API_BASE_URL_V1);
+      const streamURL = new URL(`${this.#opts.baseUrl}/v1/listen`);
       const params = {
         model: this.#opts.model,
         punctuate: this.#opts.punctuate,
