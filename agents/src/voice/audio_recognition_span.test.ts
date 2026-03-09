@@ -2,14 +2,27 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { ParticipantKind } from '@livekit/rtc-node';
-import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
+import {
+  InMemorySpanExporter,
+  type ReadableSpan,
+  SimpleSpanProcessor,
+} from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
+import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import { setTracerProvider } from '../telemetry/index.js';
+import { setTracerProvider, tracer } from '../telemetry/index.js';
 import { VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
-import { AudioRecognition, type _TurnDetector } from './audio_recognition.js';
+import { AgentSession } from './agent_session.js';
+import {
+  AudioRecognition,
+  type RecognitionHooks,
+  type _TurnDetector,
+} from './audio_recognition.js';
+import type { STTNode } from './io.js';
 
 function setupInMemoryTracing() {
   const exporter = new InMemorySpanExporter();
@@ -20,8 +33,23 @@ function setupInMemoryTracing() {
   return { exporter };
 }
 
-function spanByName(spans: any[], name: string) {
+function spanByName(spans: ReadableSpan[], name: string) {
   return spans.find((s) => s.name === name);
+}
+
+function createFakeSession(rootSpanContext = ROOT_CONTEXT): AgentSession {
+  return {
+    _agentState: 'listening',
+    _roomIO: {
+      linkedParticipant: { sid: 'p3', identity: 'charlie', kind: ParticipantKind.AGENT },
+    },
+    _setUserAwayTimer: vi.fn(),
+    _cancelUserAwayTimer: vi.fn(),
+    _userSpeakingSpan: undefined,
+    _userState: 'listening',
+    emit: vi.fn(),
+    rootSpanContext,
+  } as unknown as AgentSession;
 }
 
 class FakeVADStream extends (Object as unknown as { new (): VADStream }) {
@@ -61,6 +89,8 @@ class FakeVAD extends VAD {
 }
 
 const alwaysTrueTurnDetector: _TurnDetector = {
+  model: 'test-turn-detector',
+  provider: 'test-provider',
   supportsLanguage: async () => true,
   unlikelyThreshold: async () => undefined,
   predictEndOfTurn: async () => 1.0,
@@ -72,23 +102,15 @@ describe('AudioRecognition user_turn span parity', () => {
   it('creates user_turn and parents eou_detection under it (stt mode)', async () => {
     const { exporter } = setupInMemoryTracing();
 
-    const hooks = {
+    const hooks: RecognitionHooks = {
+      onInterruption: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
       onEndOfSpeech: vi.fn(),
       onInterimTranscript: vi.fn(),
       onFinalTranscript: vi.fn(),
       onPreemptiveGeneration: vi.fn(),
-      retrieveChatCtx: () =>
-        ({
-          copy() {
-            return this;
-          },
-          addMessage() {},
-          toJSON() {
-            return { items: [] };
-          },
-        }) as any,
+      retrieveChatCtx: () => ChatContext.empty(),
       onEndOfTurn: vi.fn(async () => true),
     };
 
@@ -109,8 +131,8 @@ describe('AudioRecognition user_turn span parity', () => {
       { type: SpeechEventType.END_OF_SPEECH },
     ];
 
-    const sttNode = async () =>
-      new ReadableStream<SpeechEvent>({
+    const sttNode: STTNode = async () =>
+      new ReadableStream<SpeechEvent | string>({
         start(controller) {
           for (const ev of sttEvents) controller.enqueue(ev);
           controller.close();
@@ -118,8 +140,8 @@ describe('AudioRecognition user_turn span parity', () => {
       });
 
     const ar = new AudioRecognition({
-      recognitionHooks: hooks as any,
-      stt: sttNode as any,
+      recognitionHooks: hooks,
+      stt: sttNode,
       vad: undefined,
       turnDetector: alwaysTrueTurnDetector,
       turnDetectionMode: 'stt',
@@ -140,6 +162,9 @@ describe('AudioRecognition user_turn span parity', () => {
     const eou = spanByName(spans, 'eou_detection');
     expect(userTurn, 'user_turn span missing').toBeTruthy();
     expect(eou, 'eou_detection span missing').toBeTruthy();
+    if (!userTurn || !eou) {
+      throw new Error('expected user_turn and eou_detection spans');
+    }
 
     expect(eou.parentSpanId).toBe(userTurn.spanContext().spanId);
 
@@ -158,23 +183,15 @@ describe('AudioRecognition user_turn span parity', () => {
   it('creates user_turn from VAD startTime (vad mode) and keeps same parenting', async () => {
     const { exporter } = setupInMemoryTracing();
 
-    const hooks = {
+    const hooks: RecognitionHooks = {
+      onInterruption: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
       onEndOfSpeech: vi.fn(),
       onInterimTranscript: vi.fn(),
       onFinalTranscript: vi.fn(),
       onPreemptiveGeneration: vi.fn(),
-      retrieveChatCtx: () =>
-        ({
-          copy() {
-            return this;
-          },
-          addMessage() {},
-          toJSON() {
-            return { items: [] };
-          },
-        }) as any,
+      retrieveChatCtx: () => ChatContext.empty(),
       onEndOfTurn: vi.fn(async () => true),
     };
 
@@ -223,8 +240,8 @@ describe('AudioRecognition user_turn span parity', () => {
       },
     ];
 
-    const sttNode = async () =>
-      new ReadableStream<SpeechEvent>({
+    const sttNode: STTNode = async () =>
+      new ReadableStream<SpeechEvent | string>({
         start(controller) {
           for (const ev of sttEvents) controller.enqueue(ev);
           controller.close();
@@ -232,9 +249,9 @@ describe('AudioRecognition user_turn span parity', () => {
       });
 
     const ar = new AudioRecognition({
-      recognitionHooks: hooks as any,
-      stt: sttNode as any,
-      vad: new FakeVAD(vadEvents) as any,
+      recognitionHooks: hooks,
+      stt: sttNode,
+      vad: new FakeVAD(vadEvents),
       turnDetector: alwaysTrueTurnDetector,
       turnDetectionMode: 'vad',
       minEndpointingDelay: 0,
@@ -253,9 +270,72 @@ describe('AudioRecognition user_turn span parity', () => {
     const eou = spanByName(spans, 'eou_detection');
     expect(userTurn).toBeTruthy();
     expect(eou).toBeTruthy();
+    if (!userTurn || !eou) {
+      throw new Error('expected user_turn and eou_detection spans');
+    }
     expect(eou.parentSpanId).toBe(userTurn.spanContext().spanId);
 
     expect(hooks.onStartOfSpeech).toHaveBeenCalled();
     expect(hooks.onEndOfSpeech).toHaveBeenCalled();
+  });
+
+  it('parents user_speaking under user_turn when an explicit speech context is provided', () => {
+    const { exporter } = setupInMemoryTracing();
+    const sessionSpan = tracer.startSpan({ name: 'agent_session', context: ROOT_CONTEXT });
+    const sessionContext = trace.setSpan(ROOT_CONTEXT, sessionSpan);
+    const fakeSession = createFakeSession(sessionContext);
+    const userTurn = tracer.startSpan({ name: 'user_turn', context: sessionContext });
+    const userTurnContext = trace.setSpan(sessionContext, userTurn);
+    const speakingStartedAt = Date.now() - 100;
+    const speakingEndedAt = Date.now();
+
+    otelContext.with(userTurnContext, () => {
+      AgentSession.prototype._updateUserState.call(fakeSession, 'speaking', {
+        lastSpeakingTime: speakingStartedAt,
+        otelContext: otelContext.active(),
+      });
+      AgentSession.prototype._updateUserState.call(fakeSession, 'listening', {
+        lastSpeakingTime: speakingEndedAt,
+        otelContext: otelContext.active(),
+      });
+    });
+
+    userTurn.end();
+    sessionSpan.end();
+
+    const spans = exporter.getFinishedSpans();
+    const userSpeaking = spanByName(spans, 'user_speaking');
+    const exportedUserTurn = spanByName(spans, 'user_turn');
+    expect(userSpeaking).toBeTruthy();
+    expect(exportedUserTurn).toBeTruthy();
+    if (!userSpeaking || !exportedUserTurn) {
+      throw new Error('expected user_speaking and user_turn spans');
+    }
+    expect(userSpeaking.parentSpanId).toBe(exportedUserTurn.spanContext().spanId);
+    expect(userSpeaking.attributes['lk.participant_id']).toBe('p3');
+  });
+
+  it('keeps user_speaking attached to the session root without an explicit speech context', () => {
+    const { exporter } = setupInMemoryTracing();
+    const sessionSpan = tracer.startSpan({ name: 'agent_session', context: ROOT_CONTEXT });
+    const sessionContext = trace.setSpan(ROOT_CONTEXT, sessionSpan);
+    const fakeSession = createFakeSession(sessionContext);
+
+    AgentSession.prototype._updateUserState.call(fakeSession, 'speaking', {
+      lastSpeakingTime: Date.now() - 100,
+    });
+    AgentSession.prototype._updateUserState.call(fakeSession, 'listening', {
+      lastSpeakingTime: Date.now(),
+    });
+
+    sessionSpan.end();
+
+    const spans = exporter.getFinishedSpans();
+    const userSpeaking = spanByName(spans, 'user_speaking');
+    expect(userSpeaking).toBeTruthy();
+    if (!userSpeaking) {
+      throw new Error('expected user_speaking span');
+    }
+    expect(userSpeaking.parentSpanId).toBe(sessionSpan.spanContext().spanId);
   });
 });
