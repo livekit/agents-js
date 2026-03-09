@@ -2,5 +2,5 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export { LLM, LLMStream, ResponsesWebSocket } from './llm.js';
+export { ResponsesWebSocket } from './llm.js';
 export * from './types.js';

@@ -124,7 +124,7 @@ export class ResponsesWebSocket {
 // LLMOptions
 // ============================================================================
 
-interface LLMOptions {
+export interface WSLLMOptions {
   model: string | ChatModels;
   apiKey?: string;
   baseURL?: string;
@@ -136,7 +136,7 @@ interface LLMOptions {
   strictToolSchema?: boolean;
 }
 
-const defaultLLMOptions: LLMOptions = {
+const defaultLLMOptions: WSLLMOptions = {
   model: 'gpt-4.1',
   apiKey: process.env.OPENAI_API_KEY,
   strictToolSchema: true,
@@ -146,8 +146,8 @@ const defaultLLMOptions: LLMOptions = {
 // LLM
 // ============================================================================
 
-export class LLM extends llm.LLM {
-  #opts: LLMOptions;
+export class WSLLM extends llm.LLM {
+  #opts: WSLLMOptions;
   #pool: ConnectionPool<ResponsesWebSocket>;
   #prevResponseId = '';
   #prevChatCtx: llm.ChatContext | null = null;
@@ -163,7 +163,7 @@ export class LLM extends llm.LLM {
    * reused across turns, reducing per-turn continuation overhead for
    * tool-call-heavy workflows.
    */
-  constructor(opts: Partial<LLMOptions> = defaultLLMOptions) {
+  constructor(opts: Partial<WSLLMOptions> = defaultLLMOptions) {
     super();
 
     this.#opts = { ...defaultLLMOptions, ...opts };
@@ -202,6 +202,10 @@ export class LLM extends llm.LLM {
     await this.#pool.close();
   }
 
+  override async aclose(): Promise<void> {
+    await this.close();
+  }
+
   /** Called by LLMStream once response.created fires to atomically persist both the
    *  response ID and its corresponding chat context for the next turn's diff. */
   _onResponseCreated(responseId: string, chatCtx: llm.ChatContext): void {
@@ -223,7 +227,7 @@ export class LLM extends llm.LLM {
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
-  }): LLMStream {
+  }): WSLLMStream {
     const modelOptions: Record<string, unknown> = { ...(extraKwargs ?? {}) };
 
     parallelToolCalls =
@@ -273,7 +277,7 @@ export class LLM extends llm.LLM {
       // sending the full context with no previous_response_id.
     }
 
-    return new LLMStream(this, {
+    return new WSLLMStream(this, {
       pool: this.#pool,
       model: this.#opts.model,
       chatCtx: inputChatCtx,
@@ -291,8 +295,8 @@ export class LLM extends llm.LLM {
 // WsLLMStream
 // ============================================================================
 
-export class LLMStream extends llm.LLMStream {
-  #parentLlm: LLM;
+export class WSLLMStream extends llm.LLMStream {
+  #parentLlm: WSLLM;
   #pool: ConnectionPool<ResponsesWebSocket>;
   #model: string | ChatModels;
   #modelOptions: Record<string, unknown>;
@@ -303,7 +307,7 @@ export class LLMStream extends llm.LLMStream {
   #responseId = '';
 
   constructor(
-    parentLlm: LLM,
+    parentLlm: WSLLM,
     {
       pool,
       model,
