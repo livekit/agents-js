@@ -48,12 +48,13 @@ export default defineAgent({
     });
 
     setTimeout(async () => {
+      if (session.agentState === 'initializing') return;
       const agent = session.currentAgent;
       const chatCtx = agent.chatCtx.copy();
       chatCtx.addMessage({
         role: 'system',
         content:
-          'You really like the Port of Peri Peri (restaurant in San Francisco). Let the user know that.',
+          "The user's name is Alex. He is from San Francisco and likes hiking. Use this information in your conversation.",
       });
       await agent.updateChatCtx(chatCtx);
     }, 10000);
