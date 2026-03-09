@@ -166,18 +166,20 @@ export class FallbackAdapter extends STT {
       return;
     }
 
-    sttStatus.recoveringRecognizeTask = Task.from(async () => {
+    sttStatus.recoveringRecognizeTask = Task.from(async (controller) => {
       try {
         await this.tryRecognize({
           stt,
           buffer,
           connOptions,
+          abortSignal: controller.signal,
           recovering: true,
         });
         sttStatus.available = true;
         this._logger.info({ stt: stt.label }, 'recovered');
         this.emitAvailabilityChanged(stt, true);
       } catch (e) {
+        if (controller.signal.aborted) return;
         this._logger.debug({ stt: stt.label, error: e }, 'recognize recovery attempt failed');
       }
     });
@@ -298,7 +300,8 @@ class FallbackSpeechStream extends SpeechStream {
     const forwardInput = async () => {
       try {
         for await (const data of this.input) {
-          for (const stream of this.recoveringStreams) {
+          const recoveringSnapshot = [...this.recoveringStreams];
+          for (const stream of recoveringSnapshot) {
             try {
               if (data === SpeechStream.FLUSH_SENTINEL) {
                 stream.flush();
@@ -335,7 +338,7 @@ class FallbackSpeechStream extends SpeechStream {
             // ignore if already closed
           }
         }
-        for (const stream of this.recoveringStreams) {
+        for (const stream of [...this.recoveringStreams]) {
           try {
             stream.endInput();
           } catch {
@@ -406,7 +409,10 @@ class FallbackSpeechStream extends SpeechStream {
       });
     } finally {
       if (forwardInputTask) {
-        forwardInputTask.catch(() => {});
+        if (!this.input.closed) {
+          this.input.close();
+        }
+        await forwardInputTask.catch(() => {});
       }
     }
   }
@@ -429,10 +435,13 @@ class FallbackSpeechStream extends SpeechStream {
     const stream = stt.stream({ connOptions: streamConnOptions });
     this.recoveringStreams.push(stream);
 
-    sttStatus.recoveringStreamTask = Task.from(async () => {
+    sttStatus.recoveringStreamTask = Task.from(async (controller) => {
+      const onAbort = () => stream.close();
+      controller.signal.addEventListener('abort', onAbort, { once: true });
       try {
         let transcriptCount = 0;
         for await (const ev of stream) {
+          if (controller.signal.aborted) break;
           if (ev.type === SpeechEventType.FINAL_TRANSCRIPT) {
             if (!ev.alternatives || !ev.alternatives[0].text) {
               continue;
@@ -442,7 +451,7 @@ class FallbackSpeechStream extends SpeechStream {
           }
         }
 
-        if (transcriptCount === 0) {
+        if (transcriptCount === 0 || controller.signal.aborted) {
           return;
         }
 
@@ -450,12 +459,14 @@ class FallbackSpeechStream extends SpeechStream {
         this._logger.info({ stt: stt.label }, 'recovered');
         this.adapter.emitAvailabilityChanged(stt, true);
       } catch (e) {
+        if (controller.signal.aborted) return;
         if (e instanceof APIError) {
           this._logger.warn({ stt: stt.label, error: e }, 'stream recovery failed');
         } else {
           this._logger.warn({ stt: stt.label, error: e }, 'stream recovery unexpected error');
         }
       } finally {
+        controller.signal.removeEventListener('abort', onAbort);
         const idx = this.recoveringStreams.indexOf(stream);
         if (idx !== -1) {
           this.recoveringStreams.splice(idx, 1);
