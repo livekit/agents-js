@@ -828,7 +828,10 @@ export class AgentActivity implements RecognitionHooks {
       // Subtract both speechDuration and inferenceDuration to correct for VAD model latency.
       speechStartTime = speechStartTime - ev.speechDuration - ev.inferenceDuration;
     }
-    this.agentSession._updateUserState('speaking', speechStartTime);
+    this.agentSession._updateUserState('speaking', {
+      lastSpeakingTime: speechStartTime,
+      otelContext: otelContext.active(),
+    });
     if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
       // Pass speechStartTime as the absolute startedAt timestamp.
       this.audioRecognition.onStartOfOverlapSpeech(
@@ -852,7 +855,10 @@ export class AgentActivity implements RecognitionHooks {
         this.agentSession._userSpeakingSpan,
       );
     }
-    this.agentSession._updateUserState('listening', speechEndTime);
+    this.agentSession._updateUserState('listening', {
+      lastSpeakingTime: speechEndTime,
+      otelContext: otelContext.active(),
+    });
   }
 
   onVADInferenceDone(ev: VADEvent): void {

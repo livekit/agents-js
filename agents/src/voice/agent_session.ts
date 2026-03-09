@@ -980,7 +980,10 @@ export class AgentSession<
   }
 
   /** @internal */
-  _updateUserState(state: UserState, lastSpeakingTime?: number) {
+  _updateUserState(
+    state: UserState,
+    options?: { lastSpeakingTime?: number; otelContext?: Context },
+  ) {
     if (this._userState === state) {
       return;
     }
@@ -988,8 +991,8 @@ export class AgentSession<
     if (state === 'speaking' && this._userSpeakingSpan === undefined) {
       this._userSpeakingSpan = tracer.startSpan({
         name: 'user_speaking',
-        context: this.rootSpanContext,
-        startTime: lastSpeakingTime,
+        context: options?.otelContext ?? this.rootSpanContext,
+        startTime: options?.lastSpeakingTime,
       });
 
       const linked = this._roomIO?.linkedParticipant;
@@ -997,7 +1000,7 @@ export class AgentSession<
         setParticipantSpanAttributes(this._userSpeakingSpan, linked);
       }
     } else if (this._userSpeakingSpan !== undefined) {
-      this._userSpeakingSpan.end(lastSpeakingTime);
+      this._userSpeakingSpan.end(options?.lastSpeakingTime);
       this._userSpeakingSpan = undefined;
     }
 
