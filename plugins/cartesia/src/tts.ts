@@ -24,6 +24,7 @@ import {
   type TTSModels,
   type TTSVoiceEmotion,
   type TTSVoiceSpeed,
+  isSonic3,
 } from './models.js';
 import {
   type CartesiaServerMessage,
@@ -36,7 +37,9 @@ import {
 
 const AUTHORIZATION_HEADER = 'X-API-Key';
 const VERSION_HEADER = 'Cartesia-Version';
-const VERSION = '2024-06-10';
+const API_VERSION = '2025-04-16';
+const API_VERSION_WITH_EXPERIMENTAL_CONTROLS = '2024-11-13';
+const MODEL_WITH_EXPERIMENTAL_CONTROLS = 'sonic-2-2025-03-07';
 const NUM_CHANNELS = 1;
 const BUFFERED_WORDS_COUNT = 8;
 
@@ -47,9 +50,15 @@ export interface TTSOptions {
   voice: string | number[];
   speed?: TTSVoiceSpeed | number;
   emotion?: (TTSVoiceEmotion | string)[];
+  /**
+   * Volume of the speech. For sonic-3, the value is valid between 0.5 and 2.0.
+   * @see https://docs.cartesia.ai/api-reference/tts/bytes#body-generation-config-volume
+   */
+  volume?: number;
   apiKey?: string;
   language: string;
   baseUrl: string;
+  apiVersion: string;
 
   /**
    * The timeout for the next chunk to be received from the Cartesia API.
@@ -67,15 +76,48 @@ export interface TTSOptions {
 }
 
 const defaultTTSOptions: TTSOptions = {
-  model: 'sonic-2',
+  model: 'sonic-3',
   encoding: 'pcm_s16le',
   sampleRate: 24000,
   voice: TTSDefaultVoiceId,
   apiKey: process.env.CARTESIA_API_KEY,
   language: 'en',
   baseUrl: 'https://api.cartesia.ai',
+  apiVersion: API_VERSION,
   chunkTimeout: 5000,
   wordTimestamps: true,
+};
+
+const checkGenerationConfig = (opts: TTSOptions) => {
+  const logger = log();
+  if (isSonic3(opts.model)) {
+    if (opts.speed !== undefined && typeof opts.speed === 'number') {
+      if (opts.speed < 0.6 || opts.speed > 2.0) {
+        logger.warn('speed must be between 0.6 and 2.0 for sonic-3');
+      }
+    }
+    if (opts.volume !== undefined && (opts.volume < 0.5 || opts.volume > 2.0)) {
+      logger.warn('volume must be between 0.5 and 2.0 for sonic-3');
+    }
+  } else if (
+    opts.apiVersion !== API_VERSION_WITH_EXPERIMENTAL_CONTROLS ||
+    opts.model !== MODEL_WITH_EXPERIMENTAL_CONTROLS
+  ) {
+    if (opts.speed || opts.emotion) {
+      logger.warn(
+        { model: opts.model, speed: opts.speed, emotion: opts.emotion },
+        `speed and emotion controls are only supported for model '${MODEL_WITH_EXPERIMENTAL_CONTROLS}' ` +
+          `or sonic-3 models, see https://docs.cartesia.ai/developer-tools/changelog for details`,
+      );
+    }
+  }
+
+  if (opts.pronunciationDictId && !isSonic3(opts.model)) {
+    logger.warn(
+      { model: opts.model, pronunciationDictId: opts.pronunciationDictId },
+      'pronunciationDictId is only supported for sonic-3 models',
+    );
+  }
 };
 
 export class TTS extends tts.TTS {
@@ -101,24 +143,26 @@ export class TTS extends tts.TTS {
       );
     }
 
-    if ((this.#opts.speed || this.#opts.emotion) && this.#opts.model !== 'sonic-2-2025-03-07') {
-      const logger = log();
-      logger.warn(
-        { model: this.#opts.model, speed: this.#opts.speed, emotion: this.#opts.emotion },
-        "speed and emotion controls are only supported for model 'sonic-2-2025-03-07', see https://docs.cartesia.ai/developer-tools/changelog for details",
-      );
+    if (
+      this.#opts.speed ||
+      this.#opts.emotion ||
+      this.#opts.volume ||
+      this.#opts.pronunciationDictId
+    ) {
+      checkGenerationConfig(this.#opts);
     }
   }
 
   updateOptions(opts: Partial<TTSOptions>) {
     this.#opts = { ...this.#opts, ...opts };
 
-    if ((this.#opts.speed || this.#opts.emotion) && this.#opts.model !== 'sonic-2-2025-03-07') {
-      const logger = log();
-      logger.warn(
-        { model: this.#opts.model, speed: this.#opts.speed, emotion: this.#opts.emotion },
-        "speed and emotion controls are only supported for model 'sonic-2-2025-03-07', see https://docs.cartesia.ai/developer-tools/changelog for details",
-      );
+    if (
+      this.#opts.speed ||
+      this.#opts.emotion ||
+      this.#opts.volume ||
+      this.#opts.pronunciationDictId
+    ) {
+      checkGenerationConfig(this.#opts);
     }
   }
 
@@ -170,7 +214,7 @@ export class ChunkedStream extends tts.ChunkedStream {
         method: 'POST',
         headers: {
           [AUTHORIZATION_HEADER]: this.#opts.apiKey!,
-          [VERSION_HEADER]: VERSION,
+          [VERSION_HEADER]: this.#opts.apiVersion,
         },
         signal: this.abortSignal,
       },
@@ -242,11 +286,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   updateOptions(opts: Partial<TTSOptions>) {
     this.#opts = { ...this.#opts, ...opts };
 
-    if ((this.#opts.speed || this.#opts.emotion) && this.#opts.model !== 'sonic-2-2025-03-07') {
-      this.#logger.warn(
-        { model: this.#opts.model, speed: this.#opts.speed, emotion: this.#opts.emotion },
-        "speed and emotion controls are only supported for model 'sonic-2-2025-03-07', see https://docs.cartesia.ai/developer-tools/changelog for details",
-      );
+    if (
+      this.#opts.speed ||
+      this.#opts.emotion ||
+      this.#opts.volume ||
+      this.#opts.pronunciationDictId
+    ) {
+      checkGenerationConfig(this.#opts);
     }
   }
 
@@ -470,7 +516,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     const wsUrl = this.#opts.baseUrl.replace(/^http/, 'ws');
-    const url = `${wsUrl}/tts/websocket?api_key=${this.#opts.apiKey}&cartesia_version=${VERSION}`;
+    const url = `${wsUrl}/tts/websocket?api_key=${this.#opts.apiKey}&cartesia_version=${this.#opts.apiVersion}`;
 
     let ws: WebSocket | undefined;
     try {
@@ -651,12 +697,6 @@ const connectCartesiaWebSocket = async ({
   }
 };
 
-/**
- * Convert TTSOptions to Cartesia API format.
- *
- * @param opts - TTS options
- * @param streaming - Whether this is for streaming (WebSocket) or non-streaming (HTTP)
- */
 const toCartesiaOptions = (
   opts: TTSOptions,
   streaming: boolean = false,
@@ -670,16 +710,17 @@ const toCartesiaOptions = (
     voice.embedding = opts.voice;
   }
 
-  const voiceControls: { [id: string]: unknown } = {};
-  if (opts.speed) {
-    voiceControls.speed = opts.speed;
-  }
-  if (opts.emotion) {
-    voiceControls.emotion = opts.emotion;
-  }
-
-  if (Object.keys(voiceControls).length) {
-    voice.__experimental_controls = voiceControls;
+  if (opts.apiVersion === API_VERSION_WITH_EXPERIMENTAL_CONTROLS) {
+    const voiceControls: { [id: string]: unknown } = {};
+    if (opts.speed) {
+      voiceControls.speed = opts.speed;
+    }
+    if (opts.emotion) {
+      voiceControls.emotion = opts.emotion;
+    }
+    if (Object.keys(voiceControls).length) {
+      voice.__experimental_controls = voiceControls;
+    }
   }
 
   const result: { [id: string]: unknown } = {
@@ -691,8 +732,28 @@ const toCartesiaOptions = (
       sample_rate: opts.sampleRate,
     },
     language: opts.language,
-    pronunciation_dict_id: opts.pronunciationDictId,
+    max_buffer_delay_ms: 0,
   };
+
+  if (opts.pronunciationDictId) {
+    result.pronunciation_dict_id = opts.pronunciationDictId;
+  }
+
+  if (opts.apiVersion > API_VERSION_WITH_EXPERIMENTAL_CONTROLS && isSonic3(opts.model)) {
+    const generationConfig: { [id: string]: unknown } = {};
+    if (opts.speed) {
+      generationConfig.speed = opts.speed;
+    }
+    if (opts.emotion) {
+      generationConfig.emotion = opts.emotion[0];
+    }
+    if (opts.volume) {
+      generationConfig.volume = opts.volume;
+    }
+    if (Object.keys(generationConfig).length) {
+      result.generation_config = generationConfig;
+    }
+  }
 
   if (streaming && opts.wordTimestamps !== false) {
     result.add_timestamps = true;

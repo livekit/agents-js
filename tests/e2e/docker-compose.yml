@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+services:
+  livekit-server:
+    image: livekit/livekit-server
+    command: --dev
+    network_mode: host
+
+  agent:
+    build:
+      context: ../..
+      dockerfile: tests/e2e/Dockerfile
+    depends_on:
+      - livekit-server
+    network_mode: host
+    environment:
+      - LIVEKIT_URL=ws://127.0.0.1:7880
+      - LIVEKIT_API_KEY=devkey
+      - LIVEKIT_API_SECRET=secret
