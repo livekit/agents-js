@@ -4,9 +4,9 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
-import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
 import type { AudioBuffer } from '../utils.js';
-import { Task, cancelAndWait, combineSignals } from '../utils.js';
+import { Task, cancelAndWait, combineSignals, delay } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { StreamAdapter } from './stream_adapter.js';
 import type { SpeechEvent } from './stt.js';
@@ -205,15 +205,29 @@ export class FallbackAdapter extends STT {
       const sttStatus = this._status[i]!;
 
       if (sttStatus.available || allFailed) {
-        try {
-          return await this.tryRecognize({
-            stt,
-            buffer,
-            connOptions,
-            abortSignal,
-            recovering: false,
-          });
-        } catch {
+        let lastError: unknown;
+        for (let attempt = 0; attempt <= connOptions.maxRetry; attempt++) {
+          try {
+            return await this.tryRecognize({
+              stt,
+              buffer,
+              connOptions,
+              abortSignal,
+              recovering: false,
+            });
+          } catch (e) {
+            lastError = e;
+            if (attempt < connOptions.maxRetry && e instanceof APIError && e.retryable) {
+              const retryInterval = intervalForRetry(connOptions, attempt);
+              if (retryInterval > 0) {
+                await delay(retryInterval);
+              }
+              continue;
+            }
+            break;
+          }
+        }
+        if (lastError) {
           if (sttStatus.available) {
             sttStatus.available = false;
             this.emitAvailabilityChanged(stt, false);
@@ -276,14 +290,15 @@ class FallbackSpeechStream extends SpeechStream {
   }
 
   private cleanupRecoveringStreams(): void {
-    for (const stream of this.recoveringStreams) {
+    const streams = this.recoveringStreams;
+    this.recoveringStreams = [];
+    for (const stream of streams) {
       try {
         stream.close();
       } catch {
         // safe to ignore if already closed
       }
     }
-    this.recoveringStreams = [];
   }
 
   protected async run(): Promise<void> {
@@ -324,7 +339,7 @@ class FallbackSpeechStream extends SpeechStream {
               }
             } catch (e) {
               if (!(e instanceof Error && e.message.includes('closed'))) {
-                this._logger.error({ error: e }, 'error forwarding input to main stream');
+                this._logger.warn({ error: e }, 'error forwarding input to main stream');
               }
             }
           }
@@ -413,6 +428,9 @@ class FallbackSpeechStream extends SpeechStream {
           this.input.close();
         }
         await forwardInputTask.catch(() => {});
+      }
+      if (!this.output.closed) {
+        this.output.close();
       }
     }
   }
