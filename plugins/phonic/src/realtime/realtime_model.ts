@@ -199,6 +199,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private configSent = false;
   private instructionsReady = new Future<void>();
   private toolsReady = new Future<void>();
+  private closedFuture = new Future<void>();
   private connectTask: Promise<void>;
   private toolDefinitions: Record<string, unknown>[] = [];
   private pendingToolCallIds = new Set<string>();
@@ -396,6 +397,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.closedFuture.resolve();
     this.instructionsReady.resolve();
     this.toolsReady.resolve();
     this.closeCurrentGeneration({ interrupted: false });
@@ -425,7 +427,12 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     });
 
-    await this.socket.waitForOpen();
+    await Promise.race([this.socket.waitForOpen(), this.closedFuture.await]);
+    if (this.closed) {
+      this.socket.close();
+      return;
+    }
+
     await this.instructionsReady.await;
     await this.toolsReady.await;
     if (this.closed) return;
