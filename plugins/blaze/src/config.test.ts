@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildAuthHeaders, resolveConfig } from './config.js';
 
@@ -5,7 +9,7 @@ describe('resolveConfig', () => {
   beforeEach(() => {
     // Clear env vars before each test
     delete process.env.BLAZE_API_URL;
-    delete process.env.BLAZE_AUTH_TOKEN;
+    delete process.env.BLAZE_API_TOKEN;
     delete process.env.BLAZE_STT_TIMEOUT;
     delete process.env.BLAZE_TTS_TIMEOUT;
     delete process.env.BLAZE_LLM_TIMEOUT;
@@ -13,7 +17,7 @@ describe('resolveConfig', () => {
 
   afterEach(() => {
     delete process.env.BLAZE_API_URL;
-    delete process.env.BLAZE_AUTH_TOKEN;
+    delete process.env.BLAZE_API_TOKEN;
   });
 
   it('uses defaults when no config or env vars provided', () => {
@@ -27,7 +31,7 @@ describe('resolveConfig', () => {
 
   it('uses env vars when provided', () => {
     process.env.BLAZE_API_URL = 'http://api.example.com';
-    process.env.BLAZE_AUTH_TOKEN = 'test-token';
+    process.env.BLAZE_API_TOKEN = 'test-token';
     const cfg = resolveConfig();
     expect(cfg.apiUrl).toBe('http://api.example.com');
     expect(cfg.authToken).toBe('test-token');
