@@ -9,7 +9,7 @@ import type { AudioBuffer } from '../utils.js';
 import { Task, cancelAndWait, combineSignals, delay } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { StreamAdapter } from './stream_adapter.js';
-import type { SpeechEvent } from './stt.js';
+import type { STTError, SpeechEvent } from './stt.js';
 import { STT, SpeechEventType, SpeechStream } from './stt.js';
 
 const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
@@ -385,22 +385,39 @@ class FallbackSpeechStream extends SpeechStream {
               forwardInputTask = forwardInput();
             }
 
+            // The child SpeechStream swallows its own run() errors: mainTask() catches
+            // them, emits on the STT, re-throws into startSoon (unhandled), and then
+            // closes this.queue via .finally(). monitorMetrics() drains the queue and
+            // closes output, so the for-await below exits via { done: true } rather
+            // than throwing. We capture the error event to detect silent failures.
+            let streamError: unknown = null;
+            const captureStreamError = (err: STTError) => {
+              streamError = err.error;
+            };
+            stt.once('error', captureStreamError);
             try {
               for await (const ev of mainStream) {
                 this.output.put(ev);
               }
-            } catch (e) {
-              if (e instanceof APIError) {
-                this._logger.warn({ stt: stt.label, error: e }, 'failed, switching to next STT');
+            } finally {
+              stt.off('error', captureStreamError);
+            }
+
+            if (streamError !== null) {
+              if (streamError instanceof APIError) {
+                this._logger.warn(
+                  { stt: stt.label, error: streamError },
+                  'failed, switching to next STT',
+                );
               } else {
                 this._logger.warn(
-                  { stt: stt.label, error: e },
+                  { stt: stt.label, error: streamError },
                   'unexpected error, switching to next STT',
                 );
               }
               mainStream.close();
               mainStream = null;
-              throw e;
+              throw streamError;
             }
 
             this.cleanupRecoveringStreams();
