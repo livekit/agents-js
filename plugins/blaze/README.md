@@ -28,7 +28,7 @@ const llm = new LLM({ botId: 'my-chatbot-id' });
 ```bash
 # Required for authenticated deployments
 export BLAZE_API_URL=https://api.blaze.vn
-export BLAZE_AUTH_TOKEN=your-bearer-token
+export BLAZE_API_TOKEN=your-bearer-token
 
 # Optional timeouts
 export BLAZE_STT_TIMEOUT=30000

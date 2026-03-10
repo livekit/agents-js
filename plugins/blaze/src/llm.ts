@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Blaze LLM Plugin for LiveKit Voice Agent (Node.js)
  *
@@ -41,7 +45,7 @@ export interface LLMOptions {
    * Falls back to config.apiUrl → BLAZE_API_URL env var.
    */
   apiUrl?: string;
-  /** Bearer token for authentication. Falls back to BLAZE_AUTH_TOKEN env var. */
+  /** Bearer token for authentication. Falls back to BLAZE_API_TOKEN env var. */
   authToken?: string;
   /** Enable deep search mode. Default: false */
   deepSearch?: boolean;
@@ -85,7 +89,7 @@ function resolveLLMOptions(opts: LLMOptions): ResolvedLLMOptions {
  * Convert ChatContext items to Blaze API message format.
  * Only processes ChatMessage items (skips FunctionCall, FunctionCallOutput, etc.)
  *
- * System messages are collected and merged into a single context
+ * System/developer messages are collected and merged into a single context
  * message prepended to the conversation, preserving their original order.
  */
 function convertMessages(chatCtx: ChatContext): BlazeChatMessage[] {
@@ -100,7 +104,7 @@ function convertMessages(chatCtx: ChatContext): BlazeChatMessage[] {
     if (!text) continue;
 
     const role = msg.role;
-    if (role === 'system') {
+    if (role === 'system' || role === 'developer') {
       systemParts.push(text);
     } else if (role === 'user') {
       messages.push({ role: 'user', content: text });
@@ -109,7 +113,7 @@ function convertMessages(chatCtx: ChatContext): BlazeChatMessage[] {
     }
   }
 
-  // Merge all system messages and prepend as unified context
+  // Merge all system/developer messages and prepend as unified context
   if (systemParts.length > 0) {
     const systemText = systemParts.join('\n\n');
     messages.unshift({ role: 'user', content: `[System Instructions]\n${systemText}` });

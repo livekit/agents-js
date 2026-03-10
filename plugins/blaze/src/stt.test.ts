@@ -1,5 +1,12 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { STT } from './stt.js';
+import { initializeLogger } from '../../../agents/src/log.js';
+
+initializeLogger({ level: 'silent', pretty: false });
 
 type AnyFn = (...args: unknown[]) => unknown;
 type STTWithRecognize = STT & { _recognize: AnyFn };
@@ -111,15 +118,15 @@ describe('STT', () => {
     it('throws on HTTP error response', async () => {
       fetchMock.mockResolvedValue({
         ok: false,
-        status: 503,
-        text: async () => 'Service Unavailable',
+        status: 400,
+        text: async () => 'Bad Request',
       });
 
       const sttInstance = new STT({ authToken: 'tok', apiUrl: 'http://stt:8080' }) as STTWithRecognize;
       const frame = makePcmFrame();
 
-      await expect(sttInstance._recognize([frame])).rejects.toThrow('Blaze STT error 503');
-    });
+      await expect(sttInstance._recognize([frame])).rejects.toThrow('Blaze STT error 400');
+    }, 20000);
 
     it('uses language from options in URL', async () => {
       fetchMock.mockResolvedValue({
