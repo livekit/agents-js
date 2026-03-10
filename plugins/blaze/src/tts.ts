@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Blaze TTS Plugin for LiveKit Voice Agent (Node.js)
  *
@@ -28,7 +32,7 @@ export interface TTSOptions {
   language?: string;
   /** Speaker/voice identifier. Default: "default" */
   speakerId?: string;
-  /** Bearer token for authentication. Falls back to BLAZE_AUTH_TOKEN env var. */
+  /** Bearer token for authentication. Falls back to BLAZE_API_TOKEN env var. */
   authToken?: string;
   /** TTS model identifier. Default: "v1_5_pro" */
   model?: string;
@@ -121,53 +125,53 @@ async function synthesizeAudio(
       body: formData,
       signal,
     });
-  } finally {
-    clearTimeout(timeoutId);
-  }
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => 'unknown error');
-    throw new Error(`Blaze TTS error ${response.status}: ${errorText}`);
-  }
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'unknown error');
+      throw new Error(`Blaze TTS error ${response.status}: ${errorText}`);
+    }
 
-  if (!response.body) {
-    throw new Error('Blaze TTS: response body is null');
-  }
+    if (!response.body) {
+      throw new Error('Blaze TTS: response body is null');
+    }
 
-  const bstream = new AudioByteStream(opts.sampleRate, 1);
-  const reader = response.body.getReader();
+    const bstream = new AudioByteStream(opts.sampleRate, 1);
+    const reader = response.body.getReader();
 
-  // Buffer frames to ensure final=true is only set on the last frame
-  let pendingFrame: import('@livekit/rtc-node').AudioFrame | undefined;
+    // Buffer frames to ensure final=true is only set on the last frame
+    let pendingFrame: import('@livekit/rtc-node').AudioFrame | undefined;
 
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (signal.aborted) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (signal.aborted) break;
 
-      for (const frame of bstream.write(value.buffer as ArrayBuffer)) {
+        for (const frame of bstream.write(value.buffer as ArrayBuffer)) {
+          if (pendingFrame !== undefined) {
+            queue.put({ requestId, segmentId, frame: pendingFrame, final: false });
+          }
+          pendingFrame = frame;
+        }
+      }
+
+      // Flush remaining buffered samples
+      for (const frame of bstream.flush()) {
         if (pendingFrame !== undefined) {
           queue.put({ requestId, segmentId, frame: pendingFrame, final: false });
         }
         pendingFrame = frame;
       }
+    } finally {
+      reader.releaseLock();
     }
 
-    // Flush remaining buffered samples
-    for (const frame of bstream.flush()) {
-      if (pendingFrame !== undefined) {
-        queue.put({ requestId, segmentId, frame: pendingFrame, final: false });
-      }
-      pendingFrame = frame;
+    // Emit last frame with final=true
+    if (pendingFrame !== undefined) {
+      queue.put({ requestId, segmentId, frame: pendingFrame, final: true });
     }
   } finally {
-    reader.releaseLock();
-  }
-
-  // Emit last frame with final=true
-  if (pendingFrame !== undefined) {
-    queue.put({ requestId, segmentId, frame: pendingFrame, final: true });
+    clearTimeout(timeoutId);
   }
 }
 

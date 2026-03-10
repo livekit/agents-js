@@ -1,5 +1,12 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LLM } from './llm.js';
+import { initializeLogger } from '../../../agents/src/log.js';
+
+initializeLogger({ level: 'silent', pretty: false });
 
 /** Create a minimal ChatContext mock for testing. */
 function makeChatCtx(messages: Array<{ role: string; text: string }>) {
@@ -218,7 +225,7 @@ describe('LLM', () => {
       expect(body[0]).toEqual({ role: 'user', content: '[System Instructions]\nYou are a helpful assistant.' });
       expect(body[1]).toEqual({ role: 'user', content: 'Hello' });
     });
-    it('merges multiple system messages into one', async () => {
+    it('merges system/developer messages into one', async () => {
       fetchMock.mockResolvedValue({
         ok: true,
         body: makeSseBody(['ok']),
