@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Blaze STT Plugin for LiveKit Voice Agent (Node.js)
  *
@@ -32,7 +36,7 @@ export interface STTOptions {
   apiUrl?: string;
   /** Language code for transcription. Default: "vi" */
   language?: string;
-  /** Bearer token for authentication. Falls back to BLAZE_AUTH_TOKEN env var. */
+  /** Bearer token for authentication. Falls back to BLAZE_API_TOKEN env var. */
   authToken?: string;
   /**
    * Dictionary of text replacements applied to transcription output.

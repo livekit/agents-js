@@ -1,7 +1,30 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TTS } from './tts.js';
+import { initializeLogger } from '../../../agents/src/log.js';
+
+initializeLogger({ level: 'silent', pretty: false });
 
 describe('TTS', () => {
+  beforeEach(() => {
+    // Default fetch stub for tests that construct streams without consuming them.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      }),
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('has correct label', () => {
     const ttsInstance = new TTS({ authToken: 'test', apiUrl: 'http://tts:8080' });
     expect(ttsInstance.label).toBe('blaze.TTS');
@@ -39,7 +62,6 @@ describe('TTS', () => {
     const stream = ttsInstance.synthesize('Hello world');
     expect(stream.label).toBe('blaze.ChunkedStream');
     expect(stream.inputText).toBe('Hello world');
-    stream.close();
   });
 
   it('stream() returns a SynthesizeStream', () => {
@@ -48,7 +70,6 @@ describe('TTS', () => {
     ttsInstance.on('error', () => {});
     const stream = ttsInstance.stream();
     expect(stream.label).toBe('blaze.SynthesizeStream');
-    stream.close();
   });
 
   describe('ChunkedStream synthesis', () => {
@@ -143,27 +164,30 @@ describe('TTS', () => {
       expect(body.get('query')).toBe('100đô la');
     });
 
-    it('builds correct FormData even when fetch returns an error response', async () => {
-      // Note: Framework-level error propagation (events + unhandled rejections) is tested
-      // via integration tests. Here we verify the request is correctly formed.
-      fetchMock.mockResolvedValue({
-        ok: false,
-        status: 500,
-        text: async () => 'Internal Server Error',
+    it('builds correct FormData for a minimal synthesis request', async () => {
+      // Keep this test deterministic: return an empty successful audio stream.
+      const readable = new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
       });
+      fetchMock.mockResolvedValue({ ok: true, body: readable });
 
       const ttsInstance = new TTS({ authToken: 'tok', apiUrl: 'http://tts:8080' });
-      ttsInstance.on('error', () => {}); // suppress error event
+      const stream = ttsInstance.synthesize('test text');
+      for await (const _ of stream) {
+        // consume stream
+      }
 
-      ttsInstance.synthesize('test text');
-
-      // Give the async run() task a tick to start
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Verify fetch was called with correct URL
       expect(fetchMock).toHaveBeenCalledOnce();
-      const [url] = fetchMock.mock.calls[0] as [string];
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
       expect(url).toBe('http://tts:8080/v1/tts/realtime');
+      expect(init.method).toBe('POST');
+
+      const body = init.body as FormData;
+      expect(body.get('query')).toBe('test text');
+      expect(body.get('audio_format')).toBe('pcm');
+      expect(body.get('normalization')).toBe('no');
     });
   });
 });
