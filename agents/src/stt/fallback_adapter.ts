@@ -220,7 +220,7 @@ export class FallbackAdapter extends STT {
             if (attempt < connOptions.maxRetry && e instanceof APIError && e.retryable) {
               const retryInterval = intervalForRetry(connOptions, attempt);
               if (retryInterval > 0) {
-                await delay(retryInterval);
+                await delay(retryInterval, { signal: abortSignal });
               }
               continue;
             }
