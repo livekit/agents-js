@@ -104,6 +104,13 @@ export class ResponsesWebSocket {
    * that yields validated server events until the response terminates.
    */
   sendRequest(payload: WsResponseCreateEvent): stream.StreamChannel<WsServerEvent> {
+    if (this.#ws.readyState !== WebSocket.OPEN) {
+      throw new APIConnectionError({
+        message: `OpenAI Responses WebSocket is not open (state ${getWebSocketStateLabel(this.#ws.readyState)})`,
+        options: { retryable: true },
+      });
+    }
+
     const channel = stream.createStreamChannel<WsServerEvent>();
     this.#outputQueue.push(channel);
     this.#ws.send(JSON.stringify(payload));
@@ -256,8 +263,9 @@ export class WSLLM extends llm.LLM {
 
     let inputChatCtx = chatCtx;
     let prevResponseId: string | undefined;
+    const canUseStoredResponse = modelOptions.store !== false;
 
-    if (this.#prevChatCtx && this.#prevResponseId) {
+    if (canUseStoredResponse && this.#prevChatCtx && this.#prevResponseId) {
       const diff = llm.computeChatCtxDiff(this.#prevChatCtx, chatCtx);
       const lastPrevItemId = this.#prevChatCtx.items.at(-1)?.id ?? null;
 
@@ -418,7 +426,16 @@ export class WSLLMStream extends llm.LLMStream {
       ...requestOptions,
     };
 
-    const channel = conn.sendRequest(payload);
+    let channel: stream.StreamChannel<WsServerEvent>;
+    try {
+      channel = conn.sendRequest(payload);
+    } catch (error) {
+      if (error instanceof APIConnectionError) {
+        conn.close();
+        this.#pool.invalidate();
+      }
+      throw error;
+    }
     const reader = channel.stream().getReader();
 
     // Events are already Zod-validated by ResponsesWebSocket before being
@@ -606,4 +623,19 @@ async function connectWs(url: string, apiKey: string, timeoutMs: number): Promis
       );
     });
   });
+}
+
+function getWebSocketStateLabel(readyState: number): string {
+  switch (readyState) {
+    case WebSocket.CONNECTING:
+      return 'CONNECTING';
+    case WebSocket.OPEN:
+      return 'OPEN';
+    case WebSocket.CLOSING:
+      return 'CLOSING';
+    case WebSocket.CLOSED:
+      return 'CLOSED';
+    default:
+      return `UNKNOWN:${readyState}`;
+  }
 }
