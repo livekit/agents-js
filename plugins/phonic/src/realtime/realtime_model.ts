@@ -203,6 +203,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private toolDefinitions: Record<string, unknown>[] = [];
   private pendingToolCallIds = new Set<string>();
   private readyToStart = false;
+  private systemPromptPostfix = '';
 
   constructor(realtimeModel: RealtimeModel) {
     super(realtimeModel);
@@ -243,9 +244,38 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateChatCtx(chatCtx: llm.ChatContext): Promise<void> {
-    let sent = false;
-    for (const item of chatCtx.items) {
-      if (item.type === 'function_call_output' && this.pendingToolCallIds.has(item.callId)) {
+    if (!this.configSent) {
+      if (chatCtx.items.length > 0) {
+        const turnHistory = chatCtx.items
+          .filter(
+            (item): item is llm.ChatMessage =>
+              item.type === 'message' &&
+              'textContent' in item &&
+              item.textContent !== undefined &&
+              item.textContent.trim() !== '',
+          )
+          .map((item) => `${item.role}: ${item.textContent}`)
+          .join('\n');
+        if (turnHistory.trim() !== '') {
+          this.logger.debug(
+            'updateChatCtx called with messages prior to config being sent to Phonic. Including conversation state in system instructions.',
+          );
+          this.systemPromptPostfix =
+            '\n\nThis conversation is being continued from an existing conversation. You are the assistant speaking to the user. The following is the conversation history:\n' +
+            turnHistory;
+        }
+        this._chatCtx = chatCtx.copy();
+      }
+      return;
+    }
+
+    const diffOps = llm.computeChatCtxDiff(this._chatCtx, chatCtx);
+    let sentToolCallOutput = false;
+    let sentAddSystemMessage = false;
+
+    for (const [, itemId] of diffOps.toCreate) {
+      const item = chatCtx.getById(itemId);
+      if (item?.type === 'function_call_output' && this.pendingToolCallIds.has(item.callId)) {
         this.pendingToolCallIds.delete(item.callId);
         this.logger.info(`Sending tool call output for ${item.name} (call_id: ${item.callId})`);
         this.socket?.sendToolCallOutput({
@@ -253,14 +283,28 @@ export class RealtimeSession extends llm.RealtimeSession {
           tool_call_id: item.callId,
           output: item.output,
         });
-        sent = true;
+        sentToolCallOutput = true;
+      }
+      if (item?.type === 'message') {
+        if ((item.role === 'system' || item.role === 'developer') && item.textContent) {
+          this.logger.debug(`Sending add system message: ${item.textContent}`);
+          this.socket?.sendAddSystemMessage({
+            type: 'add_system_message',
+            system_message: item.textContent,
+          });
+          sentAddSystemMessage = true;
+        }
       }
     }
-    if (!sent) {
+
+    this._chatCtx = chatCtx.copy();
+
+    if (!sentToolCallOutput && !sentAddSystemMessage) {
       this.logger.warn(
         'updateChatCtx called but no new tool call outputs to send. Phonic does not support general chat context updates.',
       );
-    } else {
+    }
+    if (sentToolCallOutput) {
       this.startNewAssistantTurn({ userInitiated: false });
     }
   }
@@ -386,6 +430,14 @@ export class RealtimeSession extends llm.RealtimeSession {
     await this.toolsReady.await;
     if (this.closed) return;
 
+    if (this.options.instructions === undefined) {
+      this.emitError(
+        new Error('Instructions are required to start a conversation with Phonic.'),
+        false,
+      );
+      return;
+    }
+
     this.configSent = true;
     this.socket.sendConfig({
       type: 'config',
@@ -394,7 +446,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       project: this.options.project,
       welcome_message: this.options.welcomeMessage,
       generate_welcome_message: this.options.generateWelcomeMessage,
-      system_prompt: this.options.instructions,
+      system_prompt: this.options.instructions + this.systemPromptPostfix,
       voice_id: this.options.voice,
       input_format: 'pcm_44100',
       output_format: 'pcm_44100',
