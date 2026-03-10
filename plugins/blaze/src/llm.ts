@@ -7,7 +7,7 @@
  *
  * LLM plugin interfacing with Blaze chatbot service.
  *
- * API Endpoint: POST /voicebot/{botId}/chat-conversion?stream=true
+ * API Endpoint: POST /v1/voicebot-call/{botId}/chat-conversion-stream
  * Input: JSON array of { role, content } messages
  * Output: SSE stream: data: {"content": "..."} then data: [DONE]
  */
@@ -158,10 +158,11 @@ export class BlazeLLMStream extends llm.LLMStream {
     const messages = convertMessages(this.chatCtx);
 
     // Build URL with query params
-    const url = new URL(`${this.#opts.apiUrl}/voicebot/${this.#opts.botId}/chat-conversion`);
-    url.searchParams.set('stream', 'true');
-    if (this.#opts.deepSearch) url.searchParams.set('deepSearch', 'true');
-    if (this.#opts.agenticSearch) url.searchParams.set('agenticSearch', 'true');
+    const url = new URL(`${this.#opts.apiUrl}/v1/voicebot-call/${this.#opts.botId}/chat-conversion-stream`);
+    url.searchParams.set('is_voice_call', 'true');
+    url.searchParams.set('use_tool_based', 'true');
+    if (this.#opts.deepSearch) url.searchParams.set('deep_search', 'true');
+    if (this.#opts.agenticSearch) url.searchParams.set('agentic_search', 'true');
     if (this.#opts.demographics?.gender) url.searchParams.set('gender', this.#opts.demographics.gender);
     if (this.#opts.demographics?.age !== undefined) {
       url.searchParams.set('age', String(this.#opts.demographics.age));

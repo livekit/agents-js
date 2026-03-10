@@ -84,8 +84,9 @@ describe('LLM', () => {
 
       expect(fetchMock).toHaveBeenCalledOnce();
       const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain('/voicebot/my-bot/chat-conversion');
-      expect(url).toContain('stream=true');
+      expect(url).toContain('/v1/voicebot-call/my-bot/chat-conversion-stream');
+      expect(url).toContain('is_voice_call=true');
+      expect(url).toContain('use_tool_based=true');
       expect(init.method).toBe('POST');
       expect(init.headers).toMatchObject({
         'Content-Type': 'application/json',
@@ -200,8 +201,8 @@ describe('LLM', () => {
       for await (const _ of stream) { /* consume */ }
 
       const url = fetchMock.mock.calls[0][0] as string;
-      expect(url).toContain('deepSearch=true');
-      expect(url).toContain('agenticSearch=true');
+      expect(url).toContain('deep_search=true');
+      expect(url).toContain('agentic_search=true');
       expect(url).toContain('gender=female');
       expect(url).toContain('age=30');
     });
@@ -318,7 +319,7 @@ describe('LLM', () => {
 
       expect(fetchMock).toHaveBeenCalledOnce();
       const [url] = fetchMock.mock.calls[0] as [string];
-      expect(url).toContain('/voicebot/bot/chat-conversion');
+      expect(url).toContain('/v1/voicebot-call/bot/chat-conversion-stream');
     });
   });
 });
