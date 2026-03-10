@@ -75,9 +75,9 @@ export class FallbackAdapter extends STT {
     });
 
     this.sttInstances = sttInstances;
-    this.attemptTimeoutMs = opts.attemptTimeoutMs ?? 10000;
+    this.attemptTimeoutMs = opts.attemptTimeoutMs ?? 5000;
     this.maxRetryPerSTT = opts.maxRetryPerSTT ?? 1;
-    this.retryIntervalMs = opts.retryIntervalMs ?? 5000;
+    this.retryIntervalMs = opts.retryIntervalMs ?? 1000;
     this._status = sttInstances.map(() => ({
       available: true,
       recoveringRecognizeTask: null,
