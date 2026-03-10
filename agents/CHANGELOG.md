@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.0.50
+
+### Patch Changes
+
+- fix: handle channel close errors in safeSend during shutdown - [#1110](https://github.com/livekit/agents-js/pull/1110) ([@haroldfabla2-hue](https://github.com/haroldfabla2-hue))
+
+- Skip speech handles that are already interrupted when processing queue - [#1090](https://github.com/livekit/agents-js/pull/1090) ([@lukasIO](https://github.com/lukasIO))
+
 ## 1.0.49
 
 ### Patch Changes
