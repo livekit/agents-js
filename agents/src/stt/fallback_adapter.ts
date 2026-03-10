@@ -74,6 +74,16 @@ export class FallbackAdapter extends STT {
       interimResults: sttInstances.every((s) => s.capabilities.interimResults),
     });
 
+    if (opts.attemptTimeoutMs !== undefined && opts.attemptTimeoutMs <= 0) {
+      throw new Error('attemptTimeoutMs must be a positive number.');
+    }
+    if (opts.maxRetryPerSTT !== undefined && opts.maxRetryPerSTT < 0) {
+      throw new Error('maxRetryPerSTT must be a non-negative number.');
+    }
+    if (opts.retryIntervalMs !== undefined && opts.retryIntervalMs < 0) {
+      throw new Error('retryIntervalMs must be a non-negative number.');
+    }
+
     this.sttInstances = sttInstances;
     this.attemptTimeoutMs = opts.attemptTimeoutMs ?? 5000;
     this.maxRetryPerSTT = opts.maxRetryPerSTT ?? 1;
@@ -163,6 +173,7 @@ export class FallbackAdapter extends STT {
     const sttStatus = this._status[index]!;
 
     if (sttStatus.recoveringRecognizeTask && !sttStatus.recoveringRecognizeTask.done) {
+      this._logger.debug({ stt: stt.label }, 'recognize recovery already in progress, skipping');
       return;
     }
 
@@ -295,8 +306,8 @@ class FallbackSpeechStream extends SpeechStream {
     for (const stream of streams) {
       try {
         stream.close();
-      } catch {
-        // safe to ignore if already closed
+      } catch (e) {
+        this._logger.debug({ error: e }, 'error closing recovering stream');
       }
     }
   }
@@ -349,15 +360,15 @@ class FallbackSpeechStream extends SpeechStream {
         if (mainStream) {
           try {
             mainStream.endInput();
-          } catch {
-            // ignore if already closed
+          } catch (e) {
+            this._logger.debug({ error: e }, 'error ending main stream input');
           }
         }
         for (const stream of [...this.recoveringStreams]) {
           try {
             stream.endInput();
-          } catch {
-            // ignore if already closed
+          } catch (e) {
+            this._logger.debug({ error: e }, 'error ending recovering stream input');
           }
         }
       }
@@ -422,7 +433,10 @@ class FallbackSpeechStream extends SpeechStream {
 
             this.cleanupRecoveringStreams();
             return;
-          } catch {
+          } catch (e) {
+            if (!(e instanceof APIError) && !(e instanceof APIConnectionError)) {
+              this._logger.warn({ stt: stt.label, error: e }, 'unexpected error in stream loop');
+            }
             if (sttStatus.available) {
               sttStatus.available = false;
               this.adapter.emitAvailabilityChanged(stt, false);
@@ -440,6 +454,7 @@ class FallbackSpeechStream extends SpeechStream {
         message: `all STTs failed (${labels}) after ${Date.now() - startTime}ms`,
       });
     } finally {
+      this.cleanupRecoveringStreams();
       if (forwardInputTask) {
         if (!this.input.closed) {
           this.input.close();
@@ -457,6 +472,7 @@ class FallbackSpeechStream extends SpeechStream {
     const sttStatus = this.adapter.status[index]!;
 
     if (sttStatus.recoveringStreamTask && !sttStatus.recoveringStreamTask.done) {
+      this._logger.debug({ stt: stt.label }, 'stream recovery already in progress, skipping');
       return;
     }
 
@@ -506,7 +522,11 @@ class FallbackSpeechStream extends SpeechStream {
         if (idx !== -1) {
           this.recoveringStreams.splice(idx, 1);
         }
-        stream.close();
+        try {
+          stream.close();
+        } catch (e) {
+          this._logger.debug({ error: e }, 'error closing recovery stream in finally');
+        }
       }
     });
   }
