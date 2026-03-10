@@ -1,5 +1,21 @@
 # @livekit/agents
 
+## 1.0.49
+
+### Patch Changes
+
+- Use cgroup-aware CPU monitoring inside Docker containers - [#1099](https://github.com/livekit/agents-js/pull/1099) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add GPT-5.4 to inference OpenAIModels type - [#1105](https://github.com/livekit/agents-js/pull/1105) ([@Topherhindman](https://github.com/Topherhindman))
+
+- Add AEC warmup functionality to AgentSession and AgentActivity - [#1091](https://github.com/livekit/agents-js/pull/1091) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Ensure input stream is only tee'd when it's actually being used - [#1088](https://github.com/livekit/agents-js/pull/1088) ([@lukasIO](https://github.com/lukasIO))
+
+- Support gateway Inworld model options - [#1102](https://github.com/livekit/agents-js/pull/1102) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix: prevent shutdown hang when speech is active during disconnect - [#1100](https://github.com/livekit/agents-js/pull/1100) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.0.48
 
 ### Patch Changes
