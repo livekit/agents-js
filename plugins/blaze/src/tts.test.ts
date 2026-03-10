@@ -189,5 +189,39 @@ describe('TTS', () => {
       expect(body.get('audio_format')).toBe('pcm');
       expect(body.get('normalization')).toBe('no');
     });
+
+    it('captures options at stream creation time', async () => {
+      const readable = new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      });
+      fetchMock.mockResolvedValue({ ok: true, body: readable });
+
+      const ttsInstance = new TTS({
+        authToken: 'old-token',
+        apiUrl: 'http://tts:8080',
+        language: 'vi',
+        speakerId: 'speaker-old',
+      });
+
+      const stream = ttsInstance.synthesize('hello');
+      ttsInstance.updateOptions({
+        authToken: 'new-token',
+        language: 'en',
+        speakerId: 'speaker-new',
+      });
+
+      for await (const _ of stream) {
+        // consume stream
+      }
+
+      const [_url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = init.body as FormData;
+
+      expect(init.headers).toMatchObject({ Authorization: 'Bearer old-token' });
+      expect(body.get('language')).toBe('vi');
+      expect(body.get('speaker_id')).toBe('speaker-old');
+    });
   });
 });

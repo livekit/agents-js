@@ -321,5 +321,37 @@ describe('LLM', () => {
       const [url] = fetchMock.mock.calls[0] as [string];
       expect(url).toContain('/v1/voicebot-call/bot/chat-conversion-stream');
     });
+
+    it('captures options at chat creation time', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        body: makeSseBody(['ok']),
+      });
+
+      const llmInstance = new LLM({
+        botId: 'bot',
+        authToken: 'old-token',
+        apiUrl: 'http://llm:8080',
+        deepSearch: true,
+        demographics: { gender: 'female', age: 30 },
+      });
+      const ctx = makeChatCtx([{ role: 'user', text: 'hi' }]);
+
+      const stream = llmInstance.chat({ chatCtx: ctx as never });
+      llmInstance.updateOptions({
+        authToken: 'new-token',
+        deepSearch: false,
+        demographics: { gender: 'male', age: 99 },
+      });
+
+      for await (const _ of stream) { /* consume */ }
+
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toContain('deep_search=true');
+      expect(url).toContain('gender=female');
+      expect(url).toContain('age=30');
+      expect(url).not.toContain('gender=male');
+      expect(init.headers).toMatchObject({ Authorization: 'Bearer old-token' });
+    });
   });
 });

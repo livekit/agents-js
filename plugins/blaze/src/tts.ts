@@ -61,6 +61,13 @@ interface ResolvedTTSOptions {
   timeout: number;
 }
 
+function snapshotTTSOptions(opts: ResolvedTTSOptions): ResolvedTTSOptions {
+  return {
+    ...opts,
+    normalizationRules: opts.normalizationRules ? { ...opts.normalizationRules } : undefined,
+  };
+}
+
 function resolveTTSOptions(opts: TTSOptions): ResolvedTTSOptions {
   const cfg: ResolvedBlazeConfig = resolveConfig(opts.config);
   return {
@@ -294,10 +301,10 @@ export class TTS extends tts.TTS {
   }
 
   synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream {
-    return new ChunkedStream(text, this, this.#opts, connOptions, abortSignal);
+    return new ChunkedStream(text, this, snapshotTTSOptions(this.#opts), connOptions, abortSignal);
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
-    return new SynthesizeStream(this, this.#opts, options?.connOptions);
+    return new SynthesizeStream(this, snapshotTTSOptions(this.#opts), options?.connOptions);
   }
 }

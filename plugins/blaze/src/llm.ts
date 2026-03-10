@@ -69,6 +69,13 @@ interface ResolvedLLMOptions {
   timeout: number;
 }
 
+function snapshotLLMOptions(opts: ResolvedLLMOptions): ResolvedLLMOptions {
+  return {
+    ...opts,
+    demographics: opts.demographics ? { ...opts.demographics } : undefined,
+  };
+}
+
 function resolveLLMOptions(opts: LLMOptions): ResolvedLLMOptions {
   if (!opts.botId) {
     throw new Error('Blaze LLM: botId is required');
@@ -344,7 +351,7 @@ export class BlazeLLM extends llm.LLM {
   }): BlazeLLMStream {
     return new BlazeLLMStream(
       this,
-      this.#opts,
+      snapshotLLMOptions(this.#opts),
       chatCtx,
       connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
     );
