@@ -1,10 +1,115 @@
-// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export type LanguageCode = string;
+export const KNOWN_LANGUAGE_CODES = [
+  'af',
+  'am',
+  'ar',
+  'as',
+  'az',
+  'be',
+  'bg',
+  'bn',
+  'bs',
+  'ca',
+  'cs',
+  'cy',
+  'da',
+  'de',
+  'el',
+  'en',
+  'es',
+  'et',
+  'eu',
+  'fa',
+  'ff',
+  'fi',
+  'fr',
+  'ga',
+  'gl',
+  'gu',
+  'ha',
+  'he',
+  'hi',
+  'hr',
+  'hu',
+  'hy',
+  'id',
+  'ig',
+  'is',
+  'it',
+  'ja',
+  'jv',
+  'ka',
+  'kk',
+  'km',
+  'kn',
+  'ko',
+  'ku',
+  'ky',
+  'lb',
+  'lg',
+  'ln',
+  'lo',
+  'lt',
+  'lv',
+  'mi',
+  'mk',
+  'ml',
+  'mn',
+  'mr',
+  'ms',
+  'mt',
+  'my',
+  'ne',
+  'nl',
+  'no',
+  'ny',
+  'oc',
+  'or',
+  'pa',
+  'pl',
+  'ps',
+  'pt',
+  'ro',
+  'ru',
+  'sd',
+  'sk',
+  'sl',
+  'sn',
+  'so',
+  'sq',
+  'sr',
+  'sv',
+  'sw',
+  'ta',
+  'te',
+  'tg',
+  'th',
+  'tl',
+  'tr',
+  'uk',
+  'ur',
+  'uz',
+  'vi',
+  'wo',
+  'xh',
+  'yo',
+  'zh',
+  'zu',
+] as const;
 
-// Ref: python livekit-agents/livekit/agents/_language_data.py - 17-220 lines
+export type KnownLanguageCode = (typeof KNOWN_LANGUAGE_CODES)[number];
+
+declare const languageCodeBrand: unique symbol;
+
+export type LanguageCode = string & { readonly [languageCodeBrand]: 'LanguageCode' };
+
+export function asLanguageCode(language: string): LanguageCode {
+  return language as LanguageCode;
+}
+
 const ISO_639_3_TO_1: Record<string, string | undefined> = {
   afr: 'af',
   amh: 'am',
@@ -108,7 +213,6 @@ const ISO_639_3_TO_1: Record<string, string | undefined> = {
   zul: 'zu',
 };
 
-// Ref: python livekit-agents/livekit/agents/_language_data.py - 121-220 lines
 const LANGUAGE_NAMES_TO_CODE: Record<string, string> = {
   afrikaans: 'af',
   albanian: 'sq',
@@ -212,42 +316,42 @@ CODE_TO_LANGUAGE_NAME.sl = 'slovene';
 export function normalizeLanguage(language: string): LanguageCode {
   const lowered = language.trim().toLowerCase();
   if (lowered === '') {
-    return '';
+    return asLanguageCode('');
   }
 
   if (lowered in LANGUAGE_NAMES_TO_CODE) {
-    return LANGUAGE_NAMES_TO_CODE[lowered]!;
+    return asLanguageCode(LANGUAGE_NAMES_TO_CODE[lowered]!);
   }
 
   if (lowered in ISO_639_3_TO_1) {
-    return ISO_639_3_TO_1[lowered] ?? lowered;
+    return asLanguageCode(ISO_639_3_TO_1[lowered] ?? lowered);
   }
 
   const parts = lowered.replaceAll('_', '-').split('-');
   if (parts.length >= 2) {
     const [base, ...rest] = parts;
-    return [
-      base,
-      ...rest.map((part) => {
-        if (part.length === 4) {
-          return part.charAt(0).toUpperCase() + part.slice(1);
-        }
-        return part.toUpperCase();
-      }),
-    ].join('-');
+    return asLanguageCode(
+      [
+        base,
+        ...rest.map((part) => {
+          if (part.length === 4) {
+            return part.charAt(0).toUpperCase() + part.slice(1);
+          }
+          return part.toUpperCase();
+        }),
+      ].join('-'),
+    );
   }
 
-  return lowered;
+  return asLanguageCode(lowered);
 }
 
-// Ref: python livekit-agents/livekit/agents/language.py - 100-129 lines
 export function getBaseLanguage(language: string): string {
   const normalized = normalizeLanguage(language);
   const [base = ''] = normalized.split('-');
   return ISO_639_3_TO_1[base] ?? base;
 }
 
-// Ref: python livekit-agents/livekit/agents/language.py - 111-116 lines
 export function getIsoLanguage(language: string): string {
   const normalized = normalizeLanguage(language);
   const region = getLanguageRegion(normalized);
@@ -255,14 +359,12 @@ export function getIsoLanguage(language: string): string {
   return region ? `${baseLanguage}-${region}` : baseLanguage;
 }
 
-// Ref: python livekit-agents/livekit/agents/language.py - 118-125 lines
 export function getLanguageRegion(language: string): string | undefined {
   const normalized = normalizeLanguage(language);
   const [, ...parts] = normalized.split('-');
   return parts.find((part) => part.length === 2);
 }
 
-// Ref: python livekit-agents/livekit/agents/language.py - 127-129 lines
 export function toLanguageName(language: string): string | undefined {
   return CODE_TO_LANGUAGE_NAME[getBaseLanguage(language)];
 }
