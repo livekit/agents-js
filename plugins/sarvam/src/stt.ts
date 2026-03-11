@@ -10,6 +10,7 @@ import {
   Task,
   log,
   mergeFrames,
+  normalizeLanguage,
   stt,
   waitForAbort,
 } from '@livekit/agents';
@@ -181,13 +182,15 @@ function resolveOptions(opts: Partial<STTOptions>): ResolvedSTTOptions {
     base.mode = translateOpts.mode ?? SAARAS_TRANSLATE_DEFAULTS.mode;
   } else if (model === 'saaras:v3') {
     const v3Opts = opts as STTV3Options;
-    base.languageCode = v3Opts.languageCode ?? SAARAS_V3_DEFAULTS.languageCode;
+    base.languageCode = normalizeLanguage(v3Opts.languageCode ?? SAARAS_V3_DEFAULTS.languageCode);
     base.mode = v3Opts.mode ?? SAARAS_V3_DEFAULTS.mode;
     base.prompt = v3Opts.prompt;
     base.withTimestamps = v3Opts.withTimestamps;
   } else {
     // saarika:v2.5
-    let languageCode = (opts as STTV2Options).languageCode ?? SAARIKA_DEFAULTS.languageCode;
+    let languageCode = normalizeLanguage(
+      (opts as STTV2Options).languageCode ?? SAARIKA_DEFAULTS.languageCode,
+    );
     if (!STTV2_LANGUAGE_SET.has(languageCode)) {
       languageCode = SAARIKA_DEFAULTS.languageCode;
     }
@@ -431,7 +434,7 @@ export class STT extends stt.STT {
       alternatives: [
         {
           text: data.transcript || '',
-          language: data.language_code ?? this.opts.languageCode ?? 'unknown',
+          language: normalizeLanguage(data.language_code ?? this.opts.languageCode ?? 'unknown'),
           startTime,
           endTime,
           confidence: data.language_probability ?? 0,
@@ -688,7 +691,9 @@ export class SpeechStream extends stt.SpeechStream {
             } else if (msgType === 'data') {
               const td = (json['data'] as SarvamWSTranscriptData | undefined) ?? {};
               const transcript = td.transcript ?? '';
-              const language = td.language_code ?? this.#opts.languageCode ?? 'unknown';
+              const language = normalizeLanguage(
+                td.language_code ?? this.#opts.languageCode ?? 'unknown',
+              );
               const requestId = td.request_id ?? '';
               const confidence = td.language_probability ?? 0;
               this.#requestId = requestId;

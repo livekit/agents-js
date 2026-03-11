@@ -1,0 +1,3283 @@
+From f4989e56514ed2f360af5f3b6e8a053a8dd53ce9 Mon Sep 17 00:00:00 2001
+From: David Zhao <dz@livekit.io>
+Date: Mon, 23 Feb 2026 09:48:54 -0800
+Subject: [PATCH 1/8] standardize language handling
+
+use a uniform Language class to unify how we handle language coding
+across the core framework and plugins
+---
+ livekit-agents/livekit/agents/__init__.py     |   2 +
+ .../livekit/agents/_language_data.py          | 220 ++++++++++++++++++
+ .../livekit/agents/inference/stt.py           |  19 +-
+ .../livekit/agents/inference/tts.py           |   7 +-
+ livekit-agents/livekit/agents/language.py     | 129 ++++++++++
+ .../agents/stt/multi_speaker_adapter.py       |   3 +-
+ livekit-agents/livekit/agents/stt/stt.py      |   7 +-
+ .../livekit/agents/voice/audio_recognition.py |  11 +-
+ .../livekit/agents/voice/client_events.py     |   3 +-
+ livekit-agents/livekit/agents/voice/events.py |   3 +-
+ livekit-agents/livekit/agents/worker.py       |   6 +-
+ .../livekit/plugins/assemblyai/stt.py         |   3 +-
+ .../livekit/plugins/aws/stt.py                |   7 +-
+ .../livekit/plugins/aws/tts.py                |   7 +-
+ .../livekit/plugins/azure/stt.py              |  22 +-
+ .../livekit/plugins/azure/tts.py              |   8 +-
+ .../livekit/plugins/baseten/stt.py            |  13 +-
+ .../livekit/plugins/cartesia/stt.py           |  13 +-
+ .../livekit/plugins/cartesia/tts.py           |  11 +-
+ .../livekit/plugins/clova/stt.py              |  12 +-
+ .../livekit/plugins/deepgram/stt.py           |  19 +-
+ .../livekit/plugins/deepgram/stt_v2.py        |   3 +-
+ .../livekit/plugins/elevenlabs/languages.py   | 114 ---------
+ .../livekit/plugins/elevenlabs/stt.py         |  22 +-
+ .../livekit/plugins/elevenlabs/tts.py         |  15 +-
+ .../livekit/plugins/fal/stt.py                |  14 +-
+ .../livekit/plugins/fireworksai/stt.py        |  17 +-
+ .../livekit/plugins/gladia/stt.py             |  21 +-
+ .../plugins/google/realtime/realtime_api.py   |   6 +-
+ .../livekit/plugins/google/stt.py             |  23 +-
+ .../livekit/plugins/google/tts.py             |  17 +-
+ .../livekit/plugins/gradium/stt.py            |   3 +-
+ .../livekit/plugins/mistralai/stt.py          |  11 +-
+ .../livekit/plugins/neuphonic/tts.py          |  13 +-
+ .../plugins/nltk/sentence_tokenizer.py        |   4 +-
+ .../livekit/plugins/nvidia/stt.py             |   9 +-
+ .../livekit/plugins/openai/stt.py             |  21 +-
+ .../livekit/plugins/rtzr/stt.py               |   5 +-
+ .../livekit/plugins/sarvam/stt.py             |  13 +-
+ .../livekit/plugins/sarvam/tts.py             |   3 +-
+ .../livekit/plugins/simplismart/stt.py        |  11 +-
+ .../livekit/plugins/smallestai/tts.py         |  12 +-
+ .../livekit/plugins/soniox/stt.py             |   5 +-
+ .../livekit/plugins/speechmatics/stt.py       |   9 +-
+ .../livekit/plugins/spitch/stt.py             |  14 +-
+ .../livekit/plugins/spitch/tts.py             |   7 +-
+ .../livekit/plugins/turn_detector/base.py     |  14 +-
+ .../plugins/turn_detector/multilingual.py     |   9 +-
+ makefile                                      |   1 +
+ tests/fake_stt.py                             |   8 +-
+ tests/test_language.py                        | 152 ++++++++++++
+ tests/test_plugin_google_stt.py               |   5 +-
+ tests/test_speaker_id_grouping.py             |   4 +-
+ 53 files changed, 792 insertions(+), 318 deletions(-)
+ create mode 100644 livekit-agents/livekit/agents/_language_data.py
+ create mode 100644 livekit-agents/livekit/agents/language.py
+ delete mode 100644 livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/languages.py
+ create mode 100644 tests/test_language.py
+
+diff --git a/livekit-agents/livekit/agents/__init__.py b/livekit-agents/livekit/agents/__init__.py
+index 0a74314d63..a68e5244c7 100644
+--- a/livekit-agents/livekit/agents/__init__.py
++++ b/livekit-agents/livekit/agents/__init__.py
+@@ -37,6 +37,7 @@
+     JobRequest,
+     get_job_context,
+ )
++from .language import Language
+ from .llm.chat_context import (
+     AgentConfigUpdate,
+     AgentHandoff,
+@@ -189,6 +190,7 @@ def __getattr__(name: str) -> typing.Any:
+     "AudioConfig",
+     "PlayHandle",
+     "FlushSentinel",
++    "Language",
+     "io",
+     "avatar",
+     "cli",
+diff --git a/livekit-agents/livekit/agents/_language_data.py b/livekit-agents/livekit/agents/_language_data.py
+new file mode 100644
+index 0000000000..acdee33178
+--- /dev/null
++++ b/livekit-agents/livekit/agents/_language_data.py
+@@ -0,0 +1,220 @@
++# Copyright 2023 LiveKit, Inc.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++"""Lookup tables for language normalization. Kept separate to avoid bloating the class module."""
++
++# ISO 639-3 to ISO 639-1 mapping (sourced from ElevenLabs plugin + extended)
++ISO_639_3_TO_1: dict[str, str | None] = {
++    "afr": "af",
++    "amh": "am",
++    "ara": "ar",
++    "hye": "hy",
++    "asm": "as",
++    "ast": None,
++    "aze": "az",
++    "bel": "be",
++    "ben": "bn",
++    "bos": "bs",
++    "bul": "bg",
++    "mya": "my",
++    "yue": None,
++    "cat": "ca",
++    "ceb": None,
++    "cmn": "zh",
++    "nya": "ny",
++    "hrv": "hr",
++    "ces": "cs",
++    "dan": "da",
++    "nld": "nl",
++    "eng": "en",
++    "est": "et",
++    "fil": None,
++    "fin": "fi",
++    "fra": "fr",
++    "ful": "ff",
++    "glg": "gl",
++    "lug": "lg",
++    "kat": "ka",
++    "deu": "de",
++    "ell": "el",
++    "guj": "gu",
++    "hau": "ha",
++    "heb": "he",
++    "hin": "hi",
++    "hun": "hu",
++    "isl": "is",
++    "ibo": "ig",
++    "ind": "id",
++    "gle": "ga",
++    "ita": "it",
++    "jpn": "ja",
++    "jav": "jv",
++    "kea": None,
++    "kan": "kn",
++    "kaz": "kk",
++    "khm": "km",
++    "kor": "ko",
++    "kur": "ku",
++    "kir": "ky",
++    "lao": "lo",
++    "lav": "lv",
++    "lin": "ln",
++    "lit": "lt",
++    "luo": None,
++    "ltz": "lb",
++    "mkd": "mk",
++    "msa": "ms",
++    "mal": "ml",
++    "mlt": "mt",
++    "zho": "zh",
++    "mri": "mi",
++    "mar": "mr",
++    "mon": "mn",
++    "nep": "ne",
++    "nso": None,
++    "nor": "no",
++    "oci": "oc",
++    "ori": "or",
++    "pus": "ps",
++    "fas": "fa",
++    "pol": "pl",
++    "por": "pt",
++    "pan": "pa",
++    "ron": "ro",
++    "rus": "ru",
++    "srp": "sr",
++    "sna": "sn",
++    "snd": "sd",
++    "slk": "sk",
++    "slv": "sl",
++    "som": "so",
++    "spa": "es",
++    "swa": "sw",
++    "swe": "sv",
++    "tam": "ta",
++    "tgk": "tg",
++    "tel": "te",
++    "tha": "th",
++    "tur": "tr",
++    "ukr": "uk",
++    "umb": None,
++    "urd": "ur",
++    "uzb": "uz",
++    "vie": "vi",
++    "cym": "cy",
++    "wol": "wo",
++    "xho": "xh",
++    "zul": "zu",
++}
++
++# Language names to ISO 639-1 codes
++# Covers NLTK punkt languages + common English names
++LANGUAGE_NAMES_TO_CODE: dict[str, str] = {
++    "afrikaans": "af",
++    "albanian": "sq",
++    "amharic": "am",
++    "arabic": "ar",
++    "armenian": "hy",
++    "azerbaijani": "az",
++    "basque": "eu",
++    "belarusian": "be",
++    "bengali": "bn",
++    "bosnian": "bs",
++    "bulgarian": "bg",
++    "burmese": "my",
++    "catalan": "ca",
++    "chinese": "zh",
++    "croatian": "hr",
++    "czech": "cs",
++    "danish": "da",
++    "dutch": "nl",
++    "english": "en",
++    "estonian": "et",
++    "finnish": "fi",
++    "french": "fr",
++    "galician": "gl",
++    "georgian": "ka",
++    "german": "de",
++    "greek": "el",
++    "gujarati": "gu",
++    "hausa": "ha",
++    "hebrew": "he",
++    "hindi": "hi",
++    "hungarian": "hu",
++    "icelandic": "is",
++    "indonesian": "id",
++    "irish": "ga",
++    "italian": "it",
++    "japanese": "ja",
++    "javanese": "jv",
++    "kannada": "kn",
++    "kazakh": "kk",
++    "khmer": "km",
++    "korean": "ko",
++    "kurdish": "ku",
++    "kyrgyz": "ky",
++    "lao": "lo",
++    "latvian": "lv",
++    "lingala": "ln",
++    "lithuanian": "lt",
++    "luxembourgish": "lb",
++    "macedonian": "mk",
++    "malay": "ms",
++    "malayalam": "ml",
++    "maltese": "mt",
++    "maori": "mi",
++    "marathi": "mr",
++    "mongolian": "mn",
++    "nepali": "ne",
++    "norwegian": "no",
++    "occitan": "oc",
++    "oriya": "or",
++    "pashto": "ps",
++    "persian": "fa",
++    "polish": "pl",
++    "portuguese": "pt",
++    "punjabi": "pa",
++    "romanian": "ro",
++    "russian": "ru",
++    "serbian": "sr",
++    "shona": "sn",
++    "sindhi": "sd",
++    "slovak": "sk",
++    "slovene": "sl",
++    "slovenian": "sl",
++    "somali": "so",
++    "spanish": "es",
++    "swahili": "sw",
++    "swedish": "sv",
++    "tagalog": "tl",
++    "tamil": "ta",
++    "tajik": "tg",
++    "telugu": "te",
++    "thai": "th",
++    "turkish": "tr",
++    "ukrainian": "uk",
++    "urdu": "ur",
++    "uzbek": "uz",
++    "vietnamese": "vi",
++    "welsh": "cy",
++    "wolof": "wo",
++    "xhosa": "xh",
++    "yoruba": "yo",
++    "zulu": "zu",
++}
++
++# Reverse mapping: ISO 639-1 code to language name (for NLTK compatibility)
++CODE_TO_LANGUAGE_NAME: dict[str, str] = {v: k for k, v in LANGUAGE_NAMES_TO_CODE.items()}
++# Resolve duplicates — prefer the more common name
++CODE_TO_LANGUAGE_NAME["sl"] = "slovene"
+diff --git a/livekit-agents/livekit/agents/inference/stt.py b/livekit-agents/livekit/agents/inference/stt.py
+index c7ee2faf15..ca078541c3 100644
+--- a/livekit-agents/livekit/agents/inference/stt.py
++++ b/livekit-agents/livekit/agents/inference/stt.py
+@@ -21,6 +21,7 @@
+     APITimeoutError,
+     create_api_error_from_http,
+ )
++from ..language import Language
+ from ..log import logger
+ from ..types import (
+     DEFAULT_API_CONNECT_OPTIONS,
+@@ -108,10 +109,10 @@ class FallbackModel(TypedDict, total=False):
+ FallbackModelType = FallbackModel | str
+ 
+ 
+-def _parse_model_string(model: str) -> tuple[str, NotGivenOr[str]]:
+-    language: NotGivenOr[str] = NOT_GIVEN
++def _parse_model_string(model: str) -> tuple[str, NotGivenOr[Language]]:
++    language: NotGivenOr[Language] = NOT_GIVEN
+     if (idx := model.rfind(":")) != -1:
+-        language = model[idx + 1 :]
++        language = Language(model[idx + 1 :])
+         model = model[:idx]
+     return model, language
+ 
+@@ -149,7 +150,7 @@ def _make_fallback(model: FallbackModelType) -> FallbackModel:
+ @dataclass
+ class STTOptions:
+     model: NotGivenOr[STTModels | str]
+-    language: NotGivenOr[str]
++    language: NotGivenOr[Language]
+     encoding: STTEncoding
+     sample_rate: int
+     base_url: str
+@@ -330,7 +331,7 @@ def __init__(
+ 
+         self._opts = STTOptions(
+             model=model,
+-            language=language,
++            language=Language(language) if isinstance(language, str) else language,
+             encoding=encoding if is_given(encoding) else DEFAULT_ENCODING,
+             sample_rate=sample_rate if is_given(sample_rate) else DEFAULT_SAMPLE_RATE,
+             base_url=lk_base_url,
+@@ -403,7 +404,7 @@ def update_options(
+         if is_given(model):
+             self._opts.model = model
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+ 
+         for stream in self._streams:
+             stream.update_options(model=model, language=language)
+@@ -415,7 +416,7 @@ def _sanitize_options(
+         options = replace(self._opts)
+ 
+         if is_given(language):
+-            options.language = language
++            options.language = Language(language)
+ 
+         return options
+ 
+@@ -447,7 +448,7 @@ def update_options(
+         if is_given(model):
+             self._opts.model = model
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+         self._reconnect_event.set()
+ 
+     async def _run(self) -> None:
+@@ -615,7 +616,7 @@ async def _connect_ws(self) -> aiohttp.ClientWebSocketResponse:
+     def _process_transcript(self, data: dict, is_final: bool) -> None:
+         request_id = data.get("request_id", self._request_id)
+         text = data.get("transcript", "")
+-        language = data.get("language", self._opts.language or "en")
++        language = Language(data.get("language", self._opts.language or "en"))
+         words = data.get("words", []) or []
+ 
+         if not text and not is_final:
+diff --git a/livekit-agents/livekit/agents/inference/tts.py b/livekit-agents/livekit/agents/inference/tts.py
+index eefe23cb80..5ed34884e2 100644
+--- a/livekit-agents/livekit/agents/inference/tts.py
++++ b/livekit-agents/livekit/agents/inference/tts.py
+@@ -19,6 +19,7 @@
+     APITimeoutError,
+     create_api_error_from_http,
+ )
++from ..language import Language
+ from ..log import logger
+ from ..types import DEFAULT_API_CONNECT_OPTIONS, NOT_GIVEN, APIConnectOptions, NotGivenOr
+ from ..utils import is_given
+@@ -145,7 +146,7 @@ class InworldOptions(TypedDict, total=False):
+ class _TTSOptions:
+     model: TTSModels | str
+     voice: NotGivenOr[str]
+-    language: NotGivenOr[str]
++    language: NotGivenOr[Language]
+     encoding: TTSEncoding
+     sample_rate: int
+     base_url: str
+@@ -358,7 +359,7 @@ def __init__(
+         self._opts = _TTSOptions(
+             model=model,
+             voice=voice,
+-            language=language,
++            language=Language(language) if isinstance(language, str) else language,
+             encoding=encoding if is_given(encoding) else DEFAULT_ENCODING,
+             sample_rate=sample_rate,
+             base_url=lk_base_url,
+@@ -492,7 +493,7 @@ def update_options(
+         if is_given(voice):
+             self._opts.voice = voice
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+         if is_given(extra_kwargs):
+             self._opts.extra_kwargs.update(extra_kwargs)
+ 
+diff --git a/livekit-agents/livekit/agents/language.py b/livekit-agents/livekit/agents/language.py
+new file mode 100644
+index 0000000000..2303dc871c
+--- /dev/null
++++ b/livekit-agents/livekit/agents/language.py
+@@ -0,0 +1,129 @@
++# Copyright 2023 LiveKit, Inc.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++"""Normalized BCP-47 language identifier."""
++
++from __future__ import annotations
++
++from typing import Any
++
++from pydantic import GetCoreSchemaHandler
++from pydantic_core import CoreSchema, core_schema
++
++from ._language_data import CODE_TO_LANGUAGE_NAME, ISO_639_3_TO_1, LANGUAGE_NAMES_TO_CODE
++
++
++def _normalize_language(code: str) -> str:
++    """Normalize a language code/name to BCP-47 format.
++
++    Rules:
++    - Language names (e.g. "english") → ISO 639-1 ("en")
++    - ISO 639-3 (e.g. "eng") → ISO 639-1 ("en")
++    - ISO 639-1 (e.g. "en") → pass-through
++    - BCP-47 (e.g. "en-US") → normalized casing ("en-US")
++    - Unknown codes → lowercase pass-through
++    """
++    lowered = code.strip().lower()
++
++    # Check language names first (e.g. "english" → "en")
++    if lowered in LANGUAGE_NAMES_TO_CODE:
++        return LANGUAGE_NAMES_TO_CODE[lowered]
++
++    # Check ISO 639-3 (e.g. "eng" → "en")
++    if lowered in ISO_639_3_TO_1:
++        mapped = ISO_639_3_TO_1[lowered]
++        if mapped is not None:
++            return mapped
++        # ISO 639-3 code with no ISO 639-1 equivalent — pass through as-is
++        return lowered
++
++    # Handle BCP-47 with region (e.g. "en-US", "zh-Hans-CN", "cmn-Hans-CN")
++    # Separators can be "-" or "_"
++    # Note: ISO 639-3 language subtags (e.g. "cmn") are preserved in compound tags
++    # so the code round-trips correctly for APIs like Google STT that expect them.
++    # Use the .language property to get the ISO 639-1 base code.
++    parts = lowered.replace("_", "-").split("-")
++    if len(parts) >= 2:
++        lang = parts[0]
++        # Normalize: language lowercase, region/script uppercase
++        normalized_parts = [lang]
++        for part in parts[1:]:
++            if len(part) == 4:
++                # Script subtag (e.g. "Hans") — title case
++                normalized_parts.append(part.capitalize())
++            else:
++                # Region subtag (e.g. "US") — uppercase
++                normalized_parts.append(part.upper())
++        return "-".join(normalized_parts)
++
++    # Simple code (e.g. "en", "multi") — pass through lowercase
++    return lowered
++
++
++class Language(str):
++    """Normalized BCP-47 language identifier. Accepts any common format.
++
++    Examples::
++
++        Language("english")  # → "en"
++        Language("eng")      # → "en"
++        Language("en")       # → "en"
++        Language("en-US")    # → "en-US"
++        Language("en_us")    # → "en-US"
++        Language("multi")    # → "multi"
++    """
++
++    def __new__(cls, code: str) -> Language:
++        normalized = _normalize_language(code)
++        return super().__new__(cls, normalized)
++
++    @classmethod
++    def __get_pydantic_core_schema__(
++        cls, source_type: Any, handler: GetCoreSchemaHandler
++    ) -> CoreSchema:
++        return core_schema.no_info_plain_validator_function(
++            cls,
++            serialization=core_schema.to_string_ser_schema(),
++        )
++
++    @property
++    def language(self) -> str:
++        """Base language code (ISO 639-1 when possible).
++
++        E.g., ``'en'`` from ``'en-US'``, ``'zh'`` from ``'cmn-Hans-CN'``.
++        """
++        base = self.split("-")[0]
++        mapped = ISO_639_3_TO_1.get(base)
++        return mapped if mapped is not None else base
++
++    @property
++    def iso(self) -> str:
++        """ISO 639-1 tag with region, e.g., ``'zh-CN'`` from ``'cmn-Hans-CN'``."""
++        parts = self.split("-")
++        base = self.language
++        region_parts = [p for p in parts[1:] if len(p) == 2]
++        return f"{base}-{region_parts[0]}" if region_parts else base
++
++    @property
++    def region(self) -> str | None:
++        """Region code, e.g., ``'US'`` from ``'en-US'``, or ``None``."""
++        parts = self.split("-")
++        for p in parts[1:]:
++            if len(p) == 2:
++                return p
++        return None
++
++    def to_language_name(self) -> str | None:
++        """Return the English language name (e.g. ``'english'``), or ``None`` if unknown."""
++        return CODE_TO_LANGUAGE_NAME.get(self.language)
+diff --git a/livekit-agents/livekit/agents/stt/multi_speaker_adapter.py b/livekit-agents/livekit/agents/stt/multi_speaker_adapter.py
+index 6cfda8a865..25003b4d65 100644
+--- a/livekit-agents/livekit/agents/stt/multi_speaker_adapter.py
++++ b/livekit-agents/livekit/agents/stt/multi_speaker_adapter.py
+@@ -9,6 +9,7 @@
+ from livekit import rtc
+ 
+ from .. import utils
++from ..language import Language
+ from ..log import logger
+ from ..types import DEFAULT_API_CONNECT_OPTIONS, NOT_GIVEN, APIConnectOptions, NotGivenOr
+ from ..utils.audio import AudioByteStream
+@@ -118,7 +119,7 @@ async def _forward_output(stream: RecognizeStream) -> None:
+                     self._event_ch.send_nowait(
+                         SpeechEvent(
+                             type=SpeechEventType.FINAL_TRANSCRIPT,
+-                            alternatives=[SpeechData(language="", text="")],
++                            alternatives=[SpeechData(language=Language(""), text="")],
+                         )
+                     )
+ 
+diff --git a/livekit-agents/livekit/agents/stt/stt.py b/livekit-agents/livekit/agents/stt/stt.py
+index 25b86e81bb..354ec581be 100644
+--- a/livekit-agents/livekit/agents/stt/stt.py
++++ b/livekit-agents/livekit/agents/stt/stt.py
+@@ -15,6 +15,7 @@
+ from livekit.agents.metrics.base import Metadata
+ 
+ from .._exceptions import APIConnectionError, APIError
++from ..language import Language
+ from ..log import logger
+ from ..metrics import STTMetrics
+ from ..types import (
+@@ -51,7 +52,7 @@ class SpeechEventType(str, Enum):
+ 
+ @dataclass
+ class SpeechData:
+-    language: str
++    language: Language
+     text: str
+     start_time: float = 0.0
+     end_time: float = 0.0
+@@ -60,6 +61,10 @@ class SpeechData:
+     is_primary_speaker: bool | None = None
+     words: list[TimedString] | None = None
+ 
++    def __post_init__(self) -> None:
++        if not isinstance(self.language, Language):
++            self.language = Language(self.language)
++
+ 
+ @dataclass
+ class RecognitionUsage:
+diff --git a/livekit-agents/livekit/agents/voice/audio_recognition.py b/livekit-agents/livekit/agents/voice/audio_recognition.py
+index a4c508f7de..e16110f660 100644
+--- a/livekit-agents/livekit/agents/voice/audio_recognition.py
++++ b/livekit-agents/livekit/agents/voice/audio_recognition.py
+@@ -13,6 +13,7 @@
+ from livekit import rtc
+ 
+ from .. import llm, stt, utils, vad
++from ..language import Language
+ from ..log import logger
+ from ..telemetry import trace_types, tracer
+ from ..types import NOT_GIVEN, NotGivenOr
+@@ -60,8 +61,8 @@ def provider(self) -> str:
+         return "unknown"
+ 
+     # TODO: Move those two functions to EOU ctor (capabilities dataclass)
+-    async def unlikely_threshold(self, language: str | None) -> float | None: ...
+-    async def supports_language(self, language: str | None) -> bool: ...
++    async def unlikely_threshold(self, language: Language | None) -> float | None: ...
++    async def supports_language(self, language: Language | None) -> bool: ...
+ 
+     async def predict_end_of_turn(
+         self, chat_ctx: llm.ChatContext, *, timeout: float | None = None
+@@ -138,7 +139,7 @@ def __init__(
+         self._audio_interim_transcript = ""
+         # used for STTs that support preflight mode, so it could start preemptive generation earlier
+         self._audio_preflight_transcript = ""
+-        self._last_language: str | None = None
++        self._last_language: Language | None = None
+ 
+         self._stt_ch: aio.Chan[rtc.AudioFrame] | None = None
+         self._vad_ch: aio.Chan[rtc.AudioFrame] | None = None
+@@ -303,7 +304,9 @@ async def _commit_user_turn() -> None:
+                     stt.SpeechEvent(
+                         type=stt.SpeechEventType.FINAL_TRANSCRIPT,
+                         alternatives=[
+-                            stt.SpeechData(language="", text=self._audio_interim_transcript)
++                            stt.SpeechData(
++                                language=Language(""), text=self._audio_interim_transcript
++                            )
+                         ],
+                     )
+                 )
+diff --git a/livekit-agents/livekit/agents/voice/client_events.py b/livekit-agents/livekit/agents/voice/client_events.py
+index 2cc97fc0cc..c49e36aeca 100644
+--- a/livekit-agents/livekit/agents/voice/client_events.py
++++ b/livekit-agents/livekit/agents/voice/client_events.py
+@@ -10,6 +10,7 @@
+ from livekit import rtc
+ 
+ from .. import utils
++from ..language import Language
+ from ..llm import (
+     ChatItem,
+     ChatMessage,
+@@ -73,7 +74,7 @@ class ClientUserInputTranscribedEvent(BaseModel):
+     type: Literal["user_input_transcribed"] = "user_input_transcribed"
+     transcript: str
+     is_final: bool
+-    language: str | None
++    language: Language | None
+     created_at: float
+ 
+ 
+diff --git a/livekit-agents/livekit/agents/voice/events.py b/livekit-agents/livekit/agents/voice/events.py
+index 1ab14bf8c5..278b900a29 100644
+--- a/livekit-agents/livekit/agents/voice/events.py
++++ b/livekit-agents/livekit/agents/voice/events.py
+@@ -7,6 +7,7 @@
+ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+ from typing_extensions import Self
+ 
++from ..language import Language
+ from ..llm import (
+     LLM,
+     ChatMessage,
+@@ -117,7 +118,7 @@ class UserInputTranscribedEvent(BaseModel):
+     transcript: str
+     is_final: bool
+     speaker_id: str | None = None
+-    language: str | None = None
++    language: Language | None = None
+     created_at: float = Field(default_factory=time.time)
+ 
+ 
+diff --git a/livekit-agents/livekit/agents/worker.py b/livekit-agents/livekit/agents/worker.py
+index b21289445e..d3cb42142d 100644
+--- a/livekit-agents/livekit/agents/worker.py
++++ b/livekit-agents/livekit/agents/worker.py
+@@ -858,14 +858,12 @@ async def simulate_job(
+                 if not fake_job:
+                     raise ValueError("room_info is None but fake_job is False")
+ 
+-                room_info = models.Room(sid=utils.shortuuid("FAKE_RM_"), name=room)
++                room_info = models.Room(sid=utils.shortuuid("SRM_"), name=room)
+ 
+             # room_info = await self._api.room.create_room(api.CreateRoomRequest(name=room))
+ 
+             job = agent.Job(
+-                id=utils.shortuuid("simulated-job-")
+-                if not fake_job
+-                else utils.shortuuid("fake-job-"),
++                id=utils.shortuuid("job-") if not fake_job else utils.shortuuid("mock-job-"),
+                 room=room_info,
+                 type=agent.JobType.JT_ROOM,
+                 participant=None,
+diff --git a/livekit-plugins/livekit-plugins-assemblyai/livekit/plugins/assemblyai/stt.py b/livekit-plugins/livekit-plugins-assemblyai/livekit/plugins/assemblyai/stt.py
+index f313d1637b..ba6ed09a2e 100644
+--- a/livekit-plugins/livekit-plugins-assemblyai/livekit/plugins/assemblyai/stt.py
++++ b/livekit-plugins/livekit-plugins-assemblyai/livekit/plugins/assemblyai/stt.py
+@@ -30,6 +30,7 @@
+     DEFAULT_API_CONNECT_OPTIONS,
+     APIConnectOptions,
+     APIStatusError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -401,7 +402,7 @@ def _process_stream_event(self, data: dict) -> None:
+         turn_is_formatted = data.get("turn_is_formatted", False)
+         utterance = data.get("utterance", "")
+         transcript = data.get("transcript", "")
+-        language = data.get("language_code", "en")
++        language = Language(data.get("language_code", "en"))
+ 
+         # transcript (final) and words (interim) are cumulative
+         # utterance (preflight) is chunk based
+diff --git a/livekit-plugins/livekit-plugins-aws/livekit/plugins/aws/stt.py b/livekit-plugins/livekit-plugins-aws/livekit/plugins/aws/stt.py
+index 0264341580..e08522ad8b 100644
+--- a/livekit-plugins/livekit-plugins-aws/livekit/plugins/aws/stt.py
++++ b/livekit-plugins/livekit-plugins-aws/livekit/plugins/aws/stt.py
+@@ -23,6 +23,7 @@
+ from livekit.agents import (
+     DEFAULT_API_CONNECT_OPTIONS,
+     APIConnectOptions,
++    Language,
+     stt,
+     utils,
+ )
+@@ -72,7 +73,7 @@ class Credentials:
+ @dataclass
+ class STTOptions:
+     sample_rate: int
+-    language: str
++    language: Language
+     encoding: str
+     vocabulary_name: NotGivenOr[str]
+     session_id: NotGivenOr[str]
+@@ -126,7 +127,7 @@ def __init__(
+             region = os.getenv("AWS_REGION") or DEFAULT_REGION
+ 
+         self._config = STTOptions(
+-            language=language,
++            language=Language(language),
+             sample_rate=sample_rate,
+             encoding=encoding,
+             vocabulary_name=vocabulary_name,
+@@ -372,7 +373,7 @@ def _streaming_recognize_response_to_speech_data(self, resp: Result) -> stt.Spee
+             confidence = items[0].confidence or 0.0
+ 
+         return stt.SpeechData(
+-            language=resp.language_code or self._opts.language,
++            language=Language(resp.language_code or self._opts.language),
+             start_time=(resp.start_time or 0.0) + self.start_time_offset,
+             end_time=(resp.end_time or 0.0) + self.start_time_offset,
+             text=resp.alternatives[0].transcript if resp.alternatives else "",
+diff --git a/livekit-plugins/livekit-plugins-aws/livekit/plugins/aws/tts.py b/livekit-plugins/livekit-plugins-aws/livekit/plugins/aws/tts.py
+index 680737ae5e..18ac532b70 100644
+--- a/livekit-plugins/livekit-plugins-aws/livekit/plugins/aws/tts.py
++++ b/livekit-plugins/livekit-plugins-aws/livekit/plugins/aws/tts.py
+@@ -24,6 +24,7 @@
+     APIConnectionError,
+     APIConnectOptions,
+     APITimeoutError,
++    Language,
+     tts,
+ )
+ from livekit.agents.types import (
+@@ -48,7 +49,7 @@ class _TTSOptions:
+     speech_engine: TTSSpeechEngine
+     region: str | None
+     sample_rate: int
+-    language: TTSLanguages | str | None
++    language: Language | None
+     text_type: TTSTextType
+ 
+ 
+@@ -103,7 +104,7 @@ def __init__(
+             speech_engine=speech_engine,
+             text_type=text_type,
+             region=region or None,
+-            language=language or None,
++            language=Language(language) if is_given(language) and language else None,
+             sample_rate=sample_rate,
+         )
+ 
+@@ -131,7 +132,7 @@ def update_options(
+         if is_given(voice):
+             self._opts.voice = voice
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+         if is_given(speech_engine):
+             self._opts.speech_engine = cast(TTSSpeechEngine, speech_engine)
+         if is_given(text_type):
+diff --git a/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/stt.py b/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/stt.py
+index d8695b75e7..b56d61a2e9 100644
+--- a/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/stt.py
++++ b/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/stt.py
+@@ -18,7 +18,7 @@
+ import weakref
+ from copy import deepcopy
+ from dataclasses import dataclass
+-from typing import Any, cast
++from typing import Any
+ 
+ import azure.cognitiveservices.speech as speechsdk  # type: ignore
+ from livekit import rtc
+@@ -26,6 +26,7 @@
+     DEFAULT_API_CONNECT_OPTIONS,
+     APIConnectionError,
+     APIConnectOptions,
++    Language,
+     stt,
+     utils,
+ )
+@@ -114,7 +115,9 @@ def __init__(
+             language = ["en-US"]
+ 
+         if isinstance(language, str):
+-            language = [language]
++            language = [Language(language)]
++        else:
++            language = [Language(lg) for lg in language]
+ 
+         if not is_given(speech_host):
+             speech_host = os.environ.get("AZURE_SPEECH_HOST") or NOT_GIVEN
+@@ -183,7 +186,7 @@ def stream(
+     ) -> SpeechStream:
+         config = deepcopy(self._config)
+         if is_given(language):
+-            config.language = [language]
++            config.language = [Language(language)]
+         stream = SpeechStream(stt=self, opts=config, conn_options=conn_options)
+         self._streams.add(stream)
+         return stream
+@@ -191,8 +194,9 @@ def stream(
+     def update_options(self, *, language: NotGivenOr[list[str] | str] = NOT_GIVEN) -> None:
+         if is_given(language):
+             if isinstance(language, str):
+-                language = [language]
+-            language = cast(list[str], language)
++                language = [Language(language)]
++            else:
++                language = [Language(lg) for lg in language]
+             self._config.language = language
+             for stream in self._streams:
+                 stream.update_options(language=language)
+@@ -278,13 +282,13 @@ def _cleanup() -> None:
+                 await asyncio.to_thread(_cleanup)
+ 
+     def _on_recognized(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
+-        detected_lg = speechsdk.AutoDetectSourceLanguageResult(evt.result).language
++        detected_lg = Language(speechsdk.AutoDetectSourceLanguageResult(evt.result).language)
+         text = evt.result.text.strip()
+         if not text:
+             return
+ 
+         if not detected_lg and self._opts.language:
+-            detected_lg = self._opts.language[0]
++            detected_lg = Language(self._opts.language[0])
+ 
+         # TODO: @chenghao-mou get confidence from NBest with `detailed` output format
+         final_data = stt.SpeechData(
+@@ -304,13 +308,13 @@ def _on_recognized(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
+             )
+ 
+     def _on_recognizing(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
+-        detected_lg = speechsdk.AutoDetectSourceLanguageResult(evt.result).language
++        detected_lg = Language(speechsdk.AutoDetectSourceLanguageResult(evt.result).language)
+         text = evt.result.text.strip()
+         if not text:
+             return
+ 
+         if not detected_lg and self._opts.language:
+-            detected_lg = self._opts.language[0]
++            detected_lg = Language(self._opts.language[0])
+ 
+         interim_data = stt.SpeechData(
+             language=detected_lg,
+diff --git a/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/tts.py b/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/tts.py
+index f2be53562f..e382bd3b6b 100644
+--- a/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/tts.py
++++ b/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/tts.py
+@@ -19,7 +19,7 @@
+ 
+ import aiohttp
+ 
+-from livekit.agents import APIConnectionError, APIStatusError, APITimeoutError, tts, utils
++from livekit.agents import APIConnectionError, APIStatusError, APITimeoutError, Language, tts, utils
+ from livekit.agents.types import (
+     DEFAULT_API_CONNECT_OPTIONS,
+     NOT_GIVEN,
+@@ -106,7 +106,7 @@ class _TTSOptions:
+     subscription_key: str | None
+     region: str | None
+     voice: str
+-    language: str | None
++    language: Language | None
+     speech_endpoint: str | None
+     deployment_id: str | None
+     prosody: NotGivenOr[ProsodyConfig]
+@@ -183,7 +183,7 @@ def __init__(
+             speech_endpoint=speech_endpoint,
+             voice=voice,
+             deployment_id=deployment_id,
+-            language=language,
++            language=Language(language) if language else None,
+             prosody=prosody,
+             style=style,
+             lexicon_uri=lexicon_uri,
+@@ -210,7 +210,7 @@ def update_options(
+         if is_given(voice):
+             self._opts.voice = voice
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+         if is_given(prosody):
+             prosody.validate()
+             self._opts.prosody = prosody
+diff --git a/livekit-plugins/livekit-plugins-baseten/livekit/plugins/baseten/stt.py b/livekit-plugins/livekit-plugins-baseten/livekit/plugins/baseten/stt.py
+index 9225d24736..f03cc938a3 100644
+--- a/livekit-plugins/livekit-plugins-baseten/livekit/plugins/baseten/stt.py
++++ b/livekit-plugins/livekit-plugins-baseten/livekit/plugins/baseten/stt.py
+@@ -31,6 +31,7 @@
+     DEFAULT_API_CONNECT_OPTIONS,
+     APIConnectOptions,
+     APIStatusError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -62,7 +63,7 @@ class STTOptions:
+     vad_threshold: float = 0.5
+     vad_min_silence_duration_ms: int = 300
+     vad_speech_pad_ms: int = 30
+-    language: str = "en"
++    language: Language = Language("en")
+ 
+ 
+ class STT(stt.STT):
+@@ -115,7 +116,7 @@ def __init__(
+             vad_threshold=vad_threshold,
+             vad_min_silence_duration_ms=vad_min_silence_duration_ms,
+             vad_speech_pad_ms=vad_speech_pad_ms,
+-            language=language,
++            language=Language(language),
+         )
+ 
+         if is_given(encoding):
+@@ -181,7 +182,7 @@ def update_options(
+         if is_given(vad_speech_pad_ms):
+             self._opts.vad_speech_pad_ms = vad_speech_pad_ms
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+         if is_given(buffer_size_seconds):
+             self._opts.buffer_size_seconds = buffer_size_seconds
+ 
+@@ -237,7 +238,7 @@ def update_options(
+         if is_given(vad_speech_pad_ms):
+             self._opts.vad_speech_pad_ms = vad_speech_pad_ms
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+         if is_given(buffer_size_seconds):
+             self._opts.buffer_size_seconds = buffer_size_seconds
+ 
+@@ -331,7 +332,7 @@ async def recv_task(ws: aiohttp.ClientWebSocketResponse) -> None:
+                                 type=stt.SpeechEventType.INTERIM_TRANSCRIPT,
+                                 alternatives=[
+                                     stt.SpeechData(
+-                                        language="",
++                                        language=Language(""),
+                                         text=text,
+                                         confidence=confidence,
+                                         start_time=start_time,
+@@ -343,7 +344,7 @@ async def recv_task(ws: aiohttp.ClientWebSocketResponse) -> None:
+                             self._event_ch.send_nowait(event)
+ 
+                     elif is_final:
+-                        language = data.get("language_code", self._opts.language)
++                        language = Language(data.get("language_code", self._opts.language))
+ 
+                         if text:
+                             event = stt.SpeechEvent(
+diff --git a/livekit-plugins/livekit-plugins-cartesia/livekit/plugins/cartesia/stt.py b/livekit-plugins/livekit-plugins-cartesia/livekit/plugins/cartesia/stt.py
+index 32a3bf84df..2802f13da2 100644
+--- a/livekit-plugins/livekit-plugins-cartesia/livekit/plugins/cartesia/stt.py
++++ b/livekit-plugins/livekit-plugins-cartesia/livekit/plugins/cartesia/stt.py
+@@ -29,6 +29,7 @@
+     APIConnectionError,
+     APIConnectOptions,
+     APIStatusError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -44,7 +45,7 @@
+ @dataclass
+ class STTOptions:
+     model: STTModels | str
+-    language: STTLanguages | str | None
++    language: Language | None
+     encoding: STTEncoding
+     sample_rate: int
+     api_key: str
+@@ -108,7 +109,7 @@ def __init__(
+ 
+         self._opts = STTOptions(
+             model=model,
+-            language=language,
++            language=Language(language),
+             encoding=encoding,
+             sample_rate=sample_rate,
+             api_key=cartesia_api_key,
+@@ -167,7 +168,7 @@ def update_options(
+         if is_given(model):
+             self._opts.model = model
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+ 
+         # Update all active streams
+         for stream in self._streams:
+@@ -190,7 +191,7 @@ def _sanitize_options(
+         )
+ 
+         if is_given(language):
+-            config.language = language
++            config.language = Language(language)
+ 
+         return config
+ 
+@@ -222,7 +223,7 @@ def update_options(
+         if is_given(model):
+             self._opts.model = model
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+ 
+         self._reconnect_event.set()
+ 
+@@ -378,7 +379,7 @@ def _process_stream_event(self, data: dict) -> None:
+             end_time = start_time + data.get("duration", 0)
+             self._last_speech_end_time = end_time
+             is_final = data.get("is_final", False)
+-            language = data.get("language", self._opts.language or "en")
++            language = Language(data.get("language", self._opts.language or "en"))
+ 
+             if not text and not is_final:
+                 return
+diff --git a/livekit-plugins/livekit-plugins-cartesia/livekit/plugins/cartesia/tts.py b/livekit-plugins/livekit-plugins-cartesia/livekit/plugins/cartesia/tts.py
+index ebab22ddac..507e697226 100644
+--- a/livekit-plugins/livekit-plugins-cartesia/livekit/plugins/cartesia/tts.py
++++ b/livekit-plugins/livekit-plugins-cartesia/livekit/plugins/cartesia/tts.py
+@@ -31,6 +31,7 @@
+     APIError,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     tokenize,
+     tts,
+     utils,
+@@ -70,7 +71,7 @@ class _TTSOptions:
+     volume: float | None
+     word_timestamps: bool
+     api_key: str
+-    language: str | None
++    language: Language | None
+     base_url: str
+     api_version: str
+     pronunciation_dict_id: str | None
+@@ -146,7 +147,7 @@ def __init__(
+ 
+         self._opts = _TTSOptions(
+             model=model,
+-            language=language,
++            language=Language(language) if language else None,
+             encoding=encoding,
+             sample_rate=sample_rate,
+             voice=voice,
+@@ -183,7 +184,7 @@ def __init__(
+         if word_timestamps:
+             if "preview" not in self._opts.model and (
+                 self._opts.language is not None
+-                and self._opts.language
++                and self._opts.language.language
+                 not in {
+                     "en",
+                     "de",
+@@ -261,7 +262,7 @@ def update_options(
+         if is_given(model):
+             self._opts.model = model
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language) if language else None
+         if is_given(voice):
+             self._opts.voice = cast(str | list[float], voice)
+         if is_given(speed):
+@@ -565,7 +566,7 @@ def _to_cartesia_options(opts: _TTSOptions, *, streaming: bool) -> dict[str, Any
+             "encoding": opts.encoding,
+             "sample_rate": opts.sample_rate,
+         },
+-        "language": opts.language,
++        "language": opts.language.language if opts.language else None,
+     }
+ 
+     if opts.pronunciation_dict_id:
+diff --git a/livekit-plugins/livekit-plugins-clova/livekit/plugins/clova/stt.py b/livekit-plugins/livekit-plugins-clova/livekit/plugins/clova/stt.py
+index 31d71a4876..3afb983391 100644
+--- a/livekit-plugins/livekit-plugins-clova/livekit/plugins/clova/stt.py
++++ b/livekit-plugins/livekit-plugins-clova/livekit/plugins/clova/stt.py
+@@ -27,6 +27,7 @@
+     APIConnectOptions,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -70,7 +71,8 @@ def __init__(
+         self._invoke_url = (
+             invoke_url if is_given(invoke_url) else os.environ.get("CLOVA_STT_INVOKE_URL")
+         )
+-        self._language = clova_languages_mapping.get(language, language)
++        normalized_language = Language(language)
++        self._language = clova_languages_mapping.get(normalized_language, normalized_language)
+         self._session = http_session
+         if clova_secret is None:
+             raise ValueError(
+@@ -89,7 +91,8 @@ def provider(self) -> str:
+ 
+     def update_options(self, *, language: NotGivenOr[str] = NOT_GIVEN) -> None:
+         if is_given(language):
+-            self._language = clova_languages_mapping.get(language, language)
++            normalized = Language(language)
++            self._language = clova_languages_mapping.get(normalized, normalized)
+ 
+     def _ensure_session(self) -> aiohttp.ClientSession:
+         if not self._session:
+@@ -109,7 +112,8 @@ async def _recognize_impl(
+         try:
+             url = self.url_builder()
+             if is_given(language):
+-                self._language = clova_languages_mapping.get(language, language)
++                normalized = Language(language)
++                self._language = clova_languages_mapping.get(normalized, normalized)
+             payload = json.dumps({"language": self._language, "completion": "sync"})
+ 
+             buffer = merge_frames(buffer)
+@@ -170,5 +174,5 @@ def _transcription_to_speech_event(
+     ) -> stt.SpeechEvent:
+         return stt.SpeechEvent(
+             type=event_type,
+-            alternatives=[stt.SpeechData(text=text, language=self._language)],
++            alternatives=[stt.SpeechData(text=text, language=Language(self._language))],
+         )
+diff --git a/livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py b/livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py
+index e7d9ba1f71..0b50f7de3a 100644
+--- a/livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py
++++ b/livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py
+@@ -33,6 +33,7 @@
+     APIConnectOptions,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -50,7 +51,7 @@
+ 
+ @dataclass
+ class STTOptions:
+-    language: DeepgramLanguages | str | None
++    language: Language | None
+     detect_language: bool
+     interim_results: bool
+     punctuate: bool
+@@ -163,7 +164,7 @@ def __init__(
+         _validate_keyterm(model, language, keyterm, keywords)
+ 
+         self._opts = STTOptions(
+-            language=language,
++            language=Language(language) if language else None,
+             detect_language=detect_language,
+             interim_results=interim_results,
+             punctuate=punctuate,
+@@ -300,7 +301,7 @@ def update_options(
+         keyterms: NotGivenOr[list[str]] = NOT_GIVEN,
+     ) -> None:
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+         if is_given(model):
+             self._opts.model = _validate_model(model, language)
+         if is_given(interim_results):
+@@ -366,7 +367,7 @@ def _sanitize_options(
+     ) -> STTOptions:
+         config = dataclasses.replace(self._opts)
+         if is_given(language):
+-            config.language = language
++            config.language = Language(language)
+ 
+         if config.detect_language:
+             config.language = None
+@@ -434,7 +435,7 @@ def update_options(
+         keyterms: NotGivenOr[list[str]] = NOT_GIVEN,
+     ) -> None:
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+         if is_given(model):
+             self._opts.model = _validate_model(model, language)
+         if is_given(interim_results):
+@@ -733,7 +734,7 @@ def live_transcription_to_speech_data(
+             speaker = None
+ 
+         sd = stt.SpeechData(
+-            language=language,
++            language=Language(language),
+             start_time=next((word.get("start", 0) for word in alt["words"]), 0) + start_time_offset,
+             end_time=next((word.get("end", 0) for word in alt["words"]), 0) + start_time_offset,
+             confidence=alt["confidence"],
+@@ -752,7 +753,7 @@ def live_transcription_to_speech_data(
+             else None,
+         )
+         if language == "multi" and "languages" in alt:
+-            sd.language = alt["languages"][0]  # TODO: handle multiple languages
++            sd.language = Language(alt["languages"][0])  # TODO: handle multiple languages
+         speech_data.append(sd)
+     return speech_data
+ 
+@@ -768,14 +769,14 @@ def prerecorded_transcription_to_speech_event(
+ 
+     # Use the detected language if enabled
+     # https://developers.deepgram.com/docs/language-detection
+-    detected_language = channel.get("detected_language", "")
++    detected_language = Language(channel.get("detected_language", ""))
+ 
+     return stt.SpeechEvent(
+         request_id=request_id,
+         type=stt.SpeechEventType.FINAL_TRANSCRIPT,
+         alternatives=[
+             stt.SpeechData(
+-                language=language or detected_language,
++                language=Language(language or detected_language),
+                 start_time=alt["words"][0]["start"] if alt["words"] else 0,
+                 end_time=alt["words"][-1]["end"] if alt["words"] else 0,
+                 confidence=alt["confidence"],
+diff --git a/livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py b/livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py
+index e551f6bed9..a0f6f004b0 100644
+--- a/livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py
++++ b/livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py
+@@ -30,6 +30,7 @@
+     APIConnectionError,
+     APIConnectOptions,
+     APIStatusError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -540,7 +541,7 @@ def _parse_transcription(
+     confidence = sum(word["confidence"] for word in words) / len(words) if words else 0
+ 
+     sd = stt.SpeechData(
+-        language=language,
++        language=Language(language),
+         start_time=data.get("audio_window_start", 0) + start_time_offset,
+         end_time=data.get("audio_window_end", 0) + start_time_offset,
+         confidence=confidence,
+diff --git a/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/languages.py b/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/languages.py
+deleted file mode 100644
+index a03dc6610f..0000000000
+--- a/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/languages.py
++++ /dev/null
+@@ -1,114 +0,0 @@
+-"""
+-Mapping of ISO 639-3 language codes used by Scribe to ISO 639-1
+-used by Livekit turn detector multilingual model
+-Note: ISO 639-3 language codes supported by Scribe but that have no ISO 639-1 code
+-are defined with a None mapping value
+-https://elevenlabs.io/docs/overview/capabilities/speech-to-text#supported-languages
+-"""
+-
+-ISO_639_3_TO_1 = {
+-    "afr": "af",
+-    "amh": "am",
+-    "ara": "ar",
+-    "hye": "hy",
+-    "asm": "as",
+-    "ast": None,
+-    "aze": "az",
+-    "bel": "be",
+-    "ben": "bn",
+-    "bos": "bs",
+-    "bul": "bg",
+-    "mya": "my",
+-    "yue": None,
+-    "cat": "ca",
+-    "ceb": None,
+-    "nya": "ny",
+-    "hrv": "hr",
+-    "ces": "cs",
+-    "dan": "da",
+-    "nld": "nl",
+-    "eng": "en",
+-    "est": "et",
+-    "fil": None,
+-    "fin": "fi",
+-    "fra": "fr",
+-    "ful": "ff",
+-    "glg": "gl",
+-    "lug": "lg",
+-    "kat": "ka",
+-    "deu": "de",
+-    "ell": "el",
+-    "guj": "gu",
+-    "hau": "ha",
+-    "heb": "he",
+-    "hin": "hi",
+-    "hun": "hu",
+-    "isl": "is",
+-    "ibo": "ig",
+-    "ind": "id",
+-    "gle": "ga",
+-    "ita": "it",
+-    "jpn": "ja",
+-    "jav": "jv",
+-    "kea": None,
+-    "kan": "kn",
+-    "kaz": "kk",
+-    "khm": "km",
+-    "kor": "ko",
+-    "kur": "ku",
+-    "kir": "ky",
+-    "lao": "lo",
+-    "lav": "lv",
+-    "lin": "ln",
+-    "lit": "lt",
+-    "luo": None,
+-    "ltz": "lb",
+-    "mkd": "mk",
+-    "msa": "ms",
+-    "mal": "ml",
+-    "mlt": "mt",
+-    "zho": "zh",
+-    "mri": "mi",
+-    "mar": "mr",
+-    "mon": "mn",
+-    "nep": "ne",
+-    "nso": None,
+-    "nor": "no",
+-    "oci": "oc",
+-    "ori": "or",
+-    "pus": "ps",
+-    "fas": "fa",
+-    "pol": "pl",
+-    "por": "pt",
+-    "pan": "pa",
+-    "ron": "ro",
+-    "rus": "ru",
+-    "srp": "sr",
+-    "sna": "sn",
+-    "snd": "sd",
+-    "slk": "sk",
+-    "slv": "sl",
+-    "som": "so",
+-    "spa": "es",
+-    "swa": "sw",
+-    "swe": "sv",
+-    "tam": "ta",
+-    "tgk": "tg",
+-    "tel": "te",
+-    "tha": "th",
+-    "tur": "tr",
+-    "ukr": "uk",
+-    "umb": None,
+-    "urd": "ur",
+-    "uzb": "uz",
+-    "vie": "vi",
+-    "cym": "cy",
+-    "wol": "wo",
+-    "xho": "xh",
+-    "zul": "zu",
+-}
+-
+-
+-def iso639_3_to_1(code: str | None) -> str | None:
+-    """Convert ISO 639-3 to ISO 639-1. Returns None if no mapping exists."""
+-    return ISO_639_3_TO_1.get(code.lower()) if code else None
+diff --git a/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py b/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py
+index c03cc8fac8..9aa30ee047 100644
+--- a/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py
++++ b/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py
+@@ -31,6 +31,7 @@
+     APIConnectOptions,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -39,7 +40,6 @@
+ from livekit.agents.utils import AudioBuffer, http_context, is_given
+ from livekit.agents.voice.io import TimedString
+ 
+-from .languages import iso639_3_to_1
+ from .log import logger
+ from .models import STTRealtimeSampleRates
+ 
+@@ -67,7 +67,7 @@ class STTOptions:
+     model_id: ElevenLabsSTTModels | str
+     api_key: str
+     base_url: str
+-    language_code: str | None
++    language_code: Language | None
+     tag_audio_events: bool
+     include_timestamps: bool
+     sample_rate: STTRealtimeSampleRates
+@@ -143,7 +143,7 @@ def __init__(
+         self._opts = STTOptions(
+             api_key=elevenlabs_api_key,
+             base_url=base_url if is_given(base_url) else API_BASE_URL_V1,
+-            language_code=language_code or None,
++            language_code=Language(language_code) if language_code else None,
+             tag_audio_events=tag_audio_events,
+             sample_rate=sample_rate,
+             server_vad=server_vad,
+@@ -175,7 +175,7 @@ async def _recognize_impl(
+         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+     ) -> stt.SpeechEvent:
+         if is_given(language):
+-            self._opts.language_code = language
++            self._opts.language_code = Language(language)
+ 
+         wav_bytes = rtc.combine_audio_frames(buffer).to_wav_bytes()
+         form = aiohttp.FormData()
+@@ -221,7 +221,7 @@ async def _recognize_impl(
+         except Exception as e:
+             raise APIConnectionError() from e
+ 
+-        normalized_language = iso639_3_to_1(language_code) or language_code
++        normalized_language = Language(language_code or self._opts.language_code or "")
+         return self._transcription_to_speech_event(
+             language_code=normalized_language,
+             text=extracted_text,
+@@ -245,7 +245,7 @@ def _transcription_to_speech_event(
+             alternatives=[
+                 stt.SpeechData(
+                     text=text,
+-                    language=language_code,
++                    language=Language(language_code),
+                     speaker_id=speaker_id,
+                     start_time=start_time,
+                     end_time=end_time,
+@@ -444,6 +444,9 @@ async def _connect_ws(self) -> aiohttp.ClientWebSocketResponse:
+             f"commit_strategy={commit_strategy}",
+         ]
+ 
++        if not self._language:
++            params.append("include_language_detection=true")
++
+         if server_vad := self._opts.server_vad:
+             if (
+                 vad_silence_threshold_secs := server_vad.get("vad_silence_threshold_secs")
+@@ -459,8 +462,8 @@ async def _connect_ws(self) -> aiohttp.ClientWebSocketResponse:
+         if self._language:
+             params.append(f"language_code={self._language}")
+ 
+-        if self._opts.include_timestamps:
+-            params.append("include_timestamps=true")
++        # if self._opts.include_timestamps:
++        params.append("include_timestamps=true")
+ 
+         query_string = "&".join(params)
+ 
+@@ -488,8 +491,9 @@ def _process_stream_event(self, data: dict) -> None:
+         words = data.get("words", [])
+         start_time = words[0].get("start", 0) if words else 0
+         end_time = words[-1].get("end", 0) if words else 0
++        language_code = data.get("language_code", self._language)
+ 
+-        normalized_language = iso639_3_to_1(self._language) or self._language or "en"
++        normalized_language = Language(language_code) if language_code else Language("en")
+         # 11labs only sends word timestamps for final transcripts
+         speech_data = stt.SpeechData(
+             language=normalized_language,
+diff --git a/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/tts.py b/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/tts.py
+index be9c36ee05..9d4f6ec4ba 100644
+--- a/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/tts.py
++++ b/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/tts.py
+@@ -31,6 +31,7 @@
+     APIError,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     tokenize,
+     tts,
+     utils,
+@@ -186,7 +187,7 @@ def __init__(
+             chunk_length_schedule=chunk_length_schedule,
+             enable_ssml_parsing=enable_ssml_parsing,
+             enable_logging=enable_logging,
+-            language=language,
++            language=Language(language) if is_given(language) else NOT_GIVEN,
+             inactivity_timeout=inactivity_timeout,
+             sync_alignment=sync_alignment,
+             auto_mode=auto_mode,
+@@ -253,9 +254,11 @@ def update_options(
+             self._opts.voice_settings = voice_settings
+             changed = True
+ 
+-        if is_given(language) and language != self._opts.language:
+-            self._opts.language = language
+-            changed = True
++        if is_given(language):
++            language = Language(language)
++            if language != self._opts.language:
++                self._opts.language = language
++                changed = True
+ 
+         if is_given(pronunciation_dictionary_locators):
+             self._opts.pronunciation_dictionary_locators = pronunciation_dictionary_locators
+@@ -480,7 +483,7 @@ class _TTSOptions:
+     voice_id: str
+     voice_settings: NotGivenOr[VoiceSettings]
+     model: TTSModels | str
+-    language: NotGivenOr[str]
++    language: NotGivenOr[Language]
+     base_url: str
+     encoding: TTSEncoding
+     sample_rate: int
+@@ -834,7 +837,7 @@ def _multi_stream_url(opts: _TTSOptions) -> str:
+     params.append(f"model_id={opts.model}")
+     params.append(f"output_format={opts.encoding}")
+     if is_given(opts.language):
+-        params.append(f"language_code={opts.language}")
++        params.append(f"language_code={opts.language.language}")
+     params.append(f"enable_ssml_parsing={str(opts.enable_ssml_parsing).lower()}")
+     params.append(f"enable_logging={str(opts.enable_logging).lower()}")
+     params.append(f"inactivity_timeout={opts.inactivity_timeout}")
+diff --git a/livekit-plugins/livekit-plugins-fal/livekit/plugins/fal/stt.py b/livekit-plugins/livekit-plugins-fal/livekit/plugins/fal/stt.py
+index 24231fb013..6831113fd4 100644
+--- a/livekit-plugins/livekit-plugins-fal/livekit/plugins/fal/stt.py
++++ b/livekit-plugins/livekit-plugins-fal/livekit/plugins/fal/stt.py
+@@ -6,7 +6,7 @@
+ import fal_client
+ 
+ from livekit import rtc
+-from livekit.agents import APIConnectionError, APIConnectOptions, stt
++from livekit.agents import APIConnectionError, APIConnectOptions, Language, stt
+ from livekit.agents.stt import SpeechEventType, STTCapabilities
+ from livekit.agents.types import (
+     NOT_GIVEN,
+@@ -17,7 +17,7 @@
+ 
+ @dataclass
+ class _STTOptions:
+-    language: str = "en"
++    language: Language = Language("en")
+     task: str = "transcribe"
+     chunk_level: str = "segment"
+     version: str = "3"
+@@ -38,7 +38,9 @@ def __init__(
+         self._api_key = api_key if is_given(api_key) else os.getenv("FAL_KEY")
+         if not self._api_key:
+             raise ValueError("fal AI API key is required. It should be set with env FAL_KEY")
+-        self._opts = _STTOptions(language=language if is_given(language) else "en")
++        self._opts = _STTOptions(
++            language=Language(language) if is_given(language) else Language("en")
++        )
+         self._fal_client = fal_client.AsyncClient(key=self._api_key)
+ 
+     @property
+@@ -51,7 +53,7 @@ def provider(self) -> str:
+ 
+     def update_options(self, *, language: NotGivenOr[str] = NOT_GIVEN) -> None:
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+ 
+     async def _recognize_impl(
+         self,
+@@ -62,7 +64,7 @@ async def _recognize_impl(
+     ) -> stt.SpeechEvent:
+         try:
+             if is_given(language):
+-                self._opts.language = language
++                self._opts.language = Language(language)
+             data_uri = fal_client.encode(
+                 rtc.combine_audio_frames(buffer).to_wav_bytes(), "audio/x-wav"
+             )
+@@ -71,7 +73,7 @@ async def _recognize_impl(
+                 arguments={
+                     "audio_url": data_uri,
+                     "task": self._opts.task,
+-                    "language": self._opts.language,
++                    "language": self._opts.language.language,
+                     "chunk_level": self._opts.chunk_level,
+                     "version": self._opts.version,
+                 },
+diff --git a/livekit-plugins/livekit-plugins-fireworksai/livekit/plugins/fireworksai/stt.py b/livekit-plugins/livekit-plugins-fireworksai/livekit/plugins/fireworksai/stt.py
+index d96280906f..e688b03c3c 100644
+--- a/livekit-plugins/livekit-plugins-fireworksai/livekit/plugins/fireworksai/stt.py
++++ b/livekit-plugins/livekit-plugins-fireworksai/livekit/plugins/fireworksai/stt.py
+@@ -29,6 +29,7 @@
+     DEFAULT_API_CONNECT_OPTIONS,
+     APIConnectOptions,
+     APIStatusError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -80,7 +81,7 @@ async def _run(self) -> None:
+ class STTOptions:
+     model: NotGivenOr[str]
+     sample_rate: int
+-    language: NotGivenOr[str] = NOT_GIVEN
++    language: NotGivenOr[Language] = NOT_GIVEN
+     prompt: NotGivenOr[str] = NOT_GIVEN
+     temperature: NotGivenOr[float] = NOT_GIVEN
+     skip_vad: NotGivenOr[bool] = NOT_GIVEN
+@@ -159,7 +160,7 @@ def __init__(
+         self._opts = STTOptions(
+             model=model,
+             sample_rate=sample_rate,
+-            language=language,
++            language=Language(language) if isinstance(language, str) else language,
+             prompt=prompt,
+             temperature=temperature,
+             skip_vad=skip_vad,
+@@ -229,7 +230,7 @@ def update_options(
+         if is_given(model):
+             self._opts.model = model
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+         if is_given(prompt):
+             self._opts.prompt = prompt
+         if is_given(temperature):
+@@ -300,7 +301,7 @@ def update_options(
+         if is_given(model):
+             self._opts.model = model
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+         if is_given(prompt):
+             self._opts.prompt = prompt
+         if is_given(temperature):
+@@ -496,7 +497,9 @@ def _process_stream_event(self, data: dict) -> None:
+                 final_event = stt.SpeechEvent(
+                     type=stt.SpeechEventType.FINAL_TRANSCRIPT,
+                     alternatives=[
+-                        stt.SpeechData(language=self._opts.language or "", text=full_transcript)
++                        stt.SpeechData(
++                            language=Language(self._opts.language or ""), text=full_transcript
++                        )
+                     ],
+                 )
+                 self._event_ch.send_nowait(final_event)
+@@ -509,7 +512,9 @@ def _process_stream_event(self, data: dict) -> None:
+                 interim_event = stt.SpeechEvent(
+                     type=stt.SpeechEventType.INTERIM_TRANSCRIPT,
+                     alternatives=[
+-                        stt.SpeechData(language=self._opts.language or "", text=full_transcript)
++                        stt.SpeechData(
++                            language=Language(self._opts.language or ""), text=full_transcript
++                        )
+                     ],
+                 )
+                 self._event_ch.send_nowait(interim_event)
+diff --git a/livekit-plugins/livekit-plugins-gladia/livekit/plugins/gladia/stt.py b/livekit-plugins/livekit-plugins-gladia/livekit/plugins/gladia/stt.py
+index 0df43af577..97827dc280 100644
+--- a/livekit-plugins/livekit-plugins-gladia/livekit/plugins/gladia/stt.py
++++ b/livekit-plugins/livekit-plugins-gladia/livekit/plugins/gladia/stt.py
+@@ -36,6 +36,7 @@
+     APIConnectOptions,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     NotGivenOr,
+     stt,
+     utils,
+@@ -505,7 +506,9 @@ def _create_speech_event(
+             if text:
+                 alternatives.append(
+                     stt.SpeechData(
+-                        language=utterance.get("language", languages[0] if languages else "en"),
++                        language=Language(
++                            utterance.get("language", languages[0] if languages else "en")
++                        ),
+                         start_time=utterance.get("start", 0),
+                         end_time=utterance.get("end", 0),
+                         confidence=utterance.get("confidence", 1.0),
+@@ -524,7 +527,7 @@ def _create_speech_event(
+         if not alternatives:
+             alternatives.append(
+                 stt.SpeechData(
+-                    language=languages[0] if languages and len(languages) > 0 else "en",
++                    language=Language(languages[0] if languages and len(languages) > 0 else "en"),
+                     start_time=0,
+                     end_time=0,
+                     confidence=1.0,
+@@ -1023,11 +1026,13 @@ def _process_gladia_message(self, data: dict) -> None:
+                 )
+ 
+             if text:
+-                language = utterance.get(
+-                    "language",
+-                    self._opts.language_config.languages[0]
+-                    if self._opts.language_config.languages
+-                    else "en",
++                language = Language(
++                    utterance.get(
++                        "language",
++                        self._opts.language_config.languages[0]
++                        if self._opts.language_config.languages
++                        else "en",
++                    )
+                 )
+ 
+                 speech_data = stt.SpeechData(
+@@ -1103,7 +1108,7 @@ def _process_gladia_message(self, data: dict) -> None:
+                 if translated_text and language:
+                     # Create speech data for the translation
+                     speech_data = stt.SpeechData(
+-                        language=language,  # Use the target language
++                        language=Language(language),  # Use the target language
+                         start_time=translated_utterance.get("start", 0) + self.start_time_offset,
+                         end_time=translated_utterance.get("end", 0) + self.start_time_offset,
+                         confidence=translated_utterance.get("confidence", 1.0),
+diff --git a/livekit-plugins/livekit-plugins-google/livekit/plugins/google/realtime/realtime_api.py b/livekit-plugins/livekit-plugins-google/livekit/plugins/google/realtime/realtime_api.py
+index d0263b43d0..83a9730423 100644
+--- a/livekit-plugins/livekit-plugins-google/livekit/plugins/google/realtime/realtime_api.py
++++ b/livekit-plugins/livekit-plugins-google/livekit/plugins/google/realtime/realtime_api.py
+@@ -14,7 +14,7 @@
+ from google.genai import Client as GenAIClient, types
+ from google.genai.live import AsyncSession
+ from livekit import rtc
+-from livekit.agents import APIConnectionError, llm, utils
++from livekit.agents import APIConnectionError, Language, llm, utils
+ from livekit.agents.metrics import RealtimeModelMetrics
+ from livekit.agents.metrics.base import Metadata
+ from livekit.agents.types import (
+@@ -121,7 +121,7 @@ class _RealtimeOptions:
+     model: LiveAPIModels | str
+     api_key: str | None
+     voice: Voice | str
+-    language: NotGivenOr[str]
++    language: NotGivenOr[Language]
+     response_modalities: list[types.Modality]
+     vertexai: bool
+     project: str | None
+@@ -341,7 +341,7 @@ def __init__(
+             instructions=instructions,
+             input_audio_transcription=input_audio_transcription,
+             output_audio_transcription=output_audio_transcription,
+-            language=language,
++            language=Language(language) if isinstance(language, str) else language,
+             image_encode_options=image_encode_options,
+             enable_affective_dialog=enable_affective_dialog,
+             proactivity=proactivity,
+diff --git a/livekit-plugins/livekit-plugins-google/livekit/plugins/google/stt.py b/livekit-plugins/livekit-plugins-google/livekit/plugins/google/stt.py
+index 9dc36b440e..ea6ef9e95c 100644
+--- a/livekit-plugins/livekit-plugins-google/livekit/plugins/google/stt.py
++++ b/livekit-plugins/livekit-plugins-google/livekit/plugins/google/stt.py
+@@ -39,6 +39,7 @@
+     APIConnectOptions,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -207,7 +208,9 @@ def __init__(
+                 ) from None
+ 
+         if isinstance(languages, str):
+-            languages = [languages]
++            languages = [Language(languages)]
++        else:
++            languages = [Language(lg) for lg in languages]
+ 
+         self._config = STTOptions(
+             languages=languages,
+@@ -279,7 +282,7 @@ def _sanitize_options(self, *, language: NotGivenOr[str] = NOT_GIVEN) -> STTOpti
+         config = dataclasses.replace(self._config)
+ 
+         if is_given(language):
+-            config.languages = [language]
++            config.languages = [Language(language)]
+ 
+         if not isinstance(config.languages, list):
+             config.languages = [config.languages]
+@@ -411,8 +414,9 @@ def update_options(
+     ) -> None:
+         if is_given(languages):
+             if isinstance(languages, str):
+-                languages = [languages]
+-            self._config.languages = cast(list[LgType], languages)
++                self._config.languages = [Language(languages)]
++            else:
++                self._config.languages = [Language(lg) for lg in languages]
+         if is_given(detect_language):
+             self._config.detect_language = detect_language
+         if is_given(interim_results):
+@@ -494,8 +498,9 @@ def update_options(
+     ) -> None:
+         if is_given(languages):
+             if isinstance(languages, str):
+-                languages = [languages]
+-            self._config.languages = cast(list[LgType], languages)
++                self._config.languages = [Language(languages)]
++            else:
++                self._config.languages = [Language(lg) for lg in languages]
+         if is_given(detect_language):
+             self._config.detect_language = detect_language
+         if is_given(interim_results):
+@@ -819,7 +824,7 @@ def _recognize_response_to_speech_event(
+             start_time = end_time = 0
+ 
+         confidence /= len(resp.results)
+-        lg = resp.results[0].language_code
++        lg = Language(resp.results[0].language_code)
+ 
+         alternatives = [
+             stt.SpeechData(
+@@ -871,12 +876,12 @@ def _streaming_recognize_response_to_speech_data(
+         text = final_result.alternatives[0].transcript
+         confidence = final_result.alternatives[0].confidence
+         words = list(final_result.alternatives[0].words)
+-        lg = final_result.language_code
++        lg = Language(final_result.language_code)
+     else:
+         confidence /= len(resp.results)
+         if confidence < min_confidence_threshold:
+             return None
+-        lg = resp.results[0].language_code
++        lg = Language(resp.results[0].language_code)
+ 
+     if text == "" or not words:
+         if text and not words:
+diff --git a/livekit-plugins/livekit-plugins-google/livekit/plugins/google/tts.py b/livekit-plugins/livekit-plugins-google/livekit/plugins/google/tts.py
+index bcd9bfbebb..87d10ff7bd 100644
+--- a/livekit-plugins/livekit-plugins-google/livekit/plugins/google/tts.py
++++ b/livekit-plugins/livekit-plugins-google/livekit/plugins/google/tts.py
+@@ -18,6 +18,7 @@
+ import weakref
+ from collections.abc import AsyncGenerator
+ from dataclasses import dataclass, replace
++from typing import Any
+ 
+ from google.api_core.client_options import ClientOptions
+ from google.api_core.exceptions import DeadlineExceeded, GoogleAPICallError
+@@ -27,7 +28,15 @@
+     SsmlVoiceGender,
+     SynthesizeSpeechResponse,
+ )
+-from livekit.agents import APIConnectOptions, APIStatusError, APITimeoutError, tokenize, tts, utils
++from livekit.agents import (
++    APIConnectOptions,
++    APIStatusError,
++    APITimeoutError,
++    Language,
++    tokenize,
++    tts,
++    utils,
++)
+ from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, NOT_GIVEN, NotGivenOr
+ from livekit.agents.utils import is_given
+ 
+@@ -126,7 +135,7 @@ def __init__(
+         self._credentials_file = credentials_file
+         self._location = location
+ 
+-        lang = language if is_given(language) else DEFAULT_LANGUAGE
++        lang = Language(language) if is_given(language) else DEFAULT_LANGUAGE
+         ssml_gender = _gender_from_str(DEFAULT_GENDER if not is_given(gender) else gender)
+ 
+         if not is_given(model_name):
+@@ -216,9 +225,9 @@ def update_options(
+             speaking_rate (float, optional): Speed of speech.
+             volume_gain_db (float, optional): Volume gain in decibels.
+         """
+-        params = {}
++        params: dict[str, Any] = {}
+         if is_given(language):
+-            params["language_code"] = str(language)
++            params["language_code"] = Language(language)
+         if is_given(gender):
+             params["ssml_gender"] = _gender_from_str(str(gender))
+         if is_given(voice_name):
+diff --git a/livekit-plugins/livekit-plugins-gradium/livekit/plugins/gradium/stt.py b/livekit-plugins/livekit-plugins-gradium/livekit/plugins/gradium/stt.py
+index 6beb45a433..edb4a161be 100644
+--- a/livekit-plugins/livekit-plugins-gradium/livekit/plugins/gradium/stt.py
++++ b/livekit-plugins/livekit-plugins-gradium/livekit/plugins/gradium/stt.py
+@@ -30,6 +30,7 @@
+     DEFAULT_API_CONNECT_OPTIONS,
+     APIConnectOptions,
+     APIStatusError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -57,7 +58,7 @@ class STTOptions:
+     encoding: str = "pcm_s16le"
+     temperature: float | None = None
+     # TODO(laurent): support language detection
+-    language: str = "en"
++    language: Language = Language("en")
+     vad_threshold: float = 0.6
+     vad_bucket: int | None = 2
+     # When set, we flush the stt state on the first time the VAD triggers
+diff --git a/livekit-plugins/livekit-plugins-mistralai/livekit/plugins/mistralai/stt.py b/livekit-plugins/livekit-plugins-mistralai/livekit/plugins/mistralai/stt.py
+index b6acab873f..4f395075c8 100644
+--- a/livekit-plugins/livekit-plugins-mistralai/livekit/plugins/mistralai/stt.py
++++ b/livekit-plugins/livekit-plugins-mistralai/livekit/plugins/mistralai/stt.py
+@@ -23,6 +23,7 @@
+     APIConnectOptions,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     stt,
+ )
+ from livekit.agents.types import (
+@@ -40,7 +41,7 @@
+ @dataclass
+ class _STTOptions:
+     model: STTModels | str
+-    language: str | None
++    language: Language | None
+ 
+ 
+ class STT(stt.STT):
+@@ -70,7 +71,7 @@ def __init__(
+             )
+         )
+         self._opts = _STTOptions(
+-            language=language,
++            language=Language(language) if language else None,
+             model=model,
+         )
+ 
+@@ -104,7 +105,7 @@ def update_options(
+         if is_given(model):
+             self._opts.model = model
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+ 
+     async def _recognize_impl(
+         self,
+@@ -115,7 +116,7 @@ async def _recognize_impl(
+     ) -> stt.SpeechEvent:
+         try:
+             if is_given(language):
+-                self._opts.language = language
++                self._opts.language = Language(language)
+             data = rtc.combine_audio_frames(buffer).to_wav_bytes()
+ 
+             # MistralAI transcription API call
+@@ -131,7 +132,7 @@ async def _recognize_impl(
+                 alternatives=[
+                     stt.SpeechData(
+                         text=resp.text,
+-                        language=self._opts.language if self._opts.language else "",
++                        language=Language(self._opts.language if self._opts.language else ""),
+                         start_time=resp.segments[0].start if resp.segments else 0,
+                         end_time=resp.segments[-1].end if resp.segments else 0,
+                         words=[
+diff --git a/livekit-plugins/livekit-plugins-neuphonic/livekit/plugins/neuphonic/tts.py b/livekit-plugins/livekit-plugins-neuphonic/livekit/plugins/neuphonic/tts.py
+index 2d0f0bef33..a4c53ce722 100644
+--- a/livekit-plugins/livekit-plugins-neuphonic/livekit/plugins/neuphonic/tts.py
++++ b/livekit-plugins/livekit-plugins-neuphonic/livekit/plugins/neuphonic/tts.py
+@@ -33,6 +33,7 @@
+     tts,
+     utils,
+ )
++from livekit.agents import Language
+ from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, NOT_GIVEN, NotGivenOr
+ from livekit.agents.utils import is_given
+ 
+@@ -44,7 +45,7 @@
+ 
+ @dataclass
+ class _TTSOptions:
+-    lang_code: TTSLangCodes | str
++    lang_code: Language
+     encoding: str
+     sample_rate: int
+     voice_id: str
+@@ -112,7 +113,7 @@ def __init__(
+             word_tokenizer = tokenize.basic.WordTokenizer(ignore_punctuation=False)
+ 
+         self._opts = _TTSOptions(
+-            lang_code=lang_code,
++            lang_code=Language(lang_code),
+             encoding=encoding,
+             sample_rate=sample_rate,
+             voice_id=voice_id,
+@@ -137,7 +138,7 @@ def __init__(
+     async def _connect_ws(self, timeout: float) -> aiohttp.ClientWebSocketResponse:
+         session = self._ensure_session()
+         url = self._opts.get_ws_url(
+-            f"/speak/en?api_key={self._opts.api_key}&speed={self._opts.speed}&lang_code={self._opts.lang_code}&sampling_rate={self._opts.sample_rate}&voice_id={self._opts.voice_id}"
++            f"/speak/en?api_key={self._opts.api_key}&speed={self._opts.speed}&lang_code={self._opts.lang_code.language}&sampling_rate={self._opts.sample_rate}&voice_id={self._opts.voice_id}"
+         )
+         if self._opts.jwt_token:
+             url += f"&jwt_token={self._opts.jwt_token}"
+@@ -188,7 +189,7 @@ def update_options(
+             speed (float, optional): The audio playback speed.
+         """
+         if is_given(lang_code):
+-            self._opts.lang_code = lang_code
++            self._opts.lang_code = Language(lang_code)
+         if is_given(voice_id):
+             self._opts.voice_id = voice_id
+         if is_given(speed):
+@@ -245,12 +246,12 @@ async def _run(self, output_emitter: tts.AudioEmitter) -> None:
+                 headers = None
+ 
+             async with self._tts._ensure_session().post(
+-                f"{self._opts.base_url}/sse/speak/{self._opts.lang_code}",
++                f"{self._opts.base_url}/sse/speak/{self._opts.lang_code.language}",
+                 headers=headers,
+                 json={
+                     "text": self._input_text,
+                     "voice_id": self._opts.voice_id,
+-                    "lang_code": self._opts.lang_code,
++                    "lang_code": self._opts.lang_code.language,
+                     "encoding": "pcm_linear",
+                     "sampling_rate": self._opts.sample_rate,
+                     "speed": self._opts.speed,
+diff --git a/livekit-plugins/livekit-plugins-nltk/livekit/plugins/nltk/sentence_tokenizer.py b/livekit-plugins/livekit-plugins-nltk/livekit/plugins/nltk/sentence_tokenizer.py
+index 79b9f9e492..1535837f0a 100644
+--- a/livekit-plugins/livekit-plugins-nltk/livekit/plugins/nltk/sentence_tokenizer.py
++++ b/livekit-plugins/livekit-plugins-nltk/livekit/plugins/nltk/sentence_tokenizer.py
+@@ -6,6 +6,7 @@
+ 
+ import nltk  # type: ignore
+ from livekit import agents
++from livekit.agents import Language
+ 
+ # nltk is using the punkt tokenizer
+ # https://www.nltk.org/_modules/nltk/tokenize/punkt.html
+@@ -38,7 +39,8 @@ def __init__(
+     def _sanitize_options(self, language: str | None = None) -> _TokenizerOptions:
+         config = dataclasses.replace(self._config)
+         if language:
+-            config.language = language
++            lang = Language(language)
++            config.language = lang.to_language_name() or language
+         return config
+ 
+     def tokenize(self, text: str, *, language: str | None = None) -> list[str]:
+diff --git a/livekit-plugins/livekit-plugins-nvidia/livekit/plugins/nvidia/stt.py b/livekit-plugins/livekit-plugins-nvidia/livekit/plugins/nvidia/stt.py
+index c21714cfd3..571199ed8f 100644
+--- a/livekit-plugins/livekit-plugins-nvidia/livekit/plugins/nvidia/stt.py
++++ b/livekit-plugins/livekit-plugins-nvidia/livekit/plugins/nvidia/stt.py
+@@ -12,6 +12,7 @@
+ from livekit.agents import (
+     DEFAULT_API_CONNECT_OPTIONS,
+     APIConnectOptions,
++    Language,
+     stt,
+ )
+ from livekit.agents.types import NOT_GIVEN, NotGivenOr
+@@ -28,7 +29,7 @@ class STTOptions:
+     model: str
+     function_id: str
+     punctuate: bool
+-    language_code: str
++    language_code: Language
+     sample_rate: int
+     use_ssl: bool
+     server: str
+@@ -75,7 +76,7 @@ def __init__(
+             model=model,
+             function_id=function_id,
+             punctuate=punctuate,
+-            language_code=language_code,
++            language_code=Language(language_code),
+             sample_rate=sample_rate,
+             server=server,
+             use_ssl=use_ssl,
+@@ -96,7 +97,7 @@ def stream(
+         language: NotGivenOr[str] = NOT_GIVEN,
+         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+     ) -> stt.RecognizeStream:
+-        effective_language = language if is_given(language) else self._opts.language_code
++        effective_language = Language(language) if is_given(language) else self._opts.language_code
+         return SpeechStream(stt=self, conn_options=conn_options, language=effective_language)
+ 
+     def log_asr_models(self, asr_service: riva.client.ASRService) -> dict:
+@@ -280,7 +281,7 @@ def _convert_to_speech_data(self, alternative) -> stt.SpeechData:
+             end_time = getattr(words[-1], "end_time", 0) / 1000.0 + self.start_time_offset
+ 
+         return stt.SpeechData(
+-            language=self._language,
++            language=Language(self._language),
+             start_time=start_time,
+             end_time=end_time,
+             confidence=confidence,
+diff --git a/livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/stt.py b/livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/stt.py
+index ebe99ba62d..391edc93c7 100644
+--- a/livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/stt.py
++++ b/livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/stt.py
+@@ -35,6 +35,7 @@
+     APIConnectOptions,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -64,7 +65,7 @@
+ @dataclass
+ class _STTOptions:
+     model: STTModels | str
+-    language: str
++    language: Language
+     detect_language: bool
+     turn_detection: SessionTurnDetection
+     prompt: NotGivenOr[str] = NOT_GIVEN
+@@ -121,7 +122,7 @@ def __init__(
+             }
+ 
+         self._opts = _STTOptions(
+-            language=language,
++            language=Language(language),
+             detect_language=detect_language,
+             model=model,
+             prompt=prompt,
+@@ -301,7 +302,7 @@ def stream(
+         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+     ) -> SpeechStream:
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+         stream = SpeechStream(
+             stt=self,
+             pool=self._pool,
+@@ -335,10 +336,10 @@ def update_options(
+         if is_given(model):
+             self._opts.model = model
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+         if is_given(detect_language):
+             self._opts.detect_language = detect_language
+-            self._opts.language = ""
++            self._opts.language = Language("")
+         if is_given(prompt):
+             self._opts.prompt = prompt
+         if is_given(turn_detection):
+@@ -358,7 +359,7 @@ async def _connect_ws(self, timeout: float) -> aiohttp.ClientWebSocketResponse:
+         if prompt:
+             transcription_config["prompt"] = prompt
+         if self._opts.language:
+-            transcription_config["language"] = self._opts.language
++            transcription_config["language"] = self._opts.language.language
+ 
+         input_config: dict[str, Any] = {
+             "format": {
+@@ -416,7 +417,7 @@ async def _recognize_impl(
+     ) -> stt.SpeechEvent:
+         try:
+             if is_given(language):
+-                self._opts.language = language
++                self._opts.language = Language(language)
+             data = rtc.combine_audio_frames(buffer).to_wav_bytes()
+             prompt = self._opts.prompt if is_given(self._opts.prompt) else openai.omit
+ 
+@@ -432,7 +433,7 @@ async def _recognize_impl(
+                     "audio/wav",
+                 ),
+                 model=self._opts.model,  # type: ignore
+-                language=self._opts.language,
++                language=self._opts.language.language if self._opts.language else "",
+                 prompt=prompt,
+                 response_format=format,
+                 timeout=httpx.Timeout(30, connect=conn_options.timeout),
+@@ -440,7 +441,7 @@ async def _recognize_impl(
+ 
+             sd = stt.SpeechData(text=resp.text, language=self._opts.language)
+             if isinstance(resp, TranscriptionVerbose) and resp.language:
+-                sd.language = resp.language
++                sd.language = Language(resp.language)
+ 
+             return stt.SpeechEvent(
+                 type=stt.SpeechEventType.FINAL_TRANSCRIPT,
+@@ -477,7 +478,7 @@ def update_options(
+         *,
+         language: str,
+     ) -> None:
+-        self._language = language
++        self._language = Language(language)
+         self._pool.invalidate()
+         self._reconnect_event.set()
+ 
+diff --git a/livekit-plugins/livekit-plugins-rtzr/livekit/plugins/rtzr/stt.py b/livekit-plugins/livekit-plugins-rtzr/livekit/plugins/rtzr/stt.py
+index 878f3d9cd4..f7dcf681c3 100644
+--- a/livekit-plugins/livekit-plugins-rtzr/livekit/plugins/rtzr/stt.py
++++ b/livekit-plugins/livekit-plugins-rtzr/livekit/plugins/rtzr/stt.py
+@@ -29,6 +29,7 @@
+     APIConnectOptions,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -50,7 +51,7 @@
+ @dataclass
+ class _STTOptions:
+     model_name: str = "sommers_ko"  # sommers_ko: "ko", sommers_ja: "ja"
+-    language: str = "ko"  # ko, ja, en
++    language: Language = Language("ko")  # ko, ja, en
+     sample_rate: int = DEFAULT_SAMPLE_RATE
+     encoding: str = "LINEAR16"  # or "OGG_OPUS" in future
+     domain: str = "CALL"  # CALL, MEETING
+@@ -99,7 +100,7 @@ def __init__(
+ 
+         self._params = _STTOptions(
+             model_name=model,
+-            language=language,
++            language=Language(language),
+             sample_rate=sample_rate,
+             domain=domain,
+             epd_time=epd_time,
+diff --git a/livekit-plugins/livekit-plugins-sarvam/livekit/plugins/sarvam/stt.py b/livekit-plugins/livekit-plugins-sarvam/livekit/plugins/sarvam/stt.py
+index b028784a1f..a655c44982 100644
+--- a/livekit-plugins/livekit-plugins-sarvam/livekit/plugins/sarvam/stt.py
++++ b/livekit-plugins/livekit-plugins-sarvam/livekit/plugins/sarvam/stt.py
+@@ -38,6 +38,7 @@
+     APIConnectOptions,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -406,7 +407,7 @@ def __init__(
+             )
+ 
+         self._opts = SarvamSTTOptions(
+-            language=language,
++            language=Language(language),
+             api_key=self._api_key,
+             model=model,
+             mode=mode,
+@@ -449,7 +450,7 @@ def _resolve_opts(
+         Raises:
+             ValueError: If mode is explicitly given but not supported by the model.
+         """
+-        resolved_language = language if is_given(language) else self._opts.language
++        resolved_language = Language(language) if is_given(language) else self._opts.language
+         resolved_model = model if is_given(model) else self._opts.model
+         if not isinstance(resolved_language, str):
+             resolved_language = self._opts.language
+@@ -544,7 +545,9 @@ async def _recognize_impl(
+                 request_id = response_json.get("request_id", "")
+                 detected_language = response_json.get("language_code")
+                 if not isinstance(detected_language, str):
+-                    detected_language = opts_language or ""
++                    detected_language = Language(opts_language or "")
++                else:
++                    detected_language = Language(detected_language)
+ 
+                 start_time = 0.0
+                 end_time = 0.0
+@@ -806,7 +809,7 @@ def update_options(
+         if not model or not model.strip():
+             raise ValueError("Model cannot be empty")
+ 
+-        self._opts.language = language
++        self._opts.language = Language(language)
+         self._opts.model = model
+         self._opts.base_url, self._opts.streaming_url = _get_urls_for_model(model)
+         if prompt is not None:
+@@ -1189,7 +1192,7 @@ async def _handle_transcript_data(self, data: dict) -> None:
+         """Handle transcription result messages."""
+         transcript_data = data.get("data", {})
+         transcript_text = transcript_data.get("transcript", "")
+-        language = transcript_data.get("language_code", "")
++        language = Language(transcript_data.get("language_code", ""))
+         request_id = transcript_data.get("request_id", "")
+         self._maybe_set_server_request_id(transcript_data)
+ 
+diff --git a/livekit-plugins/livekit-plugins-sarvam/livekit/plugins/sarvam/tts.py b/livekit-plugins/livekit-plugins-sarvam/livekit/plugins/sarvam/tts.py
+index 9f7a5b33bb..dff9d65eb1 100644
+--- a/livekit-plugins/livekit-plugins-sarvam/livekit/plugins/sarvam/tts.py
++++ b/livekit-plugins/livekit-plugins-sarvam/livekit/plugins/sarvam/tts.py
+@@ -36,6 +36,7 @@
+     APIConnectOptions,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     tokenize,
+     tts,
+     utils,
+@@ -377,7 +378,7 @@ def __init__(
+         word_tokenizer = tokenize.basic.SentenceTokenizer()
+ 
+         self._opts = SarvamTTSOptions(
+-            target_language_code=target_language_code,
++            target_language_code=Language(target_language_code),
+             model=model,
+             speaker=speaker,
+             speech_sample_rate=speech_sample_rate,
+diff --git a/livekit-plugins/livekit-plugins-simplismart/livekit/plugins/simplismart/stt.py b/livekit-plugins/livekit-plugins-simplismart/livekit/plugins/simplismart/stt.py
+index d45708b9be..1b6c79f6a7 100644
+--- a/livekit-plugins/livekit-plugins-simplismart/livekit/plugins/simplismart/stt.py
++++ b/livekit-plugins/livekit-plugins-simplismart/livekit/plugins/simplismart/stt.py
+@@ -36,6 +36,7 @@
+     APIConnectOptions,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -50,7 +51,7 @@
+ 
+ 
+ class SimplismartSTTOptions(BaseModel):
+-    language: str | None = None
++    language: Language | None = None
+     task: Literal["transcribe", "translate"] = "transcribe"
+     without_timestamps: bool = True
+     vad_model: Literal["silero", "frame"] = "frame"
+@@ -157,7 +158,7 @@ def __init__(
+ 
+         self._model = model
+         self._opts = SimplismartSTTOptions(
+-            language=language,
++            language=Language(language),
+             task=task,
+             without_timestamps=without_timestamps,
+             vad_model=vad_model,
+@@ -242,7 +243,7 @@ async def _recognize_impl(
+                 transcription = response_json.get("transcription", [])
+ 
+                 info = response_json.get("info", {})
+-                detected_language = info.get("language", resolved_language or "en")
++                detected_language = Language(info.get("language", resolved_language or "en"))
+ 
+                 start_time = timestamps[0][0] if timestamps else 0.0
+                 end_time = timestamps[-1][1] if timestamps else 0.0
+@@ -283,7 +284,7 @@ def stream(
+         **kwargs: Any,
+     ) -> "SpeechStream":
+         """Create a streaming transcription session."""
+-        opts_language = language if is_given(language) else self._opts.language
++        opts_language = Language(language) if is_given(language) else self._opts.language
+ 
+         # Create options for the stream
+         stream_opts = SimplismartSTTOptions(language=opts_language)
+@@ -469,7 +470,7 @@ def _handle_transcript_data(self, data: str) -> None:
+ 
+             # Create speech data
+             speech_data = stt.SpeechData(
+-                language=self._opts.language or "en",
++                language=Language(self._opts.language or "en"),
+                 text=transcript_text,
+             )
+ 
+diff --git a/livekit-plugins/livekit-plugins-smallestai/livekit/plugins/smallestai/tts.py b/livekit-plugins/livekit-plugins-smallestai/livekit/plugins/smallestai/tts.py
+index bb309f8a37..5f28832d90 100644
+--- a/livekit-plugins/livekit-plugins-smallestai/livekit/plugins/smallestai/tts.py
++++ b/livekit-plugins/livekit-plugins-smallestai/livekit/plugins/smallestai/tts.py
+@@ -25,6 +25,7 @@
+     APIConnectionError,
+     APIConnectOptions,
+     APITimeoutError,
++    Language,
+     create_api_error_from_http,
+     tts,
+     utils,
+@@ -49,7 +50,7 @@ class _TTSOptions:
+     consistency: float
+     similarity: float
+     enhancement: float
+-    language: str
++    language: Language
+     output_format: TTSEncoding | str
+     base_url: str
+ 
+@@ -115,7 +116,7 @@ def __init__(
+             consistency=consistency,
+             similarity=similarity,
+             enhancement=enhancement,
+-            language=language,
++            language=Language(language),
+             output_format=output_format,
+             base_url=base_url,
+         )
+@@ -164,7 +165,7 @@ def update_options(
+         if is_given(enhancement):
+             self._opts.enhancement = enhancement
+         if is_given(language):
+-            self._opts.language = language
++            self._opts.language = Language(language)
+         if is_given(output_format):
+             self._opts.output_format = output_format
+ 
+@@ -236,4 +237,7 @@ def _to_smallest_options(opts: _TTSOptions) -> dict[str, Any]:
+     extra_keys = ["consistency", "similarity", "enhancement"]
+ 
+     keys = base_keys if opts.model == "lightning" else base_keys + extra_keys
+-    return {key: getattr(opts, key) for key in keys}
++    result = {key: getattr(opts, key) for key in keys}
++    if "language" in result and isinstance(result["language"], Language):
++        result["language"] = result["language"].language
++    return result
+diff --git a/livekit-plugins/livekit-plugins-soniox/livekit/plugins/soniox/stt.py b/livekit-plugins/livekit-plugins-soniox/livekit/plugins/soniox/stt.py
+index 7f953c0bb1..189dfe59d9 100644
+--- a/livekit-plugins/livekit-plugins-soniox/livekit/plugins/soniox/stt.py
++++ b/livekit-plugins/livekit-plugins-soniox/livekit/plugins/soniox/stt.py
+@@ -28,6 +28,7 @@
+     APIConnectOptions,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -386,7 +387,7 @@ def send_endpoint_transcript() -> None:
+                     alternatives=[
+                         stt.SpeechData(
+                             text=final_transcript_buffer,
+-                            language=final_transcript_language,
++                            language=Language(final_transcript_language),
+                             speaker_id=final_speaker_id,
+                         )
+                     ],
+@@ -464,7 +465,7 @@ def send_endpoint_transcript() -> None:
+                                     alternatives=[
+                                         stt.SpeechData(
+                                             text=final_transcript_buffer + non_final_transcription,
+-                                            language=(
++                                            language=Language(
+                                                 final_transcript_language
+                                                 if final_transcript_language
+                                                 else non_final_transcription_language
+diff --git a/livekit-plugins/livekit-plugins-speechmatics/livekit/plugins/speechmatics/stt.py b/livekit-plugins/livekit-plugins-speechmatics/livekit/plugins/speechmatics/stt.py
+index 1feb11e6be..43fbbea951 100644
+--- a/livekit-plugins/livekit-plugins-speechmatics/livekit/plugins/speechmatics/stt.py
++++ b/livekit-plugins/livekit-plugins-speechmatics/livekit/plugins/speechmatics/stt.py
+@@ -23,6 +23,7 @@
+ from livekit.agents import (
+     DEFAULT_API_CONNECT_OPTIONS,
+     APIConnectOptions,
++    Language,
+     stt,
+     utils,
+ )
+@@ -78,7 +79,7 @@ class STTOptions:
+     """Configuration parameters for Speechmatics STT service."""
+ 
+     # Service configuration
+-    language: str = "en"
++    language: Language = Language("en")
+     output_locale: str | None = None
+     domain: str | None = None
+ 
+@@ -268,7 +269,7 @@ def _set(value: Any) -> Any:
+ 
+         # Create STT options from parameters
+         self._stt_options = STTOptions(
+-            language=language,
++            language=Language(language),
+             output_locale=_set(output_locale),
+             domain=_set(domain),
+             turn_detection_mode=turn_detection_mode,
+@@ -415,7 +416,7 @@ def _prepare_config(self, language: NotGivenOr[str] = NOT_GIVEN) -> VoiceAgentCo
+         config.audio_encoding = self._audio_encoding
+ 
+         # Language and domain
+-        config.language = language if is_given(language) else opts.language
++        config.language = Language(language) if is_given(language) else opts.language
+         config.domain = opts.domain
+         config.output_locale = opts.output_locale
+ 
+@@ -821,7 +822,7 @@ def _send_frames(self, segments: list[dict[str, Any]], is_final: bool) -> None:
+ 
+             # Create speech event
+             speech_data = stt.SpeechData(
+-                language=segment.get("language", opts.language),
++                language=Language(segment.get("language", opts.language)),
+                 text=text,
+                 speaker_id=segment.get("speaker_id", "UU"),
+                 start_time=segment.get("metadata", {}).get("start_time", 0)
+diff --git a/livekit-plugins/livekit-plugins-spitch/livekit/plugins/spitch/stt.py b/livekit-plugins/livekit-plugins-spitch/livekit/plugins/spitch/stt.py
+index 1b761c74bd..6773a955bd 100644
+--- a/livekit-plugins/livekit-plugins-spitch/livekit/plugins/spitch/stt.py
++++ b/livekit-plugins/livekit-plugins-spitch/livekit/plugins/spitch/stt.py
+@@ -13,6 +13,7 @@
+     APIConnectOptions,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     NotGivenOr,
+ )
+ from livekit.agents.stt import stt
+@@ -23,7 +24,7 @@
+ 
+ @dataclass
+ class _STTOptions:
+-    language: str
++    language: Language
+ 
+ 
+ class STT(stt.STT):
+@@ -37,7 +38,7 @@ def __init__(self, *, language: str = "en") -> None:
+             )
+         )
+ 
+-        self._opts = _STTOptions(language=language)
++        self._opts = _STTOptions(language=Language(language))
+         self._client = AsyncSpitch()
+ 
+     @property
+@@ -49,11 +50,12 @@ def provider(self) -> str:
+         return "Spitch"
+ 
+     def update_options(self, language: str) -> None:
+-        self._opts.language = language or self._opts.language
++        self._opts.language = Language(language) if language else self._opts.language
+ 
+     def _sanitize_options(self, *, language: str | None = None) -> _STTOptions:
+         config = dataclasses.replace(self._opts)
+-        config.language = language or config.language
++        if language:
++            config.language = Language(language)
+         return config
+ 
+     async def _recognize_impl(
+@@ -68,7 +70,7 @@ async def _recognize_impl(
+             data = rtc.combine_audio_frames(buffer).to_wav_bytes()
+             model = "mansa_v1" if config.language == "en" else "legacy"
+             resp = await self._client.speech.transcribe(
+-                language=config.language,  # type: ignore
++                language=config.language.language,  # type: ignore
+                 content=data,
+                 timeout=httpx.Timeout(30, connect=conn_options.timeout),
+                 timestamp="word" if "mansa" in model else None,
+@@ -79,7 +81,7 @@ async def _recognize_impl(
+                 alternatives=[
+                     stt.SpeechData(
+                         text=resp.text or "",
+-                        language=config.language or "",
++                        language=Language(config.language or ""),
+                         start_time=float(resp.segments[0].start)
+                         if resp.segments and resp.segments[0] and resp.segments[0].start
+                         else 0.0,
+diff --git a/livekit-plugins/livekit-plugins-spitch/livekit/plugins/spitch/tts.py b/livekit-plugins/livekit-plugins-spitch/livekit/plugins/spitch/tts.py
+index 9a9a21706c..05be61e367 100644
+--- a/livekit-plugins/livekit-plugins-spitch/livekit/plugins/spitch/tts.py
++++ b/livekit-plugins/livekit-plugins-spitch/livekit/plugins/spitch/tts.py
+@@ -12,6 +12,7 @@
+     APIConnectOptions,
+     APIStatusError,
+     APITimeoutError,
++    Language,
+     tts,
+ )
+ from spitch import AsyncSpitch
+@@ -23,7 +24,7 @@
+ 
+ @dataclass
+ class _TTSOptions:
+-    language: str
++    language: Language
+     voice: str
+ 
+ 
+@@ -33,7 +34,7 @@ def __init__(self, *, language: str = "en", voice: str = "lina"):
+             capabilities=tts.TTSCapabilities(streaming=False), sample_rate=24_000, num_channels=1
+         )
+ 
+-        self._opts = _TTSOptions(language=language, voice=voice)
++        self._opts = _TTSOptions(language=Language(language), voice=voice)
+         self._client = AsyncSpitch()
+ 
+     @property
+@@ -76,7 +77,7 @@ def __init__(
+     async def _run(self, output_emitter: tts.AudioEmitter) -> None:
+         spitch_stream = self._client.speech.with_streaming_response.generate(
+             text=self.input_text,
+-            language=self._opts.language,  # type: ignore
++            language=self._opts.language.language,  # type: ignore
+             voice=self._opts.voice,  # type: ignore
+             format="mp3",
+             timeout=httpx.Timeout(30, connect=self._conn_options.timeout),
+diff --git a/livekit-plugins/livekit-plugins-turn-detector/livekit/plugins/turn_detector/base.py b/livekit-plugins/livekit-plugins-turn-detector/livekit/plugins/turn_detector/base.py
+index 26ca28834b..8b5c7859b9 100644
+--- a/livekit-plugins/livekit-plugins-turn-detector/livekit/plugins/turn_detector/base.py
++++ b/livekit-plugins/livekit-plugins-turn-detector/livekit/plugins/turn_detector/base.py
+@@ -12,7 +12,7 @@
+ 
+ from huggingface_hub import errors
+ 
+-from livekit.agents import Plugin, llm
++from livekit.agents import Language, Plugin, llm
+ from livekit.agents.inference_runner import _InferenceRunner
+ from livekit.agents.ipc.inference_executor import InferenceExecutor
+ from livekit.agents.job import get_job_context
+@@ -233,18 +233,16 @@ def provider(self) -> str:
+     @abstractmethod
+     def _inference_method(self) -> str: ...
+ 
+-    async def unlikely_threshold(self, language: str | None) -> float | None:
++    async def unlikely_threshold(self, language: Language | None) -> float | None:
+         if language is None:
+             return None
+ 
+         # try the full language code first
+-        lang = language.lower()
+-        lang_data = self._languages.get(lang)
++        lang_data = self._languages.get(language.iso)
+ 
+         # try the base language if the full language code is not found
+-        if lang_data is None and "-" in lang:
+-            base_lang = lang.split("-")[0]
+-            lang_data = self._languages.get(base_lang)
++        if lang_data is None:
++            lang_data = self._languages.get(language.language)
+ 
+         if not lang_data:
+             return None
+@@ -255,7 +253,7 @@ async def unlikely_threshold(self, language: str | None) -> float | None:
+         else:
+             return lang_data["threshold"]  # type: ignore
+ 
+-    async def supports_language(self, language: str | None) -> bool:
++    async def supports_language(self, language: Language | None) -> bool:
+         return await self.unlikely_threshold(language) is not None
+ 
+     # our EOU model inference should be fast, 3 seconds is more than enough
+diff --git a/livekit-plugins/livekit-plugins-turn-detector/livekit/plugins/turn_detector/multilingual.py b/livekit-plugins/livekit-plugins-turn-detector/livekit/plugins/turn_detector/multilingual.py
+index 9ab1268795..7857fe5b7b 100644
+--- a/livekit-plugins/livekit-plugins-turn-detector/livekit/plugins/turn_detector/multilingual.py
++++ b/livekit-plugins/livekit-plugins-turn-detector/livekit/plugins/turn_detector/multilingual.py
+@@ -5,7 +5,7 @@
+ 
+ import aiohttp
+ 
+-from livekit.agents import Plugin, get_job_context, llm, utils
++from livekit.agents import Language, Plugin, get_job_context, llm, utils
+ from livekit.agents.inference_runner import _InferenceRunner
+ 
+ from .base import MAX_HISTORY_TURNS, EOUModelBase, EOUPlugin, _EUORunnerBase
+@@ -34,7 +34,7 @@ def __init__(self, *, unlikely_threshold: float | None = None):
+     def _inference_method(self) -> str:
+         return _EUORunnerMultilingual.INFERENCE_METHOD
+ 
+-    async def unlikely_threshold(self, language: str | None) -> float | None:
++    async def unlikely_threshold(self, language: Language | None) -> float | None:
+         if not language:
+             return None
+ 
+@@ -45,7 +45,7 @@ async def unlikely_threshold(self, language: str | None) -> float | None:
+                     async with utils.http_context.http_session().post(
+                         url=url,
+                         json={
+-                            "language": language,
++                            "language": language.iso,
+                         },
+                         timeout=aiohttp.ClientTimeout(total=REMOTE_INFERENCE_TIMEOUT),
+                     ) as resp:
+@@ -53,7 +53,8 @@ async def unlikely_threshold(self, language: str | None) -> float | None:
+                         data = await resp.json()
+                         threshold = data.get("threshold")
+                         if threshold:
+-                            self._languages[language] = {"threshold": threshold}
++                            # cache by base language so the base class lookup finds it
++                            self._languages[language.language] = {"threshold": threshold}
+             except Exception as e:
+                 logger.warning("Error fetching threshold for language %s", language, exc_info=e)
+ 
+diff --git a/makefile b/makefile
+index a4ca66130a..75c98c3ef1 100644
+--- a/makefile
++++ b/makefile
+@@ -98,6 +98,7 @@ unit-tests:
+ 		tests/test_ipc.py \
+ 		tests/test_ivr_activity.py \
+ 		tests/test_langgraph.py \
++		tests/test_language.py \
+ 		tests/test_schema_gemini.py \
+ 		tests/test_tts_fallback.py \
+ 		tests/test_stt_fallback.py \
+diff --git a/tests/fake_stt.py b/tests/fake_stt.py
+index 46cf48d6dc..d840a2a31b 100644
+--- a/tests/fake_stt.py
++++ b/tests/fake_stt.py
+@@ -9,7 +9,7 @@
+ from pydantic import BaseModel
+ 
+ from livekit import rtc
+-from livekit.agents import NOT_GIVEN, NotGivenOr, utils
++from livekit.agents import NOT_GIVEN, Language, NotGivenOr, utils
+ from livekit.agents.stt import (
+     STT,
+     RecognizeStream,
+@@ -118,7 +118,9 @@ async def _recognize_impl(
+ 
+         return SpeechEvent(
+             type=SpeechEventType.FINAL_TRANSCRIPT,
+-            alternatives=[SpeechData(text=self._fake_transcript or "", language=language or "")],
++            alternatives=[
++                SpeechData(text=self._fake_transcript or "", language=Language(language or ""))
++            ],
+         )
+ 
+     async def recognize(
+@@ -167,7 +169,7 @@ def send_fake_transcript(self, transcript: str, is_final: bool = True) -> None:
+                 type=SpeechEventType.FINAL_TRANSCRIPT
+                 if is_final
+                 else SpeechEventType.INTERIM_TRANSCRIPT,
+-                alternatives=[SpeechData(text=transcript, language="")],
++                alternatives=[SpeechData(text=transcript, language=Language(""))],
+             )
+         )
+ 
+diff --git a/tests/test_language.py b/tests/test_language.py
+new file mode 100644
+index 0000000000..84c73fbf55
+--- /dev/null
++++ b/tests/test_language.py
+@@ -0,0 +1,152 @@
++from livekit.agents.language import Language
++from livekit.agents.stt import SpeechData
++
++
++class TestSpeechDataCoercion:
++    def test_str_coerced_to_language(self):
++        sd = SpeechData(language="en-US", text="hello")
++        assert isinstance(sd.language, Language)
++        assert sd.language == "en-US"
++
++    def test_language_name_normalized(self):
++        sd = SpeechData(language="english", text="hello")
++        assert isinstance(sd.language, Language)
++        assert sd.language == "en"
++
++    def test_language_instance_passthrough(self):
++        lang = Language("fr")
++        sd = SpeechData(language=lang, text="bonjour")
++        assert sd.language is lang
++
++    def test_empty_string(self):
++        sd = SpeechData(language="", text="")
++        assert isinstance(sd.language, Language)
++        assert sd.language == ""
++
++    def test_properties_accessible(self):
++        sd = SpeechData(language="en-US", text="hello")
++        assert sd.language.language == "en"
++        assert sd.language.region == "US"
++        assert sd.language.to_language_name() == "english"
++
++
++class TestLanguageNormalization:
++    def test_language_name(self):
++        assert Language("english") == "en"
++        assert Language("french") == "fr"
++        assert Language("German") == "de"
++        assert Language("SPANISH") == "es"
++
++    def test_iso639_3(self):
++        assert Language("eng") == "en"
++        assert Language("fra") == "fr"
++        assert Language("deu") == "de"
++        assert Language("zho") == "zh"
++
++    def test_iso639_1_passthrough(self):
++        assert Language("en") == "en"
++        assert Language("fr") == "fr"
++        assert Language("zh") == "zh"
++
++    def test_bcp47_passthrough(self):
++        assert Language("en-US") == "en-US"
++        assert Language("zh-CN") == "zh-CN"
++        assert Language("pt-BR") == "pt-BR"
++
++    def test_bcp47_casing(self):
++        assert Language("en-us") == "en-US"
++        assert Language("EN-US") == "en-US"
++        assert Language("zh-cn") == "zh-CN"
++
++    def test_bcp47_underscore(self):
++        assert Language("en_us") == "en-US"
++        assert Language("pt_br") == "pt-BR"
++
++    def test_bcp47_script(self):
++        assert Language("zh-hans-cn") == "zh-Hans-CN"
++        assert Language("zh-hant-tw") == "zh-Hant-TW"
++
++    def test_bcp47_iso639_3_subtag_preserved(self):
++        # ISO 639-3 subtags in compound BCP-47 are preserved for API round-tripping
++        # (e.g. Google STT expects "cmn-Hans-CN", not "zh-Hans-CN")
++        assert Language("cmn-Hans-CN") == "cmn-Hans-CN"
++        assert Language("cmn-Hant-TW") == "cmn-Hant-TW"
++        assert Language("cmn-cn") == "cmn-CN"
++        # But .language resolves to ISO 639-1
++        assert Language("cmn-Hans-CN").language == "zh"
++        assert Language("cmn-Hans-CN").to_language_name() == "chinese"
++
++    def test_bcp47_iso639_3_no_iso1_subtag(self):
++        # ISO 639-3 codes with no ISO 639-1 equivalent stay as-is
++        assert Language("yue-Hant-HK") == "yue-Hant-HK"
++        assert Language("yue-Hant-HK").language == "yue"
++
++    def test_unknown_passthrough(self):
++        assert Language("multi") == "multi"
++        assert Language("auto") == "auto"
++
++    def test_iso639_3_no_iso1(self):
++        # These ISO 639-3 codes have no ISO 639-1 equivalent
++        assert Language("ast") == "ast"
++        assert Language("ceb") == "ceb"
++        assert Language("fil") == "fil"
++
++    def test_whitespace_stripped(self):
++        assert Language("  en  ") == "en"
++        assert Language(" english ") == "en"
++
++
++class TestLanguageProperties:
++    def test_language_property(self):
++        assert Language("en-US").language == "en"
++        assert Language("en").language == "en"
++        assert Language("zh-Hans-CN").language == "zh"
++        assert Language("cmn-Hans-CN").language == "zh"
++        assert Language("cmn").language == "zh"
++
++    def test_region_property(self):
++        assert Language("en-US").region == "US"
++        assert Language("pt-BR").region == "BR"
++        assert Language("zh-Hans-CN").region == "CN"
++        assert Language("cmn-Hans-CN").region == "CN"
++        assert Language("en").region is None
++        assert Language("zh").region is None
++
++    def test_iso_property(self):
++        assert Language("en-US").iso == "en-US"
++        assert Language("cmn-Hans-CN").iso == "zh-CN"
++        assert Language("cmn-Hant-TW").iso == "zh-TW"
++        assert Language("zh-Hans-CN").iso == "zh-CN"
++        assert Language("en").iso == "en"
++        assert Language("cmn").iso == "zh"
++
++    def test_to_language_name(self):
++        assert Language("en").to_language_name() == "english"
++        assert Language("fr").to_language_name() == "french"
++        assert Language("en-US").to_language_name() == "english"
++        assert Language("cmn-Hans-CN").to_language_name() == "chinese"
++        assert Language("multi").to_language_name() is None
++
++
++class TestLanguageStrCompat:
++    def test_is_str(self):
++        lang = Language("en")
++        assert isinstance(lang, str)
++        assert lang == "en"
++
++    def test_string_ops(self):
++        lang = Language("en-US")
++        assert lang.upper() == "EN-US"
++        assert lang.startswith("en")
++        assert "US" in lang
++
++    def test_hashable(self):
++        # Can be used as dict key / set member
++        d = {Language("en"): "English"}
++        assert d["en"] == "English"
++        assert d[Language("english")] == "English"
++
++    def test_in_set(self):
++        s = {Language("en"), Language("fr")}
++        assert "en" in s
++        assert Language("english") in s
+diff --git a/tests/test_plugin_google_stt.py b/tests/test_plugin_google_stt.py
+index 3d6cd5e642..3db0a33c88 100644
+--- a/tests/test_plugin_google_stt.py
++++ b/tests/test_plugin_google_stt.py
+@@ -2,6 +2,7 @@
+ from google.cloud.speech_v2.types import cloud_speech as cloud_speech_v2
+ from google.protobuf.duration_pb2 import Duration
+ 
++from livekit.agents import Language
+ from livekit.agents.stt import SpeechData, SpeechEvent, SpeechEventType
+ from livekit.agents.types import TimedString
+ from livekit.plugins.google.stt import (
+@@ -271,7 +272,7 @@ async def test_recognize_response_to_speech_event_words():
+     assert result.type == SpeechEventType.FINAL_TRANSCRIPT
+     assert result.alternatives == [
+         SpeechData(
+-            language="te-ST",
++            language=Language("te-ST"),
+             start_time=0.0,
+             end_time=1.0,
+             text="test",
+@@ -310,7 +311,7 @@ async def test_recognize_response_to_speech_event_words():
+     assert result.type == SpeechEventType.FINAL_TRANSCRIPT
+     assert result.alternatives == [
+         SpeechData(
+-            language="te-ST",
++            language=Language("te-ST"),
+             start_time=0.0,
+             end_time=1.0,
+             text="test",
+diff --git a/tests/test_speaker_id_grouping.py b/tests/test_speaker_id_grouping.py
+index 4c2ba57ece..a53f238e9f 100644
+--- a/tests/test_speaker_id_grouping.py
++++ b/tests/test_speaker_id_grouping.py
+@@ -7,7 +7,7 @@
+ 
+ import re
+ 
+-from livekit.agents import stt
++from livekit.agents import Language, stt
+ from livekit.agents.voice.audio_recognition import AudioRecognition
+ 
+ 
+@@ -42,7 +42,7 @@ def _process_fragments(self, fragments):
+             speech_data = stt.SpeechData(
+                 text=self._format_text(text, speaker_id),
+                 speaker_id=speaker_id,
+-                language="en",
++                language=Language("en"),
+                 start_time=0,
+                 end_time=0,
+                 confidence=1.0,
+
+From a830158bc4acecb62527a38ad338b45bf8e68a86 Mon Sep 17 00:00:00 2001
+From: David Zhao <dz@livekit.io>
+Date: Tue, 24 Feb 2026 00:12:04 -0800
+Subject: [PATCH 2/8] fix clova weird model naming
+
+---
+ .../livekit/plugins/clova/models.py                    | 10 +++-------
+ .../livekit-plugins-clova/livekit/plugins/clova/stt.py |  6 +++---
+ 2 files changed, 6 insertions(+), 10 deletions(-)
+
+diff --git a/livekit-plugins/livekit-plugins-clova/livekit/plugins/clova/models.py b/livekit-plugins/livekit-plugins-clova/livekit/plugins/clova/models.py
+index e7e0e640e3..bd08a029b8 100644
+--- a/livekit-plugins/livekit-plugins-clova/livekit/plugins/clova/models.py
++++ b/livekit-plugins/livekit-plugins-clova/livekit/plugins/clova/models.py
+@@ -1,15 +1,11 @@
+ from typing import Literal
+ 
+-ClovaSttLanguages = Literal["ko-KR", "en-US", "enko", "ja", "zh-cn", "zh-tw"]
++ClovaSttLanguages = Literal["ko-KR", "en-US", "enko", "ja", "zh-CN", "zh-TW"]
+ 
+ ClovaSpeechAPIType = Literal["recognizer/object-storage", "recognizer/url", "recognizer/upload"]
+ 
+ clova_languages_mapping = {
+     "en": "en-US",
+-    "ko-KR": "ko-KR",
+-    "en-US": "en-US",
+-    "enko": "enko",
+-    "ja": "ja",
+-    "zh-cn": "zh-cn",
+-    "zh-tw": "zh-tw",
++    "zh-CN": "zh-cn",
++    "zh-TW": "zh-tw",
+ }
+diff --git a/livekit-plugins/livekit-plugins-clova/livekit/plugins/clova/stt.py b/livekit-plugins/livekit-plugins-clova/livekit/plugins/clova/stt.py
+index 3afb983391..f91a97a63b 100644
+--- a/livekit-plugins/livekit-plugins-clova/livekit/plugins/clova/stt.py
++++ b/livekit-plugins/livekit-plugins-clova/livekit/plugins/clova/stt.py
+@@ -71,7 +71,7 @@ def __init__(
+         self._invoke_url = (
+             invoke_url if is_given(invoke_url) else os.environ.get("CLOVA_STT_INVOKE_URL")
+         )
+-        normalized_language = Language(language)
++        normalized_language = Language(language).iso
+         self._language = clova_languages_mapping.get(normalized_language, normalized_language)
+         self._session = http_session
+         if clova_secret is None:
+@@ -91,7 +91,7 @@ def provider(self) -> str:
+ 
+     def update_options(self, *, language: NotGivenOr[str] = NOT_GIVEN) -> None:
+         if is_given(language):
+-            normalized = Language(language)
++            normalized = Language(language).iso
+             self._language = clova_languages_mapping.get(normalized, normalized)
+ 
+     def _ensure_session(self) -> aiohttp.ClientSession:
+@@ -112,7 +112,7 @@ async def _recognize_impl(
+         try:
+             url = self.url_builder()
+             if is_given(language):
+-                normalized = Language(language)
++                normalized = Language(language).iso
+                 self._language = clova_languages_mapping.get(normalized, normalized)
+             payload = json.dumps({"language": self._language, "completion": "sync"})
+ 
+
+From 56fde7bce768518981cff47d6f7514697a87f834 Mon Sep 17 00:00:00 2001
+From: David Zhao <dz@livekit.io>
+Date: Tue, 24 Feb 2026 23:22:43 -0800
+Subject: [PATCH 3/8] fix telnyx language
+
+---
+ .../livekit/plugins/telnyx/stt.py                     | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/livekit-plugins/livekit-plugins-telnyx/livekit/plugins/telnyx/stt.py b/livekit-plugins/livekit-plugins-telnyx/livekit/plugins/telnyx/stt.py
+index 8d2d31dfee..23f7ce54b6 100644
+--- a/livekit-plugins/livekit-plugins-telnyx/livekit/plugins/telnyx/stt.py
++++ b/livekit-plugins/livekit-plugins-telnyx/livekit/plugins/telnyx/stt.py
+@@ -19,6 +19,7 @@
+     APIConnectionError,
+     APIConnectOptions,
+     APIStatusError,
++    Language,
+     stt,
+     utils,
+ )
+@@ -34,7 +35,7 @@
+ @dataclass
+ class _STTOptions:
+     api_key: str
+-    language: str
++    language: Language
+     transcription_engine: TranscriptionEngine
+     interim_results: bool
+     base_url: str
+@@ -62,7 +63,7 @@ def __init__(
+ 
+         self._opts = _STTOptions(
+             api_key=get_api_key(api_key),
+-            language=language,
++            language=Language(language),
+             transcription_engine=transcription_engine,
+             interim_results=interim_results,
+             base_url=base_url,
+@@ -86,7 +87,7 @@ async def _recognize_impl(
+         language: NotGivenOr[str] = NOT_GIVEN,
+         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+     ) -> stt.SpeechEvent:
+-        resolved_language = language if is_given(language) else self._opts.language
++        resolved_language = Language(language) if is_given(language) else self._opts.language
+ 
+         stream = self.stream(language=language, conn_options=conn_options)
+         try:
+@@ -119,7 +120,7 @@ def stream(
+         language: NotGivenOr[str] = NOT_GIVEN,
+         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+     ) -> SpeechStream:
+-        resolved_language = language if is_given(language) else self._opts.language
++        resolved_language = Language(language) if is_given(language) else self._opts.language
+         stream = SpeechStream(
+             stt=self,
+             conn_options=conn_options,
+@@ -168,7 +169,7 @@ def __init__(
+         *,
+         stt: STT,
+         conn_options: APIConnectOptions,
+-        language: str,
++        language: Language,
+     ) -> None:
+         super().__init__(stt=stt, conn_options=conn_options, sample_rate=stt._opts.sample_rate)
+         self._stt: STT = stt
+
+From 7803e14399dcedbe73d6580345d731eccc73d35e Mon Sep 17 00:00:00 2001
+From: David Zhao <dz@livekit.io>
+Date: Tue, 24 Feb 2026 23:39:05 -0800
+Subject: [PATCH 4/8] fix 11
+
+---
+ .../livekit/plugins/elevenlabs/stt.py            | 16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
+
+diff --git a/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py b/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py
+index 9aa30ee047..db4388ea98 100644
+--- a/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py
++++ b/livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py
+@@ -462,8 +462,8 @@ async def _connect_ws(self) -> aiohttp.ClientWebSocketResponse:
+         if self._language:
+             params.append(f"language_code={self._language}")
+ 
+-        # if self._opts.include_timestamps:
+-        params.append("include_timestamps=true")
++        if self._opts.include_timestamps:
++            params.append("include_timestamps=true")
+ 
+         query_string = "&".join(params)
+ 
+@@ -494,13 +494,16 @@ def _process_stream_event(self, data: dict) -> None:
+         language_code = data.get("language_code", self._language)
+ 
+         normalized_language = Language(language_code) if language_code else Language("en")
++
+         # 11labs only sends word timestamps for final transcripts
+         speech_data = stt.SpeechData(
+             language=normalized_language,
+             text=text,
+             start_time=start_time + self.start_time_offset,
+             end_time=end_time + self.start_time_offset,
+-            words=[
++        )
++        if words:
++            speech_data.words = [
+                 TimedString(
+                     text=word.get("text", ""),
+                     start_time=word.get("start", 0) + self.start_time_offset,
+@@ -508,8 +511,7 @@ def _process_stream_event(self, data: dict) -> None:
+                     start_time_offset=self.start_time_offset,
+                 )
+                 for word in words
+-            ],
+-        )
++            ]
+ 
+         if message_type == "partial_transcript":
+             logger.debug("Received message type partial_transcript: %s", data)
+@@ -557,6 +559,10 @@ def _process_stream_event(self, data: dict) -> None:
+                     self._event_ch.send_nowait(stt.SpeechEvent(type=SpeechEventType.END_OF_SPEECH))
+                     self._speaking = False
+ 
++        elif message_type == "committed_transcript":
++            # if timestamps are included, these will be ignored above since we are handling committed_transcript_with_timestamps
++            pass
++
+         elif message_type == "session_started":
+             # Session initialization message - informational only
+             session_id = data.get("session_id", "unknown")
+
+From 03b6ba6e341bac770facbb3ad1779b18bdfbe0f8 Mon Sep 17 00:00:00 2001
+From: David Zhao <dz@livekit.io>
+Date: Tue, 24 Feb 2026 23:42:43 -0800
+Subject: [PATCH 5/8] handle azure recognition failure
+
+---
+ .../livekit-plugins-azure/livekit/plugins/azure/stt.py | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/stt.py b/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/stt.py
+index b56d61a2e9..18070c2500 100644
+--- a/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/stt.py
++++ b/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/stt.py
+@@ -282,7 +282,10 @@ def _cleanup() -> None:
+                 await asyncio.to_thread(_cleanup)
+ 
+     def _on_recognized(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
+-        detected_lg = Language(speechsdk.AutoDetectSourceLanguageResult(evt.result).language)
++        res = speechsdk.AutoDetectSourceLanguageResult(evt.result)
++        detected_lg: Language | None = None
++        if res and res.language:
++            detected_lg = Language(res.language)
+         text = evt.result.text.strip()
+         if not text:
+             return
+@@ -308,7 +311,10 @@ def _on_recognized(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
+             )
+ 
+     def _on_recognizing(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
+-        detected_lg = Language(speechsdk.AutoDetectSourceLanguageResult(evt.result).language)
++        res = speechsdk.AutoDetectSourceLanguageResult(evt.result)
++        detected_lg: Language | None = None
++        if res and res.language:
++            detected_lg = Language(res.language)
+         text = evt.result.text.strip()
+         if not text:
+             return
+
+From 8cf36851d578779616afced5d27b8efcca1b53ae Mon Sep 17 00:00:00 2001
+From: David Zhao <dz@livekit.io>
+Date: Wed, 25 Feb 2026 00:04:01 -0800
+Subject: [PATCH 6/8] fix azure
+
+---
+ .../livekit-plugins-azure/livekit/plugins/azure/stt.py    | 8 ++------
+ 1 file changed, 2 insertions(+), 6 deletions(-)
+
+diff --git a/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/stt.py b/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/stt.py
+index 18070c2500..88c1c187c9 100644
+--- a/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/stt.py
++++ b/livekit-plugins/livekit-plugins-azure/livekit/plugins/azure/stt.py
+@@ -283,9 +283,7 @@ def _cleanup() -> None:
+ 
+     def _on_recognized(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
+         res = speechsdk.AutoDetectSourceLanguageResult(evt.result)
+-        detected_lg: Language | None = None
+-        if res and res.language:
+-            detected_lg = Language(res.language)
++        detected_lg = Language(res.language or "")
+         text = evt.result.text.strip()
+         if not text:
+             return
+@@ -312,9 +310,7 @@ def _on_recognized(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
+ 
+     def _on_recognizing(self, evt: speechsdk.SpeechRecognitionEventArgs) -> None:
+         res = speechsdk.AutoDetectSourceLanguageResult(evt.result)
+-        detected_lg: Language | None = None
+-        if res and res.language:
+-            detected_lg = Language(res.language)
++        detected_lg = Language(res.language or "")
+         text = evt.result.text.strip()
+         if not text:
+             return
+
+From c6c6fdc8e04b2e98a14178e6313c6d208c35d5c7 Mon Sep 17 00:00:00 2001
+From: David Zhao <dz@livekit.io>
+Date: Wed, 25 Feb 2026 22:23:04 -0800
+Subject: [PATCH 7/8] handle none
+
+---
+ livekit-agents/livekit/agents/stt/stt.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/livekit-agents/livekit/agents/stt/stt.py b/livekit-agents/livekit/agents/stt/stt.py
+index 354ec581be..04b205e279 100644
+--- a/livekit-agents/livekit/agents/stt/stt.py
++++ b/livekit-agents/livekit/agents/stt/stt.py
+@@ -62,7 +62,7 @@ class SpeechData:
+     words: list[TimedString] | None = None
+ 
+     def __post_init__(self) -> None:
+-        if not isinstance(self.language, Language):
++        if not isinstance(self.language, Language) and isinstance(self.language, str):
+             self.language = Language(self.language)
+ 
+ 
+
+From 6caadab913904f2bb52294cb86c3cb6bbe3f7a89 Mon Sep 17 00:00:00 2001
+From: David Zhao <dz@livekit.io>
+Date: Wed, 25 Feb 2026 22:35:45 -0800
+Subject: [PATCH 8/8] fix types
+
+---
+ .../livekit-plugins-soniox/livekit/plugins/soniox/stt.py        | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/livekit-plugins/livekit-plugins-soniox/livekit/plugins/soniox/stt.py b/livekit-plugins/livekit-plugins-soniox/livekit/plugins/soniox/stt.py
+index fb1e878fac..9381eb4155 100644
+--- a/livekit-plugins/livekit-plugins-soniox/livekit/plugins/soniox/stt.py
++++ b/livekit-plugins/livekit-plugins-soniox/livekit/plugins/soniox/stt.py
+@@ -542,7 +542,7 @@ def merged_speech_data(
+         total_sum = self._confidence_sum + other._confidence_sum
+         return stt.SpeechData(
+             text=self.text + other.text,
+-            language=self.language if self.language else other.language,
++            language=Language(self.language if self.language else other.language),
+             speaker_id=self.speaker_id if self.speaker_id is not None else other.speaker_id,
+             start_time=start / 1000 + start_time_offset,
+             end_time=end / 1000 + start_time_offset,

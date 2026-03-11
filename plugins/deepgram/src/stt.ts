@@ -9,7 +9,9 @@ import {
   Future,
   Task,
   createTimedString,
+  getBaseLanguage,
   log,
+  normalizeLanguage,
   stt,
   waitForAbort,
 } from '@livekit/agents';
@@ -82,13 +84,17 @@ export class STT extends stt.STT {
       );
     }
 
-    this.#opts = { ...defaultSTTOptions, ...opts };
+    this.#opts = {
+      ...defaultSTTOptions,
+      ...opts,
+      language: opts.language ? normalizeLanguage(opts.language) : defaultSTTOptions.language,
+    };
 
     if (this.#opts.detectLanguage) {
       this.#opts.language = undefined;
     } else if (
       this.#opts.language &&
-      !['en-US', 'en'].includes(this.#opts.language) &&
+      getBaseLanguage(this.#opts.language) !== 'en' &&
       [
         'nova-2-meeting',
         'nova-2-phonecall',
@@ -115,7 +121,12 @@ export class STT extends stt.STT {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
-    this.#opts = { ...this.#opts, ...opts };
+    this.#opts = {
+      ...this.#opts,
+      ...opts,
+      language:
+        opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
+    };
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
@@ -433,9 +444,11 @@ const liveTranscriptionToSpeechData = (
 
   return alts.map((alt) => {
     const wordsData: any[] = alt['words'] ?? [];
+    const detectedLanguage =
+      language === 'multi' ? alt['languages']?.[0] ?? language : alt['language'] ?? language;
 
     return {
-      language,
+      language: normalizeLanguage(detectedLanguage),
       startTime: wordsData.length ? wordsData[0]['start'] + startTimeOffset : startTimeOffset,
       endTime: wordsData.length
         ? wordsData[wordsData.length - 1]['end'] + startTimeOffset

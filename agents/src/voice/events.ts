@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { LanguageCode } from '../language.js';
 import type {
   ChatMessage,
   FunctionCall,
@@ -87,7 +88,7 @@ export type UserInputTranscribedEvent = {
   /** Not supported yet. Always null by default. */
   speakerId: string | null;
   createdAt: number;
-  language: string | null;
+  language: LanguageCode | null;
 };
 
 export const createUserInputTranscribedEvent = ({
@@ -100,7 +101,7 @@ export const createUserInputTranscribedEvent = ({
   transcript: string;
   isFinal: boolean;
   speakerId?: string | null;
-  language?: string | null;
+  language?: LanguageCode | null;
   createdAt?: number;
 }): UserInputTranscribedEvent => ({
   type: 'user_input_transcribed',

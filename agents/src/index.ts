@@ -28,6 +28,7 @@ export * from './connection_pool.js';
 export * from './generator.js';
 export * from './inference_runner.js';
 export * from './job.js';
+export * from './language.js';
 export * from './log.js';
 export * from './plugin.js';
 export * from './transcription.js';

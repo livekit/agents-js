@@ -5,6 +5,7 @@ import { type AudioFrame } from '@livekit/rtc-node';
 import type { WebSocket } from 'ws';
 import { APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
+import { type LanguageCode, areLanguagesEquivalent, normalizeLanguage } from '../language.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import {
@@ -121,10 +122,10 @@ export interface STTFallbackModel {
 export type STTFallbackModelType = STTFallbackModel | string;
 
 /** Parse a model string into [model, language]. Language is undefined if not specified. */
-export function parseSTTModelString(model: string): [string, string | undefined] {
+export function parseSTTModelString(model: string): [string, LanguageCode | undefined] {
   const idx = model.lastIndexOf(':');
   if (idx !== -1) {
-    return [model.slice(0, idx), model.slice(idx + 1)];
+    return [model.slice(0, idx), normalizeLanguage(model.slice(idx + 1))];
   }
   return [model, undefined];
 }
@@ -156,7 +157,7 @@ const DEFAULT_CANCEL_TIMEOUT = 5000;
 
 export interface InferenceSTTOptions<TModel extends STTModels> {
   model?: TModel;
-  language?: STTLanguages;
+  language?: LanguageCode;
   encoding: STTEncoding;
   sampleRate: number;
   baseURL: string;
@@ -219,25 +220,24 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     let nextModel = model;
     let nextLanguage = language;
     if (typeof nextModel === 'string') {
-      const idx = nextModel.lastIndexOf(':');
-      if (idx !== -1) {
-        const languageFromModel = nextModel.slice(idx + 1) as STTLanguages;
-        if (nextLanguage && nextLanguage !== languageFromModel) {
+      const [parsedModel, parsedLanguage] = parseSTTModelString(nextModel);
+      if (parsedLanguage !== undefined) {
+        if (nextLanguage && !areLanguagesEquivalent(nextLanguage, parsedLanguage)) {
           this.#logger.warn(
             '`language` is provided via both argument and model, using the one from the argument',
             { language: nextLanguage, model: nextModel },
           );
         } else {
-          nextLanguage = languageFromModel;
+          nextLanguage = parsedLanguage as STTLanguages;
         }
-        nextModel = nextModel.slice(0, idx) as TModel;
+        nextModel = parsedModel as TModel;
       }
     }
     const normalizedFallback = fallback ? normalizeSTTFallback(fallback) : undefined;
 
     this.opts = {
       model: nextModel as TModel,
-      language: nextLanguage,
+      language: nextLanguage ? normalizeLanguage(nextLanguage) : undefined,
       encoding,
       sampleRate,
       baseURL: lkBaseURL,
@@ -263,7 +263,11 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   }
 
   updateOptions(opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language'>>): void {
-    this.opts = { ...this.opts, ...opts };
+    this.opts = {
+      ...this.opts,
+      ...opts,
+      language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
+    };
 
     for (const stream of this.streams) {
       stream.updateOptions(opts);
@@ -278,7 +282,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       options || {};
     const streamOpts = {
       ...this.opts,
-      language: language ?? this.opts.language,
+      language: language !== undefined ? normalizeLanguage(language) : this.opts.language,
     } as InferenceSTTOptions<TModel>;
 
     const stream = new SpeechStream(this, streamOpts, connOptions);
@@ -569,7 +573,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
     const requestId = data.session_id || this.requestId;
     const text = data.transcript;
-    const language = data.language || this.opts.language || 'en';
+    const language = normalizeLanguage(data.language || this.opts.language || 'en');
 
     if (!text && !isFinal) return;
 

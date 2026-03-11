@@ -10,7 +10,9 @@ import {
   Future,
   type TimedString,
   createTimedString,
+  getBaseLanguage,
   log,
+  normalizeLanguage,
   shortuuid,
   stream,
   tokenize,
@@ -145,7 +147,7 @@ function multiStreamUrl(opts: ResolvedTTSOptions): string {
   params.push(`model_id=${opts.model}`);
   params.push(`output_format=${opts.encoding}`);
   if (opts.language) {
-    params.push(`language_code=${opts.language}`);
+    params.push(`language_code=${getBaseLanguage(opts.language)}`);
   }
   params.push(`enable_ssml_parsing=${opts.enableSsmlParsing}`);
   params.push(`enable_logging=${opts.enableLogging}`);
@@ -673,7 +675,8 @@ export class TTS extends tts.TTS {
     const voiceId = opts.voiceId ?? opts.voice?.id ?? DEFAULT_VOICE_ID;
     const voiceSettings = opts.voiceSettings ?? opts.voice?.settings;
     const model = opts.model ?? opts.modelID ?? 'eleven_turbo_v2_5';
-    const language = opts.language ?? opts.languageCode;
+    const rawLanguage = opts.language ?? opts.languageCode;
+    const language = rawLanguage ? normalizeLanguage(rawLanguage) : undefined;
 
     this.#opts = {
       apiKey,
@@ -745,7 +748,7 @@ export class TTS extends tts.TTS {
     }
 
     if (opts.language !== undefined && opts.language !== this.#opts.language) {
-      this.#opts.language = opts.language;
+      this.#opts.language = normalizeLanguage(opts.language);
       changed = true;
     }
 

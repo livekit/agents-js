@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { beforeAll, describe, expect, it } from 'vitest';
+import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { STT, type STTFallbackModel, normalizeSTTFallback, parseSTTModelString } from './stt.js';
@@ -30,6 +31,12 @@ describe('parseSTTModelString', () => {
 
   it('model with language suffix', () => {
     const [model, language] = parseSTTModelString('deepgram:en');
+    expect(model).toBe('deepgram');
+    expect(language).toBe('en');
+  });
+
+  it('normalizes language suffixes', () => {
+    const [model, language] = parseSTTModelString('deepgram:english');
     expect(model).toBe('deepgram');
     expect(language).toBe('en');
   });
@@ -151,6 +158,16 @@ describe('normalizeSTTFallback', () => {
 });
 
 describe('STT constructor fallback and connOptions', () => {
+  it('normalizes language in constructor and model string', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3:english' });
+    expect(stt['opts'].language).toBe('en');
+  });
+
+  it('prefers explicit normalized language over model suffix', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3:english', language: 'en_US' });
+    expect(stt['opts'].language).toBe(normalizeLanguage('en_US'));
+  });
+
   it('fallback not given defaults to undefined', () => {
     const stt = makeStt();
     expect(stt['opts'].fallback).toBeUndefined();
