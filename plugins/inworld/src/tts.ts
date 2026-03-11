@@ -18,7 +18,7 @@ import { type RawData, WebSocket } from 'ws';
 const USER_AGENT = 'livekit-agents-js';
 
 const DEFAULT_BIT_RATE = 64000;
-const DEFAULT_ENCODING = 'LINEAR16';
+const DEFAULT_ENCODING = 'PCM';
 const DEFAULT_MODEL = 'inworld-tts-1';
 const DEFAULT_SAMPLE_RATE = 24000;
 const DEFAULT_URL = 'https://api.inworld.ai/';
@@ -31,7 +31,7 @@ const DEFAULT_BUFFER_CHAR_THRESHOLD = 100;
 const DEFAULT_MAX_BUFFER_DELAY_MS = 3000;
 const NUM_CHANNELS = 1;
 
-export type Encoding = 'LINEAR16' | 'MP3' | 'OGG_OPUS' | 'ALAW' | 'MULAW' | 'FLAC' | string;
+export type Encoding = 'PCM' | 'LINEAR16';
 export type TimestampType = 'TIMESTAMP_TYPE_UNSPECIFIED' | 'WORD' | 'CHARACTER';
 export type TextNormalization = 'APPLY_TEXT_NORMALIZATION_UNSPECIFIED' | 'ON' | 'OFF';
 export type TimestampTransportStrategy =
