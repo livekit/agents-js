@@ -36,7 +36,13 @@ export class STT extends stt.STT {
    * `OPENAI_API_KEY` environment variable.
    */
   constructor(opts: Partial<STTOptions> = defaultSTTOptions) {
-    super({ streaming: false, interimResults: false, alignedTranscript: false });
+    // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/stt.py - 108-112 lines
+    super({
+      streaming: false,
+      interimResults: false,
+      offlineRecognize: true,
+      alignedTranscript: false,
+    });
 
     this.#opts = { ...defaultSTTOptions, ...opts };
     if (this.#opts.apiKey === undefined) {
@@ -141,8 +147,12 @@ export class STT extends stt.STT {
     return Buffer.concat([header, Buffer.from(frame.data.buffer)]);
   }
 
-  async _recognize(buffer: AudioBuffer, abortSignal?: AbortSignal): Promise<stt.SpeechEvent> {
-    const config = this.#sanitizeOptions();
+  // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/stt.py - 411-458 lines
+  async _recognize(
+    buffer: AudioBuffer,
+    options?: stt.STTRecognizeOptions,
+  ): Promise<stt.SpeechEvent> {
+    const config = this.#sanitizeOptions(options?.language);
     buffer = mergeFrames(buffer);
     const wavBuffer = this.#createWav(buffer);
     const file = new File([new Uint8Array(wavBuffer)], 'audio.wav', { type: 'audio/wav' });
@@ -156,7 +166,7 @@ export class STT extends stt.STT {
         response_format: 'json',
       },
       {
-        signal: abortSignal,
+        signal: options?.abortSignal,
       },
     );
 
@@ -174,8 +184,9 @@ export class STT extends stt.STT {
     };
   }
 
+  // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/stt.py - 298-312 lines
   /** This method throws an error; streaming is unsupported on OpenAI STT. */
-  stream(): stt.SpeechStream {
+  stream(_options?: stt.STTStreamOptions): stt.SpeechStream {
     throw new Error('Streaming is not supported on OpenAI STT');
   }
 }

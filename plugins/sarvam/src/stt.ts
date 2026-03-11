@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  APIConnectionError,
+  APITimeoutError,
+  DEFAULT_API_CONNECT_OPTIONS,
   type APIConnectOptions,
   type AudioBuffer,
   AudioByteStream,
@@ -365,9 +368,11 @@ export class STT extends stt.STT {
    */
   constructor(opts: Partial<STTOptions> = {}) {
     const resolved = resolveOptions(opts);
+    // Ref: python livekit-plugins/livekit-plugins-sarvam/livekit/plugins/sarvam/stt.py - 397-404 lines
     super({
       streaming: resolved.streaming,
       interimResults: false,
+      offlineRecognize: true,
       alignedTranscript: false,
     });
     this.opts = resolved;
@@ -393,20 +398,31 @@ export class STT extends stt.STT {
     this.opts = resolveOptions({ ...base, ...opts } as STTOptions);
   }
 
-  async _recognize(buffer: AudioBuffer, abortSignal?: AbortSignal): Promise<stt.SpeechEvent> {
+  // Ref: python livekit-plugins/livekit-plugins-sarvam/livekit/plugins/sarvam/stt.py - 475-600 lines
+  async _recognize(
+    buffer: AudioBuffer,
+    options?: stt.STTRecognizeOptions,
+  ): Promise<stt.SpeechEvent> {
+    const recognizeOpts =
+      options?.language != null && this.opts.model !== 'saaras:v2.5'
+        ? ({
+            ...this.opts,
+            languageCode: options.language,
+          } satisfies ResolvedSTTOptions)
+        : this.opts;
     const frame = mergeFrames(buffer);
     const wavBuffer = createWav(frame);
     const wavBlob = new Blob([new Uint8Array(wavBuffer)], { type: 'audio/wav' });
 
-    const formData = buildFormData(wavBlob, this.opts);
+    const formData = buildFormData(wavBlob, recognizeOpts);
 
-    const response = await fetch(getRestUrl(this.opts.model), {
+    const response = await fetch(getRestUrl(recognizeOpts.model), {
       method: 'POST',
       headers: {
-        'api-subscription-key': this.opts.apiKey,
+        'api-subscription-key': recognizeOpts.apiKey,
       },
       body: formData,
-      signal: abortSignal ?? null,
+      signal: options?.abortSignal ?? null,
     });
 
     if (!response.ok) {
@@ -431,7 +447,7 @@ export class STT extends stt.STT {
       alternatives: [
         {
           text: data.transcript || '',
-          language: data.language_code ?? this.opts.languageCode ?? 'unknown',
+          language: data.language_code ?? recognizeOpts.languageCode ?? 'unknown',
           startTime,
           endTime,
           confidence: data.language_probability ?? 0,
@@ -440,13 +456,21 @@ export class STT extends stt.STT {
     };
   }
 
-  stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
+  // Ref: python livekit-plugins/livekit-plugins-sarvam/livekit/plugins/sarvam/stt.py - 602-662 lines
+  stream(options?: stt.STTStreamOptions): SpeechStream {
     if (!this.capabilities.streaming) {
       throw new Error(
         'Sarvam STT streaming is disabled (`streaming: false`). Use recognize() for REST or wrap with stt.StreamAdapter + VAD for streaming behavior.',
       );
     }
-    return new SpeechStream(this, this.opts, options?.connOptions);
+    const streamOpts =
+      options?.language != null && this.opts.model !== 'saaras:v2.5'
+        ? ({
+            ...this.opts,
+            languageCode: options.language,
+          } satisfies ResolvedSTTOptions)
+        : this.opts;
+    return new SpeechStream(this, streamOpts, options?.connOptions);
   }
 }
 
@@ -461,11 +485,13 @@ export class SpeechStream extends stt.SpeechStream {
   #speaking = false;
   #resetWS = new Future();
   #requestId = '';
+  #connOptions: APIConnectOptions;
   label = 'sarvam.SpeechStream';
 
   constructor(sttInstance: STT, opts: ResolvedSTTOptions, connOptions?: APIConnectOptions) {
     super(sttInstance, SAMPLE_RATE, connOptions);
     this.#opts = opts;
+    this.#connOptions = connOptions ?? DEFAULT_API_CONNECT_OPTIONS;
     this.closed = false;
     this.#audioEnergyFilter = new AudioEnergyFilter();
   }
@@ -491,9 +517,7 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   protected async run() {
-    const maxRetry = 32;
-    let retries = 0;
-
+    // Ref: python livekit-plugins/livekit-plugins-sarvam/livekit/plugins/sarvam/stt.py - 852-999 lines
     while (!this.input.closed && !this.closed) {
       const wsUrl = buildWsUrl(this.#opts);
       this.#logger.info(`Sarvam STT connecting to: ${wsUrl}`);
@@ -503,42 +527,68 @@ export class SpeechStream extends stt.SpeechStream {
 
       let sessionStart = 0;
       try {
+        // Ref: python livekit-plugins/livekit-plugins-sarvam/livekit/plugins/sarvam/stt.py - 928-946 lines
         await new Promise<void>((resolve, reject) => {
-          ws.once('open', () => resolve());
-          ws.once('error', (err: Error) => reject(err));
-          ws.once('close', (code: number) =>
-            reject(new Error(`WebSocket closed with code ${code}`)),
-          );
+          const timeout = setTimeout(() => {
+            reject(
+              new APITimeoutError({
+                message: `Sarvam connection timed out after ${this.#connOptions.timeoutMs}ms`,
+              }),
+            );
+          }, this.#connOptions.timeoutMs);
+          const cleanup = () => {
+            clearTimeout(timeout);
+            ws.off('open', onOpen);
+            ws.off('error', onError);
+            ws.off('close', onClose);
+          };
+          const onOpen = () => {
+            cleanup();
+            resolve();
+          };
+          const onError = (err: Error) => {
+            cleanup();
+            reject(
+              new APIConnectionError({
+                message: `failed to connect to Sarvam STT: ${err.message}`,
+              }),
+            );
+          };
+          const onClose = (code: number) => {
+            cleanup();
+            reject(
+              new APIConnectionError({
+                message: `Sarvam WebSocket closed with code ${code} before connection was established`,
+              }),
+            );
+          };
+
+          ws.once('open', onOpen);
+          ws.once('error', onError);
+          ws.once('close', onClose);
         });
 
         sessionStart = Date.now();
         await this.#runWS(ws);
-        retries = 0;
+        continue;
       } catch (e) {
         // Clean up the WebSocket on failure to prevent listener leaks
         ws.removeAllListeners();
         ws.close();
 
         if (!this.closed && !this.input.closed) {
-          // If the session ran for a meaningful duration (>5s), this was a working
-          // session that ended normally (e.g. server idle timeout ~20s). Reset retries
-          // so expected idle-timeout reconnections don't accumulate toward the fatal limit.
-          if (sessionStart > 0 && Date.now() - sessionStart > 5000) {
-            retries = 0;
-          }
-          if (retries >= maxRetry) {
-            throw new Error(`Failed to connect to Sarvam STT after ${retries} attempts: ${e}`);
-          }
-          const delay = Math.min(retries * 5, 10);
-          retries++;
-          this.#logger.warn(
-            `Failed to connect to Sarvam STT, retrying in ${delay}s: ${e} (${retries}/${maxRetry})`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
+          const message =
+            sessionStart > 0 && Date.now() - sessionStart > 5000
+              ? `Sarvam STT session ended unexpectedly after a healthy connection: ${String(e)}`
+              : e instanceof Error
+                ? e.message
+                : `failed to connect to Sarvam STT: ${String(e)}`;
+          throw new APIConnectionError({ message });
         } else {
           this.#logger.warn(
             `Sarvam STT disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
           );
+          return;
         }
       }
     }

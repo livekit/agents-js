@@ -12,6 +12,7 @@ import {
   SpeechStream as BaseSpeechStream,
   type SpeechData,
   type SpeechEvent,
+  type STTRecognizeOptions,
   SpeechEventType,
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
@@ -188,7 +189,13 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     fallback?: STTFallbackModelType | STTFallbackModelType[];
     connOptions?: APIConnectOptions;
   }) {
-    super({ streaming: true, interimResults: true, alignedTranscript: 'word' });
+    // Ref: python livekit-agents/livekit/agents/inference/stt.py - 338-342 lines
+    super({
+      streaming: true,
+      interimResults: true,
+      offlineRecognize: false,
+      alignedTranscript: 'word',
+    });
 
     const {
       model,
@@ -258,7 +265,11 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     return new STT({ model, language });
   }
 
-  protected async _recognize(_: AudioBuffer): Promise<SpeechEvent> {
+  // Ref: python livekit-agents/livekit/agents/inference/stt.py - 424-433 lines
+  protected async _recognize(
+    _: AudioBuffer,
+    _options?: STTRecognizeOptions,
+  ): Promise<SpeechEvent> {
     throw new Error('LiveKit STT does not support batch recognition, use stream() instead');
   }
 
@@ -270,6 +281,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     }
   }
 
+  // Ref: python livekit-agents/livekit/agents/inference/stt.py - 435-445 lines
   stream(options?: {
     language?: STTLanguages | string;
     connOptions?: APIConnectOptions;

@@ -8,8 +8,15 @@ export {
   type STTCapabilities,
   type RecognitionUsage,
   type STTCallbacks,
+  type STTRecognizeOptions,
+  type STTStreamOptions,
   SpeechEventType,
   STT,
   SpeechStream,
 } from './stt.js';
 export { StreamAdapter, StreamAdapterWrapper } from './stream_adapter.js';
+export {
+  FallbackAdapter,
+  type AvailabilityChangedEvent,
+  type FallbackAdapterOptions,
+} from './fallback_adapter.js';

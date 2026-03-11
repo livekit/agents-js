@@ -7,7 +7,7 @@ import type { APIConnectOptions } from '../types.js';
 import { isStreamClosedError } from '../utils.js';
 import type { VAD, VADStream } from '../vad.js';
 import { VADEventType } from '../vad.js';
-import type { SpeechEvent } from './stt.js';
+import type { SpeechEvent, STTRecognizeOptions, STTStreamOptions } from './stt.js';
 import { STT, SpeechEventType, SpeechStream } from './stt.js';
 
 export class StreamAdapter extends STT {
@@ -16,7 +16,13 @@ export class StreamAdapter extends STT {
   label: string;
 
   constructor(stt: STT, vad: VAD) {
-    super({ streaming: true, interimResults: false });
+    // Ref: python livekit-agents/livekit/agents/stt/stream_adapter.py - 18-31 lines
+    super({
+      streaming: true,
+      interimResults: false,
+      offlineRecognize: stt.capabilities.offlineRecognize,
+      alignedTranscript: stt.capabilities.alignedTranscript,
+    });
     this.#stt = stt;
     this.#vad = vad;
     this.label = `stt.StreamAdapter<${this.#stt.label}>`;
@@ -30,24 +36,30 @@ export class StreamAdapter extends STT {
     });
   }
 
-  _recognize(frame: AudioFrame, abortSignal?: AbortSignal): Promise<SpeechEvent> {
-    return this.#stt.recognize(frame, abortSignal);
+  // Ref: python livekit-agents/livekit/agents/stt/stream_adapter.py - 45-54 lines
+  _recognize(frame: AudioFrame, options?: STTRecognizeOptions): Promise<SpeechEvent> {
+    return this.#stt.recognize(frame, options);
   }
 
-  stream(options?: { connOptions?: APIConnectOptions }): StreamAdapterWrapper {
-    return new StreamAdapterWrapper(this.#stt, this.#vad, options?.connOptions);
+  // Ref: python livekit-agents/livekit/agents/stt/stream_adapter.py - 56-68 lines
+  stream(options?: STTStreamOptions): StreamAdapterWrapper {
+    return new StreamAdapterWrapper(this.#stt, this.#vad, options?.language, options?.connOptions);
   }
 }
 
 export class StreamAdapterWrapper extends SpeechStream {
   #stt: STT;
   #vadStream: VADStream;
+  #connOptions?: APIConnectOptions;
+  #language?: string;
   label: string;
 
-  constructor(stt: STT, vad: VAD, connOptions?: APIConnectOptions) {
+  constructor(stt: STT, vad: VAD, language?: string, connOptions?: APIConnectOptions) {
     super(stt, undefined, connOptions);
     this.#stt = stt;
     this.#vadStream = vad.stream();
+    this.#language = language;
+    this.#connOptions = connOptions;
     this.label = `stt.StreamAdapterWrapper<${this.#stt.label}>`;
   }
 
@@ -61,6 +73,7 @@ export class StreamAdapterWrapper extends SpeechStream {
   }
 
   protected async run() {
+    // Ref: python livekit-agents/livekit/agents/stt/stream_adapter.py - 97-149 lines
     const forwardInput = async () => {
       for await (const input of this.input) {
         if (input === SpeechStream.FLUSH_SENTINEL) {
@@ -92,7 +105,12 @@ export class StreamAdapterWrapper extends SpeechStream {
             this.output.put({ type: SpeechEventType.END_OF_SPEECH });
 
             try {
-              const event = await this.#stt.recognize(ev.frames, this.abortSignal);
+              // Ref: python livekit-agents/livekit/agents/stt/stream_adapter.py - 122-127 lines
+              const event = await this.#stt.recognize(ev.frames, {
+                abortSignal: this.abortSignal,
+                language: this.#language,
+                connOptions: this.#connOptions,
+              });
               if (!event.alternatives![0].text) {
                 continue;
               }

@@ -85,6 +85,12 @@ export interface SpeechEvent {
 export interface STTCapabilities {
   streaming: boolean;
   interimResults: boolean;
+  // Ref: python livekit-agents/livekit/agents/stt/stt.py - 83-90 lines
+  /**
+   * Whether this STT supports non-streaming batch recognition through {@link STT.recognize}.
+   * Streaming-only providers should set this to `false`.
+   */
+  offlineRecognize?: boolean;
   /**
    * Whether this STT supports aligned transcripts with word/chunk timestamps.
    * - 'word': Provider returns word-level timestamps
@@ -100,6 +106,17 @@ export interface STTError {
   label: string;
   error: Error;
   recoverable: boolean;
+}
+
+export interface STTRecognizeOptions {
+  abortSignal?: AbortSignal;
+  language?: string;
+  connOptions?: APIConnectOptions;
+}
+
+export interface STTStreamOptions {
+  language?: string;
+  connOptions?: APIConnectOptions;
 }
 
 export type STTCallbacks = {
@@ -128,35 +145,53 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
     return this.#capabilities;
   }
 
+  // Ref: python livekit-agents/livekit/agents/stt/stt.py - 110-115 lines
+  /**
+   * Whether recognize() should emit metrics for this STT instance.
+   * Wrapper adapters can override this to avoid double-counting child metrics.
+   */
+  protected get recognizeMetricsEnabled(): boolean {
+    return true;
+  }
+
+  // Ref: python livekit-agents/livekit/agents/stt/stt.py - 148-185 lines
   /** Receives an audio buffer and returns transcription in the form of a {@link SpeechEvent} */
-  async recognize(frame: AudioBuffer, abortSignal?: AbortSignal): Promise<SpeechEvent> {
+  async recognize(
+    frame: AudioBuffer,
+    options?: STTRecognizeOptions | AbortSignal,
+  ): Promise<SpeechEvent> {
+    const normalizedOptions = normalizeRecognizeOptions(options);
     const startTime = process.hrtime.bigint();
-    const event = await this._recognize(frame, abortSignal);
+    const event = await this._recognize(frame, normalizedOptions);
     const durationMs = Number((process.hrtime.bigint() - startTime) / BigInt(1000000));
-    this.emit('metrics_collected', {
-      type: 'stt_metrics',
-      requestId: event.requestId ?? '',
-      timestamp: Date.now(),
-      durationMs,
-      label: this.label,
-      audioDurationMs: Math.round(calculateAudioDurationSeconds(frame) * 1000),
-      streamed: false,
-    });
+    if (this.recognizeMetricsEnabled) {
+      this.emit('metrics_collected', {
+        type: 'stt_metrics',
+        requestId: event.requestId ?? '',
+        timestamp: Date.now(),
+        durationMs,
+        label: this.label,
+        audioDurationMs: Math.round(calculateAudioDurationSeconds(frame) * 1000),
+        streamed: false,
+      });
+    }
     return event;
   }
 
+  // Ref: python livekit-agents/livekit/agents/stt/stt.py - 148-155 lines
   protected abstract _recognize(
     frame: AudioBuffer,
-    abortSignal?: AbortSignal,
+    options?: STTRecognizeOptions,
   ): Promise<SpeechEvent>;
 
+  // Ref: python livekit-agents/livekit/agents/stt/stt.py - 227-235 lines
   /**
    * Returns a {@link SpeechStream} that can be used to push audio frames and receive
    * transcriptions
    *
    * @param options - Optional configuration including connection options
    */
-  abstract stream(options?: { connOptions?: APIConnectOptions }): SpeechStream;
+  abstract stream(options?: STTStreamOptions): SpeechStream;
 
   async close(): Promise<void> {
     return;
@@ -404,4 +439,27 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   [Symbol.asyncIterator](): SpeechStream {
     return this;
   }
+}
+
+function normalizeRecognizeOptions(
+  options?: STTRecognizeOptions | AbortSignal,
+): STTRecognizeOptions {
+  if (!options) {
+    return {};
+  }
+
+  if (isAbortSignal(options)) {
+    return { abortSignal: options };
+  }
+
+  return options;
+}
+
+function isAbortSignal(value: unknown): value is AbortSignal {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'aborted' in value &&
+    'addEventListener' in value
+  );
 }

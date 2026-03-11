@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  APIConnectionError,
   type APIConnectOptions,
   AudioByteStream,
   Event,
@@ -107,9 +108,11 @@ export class STTv2 extends stt.STT {
    * @throws Error if no API key is provided
    */
   constructor(opts: Partial<STTv2Options> = {}) {
+    // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py - 141-147 lines
     super({
       streaming: true,
       interimResults: true,
+      offlineRecognize: false,
       alignedTranscript: 'word',
     });
 
@@ -136,9 +139,10 @@ export class STTv2 extends stt.STT {
     return 'Deepgram';
   }
 
+  // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py - 205-259 lines
   protected async _recognize(
     _frame: AudioFrame | AudioFrame[],
-    _abortSignal?: AbortSignal,
+    _options?: stt.STTRecognizeOptions,
   ): Promise<stt.SpeechEvent> {
     throw new Error('V2 API does not support non-streaming recognize. Use .stream()');
   }
@@ -149,7 +153,8 @@ export class STTv2 extends stt.STT {
    * @param options - Stream options
    * @returns A SpeechStream that emits transcription events
    */
-  stream(options?: { connOptions?: APIConnectOptions }): stt.SpeechStream {
+  // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py - 261-277 lines
+  stream(options?: stt.STTStreamOptions): stt.SpeechStream {
     const streamOpts = { ...this.#opts, apiKey: this.#apiKey };
     return new SpeechStreamv2(this, streamOpts, options?.connOptions);
   }
@@ -205,6 +210,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
   }
 
   protected async run() {
+    // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py - 481-595 lines
     // Outer Loop: Handles reconnections (Configuration updates)
     while (!this.closed) {
       try {
@@ -255,7 +261,11 @@ class SpeechStreamv2 extends stt.SpeechStream {
         }
       } catch (error) {
         this.#logger.error('Deepgram stream error', { error });
-        throw error; // Let Base Class handle retry logic
+        throw error instanceof Error
+          ? new APIConnectionError({ message: error.message })
+          : new APIConnectionError({
+              message: `Deepgram stream error: ${String(error)}`,
+            });
       } finally {
         if (this.#ws?.readyState === WebSocket.OPEN) {
           this.#ws.close();
@@ -333,10 +343,11 @@ class SpeechStreamv2 extends stt.SpeechStream {
     }
   }
 
+  // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py - 531-559 lines
   async #recvTask() {
     if (!this.#ws) return;
 
-    return new Promise<void>((resolve) => {
+    return new Promise<void>((resolve, reject) => {
       if (!this.#ws) return resolve();
 
       this.#ws.on('message', (data: Buffer, isBinary: boolean) => {
@@ -348,7 +359,14 @@ class SpeechStreamv2 extends stt.SpeechStream {
           const msg = JSON.parse(data.toString());
           this.#processStreamEvent(msg);
         } catch (error) {
-          this.#logger.error('Failed to parse Deepgram message', { error });
+          this.#logger.error('Failed to process Deepgram message', { error });
+          reject(
+            error instanceof Error
+              ? new APIConnectionError({ message: error.message })
+              : new APIConnectionError({
+                  message: `Deepgram stream message error: ${String(error)}`,
+                }),
+          );
         }
       });
 
@@ -357,8 +375,13 @@ class SpeechStreamv2 extends stt.SpeechStream {
         resolve();
       });
 
-      // Errors are caught by run() listener, resolve here to clean up task
-      this.#ws.on('error', () => resolve());
+      this.#ws.on('error', (error) =>
+        reject(
+          error instanceof Error
+            ? new APIConnectionError({ message: error.message })
+            : new APIConnectionError({ message: 'Deepgram WebSocket error' }),
+        ),
+      );
     });
   }
 

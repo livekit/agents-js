@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  APIConnectionError,
+  APITimeoutError,
   type APIConnectOptions,
   type AudioBuffer,
   AudioByteStream,
@@ -71,9 +73,11 @@ export class STT extends stt.STT {
   private abortController = new AbortController();
 
   constructor(opts: Partial<STTOptions> = defaultSTTOptions) {
+    // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py - 141-147 lines
     super({
       streaming: true,
       interimResults: opts.interimResults ?? defaultSTTOptions.interimResults,
+      offlineRecognize: false,
       alignedTranscript: 'word',
     });
     if (opts.apiKey === undefined && defaultSTTOptions.apiKey === undefined) {
@@ -110,7 +114,8 @@ export class STT extends stt.STT {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async _recognize(_: AudioBuffer): Promise<stt.SpeechEvent> {
+  // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py - 205-259 lines
+  async _recognize(_: AudioBuffer, _options?: stt.STTRecognizeOptions): Promise<stt.SpeechEvent> {
     throw new Error('Recognize is not supported on Deepgram STT');
   }
 
@@ -118,7 +123,8 @@ export class STT extends stt.STT {
     this.#opts = { ...this.#opts, ...opts };
   }
 
-  stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
+  // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py - 261-277 lines
+  stream(options?: stt.STTStreamOptions): SpeechStream {
     return new SpeechStream(this, this.#opts, options?.connOptions);
   }
 
@@ -135,11 +141,13 @@ export class SpeechStream extends stt.SpeechStream {
   #resetWS = new Future();
   #requestId = '';
   #audioDurationCollector: PeriodicCollector<number>;
+  #connOptions: APIConnectOptions;
   label = 'deepgram.SpeechStream';
 
   constructor(stt: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
     super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
+    this.#connOptions = connOptions ?? { maxRetry: 3, retryIntervalMs: 2000, timeoutMs: 10000 };
     this.closed = false;
     this.#audioEnergyFilter = new AudioEnergyFilter();
     this.#audioDurationCollector = new PeriodicCollector(
@@ -149,10 +157,7 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   protected async run() {
-    const maxRetry = 32;
-    let retries = 0;
-    let ws: WebSocket;
-
+    // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py - 481-595 lines
     while (!this.input.closed && !this.closed) {
       const streamURL = new URL(`${this.#opts.baseUrl}/v1/listen`);
       const params = {
@@ -186,35 +191,66 @@ export class SpeechStream extends stt.SpeechStream {
         }
       });
 
-      ws = new WebSocket(streamURL, {
+      const ws = new WebSocket(streamURL, {
         headers: { Authorization: `Token ${this.#opts.apiKey}` },
       });
 
       try {
-        await new Promise((resolve, reject) => {
-          ws.on('open', resolve);
-          ws.on('error', (error) => reject(error));
-          ws.on('close', (code) => reject(`WebSocket returned ${code}`));
+        // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py - 626-643 lines
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(
+              new APITimeoutError({
+                message: `Deepgram connection timed out after ${this.#connOptions.timeoutMs}ms`,
+              }),
+            );
+          }, this.#connOptions.timeoutMs);
+          const cleanup = () => {
+            clearTimeout(timeout);
+            ws.off('open', onOpen);
+            ws.off('error', onError);
+            ws.off('close', onClose);
+          };
+          const onOpen = () => {
+            cleanup();
+            resolve();
+          };
+          const onError = (error: Error) => {
+            cleanup();
+            reject(
+              new APIConnectionError({
+                message: `failed to connect to Deepgram: ${error.message}`,
+              }),
+            );
+          };
+          const onClose = (code: number) => {
+            cleanup();
+            reject(
+              new APIConnectionError({
+                message: `Deepgram WebSocket returned ${code} before connection was established`,
+              }),
+            );
+          };
+
+          ws.on('open', onOpen);
+          ws.on('error', onError);
+          ws.on('close', onClose);
         });
 
         await this.#runWS(ws);
+        continue;
       } catch (e) {
+        ws.removeAllListeners();
+        ws.close();
         if (!this.closed && !this.input.closed) {
-          if (retries >= maxRetry) {
-            throw new Error(`failed to connect to Deepgram after ${retries} attempts: ${e}`);
-          }
-
-          const delay = Math.min(retries * 5, 10);
-          retries++;
-
-          this.#logger.warn(
-            `failed to connect to Deepgram, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
+          throw e instanceof Error
+            ? new APIConnectionError({ message: e.message })
+            : new APIConnectionError({ message: `failed to connect to Deepgram: ${String(e)}` });
         } else {
           this.#logger.warn(
             `Deepgram disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
           );
+          return;
         }
       }
     }

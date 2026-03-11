@@ -1,7 +1,18 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type AudioBuffer, AudioByteStream, Task, log, stt, waitForAbort } from '@livekit/agents';
+import {
+  APIConnectionError,
+  APITimeoutError,
+  DEFAULT_API_CONNECT_OPTIONS,
+  type APIConnectOptions,
+  type AudioBuffer,
+  AudioByteStream,
+  Task,
+  log,
+  stt,
+  waitForAbort,
+} from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
 import type { BasetenSttOptions } from './types.js';
@@ -27,9 +38,11 @@ export class STT extends stt.STT {
   label = 'baseten.STT';
 
   constructor(opts: Partial<BasetenSttOptions> = {}) {
+    // Ref: python livekit-plugins/livekit-plugins-baseten/livekit/plugins/baseten/stt.py - 84-90 lines
     super({
       streaming: true,
       interimResults: opts.enablePartialTranscripts ?? defaultSTTOptions.enablePartialTranscripts!,
+      offlineRecognize: false,
       alignedTranscript: 'word',
     });
 
@@ -58,7 +71,8 @@ export class STT extends stt.STT {
   }
 
   // eslint-disable-next-line
-  async _recognize(_: AudioBuffer): Promise<stt.SpeechEvent> {
+  // Ref: python livekit-plugins/livekit-plugins-baseten/livekit/plugins/baseten/stt.py - 142-149 lines
+  async _recognize(_: AudioBuffer, _options?: stt.STTRecognizeOptions): Promise<stt.SpeechEvent> {
     throw new Error('Recognize is not supported on Baseten STT');
   }
 
@@ -66,8 +80,9 @@ export class STT extends stt.STT {
     this.#opts = { ...this.#opts, ...opts };
   }
 
-  stream(): SpeechStream {
-    return new SpeechStream(this, this.#opts);
+  // Ref: python livekit-plugins/livekit-plugins-baseten/livekit/plugins/baseten/stt.py - 151-167 lines
+  stream(options?: stt.STTStreamOptions): SpeechStream {
+    return new SpeechStream(this, this.#opts, options?.connOptions);
   }
 }
 
@@ -76,11 +91,13 @@ export class SpeechStream extends stt.SpeechStream {
   #logger = log();
   #speaking = false;
   #requestId = '';
+  #connOptions: APIConnectOptions;
   label = 'baseten.SpeechStream';
 
-  constructor(stt: STT, opts: BasetenSttOptions) {
-    super(stt, opts.sampleRate);
+  constructor(stt: STT, opts: BasetenSttOptions, connOptions?: APIConnectOptions) {
+    super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
+    this.#connOptions = connOptions ?? DEFAULT_API_CONNECT_OPTIONS;
     this.closed = false;
   }
 
@@ -93,9 +110,7 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   protected async run() {
-    const maxRetry = 32;
-    let retries = 0;
-
+    // Ref: python livekit-plugins/livekit-plugins-baseten/livekit/plugins/baseten/stt.py - 247-400 lines
     while (!this.input.closed && !this.closed) {
       const url = this.getWsUrl();
       const headers = {
@@ -105,30 +120,61 @@ export class SpeechStream extends stt.SpeechStream {
       const ws = new WebSocket(url, { headers, rejectUnauthorized: false });
 
       try {
-        await new Promise((resolve, reject) => {
-          ws.on('open', resolve);
-          ws.on('error', (error) => reject(error));
-          ws.on('close', (code) => reject(`WebSocket returned ${code}`));
+        // Ref: python livekit-plugins/livekit-plugins-baseten/livekit/plugins/baseten/stt.py - 402-427 lines
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(
+              new APITimeoutError({
+                message: `Baseten connection timed out after ${this.#connOptions.timeoutMs}ms`,
+              }),
+            );
+          }, this.#connOptions.timeoutMs);
+          const cleanup = () => {
+            clearTimeout(timeout);
+            ws.off('open', onOpen);
+            ws.off('error', onError);
+            ws.off('close', onClose);
+          };
+          const onOpen = () => {
+            cleanup();
+            resolve();
+          };
+          const onError = (error: Error) => {
+            cleanup();
+            reject(
+              new APIConnectionError({
+                message: `failed to connect to Baseten: ${error.message}`,
+              }),
+            );
+          };
+          const onClose = (code: number) => {
+            cleanup();
+            reject(
+              new APIConnectionError({
+                message: `Baseten WebSocket returned ${code} before connection was established`,
+              }),
+            );
+          };
+
+          ws.on('open', onOpen);
+          ws.on('error', onError);
+          ws.on('close', onClose);
         });
 
         await this.#runWS(ws);
+        continue;
       } catch (e) {
+        ws.removeAllListeners();
+        ws.close();
         if (!this.closed && !this.input.closed) {
-          if (retries >= maxRetry) {
-            throw new Error(`failed to connect to Baseten after ${retries} attempts: ${e}`);
-          }
-
-          const delay = Math.min(retries * 5, 10);
-          retries++;
-
-          this.#logger.warn(
-            `failed to connect to Baseten, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
+          throw e instanceof Error
+            ? new APIConnectionError({ message: e.message })
+            : new APIConnectionError({ message: `failed to connect to Baseten: ${String(e)}` });
         } else {
           this.#logger.warn(
             `Baseten disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
           );
+          return;
         }
       }
     }
