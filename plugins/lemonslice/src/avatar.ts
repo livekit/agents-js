@@ -55,6 +55,11 @@ export interface AvatarSessionOptions {
    */
   idleTimeout?: number | null;
   /**
+   * Additional payload fields to merge into the LemonSlice session creation request.
+   * This is a shallow merge and matches the Python plugin's extra kwargs behavior.
+   */
+  extraPayload?: Record<string, unknown> | null;
+  /**
    * The LemonSlice API URL. Defaults to https://lemonslice.com/api/liveai/sessions
    * or LEMONSLICE_API_URL environment variable.
    */
@@ -123,6 +128,7 @@ export class AvatarSession {
   private agentImageUrl: string | null;
   private agentPrompt: string | null;
   private idleTimeout: number | null;
+  private extraPayload: Record<string, unknown> | null;
   private apiUrl: string;
   private apiKey: string;
   private avatarParticipantIdentity: string;
@@ -150,6 +156,7 @@ export class AvatarSession {
 
     this.agentPrompt = options.agentPrompt ?? null;
     this.idleTimeout = options.idleTimeout ?? null;
+    this.extraPayload = options.extraPayload ?? null;
 
     this.apiUrl = options.apiUrl || process.env.LEMONSLICE_API_URL || DEFAULT_API_URL;
     this.apiKey = options.apiKey || process.env.LEMONSLICE_API_KEY || '';
@@ -267,6 +274,10 @@ export class AvatarSession {
 
         if (this.idleTimeout !== null) {
           payload.idle_timeout = this.idleTimeout;
+        }
+
+        if (this.extraPayload) {
+          Object.assign(payload, this.extraPayload);
         }
 
         const response = await fetch(this.apiUrl, {
