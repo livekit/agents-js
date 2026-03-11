@@ -6,10 +6,14 @@ import {
   APIConnectionError,
   APIStatusError,
   APITimeoutError,
+} from '../_exceptions.js';
+import {
   DEFAULT_API_CONNECT_OPTIONS,
+} from '../types.js';
+import {
   type Expand,
   toError,
-} from '../index.js';
+} from '../utils.js';
 import * as llm from '../llm/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { type AnyString, createAccessToken } from './utils.js';
