@@ -154,7 +154,8 @@ async function synthesizeAudio(
         if (done) break;
         if (signal.aborted) break;
 
-        for (const frame of bstream.write(value.buffer as ArrayBuffer)) {
+        const chunk = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+        for (const frame of bstream.write(chunk)) {
           if (pendingFrame !== undefined) {
             queue.put({ requestId, segmentId, frame: pendingFrame, final: false });
           }
