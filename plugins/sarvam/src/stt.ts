@@ -192,7 +192,7 @@ function resolveOptions(opts: Partial<STTOptions>): ResolvedSTTOptions {
       (opts as STTV2Options).languageCode ?? SAARIKA_DEFAULTS.languageCode,
     );
     if (!STTV2_LANGUAGE_SET.has(languageCode)) {
-      languageCode = SAARIKA_DEFAULTS.languageCode;
+      languageCode = normalizeLanguage(SAARIKA_DEFAULTS.languageCode);
     }
     base.languageCode = languageCode;
     base.withTimestamps = (opts as STTV2Options).withTimestamps;
