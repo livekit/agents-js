@@ -324,7 +324,7 @@ const getModelParams = (opts: TTSOptions): Partial<TTSOptions> => {
 
   if (opts.voiceId) params.voice_id = opts.voiceId;
   if (opts.model) params.model = opts.model;
-  if (opts.langCode) params.lang_code = normalizeLanguage(opts.langCode);
+  if (opts.langCode) params.lang_code = getBaseLanguage(opts.langCode);
   if (opts.encoding) params.encoding = opts.encoding;
   if (opts.sampleRate) params.sampling_rate = opts.sampleRate;
   if (opts.speed) params.speed = opts.speed;

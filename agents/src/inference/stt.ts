@@ -368,7 +368,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   }
 
   updateOptions(opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language'>>): void {
-    this.opts = { ...this.opts, ...opts };
+    this.opts = {
+      ...this.opts,
+      ...opts,
+      language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
+    };
     this.reconnectEvent.set();
   }
 
