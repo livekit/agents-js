@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { STT } from '@livekit/agents-plugin-openai';
 import { tts } from '@livekit/agents-plugins-test';
 import { describe, it } from 'vitest';
-import { STT } from '@livekit/agents-plugin-openai';
 import { TTS } from './tts.js';
 
 const hasDeepgramTtsConfig = Boolean(process.env.DEEPGRAM_API_KEY && process.env.OPENAI_API_KEY);
