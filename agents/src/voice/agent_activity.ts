@@ -1639,6 +1639,7 @@ export class AgentActivity implements RecognitionHooks {
     if (speechHandle.interrupted) {
       replyAbortController.abort();
       await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      speechHandle._markGenerationDone();
       return;
     }
 
