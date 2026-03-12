@@ -877,7 +877,9 @@ export class AgentSession<
     if (this.closingTask) {
       return;
     }
-    this.closeImpl(reason, error, drain);
+    this.closingTask = this.closeImpl(reason, error, drain).finally(() => {
+      this.closingTask = null;
+    });
   }
 
   /** @internal */
@@ -1123,7 +1125,6 @@ export class AgentSession<
         try {
           await this.activity.interrupt({ force: true }).await;
         } catch (error) {
-          // Uninterruptible speech can throw during forced interruption.
           this.logger.warn({ error }, 'Error interrupting activity');
         }
       }

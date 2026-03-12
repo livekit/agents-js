@@ -2,11 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export type TTSModels = 'sonic' | 'sonic-2' | 'sonic-lite' | 'sonic-preview' | 'sonic-turbo';
+// Ref: python livekit-plugins/livekit-plugins-cartesia/livekit/plugins/cartesia/models.py - 11 lines
+export type TTSModels =
+  | 'sonic'
+  | 'sonic-2'
+  | 'sonic-3'
+  | 'sonic-lite'
+  | 'sonic-preview'
+  | 'sonic-turbo';
 
 export type TTSLanguages = 'en' | 'es' | 'fr' | 'de' | 'pt' | 'zh' | 'ja';
 
-export const TTSDefaultVoiceId = '794f9389-aac1-45b6-b726-9d9369183238';
+export const TTSDefaultVoiceId = 'f786b574-daa5-4673-aa0c-cbe3e8534c02';
+
+export const isSonic3 = (model: string): boolean => model.startsWith('sonic-3');
 
 export type TTSVoiceSpeed = 'fastest' | 'fast' | 'normal' | 'slow' | 'slowest';
 
