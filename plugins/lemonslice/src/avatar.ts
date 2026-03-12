@@ -185,12 +185,13 @@ export class AvatarSession {
    * @param room - The LiveKit room where the avatar will join
    * @param options - Optional LiveKit credentials (falls back to environment variables)
    * @throws LemonSliceException if LiveKit credentials are not available or if the avatar session fails to start
+   * @returns The session ID of the LemonSlice session
    */
   async start(
     agentSession: voice.AgentSession,
     room: Room,
     options: StartOptions = {},
-  ): Promise<void> {
+  ): Promise<string> {
     const livekitUrl = options.livekitUrl || process.env.LIVEKIT_URL;
     const livekitApiKey = options.livekitApiKey || process.env.LIVEKIT_API_KEY;
     const livekitApiSecret = options.livekitApiSecret || process.env.LIVEKIT_API_SECRET;
@@ -239,7 +240,7 @@ export class AvatarSession {
     const livekitToken = await at.toJwt();
 
     this.#logger.debug('starting avatar session');
-    await this.startAgent(livekitUrl, livekitToken);
+    const sessionId = await this.startAgent(livekitUrl, livekitToken);
 
     agentSession.output.audio = new voice.DataStreamAudioOutput({
       room,
@@ -247,9 +248,11 @@ export class AvatarSession {
       sampleRate: SAMPLE_RATE,
       waitRemoteTrack: TrackKind.KIND_VIDEO,
     });
+
+    return sessionId;
   }
 
-  private async startAgent(livekitUrl: string, livekitToken: string): Promise<void> {
+  private async startAgent(livekitUrl: string, livekitToken: string): Promise<string> {
     for (let i = 0; i <= this.connOptions.maxRetry; i++) {
       try {
         const payload: Record<string, any> = {
@@ -297,7 +300,8 @@ export class AvatarSession {
             options: { statusCode: response.status, body: { error: text } },
           });
         }
-        return;
+        const data = (await response.json()) as { session_id: string };
+        return data.session_id;
       } catch (e) {
         if (e instanceof APIStatusError && !e.retryable) {
           throw e;
