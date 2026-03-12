@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type AudioBuffer, mergeFrames, stt } from '@livekit/agents';
+import { type AudioBuffer, mergeFrames, normalizeLanguage, stt } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { OpenAI } from 'openai';
 import type { GroqAudioModels, WhisperModels } from './models.js';
@@ -38,7 +38,11 @@ export class STT extends stt.STT {
   constructor(opts: Partial<STTOptions> = defaultSTTOptions) {
     super({ streaming: false, interimResults: false, alignedTranscript: false });
 
-    this.#opts = { ...defaultSTTOptions, ...opts };
+    this.#opts = {
+      ...defaultSTTOptions,
+      ...opts,
+      language: normalizeLanguage(opts.language ?? defaultSTTOptions.language),
+    };
     if (this.#opts.apiKey === undefined) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
@@ -113,7 +117,7 @@ export class STT extends stt.STT {
 
   #sanitizeOptions(language?: string): STTOptions {
     if (language) {
-      return { ...this.#opts, language };
+      return { ...this.#opts, language: normalizeLanguage(language) };
     } else {
       return this.#opts;
     }
@@ -165,7 +169,7 @@ export class STT extends stt.STT {
       alternatives: [
         {
           text: resp.text || '',
-          language: config.language || '',
+          language: normalizeLanguage(config.language || ''),
           startTime: 0,
           endTime: 0,
           confidence: 0,

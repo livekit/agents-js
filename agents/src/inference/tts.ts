@@ -6,6 +6,7 @@ import { WebSocket } from 'ws';
 import { APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { ConnectionPool } from '../connection_pool.js';
+import { type LanguageCode, normalizeLanguage } from '../language.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import { basic as tokenizeBasic } from '../tokenize/index.js';
@@ -150,7 +151,7 @@ const DEFAULT_LANGUAGE = 'en';
 export interface InferenceTTSOptions<TModel extends TTSModels> {
   model?: TModel;
   voice?: string;
-  language?: string;
+  language?: LanguageCode;
   encoding: TTSEncoding;
   sampleRate: number;
   baseURL: string;
@@ -236,7 +237,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     this.opts = {
       model: nextModel,
       voice: nextVoice,
-      language,
+      language: normalizeLanguage(language),
       encoding,
       sampleRate,
       baseURL: lkBaseURL,
@@ -267,9 +268,13 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
   }
 
   updateOptions(opts: Partial<Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language'>>) {
-    this.opts = { ...this.opts, ...opts };
+    this.opts = {
+      ...this.opts,
+      ...opts,
+      language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
+    };
     for (const stream of this.streams) {
-      stream.updateOptions(opts);
+      stream.updateOptions(this.opts);
     }
   }
 
@@ -362,7 +367,11 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
   }
 
   updateOptions(opts: Partial<Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language'>>) {
-    this.opts = { ...this.opts, ...opts };
+    this.opts = {
+      ...this.opts,
+      ...opts,
+      language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
+    };
   }
 
   protected async run(): Promise<void> {

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AccessToken } from 'livekit-server-sdk';
 import { WebSocket } from 'ws';
-import { APIConnectionError, APIStatusError } from '../index.js';
+import { APIConnectionError, APIStatusError } from '../_exceptions.js';
 
 export type AnyString = string & NonNullable<unknown>;
 

@@ -8,6 +8,7 @@ import {
   calculateAudioDurationSeconds,
   createTimedString,
   log,
+  normalizeLanguage,
   stt,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
@@ -113,7 +114,11 @@ export class STTv2 extends stt.STT {
       alignedTranscript: 'word',
     });
 
-    this.#opts = { ...defaultSTTv2Options, ...opts };
+    this.#opts = {
+      ...defaultSTTv2Options,
+      ...opts,
+      language: opts.language ? normalizeLanguage(opts.language) : defaultSTTv2Options.language,
+    };
 
     const apiKey = opts.apiKey || process.env.DEEPGRAM_API_KEY;
     if (!apiKey) {
@@ -197,7 +202,12 @@ class SpeechStreamv2 extends stt.SpeechStream {
 
   updateOptions(opts: Partial<STTv2Options>) {
     this.#logger.debug('Stream received option update', opts);
-    this.#opts = { ...this.#opts, ...opts };
+    this.#opts = {
+      ...this.#opts,
+      ...opts,
+      language:
+        opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
+    };
     if (opts.tags) this.#opts.tags = validateTags(opts.tags);
 
     // Trigger reconnection loop
@@ -478,7 +488,7 @@ function parseTranscription(
   }
 
   const sd: stt.SpeechData = {
-    language: language,
+    language: normalizeLanguage(language),
     startTime: ((data.audio_window_start as number) || 0) + startTimeOffset,
     endTime: ((data.audio_window_end as number) || 0) + startTimeOffset,
     confidence: confidence,

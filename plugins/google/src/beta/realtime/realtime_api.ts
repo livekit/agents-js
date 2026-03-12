@@ -26,6 +26,7 @@ import {
   delay,
   llm,
   log,
+  normalizeLanguage,
   shortuuid,
   stream,
 } from '@livekit/agents';
@@ -327,7 +328,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       model: options.model || defaultModel,
       apiKey,
       voice: options.voice || 'Puck',
-      language: options.language,
+      language: options.language ? normalizeLanguage(options.language) : undefined,
       responseModalities: options.modalities || [Modality.AUDIO],
       vertexai,
       project,

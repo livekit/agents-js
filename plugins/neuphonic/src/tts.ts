@@ -5,7 +5,9 @@ import {
   type APIConnectOptions,
   AudioByteStream,
   Future,
+  getBaseLanguage,
   log,
+  normalizeLanguage,
   shortuuid,
   tts,
 } from '@livekit/agents';
@@ -49,6 +51,7 @@ export class TTS extends tts.TTS {
     this.#opts = {
       ...defaultTTSOptions,
       ...opts,
+      langCode: normalizeLanguage(opts.langCode ?? defaultTTSOptions.langCode),
     };
 
     if (this.#opts.apiKey === undefined) {
@@ -104,7 +107,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       {
         hostname: API_BASE_URL,
         port: 443,
-        path: `/sse/speak/${this.#opts.langCode}`,
+        path: `/sse/speak/${getBaseLanguage(this.#opts.langCode)}`,
         method: 'POST',
         headers: {
           [AUTHORIZATION_HEADER]: this.#opts.apiKey!,
@@ -283,7 +286,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
 
-    const url = `wss://${API_BASE_URL}/speak/en?${getQueryParamString(this.#opts)}&api_key=${this.#opts.apiKey}`;
+    const url = `wss://${API_BASE_URL}/speak/${getBaseLanguage(this.#opts.langCode)}?${getQueryParamString(this.#opts)}&api_key=${this.#opts.apiKey}`;
     const ws = new WebSocket(url);
 
     try {
@@ -321,7 +324,7 @@ const getModelParams = (opts: TTSOptions): Partial<TTSOptions> => {
 
   if (opts.voiceId) params.voice_id = opts.voiceId;
   if (opts.model) params.model = opts.model;
-  if (opts.langCode) params.lang_code = opts.langCode;
+  if (opts.langCode) params.lang_code = getBaseLanguage(opts.langCode);
   if (opts.encoding) params.encoding = opts.encoding;
   if (opts.sampleRate) params.sampling_rate = opts.sampleRate;
   if (opts.speed) params.speed = opts.speed;
