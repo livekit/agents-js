@@ -8,12 +8,14 @@ import {
   APITimeoutError,
   DEFAULT_API_CONNECT_OPTIONS,
   llm,
+  log,
   toError,
 } from '@livekit/agents';
 import OpenAI from 'openai';
 import type { ChatModels } from '../models.js';
+import { WSLLM } from '../ws/llm.js';
 
-interface LLMOptions {
+export interface LLMOptions {
   model: string | ChatModels;
   apiKey?: string;
   baseURL?: string;
@@ -24,30 +26,32 @@ interface LLMOptions {
   store?: boolean;
   metadata?: Record<string, string>;
   strictToolSchema?: boolean;
+
+  /**
+   * Whether to use the WebSocket API.
+   * @default true
+   */
+  useWebSocket?: boolean;
 }
+
+type HttpLLMOptions = Omit<LLMOptions, 'useWebSocket'>;
 
 const defaultLLMOptions: LLMOptions = {
   model: 'gpt-4.1',
   apiKey: process.env.OPENAI_API_KEY,
   strictToolSchema: true,
+  useWebSocket: true,
 };
 
-export class LLM extends llm.LLM {
+class ResponsesHttpLLM extends llm.LLM {
   #client: OpenAI;
-  #opts: LLMOptions;
+  #opts: HttpLLMOptions;
 
-  /**
-   * Create a new instance of OpenAI Responses LLM.
-   *
-   * @remarks
-   * `apiKey` must be set to your OpenAI API key, either using the argument or by setting the
-   * `OPENAI_API_KEY` environment variable.
-   */
-  constructor(opts: Partial<LLMOptions> = defaultLLMOptions) {
+  constructor(opts: Partial<HttpLLMOptions> = defaultLLMOptions) {
     super();
 
     this.#opts = { ...defaultLLMOptions, ...opts };
-    if (this.#opts.apiKey === undefined) {
+    if (this.#opts.apiKey === undefined && this.#opts.client === undefined) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
 
@@ -59,15 +63,15 @@ export class LLM extends llm.LLM {
       });
   }
 
-  label(): string {
+  override label(): string {
     return 'openai.responses.LLM';
   }
 
-  get model(): string {
+  override get model(): string {
     return this.#opts.model;
   }
 
-  chat({
+  override chat({
     chatCtx,
     toolCtx,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
@@ -81,7 +85,7 @@ export class LLM extends llm.LLM {
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
-  }): LLMStream {
+  }): ResponsesHttpLLMStream {
     const modelOptions: Record<string, unknown> = { ...(extraKwargs || {}) };
 
     parallelToolCalls =
@@ -110,7 +114,7 @@ export class LLM extends llm.LLM {
       modelOptions.metadata = this.#opts.metadata;
     }
 
-    return new LLMStream(this, {
+    return new ResponsesHttpLLMStream(this, {
       model: this.#opts.model,
       client: this.#client,
       chatCtx,
@@ -122,7 +126,7 @@ export class LLM extends llm.LLM {
   }
 }
 
-export class LLMStream extends llm.LLMStream {
+class ResponsesHttpLLMStream extends llm.LLMStream {
   private model: string | ChatModels;
   private client: OpenAI;
   private modelOptions: Record<string, unknown>;
@@ -130,7 +134,7 @@ export class LLMStream extends llm.LLMStream {
   private responseId: string;
 
   constructor(
-    llm: LLM,
+    llm: ResponsesHttpLLM,
     {
       model,
       client,
@@ -323,5 +327,82 @@ export class LLMStream extends llm.LLMStream {
       };
     }
     return undefined;
+  }
+}
+
+export class LLM extends llm.LLM {
+  #opts: LLMOptions;
+  #llm: llm.LLM;
+  #logger = log();
+
+  /**
+   * Create a new instance of OpenAI Responses LLM.
+   *
+   * @remarks
+   * `apiKey` must be set to your OpenAI API key, either using the argument or by setting the
+   * `OPENAI_API_KEY` environment variable.
+   */
+  constructor(opts: Partial<LLMOptions> = defaultLLMOptions) {
+    super();
+
+    this.#opts = { ...defaultLLMOptions, ...opts };
+    const { useWebSocket, client, ...baseOpts } = this.#opts;
+
+    if (useWebSocket) {
+      if (client !== undefined) {
+        this.#logger.warn(
+          'WebSocket mode does not support custom client; provided client will be ignored',
+        );
+      }
+      this.#llm = new WSLLM(baseOpts);
+    } else {
+      this.#llm = new ResponsesHttpLLM({ ...baseOpts, client });
+    }
+  }
+
+  override label(): string {
+    return this.#llm.label();
+  }
+
+  override get model(): string {
+    return this.#llm.model;
+  }
+
+  override prewarm(): void {
+    this.#llm.prewarm();
+  }
+
+  // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/responses/llm.py - 229-233 lines
+  override async aclose(): Promise<void> {
+    await this.#llm.aclose();
+  }
+
+  async close(): Promise<void> {
+    await this.aclose();
+  }
+
+  override chat({
+    chatCtx,
+    toolCtx,
+    connOptions = DEFAULT_API_CONNECT_OPTIONS,
+    parallelToolCalls,
+    toolChoice,
+    extraKwargs,
+  }: {
+    chatCtx: llm.ChatContext;
+    toolCtx?: llm.ToolContext;
+    connOptions?: APIConnectOptions;
+    parallelToolCalls?: boolean;
+    toolChoice?: llm.ToolChoice;
+    extraKwargs?: Record<string, unknown>;
+  }): llm.LLMStream {
+    return this.#llm.chat({
+      chatCtx,
+      toolCtx,
+      connOptions,
+      parallelToolCalls,
+      toolChoice,
+      extraKwargs,
+    });
   }
 }
