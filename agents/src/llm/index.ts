@@ -30,6 +30,7 @@ export {
   type ChatItem,
   type ChatRole,
   type ImageContent,
+  type MetricsReport,
 } from './chat_context.js';
 
 export type { ProviderFormat } from './provider_format/index.js';
