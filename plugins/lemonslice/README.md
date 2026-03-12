@@ -52,14 +52,14 @@ Set `LEMONSLICE_API_KEY` and `LEMONSLICE_IMAGE_URL` to get up and running.
 |--------|------|-------------|
 | `agentId` | `string` | The LemonSlice agent ID to use. Either `agentId` or `agentImageUrl` must be provided. |
 | `agentImageUrl` | `AvatarImage` | A publicly accessible url to your avatar image. Either `agentId` or `agentImageUrl` must be provided. |
-| `extraPayload` | `Record<string, unknown>` | Additional LemonSlice session payload fields to forward with a shallow merge, matching the Python plugin's passthrough behavior. |
+| `extraPayload` | `Record<string, unknown>` | Additional LemonSlice session payload fields to forward to LemonSlice. |
 | `apiUrl` | `string` | The LemonSlice API URL. Defaults to `LEMONSLICE_API_URL` env var or the default LemonSlice API endpoint. |
 | `apiKey` | `string` | The LemonSlice API key. Defaults to `LEMONSLICE_API_KEY` env var. |
 | `avatarParticipantIdentity` | `string` | The identity of the avatar participant in the room. Defaults to `'lemonslice-avatar-agent'`. |
 | `avatarParticipantName` | `string` | The name of the avatar participant in the room. Defaults to `'lemonslice-avatar-agent'`. |
 | `connOptions` | `APIConnectOptions` | Connection options for API requests (retry count, timeout, etc.). |
 
-Use `extraPayload` for LemonSlice API fields that are not yet modeled directly by the SDK, such as `aspect_ratio`.
+Use `extraPayload` for LemonSlice API fields that are not yet modeled directly by the SDK.
 
 ## Environment Variables
 
