@@ -227,7 +227,10 @@ export class STT extends stt.STT {
     header.write('data', 36);
     header.writeUInt32LE(frame.data.byteLength, 40);
 
-    return Buffer.concat([header, Buffer.from(frame.data.buffer)]);
+    return Buffer.concat([
+      header,
+      Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength),
+    ]);
   }
 
   /**
