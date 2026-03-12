@@ -19,6 +19,7 @@ describe('LemonSlice AvatarSession', () => {
     const mockFetch = vi.mocked(fetch);
     mockFetch.mockResolvedValue({
       ok: true,
+      json: async () => ({ session_id: 'test-session-id' }),
     } as Response);
 
     const avatar = new AvatarSession({
@@ -29,9 +30,11 @@ describe('LemonSlice AvatarSession', () => {
       },
     });
 
-    await (avatar as unknown as {
-      startAgent(livekitUrl: string, livekitToken: string): Promise<void>;
-    }).startAgent('wss://livekit.example.com', 'livekit-token');
+    await (
+      avatar as unknown as {
+        startAgent(livekitUrl: string, livekitToken: string): Promise<void>;
+      }
+    ).startAgent('wss://livekit.example.com', 'livekit-token');
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith(
@@ -55,6 +58,7 @@ describe('LemonSlice AvatarSession', () => {
     const mockFetch = vi.mocked(fetch);
     mockFetch.mockResolvedValue({
       ok: true,
+      json: async () => ({ session_id: 'test-session-id' }),
     } as Response);
 
     const avatar = new AvatarSession({
@@ -62,9 +66,11 @@ describe('LemonSlice AvatarSession', () => {
       agentImageUrl: 'https://example.com/avatar.png',
     });
 
-    await (avatar as unknown as {
-      startAgent(livekitUrl: string, livekitToken: string): Promise<void>;
-    }).startAgent('wss://livekit.example.com', 'livekit-token');
+    await (
+      avatar as unknown as {
+        startAgent(livekitUrl: string, livekitToken: string): Promise<void>;
+      }
+    ).startAgent('wss://livekit.example.com', 'livekit-token');
 
     const requestInit = mockFetch.mock.calls[0]?.[1];
     const body = JSON.parse(String(requestInit?.body));
