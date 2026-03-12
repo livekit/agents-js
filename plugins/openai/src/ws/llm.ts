@@ -158,6 +158,7 @@ export class WSLLM extends llm.LLM {
   #pool: ConnectionPool<ResponsesWebSocket>;
   #prevResponseId = '';
   #prevChatCtx: llm.ChatContext | null = null;
+  #pendingToolCalls = new Set<string>();
 
   /**
    * Create a new instance of the OpenAI Responses API WebSocket LLM.
@@ -220,6 +221,10 @@ export class WSLLM extends llm.LLM {
     this.#prevChatCtx = chatCtx;
   }
 
+  _setPendingToolCalls(callIds: Set<string>): void {
+    this.#pendingToolCalls = callIds;
+  }
+
   chat({
     chatCtx,
     toolCtx,
@@ -275,11 +280,16 @@ export class WSLLM extends llm.LLM {
         diff.toCreate[0]![0] === lastPrevItemId
       ) {
         // All new items are appended after the tail of the previous context —
-        // safe to send only the incremental input with previous_response_id.
-        const newItemIds = new Set(diff.toCreate.map(([, id]: [string | null, string]) => id));
+        // safe to send only the incremental input with previous_response_id,
+        // but only if all pending tool calls from the previous response have
+        // their corresponding function_call_output in the new items.
+        const newItemIds = new Set(diff.toCreate.map(([, id]) => id));
         const newItems = chatCtx.items.filter((item: llm.ChatItem) => newItemIds.has(item.id));
-        inputChatCtx = new llm.ChatContext(newItems);
-        prevResponseId = this.#prevResponseId;
+        const pendingToolCallsCompleted = this.#pendingToolCallsCompleted(newItems);
+        if (pendingToolCallsCompleted) {
+          inputChatCtx = new llm.ChatContext(newItems);
+          prevResponseId = this.#prevResponseId;
+        }
       }
       // Otherwise: items were removed or inserted mid-history — fall back to
       // sending the full context with no previous_response_id.
@@ -297,6 +307,16 @@ export class WSLLM extends llm.LLM {
       strictToolSchema: this.#opts.strictToolSchema ?? true,
     });
   }
+
+  #pendingToolCallsCompleted(items: llm.ChatItem[]): boolean {
+    if (this.#pendingToolCalls.size === 0) return true;
+    const completedCallIds = new Set(
+      items
+        .filter((item): item is llm.FunctionCallOutput => item.type === 'function_call_output')
+        .map((item) => item.callId),
+    );
+    return [...this.#pendingToolCalls].every((callId) => completedCallIds.has(callId));
+  }
 }
 
 // ============================================================================
@@ -304,7 +324,7 @@ export class WSLLM extends llm.LLM {
 // ============================================================================
 
 export class WSLLMStream extends llm.LLMStream {
-  #parentLlm: WSLLM;
+  #llm: WSLLM;
   #pool: ConnectionPool<ResponsesWebSocket>;
   #model: string | ChatModels;
   #modelOptions: Record<string, unknown>;
@@ -313,9 +333,10 @@ export class WSLLMStream extends llm.LLMStream {
   /** Full chat context — used as fallback when previous_response_id is stale. */
   #fullChatCtx: llm.ChatContext;
   #responseId = '';
+  #pendingToolCalls = new Set<string>();
 
   constructor(
-    parentLlm: WSLLM,
+    llm: WSLLM,
     {
       pool,
       model,
@@ -338,8 +359,8 @@ export class WSLLMStream extends llm.LLMStream {
       strictToolSchema: boolean;
     },
   ) {
-    super(parentLlm, { chatCtx, toolCtx, connOptions });
-    this.#parentLlm = parentLlm;
+    super(llm, { chatCtx, toolCtx, connOptions });
+    this.#llm = llm;
     this.#pool = pool;
     this.#model = model;
     this.#modelOptions = modelOptions;
@@ -518,11 +539,12 @@ export class WSLLMStream extends llm.LLMStream {
 
   #handleResponseCreated(event: WsResponseCreatedEvent): void {
     this.#responseId = event.response.id;
-    this.#parentLlm._onResponseCreated(event.response.id, this.#fullChatCtx);
+    this.#llm._onResponseCreated(event.response.id, this.#fullChatCtx);
   }
 
   #handleOutputItemDone(event: WsOutputItemDoneEvent): llm.ChatChunk | undefined {
     if (event.item.type === 'function_call') {
+      this.#pendingToolCalls.add(event.item.call_id);
       return {
         id: this.#responseId,
         delta: {
@@ -552,6 +574,8 @@ export class WSLLMStream extends llm.LLMStream {
   }
 
   #handleResponseCompleted(event: WsResponseCompletedEvent): llm.ChatChunk | undefined {
+    this.#llm._setPendingToolCalls(this.#pendingToolCalls);
+
     if (event.response.usage) {
       return {
         id: this.#responseId,
