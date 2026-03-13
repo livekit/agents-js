@@ -1,12 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { STT } from './stt.js';
-import { initializeLogger } from '../../../agents/src/log.js';
-
-initializeLogger({ level: 'silent', pretty: false });
 
 type AnyFn = (...args: unknown[]) => unknown;
 type STTWithRecognize = STT & { _recognize: AnyFn };
@@ -55,7 +51,11 @@ describe('STT', () => {
         json: async () => ({ transcription: 'hello world', confidence: 0.95 }),
       });
 
-      const sttInstance = new STT({ authToken: 'test-token', apiUrl: 'http://stt:8080', language: 'vi' }) as STTWithRecognize;
+      const sttInstance = new STT({
+        authToken: 'test-token',
+        apiUrl: 'http://stt:8080',
+        language: 'vi',
+      }) as STTWithRecognize;
       const frame = makePcmFrame();
       await sttInstance._recognize([frame]);
 
@@ -74,15 +74,22 @@ describe('STT', () => {
         json: async () => ({ transcription: 'xin chào', confidence: 0.99 }),
       });
 
-      const sttInstance = new STT({ authToken: 'tok', apiUrl: 'http://stt:8080', language: 'vi' }) as STTWithRecognize;
+      const sttInstance = new STT({
+        authToken: 'tok',
+        apiUrl: 'http://stt:8080',
+        language: 'vi',
+      }) as STTWithRecognize;
       const frame = makePcmFrame();
       const event = await sttInstance._recognize([frame]);
-      const ev = event as { type: number; alternatives: Array<{ text: string; confidence: number; language: string }> };
+      const ev = event as {
+        type: number;
+        alternatives: Array<{ text: string; confidence: number; language: string }>;
+      };
 
       expect(ev.type).toBe(2); // SpeechEventType.FINAL_TRANSCRIPT = 2
-      expect(ev.alternatives[0].text).toBe('xin chào');
-      expect(ev.alternatives[0].confidence).toBe(0.99);
-      expect(ev.alternatives[0].language).toBe('vi');
+      expect(ev.alternatives[0]!.text).toBe('xin chào');
+      expect(ev.alternatives[0]!.confidence).toBe(0.99);
+      expect(ev.alternatives[0]!.language).toBe('vi');
     });
 
     it('applies normalization rules to transcription', async () => {
@@ -94,17 +101,20 @@ describe('STT', () => {
       const sttInstance = new STT({
         authToken: 'tok',
         apiUrl: 'http://stt:8080',
-        normalizationRules: { 'AI': 'trí tuệ nhân tạo' },
+        normalizationRules: { AI: 'trí tuệ nhân tạo' },
       }) as STTWithRecognize;
 
       const frame = makePcmFrame();
       const event = await sttInstance._recognize([frame]);
       const ev = event as { alternatives: Array<{ text: string }> };
-      expect(ev.alternatives[0].text).toBe('trí tuệ nhân tạo is great');
+      expect(ev.alternatives[0]!.text).toBe('trí tuệ nhân tạo is great');
     });
 
     it('returns event with no alternatives for empty audio', async () => {
-      const sttInstance = new STT({ authToken: 'tok', apiUrl: 'http://stt:8080' }) as STTWithRecognize;
+      const sttInstance = new STT({
+        authToken: 'tok',
+        apiUrl: 'http://stt:8080',
+      }) as STTWithRecognize;
       // Empty frame: 0 samples
       const emptyFrame = makePcmFrame(0);
       const event = await sttInstance._recognize([emptyFrame]);
@@ -122,7 +132,10 @@ describe('STT', () => {
         text: async () => 'Bad Request',
       });
 
-      const sttInstance = new STT({ authToken: 'tok', apiUrl: 'http://stt:8080' }) as STTWithRecognize;
+      const sttInstance = new STT({
+        authToken: 'tok',
+        apiUrl: 'http://stt:8080',
+      }) as STTWithRecognize;
       const frame = makePcmFrame();
 
       await expect(sttInstance._recognize([frame])).rejects.toThrow('Blaze STT error 400');
@@ -134,10 +147,16 @@ describe('STT', () => {
         json: async () => ({ transcription: 'hello', confidence: 1.0 }),
       });
 
-      const sttInstance = new STT({ authToken: 'tok', apiUrl: 'http://stt:8080', language: 'en' }) as STTWithRecognize;
+      const sttInstance = new STT({
+        authToken: 'tok',
+        apiUrl: 'http://stt:8080',
+        language: 'en',
+      }) as STTWithRecognize;
       await sttInstance._recognize([makePcmFrame()]);
 
-      const [url] = fetchMock.mock.calls[0] as [string];
+      const firstCall = fetchMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const [url] = firstCall! as [string];
       expect(url).toContain('language=en');
     });
 
@@ -148,7 +167,10 @@ describe('STT', () => {
         return { ok: true, json: async () => ({ transcription: '', confidence: 1.0 }) };
       });
 
-      const sttInstance = new STT({ authToken: 'tok', apiUrl: 'http://stt:8080' }) as STTWithRecognize;
+      const sttInstance = new STT({
+        authToken: 'tok',
+        apiUrl: 'http://stt:8080',
+      }) as STTWithRecognize;
       const frame = makePcmFrame(160, 16000, 1); // 160 samples, 16kHz, mono
       await sttInstance._recognize([frame]);
 
@@ -168,13 +190,13 @@ describe('STT', () => {
       expect(buf.toString('ascii', 0, 4)).toBe('RIFF');
       expect(buf.toString('ascii', 8, 12)).toBe('WAVE');
       expect(buf.toString('ascii', 12, 16)).toBe('fmt ');
-      expect(buf.readUInt32LE(16)).toBe(16);       // Subchunk1 size (PCM)
-      expect(buf.readUInt16LE(20)).toBe(1);        // Audio format (PCM = 1)
-      expect(buf.readUInt16LE(22)).toBe(1);        // Channels (mono)
-      expect(buf.readUInt32LE(24)).toBe(16000);    // Sample rate
-      expect(buf.readUInt16LE(34)).toBe(16);       // Bits per sample
+      expect(buf.readUInt32LE(16)).toBe(16); // Subchunk1 size (PCM)
+      expect(buf.readUInt16LE(20)).toBe(1); // Audio format (PCM = 1)
+      expect(buf.readUInt16LE(22)).toBe(1); // Channels (mono)
+      expect(buf.readUInt32LE(24)).toBe(16000); // Sample rate
+      expect(buf.readUInt16LE(34)).toBe(16); // Bits per sample
       expect(buf.toString('ascii', 36, 40)).toBe('data');
-      expect(buf.readUInt32LE(40)).toBe(320);      // Data chunk size
+      expect(buf.readUInt32LE(40)).toBe(320); // Data chunk size
     });
 
     it('applies longer normalization rules first for deterministic results', async () => {
@@ -188,8 +210,8 @@ describe('STT', () => {
         authToken: 'tok',
         apiUrl: 'http://stt:8080',
         normalizationRules: {
-          'A': 'X',   // shorter (length 1)
-          'AB': 'Y',  // longer  (length 2) — must be applied first
+          A: 'X', // shorter (length 1)
+          AB: 'Y', // longer  (length 2) — must be applied first
         },
       }) as STTWithRecognize;
 
@@ -197,7 +219,7 @@ describe('STT', () => {
       const ev = event as { alternatives: Array<{ text: string }> };
       // Longer-first: 'AB'→'Y' gives 'A Y', then 'A'→'X' gives 'X Y'
       // Shorter-first: 'A'→'X' gives 'X XB', then 'AB' not found → 'X XB' (wrong)
-      expect(ev.alternatives[0].text).toBe('X Y');
+      expect(ev.alternatives[0]!.text).toBe('X Y');
     });
   });
 });

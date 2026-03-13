@@ -1,24 +1,23 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TTS } from './tts.js';
-import { initializeLogger } from '../../../agents/src/log.js';
-
-initializeLogger({ level: 'silent', pretty: false });
 
 describe('TTS', () => {
   beforeEach(() => {
     // Default fetch stub for tests that construct streams without consuming them.
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      body: new ReadableStream({
-        start(controller) {
-          controller.close();
-        },
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        body: new ReadableStream({
+          start(controller) {
+            controller.close();
+          },
+        }),
       }),
-    }));
+    );
   });
 
   afterEach(() => {
@@ -31,7 +30,11 @@ describe('TTS', () => {
   });
 
   it('reports correct sampleRate', () => {
-    const ttsInstance = new TTS({ authToken: 'test', apiUrl: 'http://tts:8080', sampleRate: 22050 });
+    const ttsInstance = new TTS({
+      authToken: 'test',
+      apiUrl: 'http://tts:8080',
+      sampleRate: 22050,
+    });
     expect(ttsInstance.sampleRate).toBe(22050);
   });
 
@@ -137,7 +140,7 @@ describe('TTS', () => {
       // Should have emitted at least one frame
       expect(frames.length).toBeGreaterThan(0);
       // Last frame should have final=true
-      expect(frames[frames.length - 1].final).toBe(true);
+      expect(frames[frames.length - 1]!.final).toBe(true);
     });
 
     it('applies normalization rules before synthesis', async () => {
@@ -154,13 +157,17 @@ describe('TTS', () => {
       const ttsInstance = new TTS({
         authToken: 'tok',
         apiUrl: 'http://tts:8080',
-        normalizationRules: { '$': 'đô la' },
+        normalizationRules: { $: 'đô la' },
       });
 
       const stream = ttsInstance.synthesize('100$');
-      for await (const _ of stream) { /* consume */ }
+      for await (const _ of stream) {
+        /* consume */
+      }
 
-      const body = fetchMock.mock.calls[0][1].body as FormData;
+      const firstCall = fetchMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const body = (firstCall![1] as RequestInit).body as FormData;
       expect(body.get('query')).toBe('100đô la');
     });
 

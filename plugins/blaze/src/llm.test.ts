@@ -1,12 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LLM } from './llm.js';
-import { initializeLogger } from '../../../agents/src/log.js';
-
-initializeLogger({ level: 'silent', pretty: false });
 
 /** Create a minimal ChatContext mock for testing. */
 function makeChatCtx(messages: Array<{ role: string; text: string }>) {
@@ -52,7 +48,9 @@ describe('LLM', () => {
 
   it('updateOptions does not throw', () => {
     const llmInstance = new LLM({ botId: 'test-bot', authToken: 'tok', apiUrl: 'http://llm:8080' });
-    expect(() => llmInstance.updateOptions({ deepSearch: true, agenticSearch: true })).not.toThrow();
+    expect(() =>
+      llmInstance.updateOptions({ deepSearch: true, agenticSearch: true }),
+    ).not.toThrow();
   });
 
   describe('chat() streaming', () => {
@@ -73,7 +71,11 @@ describe('LLM', () => {
         body: makeSseBody(['Hello', ' world']),
       });
 
-      const llmInstance = new LLM({ botId: 'my-bot', authToken: 'test-token', apiUrl: 'http://llm:8080' });
+      const llmInstance = new LLM({
+        botId: 'my-bot',
+        authToken: 'test-token',
+        apiUrl: 'http://llm:8080',
+      });
       const ctx = makeChatCtx([{ role: 'user', text: 'Hi' }]);
 
       const stream = llmInstance.chat({ chatCtx: ctx as never });
@@ -198,9 +200,13 @@ describe('LLM', () => {
       const ctx = makeChatCtx([{ role: 'user', text: 'search' }]);
 
       const stream = llmInstance.chat({ chatCtx: ctx as never });
-      for await (const _ of stream) { /* consume */ }
+      for await (const _ of stream) {
+        /* consume */
+      }
 
-      const url = fetchMock.mock.calls[0][0] as string;
+      const firstCall = fetchMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const url = firstCall![0] as string;
       expect(url).toContain('deep_search=true');
       expect(url).toContain('agentic_search=true');
       expect(url).toContain('gender=female');
@@ -220,10 +226,20 @@ describe('LLM', () => {
       ]);
 
       const stream = llmInstance.chat({ chatCtx: ctx as never });
-      for await (const _ of stream) { /* consume */ }
+      for await (const _ of stream) {
+        /* consume */
+      }
 
-      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Array<{ role: string; content: string }>;
-      expect(body[0]).toEqual({ role: 'user', content: '[System Instructions]\nYou are a helpful assistant.' });
+      const firstCall = fetchMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const body = JSON.parse((firstCall![1] as RequestInit).body as string) as Array<{
+        role: string;
+        content: string;
+      }>;
+      expect(body[0]).toEqual({
+        role: 'user',
+        content: '[System Instructions]\nYou are a helpful assistant.',
+      });
       expect(body[1]).toEqual({ role: 'user', content: 'Hello' });
     });
     it('merges system/developer messages into one', async () => {
@@ -240,10 +256,20 @@ describe('LLM', () => {
       ]);
 
       const stream = llmInstance.chat({ chatCtx: ctx as never });
-      for await (const _ of stream) { /* consume */ }
+      for await (const _ of stream) {
+        /* consume */
+      }
 
-      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Array<{ role: string; content: string }>;
-      expect(body[0]).toEqual({ role: 'user', content: '[System Instructions]\nYou are a helpful assistant.\n\nBe concise.' });
+      const firstCall = fetchMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const body = JSON.parse((firstCall![1] as RequestInit).body as string) as Array<{
+        role: string;
+        content: string;
+      }>;
+      expect(body[0]).toEqual({
+        role: 'user',
+        content: '[System Instructions]\nYou are a helpful assistant.\n\nBe concise.',
+      });
       expect(body[1]).toEqual({ role: 'user', content: 'Hello' });
     });
     it('handles raw JSON lines (non-SSE fallback format)', async () => {
@@ -277,9 +303,11 @@ describe('LLM', () => {
       const body = new ReadableStream({
         start(controller) {
           // [DONE] and a spurious data line arrive in the same chunk
-          controller.enqueue(encoder.encode(
-            'data: {"content": "valid"}\n\ndata: [DONE]\n\ndata: {"content": "after-done"}\n\n'
-          ));
+          controller.enqueue(
+            encoder.encode(
+              'data: {"content": "valid"}\n\ndata: [DONE]\n\ndata: {"content": "after-done"}\n\n',
+            ),
+          );
           controller.close();
         },
       });
@@ -344,7 +372,9 @@ describe('LLM', () => {
         demographics: { gender: 'male', age: 99 },
       });
 
-      for await (const _ of stream) { /* consume */ }
+      for await (const _ of stream) {
+        /* consume */
+      }
 
       const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
       expect(url).toContain('deep_search=true');
