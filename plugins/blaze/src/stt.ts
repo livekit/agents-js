@@ -7,23 +7,22 @@
  *
  * Speech-to-Text plugin interfacing with Blaze transcription service.
  *
- * API Endpoint: POST /v1/stt/transcribe
+ * API Endpoint: POST `/v1/stt/transcribe`
  * Input: WAV audio file (FormData), query params: language, enable_segments
- * Output: { transcription: string, confidence: number }
+ * Output: `{ transcription: string, confidence: number }`
  */
-
 import type { AudioBuffer } from '@livekit/agents';
 import { mergeFrames, stt } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import {
   type BlazeConfig,
-  type ResolvedBlazeConfig,
-  buildAuthHeaders,
-  resolveConfig,
   MAX_RETRY_COUNT,
   RETRY_BASE_DELAY_MS,
-  sleep,
+  type ResolvedBlazeConfig,
+  buildAuthHeaders,
   isRetryableError,
+  resolveConfig,
+  sleep,
 } from './config.js';
 import type { BlazeSTTResponse } from './models.js';
 
@@ -41,7 +40,7 @@ export interface STTOptions {
   /**
    * Dictionary of text replacements applied to transcription output.
    * Keys are search strings, values are replacements.
-   * Example: { "AI": "trí tuệ nhân tạo" }
+   * Example: `{ "AI": "trí tuệ nhân tạo" }`
    */
   normalizationRules?: Record<string, string>;
   /** Request timeout in milliseconds. Default: 30000 */
@@ -61,11 +60,11 @@ interface ResolvedSTTOptions {
 function resolveSTTOptions(opts: STTOptions): ResolvedSTTOptions {
   const cfg: ResolvedBlazeConfig = resolveConfig(opts.config);
   return {
-    apiUrl:            opts.apiUrl    ?? cfg.apiUrl,
-    language:          opts.language  ?? 'vi',
-    authToken:         opts.authToken ?? cfg.authToken,
+    apiUrl: opts.apiUrl ?? cfg.apiUrl,
+    language: opts.language ?? 'vi',
+    authToken: opts.authToken ?? cfg.authToken,
     normalizationRules: opts.normalizationRules,
-    timeout:           opts.timeout   ?? cfg.sttTimeout,
+    timeout: opts.timeout ?? cfg.sttTimeout,
   };
 }
 
@@ -100,7 +99,8 @@ export class STT extends stt.STT {
   updateOptions(opts: Partial<Omit<STTOptions, 'config'>>): void {
     if (opts.language !== undefined) this.#opts.language = opts.language;
     if (opts.authToken !== undefined) this.#opts.authToken = opts.authToken;
-    if (opts.normalizationRules !== undefined) this.#opts.normalizationRules = opts.normalizationRules;
+    if (opts.normalizationRules !== undefined)
+      this.#opts.normalizationRules = opts.normalizationRules;
     if (opts.timeout !== undefined) this.#opts.timeout = opts.timeout;
   }
 
@@ -121,7 +121,9 @@ export class STT extends stt.STT {
 
     // 4. Build FormData for multipart upload
     const formData = new FormData();
-    const wavBlob = new Blob([wavBuffer], { type: 'audio/wav' });
+    // Create a Uint8Array with a detached copy to satisfy BlobPart typing in strict TS.
+    const wavBytes = Uint8Array.from(wavBuffer);
+    const wavBlob = new Blob([wavBytes], { type: 'audio/wav' });
     formData.append('audio_file', wavBlob, 'audio.wav');
 
     // 5. Build request URL with query params
@@ -162,7 +164,6 @@ export class STT extends stt.STT {
         // 7. Parse response
         result = (await response.json()) as BlazeSTTResponse;
         break; // Success
-
       } catch (err) {
         if (attempt < MAX_RETRY_COUNT && isRetryableError(err)) {
           await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
@@ -187,7 +188,7 @@ export class STT extends stt.STT {
       alternatives: [
         {
           text,
-          language: this.#opts.language,
+          language: this.#opts.language as stt.SpeechData['language'],
           startTime: 0,
           endTime: 0,
           confidence,
@@ -199,7 +200,7 @@ export class STT extends stt.STT {
   stream(): stt.SpeechStream {
     throw new Error(
       'Blaze STT does not support streaming recognition. ' +
-      'Use _recognize() for batch transcription.',
+        'Use _recognize() for batch transcription.',
     );
   }
 
@@ -217,8 +218,8 @@ export class STT extends stt.STT {
     header.writeUInt32LE(36 + frame.data.byteLength, 4);
     header.write('WAVE', 8);
     header.write('fmt ', 12);
-    header.writeUInt32LE(16, 16);                     // Subchunk1 size (PCM = 16)
-    header.writeUInt16LE(1, 20);                      // Audio format (1 = PCM)
+    header.writeUInt32LE(16, 16); // Subchunk1 size (PCM = 16)
+    header.writeUInt16LE(1, 20); // Audio format (1 = PCM)
     header.writeUInt16LE(frame.channels, 22);
     header.writeUInt32LE(frame.sampleRate, 24);
     header.writeUInt32LE(byteRate, 28);

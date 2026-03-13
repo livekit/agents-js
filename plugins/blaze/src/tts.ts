@@ -11,9 +11,9 @@
  * Input: FormData: query, language, audio_format=pcm, speaker_id, normalization=no, model
  * Output: Streaming raw PCM audio (24000 Hz, mono, 16-bit)
  */
-
 import { AudioByteStream, tts } from '@livekit/agents';
 import type { APIConnectOptions } from '@livekit/agents';
+import type { AudioFrame } from '@livekit/rtc-node';
 import {
   type BlazeConfig,
   type ResolvedBlazeConfig,
@@ -41,7 +41,7 @@ export interface TTSOptions {
   /**
    * Dictionary of text replacements applied before synthesis.
    * Keys are search strings, values are replacements.
-   * Example: { "$": "đô la", "%": "phần trăm" }
+   * Example: `{ "$": "đô la", "%": "phần trăm" }`
    */
   normalizationRules?: Record<string, string>;
   /** Request timeout in milliseconds. Default: 60000 */
@@ -71,14 +71,14 @@ function snapshotTTSOptions(opts: ResolvedTTSOptions): ResolvedTTSOptions {
 function resolveTTSOptions(opts: TTSOptions): ResolvedTTSOptions {
   const cfg: ResolvedBlazeConfig = resolveConfig(opts.config);
   return {
-    apiUrl:    opts.apiUrl    ?? cfg.apiUrl,
-    language:  opts.language  ?? 'vi',
+    apiUrl: opts.apiUrl ?? cfg.apiUrl,
+    language: opts.language ?? 'vi',
     speakerId: opts.speakerId ?? 'default',
     authToken: opts.authToken ?? cfg.authToken,
-    model:     opts.model     ?? 'v1_5_pro',
+    model: opts.model ?? 'v1_5_pro',
     sampleRate: opts.sampleRate ?? 24000,
     normalizationRules: opts.normalizationRules,
-    timeout:   opts.timeout   ?? cfg.ttsTimeout,
+    timeout: opts.timeout ?? cfg.ttsTimeout,
   };
 }
 
@@ -146,7 +146,7 @@ async function synthesizeAudio(
     const reader = response.body.getReader();
 
     // Buffer frames to ensure final=true is only set on the last frame
-    let pendingFrame: import('@livekit/rtc-node').AudioFrame | undefined;
+    let pendingFrame: AudioFrame | undefined;
 
     try {
       while (true) {
@@ -190,7 +190,13 @@ export class ChunkedStream extends tts.ChunkedStream {
   label = 'blaze.ChunkedStream';
   readonly #opts: ResolvedTTSOptions;
 
-  constructor(text: string, ttsInstance: TTS, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions, abortSignal?: AbortSignal) {
+  constructor(
+    text: string,
+    ttsInstance: TTS,
+    opts: ResolvedTTSOptions,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ) {
     super(text, ttsInstance, connOptions, abortSignal);
     this.#opts = opts;
   }
@@ -293,15 +299,20 @@ export class TTS extends tts.TTS {
    * Update TTS options at runtime.
    */
   updateOptions(opts: Partial<Omit<TTSOptions, 'config'>>): void {
-    if (opts.language   !== undefined) this.#opts.language   = opts.language;
-    if (opts.speakerId  !== undefined) this.#opts.speakerId  = opts.speakerId;
-    if (opts.authToken  !== undefined) this.#opts.authToken  = opts.authToken;
-    if (opts.model      !== undefined) this.#opts.model      = opts.model;
-    if (opts.timeout    !== undefined) this.#opts.timeout    = opts.timeout;
-    if (opts.normalizationRules !== undefined) this.#opts.normalizationRules = opts.normalizationRules;
+    if (opts.language !== undefined) this.#opts.language = opts.language;
+    if (opts.speakerId !== undefined) this.#opts.speakerId = opts.speakerId;
+    if (opts.authToken !== undefined) this.#opts.authToken = opts.authToken;
+    if (opts.model !== undefined) this.#opts.model = opts.model;
+    if (opts.timeout !== undefined) this.#opts.timeout = opts.timeout;
+    if (opts.normalizationRules !== undefined)
+      this.#opts.normalizationRules = opts.normalizationRules;
   }
 
-  synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream {
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): ChunkedStream {
     return new ChunkedStream(text, this, snapshotTTSOptions(this.#opts), connOptions, abortSignal);
   }
 

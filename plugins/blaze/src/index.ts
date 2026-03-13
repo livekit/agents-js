@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * @livekit/agents-plugin-blaze
+ * `@livekit/agents-plugin-blaze`
  *
  * LiveKit Agent Framework plugin for Blaze AI services (STT, TTS, LLM).
  *
@@ -22,7 +22,6 @@
  * const stt2 = new STT({ config, language: 'vi' });
  * ```
  */
-
 import { Plugin } from '@livekit/agents';
 
 export { STT } from './stt.js';
