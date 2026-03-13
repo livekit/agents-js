@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildAuthHeaders, resolveConfig } from './config.js';
 

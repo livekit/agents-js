@@ -7,18 +7,15 @@
  */
 
 /** Available TTS model identifiers. */
-export type BlazeTTSModel =
-  | 'v1_5_pro'
-  | 'v2_pro'
-  | string;   // Allow custom model names
+export type BlazeTTSModel = 'v1_5_pro' | 'v2_pro' | string; // Allow custom model names
 
 /** Supported language codes. */
 export type BlazeLanguage =
-  | 'vi'   // Vietnamese (default)
-  | 'en'   // English
-  | 'zh'   // Chinese
-  | 'ja'   // Japanese
-  | 'ko'   // Korean
+  | 'vi' // Vietnamese (default)
+  | 'en' // English
+  | 'zh' // Chinese
+  | 'ja' // Japanese
+  | 'ko' // Korean
   | string; // Allow any IETF language tag
 
 /** Audio format for TTS output. */
@@ -49,6 +46,6 @@ export interface BlazeChatMessage {
 
 /** Blaze LLM SSE data formats. */
 export type BlazeLLMData =
-  | { content: string }          // Format 1: primary
-  | { text: string }             // Format 2: fallback
+  | { content: string } // Format 1: primary
+  | { text: string } // Format 2: fallback
   | { delta: { text: string } }; // Format 3: delta
