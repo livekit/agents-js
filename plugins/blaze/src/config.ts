@@ -11,7 +11,7 @@
  * voicebot ID and is passed as constructor options to each plugin.
  *
  * Values are resolved in priority order:
- *   Explicit options > BlazeConfig > Environment variables > Defaults
+ *   Explicit options -\> BlazeConfig -\> Environment variables -\> Defaults
  *
  * Environment Variables (prefix: BLAZE_):
  *   BLAZE_API_URL      - Base URL for all Blaze services
@@ -54,8 +54,8 @@ function parseTimeoutEnv(envVal: string | undefined, defaultMs: number): number 
 /** Resolve configuration from options, environment variables, and defaults. */
 export function resolveConfig(config?: BlazeConfig): ResolvedBlazeConfig {
   return {
-    apiUrl:     config?.apiUrl     ?? process.env['BLAZE_API_URL']    ?? 'https://api.blaze.vn',
-    authToken:  config?.authToken  ?? process.env['BLAZE_API_TOKEN'] ?? '',
+    apiUrl: config?.apiUrl ?? process.env['BLAZE_API_URL'] ?? 'https://api.blaze.vn',
+    authToken: config?.authToken ?? process.env['BLAZE_API_TOKEN'] ?? '',
     sttTimeout: config?.sttTimeout ?? parseTimeoutEnv(process.env['BLAZE_STT_TIMEOUT'], 30000),
     ttsTimeout: config?.ttsTimeout ?? parseTimeoutEnv(process.env['BLAZE_TTS_TIMEOUT'], 60000),
     llmTimeout: config?.llmTimeout ?? parseTimeoutEnv(process.env['BLAZE_LLM_TIMEOUT'], 60000),
@@ -65,7 +65,7 @@ export function resolveConfig(config?: BlazeConfig): ResolvedBlazeConfig {
 /** Build Authorization header value if token is provided. */
 export function buildAuthHeaders(authToken: string): Record<string, string> {
   if (!authToken) return {};
-  return { 'Authorization': `Bearer ${authToken}` };
+  return { Authorization: `Bearer ${authToken}` };
 }
 
 /** Maximum number of retry attempts for transient failures. */
@@ -76,7 +76,7 @@ export const RETRY_BASE_DELAY_MS = 2000;
 
 /** Sleep for the given number of milliseconds. */
 export function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Check if an error is retryable (not an intentional abort). */

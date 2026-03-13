@@ -7,28 +7,27 @@
  *
  * LLM plugin interfacing with Blaze chatbot service.
  *
- * API Endpoint: POST /v1/voicebot-call/{botId}/chat-conversion-stream
- * Input: JSON array of { role, content } messages
- * Output: SSE stream: data: {"content": "..."} then data: [DONE]
+ * API Endpoint: POST `/v1/voicebot-call/{botId}/chat-conversion-stream`
+ * Input: JSON array of `{ role, content }` messages
+ * Output: SSE stream: `data: {"content": "..."}` then `data: [DONE]`
  */
-
 import { DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
 import type { APIConnectOptions } from '@livekit/agents';
+import {
+  type BlazeConfig,
+  MAX_RETRY_COUNT,
+  RETRY_BASE_DELAY_MS,
+  type ResolvedBlazeConfig,
+  buildAuthHeaders,
+  isRetryableError,
+  resolveConfig,
+  sleep,
+} from './config.js';
+import type { BlazeChatMessage, BlazeLLMData } from './models.js';
 
 // ChatContext and ChatMessage are in the llm namespace
 type ChatContext = llm.ChatContext;
 type ChatMessage = llm.ChatMessage;
-import {
-  type BlazeConfig,
-  type ResolvedBlazeConfig,
-  buildAuthHeaders,
-  resolveConfig,
-  MAX_RETRY_COUNT,
-  RETRY_BASE_DELAY_MS,
-  sleep,
-  isRetryableError,
-} from './config.js';
-import type { BlazeChatMessage, BlazeLLMData } from './models.js';
 
 /** Demographics for personalization. */
 export interface BlazeDemographics {
@@ -82,13 +81,13 @@ function resolveLLMOptions(opts: LLMOptions): ResolvedLLMOptions {
   }
   const cfg: ResolvedBlazeConfig = resolveConfig(opts.config);
   return {
-    botId:         opts.botId,
-    apiUrl:        opts.apiUrl    ?? cfg.apiUrl,
-    authToken:     opts.authToken ?? cfg.authToken,
-    deepSearch:    opts.deepSearch    ?? false,
+    botId: opts.botId,
+    apiUrl: opts.apiUrl ?? cfg.apiUrl,
+    authToken: opts.authToken ?? cfg.authToken,
+    deepSearch: opts.deepSearch ?? false,
     agenticSearch: opts.agenticSearch ?? false,
-    demographics:  opts.demographics,
-    timeout:       opts.timeout   ?? cfg.llmTimeout,
+    demographics: opts.demographics,
+    timeout: opts.timeout ?? cfg.llmTimeout,
   };
 }
 
@@ -165,12 +164,15 @@ export class BlazeLLMStream extends llm.LLMStream {
     const messages = convertMessages(this.chatCtx);
 
     // Build URL with query params
-    const url = new URL(`${this.#opts.apiUrl}/v1/voicebot-call/${this.#opts.botId}/chat-conversion-stream`);
+    const url = new URL(
+      `${this.#opts.apiUrl}/v1/voicebot-call/${this.#opts.botId}/chat-conversion-stream`,
+    );
     url.searchParams.set('is_voice_call', 'true');
     url.searchParams.set('use_tool_based', 'true');
     if (this.#opts.deepSearch) url.searchParams.set('deep_search', 'true');
     if (this.#opts.agenticSearch) url.searchParams.set('agentic_search', 'true');
-    if (this.#opts.demographics?.gender) url.searchParams.set('gender', this.#opts.demographics.gender);
+    if (this.#opts.demographics?.gender)
+      url.searchParams.set('gender', this.#opts.demographics.gender);
     if (this.#opts.demographics?.age !== undefined) {
       url.searchParams.set('age', String(this.#opts.demographics.age));
     }
@@ -251,7 +253,9 @@ export class BlazeLLMStream extends llm.LLMStream {
                 continue;
               }
 
-              const content = extractContent(parsed as BlazeLLMData as unknown as Record<string, unknown>);
+              const content = extractContent(
+                parsed as BlazeLLMData as unknown as Record<string, unknown>,
+              );
               if (content) {
                 completionTokens++;
                 this.queue.put({
@@ -280,7 +284,6 @@ export class BlazeLLMStream extends llm.LLMStream {
         });
 
         return; // Success — exit method
-
       } catch (err) {
         if (attempt < MAX_RETRY_COUNT && isRetryableError(err)) {
           await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
@@ -294,7 +297,9 @@ export class BlazeLLMStream extends llm.LLMStream {
   }
 
   // Required abstract method from base class
-  get label_(): string { return 'blaze.LLMStream'; }
+  get label_(): string {
+    return 'blaze.LLMStream';
+  }
 }
 
 /**
@@ -331,11 +336,11 @@ export class BlazeLLM extends llm.LLM {
    * Update LLM options at runtime.
    */
   updateOptions(opts: Partial<Omit<LLMOptions, 'botId' | 'config'>>): void {
-    if (opts.authToken     !== undefined) this.#opts.authToken     = opts.authToken;
-    if (opts.deepSearch    !== undefined) this.#opts.deepSearch    = opts.deepSearch;
+    if (opts.authToken !== undefined) this.#opts.authToken = opts.authToken;
+    if (opts.deepSearch !== undefined) this.#opts.deepSearch = opts.deepSearch;
     if (opts.agenticSearch !== undefined) this.#opts.agenticSearch = opts.agenticSearch;
-    if (opts.demographics  !== undefined) this.#opts.demographics  = opts.demographics;
-    if (opts.timeout       !== undefined) this.#opts.timeout       = opts.timeout;
+    if (opts.demographics !== undefined) this.#opts.demographics = opts.demographics;
+    if (opts.timeout !== undefined) this.#opts.timeout = opts.timeout;
   }
 
   chat({
