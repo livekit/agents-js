@@ -417,6 +417,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private hasReceivedAudioInput = false;
   private pendingInterruptText = false;
   private earlyCompletionPending = false;
+  private toolCallPending = false;
+  private generationPendingTurnComplete?: ResponseGeneration;
 
   #client: GoogleGenAI;
   #task: Promise<void>;
@@ -478,6 +480,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.earlyCompletionPending = false;
     this.pendingInterruptText = false;
 
+    this.toolCallPending = false;
+    if (this.generationPendingTurnComplete) {
+      this.markCurrentGenerationDone(false, this.generationPendingTurnComplete);
+      this.generationPendingTurnComplete = undefined;
+    }
     unlock();
   }
 
@@ -645,6 +652,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   pushAudio(frame: AudioFrame): void {
+    if (this.toolCallPending) return;
+
     // Track that we've received audio input
     this.hasReceivedAudioInput = true;
 
@@ -735,6 +744,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!this.manualActivityDetection) {
       return;
     }
+
+    if (this.toolCallPending) return;
 
     if (!this.inUserActivity) {
       this.inUserActivity = true;
@@ -969,13 +980,18 @@ export class RealtimeSession extends llm.RealtimeSession {
               if (LK_GOOGLE_DEBUG) {
                 this.#logger.debug(`(client) -> ${JSON.stringify(this.loggableClientEvent(msg))}`);
               }
-              await session.sendToolResponse({
-                functionResponses,
-              });
+              try {
+                await session.sendToolResponse({
+                  functionResponses,
+                });
+              } finally {
+                this.toolCallPending = false;
+              }
             }
             break;
           case 'realtime_input':
             const { mediaChunks, activityStart, activityEnd, text } = msg.value;
+            if (this.toolCallPending) break;
             if (mediaChunks) {
               for (const mediaChunk of mediaChunks) {
                 await session.sendRealtimeInput({ media: mediaChunk });
@@ -1013,6 +1029,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     session: types.Session,
     response: types.LiveServerMessage,
   ): Promise<void> {
+    if (response.toolCall) this.toolCallPending = true;
     // Skip logging verbose audio data events
     const hasAudioData = response.serverContent?.modelTurn?.parts?.some(
       (part) => part.inlineData?.data,
@@ -1165,21 +1182,25 @@ export class RealtimeSession extends llm.RealtimeSession {
     return obj;
   }
 
-  private markCurrentGenerationDone(keepFunctionChannelOpen: boolean = false): void {
-    if (!this.currentGeneration || this.currentGeneration._done) {
+  private markCurrentGenerationDone(
+    keepFunctionChannelOpen: boolean = false,
+    gen?: ResponseGeneration,
+  ): void {
+    const target = gen ?? this.currentGeneration;
+    if (!target || target._done) {
       return;
     }
 
     this.handleInputSpeechStopped();
 
-    const gen = this.currentGeneration;
+    const targetGen = target;
 
     // The only way we'd know that the transcription is complete is by when they are
     // done with generation
-    if (gen.inputTranscription) {
+    if (targetGen.inputTranscription) {
       this.emit('input_audio_transcription_completed', {
-        itemId: gen.inputId,
-        transcript: gen.inputTranscription,
+        itemId: targetGen.inputId,
+        transcript: targetGen.inputTranscription,
         isFinal: true,
       } as llm.InputTranscriptionCompleted);
 
@@ -1187,31 +1208,31 @@ export class RealtimeSession extends llm.RealtimeSession {
       // we would handle it manually here
       this._chatCtx.addMessage({
         role: 'user',
-        content: gen.inputTranscription,
-        id: gen.inputId,
+        content: targetGen.inputTranscription,
+        id: targetGen.inputId,
       });
     }
 
-    if (gen.outputText) {
+    if (targetGen.outputText) {
       this._chatCtx.addMessage({
         role: 'assistant',
-        content: gen.outputText,
-        id: gen.responseId,
+        content: targetGen.outputText,
+        id: targetGen.responseId,
       });
     }
 
     if (this.options.outputAudioTranscription === undefined) {
       // close the text data of transcription synchronizer
-      gen.textChannel.write('');
+      targetGen.textChannel.write('');
     }
 
-    gen.textChannel.close();
-    gen.audioChannel.close();
+    targetGen.textChannel.close();
+    targetGen.audioChannel.close();
     if (!keepFunctionChannelOpen) {
-      gen.functionChannel.close();
+      targetGen.functionChannel.close();
     }
-    gen.messageChannel.close();
-    gen._done = true;
+    targetGen.messageChannel.close();
+    targetGen._done = true;
   }
 
   private emitError(error: Error, recoverable: boolean): void {
@@ -1290,14 +1311,21 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private startNewGeneration(): void {
+    const previousGen = this.currentGeneration;
+    const previousHadOpenFunctionChannel = previousGen && !previousGen.functionChannel.closed;
+
     // close functionChannel of previous generation if still open (no toolCall arrived)
-    if (this.currentGeneration && !this.currentGeneration.functionChannel.closed) {
-      this.currentGeneration.functionChannel.close();
+    if (previousGen && previousHadOpenFunctionChannel) {
+      previousGen.functionChannel.close();
     }
 
-    if (this.currentGeneration && !this.currentGeneration._done) {
-      this.#logger.warn('Starting new generation while another is active. Finalizing previous.');
-      this.markCurrentGenerationDone();
+    if (previousGen && !previousGen._done) {
+      if (previousHadOpenFunctionChannel) {
+        this.generationPendingTurnComplete = previousGen;
+      } else {
+        this.#logger.warn('Starting new generation while another is active. Finalizing previous.');
+        this.markCurrentGenerationDone();
+      }
     }
 
     const responseId = shortuuid('GR_');
@@ -1452,7 +1480,12 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (serverContent.turnComplete && !this.earlyCompletionPending) {
-      this.markCurrentGenerationDone();
+      if (this.generationPendingTurnComplete) {
+        this.markCurrentGenerationDone(false, this.generationPendingTurnComplete);
+        this.generationPendingTurnComplete = undefined;
+      } else {
+        this.markCurrentGenerationDone();
+      }
     }
 
     // Assume Gemini emits turnComplete/generationComplete before any new generation content.
@@ -1472,6 +1505,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const gen = this.currentGeneration;
+
+    this.toolCallPending = true;
 
     if (gen.functionChannel.closed) {
       this.#logger.warn('received tool call but functionChannel is already closed.');
@@ -1493,7 +1528,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     gen.functionChannel.close();
-    this.markCurrentGenerationDone();
   }
 
   private handleToolCallCancellation(cancellation: types.LiveServerToolCallCancellation): void {
