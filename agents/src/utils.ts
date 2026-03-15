@@ -846,7 +846,12 @@ export async function waitForParticipant({
     }
   };
 
+  const onDisconnected = () => {
+    fut.reject(new Error('Got disconnected from room while waiting for participant'));
+  };
+
   room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
+  room.on(RoomEvent.Disconnected, onDisconnected);
 
   try {
     for (const p of room.remoteParticipants.values()) {
@@ -859,6 +864,7 @@ export async function waitForParticipant({
     return await fut.await;
   } finally {
     room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
+    room.off(RoomEvent.Disconnected, onDisconnected);
   }
 }
 
