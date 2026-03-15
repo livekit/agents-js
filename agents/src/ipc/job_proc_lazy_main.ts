@@ -70,7 +70,12 @@ class InfClient implements InferenceExecutor {
   async doInference(method: string, data: unknown): Promise<unknown> {
     const requestId = shortuuid('inference_job_');
     if (!safeSend({ case: 'inferenceRequest', value: { requestId, method, data } })) {
-      throw new Error('IPC channel closed');
+      // Channel closed - this is expected during normal shutdown scenarios
+      // (participant disconnect, room close, reconnection). Instead of crashing
+      // the process with an unhandled error, we return a clear error that can
+      // be handled upstream. See: https://github.com/livekit/agents-js/issues/1080
+      log().debug({ method, requestId }, 'IPC channel closed during inference, aborting gracefully');
+      throw new Error(`Inference ${method} aborted: IPC channel closed (expected during shutdown)`);
     }
 
     this.#requests[requestId] = new PendingInference();
