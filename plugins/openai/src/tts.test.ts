@@ -2,10 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { tts } from '@livekit/agents-plugins-test';
-import { describe } from 'vitest';
+import { describe, it } from 'vitest';
 import { STT } from './stt.js';
 import { TTS } from './tts.js';
 
-describe('OpenAI', async () => {
-  await tts(new TTS(), new STT(), { streaming: false });
-});
+const hasOpenAIApiKey = Boolean(process.env.OPENAI_API_KEY);
+
+if (hasOpenAIApiKey) {
+  describe('OpenAI', async () => {
+    await tts(new TTS(), new STT(), { streaming: false });
+  });
+} else {
+  describe('OpenAI', () => {
+    it.skip('requires OPENAI_API_KEY', () => {});
+  });
+}

@@ -6,6 +6,7 @@ import { WebSocket } from 'ws';
 import { APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { ConnectionPool } from '../connection_pool.js';
+import { type LanguageCode, normalizeLanguage } from '../language.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import { basic as tokenizeBasic } from '../tokenize/index.js';
@@ -62,7 +63,14 @@ export interface DeepgramTTSOptions {}
 
 export interface RimeOptions {}
 
-export interface InworldOptions {}
+export interface InworldOptions {
+  /** Controls how fast the voice speaks. 1.0 is normal speed, 0.5 is half, 1.5 is 1.5x. Default: 1.0. */
+  speaking_rate?: number;
+  /** Controls randomness in the output. Recommended between 0.6 and 1.1. Default: 1.1. */
+  temperature?: number;
+  /** Controls text normalization. "ON" expands numbers, dates, abbreviations. "OFF" reads text as written. Default: "ON". */
+  text_normalization?: 'ON' | 'OFF';
+}
 
 type _TTSModels =
   | CartesiaModels
@@ -143,7 +151,7 @@ const DEFAULT_LANGUAGE = 'en';
 export interface InferenceTTSOptions<TModel extends TTSModels> {
   model?: TModel;
   voice?: string;
-  language?: string;
+  language?: LanguageCode;
   encoding: TTSEncoding;
   sampleRate: number;
   baseURL: string;
@@ -229,7 +237,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     this.opts = {
       model: nextModel,
       voice: nextVoice,
-      language,
+      language: normalizeLanguage(language),
       encoding,
       sampleRate,
       baseURL: lkBaseURL,
@@ -260,9 +268,13 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
   }
 
   updateOptions(opts: Partial<Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language'>>) {
-    this.opts = { ...this.opts, ...opts };
+    this.opts = {
+      ...this.opts,
+      ...opts,
+      language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
+    };
     for (const stream of this.streams) {
-      stream.updateOptions(opts);
+      stream.updateOptions(this.opts);
     }
   }
 
@@ -355,7 +367,11 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
   }
 
   updateOptions(opts: Partial<Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language'>>) {
-    this.opts = { ...this.opts, ...opts };
+    this.opts = {
+      ...this.opts,
+      ...opts,
+      language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
+    };
   }
 
   protected async run(): Promise<void> {

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type PreTrainedTokenizer } from '@huggingface/transformers';
 import type { ipc, llm } from '@livekit/agents';
-import { Future, InferenceRunner, getJobContext, log } from '@livekit/agents';
+import { Future, InferenceRunner, getBaseLanguage, getJobContext, log } from '@livekit/agents';
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import { InferenceSession, Tensor } from 'onnxruntime-node';
@@ -207,8 +207,7 @@ export abstract class EOUModel {
     let langData = languages[lang];
 
     if (langData === undefined && lang.includes('-')) {
-      const baseLang = lang.split('-')[0]!;
-      langData = languages[baseLang];
+      langData = languages[getBaseLanguage(lang)];
     }
 
     if (langData === undefined) {

@@ -2,21 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import OpenAI from 'openai';
-import {
-  APIConnectionError,
-  APIStatusError,
-  APITimeoutError,
-  DEFAULT_API_CONNECT_OPTIONS,
-  type Expand,
-  toError,
-} from '../index.js';
+import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import * as llm from '../llm/index.js';
+import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import type { APIConnectOptions } from '../types.js';
+import { type Expand, toError } from '../utils.js';
 import { type AnyString, createAccessToken } from './utils.js';
 
 const DEFAULT_BASE_URL = 'https://agent-gateway.livekit.cloud/v1';
 
 export type OpenAIModels =
+  | 'openai/gpt-5.4'
+  | 'openai/gpt-5.3-chat-latest'
   | 'openai/gpt-5.2'
   | 'openai/gpt-5.2-chat-latest'
   | 'openai/gpt-5.1'

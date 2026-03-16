@@ -32,7 +32,6 @@ export default defineAgent({
       // Uses PHONIC_API_KEY environment variable when apiKey is not provided
       llm: new phonic.realtime.RealtimeModel({
         voice: 'sabrina',
-        welcomeMessage: 'Hey there, how can I help you today?',
         audioSpeed: 1.2,
       }),
     });
@@ -43,6 +42,22 @@ export default defineAgent({
     });
 
     await ctx.connect();
+
+    await session.generateReply({
+      instructions: 'Greet the user, asking about their day.',
+    });
+
+    setTimeout(async () => {
+      if (session.agentState === 'initializing') return;
+      const agent = session.currentAgent;
+      const chatCtx = agent.chatCtx.copy();
+      chatCtx.addMessage({
+        role: 'system',
+        content:
+          "The user's name is Alex. He is from San Francisco and likes hiking. Use this information in your conversation.",
+      });
+      await agent.updateChatCtx(chatCtx);
+    }, 10000);
   },
 });
 
