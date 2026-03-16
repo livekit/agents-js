@@ -381,7 +381,7 @@ importers:
         version: 17.2.3
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.18.3)(zod@4.2.1)
+        version: 6.8.1(ws@8.18.3)(zod@4.3.6)
       ws:
         specifier: ^8.14.2
         version: 8.18.3
@@ -725,10 +725,13 @@ importers:
         version: 1.1.1
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.18.3)(zod@4.2.1)
+        version: 6.8.1(ws@8.18.3)(zod@4.3.6)
       ws:
         specifier: ^8.18.0
         version: 8.18.3
+      zod:
+        specifier: ^3.25.76 || ^4.1.8
+        version: 4.3.6
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -964,7 +967,7 @@ importers:
     dependencies:
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.18.3)(zod@4.2.1)
+        version: 6.8.1(ws@8.18.3)(zod@4.3.6)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -5467,6 +5470,9 @@ packages:
   zod@4.2.1:
     resolution: {integrity: sha512-0wZ1IRqGGhMP76gLqz8EyfBXKk0J2qo2+H3fi4mcUP/KtTocoX08nmIAHl1Z2kJIZbZee8KOpBCSNPRgauucjw==}
 
+  zod@4.3.6:
+    resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
+
 snapshots:
 
   '@babel/code-frame@7.24.2':
@@ -8929,10 +8935,10 @@ snapshots:
       ws: 8.18.3
       zod: 3.25.76
 
-  openai@6.8.1(ws@8.18.3)(zod@4.2.1):
+  openai@6.8.1(ws@8.18.3)(zod@4.3.6):
     optionalDependencies:
       ws: 8.18.3
-      zod: 4.2.1
+      zod: 4.3.6
 
   optionator@0.9.4:
     dependencies:
@@ -10215,3 +10221,5 @@ snapshots:
   zod@3.25.76: {}
 
   zod@4.2.1: {}
+
+  zod@4.3.6: {}
