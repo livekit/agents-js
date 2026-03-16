@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { Throws } from '@livekit/throws-transformer/throws';
 import { AudioResampler } from '@livekit/rtc-node';
+import type { Throws } from '@livekit/throws-transformer/throws';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import { basic } from '../tokenize/index.js';
