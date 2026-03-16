@@ -358,6 +358,11 @@ export class LLM extends llm.LLM {
     } else {
       this.#llm = new ResponsesHttpLLM({ ...baseOpts, client });
     }
+
+    // Forward events from the inner delegate so consumers listening on this
+    // wrapper instance (e.g. AgentActivity) receive them.
+    this.#llm.on('metrics_collected', (metrics) => this.emit('metrics_collected', metrics));
+    this.#llm.on('error', (error) => this.emit('error', error));
   }
 
   override label(): string {
