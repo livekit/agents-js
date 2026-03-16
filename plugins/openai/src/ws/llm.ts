@@ -92,7 +92,7 @@ export class ResponsesWebSocket {
               message: 'OpenAI Responses WebSocket closed unexpectedly',
             },
           };
-          void current.write(closeError).then(() => current.close());
+          void current.write(closeError).finally(() => current.close());
         }
       }
       this.#outputQueue = [];
