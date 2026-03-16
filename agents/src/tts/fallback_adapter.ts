@@ -310,7 +310,7 @@ class FallbackChunkedStream extends ChunkedStream {
   /**
    * @throws {APIConnectionError} When all TTS providers have been exhausted
    */
-  protected async run(): Promise<Throws<undefined, APIConnectionError>> {
+  protected async run(): Promise<Throws<void, APIConnectionError>> {
     const allTTSFailed = this.adapter.status.every((s) => !s.available);
     let lastRequestId: string = '';
     let lastSegmentId: string = '';
@@ -413,7 +413,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
   /**
    * @throws {APIConnectionError} When all TTS providers have been exhausted
    */
-  protected async run(): Promise<Throws<undefined, APIConnectionError>> {
+  protected async run(): Promise<Throws<void, APIConnectionError>> {
     const allTTSFailed = this.adapter.status.every((s) => !s.available);
     if (allTTSFailed) {
       this._logger.warn('All fallback TTS instances failed, retrying from first...');

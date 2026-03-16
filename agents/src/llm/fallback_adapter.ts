@@ -300,7 +300,7 @@ class FallbackLLMStream extends LLMStream {
    * Main run method - iterates through LLMs with fallback logic.
    * @throws {APIConnectionError} When all LLM providers have been exhausted
    */
-  protected async run(): Promise<Throws<undefined, APIConnectionError>> {
+  protected async run(): Promise<Throws<void, APIConnectionError>> {
     const startTime = Date.now();
 
     // Check if all LLMs are unavailable

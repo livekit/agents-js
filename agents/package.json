@@ -37,7 +37,6 @@
   },
   "devDependencies": {
     "@livekit/rtc-node": "catalog:",
-    "@livekit/throws-transformer": "^0.1.1",
     "@microsoft/api-extractor": "^7.35.0",
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/json-schema": "^7.0.15",

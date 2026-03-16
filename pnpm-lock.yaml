@@ -26,8 +26,8 @@ importers:
         specifier: ^0.0.4
         version: 0.0.4
       '@livekit/throws-transformer':
-        specifier: ^0.1.1
-        version: 0.1.1(typescript@5.4.5)
+        specifier: ^0.1.3
+        version: 0.1.3(typescript@5.4.5)
       '@rushstack/heft':
         specifier: ^0.66.0
         version: 0.66.9(@types/node@22.15.30)
@@ -200,9 +200,6 @@ importers:
       '@livekit/rtc-node':
         specifier: 'catalog:'
         version: 0.13.24
-      '@livekit/throws-transformer':
-        specifier: ^0.1.1
-        version: 0.1.1(typescript@5.4.5)
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.15.30)
@@ -2063,8 +2060,8 @@ packages:
     resolution: {integrity: sha512-06pF8YJlJk11R6J7kFXFpwV8etpbmCskoXFvwfwcDDixMqaP6qtS5srq3G23mDaRjx7ofz/PXg2GtiZbqNGT5A==}
     engines: {node: '>= 18'}
 
-  '@livekit/throws-transformer@0.1.1':
-    resolution: {integrity: sha512-ET7hDdlPrjl3pSmsHyj3P7X+DOBoBCThA0MRGiRf4wZCSHNl+E+7IlEHbv+WQucw7grjFKBTYWdEJuCUmLK29A==}
+  '@livekit/throws-transformer@0.1.3':
+    resolution: {integrity: sha512-PBttE6W6g/2ALGu6kWOunZ5qdrXwP9Ge1An2/62OfE6Rhc0Abd4yp6ex2pWhwUfGxDsSZvFgoB1Ia/5mWAMuKQ==}
     hasBin: true
     peerDependencies:
       typescript: '>=4.7.0'
@@ -6344,7 +6341,7 @@ snapshots:
       '@livekit/rtc-node-linux-x64-gnu': 0.13.24
       '@livekit/rtc-node-win32-x64-msvc': 0.13.24
 
-  '@livekit/throws-transformer@0.1.1(typescript@5.4.5)':
+  '@livekit/throws-transformer@0.1.3(typescript@5.4.5)':
     dependencies:
       glob: 13.0.6
       typescript: 5.4.5
