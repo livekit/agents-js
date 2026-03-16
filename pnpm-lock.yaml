@@ -85,6 +85,9 @@ importers:
       tsup:
         specifier: ^8.4.0
         version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.15.30))(postcss@8.5.6)(tsx@4.21.0)(typescript@5.4.5)
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
       turbo:
         specifier: ^1.13.3
         version: 1.13.3
@@ -6296,7 +6299,7 @@ snapshots:
   '@livekit/noise-cancellation-node@0.1.9':
     dependencies:
       '@livekit/rtc-node': 0.13.24
-      tsx: 4.20.4
+      tsx: 4.21.0
     optionalDependencies:
       '@livekit/noise-cancellation-darwin-arm64': 0.1.9
       '@livekit/noise-cancellation-darwin-x64': 0.1.9
@@ -9830,7 +9833,6 @@ snapshots:
       get-tsconfig: 4.7.5
     optionalDependencies:
       fsevents: 2.3.3
-    optional: true
 
   turbo-darwin-64@1.13.3:
     optional: true
