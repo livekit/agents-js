@@ -25,9 +25,10 @@ export function isStreamReaderReleaseError(e: unknown) {
     'Invalid state: The reader is not attached to a stream',
     'Controller is already closed',
     'WritableStream is closed',
+    'Stream reader cancelled via releaseLock()',
   ];
 
-  if (e instanceof TypeError) {
+  if (e instanceof TypeError || (e instanceof Error && e.name === 'AbortError')) {
     return allowedMessages.some((message) => e.message.includes(message));
   }
 
