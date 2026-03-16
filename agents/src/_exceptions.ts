@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+// FIXME(@livekit/agents): Consider migrating error signaling away from Error subclasses
+// toward an AbortSignal-based pattern for cancellation/error propagation. Error subclasses
+// work well for synchronous throw/catch, but AbortSignal integrates better with async
+// streams, fetch, and the broader Web API ecosystem.
+
 /**
  * Raised when accepting a job but not receiving an assignment within the specified timeout.
  * The server may have chosen another worker to handle this job.
