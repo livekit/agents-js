@@ -50,6 +50,7 @@ export default defineAgent({
       new URL('../assets/walking-dogs.png', import.meta.url),
     ).toString('base64');
 
+    // realtime LLM with image input
     chatCtx.addMessage({
       role: 'user',
       content: [
