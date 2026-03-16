@@ -26,6 +26,7 @@ export function isStreamReaderReleaseError(e: unknown) {
     'Controller is already closed',
     'WritableStream is closed',
     'Stream reader cancelled via releaseLock()',
+    'The reader was released.',
   ];
 
   if (e instanceof TypeError || (e instanceof Error && e.name === 'AbortError')) {
