@@ -64,7 +64,7 @@ import {
 } from './events.js';
 import { AgentInput, AgentOutput } from './io.js';
 import { RecorderIO } from './recorder_io/index.js';
-import { ClientEventsHandler, RoomSessionTransport, SessionHost } from './remote_session.js';
+import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import {
   DEFAULT_TEXT_INPUT_CALLBACK,
   RoomIO,
@@ -204,7 +204,6 @@ export class AgentSession<
   private nextActivity?: AgentActivity;
   private updateActivityTask?: Task<void>;
   private started = false;
-  private clientEventsHandler?: ClientEventsHandler;
   private sessionHost?: SessionHost;
 
   private _chatCtx: ChatContext;
@@ -423,13 +422,6 @@ export class AgentSession<
 
       this._roomIO.start();
 
-      this.clientEventsHandler = new ClientEventsHandler(this, this._roomIO);
-      if (inputOptions?.textEnabled !== false) {
-        this.clientEventsHandler.registerTextInput(
-          inputOptions?.textInputCallback ?? DEFAULT_TEXT_INPUT_CALLBACK,
-        );
-      }
-
       const transport = new RoomSessionTransport(room, this._roomIO.linkedParticipant?.identity);
       this.sessionHost = new SessionHost(transport);
       this.sessionHost.registerSession(this);
@@ -479,10 +471,6 @@ export class AgentSession<
     tasks.push(this._updateActivity(this.agent, { waitOnEnter: false }));
 
     await Promise.allSettled(tasks);
-
-    if (this.clientEventsHandler) {
-      await this.clientEventsHandler.start();
-    }
 
     if (this.sessionHost) {
       await this.sessionHost.start();
@@ -1167,9 +1155,6 @@ export class AgentSession<
     this.input.audio = null;
     this.output.audio = null;
     this.output.transcription = null;
-
-    await this.clientEventsHandler?.close();
-    this.clientEventsHandler = undefined;
 
     await this.sessionHost?.close();
     this.sessionHost = undefined;

@@ -4,8 +4,8 @@
 import type { Span } from '@opentelemetry/api';
 
 export interface OverlappingSpeechEvent {
-  type: 'user_overlapping_speech';
-  timestamp: number;
+  type: 'overlapping_speech';
+  detectedAt: number;
   isInterruption: boolean;
   totalDurationInS: number;
   predictionDurationInS: number;

@@ -64,9 +64,9 @@ import {
   type clientEventSchema,
   type clientFunctionToolsExecutedSchema,
   type clientMetricsCollectedSchema,
+  type clientOverlappingSpeechSchema,
   type clientSessionUsageSchema,
   type clientUserInputTranscribedSchema,
-  type clientUserOverlappingSpeechSchema,
   type clientUserStateChangedSchema,
   functionCallOutputToWire,
   functionCallToWire,
@@ -116,7 +116,7 @@ export type ClientMetricsCollectedEvent = z.infer<typeof clientMetricsCollectedS
 export type ClientErrorEvent = z.infer<typeof clientErrorSchema>;
 
 /** @experimental */
-export type ClientUserOverlappingSpeechEvent = z.infer<typeof clientUserOverlappingSpeechSchema>;
+export type ClientOverlappingSpeechEvent = z.infer<typeof clientOverlappingSpeechSchema>;
 
 /** @experimental */
 export type ClientSessionUsageEvent = z.infer<typeof clientSessionUsageSchema>;
@@ -667,7 +667,7 @@ export class ClientEventsHandler {
       this.session.off(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
       this.session.off(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       this.session.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
-      this.session.off(AgentSessionEventTypes.UserOverlappingSpeech, this.onUserOverlapSpeech);
+      this.session.off(AgentSessionEventTypes.OverlappingSpeech, this.onUserOverlapSpeech);
       this.session.off(AgentSessionEventTypes.Error, this.onError);
       this.eventHandlersRegistered = false;
     }
@@ -708,7 +708,7 @@ export class ClientEventsHandler {
     this.session.on(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
     this.session.on(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
     this.session.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
-    this.session.on(AgentSessionEventTypes.UserOverlappingSpeech, this.onUserOverlapSpeech);
+    this.session.on(AgentSessionEventTypes.OverlappingSpeech, this.onUserOverlapSpeech);
     this.session.on(AgentSessionEventTypes.Error, this.onError);
     this.eventHandlersRegistered = true;
   }
@@ -833,10 +833,10 @@ export class ClientEventsHandler {
   }
 
   private onUserOverlapSpeech = (event: OverlappingSpeechEvent): void => {
-    const clientEvent: ClientUserOverlappingSpeechEvent = {
-      type: 'user_overlapping_speech',
+    const clientEvent: ClientOverlappingSpeechEvent = {
+      type: 'overlapping_speech',
       is_interruption: event.isInterruption,
-      created_at: msToS(event.timestamp),
+      created_at: msToS(event.detectedAt),
       overlap_started_at: event.overlapStartedAt != null ? msToS(event.overlapStartedAt) : null,
       detection_delay: event.detectionDelayInS,
       sent_at: msToS(Date.now()),
@@ -1036,7 +1036,7 @@ export class SessionHost {
       session.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
       session.on(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
       session.on(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
-      session.on(AgentSessionEventTypes.UserOverlappingSpeech, this.onOverlappingSpeech);
+      session.on(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
       session.on(AgentSessionEventTypes.Error, this.onHostError);
     }
   }
@@ -1064,7 +1064,7 @@ export class SessionHost {
       this.session.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
       this.session.off(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
       this.session.off(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
-      this.session.off(AgentSessionEventTypes.UserOverlappingSpeech, this.onOverlappingSpeech);
+      this.session.off(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
       this.session.off(AgentSessionEventTypes.Error, this.onHostError);
     }
 
@@ -1128,11 +1128,16 @@ export class SessionHost {
   };
 
   private onUserStateChanged = (event: UserStateChangedEvent): void => {
-    this.emitEvent(
-      'userStateChanged',
-      new pb.AgentSessionEvent_UserStateChanged({
-        oldState: USER_STATE_MAP[event.oldState],
-        newState: USER_STATE_MAP[event.newState],
+    this.sendEvent(
+      new pb.AgentSessionEvent({
+        createdAt: msToTimestamp(event.createdAt),
+        event: {
+          case: 'userStateChanged',
+          value: new pb.AgentSessionEvent_UserStateChanged({
+            oldState: USER_STATE_MAP[event.oldState],
+            newState: USER_STATE_MAP[event.newState],
+          }),
+        },
       }),
     );
   };
@@ -1156,14 +1161,17 @@ export class SessionHost {
 
   private onFunctionToolsExecuted = (event: FunctionToolsExecutedEvent): void => {
     const pbCalls = event.functionCalls.map(
-      (fc: FCItem) =>
-        new pb.FunctionCall({ name: fc.name, arguments: fc.args, callId: fc.callId }),
+      (fc: FCItem) => new pb.FunctionCall({ name: fc.name, arguments: fc.args, callId: fc.callId }),
     );
     const pbOutputs = event.functionCallOutputs
       .filter((fco): fco is FCOItem => fco != null)
       .map(
         (fco: FCOItem) =>
-          new pb.FunctionCallOutput({ callId: fco.callId, output: fco.output, isError: fco.isError }),
+          new pb.FunctionCallOutput({
+            callId: fco.callId,
+            output: fco.output,
+            isError: fco.isError,
+          }),
       );
     this.emitEvent(
       'functionToolsExecuted',
@@ -1178,17 +1186,12 @@ export class SessionHost {
     const value = new pb.AgentSessionEvent_OverlappingSpeech({
       isInterruption: event.isInterruption,
       detectionDelay: event.detectionDelayInS,
-      detectedAt: msToTimestamp(event.timestamp),
+      detectedAt: msToTimestamp(event.detectedAt),
     });
     if (event.overlapStartedAt != null) {
       value.overlapStartedAt = msToTimestamp(event.overlapStartedAt);
     }
-    this.sendEvent(
-      new pb.AgentSessionEvent({
-        createdAt: nowTimestamp(),
-        event: { case: 'overlappingSpeech', value },
-      }),
-    );
+    this.emitEvent('overlappingSpeech', value);
   };
 
   private onMetricsCollected = (_event: MetricsCollectedEvent): void => {
@@ -1237,7 +1240,10 @@ export class SessionHost {
 
     switch (req.request.case) {
       case 'ping':
-        return this.sendResponse(req.requestId, { case: 'pong', value: new pb.SessionResponse_Pong() });
+        return this.sendResponse(req.requestId, {
+          case: 'pong',
+          value: new pb.SessionResponse_Pong(),
+        });
       case 'getChatHistory':
         return this.handleGetChatHistory(req.requestId);
       case 'getAgentInfo':
@@ -1249,7 +1255,10 @@ export class SessionHost {
       case 'getRtcStats':
         return this.sendResponse(req.requestId, {
           case: 'getRtcStats',
-          value: new pb.SessionResponse_GetRTCStatsResponse({ publisherStats: [], subscriberStats: [] }),
+          value: new pb.SessionResponse_GetRTCStatsResponse({
+            publisherStats: [],
+            subscriberStats: [],
+          }),
         });
       case 'getSessionUsage':
         return this.handleGetSessionUsage(req.requestId);
@@ -1277,7 +1286,10 @@ export class SessionHost {
     });
   }
 
-  private async handleRunInput(requestId: string, input: pb.SessionRequest_RunInput): Promise<void> {
+  private async handleRunInput(
+    requestId: string,
+    input: pb.SessionRequest_RunInput,
+  ): Promise<void> {
     const text = input.text;
     let items: pb.ChatContext_ChatItem[] = [];
     let error: string | undefined;
@@ -1308,10 +1320,14 @@ export class SessionHost {
       }
     }
 
-    return this.sendResponse(requestId, {
-      case: 'runInput',
-      value: new pb.SessionResponse_RunInputResponse({ items }),
-    }, error);
+    return this.sendResponse(
+      requestId,
+      {
+        case: 'runInput',
+        value: new pb.SessionResponse_RunInputResponse({ items }),
+      },
+      error,
+    );
   }
 
   private async handleGetSessionState(requestId: string): Promise<void> {
@@ -1606,4 +1622,3 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     });
   }
 }
-

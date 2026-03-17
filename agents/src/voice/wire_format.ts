@@ -746,8 +746,8 @@ export const clientErrorSchema = z.object({
   created_at: z.number(),
 });
 
-export const clientUserOverlappingSpeechSchema = z.object({
-  type: z.literal('user_overlapping_speech'),
+export const clientOverlappingSpeechSchema = z.object({
+  type: z.literal('overlapping_speech'),
   is_interruption: z.boolean(),
   created_at: z.number(),
   sent_at: z.number(),
@@ -769,7 +769,7 @@ export const clientEventSchema = z.discriminatedUnion('type', [
   clientFunctionToolsExecutedSchema,
   clientMetricsCollectedSchema,
   clientErrorSchema,
-  clientUserOverlappingSpeechSchema,
+  clientOverlappingSpeechSchema,
   clientSessionUsageSchema,
 ]);
 

@@ -281,8 +281,8 @@ export class InterruptionStreamBase {
               }
               const e = latestEntry ?? InterruptionCacheEntry.default();
               const event: OverlappingSpeechEvent = {
-                type: 'user_overlapping_speech',
-                timestamp: chunk.endedAt,
+                type: 'overlapping_speech',
+                detectedAt: chunk.endedAt,
                 isInterruption: false,
                 overlapStartedAt: this.overlapSpeechStartedAt,
                 speechInput: e.speechInput,
@@ -334,11 +334,11 @@ export class InterruptionStreamBase {
 
     const eventEmitter = new TransformStream<OverlappingSpeechEvent, OverlappingSpeechEvent>({
       transform: (chunk, controller) => {
-        this.model.emit('user_overlapping_speech', chunk);
+        this.model.emit('overlapping_speech', chunk);
 
         const metrics: InterruptionMetrics = {
           type: 'interruption_metrics',
-          timestamp: chunk.timestamp,
+          timestamp: chunk.detectedAt,
           totalDuration: chunk.totalDurationInS * 1000,
           predictionDuration: chunk.predictionDurationInS * 1000,
           detectionDelay: chunk.detectionDelayInS * 1000,
