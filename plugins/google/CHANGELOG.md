@@ -1,5 +1,18 @@
 # @livekit/agents-plugin-google
 
+## 1.0.51
+
+### Patch Changes
+
+- fix: Google Vertex AI realtime crash when calling tools - [#1130](https://github.com/livekit/agents-js/pull/1130) ([@adriablancafort](https://github.com/adriablancafort))
+
+- Standardize LanguageCode handling - [#1120](https://github.com/livekit/agents-js/pull/1120) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Update google plugin dependencies - [#1127](https://github.com/livekit/agents-js/pull/1127) ([@adriablancafort](https://github.com/adriablancafort))
+
+- Updated dependencies [[`967160f526ff92a166426701650789c328b2328b`](https://github.com/livekit/agents-js/commit/967160f526ff92a166426701650789c328b2328b), [`188bd0662d97ef23e096fefc3f9403b86ab3446b`](https://github.com/livekit/agents-js/commit/188bd0662d97ef23e096fefc3f9403b86ab3446b), [`60bd948e26893305b1fa871c51b85308a53f6967`](https://github.com/livekit/agents-js/commit/60bd948e26893305b1fa871c51b85308a53f6967)]:
+  - @livekit/agents@1.0.51
+
 ## 1.0.50
 
 ### Patch Changes
