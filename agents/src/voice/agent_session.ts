@@ -87,68 +87,38 @@ export interface AgentSessionUsage {
   modelUsage: Array<Partial<ModelUsage>>;
 }
 
-export interface SessionOptions {
-  maxToolSteps: number;
-  /**
-   * Whether to speculatively begin LLM and TTS requests before an end-of-turn is detected.
-   * When `true`, the agent sends inference calls as soon as a user transcript is received rather
-   * than waiting for a definitive turn boundary. This can reduce response latency by overlapping
-   * model inference with user audio, but may incur extra compute if the user interrupts or
-   * revises mid-utterance.
-   * @defaultValue false
-   */
-  preemptiveGeneration: boolean;
-
-  /**
-   * If set, set the user state as "away" after this amount of time after user and agent are
-   * silent. Set to `null` to disable.
-   * @defaultValue 15.0
-   */
-  userAwayTimeout: number | null;
-
-  /**
-   * Duration in milliseconds for AEC (Acoustic Echo Cancellation) warmup, during which
-   * interruptions from audio activity are suppressed. Set to `null` to disable.
-   * @defaultValue 3000
-   */
-  aecWarmupDuration: number | null;
-
-  /**
-   * Configuration for turn handling.
-   */
-  turnHandling: Partial<TurnHandlingOptions>;
-
-  useTtsAlignedTranscript: boolean;
-
-  /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.mode instead. */
-  allowInterruptions?: boolean;
-  /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.discardAudioIfUninterruptible instead. */
-  discardAudioIfUninterruptible?: boolean;
-  /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.minDuration instead. */
-  minInterruptionDuration?: number;
-  /** @deprecated Use {@link SessionOptions.turnHandling}.interruption.minWords instead. */
-  minInterruptionWords?: number;
-  /** @deprecated Use {@link SessionOptions.turnHandling}.endpointing.minDelay instead. */
-  minEndpointingDelay?: number;
-  /** @deprecated Use {@link SessionOptions.turnHandling}.endpointing.maxDelay instead. */
-  maxEndpointingDelay?: number;
-}
-
-export interface InternalSessionOptions extends SessionOptions {
+export interface InternalSessionOptions<UserData> extends AgentSessionOptions<UserData> {
   turnHandling: InternalTurnHandlingOptions;
+  useTtsAlignedTranscript: boolean;
 }
 
-export const defaultSessionOptions = {
+export const defaultAgentSessionOptions = {
   maxToolSteps: 3,
   preemptiveGeneration: false,
   userAwayTimeout: 15.0,
   aecWarmupDuration: 3000,
   turnHandling: {},
   useTtsAlignedTranscript: true,
-} as const satisfies SessionOptions;
+} as const satisfies AgentSessionOptions;
 
-/** @deprecated {@link VoiceOptions} has been renamed to {@link SessionOptions} */
-export type VoiceOptions = SessionOptions;
+/** @deprecated {@link VoiceOptions} has been flattened onto to {@link AgentSessionOptions} */
+export type VoiceOptions = {
+  maxToolSteps: number;
+  preemptiveGeneration: boolean;
+  userAwayTimeout?: number | null;
+  /** @deprecated Use {@link AgentSessionOptions.turnHandling}.interruption.mode instead. */
+  allowInterruptions?: boolean;
+  /** @deprecated Use {@link AgentSessionOptions.turnHandling}.interruption.discardAudioIfUninterruptible instead. */
+  discardAudioIfUninterruptible?: boolean;
+  /** @deprecated Use {@link AgentSessionOptions.turnHandling}.interruption.minDuration instead. */
+  minInterruptionDuration?: number;
+  /** @deprecated Use {@link AgentSessionOptions.turnHandling}.interruption.minWords instead. */
+  minInterruptionWords?: number;
+  /** @deprecated Use {@link AgentSessionOptions.turnHandling}.endpointing.minDelay instead. */
+  minEndpointingDelay?: number;
+  /** @deprecated Use {@link AgentSessionOptions.turnHandling}.endpointing.maxDelay instead. */
+  maxEndpointingDelay?: number;
+};
 
 export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
 
@@ -165,7 +135,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.UserOverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
 };
 
-export type AgentSessionOptions<UserData = UnknownUserData> = Partial<SessionOptions> & {
+export type AgentSessionOptions<UserData = UnknownUserData> = {
   stt?: STT | STTModelString;
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
@@ -177,6 +147,38 @@ export type AgentSessionOptions<UserData = UnknownUserData> = Partial<SessionOpt
   turnDetection?: TurnDetectionMode;
   /** @deprecated use top-level SessionOptions fields instead */
   voiceOptions?: Partial<VoiceOptions>;
+
+  maxToolSteps?: number;
+  /**
+   * Whether to speculatively begin LLM and TTS requests before an end-of-turn is detected.
+   * When `true`, the agent sends inference calls as soon as a user transcript is received rather
+   * than waiting for a definitive turn boundary. This can reduce response latency by overlapping
+   * model inference with user audio, but may incur extra compute if the user interrupts or
+   * revises mid-utterance.
+   * @defaultValue false
+   */
+  preemptiveGeneration?: boolean;
+
+  /**
+   * If set, set the user state as "away" after this amount of time after user and agent are
+   * silent. Set to `null` to disable.
+   * @defaultValue 15.0
+   */
+  userAwayTimeout?: number | null;
+
+  /**
+   * Duration in milliseconds for AEC (Acoustic Echo Cancellation) warmup, during which
+   * interruptions from audio activity are suppressed. Set to `null` to disable.
+   * @defaultValue 3000
+   */
+  aecWarmupDuration?: number | null;
+
+  /**
+   * Configuration for turn handling.
+   */
+  turnHandling?: Partial<TurnHandlingOptions>;
+
+  useTtsAlignedTranscript?: boolean;
 };
 
 type ActivityTransitionOptions = {
@@ -195,7 +197,7 @@ export class AgentSession<
   tts?: TTS;
   turnDetection?: TurnDetectionMode;
 
-  readonly options: InternalSessionOptions;
+  readonly options: InternalSessionOptions<UserData>;
   private readonly activityLock = new Mutex();
 
   private agent?: Agent;
@@ -267,7 +269,7 @@ export class AgentSession<
 
     const opts = migrateLegacyOptions<UserData>(options);
 
-    const { vad, stt, llm, tts, userData, connOptions, resolvedSessionOptions } = opts;
+    const { vad, stt, llm, tts, userData, connOptions, ...resolvedSessionOptions } = opts;
     // Merge user-provided connOptions with defaults
     this._connOptions = {
       sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
