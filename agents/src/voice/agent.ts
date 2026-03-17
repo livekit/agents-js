@@ -187,9 +187,10 @@ export class Agent<UserData = any> {
 
     const migratedOptions = migrateLegacyOptions({
       turnDetection,
-      options: { turnHandling, allowInterruptions },
+      turnHandling,
+      allowInterruptions,
     });
-    this.turnHandling = migratedOptions.options.turnHandling;
+    this.turnHandling = migratedOptions.resolvedSessionOptions.turnHandling;
 
     this._vad = vad;
 

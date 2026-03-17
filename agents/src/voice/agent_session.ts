@@ -165,18 +165,17 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.UserOverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
 };
 
-export type AgentSessionOptions<UserData = UnknownUserData> = {
+export type AgentSessionOptions<UserData = UnknownUserData> = Partial<SessionOptions> & {
   stt?: STT | STTModelString;
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
-  options?: Partial<SessionOptions>;
   connOptions?: SessionConnectOptions;
 
-  /** @deprecated use {@link AgentSessionOptions.options}.turnHandling.turnDetection instead */
+  /** @deprecated use turnHandling.turnDetection instead */
   turnDetection?: TurnDetectionMode;
-  /** @deprecated use {@link AgentSessionOptions.options} instead */
+  /** @deprecated use top-level SessionOptions fields instead */
   voiceOptions?: Partial<VoiceOptions>;
 };
 
@@ -268,7 +267,7 @@ export class AgentSession<
 
     const opts = migrateLegacyOptions<UserData>(options);
 
-    const { vad, stt, llm, tts, userData, connOptions, options: sessionOptions } = opts;
+    const { vad, stt, llm, tts, userData, connOptions, resolvedSessionOptions } = opts;
     // Merge user-provided connOptions with defaults
     this._connOptions = {
       sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
@@ -299,8 +298,8 @@ export class AgentSession<
       this.tts = tts;
     }
 
-    this.turnDetection = sessionOptions?.turnHandling?.turnDetection;
-    this._interruptionDetection = sessionOptions?.turnHandling?.interruption?.mode;
+    this.turnDetection = resolvedSessionOptions.turnHandling.turnDetection;
+    this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
 
     // configurable IO
@@ -309,7 +308,7 @@ export class AgentSession<
 
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
-    this.options = opts.options;
+    this.options = resolvedSessionOptions;
     this._aecWarmupRemaining = this.options.aecWarmupDuration ?? 0;
 
     this._onUserInputTranscribed = this._onUserInputTranscribed.bind(this);

@@ -11,15 +11,35 @@ import { defaultEndpointingOptions } from './endpointing.js';
 import { defaultInterruptionOptions } from './interruption.js';
 import { type TurnHandlingOptions, defaultTurnHandlingOptions } from './turn_handling.js';
 
+export type MigratedOptions<UserData> = {
+  stt?: AgentSessionOptions<UserData>['stt'];
+  vad?: AgentSessionOptions<UserData>['vad'];
+  llm?: AgentSessionOptions<UserData>['llm'];
+  tts?: AgentSessionOptions<UserData>['tts'];
+  userData?: UserData;
+  connOptions?: AgentSessionOptions<UserData>['connOptions'];
+  resolvedSessionOptions: InternalSessionOptions;
+};
+
 export function migrateLegacyOptions<UserData>(
   legacyOptions: AgentSessionOptions<UserData>,
-): AgentSessionOptions<UserData> & { options: InternalSessionOptions } {
+): MigratedOptions<UserData> {
   const logger = log();
-  const { voiceOptions, turnDetection, options: sessionOptions, ...rest } = legacyOptions;
+  const {
+    voiceOptions,
+    turnDetection,
+    stt,
+    vad,
+    llm,
+    tts,
+    userData,
+    connOptions,
+    ...sessionOptions
+  } = legacyOptions;
 
-  if (voiceOptions !== undefined && sessionOptions !== undefined) {
+  if (voiceOptions !== undefined) {
     logger.warn(
-      'Both voiceOptions and options have been supplied as part of the AgentSessionOptions, voiceOptions will be merged with options taking precedence',
+      'voiceOptions is deprecated, use top-level SessionOptions fields on AgentSessionOptions instead',
     );
   }
 
@@ -46,7 +66,7 @@ export function migrateLegacyOptions<UserData>(
           ? { ...sessionOptions.turnHandling, turnDetection: undefined }
           : sessionOptions.turnHandling,
       }
-    : sessionOptions;
+    : undefined;
 
   const mergedOptions = structuredClone({ ...cloneableVoiceOptions, ...cloneableSessionOptions });
 
@@ -71,22 +91,21 @@ export function migrateLegacyOptions<UserData>(
     turnHandling.interruption.enabled = false;
   }
 
-  const optionsWithDefaults = {
+  const resolvedSessionOptions = {
     ...defaultSessionOptions,
     ...mergedOptions,
     turnHandling: mergeWithDefaults(turnHandling),
   };
 
-  const newAgentSessionOptions: AgentSessionOptions<UserData> & {
-    options: InternalSessionOptions;
-  } = {
-    ...rest,
-    options: optionsWithDefaults,
-    voiceOptions: optionsWithDefaults,
-    turnDetection: turnHandling.turnDetection,
+  return {
+    stt,
+    vad,
+    llm,
+    tts,
+    userData,
+    connOptions,
+    resolvedSessionOptions,
   };
-
-  return newAgentSessionOptions;
 }
 
 /** Remove keys whose value is `undefined` so they don't shadow defaults when spread. */
