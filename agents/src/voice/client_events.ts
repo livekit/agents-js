@@ -395,11 +395,11 @@ export class ClientEventsHandler {
       user_state: this.session.userState,
       agent_id: agent.id,
       options: serializeOptions({
-        turnHandling: this.session.options.turnHandling,
-        maxToolSteps: this.session.options.maxToolSteps,
-        userAwayTimeout: this.session.options.userAwayTimeout,
-        preemptiveGeneration: this.session.options.preemptiveGeneration,
-        useTtsAlignedTranscript: this.session.options.useTtsAlignedTranscript,
+        turnHandling: this.session.sessionOptions.turnHandling,
+        maxToolSteps: this.session.sessionOptions.maxToolSteps,
+        userAwayTimeout: this.session.sessionOptions.userAwayTimeout,
+        preemptiveGeneration: this.session.sessionOptions.preemptiveGeneration,
+        useTtsAlignedTranscript: this.session.sessionOptions.useTtsAlignedTranscript,
       }),
       created_at: msToS(this.session._startedAt ?? Date.now()),
     };

@@ -5,25 +5,24 @@ import { log } from '../../log.js';
 import {
   type AgentSessionOptions,
   type InternalSessionOptions,
-  defaultSessionOptions,
+  type VoiceOptions,
+  defaultAgentSessionOptions,
 } from '../agent_session.js';
 import { defaultEndpointingOptions } from './endpointing.js';
 import { defaultInterruptionOptions } from './interruption.js';
 import { type TurnHandlingOptions, defaultTurnHandlingOptions } from './turn_handling.js';
 
-export type MigratedOptions<UserData> = {
-  stt?: AgentSessionOptions<UserData>['stt'];
-  vad?: AgentSessionOptions<UserData>['vad'];
-  llm?: AgentSessionOptions<UserData>['llm'];
-  tts?: AgentSessionOptions<UserData>['tts'];
-  userData?: UserData;
-  connOptions?: AgentSessionOptions<UserData>['connOptions'];
-  resolvedSessionOptions: InternalSessionOptions;
+const defaultLegacyVoiceOptions: VoiceOptions = {
+  minEndpointingDelay: defaultTurnHandlingOptions.endpointing.minDelay,
+  maxEndpointingDelay: defaultTurnHandlingOptions.endpointing.maxDelay,
+  maxToolSteps: defaultAgentSessionOptions.maxToolSteps,
+  preemptiveGeneration: defaultAgentSessionOptions.preemptiveGeneration,
 };
 
-export function migrateLegacyOptions<UserData>(
-  legacyOptions: AgentSessionOptions<UserData>,
-): MigratedOptions<UserData> {
+export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOptions<UserData>): {
+  agentSessionOptions: InternalSessionOptions<UserData>;
+  legacyVoiceOptions: VoiceOptions;
+} {
   const logger = log();
   const {
     voiceOptions,
@@ -43,69 +42,41 @@ export function migrateLegacyOptions<UserData>(
     );
   }
 
-  // Preserve turnDetection before cloning since structuredClone converts class instances to plain objects
-  const originalTurnDetection =
-    sessionOptions?.turnHandling?.turnDetection ??
-    voiceOptions?.turnHandling?.turnDetection ??
-    turnDetection;
-
-  // Exclude potentially non-cloneable turnDetection objects before structuredClone.
-  // They are restored from originalTurnDetection below.
-  const cloneableVoiceOptions = voiceOptions
-    ? {
-        ...voiceOptions,
-        turnHandling: voiceOptions.turnHandling
-          ? { ...voiceOptions.turnHandling, turnDetection: undefined }
-          : voiceOptions.turnHandling,
-      }
-    : voiceOptions;
-  const cloneableSessionOptions = sessionOptions
-    ? {
-        ...sessionOptions,
-        turnHandling: sessionOptions.turnHandling
-          ? { ...sessionOptions.turnHandling, turnDetection: undefined }
-          : sessionOptions.turnHandling,
-      }
-    : undefined;
-
-  const mergedOptions = structuredClone({ ...cloneableVoiceOptions, ...cloneableSessionOptions });
-
   const turnHandling: TurnHandlingOptions = {
     interruption: {
-      discardAudioIfUninterruptible: mergedOptions?.discardAudioIfUninterruptible,
-      minDuration: mergedOptions?.minInterruptionDuration,
-      minWords: mergedOptions?.minInterruptionWords,
+      discardAudioIfUninterruptible: voiceOptions?.discardAudioIfUninterruptible,
+      minDuration: voiceOptions?.minInterruptionDuration,
+      minWords: voiceOptions?.minInterruptionWords,
+      ...sessionOptions.turnHandling?.interruption,
     },
     endpointing: {
-      minDelay: mergedOptions?.minEndpointingDelay,
-      maxDelay: mergedOptions?.maxEndpointingDelay,
+      minDelay: voiceOptions?.minEndpointingDelay,
+      maxDelay: voiceOptions?.maxEndpointingDelay,
+      ...sessionOptions.turnHandling?.endpointing,
     },
 
-    ...mergedOptions.turnHandling,
-    // Restore original turnDetection after spread to preserve class instance with methods
-    // (structuredClone converts class instances to plain objects, losing prototype methods)
-    turnDetection: originalTurnDetection,
+    turnDetection: sessionOptions?.turnHandling?.turnDetection ?? turnDetection,
   } as const;
 
-  if (mergedOptions?.allowInterruptions === false) {
+  if (voiceOptions?.allowInterruptions === false) {
     turnHandling.interruption.enabled = false;
   }
 
-  const resolvedSessionOptions = {
-    ...defaultSessionOptions,
-    ...mergedOptions,
-    turnHandling: mergeWithDefaults(turnHandling),
-  };
-
-  return {
+  const agentSessionOptions = {
     stt,
     vad,
     llm,
     tts,
     userData,
     connOptions,
-    resolvedSessionOptions,
+    ...defaultAgentSessionOptions,
+    ...sessionOptions,
+    turnHandling: mergeWithDefaults(turnHandling),
   };
+
+  const legacyVoiceOptions = { ...defaultLegacyVoiceOptions, ...voiceOptions };
+
+  return { agentSessionOptions, legacyVoiceOptions };
 }
 
 /** Remove keys whose value is `undefined` so they don't shadow defaults when spread. */

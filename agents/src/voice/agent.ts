@@ -185,12 +185,12 @@ export class Agent<UserData = any> {
         })
       : ChatContext.empty();
 
-    const migratedOptions = migrateLegacyOptions({
+    const { agentSessionOptions } = migrateLegacyOptions({
       turnDetection,
       turnHandling,
-      allowInterruptions,
+      voiceOptions: { allowInterruptions },
     });
-    this.turnHandling = migratedOptions.resolvedSessionOptions.turnHandling;
+    this.turnHandling = agentSessionOptions.turnHandling;
 
     this._vad = vad;
 

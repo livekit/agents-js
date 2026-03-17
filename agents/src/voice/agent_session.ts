@@ -90,6 +90,7 @@ export interface AgentSessionUsage {
 export interface InternalSessionOptions<UserData> extends AgentSessionOptions<UserData> {
   turnHandling: InternalTurnHandlingOptions;
   useTtsAlignedTranscript: boolean;
+  maxToolSteps: number;
 }
 
 export const defaultAgentSessionOptions = {
@@ -197,7 +198,11 @@ export class AgentSession<
   tts?: TTS;
   turnDetection?: TurnDetectionMode;
 
-  readonly options: InternalSessionOptions<UserData>;
+  /** @deprecated use {@link sessionOptions } instead */
+  readonly options: VoiceOptions;
+
+  readonly sessionOptions: InternalSessionOptions<UserData>;
+
   private readonly activityLock = new Mutex();
 
   private agent?: Agent;
@@ -267,7 +272,8 @@ export class AgentSession<
   constructor(options: AgentSessionOptions<UserData>) {
     super();
 
-    const opts = migrateLegacyOptions<UserData>(options);
+    const { agentSessionOptions: opts, legacyVoiceOptions } =
+      migrateLegacyOptions<UserData>(options);
 
     const { vad, stt, llm, tts, userData, connOptions, ...resolvedSessionOptions } = opts;
     // Merge user-provided connOptions with defaults
@@ -310,8 +316,9 @@ export class AgentSession<
 
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
-    this.options = resolvedSessionOptions;
-    this._aecWarmupRemaining = this.options.aecWarmupDuration ?? 0;
+    this.sessionOptions = resolvedSessionOptions;
+    this.options = legacyVoiceOptions;
+    this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
 
     this._onUserInputTranscribed = this._onUserInputTranscribed.bind(this);
     this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
@@ -367,7 +374,7 @@ export class AgentSession<
   }
 
   get useTtsAlignedTranscript(): boolean {
-    return this.options.useTtsAlignedTranscript;
+    return this.sessionOptions.useTtsAlignedTranscript;
   }
 
   set userData(value: UserData) {

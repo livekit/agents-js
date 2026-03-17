@@ -3,14 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatContext } from '../llm/chat_context.js';
 import { type ModelUsage, filterZeroValues } from '../metrics/model_usage.js';
-import type { VoiceOptions } from './agent_session.js';
+import type { AgentSessionOptions } from './agent_session.js';
 import type { AgentEvent } from './events.js';
 
 export interface SessionReport {
   jobId: string;
   roomId: string;
   room: string;
-  options: VoiceOptions;
+  options: AgentSessionOptions;
   events: AgentEvent[];
   chatHistory: ChatContext;
   enableRecording: boolean;
@@ -32,7 +32,7 @@ export interface SessionReportOptions {
   jobId: string;
   roomId: string;
   room: string;
-  options: VoiceOptions;
+  options: AgentSessionOptions;
   events: AgentEvent[];
   chatHistory: ChatContext;
   enableRecording?: boolean;
@@ -83,15 +83,18 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
   const allowInterruptions =
     interruptionConfig?.mode !== undefined
       ? interruptionConfig.mode !== false
-      : report.options.allowInterruptions;
+      : report.options.voiceOptions?.allowInterruptions;
   const discardAudioIfUninterruptible =
     interruptionConfig?.discardAudioIfUninterruptible ??
-    report.options.discardAudioIfUninterruptible;
+    report.options.voiceOptions?.discardAudioIfUninterruptible;
   const minInterruptionDuration =
-    interruptionConfig?.minDuration ?? report.options.minInterruptionDuration;
-  const minInterruptionWords = interruptionConfig?.minWords ?? report.options.minInterruptionWords;
-  const minEndpointingDelay = endpointingConfig?.minDelay ?? report.options.minEndpointingDelay;
-  const maxEndpointingDelay = endpointingConfig?.maxDelay ?? report.options.maxEndpointingDelay;
+    interruptionConfig?.minDuration ?? report.options.voiceOptions?.minInterruptionDuration;
+  const minInterruptionWords =
+    interruptionConfig?.minWords ?? report.options.voiceOptions?.minInterruptionWords;
+  const minEndpointingDelay =
+    endpointingConfig?.minDelay ?? report.options.voiceOptions?.minEndpointingDelay;
+  const maxEndpointingDelay =
+    endpointingConfig?.maxDelay ?? report.options.voiceOptions?.maxEndpointingDelay;
 
   for (const event of report.events) {
     if (event.type === 'metrics_collected') {

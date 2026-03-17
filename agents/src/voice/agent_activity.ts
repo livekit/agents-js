@@ -390,8 +390,8 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
-      minEndpointingDelay: this.agentSession.options.turnHandling.endpointing.minDelay,
-      maxEndpointingDelay: this.agentSession.options.turnHandling.endpointing.maxDelay,
+      minEndpointingDelay: this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
+      maxEndpointingDelay: this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
@@ -465,7 +465,7 @@ export class AgentActivity implements RecognitionHooks {
 
   get allowInterruptions(): boolean {
     // TODO(AJS-51): Allow options to be defined in Agent class
-    return this.agentSession.options.turnHandling.interruption?.mode !== false;
+    return this.agentSession.sessionOptions.turnHandling.interruption?.mode !== false;
   }
 
   get useTtsAlignedTranscript(): boolean {
@@ -872,7 +872,9 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    if (ev.speechDuration >= this.agentSession.options.turnHandling.interruption?.minDuration) {
+    if (
+      ev.speechDuration >= this.agentSession.sessionOptions.turnHandling.interruption?.minDuration
+    ) {
       this.interruptByAudioActivity();
     }
   }
@@ -898,7 +900,7 @@ export class AgentActivity implements RecognitionHooks {
     // - This ensures consistent behavior across all interruption scenarios
     if (
       this.stt &&
-      this.agentSession.options.turnHandling.interruption?.minWords > 0 &&
+      this.agentSession.sessionOptions.turnHandling.interruption?.minWords > 0 &&
       this.audioRecognition
     ) {
       const text = this.audioRecognition.currentTranscript;
@@ -910,7 +912,7 @@ export class AgentActivity implements RecognitionHooks {
 
       // Only allow interruption if word count meets or exceeds minInterruptionWords
       // This applies to all cases: empty strings, partial speech, and full speech
-      if (wordCount < this.agentSession.options.turnHandling.interruption?.minWords) {
+      if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
         return;
       }
     }
@@ -993,7 +995,7 @@ export class AgentActivity implements RecognitionHooks {
 
   onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
     if (
-      !this.agentSession.options.preemptiveGeneration ||
+      !this.agentSession.sessionOptions.preemptiveGeneration ||
       this.schedulingPaused ||
       (this._currentSpeech !== undefined && !this._currentSpeech.interrupted) ||
       !(this.llm instanceof LLM)
@@ -1110,16 +1112,17 @@ export class AgentActivity implements RecognitionHooks {
       this._currentSpeech &&
       this._currentSpeech.allowInterruptions &&
       !this._currentSpeech.interrupted &&
-      this.agentSession.options.turnHandling.interruption?.minWords > 0
+      this.agentSession.sessionOptions.turnHandling.interruption?.minWords > 0
     ) {
       const wordCount = splitWords(info.newTranscript, true).length;
-      if (wordCount < this.agentSession.options.turnHandling.interruption?.minWords) {
+      if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
         // avoid interruption if the new_transcript contains fewer words than minInterruptionWords
         this.cancelPreemptiveGeneration();
         this.logger.info(
           {
             wordCount,
-            minInterruptionWords: this.agentSession.options.turnHandling.interruption.minWords,
+            minInterruptionWords:
+              this.agentSession.sessionOptions.turnHandling.interruption.minWords,
           },
           'skipping user input, word count below minimum interruption threshold',
         );
@@ -2074,7 +2077,7 @@ export class AgentActivity implements RecognitionHooks {
     if (toolOutput.output.length === 0) return;
 
     // important: no agent output should be used after this point
-    const { maxToolSteps } = this.agentSession.options;
+    const { maxToolSteps } = this.agentSession.sessionOptions;
     if (speechHandle.numSteps >= maxToolSteps) {
       this.logger.warn(
         { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
@@ -2541,7 +2544,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     // important: no agent ouput should be used after this point
-    const { maxToolSteps } = this.agentSession.options;
+    const { maxToolSteps } = this.agentSession.sessionOptions;
     if (speechHandle.numSteps >= maxToolSteps) {
       this.logger.warn(
         { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },

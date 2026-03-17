@@ -276,7 +276,7 @@ export class JobContext {
       jobId: this.job.id,
       roomId: this.job.room?.sid || '',
       room: this.job.room?.name || '',
-      options: targetSession.options,
+      options: targetSession.sessionOptions,
       events: targetSession._recordedEvents,
       enableRecording: targetSession._enableRecording,
       chatHistory: targetSession.history.copy(),

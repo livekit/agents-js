@@ -506,7 +506,7 @@ export async function uploadSessionReport(options: {
     timestampMs: report.startedAt || report.timestamp || 0,
     attributes: {
       ...commonAttrs,
-      'session.options': report.options || {},
+      'session.sessionOptions': report.options || {},
       'session.report_timestamp': report.timestamp,
       agent_name: agentName,
       usage,
