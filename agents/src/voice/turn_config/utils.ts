@@ -62,6 +62,18 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
     turnHandling.interruption.enabled = false;
   }
 
+  const migratedVoiceOptions: AgentSessionOptions<UserData> = {};
+
+  if (voiceOptions?.maxToolSteps !== undefined) {
+    migratedVoiceOptions.maxToolSteps = voiceOptions.maxToolSteps;
+  }
+  if (voiceOptions?.preemptiveGeneration !== undefined) {
+    migratedVoiceOptions.preemptiveGeneration = voiceOptions.preemptiveGeneration;
+  }
+  if (voiceOptions?.userAwayTimeout !== undefined) {
+    migratedVoiceOptions.userAwayTimeout = voiceOptions.userAwayTimeout;
+  }
+
   const agentSessionOptions = {
     stt,
     vad,
@@ -70,6 +82,7 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
     userData,
     connOptions,
     ...defaultAgentSessionOptions,
+    ...migratedVoiceOptions,
     ...sessionOptions,
     turnHandling: mergeWithDefaults(turnHandling),
   };

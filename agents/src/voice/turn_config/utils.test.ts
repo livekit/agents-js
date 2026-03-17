@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { beforeAll, describe, expect, it } from 'vitest';
 import { initializeLogger } from '../../log.js';
+import { defaultAgentSessionOptions } from '../agent_session.js';
 import { defaultEndpointingOptions } from './endpointing.js';
 import { defaultInterruptionOptions } from './interruption.js';
 import { defaultTurnHandlingOptions } from './turn_handling.js';
@@ -21,9 +22,9 @@ describe('migrateLegacyOptions', () => {
       endpointing: defaultEndpointingOptions,
       interruption: defaultInterruptionOptions,
     });
-    expect(result.maxToolSteps).toBe(3);
-    expect(result.preemptiveGeneration).toBe(false);
-    expect(result.userAwayTimeout).toBe(15.0);
+    expect(result.maxToolSteps).toBe(defaultAgentSessionOptions.maxToolSteps);
+    expect(result.preemptiveGeneration).toBe(defaultAgentSessionOptions.preemptiveGeneration);
+    expect(result.userAwayTimeout).toBe(defaultAgentSessionOptions.userAwayTimeout);
   });
 
   it('should migrate legacy flat fields into nested turnHandling config', () => {

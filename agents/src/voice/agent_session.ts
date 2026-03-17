@@ -91,6 +91,7 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   turnHandling: InternalTurnHandlingOptions;
   useTtsAlignedTranscript: boolean;
   maxToolSteps: number;
+  userAwayTimeout: number | null;
 }
 
 export const defaultAgentSessionOptions = {
