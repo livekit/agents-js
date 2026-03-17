@@ -74,6 +74,8 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
     migratedVoiceOptions.userAwayTimeout = voiceOptions.userAwayTimeout;
   }
 
+  const legacyVoiceOptions = { ...defaultLegacyVoiceOptions, ...voiceOptions };
+
   const agentSessionOptions = {
     stt,
     vad,
@@ -85,9 +87,9 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
     ...migratedVoiceOptions,
     ...sessionOptions,
     turnHandling: mergeWithDefaults(turnHandling),
+    // repopulate the deprecated voice options with migrated options for backwards compatibility
+    voiceOptions: legacyVoiceOptions,
   };
-
-  const legacyVoiceOptions = { ...defaultLegacyVoiceOptions, ...voiceOptions };
 
   return { agentSessionOptions, legacyVoiceOptions };
 }
