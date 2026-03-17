@@ -390,8 +390,8 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
-      minEndpointingDelay: this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
-      maxEndpointingDelay: this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
+      minEndpointingDelay: this.minEndpointingDelay,
+      maxEndpointingDelay: this.maxEndpointingDelay,
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
@@ -464,8 +464,10 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get allowInterruptions(): boolean {
-    // TODO(AJS-51): Allow options to be defined in Agent class
-    return this.agentSession.sessionOptions.turnHandling.interruption?.mode !== false;
+    return (
+      this.agent.allowInterruptions ??
+      this.agentSession.sessionOptions.turnHandling.interruption.enabled
+    );
   }
 
   get useTtsAlignedTranscript(): boolean {
@@ -474,8 +476,21 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get turnDetection(): TurnDetectionMode | undefined {
-    // TODO(brian): prioritize using agent.turn_detection
-    return this.agentSession.turnDetection;
+    return this.agent.turnDetection ?? this.agentSession.turnDetection;
+  }
+
+  get minEndpointingDelay(): number {
+    return (
+      this.agent.minEndpointingDelay ??
+      this.agentSession.sessionOptions.turnHandling.endpointing.minDelay
+    );
+  }
+
+  get maxEndpointingDelay(): number {
+    return (
+      this.agent.maxEndpointingDelay ??
+      this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
+    );
   }
 
   get toolCtx(): ToolContext {
@@ -2860,8 +2875,8 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private resolveInterruptionDetector(): AdaptiveInterruptionDetector | undefined {
-    const interruptionDetection =
-      this.agent.interruptionDetection ?? this.agentSession.interruptionDetection;
+    const agentInterruptionDetection = this.agent.interruptionDetection;
+    const sessionInterruptionDetection = this.agentSession.interruptionDetection;
     if (
       !(
         this.stt &&
@@ -2873,18 +2888,30 @@ export class AgentActivity implements RecognitionHooks {
         !(this.llm instanceof RealtimeModel)
       )
     ) {
-      if (interruptionDetection === 'adaptive') {
+      if (
+        agentInterruptionDetection === 'adaptive' ||
+        sessionInterruptionDetection === 'adaptive'
+      ) {
         this.logger.warn(
           "interruptionDetection is provided, but it's not compatible with the current configuration and will be disabled",
         );
-        return undefined;
       }
+      return undefined;
     }
 
-    if (
-      (interruptionDetection !== undefined && interruptionDetection === false) ||
-      interruptionDetection === 'vad'
-    ) {
+    if (!this.allowInterruptions) {
+      return undefined;
+    }
+
+    if (agentInterruptionDetection === false || sessionInterruptionDetection === false) {
+      return undefined;
+    }
+
+    if (agentInterruptionDetection && agentInterruptionDetection === 'vad') {
+      return undefined;
+    }
+
+    if (sessionInterruptionDetection && sessionInterruptionDetection === 'vad') {
       return undefined;
     }
 
