@@ -162,7 +162,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
-  [AgentSessionEventTypes.UserOverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
+  [AgentSessionEventTypes.OverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
@@ -422,7 +422,7 @@ export class AgentSession<
 
       this._roomIO.start();
 
-      const transport = new RoomSessionTransport(room, this._roomIO.linkedParticipant?.identity);
+      const transport = new RoomSessionTransport(room, this._roomIO);
       this.sessionHost = new SessionHost(transport);
       this.sessionHost.registerSession(this);
       if (inputOptions?.textEnabled !== false) {

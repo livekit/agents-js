@@ -205,20 +205,20 @@ export abstract class SessionTransport {
 
 export class RoomSessionTransport extends SessionTransport {
   private readonly room: Room;
-  private remoteIdentity: string | undefined;
   private handlerRegistered = false;
   private closed = false;
   private pendingMessages: pb.AgentSessionMessage[] = [];
   private waitingResolve: ((value: IteratorResult<pb.AgentSessionMessage>) => void) | null = null;
+  private roomIO: RoomIO;
 
-  constructor(room: Room, remoteIdentity?: string) {
+  constructor(room: Room, roomIO: RoomIO) {
     super();
     this.room = room;
-    this.remoteIdentity = remoteIdentity;
+    this.roomIO = roomIO;
   }
 
-  setRemoteIdentity(identity: string | undefined): void {
-    this.remoteIdentity = identity;
+  private getRemoteIdentity() {
+    return this.roomIO.linkedParticipant?.identity;
   }
 
   override async start(): Promise<void> {
@@ -228,7 +228,7 @@ export class RoomSessionTransport extends SessionTransport {
   }
 
   private onByteStream = (reader: ByteStreamReader, participantInfo: { identity: string }) => {
-    if (this.remoteIdentity && participantInfo.identity !== this.remoteIdentity) {
+    if (this.getRemoteIdentity() && participantInfo.identity !== this.getRemoteIdentity()) {
       return;
     }
     this.readStream(reader).catch((e) => {
@@ -267,8 +267,9 @@ export class RoomSessionTransport extends SessionTransport {
         topic: TOPIC_SESSION_MESSAGES,
         name: TOPIC_SESSION_MESSAGES,
       };
-      if (this.remoteIdentity) {
-        opts.destinationIdentities = [this.remoteIdentity];
+      const remoteIdentity = this.getRemoteIdentity();
+      if (remoteIdentity) {
+        opts.destinationIdentities = [remoteIdentity];
       }
       const writer = await this.room.localParticipant!.streamBytes(opts);
       await writer.write(new Uint8Array(data));
@@ -1403,8 +1404,8 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     this.transport = transport;
   }
 
-  static fromRoom(room: Room, agentIdentity: string): RemoteSession {
-    const transport = new RoomSessionTransport(room, agentIdentity);
+  static fromRoom(room: Room, roomIO: RoomIO): RemoteSession {
+    const transport = new RoomSessionTransport(room, roomIO);
     return new RemoteSession(transport);
   }
 
