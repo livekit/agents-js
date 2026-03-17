@@ -188,7 +188,7 @@ export class Agent<UserData = any> {
     const { agentSessionOptions } = migrateLegacyOptions({
       turnDetection,
       turnHandling,
-      voiceOptions: { allowInterruptions },
+      ...(allowInterruptions !== undefined ? { voiceOptions: { allowInterruptions } } : {}),
     });
     this.turnHandling = agentSessionOptions.turnHandling;
 

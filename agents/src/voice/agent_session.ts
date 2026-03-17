@@ -95,7 +95,7 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
 
 export const defaultAgentSessionOptions = {
   maxToolSteps: 3,
-  preemptiveGeneration: false,
+  preemptiveGeneration: true,
   userAwayTimeout: 15.0,
   aecWarmupDuration: 3000,
   turnHandling: {},
@@ -156,7 +156,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * than waiting for a definitive turn boundary. This can reduce response latency by overlapping
    * model inference with user audio, but may incur extra compute if the user interrupts or
    * revises mid-utterance.
-   * @defaultValue false
+   * @defaultValue true
    */
   preemptiveGeneration?: boolean;
 
@@ -1048,7 +1048,10 @@ export class AgentSession<
   private _setUserAwayTimer(): void {
     this._cancelUserAwayTimer();
 
-    if (this.options.userAwayTimeout === null || this.options.userAwayTimeout === undefined) {
+    if (
+      this.sessionOptions.userAwayTimeout === null ||
+      this.sessionOptions.userAwayTimeout === undefined
+    ) {
       return;
     }
 
@@ -1059,7 +1062,7 @@ export class AgentSession<
     this.userAwayTimer = setTimeout(() => {
       this.logger.debug('User away timeout triggered');
       this._updateUserState('away');
-    }, this.options.userAwayTimeout * 1000);
+    }, this.sessionOptions.userAwayTimeout * 1000);
   }
 
   private _cancelUserAwayTimer(): void {
