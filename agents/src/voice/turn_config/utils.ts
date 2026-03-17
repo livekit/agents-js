@@ -5,18 +5,27 @@ import { log } from '../../log.js';
 import {
   type AgentSessionOptions,
   type InternalSessionOptions,
+  type TurnDetectionMode,
   type VoiceOptions,
-  defaultAgentSessionOptions,
 } from '../agent_session.js';
 import { defaultEndpointingOptions } from './endpointing.js';
 import { defaultInterruptionOptions } from './interruption.js';
 import { type TurnHandlingOptions, defaultTurnHandlingOptions } from './turn_handling.js';
 
+const defaultSessionOptions = {
+  maxToolSteps: 3,
+  preemptiveGeneration: true,
+  userAwayTimeout: 15.0,
+  aecWarmupDuration: 3000,
+  turnHandling: {},
+  useTtsAlignedTranscript: true,
+} as const satisfies AgentSessionOptions;
+
 const defaultLegacyVoiceOptions: VoiceOptions = {
   minEndpointingDelay: defaultTurnHandlingOptions.endpointing.minDelay,
   maxEndpointingDelay: defaultTurnHandlingOptions.endpointing.maxDelay,
-  maxToolSteps: defaultAgentSessionOptions.maxToolSteps,
-  preemptiveGeneration: defaultAgentSessionOptions.preemptiveGeneration,
+  maxToolSteps: defaultSessionOptions.maxToolSteps,
+  preemptiveGeneration: defaultSessionOptions.preemptiveGeneration,
 };
 
 export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOptions<UserData>): {
@@ -83,7 +92,7 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
     tts,
     userData,
     connOptions,
-    ...defaultAgentSessionOptions,
+    ...defaultSessionOptions,
     ...migratedVoiceOptions,
     ...sessionOptions,
     turnHandling: mergeWithDefaults(turnHandling),
@@ -105,4 +114,51 @@ export function mergeWithDefaults(config: TurnHandlingOptions) {
     endpointing: { ...defaultEndpointingOptions, ...stripUndefined(config.endpointing) },
     interruption: { ...defaultInterruptionOptions, ...stripUndefined(config.interruption) },
   } as const;
+}
+
+/**
+ * Build a partial {@link TurnHandlingOptions} from deprecated Agent constructor fields.
+ * Mirrors the Python Agent compatibility path, but keeps the JS API surface explicit.
+ */
+export function migrateTurnHandling(opts: {
+  turnDetection?: TurnDetectionMode;
+  allowInterruptions?: boolean;
+  minEndpointingDelay?: number;
+  maxEndpointingDelay?: number;
+  turnHandling?: TurnHandlingOptions;
+}): Partial<TurnHandlingOptions> {
+  if (opts.turnHandling !== undefined) {
+    return opts.turnHandling;
+  }
+
+  const migrated: Partial<TurnHandlingOptions> = {};
+
+  const endpointing: Partial<TurnHandlingOptions['endpointing']> = {};
+  if (opts.minEndpointingDelay !== undefined) {
+    endpointing.minDelay = opts.minEndpointingDelay;
+  }
+  if (opts.maxEndpointingDelay !== undefined) {
+    endpointing.maxDelay = opts.maxEndpointingDelay;
+  }
+  if (Object.keys(endpointing).length > 0) {
+    migrated.endpointing = endpointing;
+  }
+
+  const interruption: Partial<TurnHandlingOptions['interruption']> = {};
+  if (opts.allowInterruptions === false) {
+    interruption.enabled = false;
+  }
+  if (Object.keys(interruption).length > 0) {
+    migrated.interruption = interruption;
+  }
+
+  if (opts.turnDetection !== undefined) {
+    migrated.turnDetection = opts.turnDetection;
+  }
+
+  return {
+    ...(migrated.endpointing ? { endpointing: migrated.endpointing } : {}),
+    ...(migrated.interruption ? { interruption: migrated.interruption } : {}),
+    ...(migrated.turnDetection !== undefined ? { turnDetection: migrated.turnDetection } : {}),
+  };
 }

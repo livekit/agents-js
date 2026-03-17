@@ -7,7 +7,7 @@ import { defaultAgentSessionOptions } from '../agent_session.js';
 import { defaultEndpointingOptions } from './endpointing.js';
 import { defaultInterruptionOptions } from './interruption.js';
 import { defaultTurnHandlingOptions } from './turn_handling.js';
-import { migrateLegacyOptions } from './utils.js';
+import { migrateLegacyOptions, migrateTurnHandling } from './utils.js';
 
 beforeAll(() => {
   initializeLogger({ pretty: true, level: 'info' });
@@ -82,5 +82,67 @@ describe('migrateLegacyOptions', () => {
     });
 
     expect(result.turnHandling.turnDetection).toBe('vad');
+  });
+});
+
+describe('migrateTurnHandling', () => {
+  it('should return empty partial when no deprecated Agent fields are given', () => {
+    const result = migrateTurnHandling({});
+    expect(result).toEqual({});
+  });
+
+  it('should set interruption.enabled to false when allowInterruptions is false', () => {
+    const result = migrateTurnHandling({ allowInterruptions: false });
+    expect(result.interruption).toEqual({ enabled: false });
+    expect(result.endpointing).toBeUndefined();
+    expect(result.turnDetection).toBeUndefined();
+  });
+
+  it('should not set interruption when allowInterruptions is true or undefined', () => {
+    expect(migrateTurnHandling({ allowInterruptions: true })).toEqual({});
+    expect(migrateTurnHandling({ allowInterruptions: undefined })).toEqual({});
+  });
+
+  it('should map minEndpointingDelay to endpointing.minDelay', () => {
+    const result = migrateTurnHandling({ minEndpointingDelay: 800 });
+    expect(result.endpointing).toEqual({ minDelay: 800 });
+  });
+
+  it('should map maxEndpointingDelay to endpointing.maxDelay', () => {
+    const result = migrateTurnHandling({ maxEndpointingDelay: 5000 });
+    expect(result.endpointing).toEqual({ maxDelay: 5000 });
+  });
+
+  it('should pass through turnDetection', () => {
+    const result = migrateTurnHandling({ turnDetection: 'vad' });
+    expect(result.turnDetection).toBe('vad');
+  });
+
+  it('should combine all deprecated Agent fields', () => {
+    const result = migrateTurnHandling({
+      turnDetection: 'stt',
+      allowInterruptions: false,
+      minEndpointingDelay: 400,
+      maxEndpointingDelay: 3000,
+    });
+    expect(result.turnDetection).toBe('stt');
+    expect(result.interruption).toEqual({ enabled: false });
+    expect(result.endpointing).toEqual({ minDelay: 400, maxDelay: 3000 });
+  });
+
+  it('should ignore deprecated Agent fields when explicit turnHandling is provided', () => {
+    const turnHandling = {
+      endpointing: { minDelay: 999, maxDelay: 4000 },
+      interruption: { enabled: true },
+      turnDetection: 'vad' as const,
+    };
+    const result = migrateTurnHandling({
+      turnHandling,
+      turnDetection: 'stt',
+      allowInterruptions: false,
+      minEndpointingDelay: 100,
+      maxEndpointingDelay: 200,
+    });
+    expect(result).toEqual(turnHandling);
   });
 });

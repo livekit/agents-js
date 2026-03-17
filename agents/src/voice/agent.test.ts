@@ -7,7 +7,9 @@ import { tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import { Task } from '../utils.js';
 import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
-import { agentActivityStorage } from './agent_activity.js';
+import { AgentActivity, agentActivityStorage } from './agent_activity.js';
+import { defaultEndpointingOptions } from './turn_config/endpointing.js';
+import { defaultInterruptionOptions } from './turn_config/interruption.js';
 
 initializeLogger({ pretty: false, level: 'error' });
 
@@ -214,5 +216,117 @@ describe('Agent', () => {
 
     await expect(wrapper.result).resolves.toBe('ok');
     expect(closeOldActivity).toHaveBeenCalledTimes(1);
+  });
+
+  describe('Agent constructor option migration', () => {
+    it('should set allowInterruptions to false via deprecated constructor field', () => {
+      const agent = new Agent({ instructions: 'test', allowInterruptions: false });
+      expect(agent.allowInterruptions).toBe(false);
+    });
+
+    it('should not set derived properties when no compatibility fields are provided', () => {
+      const agent = new Agent({ instructions: 'test' });
+      expect(agent.allowInterruptions).toBeUndefined();
+      expect(agent.minEndpointingDelay).toBeUndefined();
+      expect(agent.maxEndpointingDelay).toBeUndefined();
+    });
+
+    it('should expose minConsecutiveSpeechDelay', () => {
+      const agent = new Agent({ instructions: 'test', minConsecutiveSpeechDelay: 1.5 });
+      expect(agent.minConsecutiveSpeechDelay).toBe(1.5);
+    });
+
+    it('should expose minEndpointingDelay via deprecated constructor field', () => {
+      const agent = new Agent({ instructions: 'test', minEndpointingDelay: 800 });
+      expect(agent.minEndpointingDelay).toBe(800);
+    });
+
+    it('should expose maxEndpointingDelay via deprecated constructor field', () => {
+      const agent = new Agent({ instructions: 'test', maxEndpointingDelay: 5000 });
+      expect(agent.maxEndpointingDelay).toBe(5000);
+    });
+
+    it('should ignore deprecated constructor fields when turnHandling is provided', () => {
+      const agent = new Agent({
+        instructions: 'test',
+        turnHandling: {
+          endpointing: { minDelay: 999 },
+          interruption: {},
+          turnDetection: 'vad',
+        },
+        allowInterruptions: false,
+        maxEndpointingDelay: 200,
+      });
+      expect(agent.turnHandling?.endpointing?.minDelay).toBe(999);
+      expect(agent.minEndpointingDelay).toBe(999);
+      expect(agent.maxEndpointingDelay).toBeUndefined();
+      expect(agent.allowInterruptions).toBeUndefined();
+      expect(agent.turnHandling?.turnDetection).toBe('vad');
+    });
+
+    it('should let turnHandling override deprecated constructor fields on conflicts', () => {
+      const agent = new Agent({
+        instructions: 'test',
+        turnHandling: {
+          endpointing: { minDelay: 999, maxDelay: 4000 },
+          interruption: { enabled: true },
+          turnDetection: 'vad',
+        },
+        allowInterruptions: false,
+        minEndpointingDelay: 100,
+        maxEndpointingDelay: 200,
+        turnDetection: 'stt',
+      });
+      expect(agent.turnHandling?.endpointing?.minDelay).toBe(999);
+      expect(agent.minEndpointingDelay).toBe(999);
+      expect(agent.maxEndpointingDelay).toBe(4000);
+      expect(agent.allowInterruptions).toBe(true);
+      expect(agent.turnHandling?.turnDetection).toBe('vad');
+    });
+
+    it('should set interruptionDetection from turnHandling.interruption.mode', () => {
+      const agent = new Agent({
+        instructions: 'test',
+        turnHandling: {
+          interruption: { mode: 'adaptive' },
+          endpointing: {},
+          turnDetection: undefined,
+        },
+      });
+      expect(agent.interruptionDetection).toBe('adaptive');
+    });
+
+    it('should let AgentActivity prefer agent-level overrides over session defaults', () => {
+      const agent = new Agent({
+        instructions: 'test',
+        turnHandling: {
+          endpointing: { minDelay: 111, maxDelay: 222 },
+          interruption: { enabled: false },
+          turnDetection: 'manual',
+        },
+      });
+      const session = {
+        options: {
+          turnHandling: {
+            endpointing: defaultEndpointingOptions,
+            interruption: defaultInterruptionOptions,
+          },
+        },
+        turnDetection: 'stt',
+        useTtsAlignedTranscript: true,
+        vad: undefined,
+        stt: undefined,
+        llm: undefined,
+        tts: undefined,
+        interruptionDetection: undefined,
+      } as any;
+
+      const activity = new AgentActivity(agent as any, session);
+
+      expect(activity.allowInterruptions).toBe(false);
+      expect(activity.turnDetection).toBe('manual');
+      expect(activity.minEndpointingDelay).toBe(111);
+      expect(activity.maxEndpointingDelay).toBe(222);
+    });
   });
 });
