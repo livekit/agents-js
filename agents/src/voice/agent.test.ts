@@ -11,6 +11,8 @@ import { AgentActivity, agentActivityStorage } from './agent_activity.js';
 import { defaultEndpointingOptions } from './turn_config/endpointing.js';
 import { defaultInterruptionOptions } from './turn_config/interruption.js';
 
+vi.mock('ofetch', () => ({ ofetch: vi.fn() }));
+
 initializeLogger({ pretty: false, level: 'error' });
 
 describe('Agent', () => {
@@ -327,6 +329,113 @@ describe('Agent', () => {
       expect(activity.turnDetection).toBe('manual');
       expect(activity.minEndpointingDelay).toBe(111);
       expect(activity.maxEndpointingDelay).toBe(222);
+    });
+
+    it('should disable adaptive interruption detection in default mode when prerequisites are missing', () => {
+      const previousRemoteEotUrl = process.env.LIVEKIT_REMOTE_EOT_URL;
+      process.env.LIVEKIT_REMOTE_EOT_URL = 'http://localhost:9999';
+
+      try {
+        const agent = new Agent({ instructions: 'test' });
+        const session = {
+          options: {
+            turnHandling: {
+              endpointing: defaultEndpointingOptions,
+              interruption: defaultInterruptionOptions,
+            },
+          },
+          sessionOptions: {
+            turnHandling: {
+              endpointing: defaultEndpointingOptions,
+              interruption: defaultInterruptionOptions,
+            },
+          },
+          turnDetection: 'manual',
+          useTtsAlignedTranscript: true,
+          vad: {},
+          stt: {
+            capabilities: {
+              alignedTranscript: true,
+              streaming: true,
+            },
+          },
+          llm: undefined,
+          tts: undefined,
+          interruptionDetection: undefined,
+        } as any;
+
+        const activity = new AgentActivity(agent as any, session);
+        expect((activity as any).interruptionDetector).toBeUndefined();
+      } finally {
+        if (previousRemoteEotUrl === undefined) {
+          delete process.env.LIVEKIT_REMOTE_EOT_URL;
+        } else {
+          process.env.LIVEKIT_REMOTE_EOT_URL = previousRemoteEotUrl;
+        }
+      }
+    });
+
+    it('should warn when session explicitly requests adaptive detection even if agent overrides it', () => {
+      const activity = Object.create(AgentActivity.prototype) as any;
+      activity.agent = {
+        interruptionDetection: false,
+        turnDetection: undefined,
+      };
+      activity.agentSession = {
+        interruptionDetection: 'adaptive',
+        turnDetection: 'manual',
+      };
+      activity.logger = { warn: vi.fn() };
+
+      expect(activity.resolveInterruptionDetector()).toBeUndefined();
+      expect(activity.logger.warn).toHaveBeenCalledWith(
+        "interruptionDetection is provided, but it's not compatible with the current configuration and will be disabled",
+      );
+    });
+
+    it('should disable adaptive interruption detection when interruptions are disabled', () => {
+      const previousRemoteEotUrl = process.env.LIVEKIT_REMOTE_EOT_URL;
+      process.env.LIVEKIT_REMOTE_EOT_URL = 'http://localhost:9999';
+
+      try {
+        const activity = Object.create(AgentActivity.prototype) as any;
+        activity.agent = {
+          interruptionDetection: undefined,
+          allowInterruptions: false,
+          turnDetection: undefined,
+          stt: undefined,
+          vad: undefined,
+          llm: undefined,
+        };
+        activity.agentSession = {
+          interruptionDetection: undefined,
+          turnDetection: 'stt',
+          sessionOptions: {
+            turnHandling: {
+              interruption: defaultInterruptionOptions,
+              endpointing: defaultEndpointingOptions,
+            },
+          },
+          stt: {
+            capabilities: {
+              alignedTranscript: true,
+              streaming: true,
+            },
+          },
+          vad: {},
+          llm: undefined,
+        };
+        activity.logger = { warn: vi.fn() };
+
+        expect(activity.resolveInterruptionDetector()).toBeUndefined();
+        expect(activity.logger.warn).not.toHaveBeenCalled();
+      } finally {
+        if (previousRemoteEotUrl === undefined) {
+          delete process.env.LIVEKIT_REMOTE_EOT_URL;
+        } else {
+          process.env.LIVEKIT_REMOTE_EOT_URL = previousRemoteEotUrl;
+        }
+      }
     });
   });
 });

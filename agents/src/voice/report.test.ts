@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
-import type { VoiceOptions } from './agent_session.js';
+import type { AgentSessionOptions, VoiceOptions } from './agent_session.js';
 import { createSessionReport, sessionReportToJSON } from './report.js';
 
-function baseOptions(): VoiceOptions {
+type ReportOptions = AgentSessionOptions & Partial<VoiceOptions>;
+
+function baseOptions(): ReportOptions {
   return {
     maxToolSteps: 3,
     preemptiveGeneration: false,
@@ -16,7 +18,7 @@ function baseOptions(): VoiceOptions {
   };
 }
 
-function serializeOptions(options: VoiceOptions) {
+function serializeOptions(options: ReportOptions) {
   const report = createSessionReport({
     jobId: 'job',
     roomId: 'room-id',
@@ -90,6 +92,23 @@ describe('sessionReportToJSON', () => {
       min_interruption_words: 4,
       min_endpointing_delay: 700,
       max_endpointing_delay: 3900,
+      max_tool_steps: 3,
+    });
+  });
+
+  it('serializes allow_interruptions from interruption.enabled when present', () => {
+    const options = baseOptions();
+    options.allowInterruptions = true;
+    options.turnHandling = {
+      interruption: {
+        enabled: false,
+        mode: 'adaptive',
+      },
+    };
+
+    const serialized = serializeOptions(options);
+    expect(serialized).toMatchObject({
+      allow_interruptions: false,
       max_tool_steps: 3,
     });
   });
