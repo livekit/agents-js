@@ -417,7 +417,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private hasReceivedAudioInput = false;
   private pendingInterruptText = false;
   private earlyCompletionPending = false;
-  private toolCallPending = false;
+  private pendingToolCallIds = new Set<string>();
   private generationPendingTurnComplete?: ResponseGeneration;
 
   #client: GoogleGenAI;
@@ -480,7 +480,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.earlyCompletionPending = false;
     this.pendingInterruptText = false;
 
-    this.toolCallPending = false;
+    this.pendingToolCallIds.clear();
     if (this.generationPendingTurnComplete) {
       this.markCurrentGenerationDone(false, this.generationPendingTurnComplete);
       this.generationPendingTurnComplete = undefined;
@@ -652,7 +652,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   pushAudio(frame: AudioFrame): void {
-    if (this.toolCallPending) return;
+    if (this.pendingToolCallIds.size > 0) return;
 
     // Track that we've received audio input
     this.hasReceivedAudioInput = true;
@@ -745,7 +745,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
-    if (this.toolCallPending) return;
+    if (this.pendingToolCallIds.size > 0) return;
 
     if (!this.inUserActivity) {
       this.inUserActivity = true;
@@ -985,13 +985,15 @@ export class RealtimeSession extends llm.RealtimeSession {
                   functionResponses,
                 });
               } finally {
-                this.toolCallPending = false;
+                for (const fr of functionResponses) {
+                  if (fr?.id) this.pendingToolCallIds.delete(fr.id);
+                }
               }
             }
             break;
           case 'realtime_input':
             const { mediaChunks, activityStart, activityEnd, text } = msg.value;
-            if (this.toolCallPending) break;
+            if (this.pendingToolCallIds.size > 0) break;
             if (mediaChunks) {
               for (const mediaChunk of mediaChunks) {
                 await session.sendRealtimeInput({ media: mediaChunk });
@@ -1029,7 +1031,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     session: types.Session,
     response: types.LiveServerMessage,
   ): Promise<void> {
-    if (response.toolCall) this.toolCallPending = true;
     // Skip logging verbose audio data events
     const hasAudioData = response.serverContent?.modelTurn?.parts?.some(
       (part) => part.inlineData?.data,
@@ -1506,8 +1507,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const gen = this.currentGeneration;
 
-    this.toolCallPending = true;
-
     if (gen.functionChannel.closed) {
       this.#logger.warn('received tool call but functionChannel is already closed.');
       return;
@@ -1518,16 +1517,16 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.#logger.warn('received function call without name, skipping');
         continue;
       }
+      const callId = fc.id || shortuuid('fnc-call-');
+      this.pendingToolCallIds.add(callId);
       gen.functionChannel.write(
         llm.FunctionCall.create({
-          callId: fc.id || shortuuid('fnc-call-'),
+          callId,
           name: fc.name,
           args: fc.args ? JSON.stringify(fc.args) : '',
         }),
       );
     }
-
-    gen.functionChannel.close();
   }
 
   private handleToolCallCancellation(cancellation: types.LiveServerToolCallCancellation): void {
@@ -1537,6 +1536,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       },
       'server cancelled tool calls',
     );
+    for (const id of cancellation.ids || []) {
+      this.pendingToolCallIds.delete(id);
+    }
   }
 
   private handleUsageMetadata(usage: types.UsageMetadata): void {
