@@ -46,6 +46,7 @@
     "zod": "^3.25.76"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "^1.10.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@livekit/mutex": "^1.1.1",
     "@livekit/protocol": "^1.43.0",

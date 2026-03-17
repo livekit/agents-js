@@ -41,7 +41,6 @@ import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
-import { ClientEventsHandler } from './client_events.js';
 import {
   type AgentEvent,
   AgentSessionEventTypes,
@@ -65,6 +64,7 @@ import {
 } from './events.js';
 import { AgentInput, AgentOutput } from './io.js';
 import { RecorderIO } from './recorder_io/index.js';
+import { ClientEventsHandler, RoomSessionTransport, SessionHost } from './remote_session.js';
 import {
   DEFAULT_TEXT_INPUT_CALLBACK,
   RoomIO,
@@ -205,6 +205,7 @@ export class AgentSession<
   private updateActivityTask?: Task<void>;
   private started = false;
   private clientEventsHandler?: ClientEventsHandler;
+  private sessionHost?: SessionHost;
 
   private _chatCtx: ChatContext;
   private _userData: UserData | undefined;
@@ -428,6 +429,15 @@ export class AgentSession<
           inputOptions?.textInputCallback ?? DEFAULT_TEXT_INPUT_CALLBACK,
         );
       }
+
+      const transport = new RoomSessionTransport(room, this._roomIO.linkedParticipant?.identity);
+      this.sessionHost = new SessionHost(transport);
+      this.sessionHost.registerSession(this);
+      if (inputOptions?.textEnabled !== false) {
+        this.sessionHost.registerTextInput(
+          inputOptions?.textInputCallback ?? DEFAULT_TEXT_INPUT_CALLBACK,
+        );
+      }
     }
 
     let ctx: JobContext | undefined = undefined;
@@ -472,6 +482,10 @@ export class AgentSession<
 
     if (this.clientEventsHandler) {
       await this.clientEventsHandler.start();
+    }
+
+    if (this.sessionHost) {
+      await this.sessionHost.start();
     }
 
     // Log used IO configuration
@@ -1156,6 +1170,9 @@ export class AgentSession<
 
     await this.clientEventsHandler?.close();
     this.clientEventsHandler = undefined;
+
+    await this.sessionHost?.close();
+    this.sessionHost = undefined;
 
     await this._roomIO?.close();
     this._roomIO = undefined;

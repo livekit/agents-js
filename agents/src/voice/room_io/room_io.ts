@@ -21,7 +21,6 @@ import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { Future, Task, waitForAbort } from '../../utils.js';
 import { type AgentSession } from '../agent_session.js';
-import type { TextInputCallback } from '../client_events.js';
 import {
   AgentSessionEventTypes,
   type AgentStateChangedEvent,
@@ -29,6 +28,7 @@ import {
   type UserInputTranscribedEvent,
 } from '../events.js';
 import type { AudioOutput, TextOutput } from '../io.js';
+import type { TextInputCallback } from '../remote_session.js';
 import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
 import { ParticipantAudioInputStream } from './_input.js';
 import {

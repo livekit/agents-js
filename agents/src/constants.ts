@@ -20,3 +20,4 @@ export const RPC_GET_AGENT_INFO = 'lk.agent.get_agent_info';
 export const RPC_SEND_MESSAGE = 'lk.agent.send_message';
 export const TOPIC_AGENT_REQUEST = 'lk.agent.request';
 export const TOPIC_AGENT_RESPONSE = 'lk.agent.response';
+export const TOPIC_SESSION_MESSAGES = 'lk.agent.session';
