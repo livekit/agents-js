@@ -376,6 +376,29 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
     const done = new Future<TaskGroupResult>();
     let taskReady = new Future<void>();
 
+    class RecordingSummaryLLM extends voice.testing.FakeLLM {
+      summaryInputs: string[] = [];
+
+      chat(...args: Parameters<voice.testing.FakeLLM['chat']>) {
+        const [{ chatCtx }] = args;
+        const last = chatCtx.items[chatCtx.items.length - 1];
+        if (last?.type === 'message' && last.role === 'user') {
+          const text = last.textContent ?? '';
+          if (text.startsWith('Conversation to summarize:\n\n')) {
+            this.summaryInputs.push(text);
+            return new voice.testing.FakeLLM([
+              {
+                input: text,
+                content: 'Summary: color=Blue, food=pizza.',
+              },
+            ]).chat(...args);
+          }
+        }
+
+        return super.chat(...args);
+      }
+    }
+
     class ChattyTaskA extends voice.AgentTask<string> {
       constructor() {
         super({
@@ -443,7 +466,7 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
       }
     }
 
-    const llmModel = createFakeLLM([
+    const llmModel = new RecordingSummaryLLM([
       {
         input: 'Blue is my favorite color.',
         toolCalls: [{ name: 'recordColor', args: { color: 'Blue' } }],
@@ -451,31 +474,6 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
       {
         input: 'I love pizza.',
         toolCalls: [{ name: 'recordFood', args: { food: 'pizza' } }],
-      },
-      {
-        input: [
-          'Conversation to summarize:',
-          '',
-          '<user>',
-          'Blue is my favorite color.',
-          '</user>',
-          '<function_call name="recordColor" call_id="fake_call_0">',
-          '{"color":"Blue"}',
-          '</function_call>',
-          '<function_call_output name="recordColor" call_id="fake_call_0">',
-          '"recorded"',
-          '</function_call_output>',
-          '<user>',
-          'I love pizza.',
-          '</user>',
-          '<function_call name="recordFood" call_id="fake_call_0">',
-          '{"food":"pizza"}',
-          '</function_call>',
-          '<function_call_output name="recordFood" call_id="fake_call_0">',
-          '"recorded"',
-          '</function_call_output>',
-        ].join('\n'),
-        content: 'Summary: color=Blue, food=pizza.',
       },
     ]);
 
@@ -501,5 +499,19 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
     if (summaryMsg && summaryMsg.type === 'message') {
       expect(summaryMsg.textContent).toBe(summaryXml('Summary: color=Blue, food=pizza.'));
     }
+
+    expect(llmModel.summaryInputs).toHaveLength(1);
+    expect(llmModel.summaryInputs[0]).toContain(
+      '<function_call name="recordColor" call_id="fake_call_0">',
+    );
+    expect(llmModel.summaryInputs[0]).toContain(
+      '<function_call_output name="recordColor" call_id="fake_call_0">',
+    );
+    expect(llmModel.summaryInputs[0]).toContain(
+      '<function_call name="recordFood" call_id="fake_call_0">',
+    );
+    expect(llmModel.summaryInputs[0]).toContain(
+      '<function_call_output name="recordFood" call_id="fake_call_0">',
+    );
   });
 });
