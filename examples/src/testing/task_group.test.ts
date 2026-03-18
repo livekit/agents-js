@@ -501,13 +501,9 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
     }
 
     expect(llmModel.summaryInputs).toHaveLength(1);
-    expect(llmModel.summaryInputs[0]).toContain('<function_call name="recordColor" call_id="');
-    expect(llmModel.summaryInputs[0]).toContain(
-      '<function_call_output name="recordColor" call_id="',
-    );
-    expect(llmModel.summaryInputs[0]).toContain('<function_call name="recordFood" call_id="');
-    expect(llmModel.summaryInputs[0]).toContain(
-      '<function_call_output name="recordFood" call_id="',
-    );
+    expect(llmModel.summaryInputs[0]).toContain('<user>\nBlue is my favorite color.\n</user>');
+    expect(llmModel.summaryInputs[0]).toContain('<user>\nI love pizza.\n</user>');
+    expect(llmModel.summaryInputs[0]).not.toContain('<function_call ');
+    expect(llmModel.summaryInputs[0]).not.toContain('<function_call_output ');
   });
 });

@@ -85,13 +85,6 @@ export class TaskGroup extends AgentTask<TaskGroupResult> {
       try {
         this._visitedTasks.add(taskId);
         const res = await this._currentTask.run();
-
-        // AgentTask handoff merges omit function calls. Re-merge the completed
-        // task context so task-group summarization can incorporate tool results.
-        this._chatCtx.merge(this._currentTask.chatCtx.copy(), {
-          excludeInstructions: true,
-        });
-
         taskResults[taskId] = res;
 
         if (this._taskCompletedCallback) {
