@@ -145,7 +145,7 @@ export class RoomSessionTransport extends SessionTransport {
       const data = msg.toBinary();
       const opts: Record<string, unknown> = {
         topic: TOPIC_SESSION_MESSAGES,
-        name: TOPIC_SESSION_MESSAGES,
+        name: shortuuid('AS_'),
       };
       const remoteIdentity = this.getRemoteIdentity();
       if (remoteIdentity) {
@@ -765,9 +765,6 @@ export class SessionHost {
           await cbResult;
         }
       } else {
-        this.session!.output.audio = null;
-        this.session!.output.transcription = null;
-
         try {
           await this.session!.interrupt({ force: true });
         } catch {
