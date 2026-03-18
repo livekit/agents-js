@@ -766,7 +766,7 @@ export class SessionHost {
         }
       } else {
         try {
-          await this.session!.interrupt({ force: true });
+          await this.session!.interrupt({ force: true }).await;
         } catch {
           // ignore
         }
