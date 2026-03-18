@@ -19,7 +19,7 @@ npm install @livekit/agents-plugin-trugen
 or
 
 ```bash
-pnpm add @livekit/agent-plugin-trugen
+pnpm add @livekit/agents-plugin-trugen
 ```
 
 ## Pre-requisites
