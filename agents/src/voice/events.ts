@@ -27,7 +27,7 @@ export enum AgentSessionEventTypes {
   FunctionToolsExecuted = 'function_tools_executed',
   MetricsCollected = 'metrics_collected',
   SpeechCreated = 'speech_created',
-  UserOverlappingSpeech = 'user_overlapping_speech',
+  OverlappingSpeech = 'overlapping_speech',
   Error = 'error',
   Close = 'close',
 }

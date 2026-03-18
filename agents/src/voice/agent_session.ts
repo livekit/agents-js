@@ -41,7 +41,6 @@ import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
-import { ClientEventsHandler } from './client_events.js';
 import {
   type AgentEvent,
   AgentSessionEventTypes,
@@ -65,6 +64,7 @@ import {
 } from './events.js';
 import { AgentInput, AgentOutput } from './io.js';
 import { RecorderIO } from './recorder_io/index.js';
+import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import {
   DEFAULT_TEXT_INPUT_CALLBACK,
   RoomIO,
@@ -162,7 +162,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
-  [AgentSessionEventTypes.UserOverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
+  [AgentSessionEventTypes.OverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
@@ -204,7 +204,7 @@ export class AgentSession<
   private nextActivity?: AgentActivity;
   private updateActivityTask?: Task<void>;
   private started = false;
-  private clientEventsHandler?: ClientEventsHandler;
+  private sessionHost?: SessionHost;
 
   private _chatCtx: ChatContext;
   private _userData: UserData | undefined;
@@ -232,7 +232,8 @@ export class AgentSession<
 
   private _interruptionDetection?: InterruptionOptions['mode'];
 
-  private _usageCollector: ModelUsageCollector = new ModelUsageCollector();
+  /** @internal */
+  _usageCollector: ModelUsageCollector = new ModelUsageCollector();
 
   /** @internal */
   _roomIO?: RoomIO;
@@ -322,9 +323,6 @@ export class AgentSession<
   ): boolean {
     const eventData = args[0] as AgentEvent;
     this._recordedEvents.push(eventData);
-    if (event === AgentSessionEventTypes.MetricsCollected) {
-      this._usageCollector.collect((eventData as MetricsCollectedEvent).metrics);
-    }
     return super.emit(event, ...args);
   }
 
@@ -422,9 +420,11 @@ export class AgentSession<
 
       this._roomIO.start();
 
-      this.clientEventsHandler = new ClientEventsHandler(this, this._roomIO);
+      const transport = new RoomSessionTransport(room, this._roomIO);
+      this.sessionHost = new SessionHost(transport);
+      this.sessionHost.registerSession(this);
       if (inputOptions?.textEnabled !== false) {
-        this.clientEventsHandler.registerTextInput(
+        this.sessionHost.registerTextInput(
           inputOptions?.textInputCallback ?? DEFAULT_TEXT_INPUT_CALLBACK,
         );
       }
@@ -470,8 +470,8 @@ export class AgentSession<
 
     await Promise.allSettled(tasks);
 
-    if (this.clientEventsHandler) {
-      await this.clientEventsHandler.start();
+    if (this.sessionHost) {
+      await this.sessionHost.start();
     }
 
     // Log used IO configuration
@@ -1154,8 +1154,8 @@ export class AgentSession<
     this.output.audio = null;
     this.output.transcription = null;
 
-    await this.clientEventsHandler?.close();
-    this.clientEventsHandler = undefined;
+    await this.sessionHost?.close();
+    this.sessionHost = undefined;
 
     await this._roomIO?.close();
     this._roomIO = undefined;

@@ -229,8 +229,8 @@ export function createWsTransport(
           );
 
           const event: OverlappingSpeechEvent = {
-            type: 'user_overlapping_speech',
-            timestamp: Date.now(),
+            type: 'overlapping_speech',
+            detectedAt: Date.now(),
             isInterruption: true,
             totalDurationInS: entry.totalDurationInS,
             predictionDurationInS: entry.predictionDurationInS,
