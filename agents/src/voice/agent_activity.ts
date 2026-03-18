@@ -698,6 +698,8 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
+    this.agentSession._usageCollector.collect(ev);
+
     this.agentSession.emit(
       AgentSessionEventTypes.MetricsCollected,
       createMetricsCollectedEvent({ metrics: ev }),

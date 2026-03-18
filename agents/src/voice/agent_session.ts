@@ -232,7 +232,8 @@ export class AgentSession<
 
   private _interruptionDetection?: InterruptionOptions['mode'];
 
-  private _usageCollector: ModelUsageCollector = new ModelUsageCollector();
+  /** @internal */
+  _usageCollector: ModelUsageCollector = new ModelUsageCollector();
 
   /** @internal */
   _roomIO?: RoomIO;
@@ -322,9 +323,6 @@ export class AgentSession<
   ): boolean {
     const eventData = args[0] as AgentEvent;
     this._recordedEvents.push(eventData);
-    if (event === AgentSessionEventTypes.MetricsCollected) {
-      this._usageCollector.collect((eventData as MetricsCollectedEvent).metrics);
-    }
     return super.emit(event, ...args);
   }
 
