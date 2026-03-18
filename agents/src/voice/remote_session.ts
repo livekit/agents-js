@@ -518,9 +518,7 @@ export class SessionHost {
       this.recvTask.cancel();
     }
 
-    for (const task of this.tasks) {
-      task.cancel();
-    }
+    await Promise.allSettled([...this.tasks].map((task) => task.cancelAndWait()));
     this.tasks.clear();
 
     await this.transport.close();
