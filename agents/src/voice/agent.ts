@@ -121,10 +121,6 @@ export interface AgentOptions<UserData> {
   useTtsAlignedTranscript?: boolean;
   /** @deprecated use turnHandling.turnDetection instead */
   turnDetection?: TurnDetectionMode;
-  /** @deprecated use turnHandling.endpointing.minDelay instead */
-  minEndpointingDelay?: number;
-  /** @deprecated use turnHandling.endpointing.maxDelay instead */
-  maxEndpointingDelay?: number;
   /** @deprecated use turnHandling.interruption.enabled instead */
   allowInterruptions?: boolean;
 }
