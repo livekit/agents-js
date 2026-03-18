@@ -392,9 +392,11 @@ export class AgentActivity implements RecognitionHooks {
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
       minEndpointingDelay:
-        this.turnHandling.endpointing?.minDelay ?? defaultTurnHandlingOptions.endpointing.minDelay,
+        this.agent.turnHandling?.endpointing?.minDelay ??
+        this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
       maxEndpointingDelay:
-        this.turnHandling.endpointing?.maxDelay ?? defaultTurnHandlingOptions.endpointing.maxDelay,
+        this.agent.turnHandling?.endpointing?.maxDelay ??
+        this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
