@@ -154,8 +154,8 @@ export function createHttpTransport(
               updateUserSpeakingSpan(entry);
             }
             const event: OverlappingSpeechEvent = {
-              type: 'user_overlapping_speech',
-              timestamp: Date.now(),
+              type: 'overlapping_speech',
+              detectedAt: Date.now(),
               overlapStartedAt: overlapSpeechStartedAt,
               isInterruption: entry.isInterruption,
               speechInput: entry.speechInput,

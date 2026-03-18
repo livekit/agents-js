@@ -153,10 +153,11 @@ export class AgentActivity implements RecognitionHooks {
     this.onError(ev);
 
   private readonly onInterruptionOverlappingSpeech = (ev: OverlappingSpeechEvent): void => {
-    this.agentSession.emit(AgentSessionEventTypes.UserOverlappingSpeech, ev);
+    this.agentSession.emit(AgentSessionEventTypes.OverlappingSpeech, ev);
   };
 
   private readonly onInterruptionMetricsCollected = (ev: InterruptionMetrics): void => {
+    this.agentSession._usageCollector.collect(ev);
     this.agentSession.emit(
       AgentSessionEventTypes.MetricsCollected,
       createMetricsCollectedEvent({ metrics: ev }),
@@ -722,6 +723,8 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
+    this.agentSession._usageCollector.collect(ev);
+
     this.agentSession.emit(
       AgentSessionEventTypes.MetricsCollected,
       createMetricsCollectedEvent({ metrics: ev }),
@@ -961,7 +964,7 @@ export class AgentActivity implements RecognitionHooks {
     this.restoreInterruptionByAudioActivity();
     this.interruptByAudioActivity();
     if (this.audioRecognition) {
-      this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.timestamp);
+      this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt);
     }
   }
 
@@ -2869,10 +2872,7 @@ export class AgentActivity implements RecognitionHooks {
         await this._mainTask.cancelAndWait();
       }
       if (this.interruptionDetector) {
-        this.interruptionDetector.off(
-          'user_overlapping_speech',
-          this.onInterruptionOverlappingSpeech,
-        );
+        this.interruptionDetector.off('overlapping_speech', this.onInterruptionOverlappingSpeech);
         this.interruptionDetector.off('metrics_collected', this.onInterruptionMetricsCollected);
         this.interruptionDetector.off('error', this.onInterruptionError);
       }
@@ -2927,7 +2927,7 @@ export class AgentActivity implements RecognitionHooks {
     try {
       const detector = new AdaptiveInterruptionDetector();
 
-      detector.on('user_overlapping_speech', this.onInterruptionOverlappingSpeech);
+      detector.on('overlapping_speech', this.onInterruptionOverlappingSpeech);
       detector.on('metrics_collected', this.onInterruptionMetricsCollected);
       detector.on('error', this.onInterruptionError);
 
