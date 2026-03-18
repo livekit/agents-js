@@ -45,7 +45,7 @@ import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
-import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
+import { Future, Task, cancelAndWait, isDevMode, waitFor } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import {
@@ -166,6 +166,13 @@ export class AgentActivity implements RecognitionHooks {
   private readonly onInterruptionError = (ev: InterruptionDetectionError): void => {
     const errorEvent = createErrorEvent(ev, this.interruptionDetector);
     this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+
+    if (!ev.recoverable) {
+      this.agentSession._onError(ev);
+      this.fallbackToVadInterruption();
+      return;
+    }
+
     this.agentSession._onError(ev);
   };
 
@@ -2923,6 +2930,15 @@ export class AgentActivity implements RecognitionHooks {
       return undefined;
     }
 
+    if (
+      agentInterruptionDetection === undefined &&
+      sessionInterruptionDetection === undefined &&
+      !isDevMode()
+    ) {
+      this.logger.warn('adaptive interruption is disabled by default in production mode');
+      return undefined;
+    }
+
     try {
       const detector = new AdaptiveInterruptionDetector();
 
@@ -2939,6 +2955,30 @@ export class AgentActivity implements RecognitionHooks {
 
   private restoreInterruptionByAudioActivity(): void {
     this.isInterruptionByAudioActivityEnabled = this.isDefaultInterruptionByAudioActivityEnabled;
+  }
+
+  private fallbackToVadInterruption(): void {
+    if (!this.isInterruptionDetectionEnabled) return;
+
+    this.isInterruptionDetectionEnabled = false;
+    this.restoreInterruptionByAudioActivity();
+
+    if (this.interruptionDetector) {
+      this.interruptionDetector.off('overlapping_speech', this.onInterruptionOverlappingSpeech);
+      this.interruptionDetector.off('metrics_collected', this.onInterruptionMetricsCollected);
+      this.interruptionDetector.off('error', this.onInterruptionError);
+      this.interruptionDetector = undefined;
+    }
+
+    if (this.audioRecognition) {
+      this.audioRecognition.disableInterruptionDetection().catch((err) => {
+        this.logger.warn({ err }, 'error while disabling interruption detection');
+      });
+    }
+
+    this.logger.warn(
+      'adaptive interruption disabled due to unrecoverable error, falling back to VAD-based interruption',
+    );
   }
 
   private async _closeSessionResources(): Promise<void> {

@@ -232,7 +232,6 @@ export class AgentSession<
   // Unrecoverable error counts, reset after agent speaking
   private llmErrorCounts = 0;
   private ttsErrorCounts = 0;
-  private interruptionDetectionErrorCounts = 0;
 
   private sessionSpan?: Span;
   private agentSpeakingSpan?: Span;
@@ -911,10 +910,7 @@ export class AgentSession<
         return;
       }
     } else if (error.type === 'interruption_detection_error') {
-      this.interruptionDetectionErrorCounts += 1;
-      if (this.interruptionDetectionErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
-        return;
-      }
+      return;
     }
 
     this.logger.error(error, 'AgentSession is closing due to unrecoverable error');
@@ -946,7 +942,6 @@ export class AgentSession<
     if (state === 'speaking') {
       this.llmErrorCounts = 0;
       this.ttsErrorCounts = 0;
-      this.interruptionDetectionErrorCounts = 0;
 
       if (this.agentSpeakingSpan === undefined) {
         this.agentSpeakingSpan = tracer.startSpan({
@@ -1199,7 +1194,6 @@ export class AgentSession<
     this.rootSpanContext = undefined;
     this.llmErrorCounts = 0;
     this.ttsErrorCounts = 0;
-    this.interruptionDetectionErrorCounts = 0;
 
     this.logger.info({ reason, error }, 'AgentSession closed');
   }

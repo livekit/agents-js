@@ -249,6 +249,15 @@ export class AudioRecognition {
     await this.interruptionTask?.cancelAndWait();
   }
 
+  async disableInterruptionDetection(): Promise<void> {
+    this.isInterruptionEnabled = false;
+    this.interruptionDetection = undefined;
+    await this.interruptionTask?.cancelAndWait();
+    this.interruptionTask = undefined;
+    await this.interruptionStreamChannel?.close();
+    this.interruptionStreamChannel = undefined;
+  }
+
   async onStartOfAgentSpeech() {
     this.isAgentSpeaking = true;
     return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());
