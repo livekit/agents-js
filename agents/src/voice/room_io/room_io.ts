@@ -16,7 +16,7 @@ import {
   TrackSource,
 } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
-import { ATTRIBUTE_PUBLISH_ON_BEHALF } from '../../constants.js';
+import { ATTRIBUTE_PUBLISH_ON_BEHALF, TOPIC_CHAT } from '../../constants.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { Future, Task, waitForAbort } from '../../utils.js';
@@ -402,6 +402,18 @@ export class RoomIO {
 
   start() {
     // -- create inputs --
+
+    if (this.inputOptions.textEnabled) {
+      try {
+        this.room.registerTextStreamHandler(TOPIC_CHAT, this.onUserTextInput);
+        this.textStreamHandlerRegistered = true;
+      } catch (error) {
+        if (this.inputOptions.textEnabled) {
+          this.logger.warn(`text stream handler for topic "${TOPIC_CHAT}" already set, ignoring`);
+        }
+      }
+    }
+
     if (this.inputOptions.audioEnabled) {
       this.audioInput = new ParticipantAudioInputStream({
         room: this.room,
