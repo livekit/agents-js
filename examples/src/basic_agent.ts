@@ -109,7 +109,7 @@ export default defineAgent({
       );
     });
 
-    session.on(voice.AgentSessionEventTypes.UserOverlappingSpeech, (ev) => {
+    session.on(voice.AgentSessionEventTypes.OverlappingSpeech, (ev) => {
       logger.warn({ type: ev.type, isInterruption: ev.isInterruption }, 'user overlapping speech');
     });
 
