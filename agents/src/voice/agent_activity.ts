@@ -391,8 +391,12 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
-      minEndpointingDelay: this.agentSession.options.turnHandling.endpointing.minDelay,
-      maxEndpointingDelay: this.agentSession.options.turnHandling.endpointing.maxDelay,
+      minEndpointingDelay:
+        this.agent.turnHandling?.endpointing?.minDelay ??
+        this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
+      maxEndpointingDelay:
+        this.agent.turnHandling?.endpointing?.maxDelay ??
+        this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
@@ -465,8 +469,10 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get allowInterruptions(): boolean {
-    // TODO(AJS-51): Allow options to be defined in Agent class
-    return this.agentSession.options.turnHandling.interruption?.mode !== false;
+    return (
+      this.agent.turnHandling?.interruption?.enabled ??
+      this.agentSession.sessionOptions.turnHandling.interruption.enabled
+    );
   }
 
   get useTtsAlignedTranscript(): boolean {
@@ -475,9 +481,26 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get turnDetection(): TurnDetectionMode | undefined {
-    // TODO(brian): prioritize using agent.turn_detection
-    return this.agentSession.turnDetection;
+    return this.agent.turnHandling?.turnDetection ?? this.agentSession.turnDetection;
   }
+
+  get turnHandling() {
+    return this.agent.turnHandling ?? this.agentSession.sessionOptions.turnHandling;
+  }
+
+  // get minEndpointingDelay(): number {
+  //   return (
+  //     this.agent.turnHandling?.endpointing?.minDelay ??
+  //     this.agentSession.sessionOptions.turnHandling.endpointing.minDelay
+  //   );
+  // }
+
+  // get maxEndpointingDelay(): number {
+  //   return (
+  //     this.agent.turnHandling?.endpointing?.maxDelay ??
+  //     this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
+  //   );
+  // }
 
   get toolCtx(): ToolContext {
     return this.agent.toolCtx;
@@ -875,7 +898,9 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    if (ev.speechDuration >= this.agentSession.options.turnHandling.interruption?.minDuration) {
+    if (
+      ev.speechDuration >= this.agentSession.sessionOptions.turnHandling.interruption?.minDuration
+    ) {
       this.interruptByAudioActivity();
     }
   }
@@ -901,7 +926,7 @@ export class AgentActivity implements RecognitionHooks {
     // - This ensures consistent behavior across all interruption scenarios
     if (
       this.stt &&
-      this.agentSession.options.turnHandling.interruption?.minWords > 0 &&
+      this.agentSession.sessionOptions.turnHandling.interruption?.minWords > 0 &&
       this.audioRecognition
     ) {
       const text = this.audioRecognition.currentTranscript;
@@ -913,7 +938,7 @@ export class AgentActivity implements RecognitionHooks {
 
       // Only allow interruption if word count meets or exceeds minInterruptionWords
       // This applies to all cases: empty strings, partial speech, and full speech
-      if (wordCount < this.agentSession.options.turnHandling.interruption?.minWords) {
+      if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
         return;
       }
     }
@@ -996,7 +1021,7 @@ export class AgentActivity implements RecognitionHooks {
 
   onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
     if (
-      !this.agentSession.options.preemptiveGeneration ||
+      !this.agentSession.sessionOptions.preemptiveGeneration ||
       this.schedulingPaused ||
       (this._currentSpeech !== undefined && !this._currentSpeech.interrupted) ||
       !(this.llm instanceof LLM)
@@ -1113,16 +1138,17 @@ export class AgentActivity implements RecognitionHooks {
       this._currentSpeech &&
       this._currentSpeech.allowInterruptions &&
       !this._currentSpeech.interrupted &&
-      this.agentSession.options.turnHandling.interruption?.minWords > 0
+      this.agentSession.sessionOptions.turnHandling.interruption?.minWords > 0
     ) {
       const wordCount = splitWords(info.newTranscript, true).length;
-      if (wordCount < this.agentSession.options.turnHandling.interruption?.minWords) {
+      if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
         // avoid interruption if the new_transcript contains fewer words than minInterruptionWords
         this.cancelPreemptiveGeneration();
         this.logger.info(
           {
             wordCount,
-            minInterruptionWords: this.agentSession.options.turnHandling.interruption.minWords,
+            minInterruptionWords:
+              this.agentSession.sessionOptions.turnHandling.interruption.minWords,
           },
           'skipping user input, word count below minimum interruption threshold',
         );
@@ -2077,7 +2103,7 @@ export class AgentActivity implements RecognitionHooks {
     if (toolOutput.output.length === 0) return;
 
     // important: no agent output should be used after this point
-    const { maxToolSteps } = this.agentSession.options;
+    const { maxToolSteps } = this.agentSession.sessionOptions;
     if (speechHandle.numSteps >= maxToolSteps) {
       this.logger.warn(
         { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
@@ -2544,7 +2570,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     // important: no agent ouput should be used after this point
-    const { maxToolSteps } = this.agentSession.options;
+    const { maxToolSteps } = this.agentSession.sessionOptions;
     if (speechHandle.numSteps >= maxToolSteps) {
       this.logger.warn(
         { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
@@ -2857,8 +2883,8 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private resolveInterruptionDetector(): AdaptiveInterruptionDetector | undefined {
-    const interruptionDetection =
-      this.agent.interruptionDetection ?? this.agentSession.interruptionDetection;
+    const agentInterruptionDetection = this.agent.turnHandling?.interruption?.mode;
+    const sessionInterruptionDetection = this.agentSession.interruptionDetection;
     if (
       !(
         this.stt &&
@@ -2870,18 +2896,30 @@ export class AgentActivity implements RecognitionHooks {
         !(this.llm instanceof RealtimeModel)
       )
     ) {
-      if (interruptionDetection === 'adaptive') {
+      if (
+        agentInterruptionDetection === 'adaptive' ||
+        sessionInterruptionDetection === 'adaptive'
+      ) {
         this.logger.warn(
           "interruptionDetection is provided, but it's not compatible with the current configuration and will be disabled",
         );
-        return undefined;
       }
+      return undefined;
     }
 
-    if (
-      (interruptionDetection !== undefined && interruptionDetection === false) ||
-      interruptionDetection === 'vad'
-    ) {
+    if (!this.allowInterruptions) {
+      return undefined;
+    }
+
+    if (agentInterruptionDetection === false || sessionInterruptionDetection === false) {
+      return undefined;
+    }
+
+    if (agentInterruptionDetection && agentInterruptionDetection === 'vad') {
+      return undefined;
+    }
+
+    if (sessionInterruptionDetection && sessionInterruptionDetection === 'vad') {
       return undefined;
     }
 
