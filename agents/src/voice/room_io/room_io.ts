@@ -274,7 +274,7 @@ export class RoomIO {
   };
 
   private onUserTextInput = (reader: TextStreamReader, participantInfo: { identity: string }) => {
-    if (participantInfo.identity !== this.participantIdentity) {
+    if (this.participantIdentity && participantInfo.identity !== this.participantIdentity) {
       return;
     }
 
