@@ -12,6 +12,7 @@ import {
   type RemoteParticipant,
   type Room,
   RoomEvent,
+  TextStreamReader,
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
@@ -127,6 +128,7 @@ export class RoomIO {
   private agentTranscriptOutput?: ParalellTextOutput;
   private transcriptionSynchronizer?: TranscriptionSynchronizer;
   private participantIdentity: string | null = null;
+  private textStreamHandlerRegistered = false;
 
   private participantAvailableFuture: Future<RemoteParticipant> = new Future();
   private roomConnectedFuture: Future<void> = new Future();
@@ -269,6 +271,36 @@ export class RoomIO {
         [`lk.agent.state`]: ev.newState,
       });
     }
+  };
+
+  private onUserTextInput = (reader: TextStreamReader, participantInfo: { identity: string }) => {
+    if (participantInfo.identity !== this.participantIdentity) {
+      return;
+    }
+
+    const participant = this.room.remoteParticipants.get(participantInfo.identity);
+    if (!participant) {
+      this.logger.warn('participant not found, ignoring text input');
+      return;
+    }
+
+    const readText = async () => {
+      const text = await reader.readAll();
+
+      const textInputResult = this.inputOptions.textInputCallback!(this.agentSession, {
+        text,
+        info: reader.info,
+      });
+
+      // check if callback is a Promise
+      if (textInputResult instanceof Promise) {
+        await textInputResult;
+      }
+    };
+
+    readText().catch((error) => {
+      this.logger.error({ error }, 'Error reading text input');
+    });
   };
 
   private async forwardUserTranscript(signal: AbortSignal): Promise<void> {
