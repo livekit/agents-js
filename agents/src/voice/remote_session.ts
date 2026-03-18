@@ -3,27 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Timestamp } from '@bufbuild/protobuf';
 import { AgentSession as pb } from '@livekit/protocol';
-import type {
-  ByteStreamReader,
-  Room,
-  RpcInvocationData,
-  TextStreamInfo,
-  TextStreamReader,
-} from '@livekit/rtc-node';
+import type { ByteStreamReader, Room, TextStreamInfo } from '@livekit/rtc-node';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';
-import type { z } from 'zod';
-import {
-  RPC_GET_AGENT_INFO,
-  RPC_GET_CHAT_HISTORY,
-  RPC_GET_SESSION_STATE,
-  RPC_SEND_MESSAGE,
-  TOPIC_AGENT_REQUEST,
-  TOPIC_AGENT_RESPONSE,
-  TOPIC_CHAT,
-  TOPIC_CLIENT_EVENTS,
-  TOPIC_SESSION_MESSAGES,
-} from '../constants.js';
+import { TOPIC_SESSION_MESSAGES } from '../constants.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import type {
   ChatItem,
