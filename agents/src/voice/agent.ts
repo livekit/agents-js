@@ -35,7 +35,6 @@ import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 import type { TimedString } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
-import type { InterruptionOptions } from './turn_config/interruption.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
 import { migrateTurnHandling } from './turn_config/utils.js';
 
@@ -137,10 +136,7 @@ export class Agent<UserData = any> {
   private _llm?: LLM | RealtimeModel;
   private _tts?: TTS;
   private _turnHandling?: Partial<TurnHandlingOptions>;
-  private _interruptionDetection?: InterruptionOptions['mode'];
-  private _allowInterruptions?: boolean;
-  private _minEndpointingDelay?: number;
-  private _maxEndpointingDelay?: number;
+
   private _minConsecutiveSpeechDelay?: number;
   private _useTtsAlignedTranscript?: boolean;
 
@@ -167,8 +163,6 @@ export class Agent<UserData = any> {
     llm,
     tts,
     allowInterruptions,
-    minEndpointingDelay,
-    maxEndpointingDelay,
     turnHandling,
     minConsecutiveSpeechDelay,
     useTtsAlignedTranscript,
@@ -198,8 +192,6 @@ export class Agent<UserData = any> {
     const resolvedTurnHandling = migrateTurnHandling({
       turnDetection,
       allowInterruptions,
-      minEndpointingDelay,
-      maxEndpointingDelay,
       turnHandling,
     });
     this._turnHandling =
@@ -223,22 +215,6 @@ export class Agent<UserData = any> {
       this._tts = InferenceTTS.fromModelString(tts);
     } else {
       this._tts = tts;
-    }
-
-    const interruption = this._turnHandling?.interruption;
-    if (interruption) {
-      if (interruption.enabled !== undefined) {
-        this._allowInterruptions = interruption.enabled;
-      }
-      if (interruption.mode !== undefined) {
-        this._interruptionDetection = interruption.mode;
-      }
-    }
-
-    const endpointing = this._turnHandling?.endpointing;
-    if (endpointing) {
-      this._minEndpointingDelay = endpointing.minDelay;
-      this._maxEndpointingDelay = endpointing.maxDelay;
     }
 
     this._minConsecutiveSpeechDelay = minConsecutiveSpeechDelay;
@@ -287,28 +263,8 @@ export class Agent<UserData = any> {
     return this.getActivityOrThrow().agentSession as AgentSession<UserData>;
   }
 
-  get interruptionDetection(): InterruptionOptions['mode'] {
-    return this._interruptionDetection;
-  }
-
   get turnHandling(): Partial<TurnHandlingOptions> | undefined {
     return this._turnHandling;
-  }
-
-  get turnDetection(): TurnDetectionMode | undefined {
-    return this._turnHandling?.turnDetection;
-  }
-
-  get allowInterruptions(): boolean | undefined {
-    return this._allowInterruptions;
-  }
-
-  get minEndpointingDelay(): number | undefined {
-    return this._minEndpointingDelay;
-  }
-
-  get maxEndpointingDelay(): number | undefined {
-    return this._maxEndpointingDelay;
   }
 
   get minConsecutiveSpeechDelay(): number | undefined {

@@ -84,6 +84,7 @@ import {
 } from './generation.js';
 import type { TimedString } from './io.js';
 import { SpeechHandle } from './speech_handle.js';
+import { defaultTurnHandlingOptions } from './turn_config/turn_handling.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
@@ -390,8 +391,10 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
-      minEndpointingDelay: this.minEndpointingDelay,
-      maxEndpointingDelay: this.maxEndpointingDelay,
+      minEndpointingDelay:
+        this.turnHandling.endpointing?.minDelay ?? defaultTurnHandlingOptions.endpointing.minDelay,
+      maxEndpointingDelay:
+        this.turnHandling.endpointing?.maxDelay ?? defaultTurnHandlingOptions.endpointing.maxDelay,
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
@@ -465,7 +468,7 @@ export class AgentActivity implements RecognitionHooks {
 
   get allowInterruptions(): boolean {
     return (
-      this.agent.allowInterruptions ??
+      this.agent.turnHandling?.interruption?.enabled ??
       this.agentSession.sessionOptions.turnHandling.interruption.enabled
     );
   }
@@ -476,22 +479,26 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get turnDetection(): TurnDetectionMode | undefined {
-    return this.agent.turnDetection ?? this.agentSession.turnDetection;
+    return this.agent.turnHandling?.turnDetection ?? this.agentSession.turnDetection;
   }
 
-  get minEndpointingDelay(): number {
-    return (
-      this.agent.minEndpointingDelay ??
-      this.agentSession.sessionOptions.turnHandling.endpointing.minDelay
-    );
+  get turnHandling() {
+    return this.agent.turnHandling ?? this.agentSession.sessionOptions.turnHandling;
   }
 
-  get maxEndpointingDelay(): number {
-    return (
-      this.agent.maxEndpointingDelay ??
-      this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
-    );
-  }
+  // get minEndpointingDelay(): number {
+  //   return (
+  //     this.agent.turnHandling?.endpointing?.minDelay ??
+  //     this.agentSession.sessionOptions.turnHandling.endpointing.minDelay
+  //   );
+  // }
+
+  // get maxEndpointingDelay(): number {
+  //   return (
+  //     this.agent.turnHandling?.endpointing?.maxDelay ??
+  //     this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
+  //   );
+  // }
 
   get toolCtx(): ToolContext {
     return this.agent.toolCtx;
@@ -2875,7 +2882,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private resolveInterruptionDetector(): AdaptiveInterruptionDetector | undefined {
-    const agentInterruptionDetection = this.agent.interruptionDetection;
+    const agentInterruptionDetection = this.agent.turnHandling?.interruption?.mode;
     const sessionInterruptionDetection = this.agentSession.interruptionDetection;
     if (
       !(
