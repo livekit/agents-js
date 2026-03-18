@@ -27,6 +27,9 @@ function createFakeLLM(responses: voice.testing.FakeLLMResponse[] = []): voice.t
   return new voice.testing.FakeLLM(responses);
 }
 
+const summaryXml = (summary: string) =>
+  ['<chat_history_summary>', summary, '</chat_history_summary>'].join('\n');
+
 async function runAndWait(session: voice.AgentSession, userInput: string) {
   const result = session.run({ userInput });
   await result.wait();
@@ -450,8 +453,28 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
         toolCalls: [{ name: 'recordFood', args: { food: 'pizza' } }],
       },
       {
-        input:
-          'Conversation to summarize:\n\nuser: Blue is my favorite color.\nuser: I love pizza.',
+        input: [
+          'Conversation to summarize:',
+          '',
+          '<user>',
+          'Blue is my favorite color.',
+          '</user>',
+          '<function_call name="recordColor" call_id="fake_call_0">',
+          '{"color":"Blue"}',
+          '</function_call>',
+          '<function_call_output name="recordColor" call_id="fake_call_0">',
+          '"recorded"',
+          '</function_call_output>',
+          '<user>',
+          'I love pizza.',
+          '</user>',
+          '<function_call name="recordFood" call_id="fake_call_0">',
+          '{"food":"pizza"}',
+          '</function_call>',
+          '<function_call_output name="recordFood" call_id="fake_call_0">',
+          '"recorded"',
+          '</function_call_output>',
+        ].join('\n'),
         content: 'Summary: color=Blue, food=pizza.',
       },
     ]);
@@ -476,7 +499,7 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
     );
     expect(summaryMsg).toBeDefined();
     if (summaryMsg && summaryMsg.type === 'message') {
-      expect(summaryMsg.textContent).toContain('[history summary]');
+      expect(summaryMsg.textContent).toBe(summaryXml('Summary: color=Blue, food=pizza.'));
     }
   });
 });

@@ -120,13 +120,9 @@ export class TaskGroup extends AgentTask<TaskGroupResult> {
           throw new Error('summarizeChatCtx requires a standard LLM on the session');
         }
 
-        // TODO(parity): Add excludeConfigUpdate when AgentConfigUpdate is ported
-        const ctxToSummarize = this._chatCtx.copy({
-          excludeInstructions: true,
-          excludeHandoff: true,
-          excludeEmptyMessage: true,
-          excludeFunctionCall: true,
-        });
+        // Keep the full item stream so summarization can distill tool results
+        // into the history summary instead of dropping them up front.
+        const ctxToSummarize = this._chatCtx.copy();
 
         const summarizedChatCtx = await ctxToSummarize._summarize(sessionLlm, {
           keepLastTurns: 0,

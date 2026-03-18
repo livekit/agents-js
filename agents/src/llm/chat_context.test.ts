@@ -17,6 +17,18 @@ import {
 
 initializeLogger({ pretty: false, level: 'error' });
 
+const summaryXml = (summary: string) =>
+  ['<chat_history_summary>', summary, '</chat_history_summary>'].join('\n');
+
+class TrackingFakeLLM extends FakeLLM {
+  chatCalls = 0;
+
+  chat(...args: Parameters<FakeLLM['chat']>) {
+    this.chatCalls += 1;
+    return super.chat(...args);
+  }
+}
+
 describe('ChatContext.toJSON', () => {
   it('should match snapshot for empty context', () => {
     const context = new ChatContext();
@@ -288,18 +300,26 @@ describe('ChatContext.toJSON', () => {
 });
 
 describe('ChatContext._summarize', () => {
-  it('keeps chronological timestamps with summary + tail', async () => {
+  it('includes function calls in the summarization source and keeps chronological order', async () => {
     const ctx = new ChatContext();
     ctx.addMessage({ role: 'system', content: 'System prompt', createdAt: 0 });
     ctx.addMessage({ role: 'user', content: 'hello', createdAt: 1000 });
     ctx.addMessage({ role: 'assistant', content: 'hi there', createdAt: 2000 });
     ctx.insert(
+      FunctionCall.create({
+        callId: 'call_1',
+        name: 'lookup',
+        args: '{"order":"123"}',
+        createdAt: 2500,
+      }),
+    );
+    ctx.insert(
       new FunctionCallOutput({
         callId: 'call_1',
         name: 'lookup',
-        output: '{"ok":true}',
+        output: '{"status":"delivered"}',
         isError: false,
-        createdAt: 3500,
+        createdAt: 2600,
       }),
     );
     ctx.addMessage({ role: 'user', content: 'my color is blue', createdAt: 3000 });
@@ -307,7 +327,22 @@ describe('ChatContext._summarize', () => {
 
     const fake = new FakeLLM([
       {
-        input: 'Conversation to summarize:\n\nuser: hello\nassistant: hi there',
+        input: [
+          'Conversation to summarize:',
+          '',
+          '<user>',
+          'hello',
+          '</user>',
+          '<assistant>',
+          'hi there',
+          '</assistant>',
+          '<function_call name="lookup" call_id="call_1">',
+          '{"order":"123"}',
+          '</function_call>',
+          '<function_call_output name="lookup" call_id="call_1">',
+          '{"status":"delivered"}',
+          '</function_call_output>',
+        ].join('\n'),
         content: 'condensed head',
       },
     ]);
@@ -323,11 +358,108 @@ describe('ChatContext._summarize', () => {
       throw new Error('summary message is missing');
     }
 
-    expect(summary.createdAt).toBeCloseTo(2999.999, 6);
+    expect(summary.textContent).toBe(summaryXml('condensed head'));
+    expect(summary.createdAt).toBeCloseTo(2999.999999, 6);
+    expect(ctx.items.filter((item) => item.type === 'function_call')).toHaveLength(0);
+    expect(ctx.items.filter((item) => item.type === 'function_call_output')).toHaveLength(0);
 
     const createdAts = ctx.items.map((item) => item.createdAt);
     const sorted = [...createdAts].sort((a, b) => a - b);
     expect(createdAts).toEqual(sorted);
+  });
+
+  it('preserves interleaved tool items that belong to the recent tail', async () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({ role: 'system', content: 'System prompt', createdAt: 0 });
+    ctx.addMessage({ role: 'user', content: 'my earbuds are broken', createdAt: 1000 });
+    ctx.addMessage({
+      role: 'assistant',
+      content: 'Can you share your order number?',
+      createdAt: 2000,
+    });
+    ctx.addMessage({ role: 'user', content: 'Order #123', createdAt: 3000 });
+    ctx.insert(
+      FunctionCall.create({
+        callId: 'call_2',
+        name: 'lookup_order',
+        args: '{"order":"123"}',
+        createdAt: 3500,
+      }),
+    );
+    ctx.insert(
+      new FunctionCallOutput({
+        callId: 'call_2',
+        name: 'lookup_order',
+        output: '{"status":"delivered"}',
+        isError: false,
+        createdAt: 3600,
+      }),
+    );
+    ctx.addMessage({
+      role: 'assistant',
+      content: 'Found your order. Let me check the warranty.',
+      createdAt: 4000,
+    });
+    ctx.addMessage({ role: 'user', content: 'Thanks.', createdAt: 5000 });
+    ctx.addMessage({ role: 'assistant', content: 'You are under warranty.', createdAt: 6000 });
+
+    const fake = new FakeLLM([
+      {
+        input: [
+          'Conversation to summarize:',
+          '',
+          '<user>',
+          'my earbuds are broken',
+          '</user>',
+          '<assistant>',
+          'Can you share your order number?',
+          '</assistant>',
+        ].join('\n'),
+        content: 'older summary',
+      },
+    ]);
+
+    await ctx._summarize(fake, { keepLastTurns: 2 });
+
+    const functionItems = ctx.items.filter(
+      (item) => item.type === 'function_call' || item.type === 'function_call_output',
+    );
+    expect(functionItems).toHaveLength(2);
+    expect(functionItems.map((item) => item.createdAt)).toEqual([3500, 3600]);
+
+    const rawTailMessages = ctx.items.filter(
+      (item) =>
+        item.type === 'message' &&
+        (item.role === 'user' || item.role === 'assistant') &&
+        item.extra?.is_summary !== true,
+    );
+    expect(rawTailMessages).toHaveLength(4);
+    expect(rawTailMessages.map((item) => item.textContent)).toEqual([
+      'Order #123',
+      'Found your order. Let me check the warranty.',
+      'Thanks.',
+      'You are under warranty.',
+    ]);
+
+    const createdAts = ctx.items.map((item) => item.createdAt);
+    const sorted = [...createdAts].sort((a, b) => a - b);
+    expect(createdAts).toEqual(sorted);
+  });
+
+  it('skips summarization when the recent-turn budget already covers the history', async () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({ role: 'system', content: 'System prompt', createdAt: 0 });
+    ctx.addMessage({ role: 'user', content: 'hello', createdAt: 1000 });
+    ctx.addMessage({ role: 'assistant', content: 'hi there', createdAt: 2000 });
+
+    const llm = new TrackingFakeLLM();
+    const originalIds = ctx.items.map((item) => item.id);
+
+    const result = await ctx._summarize(llm, { keepLastTurns: 1 });
+
+    expect(result).toBe(ctx);
+    expect(llm.chatCalls).toBe(0);
+    expect(ctx.items.map((item) => item.id)).toEqual(originalIds);
   });
 });
 
