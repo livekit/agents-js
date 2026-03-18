@@ -520,6 +520,11 @@ export class RoomIO {
     this.agentSession.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
     this.agentSession.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
 
+    if (this.textStreamHandlerRegistered) {
+      this.room.unregisterTextStreamHandler(TOPIC_CHAT);
+      this.textStreamHandlerRegistered = false;
+    }
+
     await this.initTask?.cancelAndWait();
 
     // Close stream FIRST so reader.read() in forwardUserTranscript can exit.
