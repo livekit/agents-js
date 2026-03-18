@@ -568,26 +568,23 @@ export class SessionHost {
     this.trackTask(Task.from(async () => this.transport.sendMessage(msg)));
   }
 
-  private emitEvent(
-    eventCase: pb.AgentSessionEvent['event']['case'],
-    value: pb.AgentSessionEvent['event']['value'],
-  ): void {
+  private emitEvent<Event extends pb.AgentSessionEvent['event']>(event: Event): void {
     this.sendEvent(
       new pb.AgentSessionEvent({
         createdAt: nowTimestamp(),
-        event: { case: eventCase, value } as pb.AgentSessionEvent['event'],
+        event: event,
       }),
     );
   }
 
   private onAgentStateChanged = (event: AgentStateChangedEvent): void => {
-    this.emitEvent(
-      'agentStateChanged',
-      new pb.AgentSessionEvent_AgentStateChanged({
+    this.emitEvent({
+      case: 'agentStateChanged',
+      value: new pb.AgentSessionEvent_AgentStateChanged({
         oldState: AGENT_STATE_MAP[event.oldState],
         newState: AGENT_STATE_MAP[event.newState],
       }),
-    );
+    });
   };
 
   private onUserStateChanged = (event: UserStateChangedEvent): void => {
@@ -606,20 +603,20 @@ export class SessionHost {
   };
 
   private onUserInputTranscribed = (event: UserInputTranscribedEvent): void => {
-    this.emitEvent(
-      'userInputTranscribed',
-      new pb.AgentSessionEvent_UserInputTranscribed({
+    this.emitEvent({
+      case: 'userInputTranscribed',
+      value: new pb.AgentSessionEvent_UserInputTranscribed({
         transcript: event.transcript,
         isFinal: event.isFinal,
       }),
-    );
+    });
   };
 
   private onConversationItemAdded = (event: ConversationItemAddedEvent): void => {
-    this.emitEvent(
-      'conversationItemAdded',
-      new pb.AgentSessionEvent_ConversationItemAdded({ item: chatItemToProto(event.item) }),
-    );
+    this.emitEvent({
+      case: 'conversationItemAdded',
+      value: new pb.AgentSessionEvent_ConversationItemAdded({ item: chatItemToProto(event.item) }),
+    });
   };
 
   private onFunctionToolsExecuted = (event: FunctionToolsExecutedEvent): void => {
@@ -636,13 +633,13 @@ export class SessionHost {
             isError: fco.isError,
           }),
       );
-    this.emitEvent(
-      'functionToolsExecuted',
-      new pb.AgentSessionEvent_FunctionToolsExecuted({
+    this.emitEvent({
+      case: 'functionToolsExecuted',
+      value: new pb.AgentSessionEvent_FunctionToolsExecuted({
         functionCalls: pbCalls,
         functionCallOutputs: pbOutputs,
       }),
-    );
+    });
   };
 
   private onOverlappingSpeech = (event: OverlappingSpeechEvent): void => {
@@ -654,26 +651,26 @@ export class SessionHost {
     if (event.overlapStartedAt != null) {
       value.overlapStartedAt = msToTimestamp(event.overlapStartedAt);
     }
-    this.emitEvent('overlappingSpeech', value);
+    this.emitEvent({ case: 'overlappingSpeech', value });
   };
 
   private onMetricsCollected = (_event: MetricsCollectedEvent): void => {
     if (!this.session) return;
-    this.emitEvent(
-      'sessionUsageUpdated',
-      new pb.AgentSessionEvent_SessionUsageUpdated({
+    this.emitEvent({
+      case: 'sessionUsageUpdated',
+      value: new pb.AgentSessionEvent_SessionUsageUpdated({
         usage: sessionUsageToProto(this.session.usage),
       }),
-    );
+    });
   };
 
   private onHostError = (event: ErrorEvent): void => {
-    this.emitEvent(
-      'error',
-      new pb.AgentSessionEvent_Error({
+    this.emitEvent({
+      case: 'error',
+      value: new pb.AgentSessionEvent_Error({
         message: event.error ? String(event.error) : 'Unknown error',
       }),
-    );
+    });
   };
 
   private async handleRequestSafe(req: pb.SessionRequest): Promise<void> {
