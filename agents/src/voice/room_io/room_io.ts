@@ -290,6 +290,7 @@ export class RoomIO {
       const textInputResult = this.inputOptions.textInputCallback!(this.agentSession, {
         text,
         info: reader.info,
+        participantIdentity: participantInfo.identity,
       });
 
       // check if callback is a Promise
