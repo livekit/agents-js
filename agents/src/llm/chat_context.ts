@@ -938,11 +938,9 @@ function toAttrsStr(attrs?: Record<string, unknown>): string | undefined {
 function toXml(tagName: string, content?: string, attrs?: Record<string, unknown>): string {
   const attrsStr = toAttrsStr(attrs);
   if (content) {
-    return [
-      attrsStr ? `<${tagName} ${attrsStr}>` : `<${tagName}>`,
-      content,
-      `</${tagName}>`,
-    ].join('\n');
+    return [attrsStr ? `<${tagName} ${attrsStr}>` : `<${tagName}>`, content, `</${tagName}>`].join(
+      '\n',
+    );
   }
 
   return attrsStr ? `<${tagName} ${attrsStr} />` : `<${tagName} />`;
@@ -966,14 +964,10 @@ function functionCallItemToMessage(item: FunctionCall | FunctionCallOutput): Cha
   return new ChatMessage({
     role: 'assistant',
     content: [
-      toXml(
-        'function_call_output',
-        item.isError ? toXml('error', item.output) : item.output,
-        {
-          name: item.name,
-          call_id: item.callId,
-        },
-      ),
+      toXml('function_call_output', item.isError ? toXml('error', item.output) : item.output, {
+        name: item.name,
+        call_id: item.callId,
+      }),
     ],
     createdAt: item.createdAt,
     extra: { is_function_call_output: true },
