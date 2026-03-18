@@ -156,6 +156,7 @@ export class AgentActivity implements RecognitionHooks {
   };
 
   private readonly onInterruptionMetricsCollected = (ev: InterruptionMetrics): void => {
+    this.agentSession._usageCollector.collect(ev);
     this.agentSession.emit(
       AgentSessionEventTypes.MetricsCollected,
       createMetricsCollectedEvent({ metrics: ev }),
