@@ -383,6 +383,22 @@ export function createWsTransport(
         const state = getState();
         if (!state.overlapSpeechStartedAt || !state.overlapSpeechStarted) return;
 
+        if (options.timeout > 0) {
+          const now = performance.now();
+          for (const [, entry] of state.cache.entries()) {
+            if (entry.totalDurationInS !== 0) continue;
+            if (now - entry.createdAt > options.timeout) {
+              controller.error(
+                new Error(
+                  `interruption inference timed out after ${((now - entry.createdAt) / 1000).toFixed(1)}s (ws)`,
+                ),
+              );
+              return;
+            }
+            break;
+          }
+        }
+
         try {
           sendAudioData(chunk);
         } catch (err) {
