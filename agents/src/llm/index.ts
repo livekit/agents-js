@@ -62,10 +62,12 @@ export {
   computeChatCtxDiff,
   createToolOptions,
   executeToolCall,
+  formatChatHistory,
   oaiBuildFunctionInfo,
   oaiParams,
   serializeImage,
   toJsonSchema,
+  type FormatChatHistoryOptions,
   type OpenAIFunctionParameters,
   type SerializedImage,
 } from './utils.js';

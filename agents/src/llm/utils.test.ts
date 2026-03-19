@@ -4,8 +4,15 @@
 import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import sharp from 'sharp';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ChatContext, ChatMessage, type ImageContent } from './chat_context.js';
-import { computeChatCtxDiff, serializeImage } from './utils.js';
+import {
+  AgentHandoffItem,
+  ChatContext,
+  ChatMessage,
+  FunctionCall,
+  FunctionCallOutput,
+  type ImageContent,
+} from './chat_context.js';
+import { computeChatCtxDiff, formatChatHistory, serializeImage } from './utils.js';
 
 function createChatMessage(
   id: string,
@@ -353,6 +360,100 @@ describe('computeChatCtxDiff', () => {
       ['3', '4'],
       ['5', '6'],
     ]);
+  });
+});
+
+describe('formatChatHistory', () => {
+  it('should format mixed chat history items for logging', () => {
+    const ctx = new ChatContext([
+      ChatMessage.create({
+        id: 'msg_system',
+        role: 'system',
+        content: 'You are helpful.',
+        createdAt: 1,
+      }),
+      ChatMessage.create({
+        id: 'msg_user',
+        role: 'user',
+        content: [
+          'Show me my order',
+          createImageContent('https://example.com/receipt.png'),
+          { type: 'audio_content', frame: [], transcript: 'order 123' },
+        ],
+        createdAt: 2,
+      }),
+      FunctionCall.create({
+        id: 'fn_call',
+        callId: 'call_1',
+        name: 'lookup_order',
+        args: '{"orderId":"123"}',
+        createdAt: 3,
+      }),
+      FunctionCallOutput.create({
+        id: 'fn_output',
+        callId: 'call_1',
+        name: 'lookup_order',
+        output: '{"status":"shipped","ok":true}',
+        isError: false,
+        createdAt: 4,
+      }),
+      AgentHandoffItem.create({
+        id: 'handoff',
+        oldAgentId: 'support',
+        newAgentId: 'returns',
+        createdAt: 5,
+      }),
+    ]);
+
+    expect(formatChatHistory(ctx)).toBe(
+      [
+        'Chat history (5 items)',
+        '',
+        '[0] message system',
+        '  You are helpful.',
+        '',
+        '[1] message user',
+        '  Show me my order',
+        '  [image url=https://example.com/receipt.png]',
+        '  [audio transcript="order 123"]',
+        '',
+        '[2] function_call lookup_order call_id=call_1',
+        '  {',
+        '    "orderId": "123"',
+        '  }',
+        '',
+        '[3] function_call_output lookup_order call_id=call_1',
+        '  {',
+        '    "status": "shipped",',
+        '    "ok": true',
+        '  }',
+        '',
+        '[4] agent_handoff',
+        '  support -> returns',
+      ].join('\n'),
+    );
+  });
+
+  it('should optionally include ids and timestamps', () => {
+    const ctx = new ChatContext([
+      FunctionCallOutput.create({
+        id: 'fn_output',
+        callId: 'call_1',
+        name: 'lookup_order',
+        output: 'plain text error',
+        isError: true,
+        createdAt: 123.456,
+      }),
+    ]);
+
+    expect(formatChatHistory(ctx, { includeIds: true, includeTimestamps: true })).toBe(
+      [
+        'Chat history (1 items)',
+        '',
+        '[0] function_call_output lookup_order call_id=call_1 error=true id=fn_output created_at=123.456',
+        '  plain text error',
+      ].join('\n'),
+    );
   });
 });
 
