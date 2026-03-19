@@ -1,6 +1,6 @@
 # @livekit/agents
 
-## 1.1.0
+## 1.2.0
 
 ### Minor Changes
 
@@ -12,6 +12,10 @@
 - Support Image Input for OpenAI realtime model - [#1094](https://github.com/livekit/agents-js/pull/1094) ([@toubatbrian](https://github.com/toubatbrian))
 
 - Fix hanging process when participant disconnects during init - [#1087](https://github.com/livekit/agents-js/pull/1087) ([@lukasIO](https://github.com/lukasIO))
+
+## 1.1.0
+
+deprecated
 
 ## 1.0.51
 
