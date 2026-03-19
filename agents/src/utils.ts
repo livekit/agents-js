@@ -966,3 +966,10 @@ export const isCloud = (url: URL) => {
 export const isDevMode = (): boolean => {
   return process.env.LIVEKIT_DEV_MODE === '1';
 };
+
+/**
+ * Whether the agent is hosted on LiveKit Cloud.
+ */
+export const isHosted = (): boolean => {
+  return process.env.LIVEKIT_REMOTE_EOT_URL !== undefined;
+};

@@ -45,7 +45,7 @@ import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
-import { Future, Task, cancelAndWait, isDevMode, waitFor } from '../utils.js';
+import { Future, Task, cancelAndWait, isDevMode, isHosted, waitFor } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import {
@@ -2929,9 +2929,10 @@ export class AgentActivity implements RecognitionHooks {
     if (
       agentInterruptionDetection === undefined &&
       sessionInterruptionDetection === undefined &&
+      !isHosted() &&
       !isDevMode()
     ) {
-      this.logger.warn('adaptive interruption is disabled by default in production mode');
+      this.logger.info('adaptive interruption is disabled by default in production mode');
       return undefined;
     }
 

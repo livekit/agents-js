@@ -79,8 +79,15 @@ export async function predictHTTP(
           options: { statusCode: err.statusCode, body: err.data },
         });
       }
+      const cause = err.cause as Error | undefined;
+      if (cause?.name === 'TimeoutError' || cause?.name === 'AbortError') {
+        throw new APIStatusError({
+          message: `interruption inference timeout: ${err.message}`,
+          options: { statusCode: 408, retryable: false },
+        });
+      }
       throw new APIConnectionError({
-        message: `interruption inference failed: ${err.message}`,
+        message: `interruption inference connection error: ${err.message}`,
       });
     }
     throw new APIError(`error during interruption prediction: ${err}`);

@@ -6,7 +6,6 @@ import WebSocket from 'ws';
 import { z } from 'zod';
 import {
   APIConnectionError,
-  APIError,
   APIStatusError,
   APITimeoutError,
 } from '../../_exceptions.js';
@@ -87,11 +86,27 @@ async function connectWebSocket(options: WsTransportOptions): Promise<WebSocket>
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
       ws.terminate();
-      reject(new APITimeoutError({ message: 'WebSocket connection timeout' }));
+      reject(
+        new APITimeoutError({
+          message: 'WebSocket connection timeout',
+          options: { retryable: false },
+        }),
+      );
     }, options.timeout);
     ws.once('open', () => {
       clearTimeout(timeout);
       resolve();
+    });
+    ws.once('unexpected-response', (_req, res) => {
+      clearTimeout(timeout);
+      ws.terminate();
+      const statusCode = res.statusCode ?? -1;
+      reject(
+        new APIStatusError({
+          message: `WebSocket connection rejected with status ${statusCode}`,
+          options: { statusCode, retryable: false },
+        }),
+      );
     });
     ws.once('error', (err: Error) => {
       clearTimeout(timeout);
@@ -365,9 +380,10 @@ export function createWsTransport(
             if (entry.totalDurationInS !== 0) continue;
             if (now - entry.createdAt > options.timeout) {
               controller.error(
-                new APIError(
-                  `interruption inference timed out after ${((now - entry.createdAt) / 1000).toFixed(1)}s (ws)`,
-                ),
+                new APIStatusError({
+                  message: `interruption inference timed out after ${((now - entry.createdAt) / 1000).toFixed(1)}s (ws)`,
+                  options: { statusCode: 408, retryable: false },
+                }),
               );
               return;
             }
