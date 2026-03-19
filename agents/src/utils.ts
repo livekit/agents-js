@@ -789,7 +789,7 @@ export type DelayOptions = {
  */
 export function delay(ms: number, options: DelayOptions = {}): Promise<void> {
   const { signal } = options;
-  if (signal?.aborted) return Promise.reject(signal.reason);
+  if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('delay aborted'));
   return new Promise((resolve, reject) => {
     const abort = () => {
       clearTimeout(i);
