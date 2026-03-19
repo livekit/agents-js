@@ -8,7 +8,10 @@ import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api'
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream, TransformStream } from 'node:stream/web';
-import { type ChatContext, ChatMessage } from '../llm/chat_context.js';
+import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
+import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
+import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
+import { type ChatContext, ChatMessage, type MetricsReport } from '../llm/chat_context.js';
 import {
   type ChatItem,
   type FunctionCall,
@@ -30,6 +33,7 @@ import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
   EOUMetrics,
+  InterruptionMetrics,
   LLMMetrics,
   RealtimeModelMetrics,
   STTMetrics,
@@ -41,7 +45,7 @@ import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
-import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
+import { Future, Task, cancelAndWait, isDevMode, isHosted, waitFor } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import {
@@ -57,7 +61,6 @@ import {
   type EndOfTurnInfo,
   type PreemptiveGenerationInfo,
   type RecognitionHooks,
-  type _TurnDetector,
 } from './audio_recognition.js';
 import {
   AgentSessionEventTypes,
@@ -101,6 +104,7 @@ interface PreemptiveGeneration {
   createdAt: number;
 }
 
+// TODO add false interruption handling and barge in handling for https://github.com/livekit/agents/pull/3109/changes
 export class AgentActivity implements RecognitionHooks {
   agent: Agent;
   agentSession: AgentSession;
@@ -111,7 +115,7 @@ export class AgentActivity implements RecognitionHooks {
   private audioRecognition?: AudioRecognition;
   private realtimeSession?: RealtimeSession;
   private realtimeSpans?: Map<string, Span>; // Maps response_id to OTEL span for metrics recording
-  private turnDetectionMode?: Exclude<TurnDetectionMode, _TurnDetector>;
+  private turnDetectionMode?: TurnDetectionMode;
   private logger = log();
   private _schedulingPaused = true;
   private _drainBlockedTasks: Task<any>[] = [];
@@ -126,6 +130,51 @@ export class AgentActivity implements RecognitionHooks {
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
   private _preemptiveGeneration?: PreemptiveGeneration;
+  private interruptionDetector?: AdaptiveInterruptionDetector;
+  private isInterruptionDetectionEnabled: boolean;
+  private isInterruptionByAudioActivityEnabled: boolean;
+  private isDefaultInterruptionByAudioActivityEnabled: boolean;
+
+  private readonly onRealtimeGenerationCreated = (ev: GenerationCreatedEvent): void =>
+    this.onGenerationCreated(ev);
+
+  private readonly onRealtimeInputSpeechStarted = (ev: InputSpeechStartedEvent): void =>
+    this.onInputSpeechStarted(ev);
+
+  private readonly onRealtimeInputSpeechStopped = (ev: InputSpeechStoppedEvent): void =>
+    this.onInputSpeechStopped(ev);
+
+  private readonly onRealtimeInputAudioTranscriptionCompleted = (
+    ev: InputTranscriptionCompleted,
+  ): void => this.onInputAudioTranscriptionCompleted(ev);
+
+  private readonly onModelError = (ev: RealtimeModelError | STTError | TTSError | LLMError): void =>
+    this.onError(ev);
+
+  private readonly onInterruptionOverlappingSpeech = (ev: OverlappingSpeechEvent): void => {
+    this.agentSession.emit(AgentSessionEventTypes.OverlappingSpeech, ev);
+  };
+
+  private readonly onInterruptionMetricsCollected = (ev: InterruptionMetrics): void => {
+    this.agentSession._usageCollector.collect(ev);
+    this.agentSession.emit(
+      AgentSessionEventTypes.MetricsCollected,
+      createMetricsCollectedEvent({ metrics: ev }),
+    );
+  };
+
+  private readonly onInterruptionError = (ev: InterruptionDetectionError): void => {
+    const errorEvent = createErrorEvent(ev, this.interruptionDetector);
+    this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+
+    if (!ev.recoverable) {
+      this.agentSession._onError(ev);
+      this.fallbackToVadInterruption();
+      return;
+    }
+
+    this.agentSession._onError(ev);
+  };
 
   /** @internal */
   _mainTask?: Task<void>;
@@ -133,16 +182,6 @@ export class AgentActivity implements RecognitionHooks {
   _onExitTask?: Task<void>;
   _userTurnCompletedTask?: Task<void>;
 
-  private readonly onRealtimeGenerationCreated = (ev: GenerationCreatedEvent) =>
-    this.onGenerationCreated(ev);
-  private readonly onRealtimeInputSpeechStarted = (ev: InputSpeechStartedEvent) =>
-    this.onInputSpeechStarted(ev);
-  private readonly onRealtimeInputSpeechStopped = (ev: InputSpeechStoppedEvent) =>
-    this.onInputSpeechStopped(ev);
-  private readonly onRealtimeInputAudioTranscriptionCompleted = (ev: InputTranscriptionCompleted) =>
-    this.onInputAudioTranscriptionCompleted(ev);
-  private readonly onModelError = (ev: RealtimeModelError | STTError | TTSError | LLMError) =>
-    this.onError(ev);
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
     this.agentSession = agentSession;
@@ -235,6 +274,16 @@ export class AgentActivity implements RecognitionHooks {
           'for more responsive interruption handling.',
       );
     }
+
+    this.interruptionDetector = this.resolveInterruptionDetector();
+    this.isInterruptionDetectionEnabled = !!this.interruptionDetector;
+
+    // this allows taking over audio interruption temporarily until interruption is detected
+    // by default is is ture unless turnDetection is manual or realtime_llm
+    this.isInterruptionByAudioActivityEnabled =
+      this.turnDetectionMode !== 'manual' && this.turnDetectionMode !== 'realtime_llm';
+
+    this.isDefaultInterruptionByAudioActivityEnabled = this.isInterruptionByAudioActivityEnabled;
   }
 
   async start(): Promise<void> {
@@ -348,8 +397,13 @@ export class AgentActivity implements RecognitionHooks {
       vad: this.vad,
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
-      minEndpointingDelay: this.agentSession.options.minEndpointingDelay,
-      maxEndpointingDelay: this.agentSession.options.maxEndpointingDelay,
+      interruptionDetection: this.interruptionDetector,
+      minEndpointingDelay:
+        this.agent.turnHandling?.endpointing?.minDelay ??
+        this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
+      maxEndpointingDelay:
+        this.agent.turnHandling?.endpointing?.maxDelay ??
+        this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
@@ -422,8 +476,10 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get allowInterruptions(): boolean {
-    // TODO(AJS-51): Allow options to be defined in Agent class
-    return this.agentSession.options.allowInterruptions;
+    return (
+      this.agent.turnHandling?.interruption?.enabled ??
+      this.agentSession.sessionOptions.turnHandling.interruption.enabled
+    );
   }
 
   get useTtsAlignedTranscript(): boolean {
@@ -432,12 +488,34 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get turnDetection(): TurnDetectionMode | undefined {
-    // TODO(brian): prioritize using agent.turn_detection
-    return this.agentSession.turnDetection;
+    return this.agent.turnHandling?.turnDetection ?? this.agentSession.turnDetection;
   }
+
+  get turnHandling() {
+    return this.agent.turnHandling ?? this.agentSession.sessionOptions.turnHandling;
+  }
+
+  // get minEndpointingDelay(): number {
+  //   return (
+  //     this.agent.turnHandling?.endpointing?.minDelay ??
+  //     this.agentSession.sessionOptions.turnHandling.endpointing.minDelay
+  //   );
+  // }
+
+  // get maxEndpointingDelay(): number {
+  //   return (
+  //     this.agent.turnHandling?.endpointing?.maxDelay ??
+  //     this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
+  //   );
+  // }
 
   get toolCtx(): ToolContext {
     return this.agent.toolCtx;
+  }
+
+  /** @internal */
+  get inputStartedAt() {
+    return this.audioRecognition?.inputStartedAt;
   }
 
   async updateChatCtx(chatCtx: ChatContext): Promise<void> {
@@ -471,13 +549,35 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  updateOptions({ toolChoice }: { toolChoice?: ToolChoice | null }): void {
+  updateOptions({
+    toolChoice,
+    turnDetection,
+  }: {
+    toolChoice?: ToolChoice | null;
+    turnDetection?: TurnDetectionMode;
+  }): void {
     if (toolChoice !== undefined) {
       this.toolChoice = toolChoice;
     }
 
     if (this.realtimeSession) {
       this.realtimeSession.updateOptions({ toolChoice: this.toolChoice });
+    }
+
+    if (turnDetection !== undefined) {
+      this.turnDetectionMode = turnDetection;
+      this.isDefaultInterruptionByAudioActivityEnabled =
+        this.turnDetectionMode !== 'manual' && this.turnDetectionMode !== 'realtime_llm';
+
+      // sync live flag immediately when not speaking so the change takes effect right away
+      if (this.agentSession.agentState !== 'speaking') {
+        this.isInterruptionByAudioActivityEnabled =
+          this.isDefaultInterruptionByAudioActivityEnabled;
+      }
+    }
+
+    if (this.audioRecognition) {
+      this.audioRecognition.updateOptions({ turnDetection: this.turnDetectionMode });
     }
   }
 
@@ -629,6 +729,8 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
+    this.agentSession._usageCollector.collect(ev);
+
     this.agentSession.emit(
       AgentSessionEventTypes.MetricsCollected,
       createMetricsCollectedEvent({ metrics: ev }),
@@ -660,6 +762,13 @@ export class AgentActivity implements RecognitionHooks {
 
     if (!this.vad) {
       this.agentSession._updateUserState('speaking');
+      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        this.audioRecognition.onStartOfOverlapSpeech(
+          0,
+          Date.now(),
+          this.agentSession._userSpeakingSpan,
+        );
+      }
     }
 
     // this.interrupt() is going to raise when allow_interruptions is False,
@@ -678,6 +787,9 @@ export class AgentActivity implements RecognitionHooks {
     this.logger.info(ev, 'onInputSpeechStopped');
 
     if (!this.vad) {
+      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        this.audioRecognition.onEndOfOverlapSpeech(Date.now(), this.agentSession._userSpeakingSpan);
+      }
       this.agentSession._updateUserState('listening');
     }
 
@@ -751,17 +863,40 @@ export class AgentActivity implements RecognitionHooks {
   onStartOfSpeech(ev: VADEvent): void {
     let speechStartTime = Date.now();
     if (ev) {
-      speechStartTime = speechStartTime - ev.speechDuration;
+      // Subtract both speechDuration and inferenceDuration to correct for VAD model latency.
+      speechStartTime = speechStartTime - ev.speechDuration - ev.inferenceDuration;
     }
-    this.agentSession._updateUserState('speaking', speechStartTime);
+    this.agentSession._updateUserState('speaking', {
+      lastSpeakingTime: speechStartTime,
+      otelContext: otelContext.active(),
+    });
+    if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+      // Pass speechStartTime as the absolute startedAt timestamp.
+      this.audioRecognition.onStartOfOverlapSpeech(
+        ev.speechDuration,
+        speechStartTime,
+        this.agentSession._userSpeakingSpan,
+      );
+    }
   }
 
   onEndOfSpeech(ev: VADEvent): void {
     let speechEndTime = Date.now();
     if (ev) {
-      speechEndTime = speechEndTime - ev.silenceDuration;
+      // Subtract both silenceDuration and inferenceDuration to correct for VAD model latency.
+      speechEndTime = speechEndTime - ev.silenceDuration - ev.inferenceDuration;
     }
-    this.agentSession._updateUserState('listening', speechEndTime);
+    if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+      // Pass speechEndTime as the absolute endedAt timestamp.
+      this.audioRecognition.onEndOfOverlapSpeech(
+        speechEndTime,
+        this.agentSession._userSpeakingSpan,
+      );
+    }
+    this.agentSession._updateUserState('listening', {
+      lastSpeakingTime: speechEndTime,
+      otelContext: otelContext.active(),
+    });
   }
 
   onVADInferenceDone(ev: VADEvent): void {
@@ -770,12 +905,18 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    if (ev.speechDuration >= this.agentSession.options.minInterruptionDuration) {
+    if (
+      ev.speechDuration >= this.agentSession.sessionOptions.turnHandling.interruption?.minDuration
+    ) {
       this.interruptByAudioActivity();
     }
   }
 
   private interruptByAudioActivity(): void {
+    if (!this.isInterruptionByAudioActivityEnabled) {
+      return;
+    }
+
     if (this.agentSession._aecWarmupRemaining > 0) {
       // Disable interruption from audio activity while AEC warmup is active.
       return;
@@ -790,7 +931,11 @@ export class AgentActivity implements RecognitionHooks {
     // - Always apply minInterruptionWords filtering when STT is available and minInterruptionWords > 0
     // - Apply check to all STT results: empty string, undefined, or any length
     // - This ensures consistent behavior across all interruption scenarios
-    if (this.stt && this.agentSession.options.minInterruptionWords > 0 && this.audioRecognition) {
+    if (
+      this.stt &&
+      this.agentSession.sessionOptions.turnHandling.interruption?.minWords > 0 &&
+      this.audioRecognition
+    ) {
       const text = this.audioRecognition.currentTranscript;
       // TODO(shubhra): better word splitting for multi-language
 
@@ -800,7 +945,7 @@ export class AgentActivity implements RecognitionHooks {
 
       // Only allow interruption if word count meets or exceeds minInterruptionWords
       // This applies to all cases: empty strings, partial speech, and full speech
-      if (wordCount < this.agentSession.options.minInterruptionWords) {
+      if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
         return;
       }
     }
@@ -818,6 +963,14 @@ export class AgentActivity implements RecognitionHooks {
       );
       this.realtimeSession?.interrupt();
       this._currentSpeech.interrupt();
+    }
+  }
+
+  onInterruption(ev: OverlappingSpeechEvent) {
+    this.restoreInterruptionByAudioActivity();
+    this.interruptByAudioActivity();
+    if (this.audioRecognition) {
+      this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt);
     }
   }
 
@@ -875,7 +1028,7 @@ export class AgentActivity implements RecognitionHooks {
 
   onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
     if (
-      !this.agentSession.options.preemptiveGeneration ||
+      !this.agentSession.sessionOptions.preemptiveGeneration ||
       this.schedulingPaused ||
       (this._currentSpeech !== undefined && !this._currentSpeech.interrupted) ||
       !(this.llm instanceof LLM)
@@ -896,6 +1049,7 @@ export class AgentActivity implements RecognitionHooks {
     const userMessage = ChatMessage.create({
       role: 'user',
       content: info.newTranscript,
+      transcriptConfidence: info.transcriptConfidence,
     });
     const chatCtx = this.agent.chatCtx.copy();
     const speechHandle = this.generateReply({
@@ -991,16 +1145,17 @@ export class AgentActivity implements RecognitionHooks {
       this._currentSpeech &&
       this._currentSpeech.allowInterruptions &&
       !this._currentSpeech.interrupted &&
-      this.agentSession.options.minInterruptionWords > 0
+      this.agentSession.sessionOptions.turnHandling.interruption?.minWords > 0
     ) {
       const wordCount = splitWords(info.newTranscript, true).length;
-      if (wordCount < this.agentSession.options.minInterruptionWords) {
+      if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
         // avoid interruption if the new_transcript contains fewer words than minInterruptionWords
         this.cancelPreemptiveGeneration();
         this.logger.info(
           {
             wordCount,
-            minInterruptionWords: this.agentSession.options.minInterruptionWords,
+            minInterruptionWords:
+              this.agentSession.sessionOptions.turnHandling.interruption.minWords,
           },
           'skipping user input, word count below minimum interruption threshold',
         );
@@ -1325,6 +1480,7 @@ export class AgentActivity implements RecognitionHooks {
     let userMessage: ChatMessage | undefined = ChatMessage.create({
       role: 'user',
       content: info.newTranscript,
+      transcriptConfidence: info.transcriptConfidence,
     });
 
     // create a temporary mutable chat context to pass to onUserTurnCompleted
@@ -1351,6 +1507,24 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
+    const userMetricsReport: MetricsReport = {};
+    if (info.startedSpeakingAt !== undefined) {
+      userMetricsReport.startedSpeakingAt = info.startedSpeakingAt / 1000; // ms -> seconds
+    }
+    if (info.stoppedSpeakingAt !== undefined) {
+      userMetricsReport.stoppedSpeakingAt = info.stoppedSpeakingAt / 1000; // ms -> seconds
+    }
+    if (info.transcriptionDelay !== undefined) {
+      userMetricsReport.transcriptionDelay = info.transcriptionDelay / 1000; // ms -> seconds
+    }
+    if (info.endOfUtteranceDelay !== undefined) {
+      userMetricsReport.endOfTurnDelay = info.endOfUtteranceDelay / 1000; // ms -> seconds
+    }
+    userMetricsReport.onUserTurnCompletedDelay = callbackDuration / 1000; // ms -> seconds
+    if (userMessage) {
+      userMessage.metrics = userMetricsReport;
+    }
+
     let speechHandle: SpeechHandle | undefined;
     if (this._preemptiveGeneration !== undefined) {
       const preemptive = this._preemptiveGeneration;
@@ -1363,6 +1537,14 @@ export class AgentActivity implements RecognitionHooks {
         isSameToolChoice(preemptive.toolChoice, this.toolChoice)
       ) {
         speechHandle = preemptive.speechHandle;
+        // The preemptive userMessage was created without metrics.
+        // Copy the metrics and transcriptConfidence from the new userMessage
+        // to the preemptive message BEFORE scheduling (so the pipeline inserts
+        // the message with metrics already set).
+        if (preemptive.userMessage && userMessage) {
+          preemptive.userMessage.metrics = userMetricsReport;
+          preemptive.userMessage.transcriptConfidence = userMessage.transcriptConfidence;
+        }
         this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
         this.logger.debug(
           {
@@ -1456,11 +1638,19 @@ export class AgentActivity implements RecognitionHooks {
       tasks.push(textForwardTask);
     }
 
+    let replyStartedSpeakingAt: number | undefined;
+    let replyTtsGenData: _TTSGenerationData | null = null;
+
     const onFirstFrame = (startedSpeakingAt?: number) => {
+      replyStartedSpeakingAt = startedSpeakingAt ?? Date.now();
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
+      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        this.audioRecognition.onStartOfAgentSpeech();
+        this.isInterruptionByAudioActivityEnabled = false;
+      }
     };
 
     if (!audioOutput) {
@@ -1478,8 +1668,11 @@ export class AgentActivity implements RecognitionHooks {
           audioSource,
           modelSettings,
           replyAbortController,
+          this.tts?.model,
+          this.tts?.provider,
         );
         tasks.push(ttsTask);
+        replyTtsGenData = ttsGenData;
 
         const [forwardTask, _audioOut] = performAudioForwarding(
           ttsGenData.audioStream,
@@ -1519,10 +1712,21 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (addToChatCtx) {
+      const replyStoppedSpeakingAt = Date.now();
+      const replyAssistantMetrics: MetricsReport = {};
+      if (replyTtsGenData?.ttfb !== undefined) {
+        replyAssistantMetrics.ttsNodeTtfb = replyTtsGenData.ttfb;
+      }
+      if (replyStartedSpeakingAt !== undefined) {
+        replyAssistantMetrics.startedSpeakingAt = replyStartedSpeakingAt / 1000; // ms -> seconds
+        replyAssistantMetrics.stoppedSpeakingAt = replyStoppedSpeakingAt / 1000; // ms -> seconds
+      }
+
       const message = ChatMessage.create({
         role: 'assistant',
         content: textOut?.text || '',
         interrupted: speechHandle.interrupted,
+        metrics: replyAssistantMetrics,
       });
       this.agent._chatCtx.insert(message);
       this.agentSession._conversationItemAdded(message);
@@ -1530,6 +1734,10 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
+      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
+      this.restoreInterruptionByAudioActivity();
     }
   }
 
@@ -1543,6 +1751,7 @@ export class AgentActivity implements RecognitionHooks {
     newMessage,
     toolsMessages,
     span,
+    _previousUserMetrics,
   }: {
     speechHandle: SpeechHandle;
     chatCtx: ChatContext;
@@ -1553,6 +1762,7 @@ export class AgentActivity implements RecognitionHooks {
     newMessage?: ChatMessage;
     toolsMessages?: ChatItem[];
     span: Span;
+    _previousUserMetrics?: MetricsReport;
   }): Promise<void> => {
     speechHandle._agentTurnContext = otelContext.active();
 
@@ -1605,6 +1815,8 @@ export class AgentActivity implements RecognitionHooks {
       toolCtx,
       modelSettings,
       replyAbortController,
+      this.llm?.model,
+      this.llm?.provider,
     );
     tasks.push(llmTask);
 
@@ -1621,6 +1833,8 @@ export class AgentActivity implements RecognitionHooks {
         ttsTextInput,
         modelSettings,
         replyAbortController,
+        this.tts?.model,
+        this.tts?.provider,
       );
       tasks.push(ttsTask);
     } else {
@@ -1630,10 +1844,12 @@ export class AgentActivity implements RecognitionHooks {
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForScheduled()]);
 
+    let userMetrics: MetricsReport | undefined = _previousUserMetrics;
     // Add new message to actual chat context if the speech is scheduled
     if (newMessage && speechHandle.scheduled) {
       this.agent._chatCtx.insert(newMessage);
       this.agentSession._conversationItemAdded(newMessage);
+      userMetrics = newMessage.metrics;
     }
 
     if (speechHandle.interrupted) {
@@ -1679,11 +1895,17 @@ export class AgentActivity implements RecognitionHooks {
       textOut = _textOut;
     }
 
+    let agentStartedSpeakingAt: number | undefined;
     const onFirstFrame = (startedSpeakingAt?: number) => {
+      agentStartedSpeakingAt = startedSpeakingAt ?? Date.now();
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
+      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        this.audioRecognition.onStartOfAgentSpeech();
+        this.isInterruptionByAudioActivityEnabled = false;
+      }
     };
 
     let audioOut: _AudioOut | null = null;
@@ -1740,6 +1962,29 @@ export class AgentActivity implements RecognitionHooks {
       await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
     }
 
+    const agentStoppedSpeakingAt = Date.now();
+    const assistantMetrics: MetricsReport = {};
+
+    if (llmGenData.ttft !== undefined) {
+      assistantMetrics.llmNodeTtft = llmGenData.ttft; // already in seconds
+    }
+    if (ttsGenData?.ttfb !== undefined) {
+      assistantMetrics.ttsNodeTtfb = ttsGenData.ttfb; // already in seconds
+    }
+    if (agentStartedSpeakingAt !== undefined) {
+      assistantMetrics.startedSpeakingAt = agentStartedSpeakingAt / 1000; // ms -> seconds
+      assistantMetrics.stoppedSpeakingAt = agentStoppedSpeakingAt / 1000; // ms -> seconds
+
+      if (userMetrics?.stoppedSpeakingAt !== undefined) {
+        const e2eLatency = agentStartedSpeakingAt / 1000 - userMetrics.stoppedSpeakingAt;
+        assistantMetrics.e2eLatency = e2eLatency;
+        span.setAttribute(traceTypes.ATTR_E2E_LATENCY, e2eLatency);
+      }
+    }
+
+    span.setAttribute(traceTypes.ATTR_SPEECH_INTERRUPTED, speechHandle.interrupted);
+    let hasSpeechMessage = false;
+
     // add the tools messages that triggers this reply to the chat context
     if (toolsMessages) {
       for (const msg of toolsMessages) {
@@ -1792,45 +2037,54 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       if (forwardedText) {
+        hasSpeechMessage = true;
         const message = ChatMessage.create({
           role: 'assistant',
           content: forwardedText,
           id: llmGenData.id,
           interrupted: true,
           createdAt: replyStartedAt,
+          metrics: assistantMetrics,
         });
         chatCtx.insert(message);
         this.agent._chatCtx.insert(message);
         speechHandle._itemAdded([message]);
         this.agentSession._conversationItemAdded(message);
+        span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, forwardedText);
       }
 
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
+        if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+          this.audioRecognition.onEndOfAgentSpeech(Date.now());
+          this.restoreInterruptionByAudioActivity();
+        }
       }
 
       this.logger.info(
         { speech_id: speechHandle.id, message: forwardedText },
         'playout completed with interrupt',
       );
-      // TODO(shubhra) add chat message to speech handle
       speechHandle._markGenerationDone();
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       return;
     }
 
     if (textOut && textOut.text) {
+      hasSpeechMessage = true;
       const message = ChatMessage.create({
         role: 'assistant',
         id: llmGenData.id,
         interrupted: false,
         createdAt: replyStartedAt,
         content: textOut.text,
+        metrics: assistantMetrics,
       });
       chatCtx.insert(message);
       this.agent._chatCtx.insert(message);
       speechHandle._itemAdded([message]);
       this.agentSession._conversationItemAdded(message);
+      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, textOut.text);
       this.logger.info(
         { speech_id: speechHandle.id, message: textOut.text },
         'playout completed without interruption',
@@ -1841,6 +2095,12 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('thinking');
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
+      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        {
+          this.audioRecognition.onEndOfAgentSpeech(Date.now());
+          this.restoreInterruptionByAudioActivity();
+        }
+      }
     }
 
     // mark the playout done before waiting for the tool execution
@@ -1850,7 +2110,7 @@ export class AgentActivity implements RecognitionHooks {
     if (toolOutput.output.length === 0) return;
 
     // important: no agent output should be used after this point
-    const { maxToolSteps } = this.agentSession.options;
+    const { maxToolSteps } = this.agentSession.sessionOptions;
     if (speechHandle.numSteps >= maxToolSteps) {
       this.logger.warn(
         { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
@@ -1900,6 +2160,7 @@ export class AgentActivity implements RecognitionHooks {
             instructions,
             undefined,
             toolMessages,
+            hasSpeechMessage ? undefined : userMetrics,
           ),
         ownedSpeechHandle: speechHandle,
         name: 'AgentActivity.pipelineReply',
@@ -1933,6 +2194,7 @@ export class AgentActivity implements RecognitionHooks {
     instructions?: string,
     newMessage?: ChatMessage,
     toolsMessages?: ChatItem[],
+    _previousUserMetrics?: MetricsReport,
   ): Promise<void> =>
     tracer.startActiveSpan(
       async (span) =>
@@ -1946,6 +2208,7 @@ export class AgentActivity implements RecognitionHooks {
           newMessage,
           toolsMessages,
           span,
+          _previousUserMetrics,
         }),
       {
         name: 'agent_turn',
@@ -2096,6 +2359,8 @@ export class AgentActivity implements RecognitionHooks {
                 ttsTextInput,
                 modelSettings,
                 abortController,
+                this.tts?.model,
+                this.tts?.provider,
               );
               tasks.push(ttsTask);
               realtimeAudioResult = ttsGenData.audioStream;
@@ -2312,7 +2577,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     // important: no agent ouput should be used after this point
-    const { maxToolSteps } = this.agentSession.options;
+    const { maxToolSteps } = this.agentSession.sessionOptions;
     if (speechHandle.numSteps >= maxToolSteps) {
       this.logger.warn(
         { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
@@ -2612,11 +2877,105 @@ export class AgentActivity implements RecognitionHooks {
       if (this._mainTask) {
         await this._mainTask.cancelAndWait();
       }
+      if (this.interruptionDetector) {
+        this.interruptionDetector.off('overlapping_speech', this.onInterruptionOverlappingSpeech);
+        this.interruptionDetector.off('metrics_collected', this.onInterruptionMetricsCollected);
+        this.interruptionDetector.off('error', this.onInterruptionError);
+      }
 
       this.agent._agentActivity = undefined;
     } finally {
       unlock();
     }
+  }
+
+  private resolveInterruptionDetector(): AdaptiveInterruptionDetector | undefined {
+    const agentInterruptionDetection = this.agent.turnHandling?.interruption?.mode;
+    const sessionInterruptionDetection = this.agentSession.interruptionDetection;
+    if (
+      !(
+        this.stt &&
+        this.stt.capabilities.alignedTranscript &&
+        this.stt.capabilities.streaming &&
+        this.vad &&
+        this.turnDetection !== 'manual' &&
+        this.turnDetection !== 'realtime_llm' &&
+        !(this.llm instanceof RealtimeModel)
+      )
+    ) {
+      if (
+        agentInterruptionDetection === 'adaptive' ||
+        sessionInterruptionDetection === 'adaptive'
+      ) {
+        this.logger.warn(
+          "interruptionDetection is provided, but it's not compatible with the current configuration and will be disabled",
+        );
+      }
+      return undefined;
+    }
+
+    if (!this.allowInterruptions) {
+      return undefined;
+    }
+
+    if (agentInterruptionDetection === 'vad') {
+      return undefined;
+    }
+
+    if (sessionInterruptionDetection === 'vad') {
+      return undefined;
+    }
+
+    if (
+      agentInterruptionDetection === undefined &&
+      sessionInterruptionDetection === undefined &&
+      !isHosted() &&
+      !isDevMode()
+    ) {
+      this.logger.info('adaptive interruption is disabled by default in production mode');
+      return undefined;
+    }
+
+    try {
+      const detector = new AdaptiveInterruptionDetector();
+
+      detector.on('overlapping_speech', this.onInterruptionOverlappingSpeech);
+      detector.on('metrics_collected', this.onInterruptionMetricsCollected);
+      detector.on('error', this.onInterruptionError);
+
+      return detector;
+    } catch (error: unknown) {
+      this.logger.warn({ error }, 'could not instantiate AdaptiveInterruptionDetector');
+    }
+    return undefined;
+  }
+
+  private restoreInterruptionByAudioActivity(): void {
+    this.isInterruptionByAudioActivityEnabled = this.isDefaultInterruptionByAudioActivityEnabled;
+  }
+
+  private fallbackToVadInterruption(): void {
+    if (!this.isInterruptionDetectionEnabled) return;
+
+    this.isInterruptionDetectionEnabled = false;
+    this.restoreInterruptionByAudioActivity();
+
+    if (this.interruptionDetector) {
+      this.interruptionDetector.off('overlapping_speech', this.onInterruptionOverlappingSpeech);
+      this.interruptionDetector.off('metrics_collected', this.onInterruptionMetricsCollected);
+      this.interruptionDetector.off('error', this.onInterruptionError);
+      this.interruptionDetector = undefined;
+    }
+
+    if (this.audioRecognition) {
+      this.audioRecognition.disableInterruptionDetection().catch((err) => {
+        this.logger.warn({ err }, 'error while disabling interruption detection');
+      });
+    }
+
+    this.logger.warn(
+      'adaptive interruption disabled due to unrecoverable error, falling back to VAD-based interruption',
+    );
   }
 
   private async _closeSessionResources(): Promise<void> {

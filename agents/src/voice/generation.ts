@@ -51,6 +51,7 @@ export class _LLMGenerationData {
   generatedText: string = '';
   generatedToolCalls: FunctionCall[];
   id: string;
+  ttft?: number;
 
   constructor(
     public readonly textStream: ReadableStream<string>,
@@ -416,6 +417,8 @@ export function performLLMInference(
   toolCtx: ToolContext,
   modelSettings: ModelSettings,
   controller: AbortController,
+  model?: string,
+  provider?: string,
 ): [Task<void>, _LLMGenerationData] {
   const textStream = new IdentityTransform<string>();
   const toolCallStream = new IdentityTransform<FunctionCall>();
@@ -431,8 +434,17 @@ export function performLLMInference(
     );
     span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(Object.keys(toolCtx)));
 
+    if (model) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
+    }
+    if (provider) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, provider);
+    }
+
     let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk> | null = null;
     let llmStream: ReadableStream<string | ChatChunk> | null = null;
+    const startTime = performance.now() / 1000; // Convert to seconds
+    let firstTokenReceived = false;
 
     try {
       llmStream = await node(chatCtx, toolCtx, modelSettings);
@@ -454,6 +466,11 @@ export function performLLMInference(
 
         const { done, value: chunk } = result;
         if (done) break;
+
+        if (!firstTokenReceived) {
+          firstTokenReceived = true;
+          data.ttft = performance.now() / 1000 - startTime;
+        }
 
         if (typeof chunk === 'string') {
           data.generatedText += chunk;
@@ -493,6 +510,9 @@ export function performLLMInference(
       }
 
       span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
+      if (data.ttft !== undefined) {
+        span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
+      }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         // Abort signal was triggered, handle gracefully
@@ -527,6 +547,8 @@ export function performTTSInference(
   text: ReadableStream<string | TimedString>,
   modelSettings: ModelSettings,
   controller: AbortController,
+  model?: string,
+  provider?: string,
 ): [Task<void>, _TTSGenerationData] {
   const audioStream = new IdentityTransform<AudioFrame>();
   const outputWriter = audioStream.writable.getWriter();
@@ -558,10 +580,27 @@ export function performTTSInference(
     }
   })();
 
-  const _performTTSInferenceImpl = async (signal: AbortSignal) => {
+  let ttfb: number | undefined;
+
+  const genData: _TTSGenerationData = {
+    audioStream: audioOutputStream,
+    timedTextsFut,
+    ttfb: undefined,
+  };
+
+  const _performTTSInferenceImpl = async (signal: AbortSignal, span: Span) => {
+    if (model) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
+    }
+    if (provider) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, provider);
+    }
+
     let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
     let pushedDuration = 0;
+    const startTime = performance.now() / 1000; // Convert to seconds
+    let firstByteReceived = false;
 
     try {
       ttsStream = await node(textOnlyStream.readable, modelSettings);
@@ -593,6 +632,13 @@ export function performTTSInference(
         const { done, value: frame } = await ttsStreamReader.read();
         if (done) {
           break;
+        }
+
+        if (!firstByteReceived) {
+          firstByteReceived = true;
+          ttfb = performance.now() / 1000 - startTime;
+          genData.ttfb = ttfb;
+          span.setAttribute(traceTypes.ATTR_RESPONSE_TTFB, ttfb);
         }
 
         // Write the audio frame to the output stream
@@ -631,6 +677,10 @@ export function performTTSInference(
       }
       throw error;
     } finally {
+      if (!timedTextsFut.done) {
+        // Ensure downstream consumers don't hang on errors.
+        timedTextsFut.resolve(null);
+      }
       ttsStreamReader?.releaseLock();
       await ttsStream?.cancel();
       await outputWriter.close();
@@ -642,15 +692,10 @@ export function performTTSInference(
   const currentContext = otelContext.active();
 
   const inferenceTask = async (signal: AbortSignal) =>
-    tracer.startActiveSpan(async () => _performTTSInferenceImpl(signal), {
+    tracer.startActiveSpan(async (span) => _performTTSInferenceImpl(signal, span), {
       name: 'tts_node',
       context: currentContext,
     });
-
-  const genData: _TTSGenerationData = {
-    audioStream: audioOutputStream,
-    timedTextsFut,
-  };
 
   return [
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performTTSInference'),
@@ -719,7 +764,6 @@ export function performTextForwarding(
 
 export interface _AudioOut {
   audio: Array<AudioFrame>;
-  /** Future that will be set with the timestamp of the first frame's capture */
   firstFrameFut: Future<number>;
 }
 
@@ -807,7 +851,6 @@ export function performAudioForwarding(
   ];
 }
 
-// function_tool span is already implemented in tracableToolExecution below (line ~796)
 export function performToolExecutions({
   session,
   speechHandle,

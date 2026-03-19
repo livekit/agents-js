@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { TextStreamReader } from '@livekit/rtc-node';
 import {
   type AudioFrame,
   ConnectionState,
@@ -12,8 +13,6 @@ import {
   type RemoteParticipant,
   type Room,
   RoomEvent,
-  type TextStreamInfo,
-  type TextStreamReader,
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
@@ -30,6 +29,7 @@ import {
   type UserInputTranscribedEvent,
 } from '../events.js';
 import type { AudioOutput, TextOutput } from '../io.js';
+import type { TextInputCallback } from '../remote_session.js';
 import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
 import { ParticipantAudioInputStream } from './_input.js';
 import {
@@ -39,15 +39,7 @@ import {
   ParticipantTranscriptionOutput,
 } from './_output.js';
 
-export interface TextInputEvent {
-  text: string;
-  info: TextStreamInfo;
-  participant: RemoteParticipant;
-}
-
-export type TextInputCallback = (sess: AgentSession, ev: TextInputEvent) => void | Promise<void>;
-
-const DEFAULT_TEXT_INPUT_CALLBACK: TextInputCallback = (sess: AgentSession, ev: TextInputEvent) => {
+export const DEFAULT_TEXT_INPUT_CALLBACK: TextInputCallback = (sess, ev) => {
   sess.interrupt();
   sess.generateReply({ userInput: ev.text });
 };
@@ -136,6 +128,7 @@ export class RoomIO {
   private agentTranscriptOutput?: ParalellTextOutput;
   private transcriptionSynchronizer?: TranscriptionSynchronizer;
   private participantIdentity: string | null = null;
+  private textStreamHandlerRegistered = false;
 
   private participantAvailableFuture: Future<RemoteParticipant> = new Future();
   private roomConnectedFuture: Future<void> = new Future();
@@ -145,8 +138,6 @@ export class RoomIO {
   private userTranscriptWriter: WritableStreamDefaultWriter<UserInputTranscribedEvent>;
   private forwardUserTranscriptTask?: Task<void>;
   private initTask?: Task<void>;
-
-  private textStreamHandlerRegistered = false;
 
   private logger = log();
 
@@ -283,7 +274,7 @@ export class RoomIO {
   };
 
   private onUserTextInput = (reader: TextStreamReader, participantInfo: { identity: string }) => {
-    if (participantInfo.identity !== this.participantIdentity) {
+    if (this.participantIdentity && participantInfo.identity !== this.participantIdentity) {
       return;
     }
 
@@ -299,7 +290,7 @@ export class RoomIO {
       const textInputResult = this.inputOptions.textInputCallback!(this.agentSession, {
         text,
         info: reader.info,
-        participant,
+        participantIdentity: participantInfo.identity,
       });
 
       // check if callback is a Promise
@@ -387,6 +378,10 @@ export class RoomIO {
     return this.participantAvailableFuture.done;
   }
 
+  get rtcRoom(): Room {
+    return this.room;
+  }
+
   get linkedParticipant(): RemoteParticipant | undefined {
     if (!this.isParticipantAvailable) {
       return undefined;
@@ -439,6 +434,8 @@ export class RoomIO {
   }
 
   start() {
+    // -- create inputs --
+
     if (this.inputOptions.textEnabled) {
       try {
         this.room.registerTextStreamHandler(TOPIC_CHAT, this.onUserTextInput);
@@ -450,7 +447,6 @@ export class RoomIO {
       }
     }
 
-    // -- create inputs --
     if (this.inputOptions.audioEnabled) {
       this.audioInput = new ParticipantAudioInputStream({
         room: this.room,

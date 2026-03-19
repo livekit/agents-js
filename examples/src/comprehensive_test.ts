@@ -8,6 +8,7 @@ import {
   cli,
   defineAgent,
   llm,
+  log,
   metrics,
   voice,
 } from '@livekit/agents';
@@ -238,6 +239,7 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
+    const logger = log();
     const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
       vad,
@@ -249,11 +251,19 @@ export default defineAgent({
         testedRealtimeLlmChoices: new Set(),
       },
     });
-    const usageCollector = new metrics.UsageCollector();
-
+    // Log metrics as they are emitted (session.usage is automatically collected)
     session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
       metrics.logMetrics(ev.metrics);
-      usageCollector.collect(ev.metrics);
+    });
+
+    // Log usage summary when job shuts down
+    ctx.addShutdownCallback(async () => {
+      logger.info(
+        {
+          usage: session.usage,
+        },
+        'Session usage summary',
+      );
     });
 
     await session.start({

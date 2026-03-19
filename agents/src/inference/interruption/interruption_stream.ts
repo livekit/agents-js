@@ -1,0 +1,467 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
+import type { Span } from '@opentelemetry/api';
+import { type ReadableStream, TransformStream } from 'stream/web';
+import { log } from '../../log.js';
+import type { InterruptionMetrics } from '../../metrics/base.js';
+import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
+import { traceTypes } from '../../telemetry/index.js';
+import { FRAMES_PER_SECOND, apiConnectDefaults } from './defaults.js';
+import type { InterruptionDetectionError } from './errors.js';
+import { createHttpTransport } from './http_transport.js';
+import { InterruptionCacheEntry } from './interruption_cache_entry.js';
+import type { AdaptiveInterruptionDetector } from './interruption_detector.js';
+import {
+  type AgentSpeechEnded,
+  type AgentSpeechStarted,
+  type ApiConnectOptions,
+  type Flush,
+  type InterruptionOptions,
+  type InterruptionSentinel,
+  type OverlapSpeechEnded,
+  type OverlapSpeechStarted,
+  type OverlappingSpeechEvent,
+} from './types.js';
+import { BoundedCache } from './utils.js';
+import { createWsTransport } from './ws_transport.js';
+
+// Re-export sentinel types for backwards compatibility
+export type {
+  AgentSpeechEnded,
+  AgentSpeechStarted,
+  ApiConnectOptions,
+  Flush,
+  InterruptionSentinel,
+  OverlapSpeechEnded,
+  OverlapSpeechStarted,
+};
+
+export class InterruptionStreamSentinel {
+  static agentSpeechStarted(): AgentSpeechStarted {
+    return { type: 'agent-speech-started' };
+  }
+
+  static agentSpeechEnded(): AgentSpeechEnded {
+    return { type: 'agent-speech-ended' };
+  }
+
+  static overlapSpeechStarted(
+    speechDuration: number,
+    startedAt: number,
+    userSpeakingSpan?: Span,
+  ): OverlapSpeechStarted {
+    return { type: 'overlap-speech-started', speechDuration, startedAt, userSpeakingSpan };
+  }
+
+  static overlapSpeechEnded(endedAt: number): OverlapSpeechEnded {
+    return { type: 'overlap-speech-ended', endedAt };
+  }
+
+  static flush(): Flush {
+    return { type: 'flush' };
+  }
+}
+
+function updateUserSpeakingSpan(span: Span, entry: InterruptionCacheEntry) {
+  span.setAttribute(
+    traceTypes.ATTR_IS_INTERRUPTION,
+    (entry.isInterruption ?? false).toString().toLowerCase(),
+  );
+  span.setAttribute(traceTypes.ATTR_INTERRUPTION_PROBABILITY, entry.probability);
+  span.setAttribute(traceTypes.ATTR_INTERRUPTION_TOTAL_DURATION, entry.totalDurationInS);
+  span.setAttribute(traceTypes.ATTR_INTERRUPTION_PREDICTION_DURATION, entry.predictionDurationInS);
+  span.setAttribute(traceTypes.ATTR_INTERRUPTION_DETECTION_DELAY, entry.detectionDelayInS);
+}
+
+export class InterruptionStreamBase {
+  private inputStream: StreamChannel<InterruptionSentinel | AudioFrame, InterruptionDetectionError>;
+
+  private eventStream: ReadableStream<OverlappingSpeechEvent>;
+
+  private resampler?: AudioResampler;
+
+  private numRequests = 0;
+
+  private userSpeakingSpan: Span | undefined;
+
+  private overlapSpeechStartedAt: number | undefined;
+
+  private options: InterruptionOptions;
+
+  private apiOptions: ApiConnectOptions;
+
+  private model: AdaptiveInterruptionDetector;
+
+  private logger = log();
+
+  // Store reconnect function for WebSocket transport
+  private wsReconnect?: () => Promise<void>;
+
+  // Mutable transport options that can be updated via updateOptions()
+  private transportOptions: {
+    baseUrl: string;
+    apiKey: string;
+    apiSecret: string;
+    sampleRate: number;
+    threshold: number;
+    minFrames: number;
+    timeout: number;
+    maxRetries: number;
+  };
+
+  constructor(model: AdaptiveInterruptionDetector, apiOptions: Partial<ApiConnectOptions>) {
+    this.inputStream = createStreamChannel<
+      InterruptionSentinel | AudioFrame,
+      InterruptionDetectionError
+    >();
+
+    this.model = model;
+    this.options = { ...model.options };
+    this.apiOptions = { ...apiConnectDefaults, ...apiOptions };
+
+    // Initialize mutable transport options
+    this.transportOptions = {
+      baseUrl: this.options.baseUrl,
+      apiKey: this.options.apiKey,
+      apiSecret: this.options.apiSecret,
+      sampleRate: this.options.sampleRate,
+      threshold: this.options.threshold,
+      minFrames: this.options.minFrames,
+      timeout: this.options.inferenceTimeout,
+      maxRetries: this.apiOptions.maxRetries,
+    };
+
+    this.eventStream = this.setupTransform();
+  }
+
+  /**
+   * Update stream options. For WebSocket transport, this triggers a reconnection.
+   */
+  async updateOptions(options: {
+    threshold?: number;
+    minInterruptionDurationInS?: number;
+  }): Promise<void> {
+    if (options.threshold !== undefined) {
+      this.options.threshold = options.threshold;
+      this.transportOptions.threshold = options.threshold;
+    }
+    if (options.minInterruptionDurationInS !== undefined) {
+      this.options.minInterruptionDurationInS = options.minInterruptionDurationInS;
+      this.options.minFrames = Math.ceil(options.minInterruptionDurationInS * FRAMES_PER_SECOND);
+      this.transportOptions.minFrames = this.options.minFrames;
+    }
+    // Trigger WebSocket reconnection if using proxy (WebSocket transport)
+    if (this.options.useProxy && this.wsReconnect) {
+      await this.wsReconnect();
+    }
+  }
+
+  private setupTransform(): ReadableStream<OverlappingSpeechEvent> {
+    let agentSpeechStarted = false;
+    let startIdx = 0;
+    let accumulatedSamples = 0;
+    let overlapSpeechStarted = false;
+    let overlapCount = 0;
+    const cache = new BoundedCache<number, InterruptionCacheEntry>(10);
+    const inferenceS16Data = new Int16Array(
+      Math.ceil(this.options.maxAudioDurationInS * this.options.sampleRate),
+    ).fill(0);
+
+    // State accessors for transport
+    const getState = () => ({
+      overlapSpeechStarted,
+      overlapSpeechStartedAt: this.overlapSpeechStartedAt,
+      cache,
+      overlapCount,
+    });
+    const setState = (partial: { overlapSpeechStarted?: boolean }) => {
+      if (partial.overlapSpeechStarted !== undefined) {
+        overlapSpeechStarted = partial.overlapSpeechStarted;
+      }
+    };
+    const handleSpanUpdate = (entry: InterruptionCacheEntry) => {
+      if (this.userSpeakingSpan) {
+        updateUserSpeakingSpan(this.userSpeakingSpan, entry);
+        this.userSpeakingSpan = undefined;
+      }
+    };
+
+    const onRequestSent = () => {
+      this.numRequests++;
+    };
+
+    const getAndResetNumRequests = (): number => {
+      const n = this.numRequests;
+      this.numRequests = 0;
+      return n;
+    };
+
+    // First transform: process input frames/sentinels and output audio slices or events
+    const audioTransformer = new TransformStream<
+      InterruptionSentinel | AudioFrame,
+      Int16Array | OverlappingSpeechEvent
+    >(
+      {
+        transform: (chunk, controller) => {
+          if (chunk instanceof AudioFrame) {
+            if (!agentSpeechStarted) {
+              return;
+            }
+            if (this.options.sampleRate !== chunk.sampleRate) {
+              controller.error('the sample rate of the input frames must be consistent');
+              this.logger.error('the sample rate of the input frames must be consistent');
+              return;
+            }
+            const result = writeToInferenceS16Data(
+              chunk,
+              startIdx,
+              inferenceS16Data,
+              this.options.maxAudioDurationInS,
+            );
+            startIdx = result.startIdx;
+            accumulatedSamples += result.samplesWritten;
+
+            if (
+              accumulatedSamples >=
+                Math.floor(this.options.detectionIntervalInS * this.options.sampleRate) &&
+              overlapSpeechStarted
+            ) {
+              const audioSlice = inferenceS16Data.slice(0, startIdx);
+              accumulatedSamples = 0;
+              controller.enqueue(audioSlice);
+            }
+          } else if (chunk.type === 'agent-speech-started') {
+            this.logger.debug('agent speech started');
+            agentSpeechStarted = true;
+            overlapSpeechStarted = false;
+            this.overlapSpeechStartedAt = undefined;
+            accumulatedSamples = 0;
+            overlapCount = 0;
+            startIdx = 0;
+            this.numRequests = 0;
+            cache.clear();
+          } else if (chunk.type === 'agent-speech-ended') {
+            this.logger.debug('agent speech ended');
+            agentSpeechStarted = false;
+            overlapSpeechStarted = false;
+            this.overlapSpeechStartedAt = undefined;
+            accumulatedSamples = 0;
+            overlapCount = 0;
+            startIdx = 0;
+            this.numRequests = 0;
+            cache.clear();
+          } else if (chunk.type === 'overlap-speech-started' && agentSpeechStarted) {
+            this.overlapSpeechStartedAt = chunk.startedAt;
+            this.userSpeakingSpan = chunk.userSpeakingSpan;
+            this.logger.debug('overlap speech started, starting interruption inference');
+            overlapSpeechStarted = true;
+            accumulatedSamples = 0;
+            overlapCount += 1;
+            if (overlapCount <= 1) {
+              const keepSize =
+                Math.round((chunk.speechDuration / 1000) * this.options.sampleRate) +
+                Math.round(this.options.audioPrefixDurationInS * this.options.sampleRate);
+              const shiftCount = Math.max(0, startIdx - keepSize);
+              inferenceS16Data.copyWithin(0, shiftCount, startIdx);
+              startIdx -= shiftCount;
+            }
+            cache.clear();
+          } else if (chunk.type === 'overlap-speech-ended') {
+            this.logger.debug('overlap speech ended');
+            if (overlapSpeechStarted) {
+              this.userSpeakingSpan = undefined;
+              let latestEntry = cache.pop(
+                (entry) => entry.totalDurationInS !== undefined && entry.totalDurationInS > 0,
+              );
+              if (!latestEntry) {
+                this.logger.debug('no request made for overlap speech');
+                latestEntry = InterruptionCacheEntry.default();
+              }
+              const e = latestEntry ?? InterruptionCacheEntry.default();
+              const event: OverlappingSpeechEvent = {
+                type: 'overlapping_speech',
+                detectedAt: chunk.endedAt,
+                isInterruption: false,
+                overlapStartedAt: this.overlapSpeechStartedAt,
+                speechInput: e.speechInput,
+                probabilities: e.probabilities,
+                totalDurationInS: e.totalDurationInS,
+                detectionDelayInS: e.detectionDelayInS,
+                predictionDurationInS: e.predictionDurationInS,
+                probability: e.probability,
+                numRequests: getAndResetNumRequests(),
+              };
+              controller.enqueue(event);
+              overlapSpeechStarted = false;
+              accumulatedSamples = 0;
+            }
+            this.overlapSpeechStartedAt = undefined;
+          } else if (chunk.type === 'flush') {
+            // no-op
+          }
+        },
+      },
+      { highWaterMark: 32 },
+      { highWaterMark: 32 },
+    );
+
+    // Second transform: transport layer (HTTP or WebSocket based on useProxy)
+    const transportOptions = this.transportOptions;
+
+    let transport: TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent>;
+    if (this.options.useProxy) {
+      const wsResult = createWsTransport(
+        transportOptions,
+        getState,
+        setState,
+        handleSpanUpdate,
+        onRequestSent,
+        getAndResetNumRequests,
+      );
+      transport = wsResult.transport;
+      this.wsReconnect = wsResult.reconnect;
+    } else {
+      transport = createHttpTransport(
+        transportOptions,
+        getState,
+        setState,
+        handleSpanUpdate,
+        getAndResetNumRequests,
+      );
+    }
+
+    const eventEmitter = new TransformStream<OverlappingSpeechEvent, OverlappingSpeechEvent>({
+      transform: (chunk, controller) => {
+        this.model.emit('overlapping_speech', chunk);
+
+        const metrics: InterruptionMetrics = {
+          type: 'interruption_metrics',
+          timestamp: chunk.detectedAt,
+          totalDuration: chunk.totalDurationInS * 1000,
+          predictionDuration: chunk.predictionDurationInS * 1000,
+          detectionDelay: chunk.detectionDelayInS * 1000,
+          numInterruptions: chunk.isInterruption ? 1 : 0,
+          numBackchannels: chunk.isInterruption ? 0 : 1,
+          numRequests: chunk.numRequests,
+          metadata: {
+            modelProvider: this.model.provider,
+            modelName: this.model.model,
+          },
+        };
+        this.model.emit('metrics_collected', metrics);
+
+        controller.enqueue(chunk);
+      },
+    });
+
+    // Pipeline: input -> audioTransformer -> transport -> eventEmitter -> eventStream
+    return this.inputStream
+      .stream()
+      .pipeThrough(audioTransformer)
+      .pipeThrough(transport)
+      .pipeThrough(eventEmitter);
+  }
+
+  private ensureInputNotEnded() {
+    if (this.inputStream.closed) {
+      throw new Error('input stream is closed');
+    }
+  }
+
+  private ensureStreamsNotEnded() {
+    this.ensureInputNotEnded();
+  }
+
+  private getResamplerFor(inputSampleRate: number): AudioResampler {
+    if (!this.resampler) {
+      this.resampler = new AudioResampler(inputSampleRate, this.options.sampleRate);
+    }
+    return this.resampler;
+  }
+
+  stream(): ReadableStream<OverlappingSpeechEvent> {
+    return this.eventStream;
+  }
+
+  async pushFrame(frame: InterruptionSentinel | AudioFrame): Promise<void> {
+    this.ensureStreamsNotEnded();
+    if (!(frame instanceof AudioFrame)) {
+      return this.inputStream.write(frame);
+    } else if (this.options.sampleRate !== frame.sampleRate) {
+      const resampler = this.getResamplerFor(frame.sampleRate);
+      if (resampler.inputRate !== frame.sampleRate) {
+        throw new Error('the sample rate of the input frames must be consistent');
+      }
+      for (const resampledFrame of resampler.push(frame)) {
+        await this.inputStream.write(resampledFrame);
+      }
+    } else {
+      await this.inputStream.write(frame);
+    }
+  }
+
+  async flush(): Promise<void> {
+    this.ensureStreamsNotEnded();
+    await this.inputStream.write(InterruptionStreamSentinel.flush());
+  }
+
+  async endInput(): Promise<void> {
+    await this.flush();
+    await this.inputStream.close();
+  }
+
+  async close(): Promise<void> {
+    if (!this.inputStream.closed) await this.inputStream.close();
+    this.model.removeStream(this);
+  }
+}
+
+/**
+ * Write the audio frame to the output data array and return the new start index
+ * and the number of samples written.
+ */
+function writeToInferenceS16Data(
+  frame: AudioFrame,
+  startIdx: number,
+  outData: Int16Array,
+  maxAudioDuration: number,
+): { startIdx: number; samplesWritten: number } {
+  const maxWindowSize = Math.floor(maxAudioDuration * frame.sampleRate);
+
+  if (frame.samplesPerChannel > outData.length) {
+    throw new Error('frame samples are greater than the max window size');
+  }
+
+  // Shift the data to the left if the window would overflow
+  const shift = startIdx + frame.samplesPerChannel - maxWindowSize;
+  if (shift > 0) {
+    outData.copyWithin(0, shift, startIdx);
+    startIdx -= shift;
+  }
+
+  // Get the frame data as Int16Array
+  const frameData = new Int16Array(
+    frame.data.buffer,
+    frame.data.byteOffset,
+    frame.samplesPerChannel * frame.channels,
+  );
+
+  if (frame.channels > 1) {
+    // Mix down multiple channels to mono by averaging
+    for (let i = 0; i < frame.samplesPerChannel; i++) {
+      let sum = 0;
+      for (let ch = 0; ch < frame.channels; ch++) {
+        sum += frameData[i * frame.channels + ch] ?? 0;
+      }
+      outData[startIdx + i] = Math.floor(sum / frame.channels);
+    }
+  } else {
+    // Single channel - copy directly
+    outData.set(frameData, startIdx);
+  }
+
+  startIdx += frame.samplesPerChannel;
+  return { startIdx, samplesWritten: frame.samplesPerChannel };
+}

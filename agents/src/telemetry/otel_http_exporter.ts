@@ -58,6 +58,16 @@ export class SimpleOTLPHttpLogExporter {
   private readonly config: SimpleOTLPHttpLogExporterConfig;
   private jwt: string | null = null;
 
+  private static readonly FORCE_DOUBLE_KEYS = new Set([
+    'transcriptConfidence',
+    'transcriptionDelay',
+    'endOfTurnDelay',
+    'onUserTurnCompletedDelay',
+    'llmNodeTtft',
+    'ttsNodeTtfb',
+    'e2eLatency',
+  ]);
+
   constructor(config: SimpleOTLPHttpLogExporterConfig) {
     this.config = config;
   }
@@ -72,6 +82,7 @@ export class SimpleOTLPHttpLogExporter {
 
     const endpoint = `https://${this.config.cloudHostname}/observability/logs/otlp/v0`;
     const payload = this.buildPayload(records);
+    const payloadJson = JSON.stringify(payload);
 
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -79,7 +90,7 @@ export class SimpleOTLPHttpLogExporter {
         Authorization: `Bearer ${this.jwt}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload),
+      body: payloadJson,
     });
 
     if (!response.ok) {
@@ -160,11 +171,11 @@ export class SimpleOTLPHttpLogExporter {
   ): Array<{ key: string; value: unknown }> {
     return Object.entries(attrs).map(([key, value]) => ({
       key,
-      value: this.convertValue(value),
+      value: this.convertValue(value, key),
     }));
   }
 
-  private convertValue(value: unknown): unknown {
+  private convertValue(value: unknown, path: string = ''): unknown {
     if (value === null || value === undefined) {
       return { stringValue: '' };
     }
@@ -172,20 +183,32 @@ export class SimpleOTLPHttpLogExporter {
       return { stringValue: value };
     }
     if (typeof value === 'number') {
+      const leafKey =
+        path
+          .split('.')
+          .pop()
+          ?.replace(/\[\d+\]$/, '') ?? path;
+      if (SimpleOTLPHttpLogExporter.FORCE_DOUBLE_KEYS.has(leafKey)) {
+        return { doubleValue: value };
+      }
       return Number.isInteger(value) ? { intValue: String(value) } : { doubleValue: value };
     }
     if (typeof value === 'boolean') {
       return { boolValue: value };
     }
     if (Array.isArray(value)) {
-      return { arrayValue: { values: value.map((v) => this.convertValue(v)) } };
+      return {
+        arrayValue: {
+          values: value.map((v, i) => this.convertValue(v, `${path}[${i}]`)),
+        },
+      };
     }
     if (typeof value === 'object') {
       return {
         kvlistValue: {
           values: Object.entries(value as Record<string, unknown>).map(([k, v]) => ({
             key: k,
-            value: this.convertValue(v),
+            value: this.convertValue(v, path ? `${path}.${k}` : k),
           })),
         },
       };
