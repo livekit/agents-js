@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { beforeAll, describe, expect, it } from 'vitest';
+import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { TTS, type TTSFallbackModel, normalizeTTSFallback, parseTTSModelString } from './tts.js';
@@ -165,6 +166,17 @@ describe('normalizeTTSFallback', () => {
 });
 
 describe('TTS constructor fallback and connOptions', () => {
+  it('normalizes language in constructor', () => {
+    const tts = makeTts({ language: 'english' });
+    expect(tts['opts'].language).toBe('en');
+  });
+
+  it('normalizes updated language values', () => {
+    const tts = makeTts();
+    tts.updateOptions({ language: 'en_US' });
+    expect(tts['opts'].language).toBe(normalizeLanguage('en_US'));
+  });
+
   it('fallback not given defaults to undefined', () => {
     const tts = makeTts();
     expect(tts['opts'].fallback).toBeUndefined();

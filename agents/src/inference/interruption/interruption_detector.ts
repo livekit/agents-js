@@ -7,12 +7,12 @@ import { log } from '../../log.js';
 import type { InterruptionMetrics } from '../../metrics/base.js';
 import { DEFAULT_INFERENCE_URL, STAGING_INFERENCE_URL, getDefaultInferenceUrl } from '../utils.js';
 import { FRAMES_PER_SECOND, SAMPLE_RATE, interruptionOptionDefaults } from './defaults.js';
-import type { InterruptionDetectionError } from './errors.js';
+import { InterruptionDetectionError } from './errors.js';
 import { InterruptionStreamBase } from './interruption_stream.js';
 import type { InterruptionOptions, OverlappingSpeechEvent } from './types.js';
 
 type InterruptionCallbacks = {
-  user_overlapping_speech: (event: OverlappingSpeechEvent) => void;
+  overlapping_speech: (event: OverlappingSpeechEvent) => void;
   metrics_collected: (metrics: InterruptionMetrics) => void;
   error: (error: InterruptionDetectionError) => void;
 };
@@ -160,9 +160,15 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
    * Use this when you need direct access to the stream for pushing frames.
    */
   createStream(): InterruptionStreamBase {
-    const streamBase = new InterruptionStreamBase(this, {});
-    this.streams.add(streamBase);
-    return streamBase;
+    try {
+      const streamBase = new InterruptionStreamBase(this, {});
+      this.streams.add(streamBase);
+      return streamBase;
+    } catch (e) {
+      const cause = e instanceof Error ? e : new Error(String(e));
+      this.emitError(new InterruptionDetectionError(cause.message, Date.now(), this._label, false));
+      throw e;
+    }
   }
 
   /**

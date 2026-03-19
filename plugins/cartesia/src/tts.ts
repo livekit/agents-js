@@ -9,7 +9,9 @@ import {
   Future,
   type TimedString,
   createTimedString,
+  getBaseLanguage,
   log,
+  normalizeLanguage,
   shortuuid,
   stream,
   tokenize,
@@ -144,6 +146,7 @@ export class TTS extends tts.TTS {
     });
 
     this.#opts = resolvedOpts;
+    this.#opts.language = normalizeLanguage(this.#opts.language);
 
     if (this.#opts.apiKey === undefined) {
       throw new Error(
@@ -163,6 +166,9 @@ export class TTS extends tts.TTS {
 
   updateOptions(opts: Partial<TTSOptions>) {
     this.#opts = { ...this.#opts, ...opts };
+    if (opts.language !== undefined) {
+      this.#opts.language = normalizeLanguage(opts.language);
+    }
 
     if (
       this.#opts.speed ||
@@ -739,7 +745,7 @@ const toCartesiaOptions = (
       encoding: opts.encoding,
       sample_rate: opts.sampleRate,
     },
-    language: opts.language,
+    language: getBaseLanguage(opts.language),
     max_buffer_delay_ms: 0,
   };
 

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { TextStreamReader } from '@livekit/rtc-node';
 import {
   type AudioFrame,
   ConnectionState,
@@ -127,6 +128,7 @@ export class RoomIO {
   private agentTranscriptOutput?: ParalellTextOutput;
   private transcriptionSynchronizer?: TranscriptionSynchronizer;
   private participantIdentity: string | null = null;
+  private textStreamHandlerRegistered = false;
 
   private participantAvailableFuture: Future<RemoteParticipant> = new Future();
   private roomConnectedFuture: Future<void> = new Future();
@@ -271,6 +273,37 @@ export class RoomIO {
     }
   };
 
+  private onUserTextInput = (reader: TextStreamReader, participantInfo: { identity: string }) => {
+    if (this.participantIdentity && participantInfo.identity !== this.participantIdentity) {
+      return;
+    }
+
+    const participant = this.room.remoteParticipants.get(participantInfo.identity);
+    if (!participant) {
+      this.logger.warn('participant not found, ignoring text input');
+      return;
+    }
+
+    const readText = async () => {
+      const text = await reader.readAll();
+
+      const textInputResult = this.inputOptions.textInputCallback!(this.agentSession, {
+        text,
+        info: reader.info,
+        participantIdentity: participantInfo.identity,
+      });
+
+      // check if callback is a Promise
+      if (textInputResult instanceof Promise) {
+        await textInputResult;
+      }
+    };
+
+    readText().catch((error) => {
+      this.logger.error({ error }, 'Error reading text input');
+    });
+  };
+
   private async forwardUserTranscript(signal: AbortSignal): Promise<void> {
     const reader = this.userTranscriptStream.readable.getReader();
     try {
@@ -402,6 +435,18 @@ export class RoomIO {
 
   start() {
     // -- create inputs --
+
+    if (this.inputOptions.textEnabled) {
+      try {
+        this.room.registerTextStreamHandler(TOPIC_CHAT, this.onUserTextInput);
+        this.textStreamHandlerRegistered = true;
+      } catch (error) {
+        if (this.inputOptions.textEnabled) {
+          this.logger.warn(`text stream handler for topic "${TOPIC_CHAT}" already set, ignoring`);
+        }
+      }
+    }
+
     if (this.inputOptions.audioEnabled) {
       this.audioInput = new ParticipantAudioInputStream({
         room: this.room,

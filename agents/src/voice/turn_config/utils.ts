@@ -5,88 +5,105 @@ import { log } from '../../log.js';
 import {
   type AgentSessionOptions,
   type InternalSessionOptions,
-  defaultSessionOptions,
+  type TurnDetectionMode,
+  type VoiceOptions,
 } from '../agent_session.js';
 import { defaultEndpointingOptions } from './endpointing.js';
 import { defaultInterruptionOptions } from './interruption.js';
 import { type TurnHandlingOptions, defaultTurnHandlingOptions } from './turn_handling.js';
 
-export function migrateLegacyOptions<UserData>(
-  legacyOptions: AgentSessionOptions<UserData>,
-): AgentSessionOptions<UserData> & { options: InternalSessionOptions } {
-  const logger = log();
-  const { voiceOptions, turnDetection, options: sessionOptions, ...rest } = legacyOptions;
+const defaultSessionOptions = {
+  maxToolSteps: 3,
+  preemptiveGeneration: true,
+  userAwayTimeout: 15.0,
+  aecWarmupDuration: 3000,
+  turnHandling: {},
+  useTtsAlignedTranscript: true,
+} as const satisfies AgentSessionOptions;
 
-  if (voiceOptions !== undefined && sessionOptions !== undefined) {
+const defaultLegacyVoiceOptions: VoiceOptions = {
+  minEndpointingDelay: defaultTurnHandlingOptions.endpointing.minDelay,
+  maxEndpointingDelay: defaultTurnHandlingOptions.endpointing.maxDelay,
+  maxToolSteps: defaultSessionOptions.maxToolSteps,
+  preemptiveGeneration: defaultSessionOptions.preemptiveGeneration,
+};
+
+export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOptions<UserData>): {
+  agentSessionOptions: InternalSessionOptions<UserData>;
+  legacyVoiceOptions: VoiceOptions;
+} {
+  const logger = log();
+  const {
+    voiceOptions,
+    turnDetection,
+    stt,
+    vad,
+    llm,
+    tts,
+    userData,
+    connOptions,
+    ...sessionOptions
+  } = legacyOptions;
+
+  if (voiceOptions !== undefined) {
     logger.warn(
-      'Both voiceOptions and options have been supplied as part of the AgentSessionOptions, voiceOptions will be merged with options taking precedence',
+      'voiceOptions is deprecated, use top-level SessionOptions fields on AgentSessionOptions instead',
     );
   }
 
-  // Preserve turnDetection before cloning since structuredClone converts class instances to plain objects
-  const originalTurnDetection =
-    sessionOptions?.turnHandling?.turnDetection ??
-    voiceOptions?.turnHandling?.turnDetection ??
-    turnDetection;
-
-  // Exclude potentially non-cloneable turnDetection objects before structuredClone.
-  // They are restored from originalTurnDetection below.
-  const cloneableVoiceOptions = voiceOptions
-    ? {
-        ...voiceOptions,
-        turnHandling: voiceOptions.turnHandling
-          ? { ...voiceOptions.turnHandling, turnDetection: undefined }
-          : voiceOptions.turnHandling,
-      }
-    : voiceOptions;
-  const cloneableSessionOptions = sessionOptions
-    ? {
-        ...sessionOptions,
-        turnHandling: sessionOptions.turnHandling
-          ? { ...sessionOptions.turnHandling, turnDetection: undefined }
-          : sessionOptions.turnHandling,
-      }
-    : sessionOptions;
-
-  const mergedOptions = structuredClone({ ...cloneableVoiceOptions, ...cloneableSessionOptions });
-
   const turnHandling: TurnHandlingOptions = {
     interruption: {
-      discardAudioIfUninterruptible: mergedOptions?.discardAudioIfUninterruptible,
-      minDuration: mergedOptions?.minInterruptionDuration,
-      minWords: mergedOptions?.minInterruptionWords,
+      discardAudioIfUninterruptible: voiceOptions?.discardAudioIfUninterruptible,
+      minDuration: voiceOptions?.minInterruptionDuration,
+      minWords: voiceOptions?.minInterruptionWords,
+      ...sessionOptions.turnHandling?.interruption,
     },
     endpointing: {
-      minDelay: mergedOptions?.minEndpointingDelay,
-      maxDelay: mergedOptions?.maxEndpointingDelay,
+      minDelay: voiceOptions?.minEndpointingDelay,
+      maxDelay: voiceOptions?.maxEndpointingDelay,
+      ...sessionOptions.turnHandling?.endpointing,
     },
 
-    ...mergedOptions.turnHandling,
-    // Restore original turnDetection after spread to preserve class instance with methods
-    // (structuredClone converts class instances to plain objects, losing prototype methods)
-    turnDetection: originalTurnDetection,
+    turnDetection: sessionOptions?.turnHandling?.turnDetection ?? turnDetection,
   } as const;
 
-  if (mergedOptions?.allowInterruptions === false) {
+  if (
+    voiceOptions?.allowInterruptions === false &&
+    turnHandling.interruption.enabled === undefined
+  ) {
     turnHandling.interruption.enabled = false;
   }
 
-  const optionsWithDefaults = {
+  const migratedVoiceOptions: AgentSessionOptions<UserData> = {};
+
+  if (voiceOptions?.maxToolSteps !== undefined) {
+    migratedVoiceOptions.maxToolSteps = voiceOptions.maxToolSteps;
+  }
+  if (voiceOptions?.preemptiveGeneration !== undefined) {
+    migratedVoiceOptions.preemptiveGeneration = voiceOptions.preemptiveGeneration;
+  }
+  if (voiceOptions?.userAwayTimeout !== undefined) {
+    migratedVoiceOptions.userAwayTimeout = voiceOptions.userAwayTimeout;
+  }
+
+  const legacyVoiceOptions = { ...defaultLegacyVoiceOptions, ...voiceOptions };
+
+  const agentSessionOptions = {
+    stt,
+    vad,
+    llm,
+    tts,
+    userData,
+    connOptions,
     ...defaultSessionOptions,
-    ...mergedOptions,
+    ...migratedVoiceOptions,
+    ...sessionOptions,
     turnHandling: mergeWithDefaults(turnHandling),
+    // repopulate the deprecated voice options with migrated options for backwards compatibility
+    voiceOptions: legacyVoiceOptions,
   };
 
-  const newAgentSessionOptions: AgentSessionOptions<UserData> & {
-    options: InternalSessionOptions;
-  } = {
-    ...rest,
-    options: optionsWithDefaults,
-    voiceOptions: optionsWithDefaults,
-    turnDetection: turnHandling.turnDetection,
-  };
-
-  return newAgentSessionOptions;
+  return { agentSessionOptions, legacyVoiceOptions };
 }
 
 /** Remove keys whose value is `undefined` so they don't shadow defaults when spread. */
@@ -100,4 +117,51 @@ export function mergeWithDefaults(config: TurnHandlingOptions) {
     endpointing: { ...defaultEndpointingOptions, ...stripUndefined(config.endpointing) },
     interruption: { ...defaultInterruptionOptions, ...stripUndefined(config.interruption) },
   } as const;
+}
+
+/**
+ * Build a partial {@link TurnHandlingOptions} from deprecated Agent constructor fields.
+ * Mirrors the Python Agent compatibility path, but keeps the JS API surface explicit.
+ */
+export function migrateTurnHandling(opts: {
+  turnDetection?: TurnDetectionMode;
+  allowInterruptions?: boolean;
+  minEndpointingDelay?: number;
+  maxEndpointingDelay?: number;
+  turnHandling?: TurnHandlingOptions;
+}): Partial<TurnHandlingOptions> {
+  if (opts.turnHandling !== undefined) {
+    return opts.turnHandling;
+  }
+
+  const migrated: Partial<TurnHandlingOptions> = {};
+
+  const endpointing: Partial<TurnHandlingOptions['endpointing']> = {};
+  if (opts.minEndpointingDelay !== undefined) {
+    endpointing.minDelay = opts.minEndpointingDelay;
+  }
+  if (opts.maxEndpointingDelay !== undefined) {
+    endpointing.maxDelay = opts.maxEndpointingDelay;
+  }
+  if (Object.keys(endpointing).length > 0) {
+    migrated.endpointing = endpointing;
+  }
+
+  const interruption: Partial<TurnHandlingOptions['interruption']> = {};
+  if (opts.allowInterruptions === false) {
+    interruption.enabled = false;
+  }
+  if (Object.keys(interruption).length > 0) {
+    migrated.interruption = interruption;
+  }
+
+  if (opts.turnDetection !== undefined) {
+    migrated.turnDetection = opts.turnDetection;
+  }
+
+  return {
+    ...(migrated.endpointing ? { endpointing: migrated.endpointing } : {}),
+    ...(migrated.interruption ? { interruption: migrated.interruption } : {}),
+    ...(migrated.turnDetection !== undefined ? { turnDetection: migrated.turnDetection } : {}),
+  };
 }

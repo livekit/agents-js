@@ -846,7 +846,12 @@ export async function waitForParticipant({
     }
   };
 
+  const onDisconnected = () => {
+    fut.reject(new Error('Got disconnected from room while waiting for participant'));
+  };
+
   room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
+  room.on(RoomEvent.Disconnected, onDisconnected);
 
   try {
     for (const p of room.remoteParticipants.values()) {
@@ -859,6 +864,7 @@ export async function waitForParticipant({
     return await fut.await;
   } finally {
     room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
+    room.off(RoomEvent.Disconnected, onDisconnected);
   }
 }
 
@@ -952,4 +958,18 @@ export const combineSignals = (a: AbortSignal, b: AbortSignal): AbortSignal => {
 export const isCloud = (url: URL) => {
   const hostname = url.hostname;
   return hostname.endsWith('.livekit.cloud') || hostname.endsWith('.livekit.run');
+};
+
+/**
+ * Whether the agent is running in development mode (launched via `dev` or `connect`).
+ */
+export const isDevMode = (): boolean => {
+  return process.env.LIVEKIT_DEV_MODE === '1';
+};
+
+/**
+ * Whether the agent is hosted on LiveKit Cloud.
+ */
+export const isHosted = (): boolean => {
+  return process.env.LIVEKIT_REMOTE_EOT_URL !== undefined;
 };

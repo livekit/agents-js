@@ -15,7 +15,7 @@ export interface InterruptionOptions {
    * voice-activity detection. `undefined` means auto-detect.
    * @defaultValue undefined
    */
-  mode: 'adaptive' | 'vad' | false | undefined;
+  mode: 'adaptive' | 'vad' | undefined;
   /**
    * When `true`, buffered audio is dropped while the agent is speaking and cannot be interrupted.
    * @defaultValue true

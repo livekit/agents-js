@@ -148,6 +148,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
       opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
+      process.env.LIVEKIT_DEV_MODE = '1';
       runServer({
         opts,
         production: false,
@@ -169,6 +170,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
       opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
+      process.env.LIVEKIT_DEV_MODE = '1';
       runServer({
         opts,
         production: false,

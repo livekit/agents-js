@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { calculateAudioDurationSeconds } from '../audio.js';
+import type { LanguageCode } from '../language.js';
 import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
@@ -50,7 +51,7 @@ export enum SpeechEventType {
 /** SpeechData contains metadata about this {@link SpeechEvent}. */
 export interface SpeechData {
   /** Language code of the speech. */
-  language: string;
+  language: LanguageCode;
   /** Transcribed text. */
   text: string;
   /** Start time of the speech segment in seconds. */

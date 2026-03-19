@@ -9,33 +9,31 @@
  * @see {@link https://docs.livekit.io/agents/overview | LiveKit Agents documentation}
  * @packageDocumentation
  */
-import * as beta from './beta/index.js';
-import * as cli from './cli.js';
-import * as inference from './inference/index.js';
-import * as ipc from './ipc/index.js';
-import * as llm from './llm/index.js';
-import * as metrics from './metrics/index.js';
-import * as stream from './stream/index.js';
-import * as stt from './stt/index.js';
-import * as telemetry from './telemetry/index.js';
-import * as tokenize from './tokenize/index.js';
-import * as tts from './tts/index.js';
-import * as voice from './voice/index.js';
-
 export * from './_exceptions.js';
 export * from './audio.js';
+export * as beta from './beta/index.js';
+export * as cli from './cli.js';
 export * from './connection_pool.js';
 export * from './generator.js';
+export * as inference from './inference/index.js';
 export * from './inference_runner.js';
+export * as ipc from './ipc/index.js';
 export * from './job.js';
+export * from './language.js';
+export * as llm from './llm/index.js';
 export * from './log.js';
+export * as metrics from './metrics/index.js';
 export * from './plugin.js';
+export * as stream from './stream/index.js';
+export * as stt from './stt/index.js';
+export * as telemetry from './telemetry/index.js';
+export * as tokenize from './tokenize/index.js';
 export * from './transcription.js';
+export * as tts from './tts/index.js';
 export * from './types.js';
 export * from './utils.js';
 export * from './vad.js';
 export * from './version.js';
+export * as voice from './voice/index.js';
 export { createTimedString, isTimedString, type TimedString } from './voice/io.js';
 export * from './worker.js';
-
-export { beta, cli, inference, ipc, llm, metrics, stream, stt, telemetry, tokenize, tts, voice };

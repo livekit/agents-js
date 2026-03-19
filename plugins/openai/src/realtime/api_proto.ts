@@ -162,6 +162,11 @@ export interface InputAudioContent {
   audio: AudioBase64Bytes;
 }
 
+export interface InputImageContent {
+  type: 'input_image';
+  image_url: string;
+}
+
 export interface TextContent {
   type: 'text';
   text: string;
@@ -181,6 +186,7 @@ export interface AudioContent {
 export type Content =
   | InputTextContent
   | InputAudioContent
+  | InputImageContent
   | TextContent
   | OutputTextContent
   | AudioContent;
@@ -206,7 +212,7 @@ export interface SystemItem extends BaseItem {
 export interface UserItem extends BaseItem {
   type: 'message';
   role: 'user';
-  content: (InputTextContent | InputAudioContent)[];
+  content: (InputTextContent | InputAudioContent | InputImageContent)[];
 }
 
 export interface AssistantItem extends BaseItem {
@@ -361,7 +367,7 @@ export interface UserItemCreate {
   id: string;
   type: 'message';
   role: 'user';
-  content: (InputTextContent | InputAudioContent)[];
+  content: (InputTextContent | InputAudioContent | InputImageContent)[];
 }
 
 export interface AssistantItemCreate {

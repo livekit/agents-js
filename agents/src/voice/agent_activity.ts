@@ -45,7 +45,7 @@ import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
-import { Future, Task, cancelAndWait, waitFor } from '../utils.js';
+import { Future, Task, cancelAndWait, isDevMode, isHosted, waitFor } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import {
@@ -152,10 +152,11 @@ export class AgentActivity implements RecognitionHooks {
     this.onError(ev);
 
   private readonly onInterruptionOverlappingSpeech = (ev: OverlappingSpeechEvent): void => {
-    this.agentSession.emit(AgentSessionEventTypes.UserOverlappingSpeech, ev);
+    this.agentSession.emit(AgentSessionEventTypes.OverlappingSpeech, ev);
   };
 
   private readonly onInterruptionMetricsCollected = (ev: InterruptionMetrics): void => {
+    this.agentSession._usageCollector.collect(ev);
     this.agentSession.emit(
       AgentSessionEventTypes.MetricsCollected,
       createMetricsCollectedEvent({ metrics: ev }),
@@ -165,6 +166,13 @@ export class AgentActivity implements RecognitionHooks {
   private readonly onInterruptionError = (ev: InterruptionDetectionError): void => {
     const errorEvent = createErrorEvent(ev, this.interruptionDetector);
     this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
+
+    if (!ev.recoverable) {
+      this.agentSession._onError(ev);
+      this.fallbackToVadInterruption();
+      return;
+    }
+
     this.agentSession._onError(ev);
   };
 
@@ -390,8 +398,12 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
-      minEndpointingDelay: this.agentSession.options.turnHandling.endpointing.minDelay,
-      maxEndpointingDelay: this.agentSession.options.turnHandling.endpointing.maxDelay,
+      minEndpointingDelay:
+        this.agent.turnHandling?.endpointing?.minDelay ??
+        this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
+      maxEndpointingDelay:
+        this.agent.turnHandling?.endpointing?.maxDelay ??
+        this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
@@ -464,8 +476,10 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get allowInterruptions(): boolean {
-    // TODO(AJS-51): Allow options to be defined in Agent class
-    return this.agentSession.options.turnHandling.interruption?.mode !== false;
+    return (
+      this.agent.turnHandling?.interruption?.enabled ??
+      this.agentSession.sessionOptions.turnHandling.interruption.enabled
+    );
   }
 
   get useTtsAlignedTranscript(): boolean {
@@ -474,9 +488,26 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get turnDetection(): TurnDetectionMode | undefined {
-    // TODO(brian): prioritize using agent.turn_detection
-    return this.agentSession.turnDetection;
+    return this.agent.turnHandling?.turnDetection ?? this.agentSession.turnDetection;
   }
+
+  get turnHandling() {
+    return this.agent.turnHandling ?? this.agentSession.sessionOptions.turnHandling;
+  }
+
+  // get minEndpointingDelay(): number {
+  //   return (
+  //     this.agent.turnHandling?.endpointing?.minDelay ??
+  //     this.agentSession.sessionOptions.turnHandling.endpointing.minDelay
+  //   );
+  // }
+
+  // get maxEndpointingDelay(): number {
+  //   return (
+  //     this.agent.turnHandling?.endpointing?.maxDelay ??
+  //     this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
+  //   );
+  // }
 
   get toolCtx(): ToolContext {
     return this.agent.toolCtx;
@@ -698,6 +729,8 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
+    this.agentSession._usageCollector.collect(ev);
+
     this.agentSession.emit(
       AgentSessionEventTypes.MetricsCollected,
       createMetricsCollectedEvent({ metrics: ev }),
@@ -872,7 +905,9 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    if (ev.speechDuration >= this.agentSession.options.turnHandling.interruption?.minDuration) {
+    if (
+      ev.speechDuration >= this.agentSession.sessionOptions.turnHandling.interruption?.minDuration
+    ) {
       this.interruptByAudioActivity();
     }
   }
@@ -898,7 +933,7 @@ export class AgentActivity implements RecognitionHooks {
     // - This ensures consistent behavior across all interruption scenarios
     if (
       this.stt &&
-      this.agentSession.options.turnHandling.interruption?.minWords > 0 &&
+      this.agentSession.sessionOptions.turnHandling.interruption?.minWords > 0 &&
       this.audioRecognition
     ) {
       const text = this.audioRecognition.currentTranscript;
@@ -910,7 +945,7 @@ export class AgentActivity implements RecognitionHooks {
 
       // Only allow interruption if word count meets or exceeds minInterruptionWords
       // This applies to all cases: empty strings, partial speech, and full speech
-      if (wordCount < this.agentSession.options.turnHandling.interruption?.minWords) {
+      if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
         return;
       }
     }
@@ -935,7 +970,7 @@ export class AgentActivity implements RecognitionHooks {
     this.restoreInterruptionByAudioActivity();
     this.interruptByAudioActivity();
     if (this.audioRecognition) {
-      this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.timestamp);
+      this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt);
     }
   }
 
@@ -993,7 +1028,7 @@ export class AgentActivity implements RecognitionHooks {
 
   onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
     if (
-      !this.agentSession.options.preemptiveGeneration ||
+      !this.agentSession.sessionOptions.preemptiveGeneration ||
       this.schedulingPaused ||
       (this._currentSpeech !== undefined && !this._currentSpeech.interrupted) ||
       !(this.llm instanceof LLM)
@@ -1110,16 +1145,17 @@ export class AgentActivity implements RecognitionHooks {
       this._currentSpeech &&
       this._currentSpeech.allowInterruptions &&
       !this._currentSpeech.interrupted &&
-      this.agentSession.options.turnHandling.interruption?.minWords > 0
+      this.agentSession.sessionOptions.turnHandling.interruption?.minWords > 0
     ) {
       const wordCount = splitWords(info.newTranscript, true).length;
-      if (wordCount < this.agentSession.options.turnHandling.interruption?.minWords) {
+      if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
         // avoid interruption if the new_transcript contains fewer words than minInterruptionWords
         this.cancelPreemptiveGeneration();
         this.logger.info(
           {
             wordCount,
-            minInterruptionWords: this.agentSession.options.turnHandling.interruption.minWords,
+            minInterruptionWords:
+              this.agentSession.sessionOptions.turnHandling.interruption.minWords,
           },
           'skipping user input, word count below minimum interruption threshold',
         );
@@ -1171,7 +1207,7 @@ export class AgentActivity implements RecognitionHooks {
 
         this._currentSpeech = speechHandle;
         speechHandle._authorizeGeneration();
-        await speechHandle._waitForGeneration();
+        await speechHandle.waitIfNotInterrupted([speechHandle._waitForGeneration()]);
         this._currentSpeech = undefined;
       }
 
@@ -2074,7 +2110,7 @@ export class AgentActivity implements RecognitionHooks {
     if (toolOutput.output.length === 0) return;
 
     // important: no agent output should be used after this point
-    const { maxToolSteps } = this.agentSession.options;
+    const { maxToolSteps } = this.agentSession.sessionOptions;
     if (speechHandle.numSteps >= maxToolSteps) {
       this.logger.warn(
         { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
@@ -2541,7 +2577,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     // important: no agent ouput should be used after this point
-    const { maxToolSteps } = this.agentSession.options;
+    const { maxToolSteps } = this.agentSession.sessionOptions;
     if (speechHandle.numSteps >= maxToolSteps) {
       this.logger.warn(
         { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
@@ -2842,10 +2878,7 @@ export class AgentActivity implements RecognitionHooks {
         await this._mainTask.cancelAndWait();
       }
       if (this.interruptionDetector) {
-        this.interruptionDetector.off(
-          'user_overlapping_speech',
-          this.onInterruptionOverlappingSpeech,
-        );
+        this.interruptionDetector.off('overlapping_speech', this.onInterruptionOverlappingSpeech);
         this.interruptionDetector.off('metrics_collected', this.onInterruptionMetricsCollected);
         this.interruptionDetector.off('error', this.onInterruptionError);
       }
@@ -2857,8 +2890,8 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private resolveInterruptionDetector(): AdaptiveInterruptionDetector | undefined {
-    const interruptionDetection =
-      this.agent.interruptionDetection ?? this.agentSession.interruptionDetection;
+    const agentInterruptionDetection = this.agent.turnHandling?.interruption?.mode;
+    const sessionInterruptionDetection = this.agentSession.interruptionDetection;
     if (
       !(
         this.stt &&
@@ -2870,25 +2903,43 @@ export class AgentActivity implements RecognitionHooks {
         !(this.llm instanceof RealtimeModel)
       )
     ) {
-      if (interruptionDetection === 'adaptive') {
+      if (
+        agentInterruptionDetection === 'adaptive' ||
+        sessionInterruptionDetection === 'adaptive'
+      ) {
         this.logger.warn(
           "interruptionDetection is provided, but it's not compatible with the current configuration and will be disabled",
         );
-        return undefined;
       }
+      return undefined;
+    }
+
+    if (!this.allowInterruptions) {
+      return undefined;
+    }
+
+    if (agentInterruptionDetection === 'vad') {
+      return undefined;
+    }
+
+    if (sessionInterruptionDetection === 'vad') {
+      return undefined;
     }
 
     if (
-      (interruptionDetection !== undefined && interruptionDetection === false) ||
-      interruptionDetection === 'vad'
+      agentInterruptionDetection === undefined &&
+      sessionInterruptionDetection === undefined &&
+      !isHosted() &&
+      !isDevMode()
     ) {
+      this.logger.info('adaptive interruption is disabled by default in production mode');
       return undefined;
     }
 
     try {
       const detector = new AdaptiveInterruptionDetector();
 
-      detector.on('user_overlapping_speech', this.onInterruptionOverlappingSpeech);
+      detector.on('overlapping_speech', this.onInterruptionOverlappingSpeech);
       detector.on('metrics_collected', this.onInterruptionMetricsCollected);
       detector.on('error', this.onInterruptionError);
 
@@ -2901,6 +2952,30 @@ export class AgentActivity implements RecognitionHooks {
 
   private restoreInterruptionByAudioActivity(): void {
     this.isInterruptionByAudioActivityEnabled = this.isDefaultInterruptionByAudioActivityEnabled;
+  }
+
+  private fallbackToVadInterruption(): void {
+    if (!this.isInterruptionDetectionEnabled) return;
+
+    this.isInterruptionDetectionEnabled = false;
+    this.restoreInterruptionByAudioActivity();
+
+    if (this.interruptionDetector) {
+      this.interruptionDetector.off('overlapping_speech', this.onInterruptionOverlappingSpeech);
+      this.interruptionDetector.off('metrics_collected', this.onInterruptionMetricsCollected);
+      this.interruptionDetector.off('error', this.onInterruptionError);
+      this.interruptionDetector = undefined;
+    }
+
+    if (this.audioRecognition) {
+      this.audioRecognition.disableInterruptionDetection().catch((err) => {
+        this.logger.warn({ err }, 'error while disabling interruption detection');
+      });
+    }
+
+    this.logger.warn(
+      'adaptive interruption disabled due to unrecoverable error, falling back to VAD-based interruption',
+    );
   }
 
   private async _closeSessionResources(): Promise<void> {

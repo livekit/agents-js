@@ -43,6 +43,9 @@ export default defineAgent({
     const logger = log();
 
     const session = new voice.AgentSession({
+      // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
+      // See more at https://docs.livekit.io/agents/build/turns
+      vad: ctx.proc.userData.vad! as silero.VAD,
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
       stt: new inference.STT({
@@ -64,26 +67,17 @@ export default defineAgent({
           'rime/arcana',
         ],
       }),
-      // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-      // See more at https://docs.livekit.io/agents/build/turns
-      vad: ctx.proc.userData.vad! as silero.VAD,
-
-      // to use realtime model, replace the stt, llm, tts and vad with the following
-      // llm: new openai.realtime.RealtimeModel(),
-      options: {
-        // allow the LLM to generate a response while waiting for the end of turn
-        preemptiveGeneration: true,
-        turnHandling: {
-          turnDetection: new livekit.turnDetector.MultilingualModel(),
-          interruption: {
-            resumeFalseInterruption: true,
-            falseInterruptionTimeout: 1,
-            mode: 'adaptive',
-          },
+      preemptiveGeneration: true,
+      turnHandling: {
+        turnDetection: new livekit.turnDetector.MultilingualModel(),
+        interruption: {
+          resumeFalseInterruption: true,
+          falseInterruptionTimeout: 1,
+          mode: 'adaptive',
         },
-        useTtsAlignedTranscript: true,
-        aecWarmupDuration: 3000,
       },
+      useTtsAlignedTranscript: true,
+      aecWarmupDuration: 3000,
       connOptions: {
         // Example of overriding the default connection options for the LLM/TTS/STT
         llmConnOptions: {
@@ -109,7 +103,7 @@ export default defineAgent({
       );
     });
 
-    session.on(voice.AgentSessionEventTypes.UserOverlappingSpeech, (ev) => {
+    session.on(voice.AgentSessionEventTypes.OverlappingSpeech, (ev) => {
       logger.warn({ type: ev.type, isInterruption: ev.isInterruption }, 'user overlapping speech');
     });
 

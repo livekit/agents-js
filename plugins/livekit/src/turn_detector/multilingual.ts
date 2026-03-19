@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { llm } from '@livekit/agents';
-import { getJobContext, log } from '@livekit/agents';
+import { getJobContext, log, normalizeLanguage } from '@livekit/agents';
 import { EOUModel, EOURunnerBase } from './base.js';
 import { MAX_HISTORY_TURNS } from './constants.js';
 
@@ -34,6 +34,8 @@ export class MultilingualModel extends EOUModel {
     if (!language) {
       return undefined;
     }
+
+    language = normalizeLanguage(language);
 
     let threshold = await super.unlikelyThreshold(language);
     if (threshold === undefined) {

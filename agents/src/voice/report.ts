@@ -3,14 +3,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatContext } from '../llm/chat_context.js';
 import { type ModelUsage, filterZeroValues } from '../metrics/model_usage.js';
-import type { VoiceOptions } from './agent_session.js';
+import type { AgentSessionOptions, VoiceOptions } from './agent_session.js';
 import type { AgentEvent } from './events.js';
+
+type ReportOptions = AgentSessionOptions & Partial<VoiceOptions>;
 
 export interface SessionReport {
   jobId: string;
   roomId: string;
   room: string;
-  options: VoiceOptions;
+  options: ReportOptions;
   events: AgentEvent[];
   chatHistory: ChatContext;
   enableRecording: boolean;
@@ -32,7 +34,7 @@ export interface SessionReportOptions {
   jobId: string;
   roomId: string;
   room: string;
-  options: VoiceOptions;
+  options: ReportOptions;
   events: AgentEvent[];
   chatHistory: ChatContext;
   enableRecording?: boolean;
@@ -76,22 +78,37 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
 //   - Uploads to LiveKit Cloud observability endpoint with JWT auth
 export function sessionReportToJSON(report: SessionReport): Record<string, unknown> {
   const events: Record<string, unknown>[] = [];
-  const interruptionConfig = report.options.turnHandling?.interruption;
-  const endpointingConfig = report.options.turnHandling?.endpointing;
+  const options = report.options;
+  const interruptionConfig = options.turnHandling?.interruption;
+  const endpointingConfig = options.turnHandling?.endpointing;
 
   // Keep backwards compatibility with deprecated fields
   const allowInterruptions =
-    interruptionConfig?.mode !== undefined
-      ? interruptionConfig.mode !== false
-      : report.options.allowInterruptions;
+    interruptionConfig?.enabled !== undefined
+      ? interruptionConfig.enabled
+      : interruptionConfig?.mode !== undefined
+        ? true
+        : options.allowInterruptions ?? options.voiceOptions?.allowInterruptions;
   const discardAudioIfUninterruptible =
     interruptionConfig?.discardAudioIfUninterruptible ??
-    report.options.discardAudioIfUninterruptible;
+    options.discardAudioIfUninterruptible ??
+    options.voiceOptions?.discardAudioIfUninterruptible;
   const minInterruptionDuration =
-    interruptionConfig?.minDuration ?? report.options.minInterruptionDuration;
-  const minInterruptionWords = interruptionConfig?.minWords ?? report.options.minInterruptionWords;
-  const minEndpointingDelay = endpointingConfig?.minDelay ?? report.options.minEndpointingDelay;
-  const maxEndpointingDelay = endpointingConfig?.maxDelay ?? report.options.maxEndpointingDelay;
+    interruptionConfig?.minDuration ??
+    options.minInterruptionDuration ??
+    options.voiceOptions?.minInterruptionDuration;
+  const minInterruptionWords =
+    interruptionConfig?.minWords ??
+    options.minInterruptionWords ??
+    options.voiceOptions?.minInterruptionWords;
+  const minEndpointingDelay =
+    endpointingConfig?.minDelay ??
+    options.minEndpointingDelay ??
+    options.voiceOptions?.minEndpointingDelay;
+  const maxEndpointingDelay =
+    endpointingConfig?.maxDelay ??
+    options.maxEndpointingDelay ??
+    options.voiceOptions?.maxEndpointingDelay;
 
   for (const event of report.events) {
     if (event.type === 'metrics_collected') {
@@ -113,7 +130,7 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
       min_interruption_words: minInterruptionWords,
       min_endpointing_delay: minEndpointingDelay,
       max_endpointing_delay: maxEndpointingDelay,
-      max_tool_steps: report.options.maxToolSteps,
+      max_tool_steps: options.maxToolSteps,
     },
     chat_history: report.chatHistory.toJSON({ excludeTimestamp: false }),
     enable_user_data_training: report.enableRecording,
