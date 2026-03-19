@@ -4,12 +4,6 @@
 
 ### Minor Changes
 
-- Re-release to skip deprecated 1.1.0 version - [#1153](https://github.com/livekit/agents-js/pull/1153) ([@lukasIO](https://github.com/lukasIO))
-
-## 1.1.0
-
-### Minor Changes
-
 - - Add adaptive interruption handling - [#1002](https://github.com/livekit/agents-js/pull/1002) ([@lukasIO](https://github.com/lukasIO))
   - Add remote session event handler
 
@@ -18,6 +12,10 @@
 - Support Image Input for OpenAI realtime model - [#1094](https://github.com/livekit/agents-js/pull/1094) ([@toubatbrian](https://github.com/toubatbrian))
 
 - Fix hanging process when participant disconnects during init - [#1087](https://github.com/livekit/agents-js/pull/1087) ([@lukasIO](https://github.com/lukasIO))
+
+## 1.1.0
+
+deprecated
 
 ## 1.0.51
 
