@@ -4,7 +4,6 @@
 import { z } from 'zod';
 import type { ChatContext } from '../../llm/chat_context.js';
 import { LLM, ToolError, ToolFlag, tool } from '../../llm/index.js';
-import { log } from '../../log.js';
 import { AgentTask } from '../../voice/agent.js';
 
 interface FactoryInfo {
@@ -46,7 +45,7 @@ export class TaskGroup extends AgentTask<TaskGroupResult> {
   private _registeredFactories = new Map<string, FactoryInfo>();
   private _taskCompletedCallback?: (event: TaskCompletedEvent) => Promise<void>;
   private _currentTask?: AgentTask;
-  private readonly logger = log();
+
   constructor(options: TaskGroupOptions = {}) {
     const { summarizeChatCtx = true, returnExceptions = false, chatCtx, onTaskCompleted } = options;
 
