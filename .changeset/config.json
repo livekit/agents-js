@@ -8,11 +8,12 @@
   ],
   "commit": false,
   "ignore": ["livekit-agents-examples"],
-  "fixed": [["@livekit/agents", "@livekit/agents-plugin-*", "@livekit/agents-plugins-test"]],
+  "fixed": [],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH": {
-    "onlyUpdatePeerDependentsWhenOutOfRange": true
+    "onlyUpdatePeerDependentsWhenOutOfRange": true,
+    "updateInternalDependents": "always"
   }
 }
