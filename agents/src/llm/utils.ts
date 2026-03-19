@@ -7,6 +7,7 @@ import sharp from 'sharp';
 import type { UnknownUserData } from '../voice/run_context.js';
 import type { ChatContext } from './chat_context.js';
 import {
+  type ChatContent,
   type ChatItem,
   FunctionCall,
   FunctionCallOutput,
@@ -239,6 +240,133 @@ export async function executeToolCall(
       isError: true,
     });
   }
+}
+
+export interface FormatChatHistoryOptions {
+  includeIds?: boolean;
+  includeTimestamps?: boolean;
+}
+
+/**
+ * Render a chat context into a readable multiline string for debugging and logging.
+ */
+export function formatChatHistory(
+  chatCtx: ChatContext,
+  options: FormatChatHistoryOptions = {},
+): string {
+  const { includeIds = false, includeTimestamps = false } = options;
+
+  if (chatCtx.items.length === 0) {
+    return 'Chat history (0 items)';
+  }
+
+  const formattedItems = chatCtx.items.map((item, index) =>
+    formatChatHistoryItem(item, index, {
+      includeIds,
+      includeTimestamps,
+    }),
+  );
+
+  return [
+    `Chat history (${chatCtx.items.length} items)`,
+    ...formattedItems.flatMap((item) => ['', item]),
+  ].join('\n');
+}
+
+function formatChatHistoryItem(
+  item: ChatItem,
+  index: number,
+  options: Required<FormatChatHistoryOptions>,
+): string {
+  const headerParts = [`[${index}]`];
+
+  if (item.type === 'message') {
+    headerParts.push('message', item.role);
+  } else if (item.type === 'function_call') {
+    headerParts.push('function_call', item.name, `call_id=${item.callId}`);
+  } else if (item.type === 'function_call_output') {
+    headerParts.push('function_call_output', item.name || '(unnamed)', `call_id=${item.callId}`);
+    if (item.isError) {
+      headerParts.push('error=true');
+    }
+  } else {
+    headerParts.push('agent_handoff');
+  }
+
+  if (options.includeIds) {
+    headerParts.push(`id=${item.id}`);
+  }
+
+  if (options.includeTimestamps) {
+    headerParts.push(`created_at=${item.createdAt.toFixed(3)}`);
+  }
+
+  const body = formatChatHistoryItemBody(item);
+  if (!body) {
+    return headerParts.join(' ');
+  }
+
+  return `${headerParts.join(' ')}\n${indentBlock(body, '  ')}`;
+}
+
+function formatChatHistoryItemBody(item: ChatItem): string {
+  if (item.type === 'message') {
+    const content = item.content.map((part) => formatMessageContentPart(part)).join('\n');
+    return content.trim() ? content : '(empty)';
+  }
+
+  if (item.type === 'function_call') {
+    return prettyJsonText(item.args);
+  }
+
+  if (item.type === 'function_call_output') {
+    return prettyJsonText(item.output);
+  }
+
+  return `${item.oldAgentId ?? '(none)'} -> ${item.newAgentId}`;
+}
+
+function formatMessageContentPart(part: ChatContent): string {
+  if (typeof part === 'string') {
+    return part;
+  }
+
+  if (part.type === 'image_content') {
+    if (typeof part.image === 'string') {
+      return `[image url=${truncateText(part.image, 120)}]`;
+    }
+
+    return `[image frame=${part.image.width}x${part.image.height}]`;
+  }
+
+  if (part.transcript) {
+    return `[audio transcript=${JSON.stringify(truncateText(part.transcript, 120))}]`;
+  }
+
+  return `[audio frames=${part.frame.length}]`;
+}
+
+function prettyJsonText(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
+}
+
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function indentBlock(text: string, indent: string): string {
+  return text
+    .split('\n')
+    .map((line) => `${indent}${line}`)
+    .join('\n');
 }
 
 /**

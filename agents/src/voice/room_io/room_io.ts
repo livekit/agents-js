@@ -30,6 +30,7 @@ import {
   type UserInputTranscribedEvent,
 } from '../events.js';
 import type { AudioOutput, TextOutput } from '../io.js';
+import type { TextInputCallback } from '../remote_session.js';
 import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
 import { ParticipantAudioInputStream } from './_input.js';
 import {

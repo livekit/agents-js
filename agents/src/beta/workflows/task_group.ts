@@ -85,6 +85,13 @@ export class TaskGroup extends AgentTask<TaskGroupResult> {
       try {
         this._visitedTasks.add(taskId);
         const res = await this._currentTask.run();
+
+        // AgentTask handoff merges omit function calls. Re-merge the completed
+        // task context so task-group summarization can incorporate tool results.
+        this._chatCtx.merge(this._currentTask.chatCtx.copy(), {
+          excludeInstructions: true,
+        });
+
         taskResults[taskId] = res;
 
         if (this._taskCompletedCallback) {
@@ -120,17 +127,19 @@ export class TaskGroup extends AgentTask<TaskGroupResult> {
           throw new Error('summarizeChatCtx requires a standard LLM on the session');
         }
 
-        // TODO(parity): Add excludeConfigUpdate when AgentConfigUpdate is ported
+        // Keep the full item stream so summarization can distill tool results
+        // into the history summary instead of dropping them up front.
         const ctxToSummarize = this._chatCtx.copy({
-          excludeInstructions: true,
-          excludeHandoff: true,
-          excludeEmptyMessage: true,
-          excludeFunctionCall: true,
+          excludeInstructions: false,
+          excludeFunctionCall: false,
+          excludeEmptyMessage: false,
+          excludeHandoff: false,
         });
 
         const summarizedChatCtx = await ctxToSummarize._summarize(sessionLlm, {
           keepLastTurns: 0,
         });
+
         await this.updateChatCtx(summarizedChatCtx);
       }
     } catch (e) {

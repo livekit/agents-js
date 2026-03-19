@@ -27,6 +27,9 @@ function createFakeLLM(responses: voice.testing.FakeLLMResponse[] = []): voice.t
   return new voice.testing.FakeLLM(responses);
 }
 
+const summaryXml = (summary: string) =>
+  ['<chat_history_summary>', summary, '</chat_history_summary>'].join('\n');
+
 async function runAndWait(session: voice.AgentSession, userInput: string) {
   const result = session.run({ userInput });
   await result.wait();
@@ -373,6 +376,29 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
     const done = new Future<TaskGroupResult>();
     let taskReady = new Future<void>();
 
+    class RecordingSummaryLLM extends voice.testing.FakeLLM {
+      summaryInputs: string[] = [];
+
+      chat(...args: Parameters<voice.testing.FakeLLM['chat']>) {
+        const [{ chatCtx }] = args;
+        const last = chatCtx.items[chatCtx.items.length - 1];
+        if (last?.type === 'message' && last.role === 'user') {
+          const text = last.textContent ?? '';
+          if (text.startsWith('Conversation to summarize:\n\n')) {
+            this.summaryInputs.push(text);
+            return new voice.testing.FakeLLM([
+              {
+                input: text,
+                content: 'Summary: color=Blue, food=pizza.',
+              },
+            ]).chat(...args);
+          }
+        }
+
+        return super.chat(...args);
+      }
+    }
+
     class ChattyTaskA extends voice.AgentTask<string> {
       constructor() {
         super({
@@ -440,7 +466,7 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
       }
     }
 
-    const llmModel = createFakeLLM([
+    const llmModel = new RecordingSummaryLLM([
       {
         input: 'Blue is my favorite color.',
         toolCalls: [{ name: 'recordColor', args: { color: 'Blue' } }],
@@ -448,11 +474,6 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
       {
         input: 'I love pizza.',
         toolCalls: [{ name: 'recordFood', args: { food: 'pizza' } }],
-      },
-      {
-        input:
-          'Conversation to summarize:\n\nuser: Blue is my favorite color.\nuser: I love pizza.',
-        content: 'Summary: color=Blue, food=pizza.',
       },
     ]);
 
@@ -476,7 +497,17 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
     );
     expect(summaryMsg).toBeDefined();
     if (summaryMsg && summaryMsg.type === 'message') {
-      expect(summaryMsg.textContent).toContain('[history summary]');
+      expect(summaryMsg.textContent).toBe(summaryXml('Summary: color=Blue, food=pizza.'));
     }
+
+    expect(llmModel.summaryInputs).toHaveLength(1);
+    expect(llmModel.summaryInputs[0]).toContain('<function_call name="recordColor" call_id="');
+    expect(llmModel.summaryInputs[0]).toContain(
+      '<function_call_output name="recordColor" call_id="',
+    );
+    expect(llmModel.summaryInputs[0]).toContain('<function_call name="recordFood" call_id="');
+    expect(llmModel.summaryInputs[0]).toContain(
+      '<function_call_output name="recordFood" call_id="',
+    );
   });
 });
