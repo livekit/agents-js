@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 // Minimal agent for E2E testing of cgroup-aware CPU load reporting.

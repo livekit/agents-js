@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 export const ATTRIBUTE_TRANSCRIPTION_TRACK_ID = 'lk.transcribed_track_id';

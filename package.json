@@ -13,6 +13,7 @@
     "api:update": "turbo run api:update",
     "format:check": "prettier --check \"**/src/**/*.{ts,tsx,md,json}\"",
     "format:write": "prettier --write \"**/src/**/*.{ts,tsx,md,json}\"",
+    "license:year": "node scripts/updateSpdxHeaderYear.js",
     "lint": "turbo lint",
     "lint:fix": "turbo lint -- --fix",
     "test": "vitest run",

@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 
 SPDX-License-Identifier: Apache-2.0
 -->
