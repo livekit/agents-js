@@ -793,7 +793,7 @@ export function delay(ms: number, options: DelayOptions = {}): Promise<void> {
   return new Promise((resolve, reject) => {
     const abort = () => {
       clearTimeout(i);
-      reject(signal?.reason);
+      reject(signal?.reason ?? new Error('delay aborted'));
     };
     const done = () => {
       signal?.removeEventListener('abort', abort);
