@@ -910,10 +910,11 @@ export class AgentSession<
         return;
       }
     } else if (error.type === 'interruption_detection_error') {
+      this.logger.error(error.toString());
       return;
     }
 
-    this.logger.error(error, 'AgentSession is closing due to unrecoverable error');
+    this.logger.error(error, 'AgentSession is closing due to an unrecoverable error');
 
     this.closingTask = (async () => {
       await this.closeImpl(CloseReason.ERROR, error);
