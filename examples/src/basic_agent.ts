@@ -67,9 +67,6 @@ export default defineAgent({
           'rime/arcana',
         ],
       }),
-      // to use realtime model, replace the stt, llm, tts and vad with the following
-      // llm: new openai.realtime.RealtimeModel(),
-      // allow the LLM to generate a response while waiting for the end of turn
       preemptiveGeneration: true,
       turnHandling: {
         turnDetection: new livekit.turnDetector.MultilingualModel(),
