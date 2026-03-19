@@ -1016,6 +1016,14 @@ export class AudioRecognition {
 
     while (!signal.aborted) {
       const stream = interruptionDetection.createStream();
+
+      // Unlike Python where _agent_speech_started lives on `self` and survives retries,
+      // JS creates a fresh InterruptionStreamBase per retry with agentSpeechStarted = false.
+      // Re-inject the sentinel so the new stream knows the agent is mid-speech.
+      if (numRetries > 0 && this.isAgentSpeaking) {
+        await stream.pushFrame(InterruptionStreamSentinel.agentSpeechStarted());
+      }
+
       const eventReader = stream.stream().getReader();
 
       const cleanup = async () => {
@@ -1092,6 +1100,7 @@ export class AudioRecognition {
             );
             break;
           } else {
+            const retryInterval = intervalForRetry(numRetries);
             interruptionDetection.emitError(
               new InterruptionDetectionError(
                 e.message,
@@ -1100,7 +1109,6 @@ export class AudioRecognition {
                 true,
               ),
             );
-            const retryInterval = intervalForRetry(numRetries);
             this.logger.warn(
               { model: interruptionDetection.label, attempt: numRetries },
               `failed to detect interruption, retrying in ${retryInterval}ms`,
