@@ -4,9 +4,14 @@
 import { TransformStream } from 'stream/web';
 import WebSocket from 'ws';
 import { z } from 'zod';
+import {
+  APIConnectionError,
+  APIError,
+  APIStatusError,
+  APITimeoutError,
+} from '../../_exceptions.js';
 import { log } from '../../log.js';
 import { createAccessToken } from '../utils.js';
-import { intervalForRetry } from './defaults.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import type { OverlappingSpeechEvent } from './types.js';
 import type { BoundedCache } from './utils.js';
@@ -82,7 +87,7 @@ async function connectWebSocket(options: WsTransportOptions): Promise<WebSocket>
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
       ws.terminate();
-      reject(new Error('WebSocket connection timeout'));
+      reject(new APITimeoutError({ message: 'WebSocket connection timeout' }));
     }, options.timeout);
     ws.once('open', () => {
       clearTimeout(timeout);
@@ -91,7 +96,7 @@ async function connectWebSocket(options: WsTransportOptions): Promise<WebSocket>
     ws.once('error', (err: Error) => {
       clearTimeout(timeout);
       ws.terminate();
-      reject(err);
+      reject(new APIConnectionError({ message: `WebSocket connection error: ${err.message}` }));
     });
   });
 
@@ -133,7 +138,9 @@ export function createWsTransport(
     });
 
     socket.on('error', (err: Error) => {
-      logger.error({ err }, 'WebSocket error');
+      outputController?.error(
+        new APIConnectionError({ message: `WebSocket error: ${err.message}` }),
+      );
     });
 
     socket.on('close', (code: number, reason: Buffer) => {
@@ -144,41 +151,20 @@ export function createWsTransport(
   async function ensureConnection(): Promise<void> {
     if (ws && ws.readyState === WebSocket.OPEN) return;
 
-    const maxRetries = options.maxRetries ?? 3;
-    let lastError: Error | null = null;
+    ws = await connectWebSocket(options);
+    setupMessageHandler(ws);
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        ws = await connectWebSocket(options);
-        setupMessageHandler(ws);
-
-        // Send session.create message
-        const sessionCreateMsg = JSON.stringify({
-          type: MSG_SESSION_CREATE,
-          settings: {
-            sample_rate: options.sampleRate,
-            num_channels: 1,
-            threshold: options.threshold,
-            min_frames: options.minFrames,
-            encoding: 's16le',
-          },
-        });
-        ws.send(sessionCreateMsg);
-        return;
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        if (attempt < maxRetries) {
-          const delay = intervalForRetry(attempt);
-          logger.debug(
-            { attempt, delay, err: lastError.message },
-            'WebSocket connection failed, retrying',
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-    }
-
-    throw lastError ?? new Error('Failed to connect to WebSocket after retries');
+    const sessionCreateMsg = JSON.stringify({
+      type: MSG_SESSION_CREATE,
+      settings: {
+        sample_rate: options.sampleRate,
+        num_channels: 1,
+        threshold: options.threshold,
+        min_frames: options.minFrames,
+        encoding: 's16le',
+      },
+    });
+    ws.send(sessionCreateMsg);
   }
 
   function handleMessage(message: WsMessage): void {
@@ -288,11 +274,10 @@ export function createWsTransport(
 
       case MSG_ERROR:
         outputController?.error(
-          new Error(
-            `LiveKit Adaptive Interruption error${
-              message.code !== undefined ? ` (${message.code})` : ''
-            }: ${message.message}`,
-          ),
+          new APIStatusError({
+            message: `LiveKit Adaptive Interruption error: ${message.message}`,
+            options: { statusCode: message.code ?? -1 },
+          }),
         );
         break;
     }
@@ -300,15 +285,12 @@ export function createWsTransport(
 
   function sendAudioData(audioSlice: Int16Array): void {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket not connected');
+      throw new APIConnectionError({ message: 'WebSocket not connected' });
     }
 
     const state = getState();
-    // Use truncated timestamp consistently for both cache key and header
-    // This ensures the server's response created_at matches our cache key
     const createdAt = Math.floor(performance.now());
 
-    // Store the audio data in cache with truncated timestamp
     state.cache.set(
       createdAt,
       new InterruptionCacheEntry({
@@ -318,13 +300,11 @@ export function createWsTransport(
       }),
     );
 
-    // Create header: 8-byte little-endian uint64 timestamp (milliseconds as integer)
     const header = new ArrayBuffer(8);
     const view = new DataView(header);
     view.setUint32(0, createdAt >>> 0, true);
     view.setUint32(4, Math.floor(createdAt / 0x100000000) >>> 0, true);
 
-    // Combine header and audio data
     const audioBytes = new Uint8Array(
       audioSlice.buffer,
       audioSlice.byteOffset,
@@ -334,12 +314,8 @@ export function createWsTransport(
     combined.set(new Uint8Array(header), 0);
     combined.set(audioBytes, 8);
 
-    try {
-      ws.send(combined);
-      onRequestSent?.();
-    } catch (e: unknown) {
-      logger.error(e, `failed to send audio via websocket`);
-    }
+    ws.send(combined);
+    onRequestSent?.();
   }
 
   function close(): void {
@@ -383,10 +359,26 @@ export function createWsTransport(
         const state = getState();
         if (!state.overlapSpeechStartedAt || !state.overlapSpeechStarted) return;
 
+        if (options.timeout > 0) {
+          const now = performance.now();
+          for (const [, entry] of state.cache.entries()) {
+            if (entry.totalDurationInS !== 0) continue;
+            if (now - entry.createdAt > options.timeout) {
+              controller.error(
+                new APIError(
+                  `interruption inference timed out after ${((now - entry.createdAt) / 1000).toFixed(1)}s (ws)`,
+                ),
+              );
+              return;
+            }
+            break;
+          }
+        }
+
         try {
           sendAudioData(chunk);
         } catch (err) {
-          logger.error({ err }, 'Failed to send audio data over WebSocket');
+          controller.error(err);
         }
       },
 

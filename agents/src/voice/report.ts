@@ -87,7 +87,7 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
     interruptionConfig?.enabled !== undefined
       ? interruptionConfig.enabled
       : interruptionConfig?.mode !== undefined
-        ? interruptionConfig.mode !== false
+        ? true
         : options.allowInterruptions ?? options.voiceOptions?.allowInterruptions;
   const discardAudioIfUninterruptible =
     interruptionConfig?.discardAudioIfUninterruptible ??
