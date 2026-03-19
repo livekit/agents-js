@@ -1114,7 +1114,7 @@ export class AudioRecognition {
               `failed to detect interruption, retrying in ${retryInterval}ms`,
             );
             numRetries++;
-            await delay(retryInterval);
+            await delay(retryInterval, { signal });
           }
         } else {
           const msg = e instanceof Error ? e.message : String(e);
