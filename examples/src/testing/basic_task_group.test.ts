@@ -218,7 +218,9 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
       result.expect.containsFunctionCall({ name: 'save_name' });
 
       // Args are raw JSON — parse before asserting.
-      const args = JSON.parse(result.expect.containsFunctionCall({ name: 'save_name' }).event().item.args);
+      const args = JSON.parse(
+        result.expect.containsFunctionCall({ name: 'save_name' }).event().item.args,
+      );
       expect(args.name).toBe('Eve');
 
       await expect(done.await).resolves.toBe('Eve');
@@ -266,7 +268,10 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
       }
 
       const fakeLLM = createFakeLLM([
-        { input: 'eve@example.com', toolCalls: [{ name: 'save_email', args: { email: 'eve@example.com' } }] },
+        {
+          input: 'eve@example.com',
+          toolCalls: [{ name: 'save_email', args: { email: 'eve@example.com' } }],
+        },
       ]);
 
       const session = await startSession(new ParentAgent(), { llm: fakeLLM });
@@ -275,7 +280,9 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
       const result = await runAndWait(session, 'eve@example.com');
       result.expect.containsFunctionCall({ name: 'save_email' });
 
-      const args = JSON.parse(result.expect.containsFunctionCall({ name: 'save_email' }).event().item.args);
+      const args = JSON.parse(
+        result.expect.containsFunctionCall({ name: 'save_email' }).event().item.args,
+      );
       expect(args.email).toBe('eve@example.com');
 
       await expect(done.await).resolves.toBe('eve@example.com');
@@ -295,7 +302,10 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
       }
 
       const fakeLLM = createFakeLLM([
-        { input: 'frank@test.org', toolCalls: [{ name: 'save_email', args: { email: 'frank@test.org' } }] },
+        {
+          input: 'frank@test.org',
+          toolCalls: [{ name: 'save_email', args: { email: 'frank@test.org' } }],
+        },
       ]);
 
       const session = await startSession(new ParentAgent(), { llm: fakeLLM });
@@ -339,7 +349,10 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
 
       const fakeLLM = createFakeLLM([
         { input: 'My name is Alice.', toolCalls: [{ name: 'save_name', args: { name: 'Alice' } }] },
-        { input: 'alice@example.com', toolCalls: [{ name: 'save_email', args: { email: 'alice@example.com' } }] },
+        {
+          input: 'alice@example.com',
+          toolCalls: [{ name: 'save_email', args: { email: 'alice@example.com' } }],
+        },
       ]);
 
       const session = await startSession(new Agent(), { llm: fakeLLM });
@@ -347,14 +360,18 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
 
       const nameResult = await runAndWait(session, 'My name is Alice.');
       nameResult.expect.containsFunctionCall({ name: 'save_name' });
-      const nameArgs = JSON.parse(nameResult.expect.containsFunctionCall({ name: 'save_name' }).event().item.args);
+      const nameArgs = JSON.parse(
+        nameResult.expect.containsFunctionCall({ name: 'save_name' }).event().item.args,
+      );
       expect(nameArgs.name).toBe('Alice');
 
       await emailReady.current.await;
 
       const emailResult = await runAndWait(session, 'alice@example.com');
       emailResult.expect.containsFunctionCall({ name: 'save_email' });
-      const emailArgs = JSON.parse(emailResult.expect.containsFunctionCall({ name: 'save_email' }).event().item.args);
+      const emailArgs = JSON.parse(
+        emailResult.expect.containsFunctionCall({ name: 'save_email' }).event().item.args,
+      );
       expect(emailArgs.email).toBe('alice@example.com');
 
       const tgResult = await done.await;
@@ -380,7 +397,10 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
 
       const fakeLLM = createFakeLLM([
         { input: 'Name is Dana.', toolCalls: [{ name: 'save_name', args: { name: 'Dana' } }] },
-        { input: 'dana@test.com', toolCalls: [{ name: 'save_email', args: { email: 'dana@test.com' } }] },
+        {
+          input: 'dana@test.com',
+          toolCalls: [{ name: 'save_email', args: { email: 'dana@test.com' } }],
+        },
       ]);
 
       const session = await startSession(new Agent(), { llm: fakeLLM });
@@ -411,8 +431,14 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
 
       // Third response handles the summarisation request sent after all tasks complete.
       const fakeLLM = createFakeLLM([
-        { input: 'My name is Charlie.', toolCalls: [{ name: 'save_name', args: { name: 'Charlie' } }] },
-        { input: 'charlie@test.com', toolCalls: [{ name: 'save_email', args: { email: 'charlie@test.com' } }] },
+        {
+          input: 'My name is Charlie.',
+          toolCalls: [{ name: 'save_name', args: { name: 'Charlie' } }],
+        },
+        {
+          input: 'charlie@test.com',
+          toolCalls: [{ name: 'save_email', args: { email: 'charlie@test.com' } }],
+        },
         {
           input: 'Conversation to summarize:\n\nuser: My name is Charlie.\nuser: charlie@test.com',
           content: 'Summary: name=Charlie, email=charlie@test.com.',
@@ -463,9 +489,15 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
 
       const fakeLLM = createFakeLLM([
         { input: 'My name is Alice.', toolCalls: [{ name: 'save_name', args: { name: 'Alice' } }] },
-        { input: 'Wait, I want to change my name to Bob.', toolCalls: [{ name: 'out_of_scope', args: { task_ids: ['name_task'] } }] },
+        {
+          input: 'Wait, I want to change my name to Bob.',
+          toolCalls: [{ name: 'out_of_scope', args: { task_ids: ['name_task'] } }],
+        },
         { input: 'My name is Bob.', toolCalls: [{ name: 'save_name', args: { name: 'Bob' } }] },
-        { input: 'bob@example.com', toolCalls: [{ name: 'save_email', args: { email: 'bob@example.com' } }] },
+        {
+          input: 'bob@example.com',
+          toolCalls: [{ name: 'save_email', args: { email: 'bob@example.com' } }],
+        },
       ]);
 
       const session = await startSession(new Agent(), { llm: fakeLLM });
@@ -487,7 +519,9 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
       // Provide corrected name.
       emailReady.current = new Future<void>();
       result = await runAndWait(session, 'My name is Bob.');
-      const nameArgs = JSON.parse(result.expect.containsFunctionCall({ name: 'save_name' }).event().item.args);
+      const nameArgs = JSON.parse(
+        result.expect.containsFunctionCall({ name: 'save_name' }).event().item.args,
+      );
       expect(nameArgs.name).toBe('Bob');
       await emailReady.current.await;
 
@@ -510,11 +544,23 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
 
       const fakeLLM = createFakeLLM([
         { input: 'My name is Alice.', toolCalls: [{ name: 'save_name', args: { name: 'Alice' } }] },
-        { input: 'Actually, change it to Bob.', toolCalls: [{ name: 'out_of_scope', args: { task_ids: ['name_task'] } }] },
+        {
+          input: 'Actually, change it to Bob.',
+          toolCalls: [{ name: 'out_of_scope', args: { task_ids: ['name_task'] } }],
+        },
         { input: 'My name is Bob.', toolCalls: [{ name: 'save_name', args: { name: 'Bob' } }] },
-        { input: 'No wait, make it Charlie.', toolCalls: [{ name: 'out_of_scope', args: { task_ids: ['name_task'] } }] },
-        { input: 'My name is Charlie.', toolCalls: [{ name: 'save_name', args: { name: 'Charlie' } }] },
-        { input: 'charlie@example.com', toolCalls: [{ name: 'save_email', args: { email: 'charlie@example.com' } }] },
+        {
+          input: 'No wait, make it Charlie.',
+          toolCalls: [{ name: 'out_of_scope', args: { task_ids: ['name_task'] } }],
+        },
+        {
+          input: 'My name is Charlie.',
+          toolCalls: [{ name: 'save_name', args: { name: 'Charlie' } }],
+        },
+        {
+          input: 'charlie@example.com',
+          toolCalls: [{ name: 'save_email', args: { email: 'charlie@example.com' } }],
+        },
       ]);
 
       const session = await startSession(new Agent(), { llm: fakeLLM });
@@ -573,9 +619,15 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
 
       const fakeLLM = createFakeLLM([
         { input: 'My name is Alice.', toolCalls: [{ name: 'save_name', args: { name: 'Alice' } }] },
-        { input: 'I need to start over with a different name.', toolCalls: [{ name: 'out_of_scope', args: { task_ids: ['name_task'] } }] },
+        {
+          input: 'I need to start over with a different name.',
+          toolCalls: [{ name: 'out_of_scope', args: { task_ids: ['name_task'] } }],
+        },
         { input: 'My name is Dana.', toolCalls: [{ name: 'save_name', args: { name: 'Dana' } }] },
-        { input: 'dana@test.com', toolCalls: [{ name: 'save_email', args: { email: 'dana@test.com' } }] },
+        {
+          input: 'dana@test.com',
+          toolCalls: [{ name: 'save_email', args: { email: 'dana@test.com' } }],
+        },
       ]);
 
       const session = await startSession(new Agent(), { llm: fakeLLM });
@@ -587,11 +639,15 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
 
       // Regress from email_task back to name_task.
       nameReady.current = new Future<void>();
-      const regressResult = session.run({ userInput: 'I need to start over with a different name.' });
+      const regressResult = session.run({
+        userInput: 'I need to start over with a different name.',
+      });
       await expect(regressResult.wait()).rejects.toThrow('out_of_scope');
       regressResult.expect.containsFunctionCall({ name: 'out_of_scope' });
 
-      const oosArgs = JSON.parse(regressResult.expect.containsFunctionCall({ name: 'out_of_scope' }).event().item.args);
+      const oosArgs = JSON.parse(
+        regressResult.expect.containsFunctionCall({ name: 'out_of_scope' }).event().item.args,
+      );
       expect(oosArgs.task_ids).toEqual(['name_task']);
       await nameReady.current.await;
 
