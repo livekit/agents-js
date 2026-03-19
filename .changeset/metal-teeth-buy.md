@@ -23,4 +23,5 @@
 '@livekit/agents-plugin-xai': minor
 ---
 
-Add adaptive interruption handling
+- Add adaptive interruption handling
+- Add remote session event handler
