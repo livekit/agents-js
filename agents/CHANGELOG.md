@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.2.0
+
+### Minor Changes
+
+- Re-release to skip deprecated 1.1.0 version - [#1153](https://github.com/livekit/agents-js/pull/1153) ([@lukasIO](https://github.com/lukasIO))
+
 ## 1.1.0
 
 ### Minor Changes
