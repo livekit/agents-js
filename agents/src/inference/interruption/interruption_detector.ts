@@ -166,9 +166,7 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
       return streamBase;
     } catch (e) {
       const cause = e instanceof Error ? e : new Error(String(e));
-      this.emitError(
-        new InterruptionDetectionError(cause.message, Date.now(), this._label, false),
-      );
+      this.emitError(new InterruptionDetectionError(cause.message, Date.now(), this._label, false));
       throw e;
     }
   }
