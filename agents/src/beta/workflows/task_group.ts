@@ -4,6 +4,7 @@
 import { z } from 'zod';
 import type { ChatContext } from '../../llm/chat_context.js';
 import { LLM, ToolError, ToolFlag, tool } from '../../llm/index.js';
+import { log } from '../../log.js';
 import { AgentTask } from '../../voice/agent.js';
 
 interface FactoryInfo {
@@ -45,7 +46,7 @@ export class TaskGroup extends AgentTask<TaskGroupResult> {
   private _registeredFactories = new Map<string, FactoryInfo>();
   private _taskCompletedCallback?: (event: TaskCompletedEvent) => Promise<void>;
   private _currentTask?: AgentTask;
-
+  private readonly logger = log();
   constructor(options: TaskGroupOptions = {}) {
     const { summarizeChatCtx = true, returnExceptions = false, chatCtx, onTaskCompleted } = options;
 
@@ -129,11 +130,17 @@ export class TaskGroup extends AgentTask<TaskGroupResult> {
 
         // Keep the full item stream so summarization can distill tool results
         // into the history summary instead of dropping them up front.
-        const ctxToSummarize = this._chatCtx.copy();
+        const ctxToSummarize = this._chatCtx.copy({
+          excludeInstructions: false,
+          excludeFunctionCall: false,
+          excludeEmptyMessage: false,
+          excludeHandoff: false,
+        });
 
         const summarizedChatCtx = await ctxToSummarize._summarize(sessionLlm, {
           keepLastTurns: 0,
         });
+
         await this.updateChatCtx(summarizedChatCtx);
       }
     } catch (e) {
