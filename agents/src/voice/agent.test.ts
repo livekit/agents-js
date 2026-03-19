@@ -223,29 +223,17 @@ describe('Agent', () => {
   describe('Agent constructor option migration', () => {
     it('should set allowInterruptions to false via deprecated constructor field', () => {
       const agent = new Agent({ instructions: 'test', allowInterruptions: false });
-      expect(agent.allowInterruptions).toBe(false);
+      expect(agent.turnHandling?.interruption?.enabled).toBe(false);
     });
 
     it('should not set derived properties when no compatibility fields are provided', () => {
       const agent = new Agent({ instructions: 'test' });
-      expect(agent.allowInterruptions).toBeUndefined();
-      expect(agent.minEndpointingDelay).toBeUndefined();
-      expect(agent.maxEndpointingDelay).toBeUndefined();
+      expect(agent.turnHandling).toBeUndefined();
     });
 
     it('should expose minConsecutiveSpeechDelay', () => {
       const agent = new Agent({ instructions: 'test', minConsecutiveSpeechDelay: 1.5 });
       expect(agent.minConsecutiveSpeechDelay).toBe(1.5);
-    });
-
-    it('should expose minEndpointingDelay via deprecated constructor field', () => {
-      const agent = new Agent({ instructions: 'test', minEndpointingDelay: 800 });
-      expect(agent.minEndpointingDelay).toBe(800);
-    });
-
-    it('should expose maxEndpointingDelay via deprecated constructor field', () => {
-      const agent = new Agent({ instructions: 'test', maxEndpointingDelay: 5000 });
-      expect(agent.maxEndpointingDelay).toBe(5000);
     });
 
     it('should ignore deprecated constructor fields when turnHandling is provided', () => {
@@ -257,12 +245,10 @@ describe('Agent', () => {
           turnDetection: 'vad',
         },
         allowInterruptions: false,
-        maxEndpointingDelay: 200,
       });
       expect(agent.turnHandling?.endpointing?.minDelay).toBe(999);
-      expect(agent.minEndpointingDelay).toBe(999);
-      expect(agent.maxEndpointingDelay).toBeUndefined();
-      expect(agent.allowInterruptions).toBeUndefined();
+      expect(agent.turnHandling?.endpointing?.maxDelay).toBeUndefined();
+      expect(agent.turnHandling?.interruption?.enabled).toBeUndefined();
       expect(agent.turnHandling?.turnDetection).toBe('vad');
     });
 
@@ -275,14 +261,11 @@ describe('Agent', () => {
           turnDetection: 'vad',
         },
         allowInterruptions: false,
-        minEndpointingDelay: 100,
-        maxEndpointingDelay: 200,
         turnDetection: 'stt',
       });
       expect(agent.turnHandling?.endpointing?.minDelay).toBe(999);
-      expect(agent.minEndpointingDelay).toBe(999);
-      expect(agent.maxEndpointingDelay).toBe(4000);
-      expect(agent.allowInterruptions).toBe(true);
+      expect(agent.turnHandling?.endpointing?.maxDelay).toBe(4000);
+      expect(agent.turnHandling?.interruption?.enabled).toBe(true);
       expect(agent.turnHandling?.turnDetection).toBe('vad');
     });
 
@@ -295,7 +278,7 @@ describe('Agent', () => {
           turnDetection: undefined,
         },
       });
-      expect(agent.interruptionDetection).toBe('adaptive');
+      expect(agent.turnHandling?.interruption?.mode).toBe('adaptive');
     });
 
     it('should let AgentActivity prefer agent-level overrides over session defaults', () => {
@@ -327,8 +310,8 @@ describe('Agent', () => {
 
       expect(activity.allowInterruptions).toBe(false);
       expect(activity.turnDetection).toBe('manual');
-      expect(activity.minEndpointingDelay).toBe(111);
-      expect(activity.maxEndpointingDelay).toBe(222);
+      expect(activity.turnHandling.endpointing?.minDelay).toBe(111);
+      expect(activity.turnHandling.endpointing?.maxDelay).toBe(222);
     });
 
     it('should disable adaptive interruption detection in default mode when prerequisites are missing', () => {
@@ -378,7 +361,7 @@ describe('Agent', () => {
     it('should warn when session explicitly requests adaptive detection even if agent overrides it', () => {
       const activity = Object.create(AgentActivity.prototype) as any;
       activity.agent = {
-        interruptionDetection: false,
+        turnHandling: { interruption: { mode: 'vad' } },
         turnDetection: undefined,
       };
       activity.agentSession = {
@@ -400,8 +383,9 @@ describe('Agent', () => {
       try {
         const activity = Object.create(AgentActivity.prototype) as any;
         activity.agent = {
-          interruptionDetection: undefined,
-          allowInterruptions: false,
+          turnHandling: {
+            interruption: { enabled: false },
+          },
           turnDetection: undefined,
           stt: undefined,
           vad: undefined,
