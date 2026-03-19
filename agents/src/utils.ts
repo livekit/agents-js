@@ -959,3 +959,10 @@ export const isCloud = (url: URL) => {
   const hostname = url.hostname;
   return hostname.endsWith('.livekit.cloud') || hostname.endsWith('.livekit.run');
 };
+
+/**
+ * Whether the agent is running in development mode (launched via `dev` or `connect`).
+ */
+export const isDevMode = (): boolean => {
+  return process.env.LIVEKIT_DEV_MODE === '1';
+};

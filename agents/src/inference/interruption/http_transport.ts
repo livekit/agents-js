@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { ofetch } from 'ofetch';
+import { FetchError, ofetch } from 'ofetch';
 import { TransformStream } from 'stream/web';
 import { z } from 'zod';
+import { APIConnectionError, APIError, APIStatusError, isAPIError } from '../../_exceptions.js';
 import { log } from '../../log.js';
 import { createAccessToken } from '../utils.js';
-import { intervalForRetry } from './defaults.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import type { OverlappingSpeechEvent } from './types.js';
 import type { BoundedCache } from './utils.js';
@@ -50,31 +50,42 @@ export async function predictHTTP(
   url.searchParams.append('min_frames', predictOptions.minFrames.toFixed());
   url.searchParams.append('created_at', createdAt.toFixed());
 
-  let retryCount = 0;
-  const response = await ofetch(url.toString(), {
-    retry: options.maxRetries ?? 3,
-    retryDelay: () => {
-      const delay = intervalForRetry(retryCount);
-      retryCount++;
-      return delay;
-    },
-    headers: {
-      'Content-Type': 'application/octet-stream',
-      Authorization: `Bearer ${options.token}`,
-    },
-    signal: options.signal,
-    timeout: options.timeout,
-    method: 'POST',
-    body: data,
-  });
-  const { created_at, is_bargein, probabilities } = predictEndpointResponseSchema.parse(response);
+  try {
+    const response = await ofetch(url.toString(), {
+      retry: 0,
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        Authorization: `Bearer ${options.token}`,
+      },
+      signal: options.signal,
+      timeout: options.timeout,
+      method: 'POST',
+      body: data,
+    });
+    const { created_at, is_bargein, probabilities } =
+      predictEndpointResponseSchema.parse(response);
 
-  return {
-    createdAt: created_at,
-    isBargein: is_bargein,
-    probabilities,
-    predictionDurationInS: (performance.now() - createdAt) / 1000,
-  };
+    return {
+      createdAt: created_at,
+      isBargein: is_bargein,
+      probabilities,
+      predictionDurationInS: (performance.now() - createdAt) / 1000,
+    };
+  } catch (err) {
+    if (isAPIError(err)) throw err;
+    if (err instanceof FetchError) {
+      if (err.statusCode) {
+        throw new APIStatusError({
+          message: `error during interruption prediction: ${err.message}`,
+          options: { statusCode: err.statusCode, body: err.data },
+        });
+      }
+      throw new APIConnectionError({
+        message: `interruption inference failed: ${err.message}`,
+      });
+    }
+    throw new APIError(`error during interruption prediction: ${err}`);
+  }
 }
 
 export interface HttpTransportOptions {
@@ -177,7 +188,7 @@ export function createHttpTransport(
             controller.enqueue(event);
           }
         } catch (err) {
-          logger.error({ err }, 'Failed to send audio data over HTTP');
+          controller.error(err);
         }
       },
     },
