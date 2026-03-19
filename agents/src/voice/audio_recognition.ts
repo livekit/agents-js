@@ -1016,14 +1016,6 @@ export class AudioRecognition {
 
     while (!signal.aborted) {
       const stream = interruptionDetection.createStream();
-
-      // Unlike Python where _agent_speech_started lives on `self` and survives retries,
-      // JS creates a fresh InterruptionStreamBase per retry with agentSpeechStarted = false.
-      // Re-inject the sentinel so the new stream knows the agent is mid-speech.
-      if (numRetries > 0 && this.isAgentSpeaking) {
-        await stream.pushFrame(InterruptionStreamSentinel.agentSpeechStarted());
-      }
-
       const eventReader = stream.stream().getReader();
 
       const cleanup = async () => {
@@ -1038,33 +1030,42 @@ export class AudioRecognition {
 
       signal.addEventListener('abort', cleanup, { once: true });
 
-      const forwardTask = (async () => {
-        const inputReader = this.interruptionStreamChannel!.stream().getReader();
-        const abortPromise = waitForAbort(signal);
-
-        try {
-          while (!signal.aborted) {
-            const res = await Promise.race([inputReader.read(), abortPromise]);
-            if (!res) break;
-
-            const { value, done } = res;
-            if (done) break;
-
-            if (value instanceof AudioFrame) {
-              const frameDurationMs = (value.samplesPerChannel / value.sampleRate) * 1000;
-              this._inputStartedAt ??= Date.now() - frameDurationMs;
-            } else {
-              this._inputStartedAt ??= Date.now();
-            }
-
-            await stream.pushFrame(value);
-          }
-        } finally {
-          inputReader.releaseLock();
-        }
-      })();
+      let forwardTask: Promise<void> | undefined;
 
       try {
+        // Unlike Python where _agent_speech_started lives on `self` and survives retries,
+        // JS creates a fresh InterruptionStreamBase per retry with agentSpeechStarted = false.
+        // Re-inject the sentinel so the new stream knows the agent is mid-speech.
+        if (numRetries > 0 && this.isAgentSpeaking) {
+          await stream.pushFrame(InterruptionStreamSentinel.agentSpeechStarted());
+        }
+
+        forwardTask = (async () => {
+          const inputReader = this.interruptionStreamChannel!.stream().getReader();
+          const abortPromise = waitForAbort(signal);
+
+          try {
+            while (!signal.aborted) {
+              const res = await Promise.race([inputReader.read(), abortPromise]);
+              if (!res) break;
+
+              const { value, done } = res;
+              if (done) break;
+
+              if (value instanceof AudioFrame) {
+                const frameDurationMs = (value.samplesPerChannel / value.sampleRate) * 1000;
+                this._inputStartedAt ??= Date.now() - frameDurationMs;
+              } else {
+                this._inputStartedAt ??= Date.now();
+              }
+
+              await stream.pushFrame(value);
+            }
+          } finally {
+            inputReader.releaseLock();
+          }
+        })();
+
         const abortPromise = waitForAbort(signal);
 
         while (!signal.aborted) {
@@ -1126,7 +1127,7 @@ export class AudioRecognition {
         }
       } finally {
         await cleanup();
-        await forwardTask.catch((e) => {
+        await forwardTask?.catch((e) => {
           this.logger.debug({ err: e }, 'interruption task exited with error');
         });
       }
