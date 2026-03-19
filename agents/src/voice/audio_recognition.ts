@@ -12,6 +12,8 @@ import {
 } from '@opentelemetry/api';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ReadableStream } from 'node:stream/web';
+import { isAPIError } from '../_exceptions.js';
+import { apiConnectDefaults, intervalForRetry } from '../inference/interruption/defaults.js';
 import { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import type { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import { InterruptionStreamSentinel } from '../inference/interruption/interruption_stream.js';
@@ -1009,77 +1011,119 @@ export class AudioRecognition {
   ) {
     if (!interruptionDetection || !this.interruptionStreamChannel) return;
 
-    const stream = interruptionDetection.createStream();
-    const inputReader = this.interruptionStreamChannel.stream().getReader();
+    let numRetries = 0;
+    const maxRetries = apiConnectDefaults.maxRetries;
 
-    const cleanup = async () => {
-      try {
-        signal.removeEventListener('abort', abortHandler);
-        eventReader.releaseLock();
-        await stream.close();
-      } catch (e) {
-        this.logger.debug('createInterruptionTask: error during abort handler:', e);
-      }
-    };
+    while (!signal.aborted) {
+      const stream = interruptionDetection.createStream();
+      const eventReader = stream.stream().getReader();
 
-    // Forward input frames/sentinels to the interruption stream
-    const forwardTask = (async () => {
+      const cleanup = async () => {
+        try {
+          signal.removeEventListener('abort', cleanup);
+          eventReader.releaseLock();
+          await stream.close();
+        } catch (e) {
+          this.logger.debug('createInterruptionTask: error during cleanup:', e);
+        }
+      };
+
+      signal.addEventListener('abort', cleanup, { once: true });
+
+      const forwardTask = (async () => {
+        const inputReader = this.interruptionStreamChannel!.stream().getReader();
+        const abortPromise = waitForAbort(signal);
+
+        try {
+          while (!signal.aborted) {
+            const res = await Promise.race([inputReader.read(), abortPromise]);
+            if (!res) break;
+
+            const { value, done } = res;
+            if (done) break;
+
+            if (value instanceof AudioFrame) {
+              const frameDurationMs = (value.samplesPerChannel / value.sampleRate) * 1000;
+              this._inputStartedAt ??= Date.now() - frameDurationMs;
+            } else {
+              this._inputStartedAt ??= Date.now();
+            }
+
+            await stream.pushFrame(value);
+          }
+        } finally {
+          inputReader.releaseLock();
+        }
+      })();
+
       try {
         const abortPromise = waitForAbort(signal);
+
         while (!signal.aborted) {
-          const res = await Promise.race([inputReader.read(), abortPromise]);
+          const res = await Promise.race([eventReader.read(), abortPromise]);
           if (!res) break;
-          const { value, done } = res;
+          const { done, value: ev } = res;
           if (done) break;
-          // Backdate to the actual start of the audio frame, not when it was received.
-          if (value instanceof AudioFrame) {
-            const frameDurationMs = (value.samplesPerChannel / value.sampleRate) * 1000;
-            this._inputStartedAt ??= Date.now() - frameDurationMs;
+          this.onOverlapSpeechEvent(ev);
+        }
+        break;
+      } catch (e) {
+        if (signal.aborted) break;
+
+        if (isAPIError(e)) {
+          if (maxRetries === 0 || !e.retryable) {
+            interruptionDetection.emitError(
+              new InterruptionDetectionError(
+                e.message,
+                Date.now(),
+                interruptionDetection.label,
+                false,
+              ),
+            );
+            break;
+          } else if (numRetries >= maxRetries) {
+            interruptionDetection.emitError(
+              new InterruptionDetectionError(
+                `failed to detect interruption after ${numRetries} attempts`,
+                Date.now(),
+                interruptionDetection.label,
+                false,
+              ),
+            );
+            break;
           } else {
-            this._inputStartedAt ??= Date.now();
+            interruptionDetection.emitError(
+              new InterruptionDetectionError(
+                e.message,
+                Date.now(),
+                interruptionDetection.label,
+                true,
+              ),
+            );
+            const retryInterval = intervalForRetry(numRetries);
+            this.logger.warn(
+              { model: interruptionDetection.label, attempt: numRetries },
+              `failed to detect interruption, retrying in ${retryInterval}ms`,
+            );
+            numRetries++;
+            await delay(retryInterval);
           }
-          await stream.pushFrame(value);
+        } else {
+          const msg = e instanceof Error ? e.message : String(e);
+          interruptionDetection.emitError(
+            new InterruptionDetectionError(msg, Date.now(), interruptionDetection.label, false),
+          );
+          this.logger.error(e, 'Error in interruption task');
+          break;
         }
       } finally {
-        inputReader.releaseLock();
+        await cleanup();
+        await forwardTask.catch((e) => {
+          this.logger.debug({ err: e }, 'interruption task exited with error');
+        });
       }
-    })();
-
-    // Read output events from the interruption stream
-    const eventReader = stream.stream().getReader();
-    const abortHandler = async () => {
-      await cleanup();
-    };
-    signal.addEventListener('abort', abortHandler);
-
-    try {
-      const abortPromise = waitForAbort(signal);
-
-      while (!signal.aborted) {
-        const res = await Promise.race([eventReader.read(), abortPromise]);
-        if (!res) break;
-        const { done, value: ev } = res;
-        if (done) break;
-        this.onOverlapSpeechEvent(ev);
-      }
-    } catch (e) {
-      if (!signal.aborted) {
-        const cause = e instanceof Error ? e : new Error(String(e));
-        interruptionDetection.emitError(
-          new InterruptionDetectionError(
-            cause.message,
-            Date.now(),
-            interruptionDetection.label,
-            false,
-          ),
-        );
-        this.logger.error(e, 'Error in interruption task');
-      }
-    } finally {
-      await cleanup();
-      await forwardTask;
-      this.logger.debug('Interruption task closed');
     }
+    this.logger.debug('Interruption task closed');
   }
 
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {

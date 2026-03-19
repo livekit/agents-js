@@ -2918,22 +2918,17 @@ export class AgentActivity implements RecognitionHooks {
       return undefined;
     }
 
-    if (agentInterruptionDetection === false || sessionInterruptionDetection === false) {
+    if (agentInterruptionDetection === 'vad') {
       return undefined;
     }
 
-    if (agentInterruptionDetection && agentInterruptionDetection === 'vad') {
-      return undefined;
-    }
-
-    if (sessionInterruptionDetection && sessionInterruptionDetection === 'vad') {
+    if (sessionInterruptionDetection === 'vad') {
       return undefined;
     }
 
     if (
       agentInterruptionDetection === undefined &&
       sessionInterruptionDetection === undefined &&
-      !process.env.LIVEKIT_REMOTE_EOT_URL &&
       !isDevMode()
     ) {
       this.logger.warn('adaptive interruption is disabled by default in production mode');
