@@ -197,6 +197,7 @@ examples/src/test_*.ts
 !.changeset/*.md
 !**/README.md
 !CONTRIBUTING.md
+!CLAUDE.md
 !.CODE_OF_CONDUCT.md
 
 # OpenTelemetry trace test output
