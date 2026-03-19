@@ -70,20 +70,18 @@ export default defineAgent({
 
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
-      options: {
-        // allow the LLM to generate a response while waiting for the end of turn
-        preemptiveGeneration: true,
-        turnHandling: {
-          turnDetection: new livekit.turnDetector.MultilingualModel(),
-          interruption: {
-            resumeFalseInterruption: true,
-            falseInterruptionTimeout: 1,
-            mode: 'adaptive',
-          },
+      // allow the LLM to generate a response while waiting for the end of turn
+      preemptiveGeneration: true,
+      turnHandling: {
+        turnDetection: new livekit.turnDetector.MultilingualModel(),
+        interruption: {
+          resumeFalseInterruption: true,
+          falseInterruptionTimeout: 1,
+          mode: 'adaptive',
         },
-        useTtsAlignedTranscript: true,
-        aecWarmupDuration: 3000,
       },
+      useTtsAlignedTranscript: true,
+      aecWarmupDuration: 3000,
       connOptions: {
         // Example of overriding the default connection options for the LLM/TTS/STT
         llmConnOptions: {
