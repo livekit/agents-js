@@ -1,5 +1,15 @@
 # @livekit/agents
 
+## 1.0.51
+
+### Patch Changes
+
+- Standardize LanguageCode handling - [#1120](https://github.com/livekit/agents-js/pull/1120) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Bun and deno runtime stream release fixes - [#1135](https://github.com/livekit/agents-js/pull/1135) ([@lukasIO](https://github.com/lukasIO))
+
+- Prevent mainTask hang when speech handle is interrupted after authorization - [#1126](https://github.com/livekit/agents-js/pull/1126) ([@enriqueespaillat-gyde](https://github.com/enriqueespaillat-gyde))
+
 ## 1.0.50
 
 ### Patch Changes

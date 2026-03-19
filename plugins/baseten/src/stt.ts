@@ -1,7 +1,15 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type AudioBuffer, AudioByteStream, Task, log, stt, waitForAbort } from '@livekit/agents';
+import {
+  type AudioBuffer,
+  AudioByteStream,
+  Task,
+  log,
+  normalizeLanguage,
+  stt,
+  waitForAbort,
+} from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
 import type { BasetenSttOptions } from './types.js';
@@ -54,6 +62,7 @@ export class STT extends stt.STT {
       apiKey,
       modelEndpoint,
       modelId,
+      audioLanguage: normalizeLanguage((opts.audioLanguage ?? defaultSTTOptions.audioLanguage)!),
     } as BasetenSttOptions;
   }
 
@@ -63,7 +72,14 @@ export class STT extends stt.STT {
   }
 
   updateOptions(opts: Partial<BasetenSttOptions>) {
-    this.#opts = { ...this.#opts, ...opts };
+    this.#opts = {
+      ...this.#opts,
+      ...opts,
+      audioLanguage:
+        opts.audioLanguage !== undefined
+          ? normalizeLanguage(opts.audioLanguage)
+          : this.#opts.audioLanguage,
+    };
   }
 
   stream(): SpeechStream {
@@ -222,7 +238,7 @@ export class SpeechStream extends stt.SpeechStream {
             const segments = msg.segments ?? [];
             const transcript = msg.transcript ?? '';
             const confidence = msg.confidence ?? 0.0;
-            const languageCode = msg.language_code ?? this.#opts.audioLanguage;
+            const languageCode = normalizeLanguage(msg.language_code ?? this.#opts.audioLanguage);
 
             // Skip if no transcript text
             if (!transcript) {
@@ -258,7 +274,7 @@ export class SpeechStream extends stt.SpeechStream {
             );
 
             const speechData: stt.SpeechData = {
-              language: languageCode!,
+              language: languageCode,
               text: transcript,
               startTime,
               endTime,

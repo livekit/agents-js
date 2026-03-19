@@ -281,6 +281,9 @@ importers:
       '@livekit/agents-plugin-silero':
         specifier: workspace:*
         version: link:../plugins/silero
+      '@livekit/agents-plugin-trugen':
+        specifier: workspace:*
+        version: link:../plugins/trugen
       '@livekit/agents-plugin-xai':
         specifier: workspace:*
         version: link:../plugins/xai
@@ -384,7 +387,7 @@ importers:
         version: 17.2.3
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.18.3)(zod@4.2.1)
+        version: 6.8.1(ws@8.18.3)(zod@4.3.6)
       ws:
         specifier: ^8.14.2
         version: 8.18.3
@@ -485,6 +488,9 @@ importers:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:^
+        version: link:../openai
       '@livekit/agents-plugin-silero':
         specifier: workspace:*
         version: link:../silero
@@ -544,8 +550,8 @@ importers:
   plugins/google:
     dependencies:
       '@google/genai':
-        specifier: ^1.34.0
-        version: 1.34.0
+        specifier: ^1.44.0
+        version: 1.44.0
       '@livekit/mutex':
         specifier: ^1.1.1
         version: 1.1.1
@@ -725,10 +731,13 @@ importers:
         version: 1.1.1
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.18.3)(zod@4.2.1)
+        version: 6.8.1(ws@8.18.3)(zod@4.3.6)
       ws:
         specifier: ^8.18.0
         version: 8.18.3
+      zod:
+        specifier: ^3.25.76 || ^4.1.8
+        version: 4.3.6
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -935,11 +944,36 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
 
+  plugins/trugen:
+      dependencies:
+        livekit-server-sdk:
+          specifier: ^2.13.3
+          version: 2.13.3
+      devDependencies:
+        '@livekit/agents':
+          specifier: workspace:*
+          version: link:../../agents
+        '@livekit/rtc-node':
+          specifier: 'catalog:'
+          version: 0.13.24
+        '@microsoft/api-extractor':
+          specifier: ^7.35.0
+          version: 7.43.7(@types/node@22.19.1)
+        pino:
+          specifier: ^8.19.0
+          version: 8.21.0
+        tsup:
+          specifier: ^8.3.5
+          version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.6)(tsx@4.21.0)(typescript@5.4.5)
+        typescript:
+          specifier: ^5.0.0
+          version: 5.4.5
+
   plugins/xai:
     dependencies:
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.18.3)(zod@4.2.1)
+        version: 6.8.1(ws@8.18.3)(zod@4.3.6)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1767,11 +1801,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@google/genai@1.34.0':
-    resolution: {integrity: sha512-vu53UMPvjmb7PGzlYu6Tzxso8Dfhn+a7eQFaS2uNemVtDZKwzSpJ5+ikqBbXplF7RGB1STcVDqCkPvquiwb2sw==}
+  '@google/genai@1.44.0':
+    resolution: {integrity: sha512-kRt9ZtuXmz+tLlcNntN/VV4LRdpl6ZOu5B1KbfNgfR65db15O6sUQcwnwLka8sT/V6qysD93fWrgJHF2L7dA9A==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
-      '@modelcontextprotocol/sdk': ^1.24.0
+      '@modelcontextprotocol/sdk': ^1.25.2
     peerDependenciesMeta:
       '@modelcontextprotocol/sdk':
         optional: true
@@ -2535,6 +2569,9 @@ packages:
 
   '@types/pidusage@2.0.5':
     resolution: {integrity: sha512-MIiyZI4/MK9UGUXWt0jJcCZhVw7YdhBuTOuqP/BjuLDLZ2PmmViMIQgZiWxtaMicQfAz/kMrZ5T7PKxFSkTeUA==}
+
+  '@types/retry@0.12.0':
+    resolution: {integrity: sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==}
 
   '@types/semver@7.5.8':
     resolution: {integrity: sha512-I8EUhyrgfLrcTkzV3TSsGyl1tSuPrEDzr0yd5m90UgNxQkyDXULk3b6MlQqTCpZpNtWe1K0hzclnZkTcLBe2UQ==}
@@ -3630,7 +3667,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
-    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+    deprecated: Glob versions prior to v9 are no longer supported
 
   global-agent@3.0.0:
     resolution: {integrity: sha512-PT6XReJ+D07JvGoxQMkT6qji/jVNfX/h364XHZOWeRzy64sSFr+xJ5OX7LI3b4MPQzdL4H8Y8M0xzPpsVMwA8Q==}
@@ -4354,6 +4391,10 @@ packages:
     resolution: {integrity: sha512-y3b8Kpd8OAN444hxfBbFfj1FY/RjtTd8tzYwhUqNYXx0fXx2iX4maP4Qr6qhIKbQXI02wTLAda4fYUbDagTUFw==}
     engines: {node: '>=6'}
 
+  p-retry@4.6.2:
+    resolution: {integrity: sha512-312Id396EbJdvRONlngUx0NydfrIQ5lsYu0znKVUzVvArzEIt08V1qhtyESbGVd1FGX7UKtiFp5uwKZdM8wIuQ==}
+    engines: {node: '>=8'}
+
   p-try@2.2.0:
     resolution: {integrity: sha512-R4nPAVTAU0B9D35/Gk3uJf/7XYbQcyohSKdvAxIRSNghFl4e71hVoGnBNQz9cWaXxO2I10KTC+3jMdvvoKw6dQ==}
     engines: {node: '>=6'}
@@ -4545,6 +4586,10 @@ packages:
     resolution: {integrity: sha512-mRUWCc3KUU4w1jU8sGxICXH/gNS94DvI1gxqDvBzhj1JpcsimQkYiOJfwsPUykUI5ZaspFbSgmBLER8IrQ3tqw==}
     engines: {node: '>=12.0.0'}
 
+  protobufjs@7.5.4:
+    resolution: {integrity: sha512-CvexbZtbov6jW2eXAvLukXjXUW1TzFaivC46BpWc/3BpcCysb5Vffu+B3XHMm8lVEuy2Mm4XGex8hBSg1yapPg==}
+    engines: {node: '>=12.0.0'}
+
   pump@3.0.0:
     resolution: {integrity: sha512-LwZy+p3SFs1Pytd/jYct4wpv49HiYCqd9Rlc5ZVdk0V+8Yzv6jR5Blk3TRmPL1ft69TxP0IMZGJ+WPFU2BFhww==}
 
@@ -4623,6 +4668,10 @@ packages:
   resolve@2.0.0-next.5:
     resolution: {integrity: sha512-U7WjGVG9sH8tvjW5SmGbQuui75FiyjAX72HX15DwBBwF9dNiQZRQAg9nnPhYy+TUnE0+VcrttuvNI8oSxZcocA==}
     hasBin: true
+
+  retry@0.13.1:
+    resolution: {integrity: sha512-XQBQ3I8W1Cge0Seh+6gjj03LbmRFWuoszgK9ooCpwYIrhhoO80pfq4cUkU5DkknwfOfFteRwlZ56PYOGYyFWdg==}
+    engines: {node: '>= 4'}
 
   reusify@1.0.4:
     resolution: {integrity: sha512-U9nH88a3fc/ekCF1l0/UP1IosiuIjyTh7hBvXVMHYgVcfGvt897Xguj2UOLDeI5BG2m7/uwyaLVT6fbtCwTyzw==}
@@ -4888,7 +4937,7 @@ packages:
   tar@7.4.3:
     resolution: {integrity: sha512-5S7Va8hKfV7W5U6g3aYxXmlPoZVAwUMy9AOKyF2fVuZa2UD3qZjg578OrLRt8PcNN1PleVaL/5/yYATNL0ICUw==}
     engines: {node: '>=18'}
-    deprecated: Old versions of tar are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+    deprecated: Old versions of tar are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exhorbitant rates) by contacting i@izs.me
 
   term-size@2.2.1:
     resolution: {integrity: sha512-wK0Ri4fOGjv/XPy8SBHZChl8CM7uMc5VML7SqiQ0zG7+J5Vr+RMQDoHa2CNT6KHUnTGIXH34UDMkPzAUyapBZg==}
@@ -5438,6 +5487,9 @@ packages:
 
   zod@4.2.1:
     resolution: {integrity: sha512-0wZ1IRqGGhMP76gLqz8EyfBXKk0J2qo2+H3fi4mcUP/KtTocoX08nmIAHl1Z2kJIZbZee8KOpBCSNPRgauucjw==}
+
+  zod@4.3.6:
+    resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
 snapshots:
 
@@ -6054,9 +6106,11 @@ snapshots:
   '@ffmpeg-installer/win32-x64@4.1.0':
     optional: true
 
-  '@google/genai@1.34.0':
+  '@google/genai@1.44.0':
     dependencies:
       google-auth-library: 10.5.0
+      p-retry: 4.6.2
+      protobufjs: 7.5.4
       ws: 8.18.3
     transitivePeerDependencies:
       - bufferutil
@@ -6857,6 +6911,8 @@ snapshots:
       undici-types: 6.21.0
 
   '@types/pidusage@2.0.5': {}
+
+  '@types/retry@0.12.0': {}
 
   '@types/semver@7.5.8': {}
 
@@ -8907,10 +8963,10 @@ snapshots:
       ws: 8.18.3
       zod: 3.25.76
 
-  openai@6.8.1(ws@8.18.3)(zod@4.2.1):
+  openai@6.8.1(ws@8.18.3)(zod@4.3.6):
     optionalDependencies:
       ws: 8.18.3
-      zod: 4.2.1
+      zod: 4.3.6
 
   optionator@0.9.4:
     dependencies:
@@ -8948,6 +9004,11 @@ snapshots:
       p-limit: 3.1.0
 
   p-map@2.1.0: {}
+
+  p-retry@4.6.2:
+    dependencies:
+      '@types/retry': 0.12.0
+      retry: 0.13.1
 
   p-try@2.2.0: {}
 
@@ -9157,6 +9218,21 @@ snapshots:
       '@types/node': 22.19.1
       long: 5.2.3
 
+  protobufjs@7.5.4:
+    dependencies:
+      '@protobufjs/aspromise': 1.1.2
+      '@protobufjs/base64': 1.1.2
+      '@protobufjs/codegen': 2.0.4
+      '@protobufjs/eventemitter': 1.1.0
+      '@protobufjs/fetch': 1.1.0
+      '@protobufjs/float': 1.0.2
+      '@protobufjs/inquire': 1.1.0
+      '@protobufjs/path': 1.1.2
+      '@protobufjs/pool': 1.1.0
+      '@protobufjs/utf8': 1.1.0
+      '@types/node': 22.19.1
+      long: 5.2.3
+
   pump@3.0.0:
     dependencies:
       end-of-stream: 1.4.4
@@ -9244,6 +9320,8 @@ snapshots:
       is-core-module: 2.13.1
       path-parse: 1.0.7
       supports-preserve-symlinks-flag: 1.0.0
+
+  retry@0.13.1: {}
 
   reusify@1.0.4: {}
 
@@ -10173,3 +10251,5 @@ snapshots:
   zod@3.25.76: {}
 
   zod@4.2.1: {}
+
+  zod@4.3.6: {}

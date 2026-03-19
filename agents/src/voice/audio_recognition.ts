@@ -19,6 +19,7 @@ import {
   type InterruptionSentinel,
   type OverlappingSpeechEvent,
 } from '../inference/interruption/types.js';
+import type { LanguageCode } from '../language.js';
 import { type ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream, isStreamReaderReleaseError } from '../stream/deferred_stream.js';
@@ -71,8 +72,8 @@ export interface _TurnDetector {
   readonly model: string;
   /** The provider name for this turn detector. */
   readonly provider: string;
-  unlikelyThreshold: (language?: string) => Promise<number | undefined>;
-  supportsLanguage: (language?: string) => Promise<boolean>;
+  unlikelyThreshold: (language?: LanguageCode) => Promise<number | undefined>;
+  supportsLanguage: (language?: LanguageCode) => Promise<boolean>;
   predictEndOfTurn(chatCtx: ChatContext, timeout?: number): Promise<number>;
 }
 
@@ -121,7 +122,7 @@ export class AudioRecognition {
   private turnDetectionMode?: TurnDetectionMode;
   private minEndpointingDelay: number;
   private maxEndpointingDelay: number;
-  private lastLanguage?: string;
+  private lastLanguage?: LanguageCode;
   private rootSpanContext?: Context;
   private sttModel?: string;
   private sttProvider?: string;

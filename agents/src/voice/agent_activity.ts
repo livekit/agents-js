@@ -1200,7 +1200,7 @@ export class AgentActivity implements RecognitionHooks {
 
         this._currentSpeech = speechHandle;
         speechHandle._authorizeGeneration();
-        await speechHandle._waitForGeneration();
+        await speechHandle.waitIfNotInterrupted([speechHandle._waitForGeneration()]);
         this._currentSpeech = undefined;
       }
 

@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-deepgram",
-  "version": "1.0.50",
+  "version": "1.0.51",
   "description": "Deepgram plugin for LiveKit Agents for Node.js",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -35,6 +35,7 @@
   },
   "devDependencies": {
     "@livekit/agents": "workspace:*",
+    "@livekit/agents-plugin-openai": "workspace:^",
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",

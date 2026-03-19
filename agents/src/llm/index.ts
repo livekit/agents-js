@@ -65,8 +65,10 @@ export {
   executeToolCall,
   oaiBuildFunctionInfo,
   oaiParams,
+  serializeImage,
   toJsonSchema,
   type OpenAIFunctionParameters,
+  type SerializedImage,
 } from './utils.js';
 
 export {
