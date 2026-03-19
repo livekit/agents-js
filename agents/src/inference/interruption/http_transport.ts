@@ -62,8 +62,7 @@ export async function predictHTTP(
       method: 'POST',
       body: data,
     });
-    const { created_at, is_bargein, probabilities } =
-      predictEndpointResponseSchema.parse(response);
+    const { created_at, is_bargein, probabilities } = predictEndpointResponseSchema.parse(response);
 
     return {
       createdAt: created_at,

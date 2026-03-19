@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { TextStreamReader } from '@livekit/rtc-node';
 import {
   type AudioFrame,
   ConnectionState,
@@ -12,7 +13,6 @@ import {
   type RemoteParticipant,
   type Room,
   RoomEvent,
-  TextStreamReader,
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';

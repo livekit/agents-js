@@ -67,10 +67,12 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
     turnDetection: sessionOptions?.turnHandling?.turnDetection ?? turnDetection,
   } as const;
 
-  if (voiceOptions?.allowInterruptions === false && turnHandling.interruption.enabled === undefined) {
+  if (
+    voiceOptions?.allowInterruptions === false &&
+    turnHandling.interruption.enabled === undefined
+  ) {
     turnHandling.interruption.enabled = false;
   }
-
 
   const migratedVoiceOptions: AgentSessionOptions<UserData> = {};
 
