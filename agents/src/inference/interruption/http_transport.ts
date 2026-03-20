@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { Throws } from '@livekit/throws-transformer/throws';
 import { FetchError, ofetch } from 'ofetch';
 import { TransformStream } from 'stream/web';
 import { z } from 'zod';
@@ -43,7 +44,7 @@ export async function predictHTTP(
   data: Int16Array,
   predictOptions: PredictOptions,
   options: PostOptions,
-): Promise<PredictResponse> {
+): Promise<Throws<PredictResponse, APIConnectionError | APIStatusError | APIError>> {
   const createdAt = performance.now();
   const url = new URL(`/bargein`, options.baseUrl);
   url.searchParams.append('threshold', predictOptions.threshold.toString());

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { Throws } from '@livekit/throws-transformer/throws';
+import TypedPromise from 'agents/src/typed_promise.js';
 import { TransformStream } from 'stream/web';
 import WebSocket from 'ws';
 import { z } from 'zod';
@@ -70,7 +72,9 @@ type WsMessage = z.infer<typeof wsMessageSchema>;
 /**
  * Creates a WebSocket connection and waits for it to open.
  */
-async function connectWebSocket(options: WsTransportOptions): Promise<WebSocket> {
+async function connectWebSocket(
+  options: WsTransportOptions,
+): Promise<Throws<WebSocket, APIStatusError | APITimeoutError | APIConnectionError>> {
   const baseUrl = options.baseUrl.replace(/^http/, 'ws');
   const token = await createAccessToken(options.apiKey, options.apiSecret);
   const url = `${baseUrl}/bargein`;
@@ -79,37 +83,39 @@ async function connectWebSocket(options: WsTransportOptions): Promise<WebSocket>
     headers: { Authorization: `Bearer ${token}` },
   });
 
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      ws.terminate();
-      reject(
-        new APITimeoutError({
-          message: 'WebSocket connection timeout',
-          options: { retryable: false },
-        }),
-      );
-    }, options.timeout);
-    ws.once('open', () => {
-      clearTimeout(timeout);
-      resolve();
-    });
-    ws.once('unexpected-response', (_req, res) => {
-      clearTimeout(timeout);
-      ws.terminate();
-      const statusCode = res.statusCode ?? -1;
-      reject(
-        new APIStatusError({
-          message: `WebSocket connection rejected with status ${statusCode}`,
-          options: { statusCode, retryable: false },
-        }),
-      );
-    });
-    ws.once('error', (err: Error) => {
-      clearTimeout(timeout);
-      ws.terminate();
-      reject(new APIConnectionError({ message: `WebSocket connection error: ${err.message}` }));
-    });
-  });
+  await new TypedPromise<void, APIStatusError | APITimeoutError | APIConnectionError>(
+    (resolve, reject) => {
+      const timeout = setTimeout(() => {
+        ws.terminate();
+        reject(
+          new APITimeoutError({
+            message: 'WebSocket connection timeout',
+            options: { retryable: false },
+          }),
+        );
+      }, options.timeout);
+      ws.once('open', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      ws.once('unexpected-response', (_req, res) => {
+        clearTimeout(timeout);
+        ws.terminate();
+        const statusCode = res.statusCode ?? -1;
+        reject(
+          new APIStatusError({
+            message: `WebSocket connection rejected with status ${statusCode}`,
+            options: { statusCode, retryable: false },
+          }),
+        );
+      });
+      ws.once('error', (err: Error) => {
+        clearTimeout(timeout);
+        ws.terminate();
+        reject(new APIConnectionError({ message: `WebSocket connection error: ${err.message}` }));
+      });
+    },
+  );
 
   return ws;
 }
@@ -159,7 +165,9 @@ export function createWsTransport(
     });
   }
 
-  async function ensureConnection(): Promise<void> {
+  async function ensureConnection(): Promise<
+    Throws<void, APIStatusError | APITimeoutError | APIConnectionError>
+  > {
     if (ws && ws.readyState === WebSocket.OPEN) return;
 
     ws = await connectWebSocket(options);
@@ -357,7 +365,9 @@ export function createWsTransport(
     {
       async start(controller) {
         outputController = controller;
-        await ensureConnection();
+        await ensureConnection().catch((e) => {
+          controller.error(e);
+        });
       },
 
       transform(chunk, controller) {
