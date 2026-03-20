@@ -125,6 +125,63 @@ describe('IPC send on dead process', () => {
   });
 });
 
+describe('init timeout rejection handling', () => {
+  it('does not produce unhandled rejection when init times out', async () => {
+    // Regression test: before the fix, run() was called without await in start().
+    // When init timed out, the rejection in run()'s `await this.init.await` escaped
+    // as an unhandled rejection — crashing the Node.js process.
+    const unhandled: unknown[] = [];
+    const handler = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', handler);
+
+    // Child that responds AFTER the timeout — simulates slow init under CPU pressure.
+    // Timeout fires at 50ms (init.reject), child responds at 200ms (once() resolves).
+    // Before the fix, init.reject caused an unhandled rejection in run().
+    const slowScript = join(tmpdir(), 'test_slow_init_child.mjs');
+    writeFileSync(
+      slowScript,
+      `process.on('message', () => {
+        setTimeout(() => process.send({ case: 'initializeResponse' }), 200);
+      });
+      setInterval(() => {}, 1000);`,
+    );
+
+    const { SupervisedProc } = await import('./supervised_proc.js');
+    class TestProc extends SupervisedProc {
+      createProcess() {
+        return fork(slowScript, [], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
+      }
+      async mainTask() {}
+    }
+
+    const proc = new TestProc(
+      50, // initializeTimeout — fires before child responds at 200ms
+      1000, // closeTimeout
+      0, // memoryWarnMB
+      0, // memoryLimitMB
+      5000, // pingInterval
+      60000, // pingTimeout
+      2500, // highPingThreshold
+    );
+
+    await proc.start();
+    // initialize() returns normally: child responds at 200ms, once() resolves,
+    // but init was already rejected at 50ms — run() gets the rejection.
+    await proc.initialize();
+
+    // Give the event loop a tick for any unhandled rejection to surface
+    await new Promise((r) => setTimeout(r, 100));
+
+    process.off('unhandledRejection', handler);
+    proc.proc?.kill();
+    try {
+      unlinkSync(slowScript);
+    } catch {}
+
+    expect(unhandled).toEqual([]);
+  });
+});
+
 describe('timer cleanup', () => {
   it('clearInterval stops the interval', async () => {
     let count = 0;
