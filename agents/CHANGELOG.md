@@ -1,5 +1,32 @@
 # @livekit/agents
 
+## 1.2.0
+
+### Minor Changes
+
+- - Add adaptive interruption handling - [#1002](https://github.com/livekit/agents-js/pull/1002) ([@lukasIO](https://github.com/lukasIO))
+  - Add remote session event handler
+
+### Patch Changes
+
+- Support Image Input for OpenAI realtime model - [#1094](https://github.com/livekit/agents-js/pull/1094) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Fix hanging process when participant disconnects during init - [#1087](https://github.com/livekit/agents-js/pull/1087) ([@lukasIO](https://github.com/lukasIO))
+
+## 1.1.0
+
+deprecated
+
+## 1.0.51
+
+### Patch Changes
+
+- Standardize LanguageCode handling - [#1120](https://github.com/livekit/agents-js/pull/1120) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Bun and deno runtime stream release fixes - [#1135](https://github.com/livekit/agents-js/pull/1135) ([@lukasIO](https://github.com/lukasIO))
+
+- Prevent mainTask hang when speech handle is interrupted after authorization - [#1126](https://github.com/livekit/agents-js/pull/1126) ([@enriqueespaillat-gyde](https://github.com/enriqueespaillat-gyde))
+
 ## 1.0.50
 
 ### Patch Changes

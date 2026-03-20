@@ -73,6 +73,10 @@ export abstract class RealtimeModel {
   /** The model name/identifier used by this realtime model */
   abstract get model(): string;
 
+  get provider(): string {
+    return 'unknown';
+  }
+
   abstract session(): RealtimeSession;
 
   abstract close(): Promise<void>;

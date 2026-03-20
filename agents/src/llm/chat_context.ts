@@ -81,6 +81,17 @@ export function createAudioContent(params: {
   };
 }
 
+export interface MetricsReport {
+  startedSpeakingAt?: number;
+  stoppedSpeakingAt?: number;
+  transcriptionDelay?: number;
+  endOfTurnDelay?: number;
+  onUserTurnCompletedDelay?: number;
+  llmNodeTtft?: number;
+  ttsNodeTtfb?: number;
+  e2eLatency?: number;
+}
+
 export class ChatMessage {
   readonly id: string;
 
@@ -92,11 +103,15 @@ export class ChatMessage {
 
   interrupted: boolean;
 
+  transcriptConfidence?: number;
+
+  extra: Record<string, unknown>;
+
+  metrics: MetricsReport;
+
   hash?: Uint8Array;
 
   createdAt: number;
-
-  extra: Record<string, unknown>;
 
   constructor(params: {
     role: ChatRole;
@@ -104,6 +119,8 @@ export class ChatMessage {
     id?: string;
     interrupted?: boolean;
     createdAt?: number;
+    transcriptConfidence?: number;
+    metrics?: MetricsReport;
     extra?: Record<string, unknown>;
   }) {
     const {
@@ -112,6 +129,8 @@ export class ChatMessage {
       id = shortuuid('item_'),
       interrupted = false,
       createdAt = Date.now(),
+      transcriptConfidence,
+      metrics = {},
       extra = {},
     } = params;
     this.id = id;
@@ -119,6 +138,8 @@ export class ChatMessage {
     this.content = Array.isArray(content) ? content : [content];
     this.interrupted = interrupted;
     this.createdAt = createdAt;
+    this.transcriptConfidence = transcriptConfidence;
+    this.metrics = metrics;
     this.extra = extra;
   }
 
@@ -128,6 +149,8 @@ export class ChatMessage {
     id?: string;
     interrupted?: boolean;
     createdAt?: number;
+    transcriptConfidence?: number;
+    metrics?: MetricsReport;
     extra?: Record<string, unknown>;
   }) {
     return new ChatMessage(params);
@@ -177,6 +200,16 @@ export class ChatMessage {
 
     if (!excludeTimestamp) {
       result.createdAt = this.createdAt;
+    }
+
+    if (this.transcriptConfidence !== undefined) {
+      result.transcriptConfidence = this.transcriptConfidence;
+    }
+    if (Object.keys(this.metrics).length > 0) {
+      result.metrics = { ...this.metrics };
+    }
+    if (Object.keys(this.extra).length > 0) {
+      result.extra = this.extra as JSONValue;
     }
 
     return result;
@@ -439,6 +472,8 @@ export class ChatContext {
     id?: string;
     interrupted?: boolean;
     createdAt?: number;
+    transcriptConfidence?: number;
+    metrics?: MetricsReport;
     extra?: Record<string, unknown>;
   }): ChatMessage {
     const msg = new ChatMessage(params);
@@ -623,6 +658,9 @@ export class ChatContext {
           id: item.id,
           interrupted: item.interrupted,
           createdAt: item.createdAt,
+          transcriptConfidence: item.transcriptConfidence,
+          metrics: item.metrics,
+          extra: item.extra,
         });
 
         // Filter content based on options
@@ -782,14 +820,49 @@ export class ChatContext {
   async _summarize(llm: LLM, options: { keepLastTurns?: number } = {}): Promise<ChatContext> {
     const { keepLastTurns = 2 } = options;
 
-    const toSummarize: ChatMessage[] = [];
-    for (const item of this._items) {
-      if (item.type !== 'message') continue;
-      if (item.role !== 'user' && item.role !== 'assistant') continue;
-      if (item.extra?.is_summary === true) continue;
+    // Split the history into a head/tail over the full item stream so recent
+    // tool calls/outputs stay attached to the turns they belong to.
+    const msgBudget = keepLastTurns * 2;
+    let splitIdx = this._items.length;
 
-      const text = (item.textContent ?? '').trim();
-      if (text) {
+    if (msgBudget > 0) {
+      let msgCount = 0;
+      let foundSplit = false;
+      for (let i = this._items.length - 1; i >= 0; i -= 1) {
+        const item = this._items[i]!;
+        if (item.type === 'message' && (item.role === 'user' || item.role === 'assistant')) {
+          msgCount += 1;
+          if (msgCount >= msgBudget) {
+            splitIdx = i;
+            foundSplit = true;
+            break;
+          }
+        }
+      }
+
+      if (!foundSplit) {
+        return this;
+      }
+    }
+
+    if (splitIdx === 0) {
+      return this;
+    }
+
+    const headItems = this._items.slice(0, splitIdx);
+    const tailItems = this._items.slice(splitIdx);
+
+    const toSummarize: Array<ChatMessage | FunctionCall | FunctionCallOutput> = [];
+    for (const item of headItems) {
+      if (item.type === 'message') {
+        if (item.role !== 'user' && item.role !== 'assistant') continue;
+        if (item.extra?.is_summary === true) continue;
+
+        const text = (item.textContent ?? '').trim();
+        if (text) {
+          toSummarize.push(item);
+        }
+      } else if (item.type === 'function_call' || item.type === 'function_call_output') {
         toSummarize.push(item);
       }
     }
@@ -798,23 +871,14 @@ export class ChatContext {
       return this;
     }
 
-    const tailN = Math.max(0, Math.min(toSummarize.length, keepLastTurns * 2));
-    let head: ChatMessage[];
-    let tail: ChatMessage[];
-    if (tailN === 0) {
-      head = toSummarize;
-      tail = [];
-    } else {
-      head = toSummarize.slice(0, -tailN);
-      tail = toSummarize.slice(-tailN);
-    }
+    const sourceText = toSummarize
+      .map((item) => {
+        if (item.type === 'message') {
+          return toXml(item.role, (item.textContent ?? '').trim());
+        }
 
-    if (head.length === 0) {
-      return this;
-    }
-
-    const sourceText = head
-      .map((m) => `${m.role}: ${(m.textContent ?? '').trim()}`)
+        return functionCallItemToMessage(item).textContent ?? '';
+      })
       .join('\n')
       .trim();
 
@@ -826,10 +890,21 @@ export class ChatContext {
     const promptCtx = new ChatContext();
     promptCtx.addMessage({
       role: 'system',
-      content:
-        'Compress older chat history into a short, faithful summary.\n' +
-        'Focus on user goals, constraints, decisions, key facts/preferences/entities, and pending tasks.\n' +
-        'Exclude chit-chat and greetings. Be concise.',
+      content: [
+        'Compress older conversation history into a short, faithful summary.',
+        '',
+        'The conversation is formatted as XML. Here is how to read it:',
+        '- <user>...</user>  - something the user said.',
+        '- <assistant>...</assistant>  - something the assistant said.',
+        '- <function_call name="..." call_id="...">...</function_call>  - the assistant invoked an action.',
+        '- <function_call_output name="..." call_id="...">...</function_call_output>  - the result of that action. May contain <error>...</error> if it failed.',
+        '',
+        'Guidelines:',
+        '- Distill the information learned from function call outputs into the summary. Do not mention that a tool or function was called; just preserve the knowledge gained.',
+        '- Focus on user goals, constraints, decisions, key facts, preferences, entities, and any pending or unresolved tasks.',
+        '- Omit greetings, filler, and chit-chat.',
+        '- Be concise.',
+      ].join('\n'),
     });
     promptCtx.addMessage({
       role: 'user',
@@ -848,18 +923,13 @@ export class ChatContext {
       return this;
     }
 
-    const tailStartTs = tail.length > 0 ? tail[0]!.createdAt : Infinity;
-
     const preserved: ChatItem[] = [];
-    for (const it of this._items) {
-      if (
-        (it.type === 'function_call' || it.type === 'function_call_output') &&
-        it.createdAt < tailStartTs
-      ) {
+    for (const it of headItems) {
+      if (it.type === 'message' && (it.role === 'user' || it.role === 'assistant')) {
         continue;
       }
 
-      if (it.type === 'message' && (it.role === 'user' || it.role === 'assistant')) {
+      if (it.type === 'function_call' || it.type === 'function_call_output') {
         continue;
       }
 
@@ -869,18 +939,18 @@ export class ChatContext {
     this._items = preserved;
 
     const createdAtHint =
-      tail.length > 0 ? tail[0]!.createdAt - 1e-3 : head[head.length - 1]!.createdAt + 1e-3;
+      tailItems.length > 0
+        ? tailItems[0]!.createdAt - 1e-6
+        : headItems[headItems.length - 1]!.createdAt + 1e-6;
 
     this.addMessage({
       role: 'assistant',
-      content: `[history summary]\n${summary}`,
+      content: toXml('chat_history_summary', summary),
       createdAt: createdAtHint,
       extra: { is_summary: true },
     });
 
-    for (const msg of tail) {
-      this.insert(msg);
-    }
+    this._items.push(...tailItems);
 
     return this;
   }
@@ -891,6 +961,55 @@ export class ChatContext {
   get readonly(): boolean {
     return false;
   }
+}
+
+function toAttrsStr(attrs?: Record<string, unknown>): string | undefined {
+  if (!attrs) {
+    return undefined;
+  }
+
+  return Object.entries(attrs)
+    .map(([key, value]) => `${key}="${String(value)}"`)
+    .join(' ');
+}
+
+function toXml(tagName: string, content?: string, attrs?: Record<string, unknown>): string {
+  const attrsStr = toAttrsStr(attrs);
+  if (content) {
+    return [attrsStr ? `<${tagName} ${attrsStr}>` : `<${tagName}>`, content, `</${tagName}>`].join(
+      '\n',
+    );
+  }
+
+  return attrsStr ? `<${tagName} ${attrsStr} />` : `<${tagName} />`;
+}
+
+function functionCallItemToMessage(item: FunctionCall | FunctionCallOutput): ChatMessage {
+  if (item.type === 'function_call') {
+    return new ChatMessage({
+      role: 'user',
+      content: [
+        toXml('function_call', item.args, {
+          name: item.name,
+          call_id: item.callId,
+        }),
+      ],
+      createdAt: item.createdAt,
+      extra: { is_function_call: true },
+    });
+  }
+
+  return new ChatMessage({
+    role: 'assistant',
+    content: [
+      toXml('function_call_output', item.isError ? toXml('error', item.output) : item.output, {
+        name: item.name,
+        call_id: item.callId,
+      }),
+    ],
+    createdAt: item.createdAt,
+    extra: { is_function_call_output: true },
+  });
 }
 
 export class ReadonlyChatContext extends ChatContext {

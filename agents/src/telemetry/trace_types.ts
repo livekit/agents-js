@@ -33,6 +33,7 @@ export const ATTR_PROVIDER_TOOLS = 'lk.provider_tools';
 export const ATTR_TOOL_SETS = 'lk.tool_sets';
 export const ATTR_RESPONSE_TEXT = 'lk.response.text';
 export const ATTR_RESPONSE_FUNCTION_CALLS = 'lk.response.function_calls';
+/** Time to first token in seconds. */
 export const ATTR_RESPONSE_TTFT = 'lk.response.ttft';
 
 // function tool
@@ -46,6 +47,7 @@ export const ATTR_FUNCTION_TOOL_OUTPUT = 'lk.function_tool.output';
 export const ATTR_TTS_INPUT_TEXT = 'lk.input_text';
 export const ATTR_TTS_STREAMING = 'lk.tts.streaming';
 export const ATTR_TTS_LABEL = 'lk.tts.label';
+/** Time to first byte in seconds. */
 export const ATTR_RESPONSE_TTFB = 'lk.response.ttfb';
 
 // eou detection
@@ -58,18 +60,26 @@ export const ATTR_TRANSCRIPT_CONFIDENCE = 'lk.transcript_confidence';
 export const ATTR_TRANSCRIPTION_DELAY = 'lk.transcription_delay';
 export const ATTR_END_OF_TURN_DELAY = 'lk.end_of_turn_delay';
 
+// Adaptive Interruption attributes
+export const ATTR_IS_INTERRUPTION = 'lk.is_interruption';
+export const ATTR_INTERRUPTION_PROBABILITY = 'lk.interruption.probability';
+export const ATTR_INTERRUPTION_TOTAL_DURATION = 'lk.interruption.total_duration';
+export const ATTR_INTERRUPTION_PREDICTION_DURATION = 'lk.interruption.prediction_duration';
+export const ATTR_INTERRUPTION_DETECTION_DELAY = 'lk.interruption.detection_delay';
+
 // metrics
 export const ATTR_LLM_METRICS = 'lk.llm_metrics';
 export const ATTR_TTS_METRICS = 'lk.tts_metrics';
 export const ATTR_REALTIME_MODEL_METRICS = 'lk.realtime_model_metrics';
 
-// latency span attributes
+/** End-to-end latency in seconds. */
 export const ATTR_E2E_LATENCY = 'lk.e2e_latency';
 
 // OpenTelemetry GenAI attributes
 // OpenTelemetry specification: https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/
 export const ATTR_GEN_AI_OPERATION_NAME = 'gen_ai.operation.name';
 export const ATTR_GEN_AI_REQUEST_MODEL = 'gen_ai.request.model';
+/** The provider name (e.g., 'openai', 'anthropic'). */
 export const ATTR_GEN_AI_PROVIDER_NAME = 'gen_ai.provider.name';
 export const ATTR_GEN_AI_USAGE_INPUT_TOKENS = 'gen_ai.usage.input_tokens';
 export const ATTR_GEN_AI_USAGE_OUTPUT_TOKENS = 'gen_ai.usage.output_tokens';
@@ -97,10 +107,3 @@ export const ATTR_EXCEPTION_MESSAGE = 'exception.message';
 
 // Platform-specific attributes
 export const ATTR_LANGFUSE_COMPLETION_START_TIME = 'langfuse.observation.completion_start_time';
-
-// Adaptive Interruption attributes
-export const ATTR_IS_INTERRUPTION = 'lk.is_interruption';
-export const ATTR_INTERRUPTION_PROBABILITY = 'lk.interruption.probability';
-export const ATTR_INTERRUPTION_TOTAL_DURATION = 'lk.interruption.total_duration';
-export const ATTR_INTERRUPTION_PREDICTION_DURATION = 'lk.interruption.prediction_duration';
-export const ATTR_INTERRUPTION_DETECTION_DELAY = 'lk.interruption.detection_delay';

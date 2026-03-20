@@ -30,6 +30,7 @@ export {
   type ChatItem,
   type ChatRole,
   type ImageContent,
+  type MetricsReport,
 } from './chat_context.js';
 
 export type { ProviderFormat } from './provider_format/index.js';
@@ -62,10 +63,14 @@ export {
   computeChatCtxDiff,
   createToolOptions,
   executeToolCall,
+  formatChatHistory,
   oaiBuildFunctionInfo,
   oaiParams,
+  serializeImage,
   toJsonSchema,
+  type FormatChatHistoryOptions,
   type OpenAIFunctionParameters,
+  type SerializedImage,
 } from './utils.js';
 
 export {

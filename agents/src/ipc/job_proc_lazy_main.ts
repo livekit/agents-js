@@ -120,27 +120,36 @@ const startJob = (
       }
     }, 10000);
 
-    // Run the job function within the AsyncLocalStorage context
-    await runWithJobContextAsync(ctx, async () => {
-      const { tracer, traceTypes } = await import('../telemetry/index.js');
-      return tracer.startActiveSpan(
-        async (span) => {
-          span.setAttribute(traceTypes.ATTR_JOB_ID, info.job.id);
-          span.setAttribute(traceTypes.ATTR_AGENT_NAME, info.job.agentName);
-          span.setAttribute(traceTypes.ATTR_ROOM_NAME, info.job.room?.name ?? '');
-          return func(ctx);
-        },
-        { name: 'job_entrypoint' },
-      );
-    }).finally(() => {
-      clearTimeout(unconnectedTimeout);
-    });
+    try {
+      // Run the job function within the AsyncLocalStorage context
+      await runWithJobContextAsync(ctx, async () => {
+        const { tracer, traceTypes } = await import('../telemetry/index.js');
+        return tracer.startActiveSpan(
+          async (span) => {
+            span.setAttribute(traceTypes.ATTR_JOB_ID, info.job.id);
+            span.setAttribute(traceTypes.ATTR_AGENT_NAME, info.job.agentName);
+            span.setAttribute(traceTypes.ATTR_ROOM_NAME, info.job.room?.name ?? '');
+            return func(ctx);
+          },
+          { name: 'job_entrypoint' },
+        );
+      }).finally(() => {
+        clearTimeout(unconnectedTimeout);
+      });
 
-    await once(closeEvent, 'close').then((close) => {
-      logger.debug('shutting down');
+      await once(closeEvent, 'close').then((close) => {
+        logger.debug('shutting down');
+        shutdown = true;
+        safeSend({ case: 'exiting', value: { reason: close[1] } });
+      });
+    } catch (error) {
+      logger.error({ error }, 'error in entry function');
       shutdown = true;
-      safeSend({ case: 'exiting', value: { reason: close[1] } });
-    });
+      safeSend({
+        case: 'exiting',
+        value: { reason: error instanceof Error ? error.message : String(error) },
+      });
+    }
 
     // Close the primary agent session if it exists
     if (ctx._primaryAgentSession) {

@@ -35,6 +35,8 @@ import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 import type { TimedString } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
+import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
+import { migrateTurnHandling } from './turn_config/utils.js';
 
 export const functionCallStorage = new AsyncLocalStorage<{ functionCall?: FunctionCall }>();
 export const speechHandleStorage = new AsyncLocalStorage<SpeechHandle>();
@@ -110,23 +112,28 @@ export interface AgentOptions<UserData> {
   instructions: string;
   chatCtx?: ChatContext;
   tools?: ToolContext<UserData>;
-  turnDetection?: TurnDetectionMode;
   stt?: STT | STTModelString;
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
   tts?: TTS | TTSModelString;
-  allowInterruptions?: boolean;
+  turnHandling?: TurnHandlingOptions;
   minConsecutiveSpeechDelay?: number;
   useTtsAlignedTranscript?: boolean;
+  /** @deprecated use turnHandling.turnDetection instead */
+  turnDetection?: TurnDetectionMode;
+  /** @deprecated use turnHandling.interruption.enabled instead */
+  allowInterruptions?: boolean;
 }
 
 export class Agent<UserData = any> {
   private _id: string;
-  private turnDetection?: TurnDetectionMode;
   private _stt?: STT;
   private _vad?: VAD;
   private _llm?: LLM | RealtimeModel;
   private _tts?: TTS;
+  private _turnHandling?: Partial<TurnHandlingOptions>;
+
+  private _minConsecutiveSpeechDelay?: number;
   private _useTtsAlignedTranscript?: boolean;
 
   /** @internal */
@@ -151,12 +158,14 @@ export class Agent<UserData = any> {
     vad,
     llm,
     tts,
+    allowInterruptions,
+    turnHandling,
+    minConsecutiveSpeechDelay,
     useTtsAlignedTranscript,
   }: AgentOptions<UserData>) {
     if (id) {
       this._id = id;
     } else {
-      // Convert class name to snake_case
       const className = this.constructor.name;
       if (className === 'Agent') {
         this._id = 'default_agent';
@@ -176,7 +185,14 @@ export class Agent<UserData = any> {
         })
       : ChatContext.empty();
 
-    this.turnDetection = turnDetection;
+    const resolvedTurnHandling = migrateTurnHandling({
+      turnDetection,
+      allowInterruptions,
+      turnHandling,
+    });
+    this._turnHandling =
+      Object.keys(resolvedTurnHandling).length > 0 ? resolvedTurnHandling : undefined;
+
     this._vad = vad;
 
     if (typeof stt === 'string') {
@@ -197,6 +213,7 @@ export class Agent<UserData = any> {
       this._tts = tts;
     }
 
+    this._minConsecutiveSpeechDelay = minConsecutiveSpeechDelay;
     this._useTtsAlignedTranscript = useTtsAlignedTranscript;
 
     this._agentActivity = undefined;
@@ -240,6 +257,14 @@ export class Agent<UserData = any> {
 
   get session(): AgentSession<UserData> {
     return this.getActivityOrThrow().agentSession as AgentSession<UserData>;
+  }
+
+  get turnHandling(): Partial<TurnHandlingOptions> | undefined {
+    return this._turnHandling;
+  }
+
+  get minConsecutiveSpeechDelay(): number | undefined {
+    return this._minConsecutiveSpeechDelay;
   }
 
   async onEnter(): Promise<void> {}
@@ -341,7 +366,8 @@ export class Agent<UserData = any> {
 
       // Set startTimeOffset to provide linear timestamps across reconnections
       const audioInputStartedAt =
-        activity.agentSession._recorderIO?.recordingStartedAt ?? // Use recording start time if available
+        activity.inputStartedAt ?? // Use input started at proxied from AudioRecognition if available
+        activity.agentSession._recorderIO?.recordingStartedAt ?? // Fallback to recording start time if available
         activity.agentSession._startedAt ?? // Fallback to session start time
         Date.now(); // Fallback to current time
 

@@ -12,6 +12,7 @@ import {
 } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -43,9 +44,27 @@ export default defineAgent({
       },
     });
 
+    const chatCtx = new llm.ChatContext();
+
+    const sampleImageBase64 = readFileSync(
+      new URL('../assets/walking-dogs.png', import.meta.url),
+    ).toString('base64');
+
+    // realtime LLM with image input
+    chatCtx.addMessage({
+      role: 'user',
+      content: [
+        llm.createImageContent({
+          image: `data:image/png;base64,${sampleImageBase64}`,
+          mimeType: 'image/png',
+        }),
+      ],
+    });
+
     const agent = new voice.Agent({
       instructions:
         "You are a helpful assistant created by LiveKit, always speaking English, you can hear the user's message and respond to it.",
+      chatCtx,
       tools: {
         getWeather,
         toggleLight,
@@ -68,6 +87,10 @@ export default defineAgent({
 
     session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
       console.log('metrics_collected', ev);
+    });
+
+    session.generateReply({
+      instructions: 'Describe this image.',
     });
   },
 });

@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { log } from '../log.js';
 import type { AgentMetrics } from './base.js';
 
+/**
+ * @deprecated Use LLMModelUsage, TTSModelUsage, or STTModelUsage instead.
+ * These new types provide per-model/provider usage aggregation for more detailed tracking.
+ */
 export interface UsageSummary {
   llmPromptTokens: number;
   llmPromptCachedTokens: number;
@@ -11,10 +16,16 @@ export interface UsageSummary {
   sttAudioDurationMs: number;
 }
 
+/**
+ * @deprecated Use ModelUsageCollector instead.
+ * ModelUsageCollector provides per-model/provider usage aggregation for more detailed tracking.
+ */
 export class UsageCollector {
   private summary: UsageSummary;
+  private logger = log();
 
   constructor() {
+    this.logger.warn('UsageCollector is deprecated. Use ModelUsageCollector instead.');
     this.summary = {
       llmPromptTokens: 0,
       llmPromptCachedTokens: 0,

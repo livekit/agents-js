@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
+import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import type { LanguageCode } from '../language.js';
 import type {
   ChatMessage,
@@ -26,6 +28,7 @@ export enum AgentSessionEventTypes {
   FunctionToolsExecuted = 'function_tools_executed',
   MetricsCollected = 'metrics_collected',
   SpeechCreated = 'speech_created',
+  OverlappingSpeech = 'overlapping_speech',
   Error = 'error',
   Close = 'close',
 }
@@ -216,13 +219,13 @@ export const createSpeechCreatedEvent = ({
 
 export type ErrorEvent = {
   type: 'error';
-  error: RealtimeModelError | STTError | TTSError | LLMError | unknown;
+  error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError | unknown;
   source: LLM | STT | TTS | RealtimeModel | unknown;
   createdAt: number;
 };
 
 export const createErrorEvent = (
-  error: RealtimeModelError | STTError | TTSError | LLMError | unknown,
+  error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError | unknown,
   source: LLM | STT | TTS | RealtimeModel | unknown,
   createdAt: number = Date.now(),
 ): ErrorEvent => ({
@@ -234,14 +237,20 @@ export const createErrorEvent = (
 
 export type CloseEvent = {
   type: 'close';
-  error: RealtimeModelError | STTError | TTSError | LLMError | null;
+  error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError | null;
   reason: ShutdownReason;
   createdAt: number;
 };
 
 export const createCloseEvent = (
   reason: ShutdownReason,
-  error: RealtimeModelError | STTError | TTSError | LLMError | null = null,
+  error:
+    | RealtimeModelError
+    | STTError
+    | TTSError
+    | LLMError
+    | InterruptionDetectionError
+    | null = null,
   createdAt: number = Date.now(),
 ): CloseEvent => ({
   type: 'close',
@@ -258,5 +267,6 @@ export type AgentEvent =
   | ConversationItemAddedEvent
   | FunctionToolsExecutedEvent
   | SpeechCreatedEvent
+  | OverlappingSpeechEvent
   | ErrorEvent
   | CloseEvent;
