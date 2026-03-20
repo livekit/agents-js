@@ -248,7 +248,15 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     startSoon(() => this.mainTask().finally(() => this.queue.close()));
   }
 
-  private async mainTask() {
+  /**
+   * Runs the STT with retry logic. Errors are emitted via {@link STT} error events
+   * and then re-thrown to trigger `.finally()` cleanup.
+   *
+   * @throws {APIError} When the STT request fails with a non-retryable error
+   * @throws {APIConnectionError} When all retry attempts are exhausted
+   * @internal Not annotated with Throws<> because this is fire-and-forget via startSoon()
+   */
+  private async mainTask(): Promise<void> {
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
         return await this.run();

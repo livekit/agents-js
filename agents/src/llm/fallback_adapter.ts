@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { Throws } from '@livekit/throws-transformer/throws';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
@@ -186,11 +187,12 @@ class FallbackLLMStream extends LLMStream {
   /**
    * Try to generate with a single LLM.
    * Returns an async generator that yields chunks.
+   * @throws {APIError} When the LLM returns an API error (retryable or not)
    */
   private async *tryGenerate(
     llm: LLM,
     checkRecovery: boolean = false,
-  ): AsyncGenerator<ChatChunk, void, unknown> {
+  ): AsyncGenerator<Throws<ChatChunk, APIError>, void, unknown> {
     const connOptions: APIConnectOptions = {
       ...this.connOptions,
       maxRetry: this.adapter.maxRetryPerLLM,
@@ -296,8 +298,9 @@ class FallbackLLMStream extends LLMStream {
 
   /**
    * Main run method - iterates through LLMs with fallback logic.
+   * @throws {APIConnectionError} When all LLM providers have been exhausted
    */
-  protected async run(): Promise<void> {
+  protected async run(): Promise<Throws<void, APIConnectionError>> {
     const startTime = Date.now();
 
     // Check if all LLMs are unavailable

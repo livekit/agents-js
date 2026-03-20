@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioResampler } from '@livekit/rtc-node';
+import type { Throws } from '@livekit/throws-transformer/throws';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import { basic } from '../tokenize/index.js';
@@ -306,7 +307,10 @@ class FallbackChunkedStream extends ChunkedStream {
     this.connOptions = connOptions;
   }
 
-  protected async run(): Promise<void> {
+  /**
+   * @throws {APIConnectionError} When all TTS providers have been exhausted
+   */
+  protected async run(): Promise<Throws<void, APIConnectionError>> {
     const allTTSFailed = this.adapter.status.every((s) => !s.available);
     let lastRequestId: string = '';
     let lastSegmentId: string = '';
@@ -406,7 +410,10 @@ class FallbackSynthesizeStream extends SynthesizeStream {
     this.adapter = adapter;
   }
 
-  protected async run(): Promise<void> {
+  /**
+   * @throws {APIConnectionError} When all TTS providers have been exhausted
+   */
+  protected async run(): Promise<Throws<void, APIConnectionError>> {
     const allTTSFailed = this.adapter.status.every((s) => !s.available);
     if (allTTSFailed) {
       this._logger.warn('All fallback TTS instances failed, retrying from first...');

@@ -32,10 +32,12 @@
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",
     "api:check": "api-extractor run --typescript-compiler-folder ../node_modules/typescript",
-    "api:update": "api-extractor run --local --typescript-compiler-folder ../node_modules/typescript --verbose"
+    "api:update": "api-extractor run --local --typescript-compiler-folder ../node_modules/typescript --verbose",
+    "throws:check": "throws-check src/**/*.ts"
   },
   "devDependencies": {
     "@livekit/rtc-node": "catalog:",
+    "@livekit/throws-transformer": "^0.1.5",
     "@microsoft/api-extractor": "^7.35.0",
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/json-schema": "^7.0.15",

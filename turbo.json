@@ -91,6 +91,9 @@
     },
     "api:update": {
       "dependsOn": ["^build"]
+    },
+    "throws:check": {
+      "outputs": []
     }
   }
 }
