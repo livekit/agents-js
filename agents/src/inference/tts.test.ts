@@ -265,3 +265,90 @@ describe('TTS constructor fallback and connOptions', () => {
     expect(tts['opts'].connOptions!.retryIntervalMs).toBe(2000);
   });
 });
+
+describe('TTS provider modelOptions parity', () => {
+  it('preserves ElevenLabs inference model options', () => {
+    const modelOptions = {
+      speed: 1.2,
+      stability: 0.5,
+      similarity_boost: 0.8,
+      enable_logging: false,
+    };
+
+    const tts = new TTS({
+      model: 'elevenlabs/eleven_flash_v2_5' as const,
+      apiKey: 'test-key',
+      apiSecret: 'test-secret',
+      baseURL: 'https://example.livekit.cloud',
+      modelOptions,
+    });
+
+    expect(tts['opts'].modelOptions).toEqual(modelOptions);
+  });
+
+  it('accepts expanded Cartesia inference model options', () => {
+    const modelOptions = {
+      speed: 1.15,
+      emotion: 'curious',
+      add_timestamps: true,
+    };
+
+    const tts = new TTS({
+      model: 'cartesia/sonic' as const,
+      apiKey: 'test-key',
+      apiSecret: 'test-secret',
+      baseURL: 'https://example.livekit.cloud',
+      modelOptions,
+    });
+
+    expect(tts['opts'].modelOptions).toEqual(modelOptions);
+  });
+
+  it('accepts Deepgram inference model options', () => {
+    const modelOptions = { mip_opt_out: true };
+
+    const tts = new TTS({
+      model: 'deepgram/aura-2' as const,
+      apiKey: 'test-key',
+      apiSecret: 'test-secret',
+      baseURL: 'https://example.livekit.cloud',
+      modelOptions,
+    });
+
+    expect(tts['opts'].modelOptions).toEqual(modelOptions);
+  });
+
+  it('accepts Rime inference model options', () => {
+    const modelOptions = {
+      speed_alpha: 0.9,
+      pause_between_brackets: true,
+    };
+
+    const tts = new TTS({
+      model: 'rime/mistv2' as const,
+      apiKey: 'test-key',
+      apiSecret: 'test-secret',
+      baseURL: 'https://example.livekit.cloud',
+      modelOptions,
+    });
+
+    expect(tts['opts'].modelOptions).toEqual(modelOptions);
+  });
+
+  it('accepts Inworld inference model options', () => {
+    const modelOptions = {
+      timestamp_type: 'WORD' as const,
+      apply_text_normalization: 'ON' as const,
+    };
+
+    const tts = new TTS({
+      model: 'inworld/inworld-tts-1' as const,
+      apiKey: 'test-key',
+      apiSecret: 'test-secret',
+      baseURL: 'https://example.livekit.cloud',
+      modelOptions,
+    });
+
+    expect(tts['opts'].modelOptions).toEqual(modelOptions);
+  });
+});

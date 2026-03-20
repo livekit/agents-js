@@ -46,10 +46,16 @@ export type InworldModels =
 export type RimeModels = 'rime/arcana' | 'rime/mistv2';
 
 export interface CartesiaOptions {
+  emotion?: string;
   /** Maximum duration of audio in seconds. */
   duration?: number;
   /** Speech speed. Default: not specified. */
-  speed?: 'slow' | 'normal' | 'fast';
+  speed?: 'slow' | 'normal' | 'fast' | number;
+  volume?: number;
+  max_buffer_delay_ms?: number;
+  add_timestamps?: boolean;
+  add_phoneme_timestamps?: boolean;
+  use_normalized_timestamps?: boolean;
 }
 
 export interface ElevenlabsOptions {
@@ -57,18 +63,50 @@ export interface ElevenlabsOptions {
   inactivity_timeout?: number;
   /** Text normalization mode. Default: "auto". */
   apply_text_normalization?: 'auto' | 'off' | 'on';
+  auto_mode?: boolean;
+  enable_logging?: boolean;
+  enable_ssml_parsing?: boolean;
+  sync_alignment?: boolean;
+  language_code?: string;
+  /** Voice stability tuning, typically in the range [0, 1]. */
+  stability?: number;
+  /** Voice similarity tuning, typically in the range [0, 1]. */
+  similarity_boost?: number;
+  /** Style exaggeration tuning, typically in the range [0, 1]. */
+  style?: number;
+  /** Speech speed multiplier. */
+  speed?: number;
+  use_speaker_boost?: boolean;
+  chunk_length_schedule?: number[];
+  preferred_alignment?: string;
 }
 
-export interface DeepgramTTSOptions {}
+export interface DeepgramTTSOptions {
+  /** Default: false. */
+  mip_opt_out?: boolean;
+}
 
-export interface RimeOptions {}
+export interface RimeOptions {
+  /** Default 1.0, <1 = faster, >1 = slower. */
+  speed_alpha?: number;
+  /** Default false. */
+  pause_between_brackets?: boolean;
+  /** Default false. */
+  phonemize_between_brackets?: boolean;
+  /** Comma-separated speed factors for [bracketed] words. */
+  inline_speed_alpha?: string;
+  /** Default false. */
+  no_text_normalization?: boolean;
+}
 
 export interface InworldOptions {
-  /** Controls how fast the voice speaks. 1.0 is normal speed, 0.5 is half, 1.5 is 1.5x. Default: 1.0. */
+  /** Range >0.5, <=1.5. */
   speaking_rate?: number;
-  /** Controls randomness in the output. Recommended between 0.6 and 1.1. Default: 1.1. */
+  /** Range 0-2. */
   temperature?: number;
-  /** Controls text normalization. "ON" expands numbers, dates, abbreviations. "OFF" reads text as written. Default: "ON". */
+  timestamp_type?: 'TIMESTAMP_TYPE_UNSPECIFIED' | 'WORD' | 'CHARACTER';
+  apply_text_normalization?: 'APPLY_TEXT_NORMALIZATION_UNSPECIFIED' | 'ON' | 'OFF';
+  /** @deprecated Backward-compatible alias. Use `apply_text_normalization`. */
   text_normalization?: 'ON' | 'OFF';
 }
 
@@ -156,6 +194,7 @@ export interface InferenceTTSOptions<TModel extends TTSModels> {
   baseURL: string;
   apiKey: string;
   apiSecret: string;
+  /** Flat provider-specific inference options forwarded as the `extra` payload field. */
   modelOptions: TTSOptions<TModel>;
   fallback?: TTSFallbackModel[];
   connOptions?: APIConnectOptions;
@@ -180,6 +219,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     sampleRate?: number;
     apiKey?: string;
     apiSecret?: string;
+    /** Flat provider-specific inference options forwarded as the `extra` payload field. */
     modelOptions?: TTSOptions<TModel>;
     fallback?: TTSFallbackModelType | TTSFallbackModelType[];
     connOptions?: APIConnectOptions;
