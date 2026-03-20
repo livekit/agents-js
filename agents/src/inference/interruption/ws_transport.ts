@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { Throws } from '@livekit/throws-transformer/throws';
-import TypedPromise from 'agents/src/typed_promise.js';
 import { TransformStream } from 'stream/web';
 import WebSocket from 'ws';
 import { z } from 'zod';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../../_exceptions.js';
 import { log } from '../../log.js';
+import TypedPromise from '../../typed_promise.js';
 import { createAccessToken } from '../utils.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import type { OverlappingSpeechEvent } from './types.js';
