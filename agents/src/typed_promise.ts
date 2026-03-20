@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 type InferErrors<T> = T extends TypedPromise<any, infer E> ? E : never;
 
 export default class TypedPromise<T, E extends Error> extends Promise<T> {
