@@ -86,6 +86,7 @@ export abstract class SupervisedProc {
     this.#started = true;
     this.run().catch((err) => {
       this.#logger.child({ err }).warn('supervised process run failed');
+      this.#join.resolve();
     });
   }
 

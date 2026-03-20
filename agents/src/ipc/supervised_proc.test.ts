@@ -180,6 +180,45 @@ describe('init timeout rejection handling', () => {
 
     expect(unhandled).toEqual([]);
   });
+
+  it('join() resolves after init timeout instead of hanging forever', async () => {
+    // When run() fails early (before registering proc event handlers),
+    // #join must still resolve so that join() and close() don't hang.
+    const slowScript = join(tmpdir(), 'test_slow_init_child_join.mjs');
+    writeFileSync(
+      slowScript,
+      `process.on('message', () => {
+        setTimeout(() => process.send({ case: 'initializeResponse' }), 200);
+      });
+      setInterval(() => {}, 1000);`,
+    );
+
+    const { SupervisedProc } = await import('./supervised_proc.js');
+    class TestProc extends SupervisedProc {
+      createProcess() {
+        return fork(slowScript, [], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
+      }
+      async mainTask() {}
+    }
+
+    const proc = new TestProc(50, 1000, 0, 0, 5000, 60000, 2500);
+
+    await proc.start();
+    await proc.initialize();
+
+    // join() must resolve within a reasonable time, not hang forever
+    const result = await Promise.race([
+      proc.join().then(() => 'resolved'),
+      new Promise((r) => setTimeout(() => r('timeout'), 2000)),
+    ]);
+
+    proc.proc?.kill();
+    try {
+      unlinkSync(slowScript);
+    } catch {}
+
+    expect(result).toBe('resolved');
+  });
 });
 
 describe('timer cleanup', () => {
