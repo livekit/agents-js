@@ -111,7 +111,7 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
     options.voiceOptions?.maxEndpointingDelay;
 
   for (const event of report.events) {
-    if (event.type === 'metrics_collected') {
+    if (event.type === 'metrics_collected' || event.type === 'session_usage_updated') {
       continue; // metrics are too noisy, Cloud is using the chat_history as the source of truth
     }
 

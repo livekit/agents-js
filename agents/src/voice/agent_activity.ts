@@ -67,6 +67,7 @@ import {
   createErrorEvent,
   createFunctionToolsExecutedEvent,
   createMetricsCollectedEvent,
+  createSessionUsageUpdatedEvent,
   createSpeechCreatedEvent,
   createUserInputTranscribedEvent,
 } from './events.js';
@@ -157,9 +158,14 @@ export class AgentActivity implements RecognitionHooks {
 
   private readonly onInterruptionMetricsCollected = (ev: InterruptionMetrics): void => {
     this.agentSession._usageCollector.collect(ev);
+    const usage = this.agentSession.usage;
     this.agentSession.emit(
       AgentSessionEventTypes.MetricsCollected,
       createMetricsCollectedEvent({ metrics: ev }),
+    );
+    this.agentSession.emit(
+      AgentSessionEventTypes.SessionUsageUpdated,
+      createSessionUsageUpdatedEvent({ usage }),
     );
   };
 
@@ -730,10 +736,15 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     this.agentSession._usageCollector.collect(ev);
+    const usage = this.agentSession.usage;
 
     this.agentSession.emit(
       AgentSessionEventTypes.MetricsCollected,
       createMetricsCollectedEvent({ metrics: ev }),
+    );
+    this.agentSession.emit(
+      AgentSessionEventTypes.SessionUsageUpdated,
+      createSessionUsageUpdatedEvent({ usage }),
     );
   };
 
