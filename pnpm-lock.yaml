@@ -25,9 +25,6 @@ importers:
       '@livekit/changesets-changelog-github':
         specifier: ^0.0.4
         version: 0.0.4
-      '@livekit/throws-transformer':
-        specifier: ^0.1.4
-        version: 0.1.4(typescript@5.4.5)
       '@rushstack/heft':
         specifier: ^0.66.0
         version: 0.66.9(@types/node@22.15.30)
@@ -206,6 +203,9 @@ importers:
       '@livekit/rtc-node':
         specifier: 'catalog:'
         version: 0.13.24
+      '@livekit/throws-transformer':
+        specifier: ^0.1.5
+        version: 0.1.5(typescript@5.4.5)
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.15.30)
@@ -2097,8 +2097,8 @@ packages:
     resolution: {integrity: sha512-06pF8YJlJk11R6J7kFXFpwV8etpbmCskoXFvwfwcDDixMqaP6qtS5srq3G23mDaRjx7ofz/PXg2GtiZbqNGT5A==}
     engines: {node: '>= 18'}
 
-  '@livekit/throws-transformer@0.1.4':
-    resolution: {integrity: sha512-oTtrMbSIZizLrUWpO5q0apL/z4OaLP1vgQ1W0/f6/GJRhXyj0OoE3dlRj3Jo+v33VXVdmrhkkXmtSXT6c5rg5Q==}
+  '@livekit/throws-transformer@0.1.5':
+    resolution: {integrity: sha512-uD2CyOXjrazIfbBRHoDHZQf0iR0ePgH6tCqVsCq6Ojx60AIVnKw0rFdLeqMt870sIrdNiGMn738LcZbA0jn/Zw==}
     hasBin: true
     peerDependencies:
       typescript: '>=4.7.0'
@@ -6285,7 +6285,7 @@ snapshots:
 
   '@isaacs/fs-minipass@4.0.1':
     dependencies:
-      minipass: 7.1.2
+      minipass: 7.1.3
 
   '@jest/schemas@29.6.3':
     dependencies:
@@ -6387,7 +6387,7 @@ snapshots:
       '@livekit/rtc-node-linux-x64-gnu': 0.13.24
       '@livekit/rtc-node-win32-x64-msvc': 0.13.24
 
-  '@livekit/throws-transformer@0.1.4(typescript@5.4.5)':
+  '@livekit/throws-transformer@0.1.5(typescript@5.4.5)':
     dependencies:
       glob: 13.0.6
       typescript: 5.4.5
@@ -8338,7 +8338,7 @@ snapshots:
       foreground-child: 3.1.1
       jackspeak: 3.4.3
       minimatch: 9.0.4
-      minipass: 7.1.2
+      minipass: 7.1.3
       package-json-from-dist: 1.0.1
       path-scurry: 1.11.1
 
@@ -8879,7 +8879,7 @@ snapshots:
 
   minizlib@3.0.1:
     dependencies:
-      minipass: 7.1.2
+      minipass: 7.1.3
       rimraf: 5.0.10
 
   mkdirp@3.0.1: {}
@@ -9087,7 +9087,7 @@ snapshots:
   path-scurry@1.11.1:
     dependencies:
       lru-cache: 10.2.2
-      minipass: 7.1.2
+      minipass: 7.1.3
 
   path-scurry@2.0.2:
     dependencies:
