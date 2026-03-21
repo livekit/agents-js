@@ -45,7 +45,7 @@
     "tsup": "^8.4.0",
     "turbo": "^1.13.3",
     "typedoc": "^0.25.13",
-    "typescript": "^5.4.5",
+    "typescript": "^5.9.3",
     "vite": "^7.3.1",
     "vitest": "^4.0.17"
   },

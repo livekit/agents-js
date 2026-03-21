@@ -37,7 +37,6 @@
   },
   "devDependencies": {
     "@livekit/rtc-node": "catalog:",
-    "@livekit/throws-transformer": "^0.1.5",
     "@microsoft/api-extractor": "^7.35.0",
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/json-schema": "^7.0.15",
@@ -53,6 +52,7 @@
     "@livekit/mutex": "^1.1.1",
     "@livekit/protocol": "^1.45.1",
     "@livekit/typed-emitter": "^3.0.0",
+    "@livekit/throws-transformer": "0.0.0-20260320165515",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/api-logs": "^0.54.0",
     "@opentelemetry/core": "^2.2.0",
