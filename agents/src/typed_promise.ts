@@ -3,6 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 type InferErrors<T> = T extends TypedPromise<any, infer E> ? E : never;
 
+interface PromiseRejectedResult<E> {
+  status: 'rejected';
+  reason: E;
+}
+
+type SettledResult<T> =
+  T extends TypedPromise<infer U, infer E>
+    ? PromiseFulfilledResult<U> | PromiseRejectedResult<E>
+    : T extends PromiseLike<infer U>
+      ? PromiseFulfilledResult<U> | PromiseRejectedResult<unknown>
+      : PromiseFulfilledResult<T> | PromiseRejectedResult<unknown>;
+
 export default class TypedPromise<T, E extends Error> extends Promise<T> {
   // eslint-disable-next-line @typescript-eslint/no-useless-constructor
   constructor(
@@ -32,6 +44,12 @@ export default class TypedPromise<T, E extends Error> extends Promise<T> {
     values: T,
   ): TypedPromise<{ -readonly [P in keyof T]: Awaited<T[P]> }, InferErrors<T[number]>> {
     return super.all(values) as any;
+  }
+
+  static allSettled<T extends readonly unknown[] | []>(
+    values: T,
+  ): TypedPromise<{ -readonly [P in keyof T]: SettledResult<T[P]> }, never> {
+    return super.allSettled(values) as any;
   }
 
   static race<T extends readonly (TypedPromise<any, any> | any)[]>(
