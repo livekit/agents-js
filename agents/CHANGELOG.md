@@ -1,5 +1,17 @@
 # @livekit/agents
 
+## 1.2.1
+
+### Patch Changes
+
+- Ensure delay doesn't reject with undefined - [#1152](https://github.com/livekit/agents-js/pull/1152) ([@lukasIO](https://github.com/lukasIO))
+
+- Action-aware history summarization - [#1146](https://github.com/livekit/agents-js/pull/1146) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Increase typesaftey for transport - [#1159](https://github.com/livekit/agents-js/pull/1159) ([@lukasIO](https://github.com/lukasIO))
+
+- fix: Align inference TTS provider options - [#1160](https://github.com/livekit/agents-js/pull/1160) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.2.0
 
 ### Minor Changes
