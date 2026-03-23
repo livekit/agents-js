@@ -84,7 +84,14 @@ export abstract class SupervisedProc {
     this.proc = this.createProcess();
 
     this.#started = true;
-    this.run();
+    this.run().catch((err) => {
+      this.#logger.child({ err }).warn('supervised process run failed');
+      // Note: we intentionally do NOT kill the child process here. Killing it
+      // would race with initialize()'s `once(proc, 'message')`, causing
+      // initialize() to hang forever and deadlocking the caller (proc_pool).
+      // The child process is cleaned up when the pool shuts down.
+      this.#join.resolve();
+    });
   }
 
   async run() {
