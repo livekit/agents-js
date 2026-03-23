@@ -4,7 +4,7 @@
 import {
   type JobContext,
   type JobProcess,
-  WorkerOptions,
+  ServerOptions,
   cli,
   defineAgent,
   llm,
@@ -251,5 +251,5 @@ export default defineAgent({
 // eslint-disable-next-line turbo/no-undeclared-env-vars
 if (process.env.VITEST === undefined) {
   // eslint-disable-next-line turbo/no-undeclared-env-vars
-  cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
+  cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
 }
