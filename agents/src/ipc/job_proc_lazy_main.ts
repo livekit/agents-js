@@ -50,6 +50,7 @@ class PendingInference {
 
 class InfClient implements InferenceExecutor {
   #requests: { [id: string]: PendingInference } = {};
+  #logger = log();
 
   constructor() {
     process.on('message', (msg: IPCMessage) => {
@@ -58,7 +59,7 @@ class InfClient implements InferenceExecutor {
           const fut = this.#requests[msg.value.requestId];
           delete this.#requests[msg.value.requestId];
           if (!fut) {
-            log().child({ resp: msg.value }).warn('received unexpected inference response');
+            this.#logger.child({ resp: msg.value }).warn('received unexpected inference response');
             return;
           }
           fut.resolve(msg.value);
@@ -70,7 +71,11 @@ class InfClient implements InferenceExecutor {
   async doInference(method: string, data: unknown): Promise<unknown> {
     const requestId = shortuuid('inference_job_');
     if (!safeSend({ case: 'inferenceRequest', value: { requestId, method, data } })) {
-      throw new Error('IPC channel closed');
+      this.#logger.debug(
+        { method, requestId },
+        'IPC channel closed during inference, aborting gracefully',
+      );
+      throw new Error(`Inference ${method} aborted: IPC channel closed (expected during shutdown)`);
     }
 
     this.#requests[requestId] = new PendingInference();
