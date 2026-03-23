@@ -419,6 +419,12 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.sendEvent(this.createSessionUpdateEvent());
   }
 
+  private hasInflightResponse(): boolean {
+    return (
+      this.currentGeneration !== undefined || Object.keys(this.responseCreatedFutures).length > 0
+    );
+  }
+
   sendEvent(command: api_proto.ClientEvent): void {
     this.messageChannel.put(command);
   }
@@ -624,6 +630,13 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   updateOptions({ toolChoice }: { toolChoice?: llm.ToolChoice }): void {
+    const currentToolChoice = toOaiToolChoice(this.oaiRealtimeModel._options.toolChoice);
+    const nextToolChoice = toOaiToolChoice(toolChoice);
+    if (currentToolChoice === nextToolChoice) {
+      this.oaiRealtimeModel._options.toolChoice = toolChoice;
+      return;
+    }
+
     const options: api_proto.SessionUpdateEvent['session'] = {
       type: 'realtime',
     };
@@ -677,6 +690,10 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async interrupt(): Promise<void> {
+    if (!this.hasInflightResponse()) {
+      return;
+    }
+
     this.sendEvent({
       type: 'response.cancel',
     } as api_proto.ResponseCancelEvent);
@@ -1236,13 +1253,24 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('item.id is not set');
     }
 
+    const serverEventType = event.type as string;
+    const incomingItem = openAIItemToLivekitItem(event.item);
+    const existingItem = this.remoteChatCtx.get(event.item.id);
+    const pendingCreateFuture = this.itemCreateFutures[event.item.id];
+    if (existingItem && serverEventType === 'conversation.item.added' && !pendingCreateFuture) {
+      // The server may emit a later input-audio-backed view of a user item whose
+      // transcribed text variant we already inserted locally under the same ID.
+      // Treat that as idempotent instead of surfacing a duplicate-ID error.
+      return;
+    }
+
     try {
-      this.remoteChatCtx.insert(event.previous_item_id, openAIItemToLivekitItem(event.item));
+      this.remoteChatCtx.insert(event.previous_item_id, incomingItem);
     } catch (error) {
       this.#logger.error({ error, itemId: event.item.id }, 'failed to insert conversation item');
     }
 
-    const fut = this.itemCreateFutures[event.item.id];
+    const fut = pendingCreateFuture;
     if (fut) {
       fut.resolve();
       delete this.itemCreateFutures[event.item.id];
