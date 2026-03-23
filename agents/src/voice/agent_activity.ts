@@ -129,6 +129,7 @@ export class AgentActivity implements RecognitionHooks {
 
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
+  private _toolExecutionInProgress = false;
   private _preemptiveGeneration?: PreemptiveGeneration;
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
@@ -1031,6 +1032,7 @@ export class AgentActivity implements RecognitionHooks {
       !this.agentSession.sessionOptions.preemptiveGeneration ||
       this.schedulingPaused ||
       (this._currentSpeech !== undefined && !this._currentSpeech.interrupted) ||
+      this._toolExecutionInProgress ||
       !(this.llm instanceof LLM)
     ) {
       return;
@@ -1955,6 +1957,7 @@ export class AgentActivity implements RecognitionHooks {
       onToolExecutionStarted,
       onToolExecutionCompleted,
     });
+    this._toolExecutionInProgress = true;
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
@@ -2067,6 +2070,7 @@ export class AgentActivity implements RecognitionHooks {
       );
       speechHandle._markGenerationDone();
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      this._toolExecutionInProgress = false;
       return;
     }
 
@@ -2106,6 +2110,7 @@ export class AgentActivity implements RecognitionHooks {
     // mark the playout done before waiting for the tool execution
     speechHandle._markGenerationDone();
     await executeToolsTask.result;
+    this._toolExecutionInProgress = false;
 
     if (toolOutput.output.length === 0) return;
 
@@ -2471,6 +2476,7 @@ export class AgentActivity implements RecognitionHooks {
       onToolExecutionStarted,
       onToolExecutionCompleted,
     });
+    this._toolExecutionInProgress = true;
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
@@ -2540,6 +2546,7 @@ export class AgentActivity implements RecognitionHooks {
       }
       speechHandle._markGenerationDone();
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      this._toolExecutionInProgress = false;
 
       // TODO(brian): close tees
       return;
@@ -2565,6 +2572,7 @@ export class AgentActivity implements RecognitionHooks {
     // TODO(brian): close tees
 
     await executeToolsTask.result;
+    this._toolExecutionInProgress = false;
 
     if (toolOutput.output.length > 0) {
       this.agentSession._updateAgentState('thinking');
