@@ -1257,13 +1257,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     const incomingItem = openAIItemToLivekitItem(event.item);
     const existingItem = this.remoteChatCtx.get(event.item.id);
     const pendingCreateFuture = this.itemCreateFutures[event.item.id];
-    if (existingItem) {
-      if (serverEventType === 'conversation.item.added' && !pendingCreateFuture) {
-        // The server may emit a later input-audio-backed view of a user item whose
-        // transcribed text variant we already inserted locally under the same ID.
-        // Treat that as idempotent instead of surfacing a duplicate-ID error.
-        return;
-      }
+    if (existingItem && serverEventType === 'conversation.item.added' && !pendingCreateFuture) {
+      // The server may emit a later input-audio-backed view of a user item whose
+      // transcribed text variant we already inserted locally under the same ID.
+      // Treat that as idempotent instead of surfacing a duplicate-ID error.
+      return;
     }
 
     try {
