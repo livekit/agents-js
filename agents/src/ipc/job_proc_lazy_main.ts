@@ -70,7 +70,8 @@ class InfClient implements InferenceExecutor {
   async doInference(method: string, data: unknown): Promise<unknown> {
     const requestId = shortuuid('inference_job_');
     if (!safeSend({ case: 'inferenceRequest', value: { requestId, method, data } })) {
-      throw new Error('IPC channel closed');
+      log().debug({ method, requestId }, 'IPC channel closed during inference, aborting gracefully');
+      throw new Error(`Inference ${method} aborted: IPC channel closed (expected during shutdown)`);
     }
 
     this.#requests[requestId] = new PendingInference();
