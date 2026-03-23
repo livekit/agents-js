@@ -648,7 +648,6 @@ export class AgentSession<
     return this.activity.interrupt(options);
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_session.py - 1053-1111 lines
   generateReply(options?: {
     userInput?: string | ChatMessage;
     chatCtx?: ChatContext;
