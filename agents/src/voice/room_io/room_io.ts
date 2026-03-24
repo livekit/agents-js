@@ -529,8 +529,13 @@ export class RoomIO {
     await this.initTask?.cancelAndWait();
 
     // Close stream FIRST so reader.read() in forwardUserTranscript can exit.
-    // This is a workaround for a race condition in the stream API.
-    this.userTranscriptWriter.close();
+    // Writer may already be closed or errored if a concurrent write failed
+    // during session teardown (e.g. speech interruption race). Safe to ignore.
+    try {
+      await this.userTranscriptWriter.close();
+    } catch {
+      // already closed or errored — nothing to do during teardown
+    }
     await this.forwardUserTranscriptTask?.cancelAndWait();
 
     await this.audioInput?.close();
