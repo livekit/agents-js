@@ -649,7 +649,8 @@ export class AgentSession<
   }
 
   generateReply(options?: {
-    userInput?: string;
+    userInput?: string | ChatMessage;
+    chatCtx?: ChatContext;
     instructions?: string;
     toolChoice?: ToolChoice;
     allowInterruptions?: boolean;
@@ -658,12 +659,15 @@ export class AgentSession<
       throw new Error('AgentSession is not running');
     }
 
-    const userMessage = options?.userInput
-      ? new ChatMessage({
-          role: 'user',
-          content: options.userInput,
-        })
-      : undefined;
+    const userMessage =
+      options?.userInput instanceof ChatMessage
+        ? options.userInput
+        : options?.userInput
+          ? new ChatMessage({
+              role: 'user',
+              content: options.userInput,
+            })
+          : undefined;
 
     const doGenerateReply = (activity: AgentActivity, nextActivity?: AgentActivity) => {
       if (activity.schedulingPaused) {
