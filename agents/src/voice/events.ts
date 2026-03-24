@@ -18,6 +18,7 @@ import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
 import type { TTS } from '../tts/index.js';
 import type { TTSError } from '../tts/tts.js';
+import type { AgentSessionUsage } from './agent_session.js';
 import type { SpeechHandle } from './speech_handle.js';
 
 export enum AgentSessionEventTypes {
@@ -27,6 +28,7 @@ export enum AgentSessionEventTypes {
   ConversationItemAdded = 'conversation_item_added',
   FunctionToolsExecuted = 'function_tools_executed',
   MetricsCollected = 'metrics_collected',
+  SessionUsageUpdated = 'session_usage_updated',
   SpeechCreated = 'speech_created',
   OverlappingSpeech = 'overlapping_speech',
   Error = 'error',
@@ -130,6 +132,24 @@ export const createMetricsCollectedEvent = ({
 }): MetricsCollectedEvent => ({
   type: 'metrics_collected',
   metrics,
+  createdAt,
+});
+
+export type SessionUsageUpdatedEvent = {
+  type: 'session_usage_updated';
+  usage: AgentSessionUsage;
+  createdAt: number;
+};
+
+export const createSessionUsageUpdatedEvent = ({
+  usage,
+  createdAt = Date.now(),
+}: {
+  usage: AgentSessionUsage;
+  createdAt?: number;
+}): SessionUsageUpdatedEvent => ({
+  type: 'session_usage_updated',
+  usage,
   createdAt,
 });
 
@@ -264,6 +284,7 @@ export type AgentEvent =
   | UserStateChangedEvent
   | AgentStateChangedEvent
   | MetricsCollectedEvent
+  | SessionUsageUpdatedEvent
   | ConversationItemAddedEvent
   | FunctionToolsExecutedEvent
   | SpeechCreatedEvent

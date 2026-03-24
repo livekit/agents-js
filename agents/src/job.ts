@@ -283,6 +283,7 @@ export class JobContext {
       startedAt: targetSession._startedAt,
       audioRecordingPath: recorderIO?.outputPath,
       audioRecordingStartedAt: recorderIO?.recordingStartedAt,
+      modelUsage: targetSession._usageCollector.flatten(),
     });
   }
 
