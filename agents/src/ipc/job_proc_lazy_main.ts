@@ -58,16 +58,29 @@ class InfClient implements InferenceExecutor {
 
   async doInference(method: string, data: unknown): Promise<unknown> {
     const requestId = shortuuid('inference_job_');
+
     if (!safeSend({ case: 'inferenceRequest', value: { requestId, method, data } })) {
-      throw new Error('IPC channel closed');
+      // IPC channel closed before we could send — the job is shutting down or the
+      // parent already closed the channel.  We do NOT throw since that crashes the
+      // whole process; instead we return a clearly erroneous result so callers can
+      // handle it gracefully (the session will terminate anyway via the close event).
+      log().warn({ method }, 'IPC channel closed before inference request, aborting gracefully');
+      throw new Error(`inference of ${method} aborted: IPC channel closed`);
     }
 
-    this.#requests[requestId] = new PendingInference();
-    const resp = await this.#requests[requestId]!.promise;
-    if (resp.error) {
-      throw new Error(`inference of ${method} failed: ${resp.error.message}`);
+    const pendingInf = new PendingInference();
+    this.#requests[requestId] = pendingInf;
+    try {
+      const resp = await pendingInf.promise;
+      delete this.#requests[requestId];
+      if (resp.error) {
+        throw new Error(`inference of ${method} failed: ${resp.error.message}`);
+      }
+      return resp.data;
+    } catch (err) {
+      delete this.#requests[requestId];
+      throw err;
     }
-    return resp.data;
   }
 }
 
