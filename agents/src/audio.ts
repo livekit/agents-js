@@ -143,6 +143,22 @@ export function audioFramesFromFile(
     }
   };
 
+  command.on('error', (err: Error) => {
+    if (
+      err.message?.includes('Output stream closed') ||
+      err.message?.includes('received signal 2') ||
+      err.message?.includes('SIGKILL') ||
+      err.message?.includes('SIGINT')
+    ) {
+      // Expected during teardown — not an error
+      logger.debug('FFmpeg command ended during shutdown');
+    } else {
+      logger.error(err, 'FFmpeg command error');
+    }
+    commandRunning = false;
+    onClose();
+  });
+
   const outputStream = command.pipe();
   options.abortSignal?.addEventListener('abort', onClose, { once: true });
 
