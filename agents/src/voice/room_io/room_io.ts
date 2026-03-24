@@ -533,8 +533,8 @@ export class RoomIO {
     // during session teardown (e.g. speech interruption race). Safe to ignore.
     try {
       await this.userTranscriptWriter.close();
-    } catch {
-      // already closed or errored — nothing to do during teardown
+    } catch (e) {
+      this.logger.debug({ error: e }, 'userTranscriptWriter already closed or errored');
     }
     await this.forwardUserTranscriptTask?.cancelAndWait();
 
