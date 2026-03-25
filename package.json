@@ -54,5 +54,10 @@
     "patchedDependencies": {
       "@changesets/assemble-release-plan": "patches/@changesets__assemble-release-plan.patch"
     }
+  },
+  "dependencies": {
+    "@livekit/agents": "^1.2.1",
+    "@livekit/agents-plugin-livekit": "^1.2.1",
+    "@livekit/agents-plugin-silero": "^1.2.1"
   }
 }

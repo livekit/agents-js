@@ -1504,8 +1504,10 @@ export class RealtimeSession extends llm.RealtimeSession {
         return;
       }
       // text response doesn't have itemGeneration
-      itemGeneration.textChannel.close();
-      itemGeneration.audioChannel.close();
+      // Removed textChannel.close() and audioChannel.close() because
+      // OpenAI gpt-realtime-1.5 fires output_item.done before transcription completes.
+      // Channel cleanup is safely handled instead by handleResponseDone.
+
       if (!itemGeneration.modalities.done) {
         // In case message modalities is not set, this shouldn't happen
         itemGeneration.modalities.resolve(this.oaiRealtimeModel._options.modalities);
