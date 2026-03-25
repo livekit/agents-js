@@ -640,9 +640,10 @@ export function performTTSInference(
           break;
         }
 
-        const { done, value: frame } = firstByteReceived
-          ? await waitUntilTimeout(ttsStreamReader.read(), TTS_READ_IDLE_TIMEOUT_MS)
-          : await ttsStreamReader.read();
+        const { done, value: frame } = await waitUntilTimeout(
+          ttsStreamReader.read(),
+          TTS_READ_IDLE_TIMEOUT_MS,
+        );
         if (done) {
           break;
         }
@@ -790,7 +791,6 @@ async function forwardAudio(
   const logger = log();
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
-  let hasReceivedFrame = false;
 
   const FORWARD_AUDIO_IDLE_TIMEOUT_MS = 10_000;
 
@@ -809,12 +809,11 @@ async function forwardAudio(
         break;
       }
 
-      const { done, value: frame } = hasReceivedFrame
-        ? await waitUntilTimeout(reader.read(), FORWARD_AUDIO_IDLE_TIMEOUT_MS)
-        : await reader.read();
+      const { done, value: frame } = await waitUntilTimeout(
+        reader.read(),
+        FORWARD_AUDIO_IDLE_TIMEOUT_MS,
+      );
       if (done) break;
-
-      hasReceivedFrame = true;
 
       out.audio.push(frame);
 

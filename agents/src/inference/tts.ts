@@ -586,7 +586,6 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
 
     const createRecvTask = async (signal: AbortSignal) => {
       let currentSessionId: string | null = null;
-      let hasReceivedAudio = false;
       const recvTimeoutMs = this.connOptions.timeoutMs;
 
       const bstream = new AudioByteStream(this.opts.sampleRate, NUM_CHANNELS);
@@ -597,13 +596,11 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         await inputSentEvent.wait();
 
         while (!this.closed && !signal.aborted) {
-          const result = hasReceivedAudio
-            ? await waitUntilTimeout(
-                reader.read(),
-                recvTimeoutMs,
-                () => new APITimeoutError({ message: 'TTS recv idle timeout' }),
-              )
-            : await reader.read();
+          const result = await waitUntilTimeout(
+            reader.read(),
+            recvTimeoutMs,
+            () => new APITimeoutError({ message: 'TTS recv idle timeout' }),
+          );
 
           if (signal.aborted) return;
           if (result.done) return;
@@ -614,7 +611,6 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               currentSessionId = serverEvent.session_id;
               break;
             case 'output_audio':
-              hasReceivedAudio = true;
               const base64Data = new Int8Array(Buffer.from(serverEvent.audio, 'base64'));
               for (const frame of bstream.write(base64Data.buffer)) {
                 sendLastFrame(currentSessionId!, false);
