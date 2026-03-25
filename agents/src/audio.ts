@@ -7,7 +7,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import type { ReadableStream } from 'node:stream/web';
 import { log } from './log.js';
 import { createStreamChannel } from './stream/stream_channel.js';
-import type { AudioBuffer } from './utils.js';
+import { type AudioBuffer, isFfmpegTeardownError } from './utils.js';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
@@ -144,12 +144,7 @@ export function audioFramesFromFile(
   };
 
   command.on('error', (err: Error) => {
-    if (
-      err.message?.includes('Output stream closed') ||
-      err.message?.includes('received signal 2') ||
-      err.message?.includes('SIGKILL') ||
-      err.message?.includes('SIGINT')
-    ) {
+    if (isFfmpegTeardownError(err)) {
       // Expected during teardown — not an error
       logger.debug('FFmpeg command ended during shutdown');
     } else {
