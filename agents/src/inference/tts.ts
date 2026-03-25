@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import { APIError, APIStatusError } from '../_exceptions.js';
+import { APIError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { ConnectionPool } from '../connection_pool.js';
 import { type LanguageCode, normalizeLanguage } from '../language.js';
@@ -13,7 +13,15 @@ import { basic as tokenizeBasic } from '../tokenize/index.js';
 import type { ChunkedStream } from '../tts/index.js';
 import { SynthesizeStream as BaseSynthesizeStream, TTS as BaseTTS } from '../tts/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { Event, Future, Task, cancelAndWait, combineSignals, shortuuid } from '../utils.js';
+import {
+  Event,
+  Future,
+  Task,
+  cancelAndWait,
+  combineSignals,
+  shortuuid,
+  waitUntilTimeout,
+} from '../utils.js';
 import {
   type TtsClientEvent,
   type TtsServerEvent,
@@ -578,6 +586,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
 
     const createRecvTask = async (signal: AbortSignal) => {
       let currentSessionId: string | null = null;
+      const recvTimeoutMs = this.connOptions.timeoutMs;
 
       const bstream = new AudioByteStream(this.opts.sampleRate, NUM_CHANNELS);
       const serverEventStream = eventChannel.stream();
@@ -587,7 +596,12 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         await inputSentEvent.wait();
 
         while (!this.closed && !signal.aborted) {
-          const result = await reader.read();
+          const result = await waitUntilTimeout(
+            reader.read(),
+            recvTimeoutMs,
+            () => new APITimeoutError({ message: 'TTS recv idle timeout' }),
+          );
+
           if (signal.aborted) return;
           if (result.done) return;
 
@@ -632,6 +646,14 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               break;
           }
         }
+      } catch (e) {
+        if (e instanceof APITimeoutError) {
+          this.#logger.warn('TTS recv task timed out waiting for server message');
+          await resourceCleanup();
+          completionFuture.reject(e);
+          return;
+        }
+        throw e;
       } finally {
         reader.releaseLock();
         try {

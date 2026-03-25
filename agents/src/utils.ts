@@ -9,6 +9,7 @@ import type {
   TrackKind,
 } from '@livekit/rtc-node';
 import { AudioFrame, AudioResampler, RoomEvent } from '@livekit/rtc-node';
+import type { Throws } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter, once } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
@@ -802,6 +803,33 @@ export function delay(ms: number, options: DelayOptions = {}): Promise<void> {
     const i = setTimeout(done, ms);
     signal?.addEventListener('abort', abort, { once: true });
   });
+}
+
+export class IdleTimeoutError extends Error {
+  constructor(message = 'idle timeout') {
+    super(message);
+    this.name = 'IdleTimeoutError';
+  }
+}
+
+/**
+ * Race a promise against an idle timeout. If the promise does not settle within
+ * `timeoutMs` milliseconds, the returned promise rejects with {@link IdleTimeoutError}
+ * (or the error returned by `throwError` when provided).
+ * The timer is properly cleaned up on settlement to avoid leaking handles.
+ */
+export function waitUntilTimeout<T, E extends Error = IdleTimeoutError>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  throwError?: () => E,
+): Promise<Throws<T, E>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(throwError?.() ?? new IdleTimeoutError()), timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer)) as Promise<Throws<T, E>>;
 }
 
 /**

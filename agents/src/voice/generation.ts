@@ -25,7 +25,15 @@ import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
-import { Future, Task, shortuuid, toError, waitForAbort } from '../utils.js';
+import {
+  Future,
+  IdleTimeoutError,
+  Task,
+  shortuuid,
+  toError,
+  waitForAbort,
+  waitUntilTimeout,
+} from '../utils.js';
 import {
   type Agent,
   type ModelSettings,
@@ -45,6 +53,8 @@ import {
 } from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
+
+const TTS_READ_IDLE_TIMEOUT_MS = 10_000;
 
 /** @internal */
 export class _LLMGenerationData {
@@ -550,6 +560,7 @@ export function performTTSInference(
   model?: string,
   provider?: string,
 ): [Task<void>, _TTSGenerationData] {
+  const logger = log();
   const audioStream = new IdentityTransform<AudioFrame>();
   const outputWriter = audioStream.writable.getWriter();
   const audioOutputStream = audioStream.readable;
@@ -624,12 +635,14 @@ export function performTTSInference(
       // JS currently only does single inference, so initialPushedDuration is always 0.
       // TODO: Add FlushSentinel + multi-segment loop
       const initialPushedDuration = pushedDuration;
-
       while (true) {
         if (signal.aborted) {
           break;
         }
-        const { done, value: frame } = await ttsStreamReader.read();
+
+        const { done, value: frame } = firstByteReceived
+          ? await waitUntilTimeout(ttsStreamReader.read(), TTS_READ_IDLE_TIMEOUT_MS)
+          : await ttsStreamReader.read();
         if (done) {
           break;
         }
@@ -671,14 +684,15 @@ export function performTTSInference(
         pushedDuration += frameDuration;
       }
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        // Abort signal was triggered, handle gracefully
+      if (error instanceof IdleTimeoutError) {
+        logger.warn('TTS stream stalled after producing audio, forcing close');
+      } else if (error instanceof DOMException && error.name === 'AbortError') {
         return;
+      } else {
+        throw error;
       }
-      throw error;
     } finally {
       if (!timedTextsFut.done) {
-        // Ensure downstream consumers don't hang on errors.
         timedTextsFut.resolve(null);
       }
       ttsStreamReader?.releaseLock();
@@ -773,8 +787,12 @@ async function forwardAudio(
   out: _AudioOut,
   signal?: AbortSignal,
 ): Promise<void> {
+  const logger = log();
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
+  let hasReceivedFrame = false;
+
+  const FORWARD_AUDIO_IDLE_TIMEOUT_MS = 10_000;
 
   const onPlaybackStarted = (ev: { createdAt: number }) => {
     if (!out.firstFrameFut.done) {
@@ -791,8 +809,12 @@ async function forwardAudio(
         break;
       }
 
-      const { done, value: frame } = await reader.read();
+      const { done, value: frame } = hasReceivedFrame
+        ? await waitUntilTimeout(reader.read(), FORWARD_AUDIO_IDLE_TIMEOUT_MS)
+        : await reader.read();
       if (done) break;
+
+      hasReceivedFrame = true;
 
       out.audio.push(frame);
 
@@ -818,6 +840,12 @@ async function forwardAudio(
       for (const f of resampler.flush()) {
         await audioOutput.captureFrame(f);
       }
+    }
+  } catch (e) {
+    if (e instanceof IdleTimeoutError) {
+      logger.warn('audio forwarding stalled waiting for TTS frames, forcing close');
+    } else {
+      throw e;
     }
   } finally {
     audioOutput.off(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
