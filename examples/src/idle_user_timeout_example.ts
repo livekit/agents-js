@@ -10,7 +10,7 @@ import {
   type JobContext,
   type JobProcess,
   Task,
-  WorkerOptions,
+  ServerOptions,
   cli,
   defineAgent,
   delay,
@@ -91,4 +91,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
