@@ -13,7 +13,7 @@ import {
   metrics,
   voice,
 } from '@livekit/agents';
-import * as livekit from '@livekit/agents-plugin-livekit';
+import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
@@ -56,7 +56,9 @@ export default defineAgent({
       // A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
       // See all available models at https://docs.livekit.io/agents/models/llm/
       // llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
-      llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      llm: new openai.realtime.RealtimeModel({
+        model: 'gpt-realtime-1.5',
+      }),
       // Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
       // See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
       tts: new inference.TTS({
@@ -69,7 +71,7 @@ export default defineAgent({
       }),
       preemptiveGeneration: true,
       turnHandling: {
-        turnDetection: new livekit.turnDetector.MultilingualModel(),
+        turnDetection: 'realtime_llm',
         interruption: {
           resumeFalseInterruption: true,
           falseInterruptionTimeout: 1,
