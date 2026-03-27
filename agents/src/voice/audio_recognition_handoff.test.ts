@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
-import { AudioRecognition, STTPipeline, type RecognitionHooks } from './audio_recognition.js';
+import { AudioRecognition, type RecognitionHooks, STTPipeline } from './audio_recognition.js';
 import type { STTNode } from './io.js';
 
 function createHooks() {

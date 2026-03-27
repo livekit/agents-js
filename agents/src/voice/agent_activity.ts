@@ -459,7 +459,9 @@ export class AgentActivity implements RecognitionHooks {
     const hasSttOld = !!this.stt;
     const hasSttNew = !!newActivity.stt;
     const sameSttInstance = this.stt === newActivity.stt;
-    const sameSttNode = Object.getPrototypeOf(this.agent).sttNode === Object.getPrototypeOf(newActivity.agent).sttNode;
+    const sameSttNode =
+      Object.getPrototypeOf(this.agent).sttNode ===
+      Object.getPrototypeOf(newActivity.agent).sttNode;
 
     if (!hasAudioRecognition || !hasSttOld || !hasSttNew) {
       return undefined;

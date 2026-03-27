@@ -96,11 +96,15 @@ export class STTPipeline {
     const node = await this.sttNode(this._audioChannel.stream(), {});
     if (node === null) return;
 
-    for await (const value of readStream(node, signal)) {
-      if (typeof value === 'string') {
-        throw new Error(`STT node must yield SpeechEvent, got: ${typeof value}`);
+    try {
+      for await (const value of readStream(node, signal)) {
+        if (typeof value === 'string') {
+          throw new Error(`STT node must yield SpeechEvent, got: ${typeof value}`);
+        }
+        await this._eventChannel.write(value);
       }
-      await this._eventChannel.write(value);
+    } finally {
+      await node.cancel().catch(() => {});
     }
   }
 
