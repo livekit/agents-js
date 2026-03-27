@@ -30,7 +30,7 @@ import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
-import { Task, delay, waitForAbort } from '../utils.js';
+import { Task, cancelAndWait, delay, waitForAbort } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
@@ -67,6 +67,68 @@ export interface RecognitionHooks {
   onPreemptiveGeneration: (info: PreemptiveGenerationInfo) => void;
 
   retrieveChatCtx: () => ChatContext;
+}
+
+export class STTPipeline {
+  static readonly PUMP_TASK_CANCEL_TIMEOUT = 5000;
+
+  private sttNode: STTNode;
+  private _audioChannel: StreamChannel<AudioFrame> = createStreamChannel();
+  private _eventChannel: StreamChannel<SpeechEvent> = createStreamChannel();
+
+  private _pumpTask = Task.from(({ signal }) => this.sttPump(signal));
+
+  constructor(sttNode: STTNode) {
+    this.sttNode = sttNode;
+    this._pumpTask.addDoneCallback(() => this._eventChannel.close());
+  }
+
+  get audioChannel() {
+    return this._audioChannel;
+  }
+
+  get eventChannel() {
+    return this._eventChannel;
+  }
+
+  private async sttPump(signal: AbortSignal): Promise<void> {
+    const node = await this.sttNode(this._audioChannel.stream(), {});
+
+    if (node === null) return;
+
+    const reader = node.getReader();
+    try {
+      const abortPromise = waitForAbort(signal);
+
+      while (true) {
+        const result = await Promise.race([reader.read(), abortPromise]);
+        if (!result) break;
+
+        const { done, value } = result;
+        if (done) break;
+
+        if (typeof value === 'string') {
+          throw new Error(`STT node must yield SpeechEvent, got: ${typeof value}`);
+        }
+
+        await this._eventChannel.write(value);
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch (error) {
+        if (isStreamReaderReleaseError(error)) {
+          // ignore reader release errors
+          return;
+        }
+        throw error;
+      }
+    }
+  }
+
+  async close(): Promise<void> {
+    await cancelAndWait([this._pumpTask], STTPipeline.PUMP_TASK_CANCEL_TIMEOUT);
+  }
 }
 
 export interface _TurnDetector {
@@ -154,7 +216,7 @@ export class AudioRecognition {
   private bounceEOUTask?: Task<void>;
   private commitUserTurnTask?: Task<void>;
   private vadTask?: Task<void>;
-  private sttTask?: Task<void>;
+  private sttConsumerTask?: Task<void>;
   private interruptionTask?: Task<void>;
 
   // interruption detection
@@ -227,14 +289,14 @@ export class AudioRecognition {
     this.turnDetectionMode = options.turnDetection;
   }
 
-  async start() {
+  async start(options?: { sttPipeline?: STTPipeline }) {
     this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
     this.vadTask.result.catch((err) => {
       this.logger.error(`Error running VAD task: ${err}`);
     });
 
-    this.sttTask = Task.from(({ signal }) => this.createSttTask(this.stt, signal));
-    this.sttTask.result.catch((err) => {
+    this.sttConsumerTask = Task.from(({ signal }) => this.createSttTask(this.stt, signal));
+    this.sttConsumerTask.result.catch((err) => {
       this.logger.error(`Error running STT task: ${err}`);
     });
 
@@ -247,7 +309,7 @@ export class AudioRecognition {
   }
 
   async stop() {
-    await this.sttTask?.cancelAndWait();
+    await this.sttConsumerTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
     await this.interruptionTask?.cancelAndWait();
   }
@@ -1151,9 +1213,9 @@ export class AudioRecognition {
     this.finalTranscriptConfidence = [];
     this.userTurnCommitted = false;
 
-    this.sttTask?.cancelAndWait().finally(() => {
-      this.sttTask = Task.from(({ signal }) => this.createSttTask(this.stt, signal));
-      this.sttTask.result.catch((err) => {
+    this.sttConsumerTask?.cancelAndWait().finally(() => {
+      this.sttConsumerTask = Task.from(({ signal }) => this.createSttTask(this.stt, signal));
+      this.sttConsumerTask.result.catch((err) => {
         this.logger.error(`Error running STT task: ${err}`);
       });
     });
@@ -1209,7 +1271,7 @@ export class AudioRecognition {
     this.detachInputAudioStream();
     this.silenceAudioWriter.releaseLock();
     await this.commitUserTurnTask?.cancelAndWait();
-    await this.sttTask?.cancelAndWait();
+    await this.sttConsumerTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
     await this.bounceEOUTask?.cancelAndWait();
     await this.interruptionTask?.cancelAndWait();
