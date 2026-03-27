@@ -61,6 +61,7 @@ import {
   type EndOfTurnInfo,
   type PreemptiveGenerationInfo,
   type RecognitionHooks,
+  type STTPipeline,
 } from './audio_recognition.js';
 import {
   AgentSessionEventTypes,
@@ -292,19 +293,27 @@ export class AgentActivity implements RecognitionHooks {
     this.isDefaultInterruptionByAudioActivityEnabled = this.isInterruptionByAudioActivityEnabled;
   }
 
-  async start(): Promise<void> {
+  async start(options?: { reuseSttPipeline?: STTPipeline }): Promise<void> {
     const unlock = await this.lock.lock();
     try {
-      await this._startSession({ spanName: 'start_agent_activity', runOnEnter: true });
+      await this._startSession({
+        spanName: 'start_agent_activity',
+        runOnEnter: true,
+        reuseSttPipeline: options?.reuseSttPipeline,
+      });
     } finally {
       unlock();
     }
   }
 
-  async resume(): Promise<void> {
+  async resume(options?: { reuseSttPipeline?: STTPipeline }): Promise<void> {
     const unlock = await this.lock.lock();
     try {
-      await this._startSession({ spanName: 'resume_agent_activity', runOnEnter: false });
+      await this._startSession({
+        spanName: 'resume_agent_activity',
+        runOnEnter: false,
+        reuseSttPipeline: options?.reuseSttPipeline,
+      });
     } finally {
       unlock();
     }
@@ -313,8 +322,9 @@ export class AgentActivity implements RecognitionHooks {
   private async _startSession(options: {
     spanName: 'start_agent_activity' | 'resume_agent_activity';
     runOnEnter: boolean;
+    reuseSttPipeline?: STTPipeline;
   }): Promise<void> {
-    const { spanName, runOnEnter } = options;
+    const { spanName, runOnEnter, reuseSttPipeline } = options;
     const startSpan = tracer.startSpan({
       name: spanName,
       attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
@@ -415,9 +425,15 @@ export class AgentActivity implements RecognitionHooks {
       sttProvider: this.getSttProvider(),
       getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
     });
-    this.audioRecognition.start();
-    this.started = true;
 
+    if (reuseSttPipeline) {
+      this.logger.debug('Reusing STT pipeline from previous activity');
+      await this.audioRecognition.start({ sttPipeline: reuseSttPipeline });
+    } else {
+      await this.audioRecognition.start();
+    }
+
+    this.started = true;
     this._resumeSchedulingTask();
 
     if (runOnEnter) {
@@ -436,6 +452,24 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     startSpan.end();
+  }
+
+  async _detachSttPipelineIfReusable(newActivity: AgentActivity): Promise<STTPipeline | undefined> {
+    if (!this.audioRecognition || !this.stt || !newActivity.stt) {
+      return undefined;
+    }
+
+    if (this.stt !== newActivity.stt) {
+      return undefined;
+    }
+
+    if (
+      Object.getPrototypeOf(this.agent).sttNode !== Object.getPrototypeOf(newActivity.agent).sttNode
+    ) {
+      return undefined;
+    }
+
+    return await this.audioRecognition.detachSttPipeline();
   }
 
   get currentSpeech(): SpeechHandle | undefined {

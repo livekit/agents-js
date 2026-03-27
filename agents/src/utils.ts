@@ -947,6 +947,41 @@ export async function waitForTrackPublication({
   }
 }
 
+/**
+ * Yields values from a ReadableStream until the stream ends or the signal is aborted.
+ * Handles reader cleanup and stream-release errors internally.
+ */
+export async function* readStream<T>(
+  stream: ReadableStream<T>,
+  signal?: AbortSignal,
+): AsyncGenerator<T> {
+  const reader = stream.getReader();
+  try {
+    if (signal) {
+      const abortPromise = waitForAbort(signal);
+      while (true) {
+        const result = await Promise.race([reader.read(), abortPromise]);
+        if (!result) break;
+        const { done, value } = result;
+        if (done) break;
+        yield value;
+      }
+    } else {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        yield value;
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // stream cleanup errors are expected (releasing reader, controller closed, etc.)
+    }
+  }
+}
+
 export async function waitForAbort(signal: AbortSignal) {
   const abortFuture = new Future<void>();
   const handler = () => {
