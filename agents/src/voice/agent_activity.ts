@@ -455,21 +455,25 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async _detachSttPipelineIfReusable(newActivity: AgentActivity): Promise<STTPipeline | undefined> {
-    if (!this.audioRecognition || !this.stt || !newActivity.stt) {
+    const hasAudioRecognition = !!this.audioRecognition;
+    const hasSttOld = !!this.stt;
+    const hasSttNew = !!newActivity.stt;
+    const sameSttInstance = this.stt === newActivity.stt;
+    const sameSttNode = Object.getPrototypeOf(this.agent).sttNode === Object.getPrototypeOf(newActivity.agent).sttNode;
+
+    if (!hasAudioRecognition || !hasSttOld || !hasSttNew) {
       return undefined;
     }
 
-    if (this.stt !== newActivity.stt) {
+    if (!sameSttInstance) {
       return undefined;
     }
 
-    if (
-      Object.getPrototypeOf(this.agent).sttNode !== Object.getPrototypeOf(newActivity.agent).sttNode
-    ) {
+    if (!sameSttNode) {
       return undefined;
     }
 
-    return await this.audioRecognition.detachSttPipeline();
+    return await this.audioRecognition!.detachSttPipeline();
   }
 
   get currentSpeech(): SpeechHandle | undefined {
