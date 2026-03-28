@@ -753,12 +753,7 @@ export function isStreamClosedError(error: unknown): boolean {
 }
 
 /** FFmpeg error messages expected during normal teardown/shutdown. */
-const FFMPEG_TEARDOWN_ERRORS = [
-  'Output stream closed',
-  'received signal 2',
-  'SIGKILL',
-  'SIGINT',
-];
+const FFMPEG_TEARDOWN_ERRORS = ['Output stream closed', 'received signal 2', 'SIGKILL', 'SIGINT'];
 
 /**
  * Check if an error is an expected FFmpeg teardown error that can be safely ignored during cleanup.
@@ -768,8 +763,7 @@ const FFMPEG_TEARDOWN_ERRORS = [
  */
 export function isFfmpegTeardownError(error: unknown): boolean {
   return (
-    error instanceof Error &&
-    FFMPEG_TEARDOWN_ERRORS.some((msg) => error.message?.includes(msg))
+    error instanceof Error && FFMPEG_TEARDOWN_ERRORS.some((msg) => error.message?.includes(msg))
   );
 }
 
