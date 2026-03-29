@@ -753,6 +753,21 @@ export function isStreamClosedError(error: unknown): boolean {
   );
 }
 
+/** FFmpeg error messages expected during normal teardown/shutdown. */
+const FFMPEG_TEARDOWN_ERRORS = ['Output stream closed', 'received signal 2', 'SIGKILL', 'SIGINT'];
+
+/**
+ * Check if an error is an expected FFmpeg teardown error that can be safely ignored during cleanup.
+ *
+ * @param error - The error to check.
+ * @returns True if the error is an expected FFmpeg shutdown error.
+ */
+export function isFfmpegTeardownError(error: unknown): boolean {
+  return (
+    error instanceof Error && FFMPEG_TEARDOWN_ERRORS.some((msg) => error.message?.includes(msg))
+  );
+}
+
 /**
  * In JS an error can be any arbitrary value.
  * This function converts an unknown error to an Error and stores the original value in the error object.

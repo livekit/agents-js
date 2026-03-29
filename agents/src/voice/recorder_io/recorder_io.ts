@@ -13,7 +13,7 @@ import { TransformStream } from 'node:stream/web';
 import { log } from '../../log.js';
 import { isStreamReaderReleaseError } from '../../stream/deferred_stream.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
-import { Future, Task, cancelAndWait, delay } from '../../utils.js';
+import { Future, Task, cancelAndWait, delay, isFfmpegTeardownError } from '../../utils.js';
 import type { AgentSession } from '../agent_session.js';
 import { AudioInput, AudioOutput, type PlaybackFinishedEvent } from '../io.js';
 
@@ -203,12 +203,7 @@ export class RecorderIO {
         })
         .on('error', (err) => {
           // Ignore errors from intentional stream closure or SIGINT during shutdown
-          if (
-            err.message?.includes('Output stream closed') ||
-            err.message?.includes('received signal 2') ||
-            err.message?.includes('SIGKILL') ||
-            err.message?.includes('SIGINT')
-          ) {
+          if (isFfmpegTeardownError(err)) {
             resolve();
           } else {
             this.logger.error({ err }, 'FFmpeg encoding error');
