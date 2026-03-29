@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-bey
 
+## 1.2.2
+
+### Patch Changes
+
+- Updated dependencies [[`a4cffe18728b5d41a26653b2cbdce1f2fb45c8d9`](https://github.com/livekit/agents-js/commit/a4cffe18728b5d41a26653b2cbdce1f2fb45c8d9), [`e2bafbca7c2ccbd0f163303305e6eef0c318fa20`](https://github.com/livekit/agents-js/commit/e2bafbca7c2ccbd0f163303305e6eef0c318fa20), [`f0ac7421ff47b30be80828ce602867bdb3f15bec`](https://github.com/livekit/agents-js/commit/f0ac7421ff47b30be80828ce602867bdb3f15bec), [`a183e4283a73307cae7b444b8a350efea6ef9e06`](https://github.com/livekit/agents-js/commit/a183e4283a73307cae7b444b8a350efea6ef9e06), [`706729f9e76a05c6c98c408d09f47f66f6a316cf`](https://github.com/livekit/agents-js/commit/706729f9e76a05c6c98c408d09f47f66f6a316cf), [`dba15b13c27fc05b2477fb866c5e29bc381748c3`](https://github.com/livekit/agents-js/commit/dba15b13c27fc05b2477fb866c5e29bc381748c3), [`755fcf968efc0077346d56e8b829e9a4527c6e5e`](https://github.com/livekit/agents-js/commit/755fcf968efc0077346d56e8b829e9a4527c6e5e)]:
+  - @livekit/agents@1.2.2
+
 ## 1.2.1
 
 ### Patch Changes
