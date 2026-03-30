@@ -342,14 +342,16 @@ export class LLMStream extends llm.LLMStream {
         },
         {
           timeout: this.connOptions.timeoutMs,
+          signal: this.abortController.signal,
         },
       );
 
       for await (const chunk of stream) {
+        if (this.abortController.signal.aborted) {
+          break;
+        }
+
         for (const choice of chunk.choices) {
-          if (this.abortController.signal.aborted) {
-            break;
-          }
           const chatChunk = this.parseChoice(chunk.id, choice);
           if (chatChunk) {
             retryable = false;

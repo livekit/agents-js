@@ -848,6 +848,13 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       this.itemDeleteFutures = {};
 
+      for (const handle of Object.values(this.responseCreatedFutures)) {
+        if (!handle.doneFut.done) {
+          handle.doneFut.reject(new Error('Session reconnected'));
+        }
+      }
+      this.responseCreatedFutures = {};
+
       // Clear audio-capable item tracking - restored items are text-only on the server
       this.audioCapableItemIds.clear();
 
