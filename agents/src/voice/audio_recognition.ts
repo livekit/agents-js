@@ -696,6 +696,16 @@ export class AudioRecognition {
             });
           });
         }
+        // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 483-495 lines
+        // STT EOT changes user state from speaking to listening without updating VAD internal states.
+        // VAD EOS will also skip updating user state from listening (STT enforced) to listening (VAD detected)
+        // and user state won't be updated until a new VAD SOS is received.
+        // Reset VAD so that incorrect end of turn from STT can be corrected by VAD interruption.
+        // If user is still speaking (an immediate VAD SOS will interrupt the agent).
+        if (this.vad && this.speaking) {
+          this.logger.warn('stt end of speech received while user is speaking, resetting vad');
+          this.resetVad();
+        }
         this.speaking = false;
         this.userTurnCommitted = true;
         this.lastSpeakingTime = Date.now();
@@ -1155,6 +1165,23 @@ export class AudioRecognition {
       this.sttTask = Task.from(({ signal }) => this.createSttTask(this.stt, signal));
       this.sttTask.result.catch((err) => {
         this.logger.error(`Error running STT task: ${err}`);
+      });
+    });
+  }
+
+  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 483-495 lines
+  /**
+   * Reset the VAD by restarting its task. This is needed when STT sends a premature
+   * end-of-turn signal while the user is still speaking, so VAD can detect new speech
+   * and trigger interruptions correctly.
+   */
+  private resetVad() {
+    if (!this.vad) return;
+
+    this.vadTask?.cancelAndWait().finally(() => {
+      this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
+      this.vadTask.result.catch((err) => {
+        this.logger.error(`Error running VAD task: ${err}`);
       });
     });
   }
