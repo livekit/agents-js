@@ -6,7 +6,7 @@ import type { EventEmitter } from 'node:events';
 import { initializeLogger, log } from './log.js';
 import { Plugin } from './plugin.js';
 import { version } from './version.js';
-import { AgentServer, ServerOptions } from './worker.js';
+import { AgentServer, ServerOptions, WorkerError } from './worker.js';
 
 type CliArgs = {
   opts: ServerOptions;
@@ -40,7 +40,13 @@ const runServer = async (args: CliArgs) => {
       process.exit(130); // SIGINT exit code
     });
     if (args.production) {
-      await server.drain();
+      try {
+        await server.drain();
+      } catch (e) {
+        if (e instanceof WorkerError) {
+          logger.error(e);
+        }
+      }
     }
     await server.close();
     logger.debug('worker closed due to SIGINT.');
@@ -50,7 +56,13 @@ const runServer = async (args: CliArgs) => {
   process.once('SIGTERM', async () => {
     logger.debug('SIGTERM received in CLI.');
     if (args.production) {
-      await server.drain();
+      try {
+        await server.drain();
+      } catch (e) {
+        if (e instanceof WorkerError) {
+          logger.error(e);
+        }
+      }
     }
     await server.close();
     logger.debug('worker closed due to SIGTERM.');

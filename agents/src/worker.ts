@@ -10,6 +10,7 @@ import {
   WorkerMessage,
   WorkerStatus,
 } from '@livekit/protocol';
+import type { Throws } from '@livekit/throws-transformer/throws';
 import type { ParticipantInfo } from 'livekit-server-sdk';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
@@ -428,7 +429,7 @@ export class AgentServer {
   }
 
   /** @throws {@link WorkerError} if worker did not drain in time */
-  async drain(timeout?: number) {
+  async drain(timeout?: number): Promise<Throws<void, WorkerError>> {
     if (this.#draining) {
       return;
     }
@@ -450,7 +451,7 @@ export class AgentServer {
 
     const joinJobs = async () => {
       return Promise.all(
-        this.#procPool.processes.map((proc) => {
+        this.#procPool.processes.map((proc): Promise<Throws<void, Error>> => {
           if (!proc.runningJob) {
             proc.close();
           }
@@ -465,8 +466,8 @@ export class AgentServer {
         throw new WorkerError('timed out draining');
       }, timeout);
     }
-    await joinJobs().then(() => {
-      if (timeout) {
+    await joinJobs().finally(() => {
+      if (timer) {
         clearTimeout(timer);
       }
     });
@@ -629,6 +630,21 @@ export class AgentServer {
     const loadMonitor = setInterval(() => {
       if (closingWS) clearInterval(loadMonitor);
 
+      if (this.#draining && currentStatus !== WorkerStatus.WS_FULL) {
+        this.event.emit(
+          'worker_msg',
+          new WorkerMessage({
+            message: {
+              case: 'updateWorker',
+              value: {
+                load: 1,
+                status: WorkerStatus.WS_FULL,
+              },
+            },
+          }),
+        );
+      }
+
       const oldStatus = currentStatus;
       this.#opts
         .loadFunc(this)
@@ -708,6 +724,7 @@ export class AgentServer {
       );
 
       this.#pending[req.id] = new PendingAssignment();
+
       const timer = setTimeout(() => {
         this.#logger.child({ req }).warn(`assignment for job ${req.id} timed out`);
         return;
@@ -718,13 +735,17 @@ export class AgentServer {
       });
 
       if (asgn) {
-        await this.#procPool.launchJob({
-          acceptArguments: args,
-          job: msg.job!,
-          url: asgn.url || this.#opts.wsURL,
-          token: asgn.token,
-          workerId: this.id,
-        });
+        try {
+          await this.#procPool.launchJob({
+            acceptArguments: args,
+            job: msg.job!,
+            url: asgn.url || this.#opts.wsURL,
+            token: asgn.token,
+            workerId: this.id,
+          });
+        } catch (e) {
+          this.#logger.child({ requestId: req.id }).error(e, 'error launching job');
+        }
       } else {
         this.#logger.child({ requestId: req.id }).warn('pending assignment not found');
       }
@@ -734,6 +755,14 @@ export class AgentServer {
     this.#logger
       .child({ jobId: msg.job?.id, resuming: msg.resuming, agentName: this.#opts.agentName })
       .info('received job request');
+
+    if (this.#draining) {
+      this.#logger
+        .child({ jobId: msg.job?.id, resuming: msg.resuming, agentName: this.#opts.agentName })
+        .info('Worker is draining and no longer available, rejecting job');
+      await req.reject();
+      return;
+    }
 
     const jobRequestTask = async () => {
       try {
@@ -770,7 +799,7 @@ export class AgentServer {
       // safe to ignore
       return;
     }
-    await proc.close();
+    await proc.close().catch((e) => this.#logger.error(e, 'Error terminating job'));
   }
 
   async close() {
