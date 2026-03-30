@@ -165,6 +165,7 @@ export class AudioRecognition {
   private isInterruptionEnabled: boolean;
   private isAgentSpeaking: boolean;
   private interruptionStreamChannel?: StreamChannel<InterruptionSentinel | AudioFrame>;
+  private closed = false;
 
   constructor(opts: AudioRecognitionOptions) {
     this.hooks = opts.recognitionHooks;
@@ -1177,6 +1178,7 @@ export class AudioRecognition {
     if (!this.vad) return;
 
     this.vadTask?.cancelAndWait().finally(() => {
+      if (this.closed) return;
       this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
       this.vadTask.result.catch((err) => {
         this.logger.error(`Error running VAD task: ${err}`);
@@ -1231,6 +1233,7 @@ export class AudioRecognition {
   }
 
   async close() {
+    this.closed = true;
     this.detachInputAudioStream();
     this.silenceAudioWriter.releaseLock();
     await this.commitUserTurnTask?.cancelAndWait();
