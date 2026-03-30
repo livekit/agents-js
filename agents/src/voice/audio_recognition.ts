@@ -696,7 +696,6 @@ export class AudioRecognition {
             });
           });
         }
-        // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 483-495 lines
         // STT EOT changes user state from speaking to listening without updating VAD internal states.
         // VAD EOS will also skip updating user state from listening (STT enforced) to listening (VAD detected)
         // and user state won't be updated until a new VAD SOS is received.
@@ -1169,7 +1168,6 @@ export class AudioRecognition {
     });
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 483-495 lines
   /**
    * Reset the VAD by restarting its task. This is needed when STT sends a premature
    * end-of-turn signal while the user is still speaking, so VAD can detect new speech

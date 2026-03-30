@@ -679,7 +679,6 @@ class RecorderAudioOutput extends AudioOutput {
       pauseIdx++;
     }
 
-    // Ref: python livekit-agents/livekit/agents/voice/recorder_io/recorder_io.py - 481 lines
     // Filter out empty frames from split operations to avoid spurious buffer writes
     const filteredBuf = buf.filter((f) => f.samplesPerChannel > 0);
 
