@@ -23,7 +23,7 @@ import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
 import { log } from './log.js';
-import { Future } from './utils.js';
+import { Future, rejectOnAbort, waitForAbort } from './utils.js';
 import { version } from './version.js';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -460,17 +460,12 @@ export class AgentServer {
       );
     };
 
-    let timer: NodeJS.Timeout | undefined;
+    const promises = [joinJobs()];
+
     if (timeout) {
-      timer = setTimeout(() => {
-        throw new WorkerError('timed out draining');
-      }, timeout);
+      promises.push(rejectOnAbort(AbortSignal.timeout(timeout)));
     }
-    await joinJobs().finally(() => {
-      if (timer) {
-        clearTimeout(timer);
-      }
-    });
+    await Promise.race(promises);
   }
 
   async simulateJob(roomName: string, participantIdentity?: string) {

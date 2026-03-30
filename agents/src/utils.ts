@@ -968,9 +968,18 @@ export async function waitForAbort(signal: AbortSignal) {
     abortFuture.resolve();
     signal.removeEventListener('abort', handler);
   };
-
+  if (signal.aborted) {
+    return;
+  }
   signal.addEventListener('abort', handler, { once: true });
   return await abortFuture.await;
+}
+
+export async function rejectOnAbort(signal: AbortSignal): Promise<never> {
+  if (signal.aborted) throw signal.reason;
+  const abortFuture = new Future<never>();
+  signal.addEventListener('abort', () => abortFuture.reject(signal.reason), { once: true });
+  return abortFuture.await;
 }
 
 /**
