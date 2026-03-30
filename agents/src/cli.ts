@@ -45,8 +45,9 @@ const runServer = async (args: CliArgs) => {
       } catch (e) {
         if (e instanceof WorkerError) {
           logger.error(e);
+        } else {
+          throw e;
         }
-      }
     }
     await server.close();
     logger.debug('worker closed due to SIGINT.');
