@@ -630,19 +630,23 @@ export class AgentServer {
     const loadMonitor = setInterval(() => {
       if (closingWS) clearInterval(loadMonitor);
 
-      if (this.#draining && currentStatus !== WorkerStatus.WS_FULL) {
-        this.event.emit(
-          'worker_msg',
-          new WorkerMessage({
-            message: {
-              case: 'updateWorker',
-              value: {
-                load: 1,
-                status: WorkerStatus.WS_FULL,
+      if (this.#draining) {
+        if (currentStatus !== WorkerStatus.WS_FULL) {
+          currentStatus = WorkerStatus.WS_FULL;
+          this.event.emit(
+            'worker_msg',
+            new WorkerMessage({
+              message: {
+                case: 'updateWorker',
+                value: {
+                  load: 1,
+                  status: WorkerStatus.WS_FULL,
+                },
               },
-            },
-          }),
-        );
+            }),
+          );
+        }
+        return;
       }
 
       const oldStatus = currentStatus;
