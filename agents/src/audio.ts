@@ -49,8 +49,11 @@ export class AudioByteStream {
     this.#buf = new Int8Array();
   }
 
-  write(data: ArrayBuffer): AudioFrame[] {
-    this.#buf = new Int8Array([...this.#buf, ...new Int8Array(data)]);
+  write(data: ArrayBufferLike | ArrayBufferView): AudioFrame[] {
+    const bytes = ArrayBuffer.isView(data)
+      ? new Int8Array(data.buffer, data.byteOffset, data.byteLength)
+      : new Int8Array(data);
+    this.#buf = new Int8Array([...this.#buf, ...bytes]);
 
     const frames: AudioFrame[] = [];
     while (this.#buf.length >= this.#bytesPerFrame) {
