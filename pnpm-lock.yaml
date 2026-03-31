@@ -770,8 +770,8 @@ importers:
   plugins/phonic:
     dependencies:
       phonic:
-        specifier: ^0.31.2
-        version: 0.31.2
+        specifier: ^0.31.8
+        version: 0.31.8
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -976,7 +976,7 @@ importers:
     dependencies:
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.18.3)(zod@4.3.6)
+        version: 6.8.1(ws@8.20.0)(zod@4.3.6)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -4482,8 +4482,8 @@ packages:
     resolution: {integrity: sha512-vE7JKRyES09KiunauX7nd2Q9/L7lhok4smP9RZTDeD4MVs72Dp2qNFVz39Nz5a0FVEW0BJR6C0DYrq6unoziZA==}
     engines: {node: '>= 14.16'}
 
-  phonic@0.31.2:
-    resolution: {integrity: sha512-vpFBFpJYCjgqG2RPe+z3EmwLu/HN8CX1A9kEvNestpm/PWhaGLcEL3ySZmm+AOCaDeRykdhdJ5smEFKj20gd4Q==}
+  phonic@0.31.8:
+    resolution: {integrity: sha512-BeUqRbr0Ta0uB+6OCB770BNJ/r77HvgF+5vE2c69HEylqO93IMQkeWVeXb56Vh8mT5D3LGoO6NRssG5ChtreMw==}
     engines: {node: '>=18.0.0'}
 
   picocolors@1.0.1:
@@ -5475,6 +5475,18 @@ packages:
 
   ws@8.18.3:
     resolution: {integrity: sha512-PEIGCY5tSlUt50cqyMXfCzX+oOPqN0vuGqWzbcJ2xvnkzkq46oOpz7dQaTDBdfICb4N14+GARUDw2XV2N4tvzg==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
+  ws@8.20.0:
+    resolution: {integrity: sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -9020,6 +9032,11 @@ snapshots:
       ws: 8.18.3
       zod: 4.3.6
 
+  openai@6.8.1(ws@8.20.0)(zod@4.3.6):
+    optionalDependencies:
+      ws: 8.20.0
+      zod: 4.3.6
+
   optionator@0.9.4:
     dependencies:
       deep-is: 0.1.4
@@ -9104,9 +9121,9 @@ snapshots:
 
   pathval@2.0.0: {}
 
-  phonic@0.31.2:
+  phonic@0.31.8:
     dependencies:
-      ws: 8.18.3
+      ws: 8.20.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -10309,6 +10326,8 @@ snapshots:
   ws@8.17.0: {}
 
   ws@8.18.3: {}
+
+  ws@8.20.0: {}
 
   yallist@4.0.0: {}
 
