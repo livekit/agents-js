@@ -837,7 +837,7 @@ export function waitUntilTimeout<T, E extends Error = IdleTimeoutError>(
   promise: Promise<T>,
   timeoutMs: number,
   throwError?: () => E,
-): Promise<Throws<T, E>> {
+): Promise<Throws<T, E | IdleTimeoutError>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
     promise,

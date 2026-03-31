@@ -23,7 +23,7 @@ import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
 import { log } from './log.js';
-import { Future, rejectOnAbort, waitForAbort } from './utils.js';
+import { Future, rejectOnAbort } from './utils.js';
 import { version } from './version.js';
 
 const MAX_RECONNECT_ATTEMPTS = 10;

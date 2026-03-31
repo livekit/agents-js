@@ -6,7 +6,7 @@ import type { EventEmitter } from 'node:events';
 import { initializeLogger, log } from './log.js';
 import { Plugin } from './plugin.js';
 import { version } from './version.js';
-import { AgentServer, ServerOptions, WorkerError } from './worker.js';
+import { AgentServer, ServerOptions } from './worker.js';
 
 type CliArgs = {
   opts: ServerOptions;
