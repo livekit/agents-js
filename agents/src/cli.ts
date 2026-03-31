@@ -43,11 +43,7 @@ const runServer = async (args: CliArgs) => {
       try {
         await server.drain();
       } catch (e) {
-        if (e instanceof WorkerError) {
-          logger.error(e);
-        } else {
-          throw e;
-        }
+        logger.error(e);
       }
     }
     await server.close();
@@ -61,9 +57,7 @@ const runServer = async (args: CliArgs) => {
       try {
         await server.drain();
       } catch (e) {
-        if (e instanceof WorkerError) {
-          logger.error(e);
-        }
+        logger.error(e);
       }
     }
     await server.close();
