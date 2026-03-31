@@ -19,8 +19,8 @@ export class ProcPool {
   controller = new AbortController();
   initMutex = new Mutex();
   procMutex?: MultiMutex;
-  procUnlock?: () => void;
-  warmedProcQueue = new Queue<JobExecutor>();
+  // Keep each lock token paired with its warmed process so MultiMutex slots are always released correctly.
+  warmedProcQueue = new Queue<{ proc: JobExecutor; unlock: () => void }>();
   inferenceExecutor?: InferenceExecutor;
   memoryWarnMB: number;
   memoryLimitMB: number;
@@ -56,11 +56,10 @@ export class ProcPool {
   async launchJob(info: RunningJobInfo) {
     let proc: JobExecutor;
     if (this.procMutex) {
-      proc = await this.warmedProcQueue.get();
-      if (this.procUnlock) {
-        this.procUnlock();
-        this.procUnlock = undefined;
-      }
+      const entry = await this.warmedProcQueue.get();
+      proc = entry.proc;
+      // Release exactly the slot that produced this warmed process.
+      entry.unlock();
     } else {
       proc = new JobProcExecutor(
         this.agent,
@@ -80,7 +79,7 @@ export class ProcPool {
     await proc.launchJob(info);
   }
 
-  async procWatchTask() {
+  async procWatchTask(procUnlock: () => void) {
     const proc = new JobProcExecutor(
       this.agent,
       this.inferenceExecutor,
@@ -104,12 +103,10 @@ export class ProcPool {
       await proc.start();
       try {
         await proc.initialize();
-        await this.warmedProcQueue.put(proc);
+        await this.warmedProcQueue.put({ proc, unlock: procUnlock });
       } catch {
-        if (this.procUnlock) {
-          this.procUnlock();
-          this.procUnlock = undefined;
-        }
+        // Initialization failed before enqueue, so release the acquired slot immediately.
+        procUnlock();
       }
 
       unlock();
@@ -136,8 +133,8 @@ export class ProcPool {
   async run(signal: AbortSignal) {
     if (this.procMutex) {
       while (!signal.aborted) {
-        this.procUnlock = await this.procMutex.lock();
-        const task = this.procWatchTask();
+        const procUnlock = await this.procMutex.lock();
+        const task = this.procWatchTask(procUnlock);
         this.tasks.push(task);
         task.finally(() => {
           const taskIndex = this.tasks.indexOf(task);
@@ -157,7 +154,10 @@ export class ProcPool {
     }
     this.closed = true;
     this.controller.abort();
-    this.warmedProcQueue.items.forEach((e) => e.close());
+    this.warmedProcQueue.items.forEach((e) => {
+      e.unlock();
+      e.proc.close();
+    });
     this.executors.forEach((e) => e.close());
     await Promise.allSettled(this.tasks);
   }

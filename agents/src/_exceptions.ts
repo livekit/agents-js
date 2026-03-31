@@ -79,8 +79,10 @@ export class APIStatusError extends APIError {
     options?: APIStatusErrorOptions;
   }) {
     const statusCode = options.statusCode ?? -1;
-    // 4xx errors are not retryable
-    const isRetryable = options.retryable ?? !(statusCode >= 400 && statusCode < 500);
+    // 408/429 are transient even though they are 4xx, so keep them retryable by default.
+    const isRetryable =
+      options.retryable ??
+      (statusCode === 408 || statusCode === 429 || !(statusCode >= 400 && statusCode < 500));
 
     super(message, { body: options.body, retryable: isRetryable });
     this.name = 'APIStatusError';

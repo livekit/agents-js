@@ -360,6 +360,8 @@ export class ParticipantAudioOutput extends AudioOutput {
   }
 
   private async waitForPlayoutTask(abortController: AbortController): Promise<void> {
+    // Snapshot duration for this flush so overlapping next-segment frames are not erased on completion.
+    const accountedDuration = this.pushedDuration;
     const abortFuture = new Future<boolean>();
 
     const resolveAbort = () => {
@@ -378,16 +380,15 @@ export class ParticipantAudioOutput extends AudioOutput {
       this.interruptedFuture.await.then(() => true),
     ]);
 
-    let pushedDuration = this.pushedDuration;
+    let pushedDuration = accountedDuration;
 
     if (interrupted) {
-      // Calculate actual played duration accounting for queued audio
-      // Note: queuedDuration is in milliseconds, pushedDuration is in seconds
-      pushedDuration = Math.max(this.pushedDuration - this.audioSource.queuedDuration / 1000, 0);
+      pushedDuration = Math.max(accountedDuration - this.audioSource.queuedDuration / 1000, 0);
       this.audioSource.clearQueue();
     }
 
-    this.pushedDuration = 0;
+    // Remove only this segment's duration; newer captured frames remain queued for the next flush.
+    this.pushedDuration -= accountedDuration;
     this.interruptedFuture = new Future();
     this.firstFrameEmitted = false;
 

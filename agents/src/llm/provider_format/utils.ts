@@ -51,6 +51,8 @@ class ChatItemGroup {
       this.toolCalls.push(item);
     } else if (item.type === 'function_call_output') {
       this.toolOutputs.push(item);
+    } else if (item.type === 'agent_handoff') {
+      // provider formatters don't serialize handoff records into model input.
     }
     return this;
   }
@@ -153,6 +155,8 @@ export function groupToolCalls(chatCtx: ChatContext) {
       toolOutputs.push(item);
     } else {
       itemGroups[item.id] = ChatItemGroup.create().add(item);
+      // User/system messages and agent_handoff items also need stable insertion indices.
+      insertionOrder[item.id] = insertionIndex++;
     }
   }
 

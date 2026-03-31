@@ -543,13 +543,20 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       try {
         ws = await this.stt.connectWs(this.connOptions.timeoutMs);
 
-        const controller = this.abortController; // Use base class abortController for proper cancellation
-        const sendTask = Task.from(({ signal }) => send(ws!, signal), controller);
-        const wsListenerTask = Task.from(({ signal }) => createWsListener(ws!, signal), controller);
-        const recvTask = Task.from(({ signal }) => recv(signal), controller);
+        // Use a per-connection controller so reconnect loops don't inherit a permanently-aborted signal.
+        const connController = new AbortController();
+        const onStreamAbort = () => connController.abort();
+        this.abortController.signal.addEventListener('abort', onStreamAbort);
+
+        const sendTask = Task.from(({ signal }) => send(ws!, signal), connController);
+        const wsListenerTask = Task.from(
+          ({ signal }) => createWsListener(ws!, signal),
+          connController,
+        );
+        const recvTask = Task.from(({ signal }) => recv(signal), connController);
         const waitReconnectTask = Task.from(
           ({ signal }) => Promise.race([this.reconnectEvent.wait(), waitForAbort(signal)]),
-          controller,
+          connController,
         );
 
         try {
@@ -564,13 +571,16 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           // Reconnect triggered - clear event and continue loop
           this.reconnectEvent.clear();
         } finally {
-          // Cancel all tasks to ensure cleanup
+          connController.abort();
+          this.abortController.signal.removeEventListener('abort', onStreamAbort);
           await cancelAndWait(
             [sendTask, wsListenerTask, recvTask, waitReconnectTask],
             DEFAULT_CANCEL_TIMEOUT,
           );
           resourceCleanup();
         }
+
+        if (this.abortController.signal.aborted) break;
       } finally {
         // Ensure cleanup even if connectWs throws
         resourceCleanup();
