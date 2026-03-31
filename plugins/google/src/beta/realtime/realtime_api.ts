@@ -660,12 +660,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     for (const f of this.resampleAudio(frame)) {
       for (const nf of this.bstream.write(f.data.buffer as ArrayBuffer)) {
         const realtimeInput: types.LiveClientRealtimeInput = {
-          mediaChunks: [
-            {
-              mimeType: 'audio/pcm',
-              data: Buffer.from(nf.data.buffer).toString('base64'),
-            },
-          ],
+          audio: {
+            mimeType: 'audio/pcm',
+            data: Buffer.from(nf.data.buffer).toString('base64'),
+          },
         };
         this.sendClientEvent({
           type: 'realtime_input',
@@ -704,26 +702,12 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.inUserActivity = false;
     }
 
-    // Gemini requires the last message to end with user's turn
-    // so we need to add a placeholder user turn in order to trigger a new generation
-    const turns: types.Content[] = [];
-    if (instructions !== undefined) {
-      turns.push({
-        parts: [{ text: instructions }],
-        role: 'model',
-      });
-    }
-    turns.push({
-      parts: [{ text: '.' }],
-      role: 'user',
-    });
-
+    // Trigger generation via realtime text input.
+    // Gemini 3.1+ rejects sendClientContent — sendRealtimeInput({ text }) works on all Live models.
+    // Instructions are included in the text so the model uses them as context for the next reply.
     this.sendClientEvent({
-      type: 'content',
-      value: {
-        turns,
-        turnComplete: true,
-      },
+      type: 'realtime_input',
+      value: { text: instructions ?? '.' },
     });
 
     const timeoutHandle = setTimeout(() => {
@@ -992,12 +976,10 @@ export class RealtimeSession extends llm.RealtimeSession {
             }
             break;
           case 'realtime_input':
-            const { mediaChunks, activityStart, activityEnd, text } = msg.value;
+            const { audio, activityStart, activityEnd, text } = msg.value;
             if (this.pendingToolCallIds.size > 0) break;
-            if (mediaChunks) {
-              for (const mediaChunk of mediaChunks) {
-                await session.sendRealtimeInput({ media: mediaChunk });
-              }
+            if (audio) {
+              await session.sendRealtimeInput({ audio });
             }
             if (text) {
               await session.sendRealtimeInput({ text });
@@ -1141,15 +1123,14 @@ export class RealtimeSession extends llm.RealtimeSession {
     maxLength: number = 30,
   ): Record<string, unknown> {
     const obj: any = { ...event };
-    if (obj.type === 'realtime_input' && obj.value?.mediaChunks) {
+    if (obj.type === 'realtime_input' && obj.value?.audio) {
+      const mc = obj.value.audio as { mimeType?: string; data?: string };
       obj.value = {
         ...obj.value,
-        mediaChunks: (obj.value.mediaChunks as Array<{ mimeType?: string; data?: string }>).map(
-          (mc) => ({
-            ...mc,
-            data: typeof mc.data === 'string' ? this.truncateString(mc.data, maxLength) : mc.data,
-          }),
-        ),
+        audio: {
+          ...mc,
+          data: typeof mc.data === 'string' ? this.truncateString(mc.data, maxLength) : mc.data,
+        },
       };
     }
     return obj;
@@ -1265,17 +1246,15 @@ export class RealtimeSession extends llm.RealtimeSession {
         },
         languageCode: opts.language,
       },
-      tools: [
-        {
-          functionDeclarations: this.geminiDeclarations,
-          ...this.options.geminiTools,
-        },
-      ],
+      tools:
+        this.geminiDeclarations.length > 0 || this.options.geminiTools
+          ? [{ functionDeclarations: this.geminiDeclarations, ...this.options.geminiTools }]
+          : undefined,
       inputAudioTranscription: opts.inputAudioTranscription,
       outputAudioTranscription: opts.outputAudioTranscription,
-      sessionResumption: {
-        handle: this.sessionResumptionHandle,
-      },
+      sessionResumption: this.sessionResumptionHandle
+        ? { handle: this.sessionResumptionHandle }
+        : undefined,
     };
 
     // Add generation fields at TOP LEVEL (NO generationConfig!)
