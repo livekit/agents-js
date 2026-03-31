@@ -111,7 +111,7 @@ export class CGroupV1CpuMonitor implements CpuMonitor {
       // do not use the host CPU count as it could overstate the number available to the container
       return 2.0;
     }
-    return Math.max(quota / period, 1.0);
+    return quota / period;
   }
 
   cpuPercent(intervalMs: number): Promise<number> {

@@ -228,6 +228,9 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
           case 'response.completed':
             chunk = this.handleResponseCompleted(event);
             break;
+          case 'response.failed':
+            this.handleResponseFailed(event);
+            break;
         }
 
         if (chunk) {
@@ -269,6 +272,13 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
         statusCode: -1,
         retryable: false,
       },
+    });
+  }
+
+  private handleResponseFailed(event: OpenAI.Responses.ResponseFailedEvent): void {
+    throw new APIStatusError({
+      message: event.response.error?.message ?? 'Response failed',
+      options: { statusCode: -1, retryable: false },
     });
   }
 
