@@ -1254,7 +1254,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       outputAudioTranscription: opts.outputAudioTranscription,
       sessionResumption: this.sessionResumptionHandle
         ? { handle: this.sessionResumptionHandle }
-        : undefined,
+        : {}, // empty object opts in to resumption on first connect
     };
 
     // Add generation fields at TOP LEVEL (NO generationConfig!)
