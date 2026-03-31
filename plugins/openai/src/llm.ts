@@ -521,7 +521,7 @@ export class LLM extends llm.LLM {
     return new LLMStream(this as unknown as inference.LLM, {
       model: this.#opts.model,
       providerFmt: this.#providerFmt,
-      client: this.#client,
+      client: this.#client as any,
       chatCtx,
       toolCtx,
       connOptions,
