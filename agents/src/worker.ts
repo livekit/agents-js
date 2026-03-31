@@ -463,7 +463,11 @@ export class AgentServer {
     const promises = [joinJobs()];
 
     if (timeout) {
-      promises.push(rejectOnAbort(AbortSignal.timeout(timeout)).catch(() => { throw new WorkerError('timed out draining'); }));
+      promises.push(
+        rejectOnAbort(AbortSignal.timeout(timeout)).catch(() => {
+          throw new WorkerError('timed out draining');
+        }),
+      );
     }
     await Promise.race(promises);
   }
