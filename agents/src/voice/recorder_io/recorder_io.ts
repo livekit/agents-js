@@ -679,11 +679,16 @@ class RecorderAudioOutput extends AudioOutput {
       pauseIdx++;
     }
 
-    if (buf.length > 0) {
+    // Filter out empty frames from split operations to avoid spurious buffer writes
+    const filteredBuf = buf.filter((f) => f.samplesPerChannel > 0);
+
+    if (filteredBuf.length > 0) {
       if (trailingSilenceDuration > 0) {
-        buf.push(createSilenceFrame(trailingSilenceDuration / 1000, sampleRate, numChannels));
+        filteredBuf.push(
+          createSilenceFrame(trailingSilenceDuration / 1000, sampleRate, numChannels),
+        );
       }
-      this.writeFn(buf);
+      this.writeFn(filteredBuf);
     }
 
     this.accFrames = [];
