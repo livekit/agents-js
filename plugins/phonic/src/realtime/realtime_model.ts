@@ -99,6 +99,12 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       multilingualMode?: 'auto' | 'request';
       /**
+       * Deprecated. Use `defaultLanguage` and `additionalLanguages` instead.
+       * When both of those are omitted and this is set, `languages[0]` is the default
+       * language and `languages.slice(1)` are additional languages.
+       */
+      languages?: string[];
+      /**
        * Audio playback speed
        */
       audioSpeed?: number;
@@ -147,6 +153,21 @@ export class RealtimeModel extends llm.RealtimeModel {
       throw new Error('Phonic API key is required. Provide apiKey or set PHONIC_API_KEY.');
     }
 
+    let defaultLanguage = options.defaultLanguage;
+    let additionalLanguages = options.additionalLanguages;
+    if (
+      options.languages !== undefined &&
+      options.defaultLanguage === undefined &&
+      options.additionalLanguages === undefined
+    ) {
+      if (options.languages.length > 0) {
+        defaultLanguage = options.languages[0];
+      }
+      if (options.languages.length > 1) {
+        additionalLanguages = options.languages.slice(1);
+      }
+    }
+
     this._options = {
       apiKey,
       voice: options.voice,
@@ -154,8 +175,8 @@ export class RealtimeModel extends llm.RealtimeModel {
       project: options.project,
       welcomeMessage: options.welcomeMessage,
       generateWelcomeMessage: options.generateWelcomeMessage,
-      defaultLanguage: options.defaultLanguage,
-      additionalLanguages: options.additionalLanguages,
+      defaultLanguage,
+      additionalLanguages,
       multilingualMode: options.multilingualMode,
       audioSpeed: options.audioSpeed,
       phonicTools: options.phonicTools,
