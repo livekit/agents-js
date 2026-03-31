@@ -387,8 +387,7 @@ export class ParticipantAudioOutput extends AudioOutput {
       this.audioSource.clearQueue();
     }
 
-    // Remove only this segment's duration; newer captured frames remain queued for the next flush.
-    this.pushedDuration -= accountedDuration;
+    this.pushedDuration = 0;
     this.interruptedFuture = new Future();
     this.firstFrameEmitted = false;
 

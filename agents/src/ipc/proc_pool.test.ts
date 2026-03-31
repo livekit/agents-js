@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
 import type { RunningJobInfo } from '../job.js';
-import { JobStatus, type JobExecutor } from './job_executor.js';
+import { type JobExecutor, JobStatus } from './job_executor.js';
 import { ProcPool } from './proc_pool.js';
 
 function createMockExecutor() {
