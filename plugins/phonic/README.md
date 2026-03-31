@@ -73,7 +73,9 @@ Set the `PHONIC_API_KEY` environment variable, or pass `apiKey` directly to `Rea
 | `welcomeMessage` | `string` | Message the agent says when the conversation starts. Ignored when `generateWelcomeMessage` is true |
 | `generateWelcomeMessage` | `boolean` | Auto-generate the welcome message (ignores `welcomeMessage`) |
 | `project` | `string` | Project name (default: `main`) |
-| `languages` | `string[]` | ISO 639-1 language codes the agent should recognize and speak |
+| `defaultLanguage` | `string` | ISO 639-1 default language for recognition and speech |
+| `additionalLanguages` | `string[]` | Further ISO 639-1 codes (must not repeat `defaultLanguage`) |
+| `multilingualMode` | `'auto'` \| `'request'` | Per-utterance language detection vs. change on user request (recommended: `request`) |
 | `audioSpeed` | `number` | Audio playback speed |
 | `phonicTools` | `string[]` | [Phonic Webhook tool](https://docs.phonic.co/docs/using-tools/tools_overview#webhook-tools) names available to the assistant |
 | `boostedKeywords` | `string[]` | Keywords to boost in speech recognition |
