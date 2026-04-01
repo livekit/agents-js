@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { Throws } from '@livekit/throws-transformer/throws';
 import { describe, expect, it, vi } from 'vitest';
 import type { RunningJobInfo } from '../job.js';
 import { type JobExecutor, JobStatus } from './job_executor.js';
@@ -22,7 +23,9 @@ function createMockExecutor() {
 }
 
 describe('ProcPool warmed process lock handling', () => {
-  it('releases lock token from the dequeued warmed process entry', async () => {
+  it('releases lock token from the dequeued warmed process entry', async (): Promise<
+    Throws<void, Error>
+  > => {
     const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
     const unlock = vi.fn();
     const executor = createMockExecutor();
