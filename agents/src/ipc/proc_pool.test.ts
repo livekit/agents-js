@@ -35,6 +35,7 @@ describe('ProcPool warmed process lock handling', () => {
     } as unknown as RunningJobInfo;
 
     await pool.warmedProcQueue.put({ proc: executor, unlock });
+    // @throws-transformer ignore
     await pool.launchJob(jobInfo);
 
     expect(unlock).toHaveBeenCalledTimes(1);
