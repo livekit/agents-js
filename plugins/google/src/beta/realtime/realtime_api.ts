@@ -684,9 +684,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
     if (this.options.model === 'gemini-3.1-flash-live-preview') {
       this.#logger.warn(
-        'generate_reply is not compatible with gemini-3.1-flash-live-preview and will be ignored.',
+        'generateReply is not compatible with gemini-3.1-flash-live-preview and will be ignored.',
       );
-      throw new Error("generate_reply is not compatible with 'gemini-3.1-flash-live-preview'");
+      throw new Error("generateReply is not compatible with 'gemini-3.1-flash-live-preview'");
     }
 
     if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
