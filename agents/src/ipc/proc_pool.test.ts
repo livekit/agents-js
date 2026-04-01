@@ -53,4 +53,17 @@ describe('ProcPool warmed process lock handling', () => {
     expect(unlock).toHaveBeenCalledTimes(1);
     expect(executor.close).toHaveBeenCalledTimes(1);
   });
+
+  it('releases both init and proc locks when closed before proc starts', async () => {
+    const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
+    const initUnlock = vi.fn();
+    const procUnlock = vi.fn();
+    pool.closed = true;
+    pool.initMutex.lock = vi.fn(async () => initUnlock);
+
+    await pool.procWatchTask(procUnlock);
+
+    expect(initUnlock).toHaveBeenCalledTimes(1);
+    expect(procUnlock).toHaveBeenCalledTimes(1);
+  });
 });

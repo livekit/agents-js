@@ -96,21 +96,28 @@ export class ProcPool {
       this.executors.push(proc);
 
       const unlock = await this.initMutex.lock();
-      if (this.closed) {
-        return;
-      }
-
-      await proc.start();
+      let procUnlockTransferred = false;
       try {
-        await proc.initialize();
-        await this.warmedProcQueue.put({ proc, unlock: procUnlock });
-      } catch {
-        // Initialization failed before enqueue, so release the acquired slot immediately.
-        procUnlock();
-      }
+        if (this.closed) {
+          return;
+        }
 
-      unlock();
-      await proc.join();
+        await proc.start();
+        try {
+          await proc.initialize();
+          await this.warmedProcQueue.put({ proc, unlock: procUnlock });
+          procUnlockTransferred = true;
+        } catch {
+          // Initialization failed before enqueue, so release the acquired slot immediately.
+        }
+
+        await proc.join();
+      } finally {
+        unlock();
+        if (!procUnlockTransferred) {
+          procUnlock();
+        }
+      }
     } finally {
       const procIndex = this.executors.indexOf(proc);
       if (procIndex !== -1) {
