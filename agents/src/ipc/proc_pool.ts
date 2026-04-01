@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { MultiMutex, Mutex } from '@livekit/mutex';
+import type { Throws } from '@livekit/throws-transformer/throws';
 import type { RunningJobInfo } from '../job.js';
 import { Queue } from '../utils.js';
 import type { InferenceExecutor } from './inference_executor.js';
@@ -53,7 +54,7 @@ export class ProcPool {
     return this.executors.find((x) => x.runningJob && x.runningJob.job.id === id) || null;
   }
 
-  async launchJob(info: RunningJobInfo) {
+  async launchJob(info: RunningJobInfo): Promise<Throws<void, Error>> {
     let proc: JobExecutor;
     if (this.procMutex) {
       const entry = await this.warmedProcQueue.get();

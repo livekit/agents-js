@@ -40,7 +40,11 @@ const runServer = async (args: CliArgs) => {
       process.exit(130); // SIGINT exit code
     });
     if (args.production) {
-      await server.drain();
+      try {
+        await server.drain();
+      } catch (e) {
+        logger.error(e);
+      }
     }
     await server.close();
     logger.debug('worker closed due to SIGINT.');
@@ -50,7 +54,11 @@ const runServer = async (args: CliArgs) => {
   process.once('SIGTERM', async () => {
     logger.debug('SIGTERM received in CLI.');
     if (args.production) {
-      await server.drain();
+      try {
+        await server.drain();
+      } catch (e) {
+        logger.error(e);
+      }
     }
     await server.close();
     logger.debug('worker closed due to SIGTERM.');

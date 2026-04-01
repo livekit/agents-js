@@ -837,7 +837,7 @@ export function waitUntilTimeout<T, E extends Error = IdleTimeoutError>(
   promise: Promise<T>,
   timeoutMs: number,
   throwError?: () => E,
-): Promise<Throws<T, E>> {
+): Promise<Throws<T, E | IdleTimeoutError>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
     promise,
@@ -968,9 +968,18 @@ export async function waitForAbort(signal: AbortSignal) {
     abortFuture.resolve();
     signal.removeEventListener('abort', handler);
   };
-
+  if (signal.aborted) {
+    return;
+  }
   signal.addEventListener('abort', handler, { once: true });
   return await abortFuture.await;
+}
+
+export async function rejectOnAbort(signal: AbortSignal): Promise<never> {
+  if (signal.aborted) throw signal.reason;
+  const abortFuture = new Future<never>();
+  signal.addEventListener('abort', () => abortFuture.reject(signal.reason), { once: true });
+  return abortFuture.await;
 }
 
 /**
