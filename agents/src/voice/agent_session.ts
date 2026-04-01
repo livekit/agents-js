@@ -39,8 +39,12 @@ import {
 import { Task } from '../utils.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
-import { AgentActivity } from './agent_activity.js';
-import type { STTPipeline, _TurnDetector } from './audio_recognition.js';
+import {
+  AgentActivity,
+  type ReusableResources,
+  cleanupReusableResources,
+} from './agent_activity.js';
+import type { _TurnDetector } from './audio_recognition.js';
 import {
   type AgentEvent,
   AgentSessionEventTypes,
@@ -762,7 +766,7 @@ export class AgentSession<
     const runWithContext = async () => {
       const unlock = await this.activityLock.lock();
       let onEnterTask: Task<void> | undefined;
-      let reusedSttPipeline: STTPipeline | undefined;
+      let reusableResources: ReusableResources | undefined;
 
       try {
         this.agent = agent;
@@ -785,15 +789,16 @@ export class AgentSession<
           this.nextActivity = agent._agentActivity;
         }
 
-        if (prevActivityObj && this.nextActivity && prevActivityObj !== this.nextActivity) {
-          reusedSttPipeline = await prevActivityObj._detachSttPipelineIfReusable(this.nextActivity);
-        }
-
         if (prevActivityObj && prevActivityObj !== this.nextActivity) {
           if (previousActivity === 'pause') {
-            await prevActivityObj.pause({ blockedTasks });
+            reusableResources = await prevActivityObj.pause({
+              blockedTasks,
+              newActivity: this.nextActivity,
+            });
           } else {
-            await prevActivityObj.drain();
+            reusableResources = await prevActivityObj.drain({
+              newActivity: this.nextActivity,
+            });
             await prevActivityObj.close();
           }
         }
@@ -803,8 +808,10 @@ export class AgentSession<
             { agentId: this.nextActivity?.agent.id },
             'Session is closing, skipping start of next activity',
           );
-          await reusedSttPipeline?.close();
-          reusedSttPipeline = undefined;
+          if (reusableResources) {
+            await cleanupReusableResources(reusableResources);
+            reusableResources = undefined;
+          }
           this.nextActivity = undefined;
           this.activity = undefined;
           return;
@@ -834,11 +841,11 @@ export class AgentSession<
         );
 
         if (newActivity === 'start') {
-          await this.activity!.start({ reuseSttPipeline: reusedSttPipeline });
+          await this.activity!.start({ reuseResources: reusableResources });
         } else {
-          await this.activity!.resume({ reuseSttPipeline: reusedSttPipeline });
+          await this.activity!.resume({ reuseResources: reusableResources });
         }
-        reusedSttPipeline = undefined;
+        reusableResources = undefined;
 
         onEnterTask = this.activity!._onEnterTask;
 
@@ -846,9 +853,11 @@ export class AgentSession<
           this.activity!.attachAudioInput(this._input.audio.stream);
         }
       } catch (error) {
-        // JS safeguard: session cleanup owns the detached pipeline until the next activity
+        // JS safeguard: session cleanup owns the detached resources until the next activity
         // starts successfully, preventing leaks when handoff fails mid-transition.
-        await reusedSttPipeline?.close();
+        if (reusableResources) {
+          await cleanupReusableResources(reusableResources);
+        }
         throw error;
       } finally {
         unlock();

@@ -177,6 +177,9 @@ export class RealtimeModel extends llm.RealtimeModel {
       autoToolReplyGeneration: false,
       audioOutput: modalities.includes('audio'),
       manualFunctionCalls: true,
+      midSessionContextUpdate: true,
+      midSessionInstructionsUpdate: true,
+      midSessionToolsUpdate: true,
     });
 
     const isAzure = !!(options.apiVersion || options.entraToken || options.azureDeployment);

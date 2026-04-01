@@ -41,6 +41,7 @@ export class DeferredReadableStream<T> {
   private transform: IdentityTransform<T>;
   private writer: WritableStreamDefaultWriter<T>;
   private sourceReader?: ReadableStreamDefaultReader<T>;
+  private detachRequested = false;
 
   constructor() {
     this.transform = new IdentityTransform<T>();
@@ -83,6 +84,11 @@ export class DeferredReadableStream<T> {
 
       sourceError = e;
     } finally {
+      if (this.detachRequested) {
+        this.detachRequested = false;
+        return;
+      }
+
       // any other error from source will be propagated to the consumer
       if (sourceError) {
         try {
@@ -124,6 +130,7 @@ export class DeferredReadableStream<T> {
     }
 
     const sourceReader = this.sourceReader!;
+    this.detachRequested = true;
     // Clear source first so future setSource() calls can reattach cleanly.
     this.sourceReader = undefined;
 

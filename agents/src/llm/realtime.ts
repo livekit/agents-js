@@ -49,6 +49,9 @@ export interface RealtimeCapabilities {
   autoToolReplyGeneration: boolean;
   audioOutput: boolean;
   manualFunctionCalls: boolean;
+  midSessionContextUpdate?: boolean;
+  midSessionInstructionsUpdate?: boolean;
+  midSessionToolsUpdate?: boolean;
 }
 
 export interface InputTranscriptionCompleted {
@@ -155,6 +158,13 @@ export abstract class RealtimeSession extends EventEmitter {
     return;
   }
 
+  say(
+    _text: string | ReadableStream<string>,
+    _options?: { allowInterruptions?: boolean },
+  ): Promise<GenerationCreatedEvent> {
+    throw new Error(`${this.constructor.name} does not implement say(). use a TTS model instead`);
+  }
+
   private async _mainTaskImpl(signal: AbortSignal): Promise<void> {
     const reader = this.deferredInputStream.stream.getReader();
     while (true) {
@@ -167,6 +177,14 @@ export abstract class RealtimeSession extends EventEmitter {
   }
 
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>): void {
-    this.deferredInputStream.setSource(audioStream);
+    if (this.deferredInputStream.isSourceSet) {
+      // Reused sessions must detach the previous audio source before rebinding.
+      void this.deferredInputStream.detachSource();
+    }
+    try {
+      this.deferredInputStream.setSource(audioStream);
+    } catch (error) {
+      throw error;
+    }
   }
 }

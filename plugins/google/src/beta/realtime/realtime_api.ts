@@ -311,6 +311,8 @@ export class RealtimeModel extends llm.RealtimeModel {
       autoToolReplyGeneration: true,
       audioOutput: options.modalities?.includes(Modality.AUDIO) ?? true,
       manualFunctionCalls: false,
+      midSessionInstructionsUpdate: true,
+      midSessionToolsUpdate: false,
     });
 
     // Environment variable fallbacks
