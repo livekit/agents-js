@@ -126,7 +126,7 @@ const startJob = (
     }, 10000);
 
     try {
-      const closePromise = await once(closeEvent, 'close').then((close) => {
+      const closePromise = once(closeEvent, 'close').then((close) => {
         logger.debug('shutting down');
         shutdown = true;
         safeSend({ case: 'exiting', value: { reason: close[1] } });
