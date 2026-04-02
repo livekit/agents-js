@@ -112,6 +112,14 @@ export class ChunkedStream extends tts.ChunkedStream {
     url.searchParams.append('encoding', this.opts.encoding);
 
     await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const settle = (fn: () => void) => {
+        if (!settled) {
+          settled = true;
+          fn();
+        }
+      };
+
       const req = request(
         {
           hostname: url.hostname,
@@ -126,8 +134,12 @@ export class ChunkedStream extends tts.ChunkedStream {
         },
         (res) => {
           if (res.statusCode !== 200) {
-            reject(
-              new Error(`Deepgram TTS HTTP request failed: ${res.statusCode} ${res.statusMessage}`),
+            settle(() =>
+              reject(
+                new Error(
+                  `Deepgram TTS HTTP request failed: ${res.statusCode} ${res.statusMessage}`,
+                ),
+              ),
             );
             return;
           }
@@ -148,6 +160,7 @@ export class ChunkedStream extends tts.ChunkedStream {
           res.on('error', (err) => {
             if (err.message === 'aborted') return;
             this.#logger.error({ err }, 'Deepgram TTS response error');
+            settle(() => reject(err));
           });
 
           res.on('close', () => {
@@ -164,7 +177,7 @@ export class ChunkedStream extends tts.ChunkedStream {
             if (!this.queue.closed) {
               this.queue.close();
             }
-            resolve();
+            settle(() => resolve());
           });
         },
       );
@@ -172,9 +185,10 @@ export class ChunkedStream extends tts.ChunkedStream {
       req.on('error', (err) => {
         if (err.name === 'AbortError') return;
         this.#logger.error({ err }, 'Deepgram TTS request error');
+        settle(() => reject(err));
       });
 
-      req.on('close', () => resolve());
+      req.on('close', () => settle(() => resolve()));
       req.write(JSON.stringify(json));
       req.end();
     });

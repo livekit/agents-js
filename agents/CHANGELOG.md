@@ -1,5 +1,23 @@
 # @livekit/agents
 
+## 1.2.2
+
+### Patch Changes
+
+- fix: Include session usage in reports and emit usage updates - [#1161](https://github.com/livekit/agents-js/pull/1161) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Handle unhandled rejection from fire-and-forget run() in SupervisedProc - [#1158](https://github.com/livekit/agents-js/pull/1158) ([@Raysharr](https://github.com/Raysharr))
+
+- fix: add idle timeouts to TTS stream reads to prevent agent stuck in speaking state - [#1174](https://github.com/livekit/agents-js/pull/1174) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Guard WritableStream close in RoomIO teardown to prevent ERR_INVALID_STATE when writer is already closed or errored during concurrent speech interruption - [#1172](https://github.com/livekit/agents-js/pull/1172) ([@Raysharr](https://github.com/Raysharr))
+
+- fix(IPC): graceful handling when channel closes during inference - [#1168](https://github.com/livekit/agents-js/pull/1168) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add chatCtx and ChatMessage support to AgentSession.generateReply - [#1170](https://github.com/livekit/agents-js/pull/1170) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix: handle unhandled 'error' event on FfmpegCommand in audio.ts - [#1173](https://github.com/livekit/agents-js/pull/1173) ([@enriqueespaillat-gyde](https://github.com/enriqueespaillat-gyde))
+
 ## 1.2.1
 
 ### Patch Changes

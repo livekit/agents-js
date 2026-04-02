@@ -662,12 +662,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     for (const f of this.resampleAudio(frame)) {
       for (const nf of this.bstream.write(f.data.buffer as ArrayBuffer)) {
         const realtimeInput: types.LiveClientRealtimeInput = {
-          mediaChunks: [
-            {
-              mimeType: 'audio/pcm',
-              data: Buffer.from(nf.data.buffer).toString('base64'),
-            },
-          ],
+          audio: {
+            mimeType: 'audio/pcm',
+            data: Buffer.from(nf.data.buffer).toString('base64'),
+          },
         };
         this.sendClientEvent({
           type: 'realtime_input',
@@ -686,6 +684,13 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
+    if (this.options.model === 'gemini-3.1-flash-live-preview') {
+      this.#logger.warn(
+        'generateReply is not compatible with gemini-3.1-flash-live-preview and will be ignored.',
+      );
+      throw new Error("generateReply is not compatible with 'gemini-3.1-flash-live-preview'");
+    }
+
     if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
       this.#logger.warn(
         'generateReply called while another generation is pending, cancelling previous.',
@@ -994,12 +999,15 @@ export class RealtimeSession extends llm.RealtimeSession {
             }
             break;
           case 'realtime_input':
-            const { mediaChunks, activityStart, activityEnd, text } = msg.value;
+            const { mediaChunks, audio, activityStart, activityEnd, text } = msg.value;
             if (this.pendingToolCallIds.size > 0) break;
             if (mediaChunks) {
               for (const mediaChunk of mediaChunks) {
                 await session.sendRealtimeInput({ media: mediaChunk });
               }
+            }
+            if (audio) {
+              await session.sendRealtimeInput({ audio });
             }
             if (text) {
               await session.sendRealtimeInput({ text });
@@ -1154,6 +1162,16 @@ export class RealtimeSession extends llm.RealtimeSession {
         ),
       };
     }
+    if (obj.type === 'realtime_input' && obj.value?.audio) {
+      const ac = obj.value.audio as { mimeType?: string; data?: string };
+      obj.value = {
+        ...obj.value,
+        audio: {
+          ...ac,
+          data: typeof ac.data === 'string' ? this.truncateString(ac.data, maxLength) : ac.data,
+        },
+      };
+    }
     return obj;
   }
 
@@ -1267,17 +1285,15 @@ export class RealtimeSession extends llm.RealtimeSession {
         },
         languageCode: opts.language,
       },
-      tools: [
-        {
-          functionDeclarations: this.geminiDeclarations,
-          ...this.options.geminiTools,
-        },
-      ],
+      tools:
+        this.geminiDeclarations.length > 0 || this.options.geminiTools
+          ? [{ functionDeclarations: this.geminiDeclarations, ...this.options.geminiTools }]
+          : undefined,
       inputAudioTranscription: opts.inputAudioTranscription,
       outputAudioTranscription: opts.outputAudioTranscription,
-      sessionResumption: {
-        handle: this.sessionResumptionHandle,
-      },
+      sessionResumption: this.sessionResumptionHandle
+        ? { handle: this.sessionResumptionHandle }
+        : {},
     };
 
     // Add generation fields at TOP LEVEL (NO generationConfig!)
@@ -1529,6 +1545,8 @@ export class RealtimeSession extends llm.RealtimeSession {
         }),
       );
     }
+    // This closes message/text/audio/function streams so the consumer can continue.
+    this.markCurrentGenerationDone();
   }
 
   private handleToolCallCancellation(cancellation: types.LiveServerToolCallCancellation): void {
