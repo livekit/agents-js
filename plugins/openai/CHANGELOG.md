@@ -1,5 +1,21 @@
 # @livekit/agents-plugin-openai
 
+## 1.2.3
+
+### Patch Changes
+
+- fix: Address 6 bugs from Detail scan (March 25) - [#1182](https://github.com/livekit/agents-js/pull/1182) ([@toubatbrian](https://github.com/toubatbrian))
+
+  - inference/llm: pass abort signal to OpenAI SDK and check abort in outer streaming loop
+  - llm/fallback_adapter: call tryRecovery() before throwing on mid-stream failure
+  - openai/realtime: clear responseCreatedFutures on reconnect to prevent generateReply() hang
+  - deepgram/tts: reject on network errors instead of swallowing them
+  - cpu: remove Math.max clamp in cgroup v1 so fractional CPU limits are reported correctly
+  - openai/responses: handle response.failed event in HTTP streaming
+
+- Updated dependencies [[`3fee5c2118e7a33b0f55843ee6f36a4f10936f8b`](https://github.com/livekit/agents-js/commit/3fee5c2118e7a33b0f55843ee6f36a4f10936f8b), [`3a0cf84ce9ca910b92c61eb04d180fd43471a0fc`](https://github.com/livekit/agents-js/commit/3a0cf84ce9ca910b92c61eb04d180fd43471a0fc), [`6ae32034457d819b5df59bc2b4e772200e0afad7`](https://github.com/livekit/agents-js/commit/6ae32034457d819b5df59bc2b4e772200e0afad7), [`50a650b6cb3af13007190f55a41bbe17ac2b4696`](https://github.com/livekit/agents-js/commit/50a650b6cb3af13007190f55a41bbe17ac2b4696), [`4a94843f12746cfab47d616c3f92428a2c95a7fc`](https://github.com/livekit/agents-js/commit/4a94843f12746cfab47d616c3f92428a2c95a7fc)]:
+  - @livekit/agents@1.2.3
+
 ## 1.2.2
 
 ### Patch Changes

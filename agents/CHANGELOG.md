@@ -1,5 +1,26 @@
 # @livekit/agents
 
+## 1.2.3
+
+### Patch Changes
+
+- Fix worker draining behaviour - [#1180](https://github.com/livekit/agents-js/pull/1180) ([@lukasIO](https://github.com/lukasIO))
+
+- Fix Queue dropping falsy items - [#1190](https://github.com/livekit/agents-js/pull/1190) ([@lukasIO](https://github.com/lukasIO))
+
+- fix: Address 6 bugs from Detail scan (March 25) - [#1182](https://github.com/livekit/agents-js/pull/1182) ([@toubatbrian](https://github.com/toubatbrian))
+
+  - inference/llm: pass abort signal to OpenAI SDK and check abort in outer streaming loop
+  - llm/fallback_adapter: call tryRecovery() before throwing on mid-stream failure
+  - openai/realtime: clear responseCreatedFutures on reconnect to prevent generateReply() hang
+  - deepgram/tts: reject on network errors instead of swallowing them
+  - cpu: remove Math.max clamp in cgroup v1 so fractional CPU limits are reported correctly
+  - openai/responses: handle response.failed event in HTTP streaming
+
+- fix: address 5 Detail scan bugs from March 11 (reconnect, mutex leak, playout, ordering, retryability) - [#1188](https://github.com/livekit/agents-js/pull/1188) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(voice): reset VAD on premature STT EOT & guard empty recorder frames - [#1181](https://github.com/livekit/agents-js/pull/1181) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.2.2
 
 ### Patch Changes
