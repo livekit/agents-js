@@ -2892,14 +2892,6 @@ export class AgentActivity implements RecognitionHooks {
         allowInterruptions: speechHandle.allowInterruptions,
       });
     } catch (e) {
-      if (e instanceof Error && e.message.includes('does not implement say()')) {
-        this.logger.error(
-          'say() is not implemented for %s; use a TTS model instead',
-          this.realtimeSession.realtimeModel.provider,
-        );
-        this.agentSession._updateAgentState('listening');
-        return;
-      }
       this.logger.error('failed to say text: %s', String(e));
       this.agentSession._updateAgentState('listening');
       return;
