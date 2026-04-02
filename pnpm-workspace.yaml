@@ -3,5 +3,9 @@ packages:
   - 'plugins/*'
   - 'examples'
 
+minimumReleaseAge: 2880
+minimumReleaseAgeExclude:
+  - '@livekit/*'
+
 catalog:
   '@livekit/rtc-node': ^0.13.24

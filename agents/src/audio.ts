@@ -7,7 +7,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import type { ReadableStream } from 'node:stream/web';
 import { log } from './log.js';
 import { createStreamChannel } from './stream/stream_channel.js';
-import type { AudioBuffer } from './utils.js';
+import { type AudioBuffer, isFfmpegTeardownError } from './utils.js';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
@@ -49,8 +49,11 @@ export class AudioByteStream {
     this.#buf = new Int8Array();
   }
 
-  write(data: ArrayBuffer): AudioFrame[] {
-    this.#buf = new Int8Array([...this.#buf, ...new Int8Array(data)]);
+  write(data: ArrayBufferLike | ArrayBufferView): AudioFrame[] {
+    const bytes = ArrayBuffer.isView(data)
+      ? new Int8Array(data.buffer, data.byteOffset, data.byteLength)
+      : new Int8Array(data);
+    this.#buf = new Int8Array([...this.#buf, ...bytes]);
 
     const frames: AudioFrame[] = [];
     while (this.#buf.length >= this.#bytesPerFrame) {
@@ -142,6 +145,17 @@ export function audioFramesFromFile(
       command.kill('SIGKILL');
     }
   };
+
+  command.on('error', (err: Error) => {
+    if (isFfmpegTeardownError(err)) {
+      // Expected during teardown — not an error
+      logger.debug('FFmpeg command ended during shutdown');
+    } else {
+      logger.error(err, 'FFmpeg command error');
+    }
+    commandRunning = false;
+    onClose();
+  });
 
   const outputStream = command.pipe();
   options.abortSignal?.addEventListener('abort', onClose, { once: true });

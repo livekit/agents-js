@@ -360,6 +360,8 @@ class FallbackLLMStream extends LLMStream {
             this.adapter._emitAvailabilityChanged(llm, false);
           }
 
+          this.tryRecovery(llm, i);
+
           // Check if we sent data before failing
           if (textSent || toolCallsSent.length > 0) {
             const extra = { textSent, toolCallsSent };
@@ -379,9 +381,6 @@ class FallbackLLMStream extends LLMStream {
           }
         }
       }
-
-      // Trigger background recovery for this LLM
-      this.tryRecovery(llm, i);
     }
 
     // All LLMs failed

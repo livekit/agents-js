@@ -211,6 +211,35 @@ describe('FallbackAdapter', () => {
     expect(chunks).toHaveLength(4);
   });
 
+  it('should initiate recovery on mid-stream failure with retryOnChunkSent=false', async () => {
+    const llm1 = new MockLLM('llm1');
+    llm1.shouldFail = true;
+    llm1.failAfterChunks = 1;
+    const llm2 = new MockLLM('llm2');
+    const adapter = new FallbackAdapter({
+      llms: [llm1, llm2],
+      retryOnChunkSent: false,
+    });
+
+    const stream = adapter.chat({
+      chatCtx: {} as ChatContext,
+    });
+
+    const errorPromise = new Promise<Error>((resolve) => {
+      adapter.on('error', (e) => resolve(e.error));
+    });
+
+    for await (const _ of stream) {
+      // consume
+    }
+
+    const error = await errorPromise;
+    expect(error).toBeInstanceOf(APIError);
+    expect(adapter._status[0]!.available).toBe(false);
+    // tryRecovery must have been called despite the throw -- recoveringTask is in flight
+    expect(adapter._status[0]!.recoveringTask).not.toBeNull();
+  });
+
   it('should emit availability changed events', async () => {
     const llm1 = new MockLLM('llm1');
     llm1.shouldFail = true;

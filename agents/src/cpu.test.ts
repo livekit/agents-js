@@ -177,14 +177,14 @@ describe('cpu', () => {
       expect(monitor.cpuCount()).toBe(2.0);
     });
 
-    it('clamps cpuCount to minimum 1.0', () => {
+    it('returns fractional cpuCount for sub-CPU limits', () => {
       mockReadFileSync.mockImplementation((p) => {
         if (String(p) === '/sys/fs/cgroup/cpu/cpu.cfs_quota_us') return '50000';
         if (String(p) === '/sys/fs/cgroup/cpu/cpu.cfs_period_us') return '100000';
         return '';
       });
       const monitor = new CGroupV1CpuMonitor();
-      expect(monitor.cpuCount()).toBe(1.0);
+      expect(monitor.cpuCount()).toBe(0.5);
     });
 
     it('respects NUM_CPUS env var', () => {

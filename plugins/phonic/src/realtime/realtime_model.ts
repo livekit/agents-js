@@ -34,7 +34,9 @@ export interface RealtimeModelOptions {
   project?: string;
   connOptions: APIConnectOptions;
   baseUrl?: string;
-  languages?: string[];
+  defaultLanguage?: string;
+  additionalLanguages?: string[];
+  multilingualMode?: 'auto' | 'request';
   audioSpeed?: number;
   phonicTools?: string[];
   boostedKeywords?: string[];
@@ -85,7 +87,21 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       project?: string;
       /**
-       * ISO 639-1 language codes the agent should recognize and speak
+       * ISO 639-1 default language for recognition and speech
+       */
+      defaultLanguage?: string;
+      /**
+       * Further ISO 639-1 codes (must not include `defaultLanguage`)
+       */
+      additionalLanguages?: string[];
+      /**
+       * `auto`: detect language per utterance. `request`: switch only when the user asks (recommended).
+       */
+      multilingualMode?: 'auto' | 'request';
+      /**
+       * Deprecated. Use `defaultLanguage` and `additionalLanguages` instead.
+       * When both of those are omitted and this is set, `languages[0]` is the default
+       * language and `languages.slice(1)` are additional languages.
        */
       languages?: string[];
       /**
@@ -137,6 +153,21 @@ export class RealtimeModel extends llm.RealtimeModel {
       throw new Error('Phonic API key is required. Provide apiKey or set PHONIC_API_KEY.');
     }
 
+    let defaultLanguage = options.defaultLanguage;
+    let additionalLanguages = options.additionalLanguages;
+    if (
+      options.languages !== undefined &&
+      options.defaultLanguage === undefined &&
+      options.additionalLanguages === undefined
+    ) {
+      if (options.languages.length > 0) {
+        defaultLanguage = options.languages[0];
+      }
+      if (options.languages.length > 1) {
+        additionalLanguages = options.languages.slice(1);
+      }
+    }
+
     this._options = {
       apiKey,
       voice: options.voice,
@@ -144,7 +175,9 @@ export class RealtimeModel extends llm.RealtimeModel {
       project: options.project,
       welcomeMessage: options.welcomeMessage,
       generateWelcomeMessage: options.generateWelcomeMessage,
-      languages: options.languages,
+      defaultLanguage,
+      additionalLanguages,
+      multilingualMode: options.multilingualMode,
       audioSpeed: options.audioSpeed,
       phonicTools: options.phonicTools,
       boostedKeywords: options.boostedKeywords,
@@ -457,7 +490,15 @@ export class RealtimeSession extends llm.RealtimeSession {
       voice_id: this.options.voice,
       input_format: 'pcm_44100',
       output_format: 'pcm_44100',
-      recognized_languages: this.options.languages,
+      ...(this.options.defaultLanguage !== undefined && {
+        default_language: this.options.defaultLanguage,
+      }),
+      ...(this.options.additionalLanguages !== undefined && {
+        additional_languages: this.options.additionalLanguages,
+      }),
+      ...(this.options.multilingualMode !== undefined && {
+        multilingual_mode: this.options.multilingualMode,
+      }),
       audio_speed: this.options.audioSpeed,
       tools: [...(this.options.phonicTools ?? []), ...this.toolDefinitions],
       boosted_keywords: this.options.boostedKeywords,
