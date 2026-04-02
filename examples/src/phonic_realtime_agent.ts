@@ -33,6 +33,7 @@ export default defineAgent({
       llm: new phonic.realtime.RealtimeModel({
         voice: 'sabrina',
         audioSpeed: 1.2,
+        minWordsToInterrupt: 3,
       }),
     });
 
@@ -47,17 +48,17 @@ export default defineAgent({
       instructions: 'Greet the user, asking about their day.',
     });
 
-    setTimeout(async () => {
-      if (session.agentState === 'initializing') return;
-      const agent = session.currentAgent;
-      const chatCtx = agent.chatCtx.copy();
-      chatCtx.addMessage({
-        role: 'system',
-        content:
-          "The user's name is Alex. He is from San Francisco and likes hiking. Use this information in your conversation.",
-      });
-      await agent.updateChatCtx(chatCtx);
-    }, 10000);
+    // setTimeout(async () => {
+    //   if (session.agentState === 'initializing') return;
+    //   const agent = session.currentAgent;
+    //   const chatCtx = agent.chatCtx.copy();
+    //   chatCtx.addMessage({
+    //     role: 'system',
+    //     content:
+    //       "The user's name is Alex. He is from San Francisco and likes hiking. Use this information in your conversation.",
+    //   });
+    //   await agent.updateChatCtx(chatCtx);
+    // }, 10000);
   },
 });
 
