@@ -2876,10 +2876,6 @@ export class AgentActivity implements RecognitionHooks {
       throw new Error('realtimeSession is not available');
     }
 
-    // Parity gap (python->ts): Python also waits on a user-silence event when interruptions
-    // are enabled. TS voice runtime currently does not expose an equivalent wait primitive here.
-    // Behavior equivalent: we gate on tool/speech authorization and interruption status before
-    // issuing realtime say().
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
 
     if (speechHandle.interrupted) {
