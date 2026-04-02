@@ -41,7 +41,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "phonic": "^0.31.8"
+    "phonic": "^0.31.10"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
