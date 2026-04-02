@@ -144,12 +144,15 @@ const startJob = (
           },
           { name: 'job_entrypoint' },
         );
-      }).finally(async () => {
-        clearTimeout(unconnectedTimeout);
-        if (!shutdown) {
-          await closePromise;
-        }
-      });
+      })
+        .then(async () => {
+          if (!shutdown) {
+            await closePromise;
+          }
+        })
+        .finally(async () => {
+          clearTimeout(unconnectedTimeout);
+        });
     } catch (error) {
       logger.error({ error }, 'error in entry function');
       shutdown = true;
