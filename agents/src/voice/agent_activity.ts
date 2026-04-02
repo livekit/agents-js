@@ -827,7 +827,7 @@ export class AgentActivity implements RecognitionHooks {
     if (this.realtimeSession !== undefined && !audio && !this.tts) {
       task = this.createSpeechTask({
         taskFn: (abortController: AbortController) =>
-          this.realtimeSayTask(handle, text, {}, abortController),
+          this.realtimeSayTask(handle, text, addToChatCtx, {}, abortController),
         ownedSpeechHandle: handle,
         name: 'AgentActivity.realtime_say',
       });
@@ -2365,6 +2365,7 @@ export class AgentActivity implements RecognitionHooks {
     ev: GenerationCreatedEvent,
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
+    addToChatCtx: boolean = true,
   ): Promise<void> {
     return tracer.startActiveSpan(
       async (span) =>
@@ -2373,6 +2374,7 @@ export class AgentActivity implements RecognitionHooks {
           ev,
           modelSettings,
           replyAbortController,
+          addToChatCtx,
           span,
         }),
       {
@@ -2387,12 +2389,14 @@ export class AgentActivity implements RecognitionHooks {
     ev,
     modelSettings,
     replyAbortController,
+    addToChatCtx,
     span,
   }: {
     speechHandle: SpeechHandle;
     ev: GenerationCreatedEvent;
     modelSettings: ModelSettings;
     replyAbortController: AbortController;
+    addToChatCtx: boolean;
     span: Span;
   }): Promise<void> {
     speechHandle._agentTurnContext = otelContext.active();
@@ -2664,7 +2668,7 @@ export class AgentActivity implements RecognitionHooks {
           });
         }
 
-        if (forwardedText) {
+        if (forwardedText && addToChatCtx) {
           const message = ChatMessage.create({
             role: 'assistant',
             content: forwardedText,
@@ -2689,7 +2693,7 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    if (messageOutputs.length > 0) {
+    if (messageOutputs.length > 0 && addToChatCtx) {
       // there should be only one message
       const [msgId, textOut, _, __] = messageOutputs[0]!;
       const message = ChatMessage.create({
@@ -2862,6 +2866,7 @@ export class AgentActivity implements RecognitionHooks {
   private async realtimeSayTask(
     speechHandle: SpeechHandle,
     text: string | ReadableStream<string>,
+    addToChatCtx: boolean,
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
   ): Promise<void> {
@@ -2892,6 +2897,7 @@ export class AgentActivity implements RecognitionHooks {
           'say() is not implemented for %s; use a TTS model instead',
           this.realtimeSession.realtimeModel.provider,
         );
+        this.agentSession._updateAgentState('listening');
         return;
       }
       this.logger.error('failed to say text: %s', String(e));
@@ -2904,6 +2910,7 @@ export class AgentActivity implements RecognitionHooks {
       generationEv,
       modelSettings,
       replyAbortController,
+      addToChatCtx,
     );
   }
 

@@ -484,12 +484,18 @@ export class RealtimeSession extends llm.RealtimeSession {
       const futures: Future<void>[] = [];
 
       for (const event of events) {
-        const future = new Future<void>();
-        futures.push(future);
-
         if (event.type === 'conversation.item.create') {
+          const future = new Future<void>();
+          futures.push(future);
           this.itemCreateFutures[event.item.id] = future;
         } else if (event.type == 'conversation.item.delete') {
+          const existingDeleteFuture = this.itemDeleteFutures[event.item_id];
+          if (existingDeleteFuture) {
+            futures.push(existingDeleteFuture);
+            continue;
+          }
+          const future = new Future<void>();
+          futures.push(future);
           this.itemDeleteFutures[event.item_id] = future;
         }
 

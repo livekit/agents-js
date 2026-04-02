@@ -355,7 +355,6 @@ class SurveyAgent extends voice.Agent<SurveyUserData> {
 export default defineAgent({
   entry: async (ctx: JobContext) => {
     const session = new voice.AgentSession<SurveyUserData>({
-      // Manual testing target for #5293 follow-up: realtime say path using Phonic.
       llm: 'openai/gpt-4.1',
       stt: 'deepgram/nova-3',
       tts: 'cartesia/sonic-3',

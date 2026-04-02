@@ -983,6 +983,10 @@ export async function* readStream<T>(
 }
 
 export async function waitForAbort(signal: AbortSignal) {
+  if (signal.aborted) {
+    return;
+  }
+
   const abortFuture = new Future<void>();
   const handler = () => {
     abortFuture.resolve();

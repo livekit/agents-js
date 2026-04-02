@@ -4,7 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import type { ReadableStream } from 'node:stream/web';
-import { DeferredReadableStream } from '../stream/deferred_stream.js';
+import { MultiInputStream } from '../stream/multi_input_stream.js';
 import { Task } from '../utils.js';
 import type { TimedString } from '../voice/io.js';
 import type { ChatContext, FunctionCall } from './chat_context.js';
@@ -87,7 +87,8 @@ export abstract class RealtimeModel {
 
 export abstract class RealtimeSession extends EventEmitter {
   protected _realtimeModel: RealtimeModel;
-  private deferredInputStream = new DeferredReadableStream<AudioFrame>();
+  private inputAudioStream = new MultiInputStream<AudioFrame>();
+  private inputAudioStreamId?: string;
   private _mainTask: Task<void>;
 
   constructor(realtimeModel: RealtimeModel) {
@@ -149,6 +150,7 @@ export abstract class RealtimeSession extends EventEmitter {
 
   async close(): Promise<void> {
     this._mainTask.cancel();
+    await this.inputAudioStream.close();
   }
 
   /**
@@ -166,7 +168,7 @@ export abstract class RealtimeSession extends EventEmitter {
   }
 
   private async _mainTaskImpl(signal: AbortSignal): Promise<void> {
-    const reader = this.deferredInputStream.stream.getReader();
+    const reader = this.inputAudioStream.stream.getReader();
     while (true) {
       const { done, value } = await reader.read();
       if (done || signal.aborted) {
@@ -177,14 +179,9 @@ export abstract class RealtimeSession extends EventEmitter {
   }
 
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>): void {
-    if (this.deferredInputStream.isSourceSet) {
-      // Reused sessions must detach the previous audio source before rebinding.
-      void this.deferredInputStream.detachSource();
+    if (this.inputAudioStreamId !== undefined) {
+      void this.inputAudioStream.removeInputStream(this.inputAudioStreamId);
     }
-    try {
-      this.deferredInputStream.setSource(audioStream);
-    } catch (error) {
-      throw error;
-    }
+    this.inputAudioStreamId = this.inputAudioStream.addInputStream(audioStream);
   }
 }

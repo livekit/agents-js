@@ -41,7 +41,7 @@ export class DeferredReadableStream<T> {
   private transform: IdentityTransform<T>;
   private writer: WritableStreamDefaultWriter<T>;
   private sourceReader?: ReadableStreamDefaultReader<T>;
-  private detachRequested = false;
+  private sourceAttached = false;
 
   constructor() {
     this.transform = new IdentityTransform<T>();
@@ -60,10 +60,11 @@ export class DeferredReadableStream<T> {
    * Call once the actual source is ready.
    */
   setSource(source: ReadableStream<T>) {
-    if (this.isSourceSet) {
+    if (this.sourceAttached) {
       throw new Error('Stream source already set');
     }
 
+    this.sourceAttached = true;
     const sourceReader = source.getReader();
     this.sourceReader = sourceReader;
     void this.pump(sourceReader);
@@ -84,11 +85,6 @@ export class DeferredReadableStream<T> {
 
       sourceError = e;
     } finally {
-      if (this.detachRequested) {
-        this.detachRequested = false;
-        return;
-      }
-
       // any other error from source will be propagated to the consumer
       if (sourceError) {
         try {
@@ -130,8 +126,7 @@ export class DeferredReadableStream<T> {
     }
 
     const sourceReader = this.sourceReader!;
-    this.detachRequested = true;
-    // Clear source first so future setSource() calls can reattach cleanly.
+    // Clear active source reader reference before releasing lock.
     this.sourceReader = undefined;
 
     // release lock will make any pending read() throw TypeError
