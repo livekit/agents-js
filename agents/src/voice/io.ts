@@ -96,6 +96,7 @@ export abstract class AudioInput {
    */
   addInputStream(source: AsyncIterable<AudioFrame>): string {
     const id = `input-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    this._pumpAbort?.abort();
     const abort = new AbortController();
     this._pumpAbort = abort;
     (async () => {

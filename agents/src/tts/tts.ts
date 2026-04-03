@@ -393,7 +393,12 @@ export abstract class SynthesizeStream
       } catch {
         // Source errors are silently consumed
       } finally {
-        this.inputChan.close();
+        // Only close the channel if this pump was NOT replaced by a new one.
+        // If abort fired because updateInputStream was called again, the new
+        // pump owns the channel and we must not close it.
+        if (!abort.signal.aborted) {
+          this.inputChan.close();
+        }
       }
     })();
   }
