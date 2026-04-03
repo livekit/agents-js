@@ -738,7 +738,6 @@ export class AgentSession<
     this._activityChanged.set();
   }
 
-
   /** @internal */
   _trackRunHandle(handle: SpeechHandle | Task<void>): void {
     if (this._globalRunState && !this._globalRunState.done()) {
@@ -918,18 +917,12 @@ export class AgentSession<
         // Notify AFTER start/resume so waiters see schedulingPaused=false.
         this._notifyActivityChanged();
 
-        // If a RunResult is active and the activity's onEnter is still running
-        // (e.g. a resumed TaskGroup whose loop will start the next child task),
-        // track a handle that waits for the next activity change. Registered
-        // AFTER notify so it waits for the subsequent transition, not this one.
         // For resumed activities whose onEnter is still running (e.g. a
         // TaskGroup loop advancing to the next child), track a handle that
-        // waits for the child transition. Only for 'resume' — freshly started
-        // activities haven't triggered cascading transitions yet.
-        // For resumed activities whose onEnter is still running (e.g. a
-        // TaskGroup loop advancing to the next child), track a handle that
-        // waits for the child transition. Only for 'resume' — freshly started
-        // activities haven't triggered cascading transitions yet.
+        // waits for the child transition then drains the cascade. Only for
+        // 'resume' — freshly started activities haven't triggered cascading
+        // transitions yet. Registered AFTER notify so it waits for the
+        // subsequent transition, not this one.
         if (
           newActivity === 'resume' &&
           this._globalRunState &&
