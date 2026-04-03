@@ -104,8 +104,8 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
 
     // Tee the output channel into two iterators: one for consumer, one for metrics
     this.outputTee = tee(this.outputChan, 2);
-    this.outputIter = this.outputTee[0][Symbol.asyncIterator]();
-    this.metricsIter = this.outputTee[1][Symbol.asyncIterator]();
+    this.outputIter = this.outputTee.get(0)[Symbol.asyncIterator]();
+    this.metricsIter = this.outputTee.get(1)[Symbol.asyncIterator]();
 
     this.monitorMetrics();
   }

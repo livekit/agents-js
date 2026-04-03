@@ -21,6 +21,7 @@ import {
 } from '../llm/tool_context.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
+import { withIdleTimeout } from '../stream/adapters.js';
 import { Chan, ChanClosed } from '../stream/chan.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
@@ -627,7 +628,7 @@ export function performTTSInference(
       // JS currently only does single inference, so initialPushedDuration is always 0.
       // TODO: Add FlushSentinel + multi-segment loop
       const initialPushedDuration = pushedDuration;
-      for await (const frame of ttsStream) {
+      for await (const frame of withIdleTimeout(ttsStream, TTS_READ_IDLE_TIMEOUT_MS)) {
         if (signal.aborted) {
           break;
         }
@@ -789,7 +790,7 @@ async function forwardAudio(
     audioOutput.on(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
     audioOutput.resume();
 
-    for await (const frame of ttsStream) {
+    for await (const frame of withIdleTimeout(ttsStream, TTS_READ_IDLE_TIMEOUT_MS)) {
       if (signal?.aborted) {
         break;
       }

@@ -185,13 +185,13 @@ export class AudioRecognition {
 
     if (opts.interruptionDetection) {
       const teed = tee(this.inputChan, 3);
-      this.vadInputStream = teed[0];
-      this.sttInputStream = mergeAsyncIterables(teed[1], this.silenceAudioChan);
+      this.vadInputStream = teed.get(0);
+      this.sttInputStream = mergeAsyncIterables(teed.get(1), this.silenceAudioChan);
       this.interruptionChan = new Chan<InterruptionSentinel | AudioFrame>();
       // Pump teed[2] into interruptionChan
       (async () => {
         try {
-          for await (const frame of teed[2]) {
+          for await (const frame of teed.get(2)) {
             try {
               this.interruptionChan!.sendNowait(frame);
             } catch (e) {
@@ -205,8 +205,8 @@ export class AudioRecognition {
       })();
     } else {
       const teed = tee(this.inputChan, 2);
-      this.vadInputStream = teed[0];
-      this.sttInputStream = mergeAsyncIterables(teed[1], this.silenceAudioChan);
+      this.vadInputStream = teed.get(0);
+      this.sttInputStream = mergeAsyncIterables(teed.get(1), this.silenceAudioChan);
     }
   }
 
@@ -260,8 +260,8 @@ export class AudioRecognition {
     this.interruptionDetection = undefined;
     await this.interruptionTask?.cancelAndWait();
     this.interruptionTask = undefined;
-    await this.interruptionStreamChannel?.close();
-    this.interruptionStreamChannel = undefined;
+    this.interruptionChan?.close();
+    this.interruptionChan = undefined;
   }
 
   async onStartOfAgentSpeech() {
@@ -990,14 +990,13 @@ export class AudioRecognition {
     interruptionDetection: AdaptiveInterruptionDetector | undefined,
     signal: AbortSignal,
   ) {
-    if (!interruptionDetection || !this.interruptionStreamChannel) return;
+    if (!interruptionDetection || !this.interruptionChan) return;
 
     let numRetries = 0;
     const maxRetries = apiConnectDefaults.maxRetries;
 
     while (!signal.aborted) {
       const stream = interruptionDetection.createStream();
-      const eventReader = stream.stream().getReader();
 
       const cleanup = async () => {
         try {

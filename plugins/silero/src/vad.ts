@@ -157,15 +157,13 @@ export class VADStream extends baseStream {
       // used to avoid drift when the sampleRate ratio is not an integer
       let inputCopyRemainingFrac = 0.0;
 
-      while (!this.closed) {
-        const { done, value: frame } = await this.inputReader.read();
-        if (done) {
-          break;
-        }
+      for await (const inputItem of this.inputChan) {
+        if (this.closed) break;
 
-        if (typeof frame === 'symbol') {
+        if (typeof inputItem === 'symbol') {
           continue; // ignore flush sentinel for now
         }
+        const frame = inputItem;
 
         if (!this.#inputSampleRate || !this.#speechBuffer) {
           this.#inputSampleRate = frame.sampleRate;

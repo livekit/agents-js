@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-export { fromReadableStream, mergeAsyncIterables, toReadableStream } from './adapters.js';
+export {
+  fromReadableStream,
+  mergeAsyncIterables,
+  toReadableStream,
+  withIdleTimeout,
+} from './adapters.js';
 export { Chan, ChanClosed, ChanEmpty, ChanFull } from './chan.js';
 export { DeferredReadableStream, isStreamReaderReleaseError } from './deferred_stream.js';
 export { IdentityTransform } from './identity_transform.js';

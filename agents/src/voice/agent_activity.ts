@@ -624,9 +624,9 @@ export class AgentActivity implements RecognitionHooks {
     })();
 
     if (this.realtimeSession && this.audioRecognition) {
-      const [realtimeAudioStream, recognitionAudioStream] = tee(filteredStream, 2);
-      this.realtimeSession.setInputAudioStream(realtimeAudioStream);
-      this.audioRecognition.setInputAudioStream(recognitionAudioStream);
+      const teed = tee(filteredStream, 2);
+      this.realtimeSession.setInputAudioStream(teed.get(0));
+      this.audioRecognition.setInputAudioStream(teed.get(1));
     } else if (this.realtimeSession) {
       this.realtimeSession.setInputAudioStream(filteredStream);
     } else if (this.audioRecognition) {
@@ -1637,7 +1637,9 @@ export class AgentActivity implements RecognitionHooks {
       baseIterable = text;
     }
 
-    const [textSource, audioSource] = tee(baseIterable, 2);
+    const teed = tee(baseIterable, 2);
+    const textSource = teed.get(0);
+    const audioSource = teed.get(1);
 
     const tasks: Array<Task<void>> = [];
 
@@ -1841,8 +1843,9 @@ export class AgentActivity implements RecognitionHooks {
 
     if (audioOutput) {
       // Only tee the stream when we need TTS
-      const [ttsTextInput, textOutput] = tee(llmGenData.textStream, 2);
-      llmOutput = textOutput;
+      const llmTee = tee(llmGenData.textStream, 2);
+      const ttsTextInput = llmTee.get(0);
+      llmOutput = llmTee.get(1);
       [ttsTask, ttsGenData] = performTTSInference(
         (...args) => this.agent.ttsNode(...args),
         ttsTextInput,
@@ -2345,9 +2348,9 @@ export class AgentActivity implements RecognitionHooks {
                 'text response received from realtime API, falling back to use a TTS model.',
               );
             }
-            const [_ttsTextInput, _trTextInput] = tee(msg.textStream, 2);
-            ttsTextInput = _ttsTextInput;
-            trTextInput = _trTextInput;
+            const msgTee = tee(msg.textStream, 2);
+            ttsTextInput = msgTee.get(0);
+            trTextInput = msgTee.get(1);
           } else {
             trTextInput = msg.textStream;
           }
@@ -2434,7 +2437,9 @@ export class AgentActivity implements RecognitionHooks {
       ),
     ];
 
-    const [toolCallStream, toolCallStreamForTracing] = tee(ev.functionStream, 2);
+    const toolTee = tee(ev.functionStream, 2);
+    const toolCallStream = toolTee.get(0);
+    const toolCallStreamForTracing = toolTee.get(1);
     // TODO(brian): append to tracing tees
     const toolCalls: FunctionCall[] = [];
 

@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { ReadableStream } from 'node:stream/web';
+import { IdleTimeoutError } from '../utils.js';
 import { Chan, ChanClosed } from './chan.js';
 
 /**
@@ -118,4 +119,50 @@ export function mergeAsyncIterables<T>(...sources: AsyncIterable<T>[]): AsyncIte
   }
 
   return ch;
+}
+
+/**
+ * Wrap an AsyncIterable with an idle timeout on each `.next()` call.
+ *
+ * If the source does not yield a value within `timeoutMs` milliseconds,
+ * the iteration throws {@link IdleTimeoutError}. The timer resets after
+ * every successfully received value.
+ *
+ * @param source - The AsyncIterable to wrap
+ * @param timeoutMs - Maximum idle time between values in milliseconds
+ * @returns An AsyncIterable that throws IdleTimeoutError on stall
+ */
+export async function* withIdleTimeout<T>(
+  source: AsyncIterable<T>,
+  timeoutMs: number,
+): AsyncGenerator<T> {
+  const iter = source[Symbol.asyncIterator]();
+  let timedOut = false;
+  try {
+    while (true) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const result = await Promise.race([
+        iter.next(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new IdleTimeoutError()), timeoutMs);
+        }),
+      ]).finally(() => clearTimeout(timer));
+      if (result.done) break;
+      yield result.value;
+    }
+  } catch (e) {
+    if (e instanceof IdleTimeoutError) {
+      timedOut = true;
+    }
+    throw e;
+  } finally {
+    if (!timedOut) {
+      // Only attempt cleanup if we didn't time out — a timed-out iterator
+      // may be stuck on a never-resolving promise, so calling return() would hang.
+      await iter.return?.(undefined);
+    } else {
+      // Fire-and-forget: allow GC to clean up the stalled iterator
+      iter.return?.(undefined)?.catch?.(() => {});
+    }
+  }
 }

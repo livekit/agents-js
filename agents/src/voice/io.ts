@@ -84,7 +84,7 @@ export interface AudioOutputCapabilities {
 
 export abstract class AudioInput {
   protected inputChan: Chan<AudioFrame> = new Chan<AudioFrame>();
-  private _pumpAbort: AbortController | null = null;
+  protected _pumpAbort: AbortController | null = null;
 
   get stream(): AsyncIterable<AudioFrame> {
     return this.inputChan;
