@@ -80,7 +80,7 @@ export class LLM extends llm.LLM {
    * @param presencePenalty - Penalizes the model for generating previously mentioned concepts. Defaults to undefined.
    * @param frequencyPenalty - Penalizes the model for repeating words. Defaults to undefined.
    * @param toolChoice - Specifies whether to use tools during response generation. Defaults to "auto".
-   * @param thinkingConfig - The thinking configuration for response generation. Defaults to undefined.
+   * @param thinkingConfig - The thinking configuration for response generation. Gemini 3.1 models use `thinkingLevel`; Gemini 2.5 models use `thinkingBudget`. Defaults to undefined.
    * @param automaticFunctionCallingConfig - The automatic function calling configuration for response generation. Defaults to undefined.
    * @param geminiTools - The Gemini-specific tools to use for the session.
    * @param httpOptions - The HTTP options to use for the session.

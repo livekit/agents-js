@@ -288,8 +288,8 @@ export class RealtimeModel extends llm.RealtimeModel {
       /**
        * Thinking configuration for native audio models.
        * If not set, the model's default thinking behavior is used.
-       * Use `\{ thinkingBudget: 0 \}` to disable thinking.
-       * Use `\{ thinkingBudget: -1 \}` for automatic/dynamic thinking.
+       * Gemini 3.1 live models use `thinkingLevel`.
+       * Gemini 2.5 live models use `thinkingBudget`.
        */
       thinkingConfig?: types.ThinkingConfig;
     } = {},
@@ -698,9 +698,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
     if (this.options.model === 'gemini-3.1-flash-live-preview') {
       this.#logger.warn(
-        'generateReply is not compatible with gemini-3.1-flash-live-preview and will be ignored.',
+        'generateReply is not compatible with gemini-3.1-flash-live-preview. Use a Gemini 2.5 live model for voice-agent flows that require programmatic reply generation.',
       );
-      throw new Error("generateReply is not compatible with 'gemini-3.1-flash-live-preview'");
+      throw new Error(
+        "generateReply is not compatible with 'gemini-3.1-flash-live-preview'; use a Gemini 2.5 live model for voice-agent flows that require programmatic reply generation.",
+      );
     }
 
     if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
