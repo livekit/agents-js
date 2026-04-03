@@ -15,7 +15,7 @@ function isACloseable(obj: unknown): obj is ACloseable {
   );
 }
 
-async function closeIterator<T>(iterator: AsyncIterator<T>, started: boolean): Promise<void> {
+async function closeIterator<T>(iterator: AsyncIterator<T>): Promise<void> {
   if (isACloseable(iterator)) {
     await iterator.aclose();
   } else if (
@@ -24,15 +24,10 @@ async function closeIterator<T>(iterator: AsyncIterator<T>, started: boolean): P
     'return' in iterator &&
     typeof iterator.return === 'function'
   ) {
-    // JS async generators skip try/finally if never advanced.
-    // Start the generator so its cleanup logic can run.
-    if (!started) {
-      try {
-        await iterator.next();
-      } catch {
-        // ignore — we just need it entered
-      }
-    }
+    // Note: for unstarted async generators, return() completes
+    // immediately without running finally blocks. This matches Python's
+    // behavior (aclose() on an unstarted generator is a no-op) and is
+    // safe because no resources were acquired inside the generator body.
     await iterator.return(undefined);
   }
 }
@@ -86,7 +81,6 @@ class TeePeerIterator<T> implements AsyncIterableIterator<T> {
   private _iterator: AsyncIterator<T>;
   private _lock: Lock;
   private _exception: [Error | null];
-  private _started: { value: boolean };
   private _done = false;
 
   constructor(
@@ -95,14 +89,12 @@ class TeePeerIterator<T> implements AsyncIterableIterator<T> {
     peers: T[][],
     lock: Lock,
     exception: [Error | null],
-    started: { value: boolean },
   ) {
     this._iterator = iterator;
     this._buffer = buffer;
     this._peers = peers;
     this._lock = lock;
     this._exception = exception;
-    this._started = started;
   }
 
   async next(): Promise<IteratorResult<T>> {
@@ -133,9 +125,7 @@ class TeePeerIterator<T> implements AsyncIterableIterator<T> {
       let result: IteratorResult<T>;
       try {
         result = await this._iterator.next();
-        this._started.value = true;
       } catch (e) {
-        this._started.value = true;
         this._exception[0] = e instanceof Error ? e : new Error(String(e));
         this._done = true;
         this._removeSelf();
@@ -189,7 +179,7 @@ class TeePeerIterator<T> implements AsyncIterableIterator<T> {
 
     // If we're the last peer, close the upstream iterator
     if (this._peers.length === 0) {
-      await closeIterator(this._iterator, this._started.value);
+      await closeIterator(this._iterator);
     }
   }
 }
@@ -225,11 +215,9 @@ export class Tee<T> {
 
     const lock = new Lock();
     const exception: [Error | null] = [null];
-    const started = { value: false };
 
     this._children = this._buffers.map(
-      (buffer) =>
-        new TeePeerIterator(this._iterator, buffer, this._buffers, lock, exception, started),
+      (buffer) => new TeePeerIterator(this._iterator, buffer, this._buffers, lock, exception),
     );
   }
 
@@ -269,7 +257,7 @@ export class Tee<T> {
 
     // Ensure upstream is closed even if peer cleanup didn't trigger it
     try {
-      await closeIterator(this._iterator, true);
+      await closeIterator(this._iterator);
     } catch {
       // Ignore errors during cleanup
     }

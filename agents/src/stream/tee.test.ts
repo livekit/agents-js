@@ -215,7 +215,7 @@ describe('tee', () => {
     await iterB.return!(undefined);
   });
 
-  it('should close upstream when last peer is closed', async () => {
+  it('should close upstream when last peer is closed after reading', async () => {
     let upstreamClosed = false;
     async function* tracked(): AsyncGenerator<number> {
       try {
@@ -230,6 +230,9 @@ describe('tee', () => {
     const t = tee(tracked(), 2);
     const [a, b] = t.toArray();
 
+    // Advance at least one peer so the generator is started
+    await a.next();
+
     // Close both peers
     await a.return(undefined);
     expect(upstreamClosed).toBe(false); // Still one peer left
@@ -237,9 +240,29 @@ describe('tee', () => {
     expect(upstreamClosed).toBe(true); // Last peer closed upstream
   });
 
+  it('should close upstream without hanging when no peer ever read', async () => {
+    let upstreamClosed = false;
+    async function* tracked(): AsyncGenerator<number> {
+      try {
+        yield 1;
+      } finally {
+        upstreamClosed = true;
+      }
+    }
+
+    const t = tee(tracked(), 2);
+    const [a, b] = t.toArray();
+
+    // Close both peers without ever reading — should not hang.
+    // Python also doesn't run finally for unstarted generators.
+    await a.return(undefined);
+    await b.return(undefined);
+    expect(upstreamClosed).toBe(false);
+  });
+
   // ─── aclose ───
 
-  it('should close all children and upstream via aclose', async () => {
+  it('should close all children and upstream via aclose after reading', async () => {
     let upstreamClosed = false;
     async function* tracked(): AsyncGenerator<number> {
       try {
@@ -251,8 +274,27 @@ describe('tee', () => {
     }
 
     const t = new Tee(tracked(), 3);
+    // Start the generator by reading from one child
+    await t.get(0).next();
     await t.aclose();
     expect(upstreamClosed).toBe(true);
+  });
+
+  it('should close via aclose without hanging when no child ever read', async () => {
+    let upstreamClosed = false;
+    async function* tracked(): AsyncGenerator<number> {
+      try {
+        yield 1;
+      } finally {
+        upstreamClosed = true;
+      }
+    }
+
+    const t = new Tee(tracked(), 3);
+    // No child reads — aclose should not hang
+    await t.aclose();
+    // Python doesn't run finally for unstarted generators either
+    expect(upstreamClosed).toBe(false);
   });
 
   // ─── Indexing and iteration ───
@@ -297,6 +339,26 @@ describe('tee', () => {
     for (const r of results) {
       expect(r).toEqual([1, 2, 3]);
     }
+  });
+
+  it('should not hang when closing unstarted tee over a blocking source', async () => {
+    // P1 regression: if upstream blocks before its first yield,
+    // closeIterator must not hang forever on iterator.next().
+    async function* blockingSource(): AsyncGenerator<number> {
+      await new Promise<void>(() => {
+        // never resolves — simulates an indefinitely blocking source
+      });
+      yield 1;
+    }
+
+    const t = new Tee(blockingSource(), 2);
+
+    // Close without ever reading — this should return quickly, not hang
+    const closePromise = t.aclose();
+    const timeout = new Promise<string>((r) => setTimeout(() => r('timeout'), 1000));
+    const result = await Promise.race([closePromise.then(() => 'closed'), timeout]);
+
+    expect(result).toBe('closed');
   });
 
   it('should handle tee of tee', async () => {
