@@ -641,8 +641,6 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
               newActivity: 'resume',
               waitOnEnter: false,
             });
-            // Drain any cascading transitions triggered by the resumed agent's
-            // onEnter (e.g. TaskGroup starting the next child task).
             await session._drainActivityLock();
           },
           undefined,

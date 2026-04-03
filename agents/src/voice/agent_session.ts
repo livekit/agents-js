@@ -734,6 +734,11 @@ export class AgentSession<
     } while (this.activity !== prevActivity);
   }
 
+  private _notifyActivityChanged(): void {
+    this._activityChanged.set();
+  }
+
+
   /** @internal */
   _trackRunHandle(handle: SpeechHandle | Task<void>): void {
     if (this._globalRunState && !this._globalRunState.done()) {
@@ -790,6 +795,11 @@ export class AgentSession<
     if (this._runStartInFlight || (this._globalRunState && !this._globalRunState.done())) {
       throw new Error('nested runs are not supported');
     }
+
+    const runState = new RunResult<T>({
+      userInput,
+      outputType,
+    });
 
     this._runStartInFlight = true;
 
@@ -905,8 +915,45 @@ export class AgentSession<
           await this.activity!.resume({ reuseResources: reusableResources });
         }
 
-        // Set event AFTER start/resume so waiters see schedulingPaused=false.
-        this._activityChanged.set();
+        // Notify AFTER start/resume so waiters see schedulingPaused=false.
+        this._notifyActivityChanged();
+
+        // If a RunResult is active and the activity's onEnter is still running
+        // (e.g. a resumed TaskGroup whose loop will start the next child task),
+        // track a handle that waits for the next activity change. Registered
+        // AFTER notify so it waits for the subsequent transition, not this one.
+        // For resumed activities whose onEnter is still running (e.g. a
+        // TaskGroup loop advancing to the next child), track a handle that
+        // waits for the child transition. Only for 'resume' — freshly started
+        // activities haven't triggered cascading transitions yet.
+        // For resumed activities whose onEnter is still running (e.g. a
+        // TaskGroup loop advancing to the next child), track a handle that
+        // waits for the child transition. Only for 'resume' — freshly started
+        // activities haven't triggered cascading transitions yet.
+        if (
+          newActivity === 'resume' &&
+          this._globalRunState &&
+          !this._globalRunState.done() &&
+          this.activity?._onEnterTask &&
+          !this.activity._onEnterTask.done
+        ) {
+          this._activityChanged.clear();
+          const onEnterDone = this.activity._onEnterTask.result.then(
+            () => {},
+            () => {},
+          );
+          const settleTask = Task.from(
+            async () => {
+              // Race: either the next transition fires, or onEnter finishes
+              // without triggering one (e.g. last task in the group).
+              await Promise.race([this._activityChanged.wait(), onEnterDone]);
+              await this._drainActivityLock();
+            },
+            undefined,
+            'activity_settleWait',
+          );
+          this._trackRunHandle(settleTask);
+        }
 
         reusableResources = undefined;
 
