@@ -3,13 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
-import { type ReadableStream, TransformStream } from 'stream/web';
 import { log } from '../../log.js';
 import type { InterruptionMetrics } from '../../metrics/base.js';
-import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
+import { Chan } from '../../stream/chan.js';
 import { traceTypes } from '../../telemetry/index.js';
 import { FRAMES_PER_SECOND, apiConnectDefaults } from './defaults.js';
-import type { InterruptionDetectionError } from './errors.js';
 import { createHttpTransport } from './http_transport.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import type { AdaptiveInterruptionDetector } from './interruption_detector.js';
@@ -76,9 +74,9 @@ function updateUserSpeakingSpan(span: Span, entry: InterruptionCacheEntry) {
 }
 
 export class InterruptionStreamBase {
-  private inputStream: StreamChannel<InterruptionSentinel | AudioFrame, InterruptionDetectionError>;
+  private inputChan: Chan<InterruptionSentinel | AudioFrame>;
 
-  private eventStream: ReadableStream<OverlappingSpeechEvent>;
+  private eventStream: AsyncIterable<OverlappingSpeechEvent>;
 
   private resampler?: AudioResampler;
 
@@ -112,10 +110,7 @@ export class InterruptionStreamBase {
   };
 
   constructor(model: AdaptiveInterruptionDetector, apiOptions: Partial<ApiConnectOptions>) {
-    this.inputStream = createStreamChannel<
-      InterruptionSentinel | AudioFrame,
-      InterruptionDetectionError
-    >();
+    this.inputChan = new Chan<InterruptionSentinel | AudioFrame>();
 
     this.model = model;
     this.options = { ...model.options };
@@ -133,7 +128,7 @@ export class InterruptionStreamBase {
       maxRetries: this.apiOptions.maxRetries,
     };
 
-    this.eventStream = this.setupTransform();
+    this.eventStream = this.setupPipeline();
   }
 
   /**
@@ -158,7 +153,9 @@ export class InterruptionStreamBase {
     }
   }
 
-  private setupTransform(): ReadableStream<OverlappingSpeechEvent> {
+  private setupPipeline(): AsyncIterable<OverlappingSpeechEvent> {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const self = this;
     let agentSpeechStarted = false;
     let startIdx = 0;
     let accumulatedSamples = 0;
@@ -198,119 +195,115 @@ export class InterruptionStreamBase {
       return n;
     };
 
-    // First transform: process input frames/sentinels and output audio slices or events
-    const audioTransformer = new TransformStream<
-      InterruptionSentinel | AudioFrame,
-      Int16Array | OverlappingSpeechEvent
-    >(
-      {
-        transform: (chunk, controller) => {
-          if (chunk instanceof AudioFrame) {
-            if (!agentSpeechStarted) {
-              return;
-            }
-            if (this.options.sampleRate !== chunk.sampleRate) {
-              controller.error('the sample rate of the input frames must be consistent');
-              this.logger.error('the sample rate of the input frames must be consistent');
-              return;
-            }
-            const result = writeToInferenceS16Data(
-              chunk,
-              startIdx,
-              inferenceS16Data,
-              this.options.maxAudioDurationInS,
-            );
-            startIdx = result.startIdx;
-            accumulatedSamples += result.samplesWritten;
-
-            if (
-              accumulatedSamples >=
-                Math.floor(this.options.detectionIntervalInS * this.options.sampleRate) &&
-              overlapSpeechStarted
-            ) {
-              const audioSlice = inferenceS16Data.slice(0, startIdx);
-              accumulatedSamples = 0;
-              controller.enqueue(audioSlice);
-            }
-          } else if (chunk.type === 'agent-speech-started') {
-            this.logger.debug('agent speech started');
-            agentSpeechStarted = true;
-            overlapSpeechStarted = false;
-            this.overlapSpeechStartedAt = undefined;
-            accumulatedSamples = 0;
-            overlapCount = 0;
-            startIdx = 0;
-            this.numRequests = 0;
-            cache.clear();
-          } else if (chunk.type === 'agent-speech-ended') {
-            this.logger.debug('agent speech ended');
-            agentSpeechStarted = false;
-            overlapSpeechStarted = false;
-            this.overlapSpeechStartedAt = undefined;
-            accumulatedSamples = 0;
-            overlapCount = 0;
-            startIdx = 0;
-            this.numRequests = 0;
-            cache.clear();
-          } else if (chunk.type === 'overlap-speech-started' && agentSpeechStarted) {
-            this.overlapSpeechStartedAt = chunk.startedAt;
-            this.userSpeakingSpan = chunk.userSpeakingSpan;
-            this.logger.debug('overlap speech started, starting interruption inference');
-            overlapSpeechStarted = true;
-            accumulatedSamples = 0;
-            overlapCount += 1;
-            if (overlapCount <= 1) {
-              const keepSize =
-                Math.round((chunk.speechDuration / 1000) * this.options.sampleRate) +
-                Math.round(this.options.audioPrefixDurationInS * this.options.sampleRate);
-              const shiftCount = Math.max(0, startIdx - keepSize);
-              inferenceS16Data.copyWithin(0, shiftCount, startIdx);
-              startIdx -= shiftCount;
-            }
-            cache.clear();
-          } else if (chunk.type === 'overlap-speech-ended') {
-            this.logger.debug('overlap speech ended');
-            if (overlapSpeechStarted) {
-              this.userSpeakingSpan = undefined;
-              let latestEntry = cache.pop(
-                (entry) => entry.totalDurationInS !== undefined && entry.totalDurationInS > 0,
-              );
-              if (!latestEntry) {
-                this.logger.debug('no request made for overlap speech');
-                latestEntry = InterruptionCacheEntry.default();
-              }
-              const e = latestEntry ?? InterruptionCacheEntry.default();
-              const event: OverlappingSpeechEvent = {
-                type: 'overlapping_speech',
-                detectedAt: chunk.endedAt,
-                isInterruption: false,
-                overlapStartedAt: this.overlapSpeechStartedAt,
-                speechInput: e.speechInput,
-                probabilities: e.probabilities,
-                totalDurationInS: e.totalDurationInS,
-                detectionDelayInS: e.detectionDelayInS,
-                predictionDurationInS: e.predictionDurationInS,
-                probability: e.probability,
-                numRequests: getAndResetNumRequests(),
-              };
-              controller.enqueue(event);
-              overlapSpeechStarted = false;
-              accumulatedSamples = 0;
-            }
-            this.overlapSpeechStartedAt = undefined;
-          } else if (chunk.type === 'flush') {
-            // no-op
+    // Audio transform: process input frames/sentinels and output audio slices or events
+    const audioTransform = async function* (
+      source: AsyncIterable<InterruptionSentinel | AudioFrame>,
+    ): AsyncIterable<Int16Array | OverlappingSpeechEvent> {
+      for await (const chunk of source) {
+        if (chunk instanceof AudioFrame) {
+          if (!agentSpeechStarted) {
+            continue;
           }
-        },
-      },
-      { highWaterMark: 32 },
-      { highWaterMark: 32 },
-    );
+          if (self.options.sampleRate !== chunk.sampleRate) {
+            self.logger.error('the sample rate of the input frames must be consistent');
+            throw new Error('the sample rate of the input frames must be consistent');
+          }
+          const result = writeToInferenceS16Data(
+            chunk,
+            startIdx,
+            inferenceS16Data,
+            self.options.maxAudioDurationInS,
+          );
+          startIdx = result.startIdx;
+          accumulatedSamples += result.samplesWritten;
 
-    // Second transform: transport layer (HTTP or WebSocket based on useProxy)
+          if (
+            accumulatedSamples >=
+              Math.floor(self.options.detectionIntervalInS * self.options.sampleRate) &&
+            overlapSpeechStarted
+          ) {
+            const audioSlice = inferenceS16Data.slice(0, startIdx);
+            accumulatedSamples = 0;
+            yield audioSlice;
+          }
+        } else if (chunk.type === 'agent-speech-started') {
+          self.logger.debug('agent speech started');
+          agentSpeechStarted = true;
+          overlapSpeechStarted = false;
+          self.overlapSpeechStartedAt = undefined;
+          accumulatedSamples = 0;
+          overlapCount = 0;
+          startIdx = 0;
+          self.numRequests = 0;
+          cache.clear();
+        } else if (chunk.type === 'agent-speech-ended') {
+          self.logger.debug('agent speech ended');
+          agentSpeechStarted = false;
+          overlapSpeechStarted = false;
+          self.overlapSpeechStartedAt = undefined;
+          accumulatedSamples = 0;
+          overlapCount = 0;
+          startIdx = 0;
+          self.numRequests = 0;
+          cache.clear();
+        } else if (chunk.type === 'overlap-speech-started' && agentSpeechStarted) {
+          self.overlapSpeechStartedAt = chunk.startedAt;
+          self.userSpeakingSpan = chunk.userSpeakingSpan;
+          self.logger.debug('overlap speech started, starting interruption inference');
+          overlapSpeechStarted = true;
+          accumulatedSamples = 0;
+          overlapCount += 1;
+          if (overlapCount <= 1) {
+            const keepSize =
+              Math.round((chunk.speechDuration / 1000) * self.options.sampleRate) +
+              Math.round(self.options.audioPrefixDurationInS * self.options.sampleRate);
+            const shiftCount = Math.max(0, startIdx - keepSize);
+            inferenceS16Data.copyWithin(0, shiftCount, startIdx);
+            startIdx -= shiftCount;
+          }
+          cache.clear();
+        } else if (chunk.type === 'overlap-speech-ended') {
+          self.logger.debug('overlap speech ended');
+          if (overlapSpeechStarted) {
+            self.userSpeakingSpan = undefined;
+            let latestEntry = cache.pop(
+              (entry) => entry.totalDurationInS !== undefined && entry.totalDurationInS > 0,
+            );
+            if (!latestEntry) {
+              self.logger.debug('no request made for overlap speech');
+              latestEntry = InterruptionCacheEntry.default();
+            }
+            const e = latestEntry ?? InterruptionCacheEntry.default();
+            const event: OverlappingSpeechEvent = {
+              type: 'overlapping_speech',
+              detectedAt: chunk.endedAt,
+              isInterruption: false,
+              overlapStartedAt: self.overlapSpeechStartedAt,
+              speechInput: e.speechInput,
+              probabilities: e.probabilities,
+              totalDurationInS: e.totalDurationInS,
+              detectionDelayInS: e.detectionDelayInS,
+              predictionDurationInS: e.predictionDurationInS,
+              probability: e.probability,
+              numRequests: getAndResetNumRequests(),
+            };
+            yield event;
+            overlapSpeechStarted = false;
+            accumulatedSamples = 0;
+          }
+          self.overlapSpeechStartedAt = undefined;
+        } else if (chunk.type === 'flush') {
+          // no-op
+        }
+      }
+    };
+
+    // Transport layer (HTTP or WebSocket based on useProxy)
     const transportOptions = this.transportOptions;
 
-    let transport: TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent>;
+    let transportFn: (
+      source: AsyncIterable<Int16Array | OverlappingSpeechEvent>,
+    ) => AsyncIterable<OverlappingSpeechEvent>;
     if (this.options.useProxy) {
       const wsResult = createWsTransport(
         transportOptions,
@@ -320,10 +313,10 @@ export class InterruptionStreamBase {
         onRequestSent,
         getAndResetNumRequests,
       );
-      transport = wsResult.transport;
+      transportFn = wsResult.transport;
       this.wsReconnect = wsResult.reconnect;
     } else {
-      transport = createHttpTransport(
+      transportFn = createHttpTransport(
         transportOptions,
         getState,
         setState,
@@ -332,40 +325,39 @@ export class InterruptionStreamBase {
       );
     }
 
-    const eventEmitter = new TransformStream<OverlappingSpeechEvent, OverlappingSpeechEvent>({
-      transform: (chunk, controller) => {
-        this.model.emit('overlapping_speech', chunk);
+    // Event emitter: emit model events and metrics for each overlapping speech event
+    const eventEmit = async function* (
+      source: AsyncIterable<OverlappingSpeechEvent>,
+    ): AsyncIterable<OverlappingSpeechEvent> {
+      for await (const event of source) {
+        self.model.emit('overlapping_speech', event);
 
         const metrics: InterruptionMetrics = {
           type: 'interruption_metrics',
-          timestamp: chunk.detectedAt,
-          totalDuration: chunk.totalDurationInS * 1000,
-          predictionDuration: chunk.predictionDurationInS * 1000,
-          detectionDelay: chunk.detectionDelayInS * 1000,
-          numInterruptions: chunk.isInterruption ? 1 : 0,
-          numBackchannels: chunk.isInterruption ? 0 : 1,
-          numRequests: chunk.numRequests,
+          timestamp: event.detectedAt,
+          totalDuration: event.totalDurationInS * 1000,
+          predictionDuration: event.predictionDurationInS * 1000,
+          detectionDelay: event.detectionDelayInS * 1000,
+          numInterruptions: event.isInterruption ? 1 : 0,
+          numBackchannels: event.isInterruption ? 0 : 1,
+          numRequests: event.numRequests,
           metadata: {
-            modelProvider: this.model.provider,
-            modelName: this.model.model,
+            modelProvider: self.model.provider,
+            modelName: self.model.model,
           },
         };
-        this.model.emit('metrics_collected', metrics);
+        self.model.emit('metrics_collected', metrics);
 
-        controller.enqueue(chunk);
-      },
-    });
+        yield event;
+      }
+    };
 
-    // Pipeline: input -> audioTransformer -> transport -> eventEmitter -> eventStream
-    return this.inputStream
-      .stream()
-      .pipeThrough(audioTransformer)
-      .pipeThrough(transport)
-      .pipeThrough(eventEmitter);
+    // Pipeline: inputChan -> audioTransform -> transport -> eventEmit
+    return eventEmit(transportFn(audioTransform(this.inputChan)));
   }
 
   private ensureInputNotEnded() {
-    if (this.inputStream.closed) {
+    if (this.inputChan.closed) {
       throw new Error('input stream is closed');
     }
   }
@@ -381,39 +373,39 @@ export class InterruptionStreamBase {
     return this.resampler;
   }
 
-  stream(): ReadableStream<OverlappingSpeechEvent> {
+  stream(): AsyncIterable<OverlappingSpeechEvent> {
     return this.eventStream;
   }
 
   async pushFrame(frame: InterruptionSentinel | AudioFrame): Promise<void> {
     this.ensureStreamsNotEnded();
     if (!(frame instanceof AudioFrame)) {
-      return this.inputStream.write(frame);
+      await this.inputChan.send(frame);
     } else if (this.options.sampleRate !== frame.sampleRate) {
       const resampler = this.getResamplerFor(frame.sampleRate);
       if (resampler.inputRate !== frame.sampleRate) {
         throw new Error('the sample rate of the input frames must be consistent');
       }
       for (const resampledFrame of resampler.push(frame)) {
-        await this.inputStream.write(resampledFrame);
+        await this.inputChan.send(resampledFrame);
       }
     } else {
-      await this.inputStream.write(frame);
+      await this.inputChan.send(frame);
     }
   }
 
   async flush(): Promise<void> {
     this.ensureStreamsNotEnded();
-    await this.inputStream.write(InterruptionStreamSentinel.flush());
+    await this.inputChan.send(InterruptionStreamSentinel.flush());
   }
 
   async endInput(): Promise<void> {
     await this.flush();
-    await this.inputStream.close();
+    this.inputChan.close();
   }
 
   async close(): Promise<void> {
-    if (!this.inputStream.closed) await this.inputStream.close();
+    if (!this.inputChan.closed) this.inputChan.close();
     this.model.removeStream(this);
   }
 }

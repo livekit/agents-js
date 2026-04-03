@@ -9,7 +9,6 @@ import {
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
-import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
@@ -131,13 +130,9 @@ describe('AudioRecognition user_turn span parity', () => {
       { type: SpeechEventType.END_OF_SPEECH },
     ];
 
-    const sttNode: STTNode = async () =>
-      new ReadableStream<SpeechEvent | string>({
-        start(controller) {
-          for (const ev of sttEvents) controller.enqueue(ev);
-          controller.close();
-        },
-      });
+    const sttNode: STTNode = async function* () {
+      for (const ev of sttEvents) yield ev;
+    };
 
     const ar = new AudioRecognition({
       recognitionHooks: hooks,
@@ -240,13 +235,9 @@ describe('AudioRecognition user_turn span parity', () => {
       },
     ];
 
-    const sttNode: STTNode = async () =>
-      new ReadableStream<SpeechEvent | string>({
-        start(controller) {
-          for (const ev of sttEvents) controller.enqueue(ev);
-          controller.close();
-        },
-      });
+    const sttNode: STTNode = async function* () {
+      for (const ev of sttEvents) yield ev;
+    };
 
     const ar = new AudioRecognition({
       recognitionHooks: hooks,

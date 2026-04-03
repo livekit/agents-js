@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
-import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../src/log.js';
 import { Event, Task, TaskResult, delay, isPending, resampleStream } from '../src/utils.js';
@@ -637,17 +636,10 @@ describe('utils', () => {
       return new AudioFrame(data, sampleRate, channels, samples);
     };
 
-    const streamToArray = async (stream: ReadableStream<AudioFrame>): Promise<AudioFrame[]> => {
-      const reader = stream.getReader();
+    const iterableToArray = async (source: AsyncIterable<AudioFrame>): Promise<AudioFrame[]> => {
       const chunks: AudioFrame[] = [];
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-        }
-      } finally {
-        reader.releaseLock();
+      for await (const value of source) {
+        chunks.push(value);
       }
       return chunks;
     };
@@ -657,15 +649,12 @@ describe('utils', () => {
       const outputRate = 16000;
       const inputFrame = createAudioFrame(inputRate, 960); // 20ms at 48kHz
 
-      const inputStream = new ReadableStream<AudioFrame>({
-        start(controller) {
-          controller.enqueue(inputFrame);
-          controller.close();
-        },
-      });
+      const inputStream = (async function* () {
+        yield inputFrame;
+      })();
 
       const outputStream = resampleStream({ stream: inputStream, outputRate });
-      const outputFrames = await streamToArray(outputStream);
+      const outputFrames = await iterableToArray(outputStream);
 
       expect(outputFrames.length).toBeGreaterThan(0);
 
@@ -679,15 +668,12 @@ describe('utils', () => {
       const sampleRate = 44100;
       const inputFrame = createAudioFrame(sampleRate, 1024);
 
-      const inputStream = new ReadableStream<AudioFrame>({
-        start(controller) {
-          controller.enqueue(inputFrame);
-          controller.close();
-        },
-      });
+      const inputStream = (async function* () {
+        yield inputFrame;
+      })();
 
       const outputStream = resampleStream({ stream: inputStream, outputRate: sampleRate });
-      const outputFrames = await streamToArray(outputStream);
+      const outputFrames = await iterableToArray(outputStream);
 
       expect(outputFrames.length).toBeGreaterThan(0);
 
@@ -703,16 +689,13 @@ describe('utils', () => {
       const frame1 = createAudioFrame(inputRate, 640);
       const frame2 = createAudioFrame(inputRate, 640);
 
-      const inputStream = new ReadableStream<AudioFrame>({
-        start(controller) {
-          controller.enqueue(frame1);
-          controller.enqueue(frame2);
-          controller.close();
-        },
-      });
+      const inputStream = (async function* () {
+        yield frame1;
+        yield frame2;
+      })();
 
       const outputStream = resampleStream({ stream: inputStream, outputRate });
-      const outputFrames = await streamToArray(outputStream);
+      const outputFrames = await iterableToArray(outputStream);
 
       expect(outputFrames.length).toBeGreaterThan(0);
 
@@ -723,14 +706,12 @@ describe('utils', () => {
     });
 
     it('should handle empty stream', async () => {
-      const inputStream = new ReadableStream<AudioFrame>({
-        start(controller) {
-          controller.close();
-        },
-      });
+      const inputStream = (async function* (): AsyncIterable<AudioFrame> {
+        // empty stream
+      })();
 
       const outputStream = resampleStream({ stream: inputStream, outputRate: 44100 });
-      const outputFrames = await streamToArray(outputStream);
+      const outputFrames = await iterableToArray(outputStream);
 
       expect(outputFrames).toEqual([]);
     });

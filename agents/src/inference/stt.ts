@@ -7,7 +7,7 @@ import { APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { type LanguageCode, areLanguagesEquivalent, normalizeLanguage } from '../language.js';
 import { log } from '../log.js';
-import { createStreamChannel } from '../stream/stream_channel.js';
+import { Chan, ChanClosed } from '../stream/chan.js';
 import {
   STT as BaseSTT,
   SpeechStream as BaseSpeechStream,
@@ -390,7 +390,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let closing = false;
       let finalReceived = false;
 
-      const eventChannel = createStreamChannel<SttServerEvent>();
+      const eventChannel = new Chan<SttServerEvent>();
 
       const resourceCleanup = () => {
         if (closing) return;
@@ -411,7 +411,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
           ws.on('message', (data) => {
             const json = JSON.parse(data.toString()) as SttServerEvent;
-            eventChannel.write(json);
+            try {
+              eventChannel.sendNowait(json);
+            } catch {
+              // Chan closed
+            }
           });
 
           ws.on('error', (e) => {
@@ -489,20 +493,15 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       };
 
       const recv = async (signal: AbortSignal) => {
-        const serverEventStream = eventChannel.stream();
-        const reader = serverEventStream.getReader();
-
         try {
-          while (!this.closed && !signal.aborted) {
-            const result = await reader.read();
-            if (signal.aborted) return;
-            if (result.done) return;
+          for await (const value of eventChannel) {
+            if (this.closed || signal.aborted) return;
 
             // Parse and validate with Zod schema
-            const parseResult = await sttServerEventSchema.safeParseAsync(result.value);
+            const parseResult = await sttServerEventSchema.safeParseAsync(value);
             if (!parseResult.success) {
               this.#logger.warn(
-                { error: parseResult.error, rawData: result.value },
+                { error: parseResult.error, rawData: value },
                 'Failed to parse STT server event',
               );
               continue;
@@ -530,13 +529,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 throw new APIError(`LiveKit STT returned error: ${JSON.stringify(event)}`);
             }
           }
-        } finally {
-          reader.releaseLock();
-          try {
-            await serverEventStream.cancel();
-          } catch (e) {
-            this.#logger.debug('Error cancelling serverEventStream (may already be cancelled):', e);
-          }
+        } catch (e) {
+          if (!(e instanceof ChanClosed)) throw e;
         }
       };
 

@@ -5,7 +5,6 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
 import { context as otelContext } from '@opentelemetry/api';
-import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
 import {
   type ChatContext,
   ChatMessage,
@@ -22,7 +21,7 @@ import {
 } from '../llm/tool_context.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
-import { IdentityTransform } from '../stream/identity_transform.js';
+import { Chan, ChanClosed } from '../stream/chan.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import {
@@ -64,8 +63,8 @@ export class _LLMGenerationData {
   ttft?: number;
 
   constructor(
-    public readonly textStream: ReadableStream<string>,
-    public readonly toolCallStream: ReadableStream<FunctionCall>,
+    public readonly textStream: AsyncIterable<string>,
+    public readonly toolCallStream: AsyncIterable<FunctionCall>,
   ) {
     this.id = shortuuid('item_');
     this.generatedToolCalls = [];
@@ -78,11 +77,11 @@ export class _LLMGenerationData {
  */
 export interface _TTSGenerationData {
   /** Audio frame stream from TTS */
-  audioStream: ReadableStream<AudioFrame>;
+  audioStream: AsyncIterable<AudioFrame>;
   /**
    * Future that resolves to a stream of timed transcripts, or null if TTS doesn't support it.
    */
-  timedTextsFut: Future<ReadableStream<TimedString> | null>;
+  timedTextsFut: Future<AsyncIterable<TimedString> | null>;
   /** Time to first byte (set when first audio frame is received) */
   ttfb?: number;
 }
@@ -430,12 +429,10 @@ export function performLLMInference(
   model?: string,
   provider?: string,
 ): [Task<void>, _LLMGenerationData] {
-  const textStream = new IdentityTransform<string>();
-  const toolCallStream = new IdentityTransform<FunctionCall>();
+  const textChan = new Chan<string>();
+  const toolCallChan = new Chan<FunctionCall>();
 
-  const textWriter = textStream.writable.getWriter();
-  const toolCallWriter = toolCallStream.writable.getWriter();
-  const data = new _LLMGenerationData(textStream.readable, toolCallStream.readable);
+  const data = new _LLMGenerationData(textChan, toolCallChan);
 
   const _performLLMInferenceImpl = async (signal: AbortSignal, span: Span) => {
     span.setAttribute(
@@ -451,31 +448,21 @@ export function performLLMInference(
       span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, provider);
     }
 
-    let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk> | null = null;
-    let llmStream: ReadableStream<string | ChatChunk> | null = null;
+    let llmStream: AsyncIterable<string | ChatChunk> | null = null;
     const startTime = performance.now() / 1000; // Convert to seconds
     let firstTokenReceived = false;
 
     try {
       llmStream = await node(chatCtx, toolCtx, modelSettings);
       if (llmStream === null) {
-        await textWriter.close();
+        textChan.close();
         return;
       }
 
-      const abortPromise = waitForAbort(signal);
-
       // TODO(brian): add support for dynamic tools
 
-      llmStreamReader = llmStream.getReader();
-      while (true) {
+      for await (const chunk of llmStream) {
         if (signal.aborted) break;
-
-        const result = await Promise.race([llmStreamReader.read(), abortPromise]);
-        if (result === undefined) break;
-
-        const { done, value: chunk } = result;
-        if (done) break;
 
         if (!firstTokenReceived) {
           firstTokenReceived = true;
@@ -484,7 +471,12 @@ export function performLLMInference(
 
         if (typeof chunk === 'string') {
           data.generatedText += chunk;
-          await textWriter.write(chunk);
+          try {
+            textChan.sendNowait(chunk);
+          } catch (e) {
+            if (e instanceof ChanClosed) break;
+            throw e;
+          }
           // TODO(shubhra): better way to check??
         } else {
           if (chunk.delta === undefined) {
@@ -505,13 +497,23 @@ export function performLLMInference(
               });
 
               data.generatedToolCalls.push(toolCall);
-              await toolCallWriter.write(toolCall);
+              try {
+                toolCallChan.sendNowait(toolCall);
+              } catch (e) {
+                if (e instanceof ChanClosed) break;
+                throw e;
+              }
             }
           }
 
           if (chunk.delta.content) {
             data.generatedText += chunk.delta.content;
-            await textWriter.write(chunk.delta.content);
+            try {
+              textChan.sendNowait(chunk.delta.content);
+            } catch (e) {
+              if (e instanceof ChanClosed) break;
+              throw e;
+            }
           }
         }
 
@@ -530,10 +532,8 @@ export function performLLMInference(
       }
       throw error;
     } finally {
-      llmStreamReader?.releaseLock();
-      await llmStream?.cancel();
-      await textWriter.close();
-      await toolCallWriter.close();
+      textChan.close();
+      toolCallChan.close();
     }
   };
 
@@ -554,47 +554,42 @@ export function performLLMInference(
 
 export function performTTSInference(
   node: TTSNode,
-  text: ReadableStream<string | TimedString>,
+  text: AsyncIterable<string | TimedString>,
   modelSettings: ModelSettings,
   controller: AbortController,
   model?: string,
   provider?: string,
 ): [Task<void>, _TTSGenerationData] {
   const logger = log();
-  const audioStream = new IdentityTransform<AudioFrame>();
-  const outputWriter = audioStream.writable.getWriter();
-  const audioOutputStream = audioStream.readable;
+  const audioChan = new Chan<AudioFrame>();
+  const timedTextsChan = new Chan<TimedString>();
 
-  const timedTextsFut = new Future<ReadableStream<TimedString> | null>();
-  const timedTextsStream = new IdentityTransform<TimedString>();
-  const timedTextsWriter = timedTextsStream.writable.getWriter();
+  const timedTextsFut = new Future<AsyncIterable<TimedString> | null>();
 
-  // Transform stream to extract text from TimedString objects
-  const textOnlyStream = new IdentityTransform<string>();
-  const textOnlyWriter = textOnlyStream.writable.getWriter();
+  // Transform iterable to extract text from TimedString objects
+  const textOnlyChan = new Chan<string>();
   (async () => {
-    const reader = text.getReader();
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
+      for await (const value of text) {
         const textValue = typeof value === 'string' ? value : value.text;
-        await textOnlyWriter.write(textValue);
+        try {
+          textOnlyChan.sendNowait(textValue);
+        } catch (e) {
+          if (e instanceof ChanClosed) break;
+          throw e;
+        }
       }
-      await textOnlyWriter.close();
-    } catch (e) {
-      await textOnlyWriter.abort(e as Error);
+    } catch {
+      // Source errors are silently consumed
     } finally {
-      reader.releaseLock();
+      textOnlyChan.close();
     }
   })();
 
   let ttfb: number | undefined;
 
   const genData: _TTSGenerationData = {
-    audioStream: audioOutputStream,
+    audioStream: audioChan,
     timedTextsFut,
     ttfb: undefined,
   };
@@ -607,44 +602,33 @@ export function performTTSInference(
       span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, provider);
     }
 
-    let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
-    let ttsStream: ReadableStream<AudioFrame> | null = null;
+    let ttsStream: AsyncIterable<AudioFrame> | null = null;
     let pushedDuration = 0;
     const startTime = performance.now() / 1000; // Convert to seconds
     let firstByteReceived = false;
 
     try {
-      ttsStream = await node(textOnlyStream.readable, modelSettings);
+      ttsStream = await node(textOnlyChan, modelSettings);
       if (ttsStream === null) {
         timedTextsFut.resolve(null);
-        await outputWriter.close();
-        await timedTextsWriter.close();
+        audioChan.close();
+        timedTextsChan.close();
         return;
       }
 
       // This is critical: the future must be resolved with the channel/stream before the loop
       // so that agent_activity can start reading while we write
       if (!timedTextsFut.done) {
-        timedTextsFut.resolve(timedTextsStream.readable);
+        timedTextsFut.resolve(timedTextsChan);
       }
-
-      ttsStreamReader = ttsStream.getReader();
 
       // In Python, perform_tts_inference has a while loop processing multiple input segments
       // (separated by FlushSentinel), with pushed_duration accumulating across segments.
       // JS currently only does single inference, so initialPushedDuration is always 0.
       // TODO: Add FlushSentinel + multi-segment loop
       const initialPushedDuration = pushedDuration;
-      while (true) {
+      for await (const frame of ttsStream) {
         if (signal.aborted) {
-          break;
-        }
-
-        const { done, value: frame } = await waitUntilTimeout(
-          ttsStreamReader.read(),
-          TTS_READ_IDLE_TIMEOUT_MS,
-        );
-        if (done) {
           break;
         }
 
@@ -655,8 +639,13 @@ export function performTTSInference(
           span.setAttribute(traceTypes.ATTR_RESPONSE_TTFB, ttfb);
         }
 
-        // Write the audio frame to the output stream
-        await outputWriter.write(frame);
+        // Write the audio frame to the output channel
+        try {
+          audioChan.sendNowait(frame);
+        } catch (e) {
+          if (e instanceof ChanClosed) break;
+          throw e;
+        }
 
         const timedTranscripts = frame.userdata[USERDATA_TIMED_TRANSCRIPT] as
           | TimedString[]
@@ -677,7 +666,12 @@ export function performTTSInference(
               confidence: timedText.confidence,
               startTimeOffset: timedText.startTimeOffset,
             });
-            await timedTextsWriter.write(adjustedTimedText);
+            try {
+              timedTextsChan.sendNowait(adjustedTimedText);
+            } catch (e) {
+              if (e instanceof ChanClosed) break;
+              throw e;
+            }
           }
         }
 
@@ -696,10 +690,8 @@ export function performTTSInference(
       if (!timedTextsFut.done) {
         timedTextsFut.resolve(null);
       }
-      ttsStreamReader?.releaseLock();
-      await ttsStream?.cancel();
-      await outputWriter.close();
-      await timedTextsWriter.close();
+      audioChan.close();
+      timedTextsChan.close();
     }
   };
 
@@ -724,19 +716,16 @@ export interface _TextOut {
 }
 
 async function forwardText(
-  source: ReadableStream<string | TimedString>,
+  source: AsyncIterable<string | TimedString>,
   out: _TextOut,
   signal: AbortSignal,
   textOutput: TextOutput | null,
 ): Promise<void> {
-  const reader = source.getReader();
   try {
-    while (true) {
+    for await (const delta of source) {
       if (signal.aborted) {
         break;
       }
-      const { done, value: delta } = await reader.read();
-      if (done) break;
 
       const deltaIsTimedString = isTimedString(delta);
       const textDelta = deltaIsTimedString ? delta.text : delta;
@@ -754,12 +743,11 @@ async function forwardText(
     if (textOutput !== null) {
       textOutput.flush();
     }
-    reader?.releaseLock();
   }
 }
 
 export function performTextForwarding(
-  source: ReadableStream<string | TimedString>,
+  source: AsyncIterable<string | TimedString>,
   controller: AbortController,
   textOutput: TextOutput | null,
 ): [Task<void>, _TextOut] {
@@ -783,16 +771,13 @@ export interface _AudioOut {
 }
 
 async function forwardAudio(
-  ttsStream: ReadableStream<AudioFrame>,
+  ttsStream: AsyncIterable<AudioFrame>,
   audioOutput: AudioOutput,
   out: _AudioOut,
   signal?: AbortSignal,
 ): Promise<void> {
   const logger = log();
-  const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
-
-  const FORWARD_AUDIO_IDLE_TIMEOUT_MS = 10_000;
 
   const onPlaybackStarted = (ev: { createdAt: number }) => {
     if (!out.firstFrameFut.done) {
@@ -804,16 +789,10 @@ async function forwardAudio(
     audioOutput.on(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
     audioOutput.resume();
 
-    while (true) {
+    for await (const frame of ttsStream) {
       if (signal?.aborted) {
         break;
       }
-
-      const { done, value: frame } = await waitUntilTimeout(
-        reader.read(),
-        FORWARD_AUDIO_IDLE_TIMEOUT_MS,
-      );
-      if (done) break;
 
       out.audio.push(frame);
 
@@ -853,13 +832,12 @@ async function forwardAudio(
       out.firstFrameFut.reject(new Error('audio forwarding cancelled before playback started'));
     }
 
-    reader?.releaseLock();
     audioOutput.flush();
   }
 }
 
 export function performAudioForwarding(
-  ttsStream: ReadableStream<AudioFrame>,
+  ttsStream: AsyncIterable<AudioFrame>,
   audioOutput: AudioOutput,
   controller: AbortController,
 ): [Task<void>, _AudioOut] {
@@ -892,7 +870,7 @@ export function performToolExecutions({
   speechHandle: SpeechHandle;
   toolCtx: ToolContext;
   toolChoice?: ToolChoice;
-  toolCallStream: ReadableStream<FunctionCall>;
+  toolCallStream: AsyncIterable<FunctionCall>;
   onToolExecutionStarted?: (toolCall: FunctionCall) => void;
   onToolExecutionCompleted?: (toolExecutionOutput: ToolExecutionOutput) => void;
   controller: AbortController;
@@ -910,13 +888,10 @@ export function performToolExecutions({
 
   const executeToolsTask = async (controller: AbortController) => {
     const signal = controller.signal;
-    const reader = toolCallStream.getReader();
 
     const tasks: Task<void>[] = [];
-    while (!signal.aborted) {
-      const { done, value: toolCall } = await reader.read();
+    for await (const toolCall of toolCallStream) {
       if (signal.aborted) break;
-      if (done) break;
 
       if (toolChoice === 'none') {
         logger.error(

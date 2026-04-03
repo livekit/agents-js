@@ -2,9 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
-import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
 import { log } from '../../log.js';
-import { IdentityTransform } from '../../stream/identity_transform.js';
+import { Chan, ChanClosed } from '../../stream/chan.js';
 import type { SentenceStream, SentenceTokenizer } from '../../tokenize/index.js';
 import { basic } from '../../tokenize/index.js';
 import { Future, Task, delay } from '../../utils.js';
@@ -143,8 +142,7 @@ class SegmentSynchronizerImpl {
   private textData: TextData;
   private audioData: AudioData;
   private speed: number;
-  private outputStream: IdentityTransform<string>;
-  private outputStreamWriter: WritableStreamDefaultWriter<string>;
+  private outputChan: Chan<string>;
   private captureTask: Promise<void>;
   private startWallTime?: number;
 
@@ -171,12 +169,11 @@ class SegmentSynchronizerImpl {
       done: false,
       annotatedRate: null,
     };
-    this.outputStream = new IdentityTransform();
-    this.outputStreamWriter = this.outputStream.writable.getWriter();
+    this.outputChan = new Chan<string>();
 
     this.mainTask()
       .then(() => {
-        this.outputStreamWriter.close();
+        this.outputChan.close();
       })
       .catch((error) => {
         this.logger.error({ error }, 'mainTask SegmentSynchronizerImpl');
@@ -200,8 +197,8 @@ class SegmentSynchronizerImpl {
     return this.textData.pushedText.length > this.textData.forwardedText.length;
   }
 
-  get readable(): ReadableStream<string> {
-    return this.outputStream.readable;
+  get readable(): AsyncIterable<string> {
+    return this.outputChan;
   }
 
   pushAudio(frame: AudioFrame) {
@@ -305,15 +302,13 @@ class SegmentSynchronizerImpl {
     // Don't use a for-await loop here, because exiting the loop will close the writer in the
     // outputStream, which will cause an error in the mainTask.then method.
     // NOTE: forwardedText is updated in mainTask, NOT here
-    const reader = this.outputStream.readable.getReader();
-    while (true) {
-      const { done, value: text } = await reader.read();
-      if (done) {
-        break;
+    try {
+      for await (const text of this.outputChan) {
+        await this.nextInChain.captureText(text);
       }
-      await this.nextInChain.captureText(text);
+    } catch (e) {
+      if (!(e instanceof ChanClosed)) throw e;
     }
-    reader.releaseLock();
     this.nextInChain.flush();
   }
 
@@ -342,7 +337,7 @@ class SegmentSynchronizerImpl {
         }
 
         if (this.playbackCompleted) {
-          this.outputStreamWriter.write(sentence.slice(textCursor, endPos));
+          this.outputChan.sendNowait(sentence.slice(textCursor, endPos));
           textCursor = endPos;
           continue;
         }
@@ -379,7 +374,7 @@ class SegmentSynchronizerImpl {
 
         await this.sleepIfNotClosed(delayTime / 2);
         const forwardedWord = sentence.slice(textCursor, endPos);
-        this.outputStreamWriter.write(forwardedWord);
+        this.outputChan.sendNowait(forwardedWord);
 
         await this.sleepIfNotClosed(delayTime / 2);
 
@@ -390,7 +385,7 @@ class SegmentSynchronizerImpl {
 
       if (textCursor < sentence.length) {
         const remaining = sentence.slice(textCursor);
-        this.outputStreamWriter.write(remaining);
+        this.outputChan.sendNowait(remaining);
       }
     }
   }

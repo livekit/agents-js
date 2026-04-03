@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
-import { ReadableStream } from 'stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../log.js';
 import { performAudioForwarding, performTTSInference } from './generation.js';
@@ -36,12 +35,12 @@ describe('TTS stream idle timeout', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
   it('forwardAudio completes when TTS stream stalls after producing frames', async () => {
-    const stalledStream = new ReadableStream<AudioFrame>({
-      start(controller) {
-        controller.enqueue(createSilentFrame());
-        controller.enqueue(createSilentFrame());
-      },
-    });
+    const stalledStream = (async function* () {
+      yield createSilentFrame();
+      yield createSilentFrame();
+      // stall: never close
+      await new Promise(() => {});
+    })();
 
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
@@ -61,14 +60,11 @@ describe('TTS stream idle timeout', () => {
   }, 10_000);
 
   it('forwardAudio completes normally when TTS stream closes properly', async () => {
-    const normalStream = new ReadableStream<AudioFrame>({
-      start(controller) {
-        controller.enqueue(createSilentFrame());
-        controller.enqueue(createSilentFrame());
-        controller.enqueue(createSilentFrame());
-        controller.close();
-      },
-    });
+    const normalStream = (async function* () {
+      yield createSilentFrame();
+      yield createSilentFrame();
+      yield createSilentFrame();
+    })();
 
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
@@ -82,19 +78,16 @@ describe('TTS stream idle timeout', () => {
   });
 
   it('performTTSInference completes when TTS node returns stalled stream', async () => {
-    const stalledTtsStream = new ReadableStream<AudioFrame>({
-      start(controller) {
-        controller.enqueue(createSilentFrame());
-      },
-    });
+    const stalledTtsStream = (async function* () {
+      yield createSilentFrame();
+      // stall: never close
+      await new Promise(() => {});
+    })();
 
     const ttsNode = async () => stalledTtsStream;
-    const textInput = new ReadableStream<string>({
-      start(controller) {
-        controller.enqueue('Hello world');
-        controller.close();
-      },
-    });
+    const textInput = (async function* () {
+      yield 'Hello world';
+    })();
 
     const controller = new AbortController();
     const [task, genData] = performTTSInference(ttsNode, textInput, {}, controller);

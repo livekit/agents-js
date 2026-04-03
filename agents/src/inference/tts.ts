@@ -8,7 +8,7 @@ import { AudioByteStream } from '../audio.js';
 import { ConnectionPool } from '../connection_pool.js';
 import { type LanguageCode, normalizeLanguage } from '../language.js';
 import { log } from '../log.js';
-import { createStreamChannel } from '../stream/stream_channel.js';
+import { Chan, ChanClosed } from '../stream/chan.js';
 import { basic as tokenizeBasic } from '../tokenize/index.js';
 import type { ChunkedStream } from '../tts/index.js';
 import { SynthesizeStream as BaseSynthesizeStream, TTS as BaseTTS } from '../tts/index.js';
@@ -434,7 +434,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     let lastFrame: AudioFrame | undefined;
 
     const sendTokenizerStream = new tokenizeBasic.SentenceTokenizer().stream();
-    const eventChannel = createStreamChannel<TtsServerEvent>();
+    const eventChannel = new Chan<TtsServerEvent>();
     const requestId = shortuuid('tts_request_');
     const inputSentEvent = new Event();
 
@@ -445,8 +445,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
       if (closing) return;
       closing = true;
       sendTokenizerStream.close();
-      // close() returns a promise; don't leak it
-      await eventChannel.close();
+      eventChannel.close();
     };
 
     const sendClientEvent = async (event: TtsClientEvent, ws: WebSocket, signal: AbortSignal) => {
@@ -510,13 +509,13 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         try {
           const eventJson = JSON.parse(data.toString()) as Record<string, unknown>;
           const validatedEvent = ttsServerEventSchema.parse(eventJson);
-          // writer.write returns a promise; avoid unhandled rejections if stream is closed
-          void eventChannel.write(validatedEvent).catch((error) => {
-            this.#logger.debug(
-              { error },
-              'Failed writing TTS event to stream channel (likely closed)',
-            );
-          });
+          try {
+            eventChannel.sendNowait(validatedEvent);
+          } catch (error) {
+            if (!(error instanceof ChanClosed)) {
+              this.#logger.debug({ error }, 'Failed writing TTS event to channel (likely closed)');
+            }
+          }
         } catch (e) {
           this.#logger.error({ error: e }, 'Error parsing WebSocket message');
         }
@@ -589,15 +588,14 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
       const recvTimeoutMs = this.connOptions.timeoutMs;
 
       const bstream = new AudioByteStream(this.opts.sampleRate, NUM_CHANNELS);
-      const serverEventStream = eventChannel.stream();
-      const reader = serverEventStream.getReader();
+      const iter = eventChannel[Symbol.asyncIterator]();
 
       try {
         await inputSentEvent.wait();
 
         while (!this.closed && !signal.aborted) {
           const result = await waitUntilTimeout(
-            reader.read(),
+            iter.next(),
             recvTimeoutMs,
             () => new APITimeoutError({ message: 'TTS recv idle timeout' }),
           );
@@ -647,6 +645,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           }
         }
       } catch (e) {
+        if (e instanceof ChanClosed) return;
         if (e instanceof APITimeoutError) {
           this.#logger.warn('TTS recv task timed out waiting for server message');
           await resourceCleanup();
@@ -654,13 +653,6 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           return;
         }
         throw e;
-      } finally {
-        reader.releaseLock();
-        try {
-          await serverEventStream.cancel();
-        } catch (e) {
-          this.#logger.debug('Error cancelling serverEventStream (may already be cancelled):', e);
-        }
       }
     };
 

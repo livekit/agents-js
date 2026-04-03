@@ -13,8 +13,8 @@ import {
   RoomEvent,
   TrackSource,
 } from '@livekit/rtc-node';
-import type { ReadableStream } from 'node:stream/web';
 import { log } from '../../log.js';
+import { fromReadableStream } from '../../stream/adapters.js';
 import { resampleStream } from '../../utils.js';
 import { AudioInput } from '../io.js';
 
@@ -125,7 +125,7 @@ export class ParticipantAudioInputStream extends AudioInput {
 
   private closeStream() {
     if (this.currentInputId) {
-      void this.multiStream.removeInputStream(this.currentInputId);
+      this._pumpAbort?.abort();
       this.currentInputId = null;
     }
 
@@ -147,7 +147,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     }
     this.closeStream();
     this.publication = publication;
-    this.currentInputId = this.multiStream.addInputStream(
+    this.currentInputId = this.addInputStream(
       resampleStream({
         stream: this.createStream(track),
         outputRate: this.sampleRate,
@@ -174,13 +174,15 @@ export class ParticipantAudioInputStream extends AudioInput {
     }
   };
 
-  private createStream(track: RemoteTrack): ReadableStream<AudioFrame> {
-    return new AudioStream(track, {
-      sampleRate: this.sampleRate,
-      numChannels: this.numChannels,
-      noiseCancellation: this.frameProcessor || this.noiseCancellation,
-      // TODO(AJS-269): resolve compatibility issue with node-sdk to remove the forced type casting
-    }) as unknown as ReadableStream<AudioFrame>;
+  private createStream(track: RemoteTrack): AsyncIterable<AudioFrame> {
+    return fromReadableStream(
+      new AudioStream(track, {
+        sampleRate: this.sampleRate,
+        numChannels: this.numChannels,
+        noiseCancellation: this.frameProcessor || this.noiseCancellation,
+        // TODO(AJS-269): resolve compatibility issue with node-sdk to remove the forced type casting
+      }) as unknown as import('node:stream/web').ReadableStream<AudioFrame>,
+    );
   }
 
   override async close() {

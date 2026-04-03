@@ -8,11 +8,8 @@ import ffmpeg from 'fluent-ffmpeg';
 import fs from 'node:fs';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import type { ReadableStream } from 'node:stream/web';
-import { TransformStream } from 'node:stream/web';
 import { log } from '../../log.js';
-import { isStreamReaderReleaseError } from '../../stream/deferred_stream.js';
-import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
+import { Chan, ChanClosed } from '../../stream/chan.js';
 import { Future, Task, cancelAndWait, delay, isFfmpegTeardownError } from '../../utils.js';
 import type { AgentSession } from '../agent_session.js';
 import { AudioInput, AudioOutput, type PlaybackFinishedEvent } from '../io.js';
@@ -37,8 +34,8 @@ export class RecorderIO {
   private inRecord?: RecorderAudioInput;
   private outRecord?: RecorderAudioOutput;
 
-  private inChan: StreamChannel<AudioFrame[]> = createStreamChannel<AudioFrame[]>();
-  private outChan: StreamChannel<AudioFrame[]> = createStreamChannel<AudioFrame[]>();
+  private inChan: Chan<AudioFrame[]> = new Chan<AudioFrame[]>();
+  private outChan: Chan<AudioFrame[]> = new Chan<AudioFrame[]>();
 
   private session: AgentSession;
   private sampleRate: number;
@@ -101,8 +98,8 @@ export class RecorderIO {
     try {
       if (!this.started) return;
 
-      await this.inChan.close();
-      await this.outChan.close();
+      this.inChan.close();
+      this.outChan.close();
       await this.closeFuture.await;
       await cancelAndWait([this.forwardTask!, this.encodeTask!]);
       await this.inRecord?.close();
@@ -125,8 +122,12 @@ export class RecorderIO {
 
   private writeCb(buf: AudioFrame[]): void {
     const inputBuf = this.inRecord!.takeBuf(this.outRecord?._lastSpeechEndTime);
-    this.inChan.write(inputBuf);
-    this.outChan.write(buf);
+    try {
+      this.inChan.sendNowait(inputBuf);
+      this.outChan.sendNowait(buf);
+    } catch (e) {
+      if (!(e instanceof ChanClosed)) throw e;
+    }
   }
 
   get recording(): boolean {
@@ -171,12 +172,18 @@ export class RecorderIO {
 
       // Flush input buffer
       const inputBuf = this.inRecord!.takeBuf(this.outRecord!._lastSpeechEndTime);
-      this.inChan
-        .write(inputBuf)
-        .catch((err) => this.logger.error({ err }, 'Error writing RecorderIO input buffer'));
-      this.outChan
-        .write([])
-        .catch((err) => this.logger.error({ err }, 'Error writing RecorderIO output buffer'));
+      try {
+        this.inChan.sendNowait(inputBuf);
+      } catch (err) {
+        if (!(err instanceof ChanClosed))
+          this.logger.error({ err }, 'Error writing RecorderIO input buffer');
+      }
+      try {
+        this.outChan.sendNowait([]);
+      } catch (err) {
+        if (!(err instanceof ChanClosed))
+          this.logger.error({ err }, 'Error writing RecorderIO output buffer');
+      }
     }
   }
 
@@ -314,12 +321,12 @@ export class RecorderIO {
   private async encode(): Promise<void> {
     if (!this._outputPath) return;
 
-    const inReader = this.inChan.stream().getReader();
-    const outReader = this.outChan.stream().getReader();
+    const inIter = this.inChan[Symbol.asyncIterator]();
+    const outIter = this.outChan[Symbol.asyncIterator]();
 
     try {
       while (true) {
-        const [inResult, outResult] = await Promise.all([inReader.read(), outReader.read()]);
+        const [inResult, outResult] = await Promise.all([inIter.next(), outIter.next()]);
 
         if (inResult.done || outResult.done) {
           break;
@@ -348,11 +355,10 @@ export class RecorderIO {
         await this.ffmpegPromise;
       }
     } catch (err) {
-      this.logger.error({ err }, 'Error in encode task');
+      if (!(err instanceof ChanClosed)) {
+        this.logger.error({ err }, 'Error in encode task');
+      }
     } finally {
-      inReader.releaseLock();
-      outReader.releaseLock();
-
       if (!this.closeFuture.done) {
         this.closeFuture.resolve();
       }
@@ -374,7 +380,7 @@ class RecorderAudioInput extends AudioInput {
     this.source = source;
 
     // Set up the intercepting stream
-    this.multiStream.addInputStream(this.createInterceptingStream());
+    this.addInputStream(this.createInterceptingStream());
   }
 
   /**
@@ -430,59 +436,27 @@ class RecorderAudioInput extends AudioInput {
   }
 
   /**
-   * Creates a stream that intercepts frames from the source,
+   * Creates an async iterable that intercepts frames from the source,
    * accumulates them when recording, and passes them through unchanged.
    */
-  private createInterceptingStream(): ReadableStream<AudioFrame> {
-    const sourceStream = this.source.stream;
-    const reader = sourceStream.getReader();
-
-    const transform = new TransformStream<AudioFrame, AudioFrame>({
-      transform: (frame, controller) => {
-        // Accumulate frames when recording is active
-        if (this.recorderIO.recording) {
-          if (this._startedWallTime === undefined) {
-            this._startedWallTime = Date.now();
-          }
-          this.accFrames.push(frame);
-        }
-
-        controller.enqueue(frame);
-      },
-    });
-
-    const pump = async () => {
-      const writer = transform.writable.getWriter();
-      let sourceError: unknown;
-
+  private createInterceptingStream(): AsyncIterable<AudioFrame> {
+    const self = this;
+    return (async function* () {
       try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          await writer.write(value);
+        for await (const frame of self.source.stream) {
+          // Accumulate frames when recording is active
+          if (self.recorderIO.recording) {
+            if (self._startedWallTime === undefined) {
+              self._startedWallTime = Date.now();
+            }
+            self.accFrames.push(frame);
+          }
+          yield frame;
         }
-      } catch (e) {
-        if (isStreamReaderReleaseError(e)) return;
-        sourceError = e;
-      } finally {
-        if (sourceError) {
-          writer.abort(sourceError);
-          return;
-        }
-
-        writer.releaseLock();
-
-        try {
-          await transform.writable.close();
-        } catch {
-          // ignore "WritableStream is closed" errors
-        }
+      } catch {
+        // Source errors silently consumed
       }
-    };
-
-    pump();
-
-    return transform.readable;
+    })();
   }
 
   onAttached(): void {

@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { ReadableStream } from 'node:stream/web';
 import {
   LLM as InferenceLLM,
   STT as InferenceSTT,
@@ -272,18 +271,18 @@ export class Agent<UserData = any> {
   async onExit(): Promise<void> {}
 
   async transcriptionNode(
-    text: ReadableStream<string | TimedString>,
+    text: AsyncIterable<string | TimedString>,
     modelSettings: ModelSettings,
-  ): Promise<ReadableStream<string | TimedString> | null> {
+  ): Promise<AsyncIterable<string | TimedString> | null> {
     return Agent.default.transcriptionNode(this, text, modelSettings);
   }
 
   async onUserTurnCompleted(_chatCtx: ChatContext, _newMessage: ChatMessage): Promise<void> {}
 
   async sttNode(
-    audio: ReadableStream<AudioFrame>,
+    audio: AsyncIterable<AudioFrame>,
     modelSettings: ModelSettings,
-  ): Promise<ReadableStream<SpeechEvent | string> | null> {
+  ): Promise<AsyncIterable<SpeechEvent | string> | null> {
     return Agent.default.sttNode(this, audio, modelSettings);
   }
 
@@ -291,21 +290,21 @@ export class Agent<UserData = any> {
     chatCtx: ChatContext,
     toolCtx: ToolContext,
     modelSettings: ModelSettings,
-  ): Promise<ReadableStream<ChatChunk | string> | null> {
+  ): Promise<AsyncIterable<ChatChunk | string> | null> {
     return Agent.default.llmNode(this, chatCtx, toolCtx, modelSettings);
   }
 
   async ttsNode(
-    text: ReadableStream<string>,
+    text: AsyncIterable<string>,
     modelSettings: ModelSettings,
-  ): Promise<ReadableStream<AudioFrame> | null> {
+  ): Promise<AsyncIterable<AudioFrame> | null> {
     return Agent.default.ttsNode(this, text, modelSettings);
   }
 
   async realtimeAudioOutputNode(
-    audio: ReadableStream<AudioFrame>,
+    audio: AsyncIterable<AudioFrame>,
     modelSettings: ModelSettings,
-  ): Promise<ReadableStream<AudioFrame> | null> {
+  ): Promise<AsyncIterable<AudioFrame> | null> {
     return Agent.default.realtimeAudioOutputNode(this, audio, modelSettings);
   }
 
@@ -341,9 +340,9 @@ export class Agent<UserData = any> {
   static default = {
     async sttNode(
       agent: Agent,
-      audio: ReadableStream<AudioFrame>,
+      audio: AsyncIterable<AudioFrame>,
       _modelSettings: ModelSettings,
-    ): Promise<ReadableStream<SpeechEvent | string> | null> {
+    ): Promise<AsyncIterable<SpeechEvent | string> | null> {
       const activity = agent.getActivityOrThrow();
       if (!activity.stt) {
         throw new Error('sttNode called but no STT node is available');
@@ -383,22 +382,15 @@ export class Agent<UserData = any> {
         stream.close();
       };
 
-      return new ReadableStream({
-        async start(controller) {
-          try {
-            for await (const event of stream) {
-              controller.enqueue(event);
-            }
-            controller.close();
-          } finally {
-            // Always clean up the STT stream, whether it ends naturally or is cancelled
-            cleanup();
+      return (async function* () {
+        try {
+          for await (const event of stream) {
+            yield event;
           }
-        },
-        cancel() {
+        } finally {
           cleanup();
-        },
-      });
+        }
+      })();
     },
 
     async llmNode(
@@ -406,7 +398,7 @@ export class Agent<UserData = any> {
       chatCtx: ChatContext,
       toolCtx: ToolContext,
       modelSettings: ModelSettings,
-    ): Promise<ReadableStream<ChatChunk | string> | null> {
+    ): Promise<AsyncIterable<ChatChunk | string> | null> {
       const activity = agent.getActivityOrThrow();
       if (!activity.llm) {
         throw new Error('llmNode called but no LLM node is available');
@@ -437,28 +429,22 @@ export class Agent<UserData = any> {
         stream.close();
       };
 
-      return new ReadableStream({
-        async start(controller) {
-          try {
-            for await (const chunk of stream) {
-              controller.enqueue(chunk);
-            }
-            controller.close();
-          } finally {
-            cleanup();
+      return (async function* () {
+        try {
+          for await (const chunk of stream) {
+            yield chunk;
           }
-        },
-        cancel() {
+        } finally {
           cleanup();
-        },
-      });
+        }
+      })();
     },
 
     async ttsNode(
       agent: Agent,
-      text: ReadableStream<string>,
+      text: AsyncIterable<string>,
       _modelSettings: ModelSettings,
-    ): Promise<ReadableStream<AudioFrame> | null> {
+    ): Promise<AsyncIterable<AudioFrame> | null> {
       const activity = agent.getActivityOrThrow();
       if (!activity.tts) {
         throw new Error('ttsNode called but no TTS node is available');
@@ -481,43 +467,37 @@ export class Agent<UserData = any> {
         stream.close();
       };
 
-      return new ReadableStream({
-        async start(controller) {
-          try {
-            for await (const chunk of stream) {
-              if (chunk === SynthesizeStream.END_OF_STREAM) {
-                break;
-              }
-              // Attach timed transcripts to frame.userdata
-              if (chunk.timedTranscripts && chunk.timedTranscripts.length > 0) {
-                chunk.frame.userdata[USERDATA_TIMED_TRANSCRIPT] = chunk.timedTranscripts;
-              }
-              controller.enqueue(chunk.frame);
+      return (async function* () {
+        try {
+          for await (const chunk of stream) {
+            if (chunk === SynthesizeStream.END_OF_STREAM) {
+              break;
             }
-            controller.close();
-          } finally {
-            cleanup();
+            // Attach timed transcripts to frame.userdata
+            if (chunk.timedTranscripts && chunk.timedTranscripts.length > 0) {
+              chunk.frame.userdata[USERDATA_TIMED_TRANSCRIPT] = chunk.timedTranscripts;
+            }
+            yield chunk.frame;
           }
-        },
-        cancel() {
+        } finally {
           cleanup();
-        },
-      });
+        }
+      })();
     },
 
     async transcriptionNode(
-      agent: Agent,
-      text: ReadableStream<string | TimedString>,
+      _agent: Agent,
+      text: AsyncIterable<string | TimedString>,
       _modelSettings: ModelSettings,
-    ): Promise<ReadableStream<string | TimedString> | null> {
+    ): Promise<AsyncIterable<string | TimedString> | null> {
       return text;
     },
 
     async realtimeAudioOutputNode(
       _agent: Agent,
-      audio: ReadableStream<AudioFrame>,
+      audio: AsyncIterable<AudioFrame>,
       _modelSettings: ModelSettings,
-    ): Promise<ReadableStream<AudioFrame> | null> {
+    ): Promise<AsyncIterable<AudioFrame> | null> {
       return audio;
     },
   };

@@ -2,13 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { Throws } from '@livekit/throws-transformer/throws';
-import { TransformStream } from 'stream/web';
 import WebSocket from 'ws';
 import { z } from 'zod';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../../_exceptions.js';
 import { log } from '../../log.js';
+import { Chan } from '../../stream/chan.js';
 import TypedPromise from '../../typed_promise.js';
 import { createAccessToken } from '../utils.js';
+import type { TransportFn } from './http_transport.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import type { OverlappingSpeechEvent } from './types.js';
 import type { BoundedCache } from './utils.js';
@@ -121,7 +122,7 @@ async function connectWebSocket(
 }
 
 export interface WsTransportResult {
-  transport: TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent>;
+  transport: TransportFn;
   reconnect: () => Promise<void>;
 }
 
@@ -142,7 +143,8 @@ export function createWsTransport(
 ): WsTransportResult {
   const logger = log();
   let ws: WebSocket | null = null;
-  let outputController: TransformStreamDefaultController<OverlappingSpeechEvent> | null = null;
+  let outputChan: Chan<OverlappingSpeechEvent> | null = null;
+  let transportError: unknown = null;
 
   function setupMessageHandler(socket: WebSocket): void {
     socket.on('message', (data: WebSocket.Data) => {
@@ -155,9 +157,8 @@ export function createWsTransport(
     });
 
     socket.on('error', (err: Error) => {
-      outputController?.error(
-        new APIConnectionError({ message: `WebSocket error: ${err.message}` }),
-      );
+      transportError = new APIConnectionError({ message: `WebSocket error: ${err.message}` });
+      outputChan?.close();
     });
 
     socket.on('close', (code: number, reason: Buffer) => {
@@ -247,7 +248,11 @@ export function createWsTransport(
             numRequests: getAndResetNumRequests?.() ?? 0,
           };
 
-          outputController?.enqueue(event);
+          try {
+            outputChan?.sendNowait(event);
+          } catch {
+            // Chan closed
+          }
           setState({ overlapSpeechStarted: false });
         }
         break;
@@ -292,12 +297,11 @@ export function createWsTransport(
         break;
 
       case MSG_ERROR:
-        outputController?.error(
-          new APIStatusError({
-            message: `LiveKit Adaptive Interruption error: ${message.message}`,
-            options: { statusCode: message.code ?? -1 },
-          }),
-        );
+        transportError = new APIStatusError({
+          message: `LiveKit Adaptive Interruption error: ${message.message}`,
+          options: { statusCode: message.code ?? -1 },
+        });
+        outputChan?.close();
         break;
     }
   }
@@ -358,59 +362,70 @@ export function createWsTransport(
     close();
   }
 
-  const transport = new TransformStream<
-    Int16Array | OverlappingSpeechEvent,
-    OverlappingSpeechEvent
-  >(
-    {
-      async start(controller) {
-        outputController = controller;
-        await ensureConnection().catch((e) => {
-          controller.error(e);
-        });
-      },
+  const transport: TransportFn = async function* (source) {
+    outputChan = new Chan<OverlappingSpeechEvent>();
+    transportError = null;
 
-      transform(chunk, controller) {
-        if (!(chunk instanceof Int16Array)) {
-          controller.enqueue(chunk);
-          return;
-        }
+    await ensureConnection();
 
-        // Only forwards buffered audio while overlap speech is actively on.
-        const state = getState();
-        if (!state.overlapSpeechStartedAt || !state.overlapSpeechStarted) return;
+    // Pump source in background: consume input, send audio to WS, passthrough events
+    const pump = (async () => {
+      try {
+        for await (const chunk of source) {
+          if (!(chunk instanceof Int16Array)) {
+            try {
+              outputChan!.sendNowait(chunk);
+            } catch {
+              break;
+            }
+            continue;
+          }
 
-        if (options.timeout > 0) {
-          const now = performance.now();
-          for (const [, entry] of state.cache.entries()) {
-            if (entry.totalDurationInS !== 0) continue;
-            if (now - entry.createdAt > options.timeout) {
-              controller.error(
-                new APIStatusError({
+          // Only forwards buffered audio while overlap speech is actively on.
+          const state = getState();
+          if (!state.overlapSpeechStartedAt || !state.overlapSpeechStarted) continue;
+
+          if (options.timeout > 0) {
+            const now = performance.now();
+            for (const [, entry] of state.cache.entries()) {
+              if (entry.totalDurationInS !== 0) continue;
+              if (now - entry.createdAt > options.timeout) {
+                transportError = new APIStatusError({
                   message: `interruption inference timed out after ${((now - entry.createdAt) / 1000).toFixed(1)}s (ws)`,
                   options: { statusCode: 408, retryable: false },
-                }),
-              );
-              return;
+                });
+                outputChan!.close();
+                return;
+              }
+              break;
             }
-            break;
+          }
+
+          try {
+            sendAudioData(chunk);
+          } catch (err) {
+            transportError = err;
+            outputChan!.close();
+            return;
           }
         }
-
-        try {
-          sendAudioData(chunk);
-        } catch (err) {
-          controller.error(err);
-        }
-      },
-
-      flush() {
+      } finally {
         close();
-      },
-    },
-    { highWaterMark: 2 },
-    { highWaterMark: 2 },
-  );
+        outputChan!.close();
+      }
+    })();
+
+    try {
+      for await (const event of outputChan) {
+        yield event;
+      }
+      if (transportError) {
+        throw transportError;
+      }
+    } finally {
+      await pump;
+    }
+  };
 
   return { transport, reconnect };
 }

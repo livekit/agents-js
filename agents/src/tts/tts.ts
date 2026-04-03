@@ -5,11 +5,10 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Span } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
-import { DeferredReadableStream } from '../stream/deferred_stream.js';
+import { Chan, ChanClosed } from '../stream/chan.js';
 import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
 import { AsyncIterableQueue, delay, mergeFrames, startSoon, toError } from '../utils.js';
@@ -171,9 +170,8 @@ export abstract class SynthesizeStream
   protected connOptions: APIConnectOptions;
   protected abortController = new AbortController();
 
-  private deferredInputStream: DeferredReadableStream<
-    string | typeof SynthesizeStream.FLUSH_SENTINEL
-  >;
+  private inputChan = new Chan<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
+  private _pumpAbort: AbortController | null = null;
   private logger = log();
 
   abstract label: string;
@@ -189,12 +187,11 @@ export abstract class SynthesizeStream
   constructor(tts: TTS, connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS) {
     this.#tts = tts;
     this.connOptions = connOptions;
-    this.deferredInputStream = new DeferredReadableStream();
     this.pumpInput();
 
     this.abortController.signal.addEventListener('abort', () => {
-      this.deferredInputStream.detachSource();
-      // TODO (AJS-36) clean this up when we refactor with streams
+      this._pumpAbort?.abort();
+      this.inputChan.close();
       if (!this.input.closed) this.input.close();
       if (!this.output.closed) this.output.close();
       this.closed = true;
@@ -277,31 +274,18 @@ export abstract class SynthesizeStream
     });
   }
 
-  // NOTE(AJS-37): The implementation below uses an AsyncIterableQueue (`this.input`)
-  // bridged from a DeferredReadableStream (`this.deferredInputStream`) rather than
-  // consuming the stream directly.
-  //
-  // A full refactor to native Web Streams was considered but is currently deferred.
-  // The primary reason is to maintain architectural parity with the Python SDK,
-  // which is a key design goal for the project. This ensures a consistent developer
-  // experience across both platforms.
-  //
-  // For more context, see the discussion in GitHub issue # 844.
   protected async pumpInput() {
-    const reader = this.deferredInputStream.stream.getReader();
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done || value === SynthesizeStream.FLUSH_SENTINEL) {
+      for await (const value of this.inputChan) {
+        if (value === SynthesizeStream.FLUSH_SENTINEL) {
           break;
         }
         this.pushText(value);
       }
       this.endInput();
     } catch (error) {
-      this.logger.error(error, 'Error reading deferred input stream');
+      this.logger.error(error, 'Error reading input channel');
     } finally {
-      reader.releaseLock();
       // Ensure output is closed when the stream ends
       if (!this.#monitorMetricsTask) {
         // No text was received, close the output directly
@@ -391,8 +375,27 @@ export abstract class SynthesizeStream
 
   protected abstract run(): Promise<void>;
 
-  updateInputStream(text: ReadableStream<string>) {
-    this.deferredInputStream.setSource(text);
+  updateInputStream(text: AsyncIterable<string>) {
+    this._pumpAbort?.abort();
+    const abort = new AbortController();
+    this._pumpAbort = abort;
+    (async () => {
+      try {
+        for await (const value of text) {
+          if (abort.signal.aborted) break;
+          try {
+            this.inputChan.sendNowait(value);
+          } catch (e) {
+            if (e instanceof ChanClosed) break;
+            throw e;
+          }
+        }
+      } catch {
+        // Source errors are silently consumed
+      } finally {
+        this.inputChan.close();
+      }
+    })();
   }
 
   /** Push a string of text to the TTS */

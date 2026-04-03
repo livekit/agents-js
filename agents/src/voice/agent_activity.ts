@@ -7,7 +7,6 @@ import type { Span } from '@opentelemetry/api';
 import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { ReadableStream, TransformStream } from 'node:stream/web';
 import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
@@ -40,7 +39,8 @@ import type {
   TTSMetrics,
   VADMetrics,
 } from '../metrics/base.js';
-import { MultiInputStream } from '../stream/multi_input_stream.js';
+import { Chan, ChanClosed } from '../stream/chan.js';
+import { tee } from '../stream/tee.js';
 import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
@@ -125,8 +125,8 @@ export class AgentActivity implements RecognitionHooks {
   private q_updated: Future;
   private speechTasks: Set<Task<void>> = new Set();
   private lock = new Mutex();
-  private audioStream = new MultiInputStream<AudioFrame>();
-  private audioStreamId?: string;
+  private audioChan = new Chan<AudioFrame>();
+  private _audioPumpAbort: AbortController | null = null;
 
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
@@ -587,51 +587,58 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  attachAudioInput(audioStream: ReadableStream<AudioFrame>): void {
-    void this.audioStream.close();
-    this.audioStream = new MultiInputStream<AudioFrame>();
+  attachAudioInput(audioStream: AsyncIterable<AudioFrame>): void {
+    // Close previous pump and channel, create fresh ones
+    this._audioPumpAbort?.abort();
+    this.audioChan.close();
+    this.audioChan = new Chan<AudioFrame>();
 
-    // Filter is applied on this.audioStream.stream (downstream of MultiInputStream) rather
-    // than on the source audioStream via pipeThrough. pipeThrough locks its source stream, so
-    // if it were applied directly on audioStream, that lock would survive MultiInputStream.close()
-    // and make audioStream permanently locked for subsequent attachAudioInput calls (e.g. handoff).
-    const aecWarmupAudioFilter = new TransformStream<AudioFrame, AudioFrame>({
-      transform: (frame, controller) => {
+    // AEC warmup filter as an async generator
+    const filteredStream = async function* (this: AgentActivity) {
+      for await (const frame of this.audioChan) {
         const shouldDiscardForAecWarmup =
           this.agentSession.agentState === 'speaking' && this.agentSession._aecWarmupRemaining > 0;
         if (!shouldDiscardForAecWarmup) {
-          controller.enqueue(frame);
+          yield frame;
         }
-      },
-    });
+      }
+    }.call(this);
 
-    this.audioStreamId = this.audioStream.addInputStream(audioStream);
+    // Pump source into audioChan
+    const abort = new AbortController();
+    this._audioPumpAbort = abort;
+    (async () => {
+      try {
+        for await (const frame of audioStream) {
+          if (abort.signal.aborted) break;
+          try {
+            this.audioChan.sendNowait(frame);
+          } catch (e) {
+            if (e instanceof ChanClosed) break;
+            throw e;
+          }
+        }
+      } catch {
+        // Source errors silently consumed
+      }
+    })();
 
     if (this.realtimeSession && this.audioRecognition) {
-      const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream
-        .pipeThrough(aecWarmupAudioFilter)
-        .tee();
+      const [realtimeAudioStream, recognitionAudioStream] = tee(filteredStream, 2);
       this.realtimeSession.setInputAudioStream(realtimeAudioStream);
       this.audioRecognition.setInputAudioStream(recognitionAudioStream);
     } else if (this.realtimeSession) {
-      this.realtimeSession.setInputAudioStream(
-        this.audioStream.stream.pipeThrough(aecWarmupAudioFilter),
-      );
+      this.realtimeSession.setInputAudioStream(filteredStream);
     } else if (this.audioRecognition) {
-      this.audioRecognition.setInputAudioStream(
-        this.audioStream.stream.pipeThrough(aecWarmupAudioFilter),
-      );
+      this.audioRecognition.setInputAudioStream(filteredStream);
     }
   }
 
   detachAudioInput(): void {
-    if (this.audioStreamId === undefined) {
-      return;
-    }
-
-    void this.audioStream.close();
-    this.audioStream = new MultiInputStream<AudioFrame>();
-    this.audioStreamId = undefined;
+    this._audioPumpAbort?.abort();
+    this._audioPumpAbort = null;
+    this.audioChan.close();
+    this.audioChan = new Chan<AudioFrame>();
   }
 
   commitUserTurn(
@@ -657,9 +664,9 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   say(
-    text: string | ReadableStream<string>,
+    text: string | AsyncIterable<string>,
     options?: {
-      audio?: ReadableStream<AudioFrame>;
+      audio?: AsyncIterable<AudioFrame>;
       allowInterruptions?: boolean;
       addToChatCtx?: boolean;
     },
@@ -1597,11 +1604,11 @@ export class AgentActivity implements RecognitionHooks {
 
   private async ttsTask(
     speechHandle: SpeechHandle,
-    text: string | ReadableStream<string>,
+    text: string | AsyncIterable<string>,
     addToChatCtx: boolean,
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
-    audio?: ReadableStream<AudioFrame> | null,
+    audio?: AsyncIterable<AudioFrame> | null,
   ): Promise<void> {
     speechHandle._agentTurnContext = otelContext.active();
 
@@ -1621,19 +1628,16 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    let baseStream: ReadableStream<string>;
-    if (text instanceof ReadableStream) {
-      baseStream = text;
+    let baseIterable: AsyncIterable<string>;
+    if (typeof text === 'string') {
+      baseIterable = (async function* () {
+        yield text;
+      })();
     } else {
-      baseStream = new ReadableStream({
-        start(controller) {
-          controller.enqueue(text);
-          controller.close();
-        },
-      });
+      baseIterable = text;
     }
 
-    const [textSource, audioSource] = baseStream.tee();
+    const [textSource, audioSource] = tee(baseIterable, 2);
 
     const tasks: Array<Task<void>> = [];
 
@@ -1833,11 +1837,11 @@ export class AgentActivity implements RecognitionHooks {
 
     let ttsTask: Task<void> | null = null;
     let ttsGenData: _TTSGenerationData | null = null;
-    let llmOutput: ReadableStream<string>;
+    let llmOutput: AsyncIterable<string>;
 
     if (audioOutput) {
       // Only tee the stream when we need TTS
-      const [ttsTextInput, textOutput] = llmGenData.textStream.tee();
+      const [ttsTextInput, textOutput] = tee(llmGenData.textStream, 2);
       llmOutput = textOutput;
       [ttsTask, ttsGenData] = performTTSInference(
         (...args) => this.agent.ttsNode(...args),
@@ -1877,7 +1881,7 @@ export class AgentActivity implements RecognitionHooks {
     const replyStartedAt = Date.now();
 
     // Determine the transcription input source
-    let transcriptionInput: ReadableStream<string | TimedString> = llmOutput;
+    let transcriptionInput: AsyncIterable<string | TimedString> = llmOutput;
 
     // Check if we should use TTS aligned transcripts
     if (this.useTtsAlignedTranscript && this.tts?.capabilities.alignedTranscript && ttsGenData) {
@@ -2332,8 +2336,8 @@ export class AgentActivity implements RecognitionHooks {
           }
 
           const msgModalities = msg.modalities ? await msg.modalities : undefined;
-          let ttsTextInput: ReadableStream<string | TimedString> | null = null;
-          let trTextInput: ReadableStream<string | TimedString>;
+          let ttsTextInput: AsyncIterable<string | TimedString> | null = null;
+          let trTextInput: AsyncIterable<string | TimedString>;
 
           if (msgModalities && !msgModalities.includes('audio') && this.tts) {
             if (this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput) {
@@ -2341,7 +2345,7 @@ export class AgentActivity implements RecognitionHooks {
                 'text response received from realtime API, falling back to use a TTS model.',
               );
             }
-            const [_ttsTextInput, _trTextInput] = msg.textStream.tee();
+            const [_ttsTextInput, _trTextInput] = tee(msg.textStream, 2);
             ttsTextInput = _ttsTextInput;
             trTextInput = _trTextInput;
           } else {
@@ -2362,7 +2366,7 @@ export class AgentActivity implements RecognitionHooks {
 
           let audioOut: _AudioOut | null = null;
           if (audioOutput) {
-            let realtimeAudioResult: ReadableStream<AudioFrame> | null = null;
+            let realtimeAudioResult: AsyncIterable<AudioFrame> | null = null;
 
             if (ttsTextInput) {
               const [ttsTask, ttsGenData] = performTTSInference(
@@ -2430,25 +2434,23 @@ export class AgentActivity implements RecognitionHooks {
       ),
     ];
 
-    const [toolCallStream, toolCallStreamForTracing] = ev.functionStream.tee();
+    const [toolCallStream, toolCallStreamForTracing] = tee(ev.functionStream, 2);
     // TODO(brian): append to tracing tees
     const toolCalls: FunctionCall[] = [];
 
     const readToolStreamTask = async (
       controller: AbortController,
-      stream: ReadableStream<FunctionCall>,
+      stream: AsyncIterable<FunctionCall>,
     ) => {
-      const reader = stream.getReader();
       try {
-        while (!controller.signal.aborted) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        for await (const value of stream) {
+          if (controller.signal.aborted) break;
 
           this.logger.debug({ tool_call: value }, 'received tool call from the realtime API');
           toolCalls.push(value);
         }
-      } finally {
-        reader.releaseLock();
+      } catch {
+        // Stream closed or source error
       }
     };
 

@@ -10,8 +10,6 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
-import type { WritableStreamDefaultWriter } from 'node:stream/web';
-import { ReadableStream } from 'node:stream/web';
 import { isAPIError } from '../_exceptions.js';
 import { apiConnectDefaults, intervalForRetry } from '../inference/interruption/defaults.js';
 import { InterruptionDetectionError } from '../inference/interruption/errors.js';
@@ -24,10 +22,9 @@ import {
 import type { LanguageCode } from '../language.js';
 import { type ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
-import { DeferredReadableStream, isStreamReaderReleaseError } from '../stream/deferred_stream.js';
-import { IdentityTransform } from '../stream/identity_transform.js';
-import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
-import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
+import { mergeAsyncIterables } from '../stream/adapters.js';
+import { Chan, ChanClosed } from '../stream/chan.js';
+import { tee } from '../stream/tee.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { Task, delay, waitForAbort } from '../utils.js';
@@ -130,7 +127,8 @@ export class AudioRecognition {
   private sttProvider?: string;
   private getLinkedParticipant?: () => ParticipantLike | undefined;
 
-  private deferredInputStream: DeferredReadableStream<AudioFrame>;
+  private inputChan = new Chan<AudioFrame>();
+  private _pumpAbort: AbortController | null = null;
   private logger = log();
   private lastFinalTranscriptTime = 0;
   private audioTranscript = '';
@@ -145,10 +143,9 @@ export class AudioRecognition {
 
   private userTurnSpan?: Span;
 
-  private vadInputStream: ReadableStream<AudioFrame>;
-  private sttInputStream: ReadableStream<AudioFrame>;
-  private silenceAudioTransform = new IdentityTransform<AudioFrame>();
-  private silenceAudioWriter: WritableStreamDefaultWriter<AudioFrame>;
+  private vadInputStream: AsyncIterable<AudioFrame>;
+  private sttInputStream: AsyncIterable<AudioFrame>;
+  private silenceAudioChan = new Chan<AudioFrame>();
 
   // all cancellable tasks
   private bounceEOUTask?: Task<void>;
@@ -164,7 +161,7 @@ export class AudioRecognition {
   private transcriptBuffer: SpeechEvent[];
   private isInterruptionEnabled: boolean;
   private isAgentSpeaking: boolean;
-  private interruptionStreamChannel?: StreamChannel<InterruptionSentinel | AudioFrame>;
+  private interruptionChan?: Chan<InterruptionSentinel | AudioFrame>;
   private closed = false;
 
   constructor(opts: AudioRecognitionOptions) {
@@ -181,31 +178,36 @@ export class AudioRecognition {
     this.sttProvider = opts.sttProvider;
     this.getLinkedParticipant = opts.getLinkedParticipant;
 
-    this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.interruptionDetection = opts.interruptionDetection;
     this.transcriptBuffer = [];
     this.isInterruptionEnabled = !!(opts.interruptionDetection && opts.vad);
     this.isAgentSpeaking = false;
 
     if (opts.interruptionDetection) {
-      const [vadInputStream, teedInput] = this.deferredInputStream.stream.tee();
-      const [inputStream, sttInputStream] = teedInput.tee();
-      this.vadInputStream = vadInputStream;
-      this.sttInputStream = mergeReadableStreams(
-        sttInputStream,
-        this.silenceAudioTransform.readable,
-      );
-      this.interruptionStreamChannel = createStreamChannel();
-      this.interruptionStreamChannel.addStreamInput(inputStream);
+      const teed = tee(this.inputChan, 3);
+      this.vadInputStream = teed[0];
+      this.sttInputStream = mergeAsyncIterables(teed[1], this.silenceAudioChan);
+      this.interruptionChan = new Chan<InterruptionSentinel | AudioFrame>();
+      // Pump teed[2] into interruptionChan
+      (async () => {
+        try {
+          for await (const frame of teed[2]) {
+            try {
+              this.interruptionChan!.sendNowait(frame);
+            } catch (e) {
+              if (e instanceof ChanClosed) break;
+              throw e;
+            }
+          }
+        } catch {
+          // Source errors silently consumed
+        }
+      })();
     } else {
-      const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
-      this.vadInputStream = vadInputStream;
-      this.sttInputStream = mergeReadableStreams(
-        sttInputStream,
-        this.silenceAudioTransform.readable,
-      );
+      const teed = tee(this.inputChan, 2);
+      this.vadInputStream = teed[0];
+      this.sttInputStream = mergeAsyncIterables(teed[1], this.silenceAudioChan);
     }
-    this.silenceAudioWriter = this.silenceAudioTransform.writable.getWriter();
   }
 
   /**
@@ -437,15 +439,12 @@ export class AudioRecognition {
   private async trySendInterruptionSentinel(
     frame: AudioFrame | InterruptionSentinel,
   ): Promise<boolean> {
-    if (
-      this.isInterruptionEnabled &&
-      this.interruptionStreamChannel &&
-      !this.interruptionStreamChannel.closed
-    ) {
+    if (this.isInterruptionEnabled && this.interruptionChan) {
       try {
-        await this.interruptionStreamChannel.write(frame);
+        this.interruptionChan.sendNowait(frame);
         return true;
       } catch (e: unknown) {
+        if (e instanceof ChanClosed) return false;
         this.logger.warn(
           `could not forward interruption sentinel: ${e instanceof Error ? e.message : String(e)}`,
         );
@@ -896,47 +895,18 @@ export class AudioRecognition {
 
     if (signal.aborted || sttStream === null) return;
 
-    if (sttStream instanceof ReadableStream) {
-      const reader = sttStream.getReader();
+    try {
+      for await (const ev of sttStream) {
+        if (signal.aborted) break;
 
-      signal.addEventListener('abort', async () => {
-        try {
-          reader.releaseLock();
-          await sttStream?.cancel();
-        } catch (e) {
-          this.logger.debug('createSttTask: error during abort handler:', e);
-        }
-      });
-
-      try {
-        while (true) {
-          if (signal.aborted) break;
-
-          const { done, value: ev } = await reader.read();
-          if (done) break;
-
-          if (typeof ev === 'string') {
-            throw new Error('STT node must yield SpeechEvent');
-          } else {
-            await this.onSTTEvent(ev);
-          }
-        }
-      } catch (e) {
-        if (isStreamReaderReleaseError(e)) {
-          return;
-        }
-        this.logger.error({ error: e }, 'createSttTask: error reading sttStream');
-      } finally {
-        reader.releaseLock();
-        try {
-          await sttStream.cancel();
-        } catch (e) {
-          this.logger.debug(
-            'createSttTask: error cancelling sttStream (may already be cancelled):',
-            e,
-          );
+        if (typeof ev === 'string') {
+          throw new Error('STT node must yield SpeechEvent');
+        } else {
+          await this.onSTTEvent(ev);
         }
       }
+    } catch (e) {
+      this.logger.error({ error: e }, 'createSttTask: error reading sttStream');
     }
   }
 
@@ -1032,7 +1002,6 @@ export class AudioRecognition {
       const cleanup = async () => {
         try {
           signal.removeEventListener('abort', cleanup);
-          eventReader.releaseLock();
           await stream.close();
         } catch (e) {
           this.logger.debug('createInterruptionTask: error during cleanup:', e);
@@ -1052,16 +1021,10 @@ export class AudioRecognition {
         }
 
         forwardTask = (async () => {
-          const inputReader = this.interruptionStreamChannel!.stream().getReader();
-          const abortPromise = waitForAbort(signal);
-
+          if (!this.interruptionChan) return;
           try {
-            while (!signal.aborted) {
-              const res = await Promise.race([inputReader.read(), abortPromise]);
-              if (!res) break;
-
-              const { value, done } = res;
-              if (done) break;
+            for await (const value of this.interruptionChan) {
+              if (signal.aborted) break;
 
               if (value instanceof AudioFrame) {
                 const frameDurationMs = (value.samplesPerChannel / value.sampleRate) * 1000;
@@ -1072,18 +1035,13 @@ export class AudioRecognition {
 
               await stream.pushFrame(value);
             }
-          } finally {
-            inputReader.releaseLock();
+          } catch {
+            // Channel closed or source error
           }
         })();
 
-        const abortPromise = waitForAbort(signal);
-
-        while (!signal.aborted) {
-          const res = await Promise.race([eventReader.read(), abortPromise]);
-          if (!res) break;
-          const { done, value: ev } = res;
-          if (done) break;
+        for await (const ev of stream.stream()) {
+          if (signal.aborted) break;
           this.onOverlapSpeechEvent(ev);
         }
         break;
@@ -1146,12 +1104,30 @@ export class AudioRecognition {
     this.logger.debug('Interruption task closed');
   }
 
-  setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {
-    this.deferredInputStream.setSource(audioStream);
+  setInputAudioStream(audioStream: AsyncIterable<AudioFrame>) {
+    this._pumpAbort?.abort();
+    const abort = new AbortController();
+    this._pumpAbort = abort;
+    (async () => {
+      try {
+        for await (const frame of audioStream) {
+          if (abort.signal.aborted) break;
+          try {
+            this.inputChan.sendNowait(frame);
+          } catch (e) {
+            if (e instanceof ChanClosed) break;
+            throw e;
+          }
+        }
+      } catch {
+        // Source errors are silently consumed
+      }
+    })();
   }
 
   detachInputAudioStream() {
-    this.deferredInputStream.detachSource();
+    this._pumpAbort?.abort();
+    this._pumpAbort = null;
   }
 
   clearUserTurn() {
@@ -1196,7 +1172,11 @@ export class AudioRecognition {
             const numSamples = Math.floor(this.sampleRate * 0.5);
             const silence = new Int16Array(numSamples * 2);
             const silenceFrame = new AudioFrame(silence, this.sampleRate, 1, numSamples);
-            this.silenceAudioWriter.write(silenceFrame);
+            try {
+              this.silenceAudioChan.sendNowait(silenceFrame);
+            } catch (e) {
+              if (!(e instanceof ChanClosed)) throw e;
+            }
           }
 
           // wait for the final transcript to be available
@@ -1235,13 +1215,14 @@ export class AudioRecognition {
   async close() {
     this.closed = true;
     this.detachInputAudioStream();
-    this.silenceAudioWriter.releaseLock();
+    this.silenceAudioChan.close();
+    this.inputChan.close();
+    this.interruptionChan?.close();
     await this.commitUserTurnTask?.cancelAndWait();
     await this.sttTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
     await this.bounceEOUTask?.cancelAndWait();
     await this.interruptionTask?.cancelAndWait();
-    await this.interruptionStreamChannel?.close();
   }
 
   private _endUserTurnSpan({

@@ -4,9 +4,8 @@
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { AudioFrame } from '@livekit/rtc-node';
 import ffmpeg from 'fluent-ffmpeg';
-import type { ReadableStream } from 'node:stream/web';
 import { log } from './log.js';
-import { createStreamChannel } from './stream/stream_channel.js';
+import { Chan, ChanClosed } from './stream/chan.js';
 import { type AudioBuffer, isFfmpegTeardownError } from './utils.js';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
@@ -110,12 +109,12 @@ export class AudioByteStream {
 export function audioFramesFromFile(
   filePath: string,
   options: AudioDecodeOptions = {},
-): ReadableStream<AudioFrame> {
+): AsyncIterable<AudioFrame> {
   const sampleRate = options.sampleRate ?? 48000;
   const numChannels = options.numChannels ?? 1;
 
   const audioStream = new AudioByteStream(sampleRate, numChannels);
-  const channel = createStreamChannel<AudioFrame>();
+  const chan = new Chan<AudioFrame>();
   const logger = log();
 
   // TODO (Brian): decode WAV using a custom decoder instead of FFmpeg
@@ -139,7 +138,7 @@ export function audioFramesFromFile(
   const onClose = () => {
     logger.debug('Audio file playback aborted');
 
-    channel.close();
+    chan.close();
     if (commandRunning) {
       commandRunning = false;
       command.kill('SIGKILL');
@@ -168,17 +167,27 @@ export function audioFramesFromFile(
 
     const frames = audioStream.write(arrayBuffer);
     for (const frame of frames) {
-      channel.write(frame);
+      try {
+        chan.sendNowait(frame);
+      } catch (e) {
+        if (e instanceof ChanClosed) return;
+        throw e;
+      }
     }
   });
 
   outputStream.on('end', () => {
     const frames = audioStream.flush();
     for (const frame of frames) {
-      channel.write(frame);
+      try {
+        chan.sendNowait(frame);
+      } catch (e) {
+        if (e instanceof ChanClosed) return;
+        throw e;
+      }
     }
     commandRunning = false;
-    channel.close();
+    chan.close();
   });
 
   outputStream.on('error', (err: Error) => {
@@ -187,7 +196,7 @@ export function audioFramesFromFile(
     onClose();
   });
 
-  return channel.stream();
+  return chan;
 }
 
 /**

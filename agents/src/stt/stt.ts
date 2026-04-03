@@ -4,13 +4,12 @@
 import { type AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { calculateAudioDurationSeconds } from '../audio.js';
 import type { LanguageCode } from '../language.js';
 import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
-import { DeferredReadableStream } from '../stream/deferred_stream.js';
+import { Chan, ChanClosed } from '../stream/chan.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
 import type { AudioBuffer } from '../utils.js';
 import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
@@ -222,7 +221,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   abstract label: string;
   protected closed = false;
   #stt: STT;
-  private deferredInputStream: DeferredReadableStream<AudioFrame>;
+  private inputChan = new Chan<AudioFrame>();
+  private _pumpAbort: AbortController | null = null;
   private logger = log();
   private _connOptions: APIConnectOptions;
   private _startTimeOffset: number = 0;
@@ -236,7 +236,6 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   ) {
     this.#stt = stt;
     this._connOptions = connectionOptions;
-    this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.neededSampleRate = sampleRate;
     this.monitorMetrics();
     this.pumpInput();
@@ -304,20 +303,12 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   protected async pumpInput() {
-    // TODO(AJS-35): Implement STT with webstreams API
-    const inputStream = this.deferredInputStream.stream;
-    const reader = inputStream.getReader();
-
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      for await (const value of this.inputChan) {
         this.pushFrame(value);
       }
     } catch (error) {
       this.logger.error('Error in STTStream mainTask:', error);
-    } finally {
-      reader.releaseLock();
     }
   }
 
@@ -375,12 +366,30 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     this._startTimeOffset = value;
   }
 
-  updateInputStream(audioStream: ReadableStream<AudioFrame>) {
-    this.deferredInputStream.setSource(audioStream);
+  updateInputStream(audioStream: AsyncIterable<AudioFrame>) {
+    this._pumpAbort?.abort();
+    const abort = new AbortController();
+    this._pumpAbort = abort;
+    (async () => {
+      try {
+        for await (const frame of audioStream) {
+          if (abort.signal.aborted) break;
+          try {
+            this.inputChan.sendNowait(frame);
+          } catch (e) {
+            if (e instanceof ChanClosed) break;
+            throw e;
+          }
+        }
+      } catch {
+        // Source errors are silently consumed
+      }
+    })();
   }
 
   detachInputStream() {
-    this.deferredInputStream.detachSource();
+    this._pumpAbort?.abort();
+    this._pumpAbort = null;
   }
 
   /** Push an audio frame to the STT */

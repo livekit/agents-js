@@ -12,8 +12,6 @@ import { AudioFrame, AudioResampler, RoomEvent } from '@livekit/rtc-node';
 import type { Throws } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter, once } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
-import { TransformStream, type TransformStreamDefaultController } from 'node:stream/web';
 import { v4 as uuidv4 } from 'uuid';
 import { log } from './log.js';
 
@@ -701,32 +699,33 @@ export function resampleStream({
   stream,
   outputRate,
 }: {
-  stream: ReadableStream<AudioFrame>;
+  stream: AsyncIterable<AudioFrame>;
   outputRate: number;
-}): ReadableStream<AudioFrame> {
-  let resampler: AudioResampler | null = null;
-  const transformStream = new TransformStream<AudioFrame, AudioFrame>({
-    transform(chunk: AudioFrame, controller: TransformStreamDefaultController<AudioFrame>) {
-      if (chunk.samplesPerChannel === 0) {
-        controller.enqueue(chunk);
-        return;
-      }
-      if (!resampler) {
-        resampler = new AudioResampler(chunk.sampleRate, outputRate);
-      }
-      for (const frame of resampler.push(chunk)) {
-        controller.enqueue(frame);
-      }
-    },
-    flush(controller) {
-      if (resampler) {
-        for (const frame of resampler.flush()) {
-          controller.enqueue(frame);
+}): AsyncIterable<AudioFrame> {
+  return (async function* () {
+    let resampler: AudioResampler | null = null;
+    try {
+      for await (const chunk of stream) {
+        if (chunk.samplesPerChannel === 0) {
+          yield chunk;
+          continue;
+        }
+        if (!resampler) {
+          resampler = new AudioResampler(chunk.sampleRate, outputRate);
+        }
+        for (const frame of resampler.push(chunk)) {
+          yield frame;
         }
       }
-    },
-  });
-  return stream.pipeThrough(transformStream);
+      if (resampler) {
+        for (const frame of resampler.flush()) {
+          yield frame;
+        }
+      }
+    } finally {
+      // resampler cleanup happens via GC
+    }
+  })();
 }
 
 export class InvalidErrorType extends Error {

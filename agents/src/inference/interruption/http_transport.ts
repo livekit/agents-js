@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Throws } from '@livekit/throws-transformer/throws';
 import { FetchError, ofetch } from 'ofetch';
-import { TransformStream } from 'stream/web';
 import { z } from 'zod';
 import { APIConnectionError, APIError, APIStatusError, isAPIError } from '../../_exceptions.js';
 import { log } from '../../log.js';
@@ -113,8 +112,12 @@ export interface HttpTransportState {
   cache: BoundedCache<number, InterruptionCacheEntry>;
 }
 
+export type TransportFn = (
+  source: AsyncIterable<Int16Array | OverlappingSpeechEvent>,
+) => AsyncIterable<OverlappingSpeechEvent>;
+
 /**
- * Creates an HTTP transport TransformStream for interruption detection.
+ * Creates an HTTP transport async generator for interruption detection.
  *
  * This transport receives Int16Array audio slices and outputs InterruptionEvents.
  * Each audio slice triggers an HTTP POST request.
@@ -128,80 +131,72 @@ export function createHttpTransport(
   setState: (partial: Partial<HttpTransportState>) => void,
   updateUserSpeakingSpan?: (entry: InterruptionCacheEntry) => void,
   getAndResetNumRequests?: () => number,
-): TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent> {
+): TransportFn {
   const logger = log();
 
-  return new TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent>(
-    {
-      async transform(chunk, controller) {
-        if (!(chunk instanceof Int16Array)) {
-          controller.enqueue(chunk);
-          return;
+  return async function* (source) {
+    for await (const chunk of source) {
+      if (!(chunk instanceof Int16Array)) {
+        yield chunk;
+        continue;
+      }
+
+      const state = getState();
+      const overlapSpeechStartedAt = state.overlapSpeechStartedAt;
+      if (overlapSpeechStartedAt === undefined || !state.overlapSpeechStarted) continue;
+
+      const resp = await predictHTTP(
+        chunk,
+        { threshold: options.threshold, minFrames: options.minFrames },
+        {
+          baseUrl: options.baseUrl,
+          timeout: options.timeout,
+          maxRetries: options.maxRetries,
+          token: await createAccessToken(options.apiKey, options.apiSecret),
+        },
+      );
+
+      const { createdAt, isBargein, probabilities, predictionDurationInS } = resp;
+      const entry = state.cache.setOrUpdate(
+        createdAt,
+        () => new InterruptionCacheEntry({ createdAt }),
+        {
+          probabilities,
+          isInterruption: isBargein,
+          speechInput: chunk,
+          totalDurationInS: (performance.now() - createdAt) / 1000,
+          detectionDelayInS: (Date.now() - overlapSpeechStartedAt) / 1000,
+          predictionDurationInS,
+        },
+      );
+
+      if (state.overlapSpeechStarted && entry.isInterruption) {
+        if (updateUserSpeakingSpan) {
+          updateUserSpeakingSpan(entry);
         }
-
-        const state = getState();
-        const overlapSpeechStartedAt = state.overlapSpeechStartedAt;
-        if (overlapSpeechStartedAt === undefined || !state.overlapSpeechStarted) return;
-
-        try {
-          const resp = await predictHTTP(
-            chunk,
-            { threshold: options.threshold, minFrames: options.minFrames },
-            {
-              baseUrl: options.baseUrl,
-              timeout: options.timeout,
-              maxRetries: options.maxRetries,
-              token: await createAccessToken(options.apiKey, options.apiSecret),
-            },
-          );
-
-          const { createdAt, isBargein, probabilities, predictionDurationInS } = resp;
-          const entry = state.cache.setOrUpdate(
-            createdAt,
-            () => new InterruptionCacheEntry({ createdAt }),
-            {
-              probabilities,
-              isInterruption: isBargein,
-              speechInput: chunk,
-              totalDurationInS: (performance.now() - createdAt) / 1000,
-              detectionDelayInS: (Date.now() - overlapSpeechStartedAt) / 1000,
-              predictionDurationInS,
-            },
-          );
-
-          if (state.overlapSpeechStarted && entry.isInterruption) {
-            if (updateUserSpeakingSpan) {
-              updateUserSpeakingSpan(entry);
-            }
-            const event: OverlappingSpeechEvent = {
-              type: 'overlapping_speech',
-              detectedAt: Date.now(),
-              overlapStartedAt: overlapSpeechStartedAt,
-              isInterruption: entry.isInterruption,
-              speechInput: entry.speechInput,
-              probabilities: entry.probabilities,
-              totalDurationInS: entry.totalDurationInS,
-              predictionDurationInS: entry.predictionDurationInS,
-              detectionDelayInS: entry.detectionDelayInS,
-              probability: entry.probability,
-              numRequests: getAndResetNumRequests?.() ?? 0,
-            };
-            logger.debug(
-              {
-                detectionDelayInS: entry.detectionDelayInS,
-                totalDurationInS: entry.totalDurationInS,
-              },
-              'interruption detected',
-            );
-            setState({ overlapSpeechStarted: false });
-            controller.enqueue(event);
-          }
-        } catch (err) {
-          controller.error(err);
-        }
-      },
-    },
-    { highWaterMark: 2 },
-    { highWaterMark: 2 },
-  );
+        const event: OverlappingSpeechEvent = {
+          type: 'overlapping_speech',
+          detectedAt: Date.now(),
+          overlapStartedAt: overlapSpeechStartedAt,
+          isInterruption: entry.isInterruption,
+          speechInput: entry.speechInput,
+          probabilities: entry.probabilities,
+          totalDurationInS: entry.totalDurationInS,
+          predictionDurationInS: entry.predictionDurationInS,
+          detectionDelayInS: entry.detectionDelayInS,
+          probability: entry.probability,
+          numRequests: getAndResetNumRequests?.() ?? 0,
+        };
+        logger.debug(
+          {
+            detectionDelayInS: entry.detectionDelayInS,
+            totalDurationInS: entry.totalDurationInS,
+          },
+          'interruption detected',
+        );
+        setState({ overlapSpeechStarted: false });
+        yield event;
+      }
+    }
+  };
 }

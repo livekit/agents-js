@@ -3,31 +3,30 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import type { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
-import { MultiInputStream } from '../stream/multi_input_stream.js';
+import { Chan, ChanClosed } from '../stream/chan.js';
 import type { SpeechEvent } from '../stt/stt.js';
 import { Future } from '../utils.js';
 import type { ModelSettings } from './agent.js';
 
 export type STTNode = (
-  audio: ReadableStream<AudioFrame>,
+  audio: AsyncIterable<AudioFrame>,
   modelSettings: ModelSettings,
-) => Promise<ReadableStream<SpeechEvent | string> | null>;
+) => Promise<AsyncIterable<SpeechEvent | string> | null>;
 
 export type LLMNode = (
   chatCtx: ChatContext,
   toolCtx: ToolContext,
   modelSettings: ModelSettings,
-) => Promise<ReadableStream<ChatChunk | string> | null>;
+) => Promise<AsyncIterable<ChatChunk | string> | null>;
 
 export type TTSNode = (
-  text: ReadableStream<string>,
+  text: AsyncIterable<string>,
   modelSettings: ModelSettings,
-) => Promise<ReadableStream<AudioFrame> | null>;
+) => Promise<AsyncIterable<AudioFrame> | null>;
 
 /**
  * Symbol used to identify TimedString objects.
@@ -84,14 +83,42 @@ export interface AudioOutputCapabilities {
 }
 
 export abstract class AudioInput {
-  protected multiStream: MultiInputStream<AudioFrame> = new MultiInputStream<AudioFrame>();
+  protected inputChan: Chan<AudioFrame> = new Chan<AudioFrame>();
+  private _pumpAbort: AbortController | null = null;
 
-  get stream(): ReadableStream<AudioFrame> {
-    return this.multiStream.stream;
+  get stream(): AsyncIterable<AudioFrame> {
+    return this.inputChan;
+  }
+
+  /**
+   * Add an input source. Values from the source are pumped into the internal channel.
+   * Returns an id that can be passed to removeInputStream.
+   */
+  addInputStream(source: AsyncIterable<AudioFrame>): string {
+    const id = `input-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const abort = new AbortController();
+    this._pumpAbort = abort;
+    (async () => {
+      try {
+        for await (const frame of source) {
+          if (abort.signal.aborted) break;
+          try {
+            this.inputChan.sendNowait(frame);
+          } catch (e) {
+            if (e instanceof ChanClosed) break;
+            throw e;
+          }
+        }
+      } catch {
+        // Source errors are silently consumed
+      }
+    })();
+    return id;
   }
 
   async close(): Promise<void> {
-    await this.multiStream.close();
+    this._pumpAbort?.abort();
+    this.inputChan.close();
   }
 
   onAttached(): void {}

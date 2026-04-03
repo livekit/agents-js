@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { ReadableStream as NodeReadableStream } from 'stream/web';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { FunctionCall, tool } from '../llm/index.js';
@@ -10,38 +9,25 @@ import type { Task } from '../utils.js';
 import { cancelAndWait, delay } from '../utils.js';
 import { type _TextOut, performTextForwarding, performToolExecutions } from './generation.js';
 
-function createStringStream(chunks: string[], delayMs: number = 0): NodeReadableStream<string> {
-  return new NodeReadableStream<string>({
-    async start(controller) {
-      for (const c of chunks) {
-        if (delayMs > 0) {
-          await delay(delayMs);
-        }
-        controller.enqueue(c);
-      }
-      controller.close();
-    },
-  });
+async function* createStringStream(chunks: string[], delayMs: number = 0): AsyncIterable<string> {
+  for (const c of chunks) {
+    if (delayMs > 0) {
+      await delay(delayMs);
+    }
+    yield c;
+  }
 }
 
-function createFunctionCallStream(fc: FunctionCall): NodeReadableStream<FunctionCall> {
-  return new NodeReadableStream<FunctionCall>({
-    start(controller) {
-      controller.enqueue(fc);
-      controller.close();
-    },
-  });
+async function* createFunctionCallStream(fc: FunctionCall): AsyncIterable<FunctionCall> {
+  yield fc;
 }
 
-function createFunctionCallStreamFromArray(fcs: FunctionCall[]): NodeReadableStream<FunctionCall> {
-  return new NodeReadableStream<FunctionCall>({
-    start(controller) {
-      for (const fc of fcs) {
-        controller.enqueue(fc);
-      }
-      controller.close();
-    },
-  });
+async function* createFunctionCallStreamFromArray(
+  fcs: FunctionCall[],
+): AsyncIterable<FunctionCall> {
+  for (const fc of fcs) {
+    yield fc;
+  }
 }
 
 describe('Generation + Tool Execution', () => {

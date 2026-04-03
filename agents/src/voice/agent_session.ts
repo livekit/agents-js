@@ -7,7 +7,6 @@ import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
 import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
 import type { z } from 'zod';
 import {
   LLM as InferenceLLM,
@@ -601,9 +600,9 @@ export class AgentSession<
   }
 
   say(
-    text: string | ReadableStream<string>,
+    text: string | AsyncIterable<string>,
     options?: {
-      audio?: ReadableStream<AudioFrame>;
+      audio?: AsyncIterable<AudioFrame>;
       allowInterruptions?: boolean;
       addToChatCtx?: boolean;
     },

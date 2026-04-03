@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
-import type { ReadableStream } from 'node:stream/web';
-import { DeferredReadableStream } from '../stream/deferred_stream.js';
+import { Chan, ChanClosed } from '../stream/chan.js';
 import { Task } from '../utils.js';
 import type { TimedString } from '../voice/io.js';
 import type { ChatContext, FunctionCall } from './chat_context.js';
@@ -21,14 +20,14 @@ export interface MessageGeneration {
   /**
    * Text stream that may contain plain strings or TimedString objects with timestamps.
    */
-  textStream: ReadableStream<string | TimedString>;
-  audioStream: ReadableStream<AudioFrame>;
+  textStream: AsyncIterable<string | TimedString>;
+  audioStream: AsyncIterable<AudioFrame>;
   modalities?: Promise<('text' | 'audio')[]>;
 }
 
 export interface GenerationCreatedEvent {
-  messageStream: ReadableStream<MessageGeneration>;
-  functionStream: ReadableStream<FunctionCall>;
+  messageStream: AsyncIterable<MessageGeneration>;
+  functionStream: AsyncIterable<FunctionCall>;
   userInitiated: boolean;
   /** Response ID for correlating metrics with spans */
   responseId?: string;
@@ -84,7 +83,8 @@ export abstract class RealtimeModel {
 
 export abstract class RealtimeSession extends EventEmitter {
   protected _realtimeModel: RealtimeModel;
-  private deferredInputStream = new DeferredReadableStream<AudioFrame>();
+  private inputChan = new Chan<AudioFrame>();
+  private _pumpAbort: AbortController | null = null;
   private _mainTask: Task<void>;
 
   constructor(realtimeModel: RealtimeModel) {
@@ -156,17 +156,32 @@ export abstract class RealtimeSession extends EventEmitter {
   }
 
   private async _mainTaskImpl(signal: AbortSignal): Promise<void> {
-    const reader = this.deferredInputStream.stream.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done || signal.aborted) {
+    for await (const value of this.inputChan) {
+      if (signal.aborted) {
         break;
       }
       this.pushAudio(value);
     }
   }
 
-  setInputAudioStream(audioStream: ReadableStream<AudioFrame>): void {
-    this.deferredInputStream.setSource(audioStream);
+  setInputAudioStream(audioStream: AsyncIterable<AudioFrame>): void {
+    this._pumpAbort?.abort();
+    const abort = new AbortController();
+    this._pumpAbort = abort;
+    (async () => {
+      try {
+        for await (const frame of audioStream) {
+          if (abort.signal.aborted) break;
+          try {
+            this.inputChan.sendNowait(frame);
+          } catch (e) {
+            if (e instanceof ChanClosed) break;
+            throw e;
+          }
+        }
+      } catch {
+        // Source errors are silently consumed
+      }
+    })();
   }
 }
