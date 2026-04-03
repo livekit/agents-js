@@ -543,6 +543,13 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateInstructions(instructions: string): Promise<void> {
+    if (this.options.model === 'gemini-3.1-flash-live-preview') {
+      this.#logger.warn(
+        'updateInstructions is not compatible with gemini-3.1-flash-live-preview and will be ignored.',
+      );
+      this.options.instructions = instructions;
+      return;
+    }
     if (this.options.instructions === undefined || this.options.instructions !== instructions) {
       this.options.instructions = instructions;
       this.markRestartNeeded();
@@ -550,6 +557,13 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateChatCtx(chatCtx: llm.ChatContext): Promise<void> {
+    if (this.options.model === 'gemini-3.1-flash-live-preview') {
+      this.#logger.warn(
+        'updateChatCtx is not compatible with gemini-3.1-flash-live-preview and will be ignored.',
+      );
+      this._chatCtx = chatCtx.copy();
+      return;
+    }
     const unlock = await this.sessionLock.lock();
     try {
       if (!this.activeSession) {
