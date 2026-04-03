@@ -605,31 +605,22 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       );
     }
 
-    await session._updateActivity(this, {
-      previousActivity: 'pause',
-      newActivity: 'start',
-      blockedTasks,
-    });
-
-    let runState = session._globalRunState;
-    if (speechHandle && runState && !runState.done()) {
-      // Only unwatch the parent speech handle if there are other handles keeping the run alive.
-      // When watchedHandleCount is 1 (only the parent), unwatching would drop it to 0 and
-      // mark the run done prematurely — before function_call_output and assistant message arrive.
-      if (runState._watchedHandleCount() > 1) {
-        runState._unwatchHandle(speechHandle);
-      }
-      // it is OK to call _markDoneIfNeeded here, the above _updateActivity will call onEnter
-      // and newly added handles keep the run alive.
-      runState._markDoneIfNeeded();
-    }
+    const startTransitionTask = Task.from(
+      () =>
+        session._updateActivity(this, {
+          previousActivity: 'pause',
+          newActivity: 'start',
+          blockedTasks,
+        }),
+      undefined,
+      'AgentTask_startTransition',
+    );
+    session._trackRunHandle(startTransitionTask);
+    await startTransitionTask.result;
 
     try {
       return await this.future.await;
     } finally {
-      // runState could have changed after future resolved
-      runState = session._globalRunState;
-
       if (session.currentAgent !== this) {
         this.#logger.warn(
           `${this.constructor.name} completed, but the agent has changed in the meantime. ` +
@@ -637,21 +628,28 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
         );
         await oldActivity.close();
       } else {
-        if (speechHandle && runState && !runState.done()) {
-          runState._watchHandle(speechHandle);
-        }
-
         const mergedChatCtx = oldAgent._chatCtx.merge(this._chatCtx, {
           excludeFunctionCall: true,
           excludeInstructions: true,
         });
         oldAgent._chatCtx.items = mergedChatCtx.items;
 
-        await session._updateActivity(oldAgent, {
-          previousActivity: 'close',
-          newActivity: 'resume',
-          waitOnEnter: false,
-        });
+        const resumeTransitionTask = Task.from(
+          async () => {
+            await session._updateActivity(oldAgent, {
+              previousActivity: 'close',
+              newActivity: 'resume',
+              waitOnEnter: false,
+            });
+            // Drain any cascading transitions triggered by the resumed agent's
+            // onEnter (e.g. TaskGroup starting the next child task).
+            await session._drainActivityLock();
+          },
+          undefined,
+          'AgentTask_resumeTransition',
+        );
+        session._trackRunHandle(resumeTransitionTask);
+        await resumeTransitionTask.result;
       }
     }
   }

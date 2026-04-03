@@ -36,7 +36,7 @@ import {
   type ResolvedSessionConnectOptions,
   type SessionConnectOptions,
 } from '../types.js';
-import { Task } from '../utils.js';
+import { Event, Task } from '../utils.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import {
@@ -274,6 +274,11 @@ export class AgentSession<
 
   /** @internal */
   _userSpeakingSpan?: Span;
+
+  /** @internal - true while run() setup is in flight */
+  _runStartInFlight = false;
+
+  private _activityChanged = new Event();
 
   private logger = log();
 
@@ -706,6 +711,60 @@ export class AgentSession<
   }
 
   /**
+   * @internal
+   * Wait for all in-flight activity transitions to complete.
+   *
+   * _updateActivity holds the activityLock for its critical section, then
+   * releases it before awaiting onEnter.  If onEnter triggers a nested
+   * _updateActivity (e.g. Agent → TaskGroup → AgentTask),
+   * each nested call queues behind the lock in FIFO order.
+   *
+   * A single lock acquire only waits for the *next* holder — not the full
+   * chain.  So we loop: snapshot the current agent, acquire+release the lock
+   * (which blocks until the next queued _updateActivity finishes its critical
+   * section), then check whether the agent changed.  If it did, another
+   * transition ran, so we loop again.  When two consecutive iterations see
+   * the same agent, the chain has settled.
+   */
+  async _drainActivityLock(): Promise<void> {
+    let prevActivity: AgentActivity | undefined;
+    do {
+      prevActivity = this.activity;
+      (await this.activityLock.lock())();
+    } while (this.activity !== prevActivity);
+  }
+
+  /** @internal */
+  _trackRunHandle(handle: SpeechHandle | Task<void>): void {
+    if (this._globalRunState && !this._globalRunState.done()) {
+      this._globalRunState._watchHandle(handle);
+    }
+  }
+
+  /**
+   * Wait for the current activity to be ready to accept input.
+   *
+   * After _drainActivityLock, the final activity is normally already started
+   * with schedulingPaused=false. This loop handles edge cases where a
+   * transition is still settling.
+   */
+  private async waitForRunReadyActivity(): Promise<void> {
+    while (this.activity?.schedulingPaused) {
+      if (this.closing) {
+        throw new Error('AgentSession is closing, cannot use generateReply()');
+      }
+
+      this._activityChanged.clear();
+      if (!this.activity?.schedulingPaused) break;
+      await this._activityChanged.wait();
+    }
+
+    if (!this.activity || this.closing) {
+      throw new Error('AgentSession is closing, cannot use generateReply()');
+    }
+  }
+
+  /**
    * Run a test with user input and return a result for assertions.
    *
    * This method is primarily used for testing agent behavior without
@@ -728,29 +787,29 @@ export class AgentSession<
     userInput: string;
     outputType?: z.ZodType<T>;
   }): RunResult<T> {
-    if (this._globalRunState && !this._globalRunState.done()) {
+    if (this._runStartInFlight || (this._globalRunState && !this._globalRunState.done())) {
       throw new Error('nested runs are not supported');
     }
 
-    const runState = new RunResult<T>({
-      userInput,
-      outputType,
-    });
+    this._runStartInFlight = true;
 
-    this._globalRunState = runState;
-
-    // Defer generateReply through the activityLock to ensure any in-progress
-    // activity transition (e.g. AgentTask started from onEnter) completes first.
-    // TS Task.from starts onEnter synchronously, so the transition may already be
-    // mid-flight by the time run() is called after session.start() resolves.
-    // Acquiring and immediately releasing the lock guarantees FIFO ordering:
-    // the transition's lock section finishes before we route generateReply.
     (async () => {
       try {
-        const unlock = await this.activityLock.lock();
-        unlock();
+        // Drain the activity lock until no more transitions are queued.
+        // Each nested _updateActivity from the bootstrap chain (e.g.
+        // Agent → TaskGroup → AgentTask) acquires and
+        // releases the lock in FIFO order. We keep re-acquiring until the
+        // activity stabilizes (no change between two consecutive acquisitions).
+        await this._drainActivityLock();
+        await this.waitForRunReadyActivity();
+
+        this._globalRunState = runState;
+        this._runStartInFlight = false;
+
+        runState._setMinCreatedAt(Date.now());
         this.generateReply({ userInput });
       } catch (e) {
+        this._runStartInFlight = false;
         runState._reject(e instanceof Error ? e : new Error(String(e)));
       }
     })();
@@ -845,6 +904,10 @@ export class AgentSession<
         } else {
           await this.activity!.resume({ reuseResources: reusableResources });
         }
+
+        // Set event AFTER start/resume so waiters see schedulingPaused=false.
+        this._activityChanged.set();
+
         reusableResources = undefined;
 
         onEnterTask = this.activity!._onEnterTask;
