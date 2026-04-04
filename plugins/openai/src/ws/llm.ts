@@ -141,6 +141,8 @@ export interface WSLLMOptions {
   store?: boolean;
   metadata?: Record<string, string>;
   strictToolSchema?: boolean;
+  /** Specifies the processing tier (e.g. 'auto', 'default', 'priority', 'flex'). */
+  serviceTier?: string;
 }
 
 const defaultLLMOptions: WSLLMOptions = {
@@ -264,6 +266,10 @@ export class WSLLM extends llm.LLM {
 
     if (this.#opts.metadata) {
       modelOptions.metadata = this.#opts.metadata;
+    }
+
+    if (this.#opts.serviceTier) {
+      modelOptions.service_tier = this.#opts.serviceTier;
     }
 
     let inputChatCtx = chatCtx;
