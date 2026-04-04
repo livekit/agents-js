@@ -63,18 +63,30 @@ export async function connectWs(
       resolve(socket);
     };
 
-    const onError = (err: unknown) => {
+    const onUnexpectedResponse = (_req: unknown, res: { statusCode: number }) => {
       clearTimeout(timeout);
-      if (err && typeof err === 'object' && 'code' in err && (err as any).code === 429) {
+      socket.close();
+      if (res.statusCode === 429) {
         reject(
           new APIStatusError({
             message: 'LiveKit gateway quota exceeded',
-            options: { statusCode: 429 },
+            options: { statusCode: 429, retryable: true },
           }),
         );
       } else {
-        reject(new APIConnectionError({ message: 'Error connecting to LiveKit WebSocket' }));
+        reject(
+          new APIStatusError({
+            message: `Unexpected server response: ${res.statusCode}`,
+            options: { statusCode: res.statusCode },
+          }),
+        );
       }
+    };
+
+    const onError = (err: unknown) => {
+      clearTimeout(timeout);
+      const message = err instanceof Error ? err.message : 'Error connecting to LiveKit WebSocket';
+      reject(new APIConnectionError({ message }));
     };
 
     const onClose = (code: number) => {
@@ -87,7 +99,9 @@ export async function connectWs(
         );
       }
     };
+
     socket.once('open', onOpen);
+    socket.once('unexpected-response', onUnexpectedResponse);
     socket.once('error', onError);
     socket.once('close', onClose);
   });
