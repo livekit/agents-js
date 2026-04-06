@@ -95,6 +95,12 @@ export interface RoomOutputOptions {
   /** The name of the audio track to publish. If not provided, default to "roomio_audio".
    */
   audioPublishOptions: TrackPublishOptions;
+  /** Maximum queue size in milliseconds for the audio output buffer.
+    When TTS generates audio faster than real-time, a larger queue prevents
+    early frames from being discarded by the ring buffer.
+    Defaults to the AudioSource internal default (1000ms).
+  */
+  queueSizeMs?: number;
 }
 
 const DEFAULT_ROOM_INPUT_OPTIONS: RoomInputOptions = {
@@ -462,6 +468,7 @@ export class RoomIO {
         sampleRate: this.outputOptions.audioSampleRate,
         numChannels: this.outputOptions.audioNumChannels,
         trackPublishOptions: this.outputOptions.audioPublishOptions,
+        queueSizeMs: this.outputOptions.queueSizeMs,
       });
     }
     if (this.outputOptions.transcriptionEnabled) {
