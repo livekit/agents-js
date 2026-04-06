@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../../_exceptions.js';
 import { log } from '../../log.js';
 import TypedPromise from '../../typed_promise.js';
-import { createAccessToken } from '../utils.js';
+import { buildMetadataHeaders, createAccessToken } from '../utils.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import type { OverlappingSpeechEvent } from './types.js';
 import type { BoundedCache } from './utils.js';
@@ -80,7 +80,7 @@ async function connectWebSocket(
   const url = `${baseUrl}/bargein`;
 
   const ws = new WebSocket(url, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { ...buildMetadataHeaders(), Authorization: `Bearer ${token}` },
   });
 
   await new TypedPromise<void, APIStatusError | APITimeoutError | APIConnectionError>(
