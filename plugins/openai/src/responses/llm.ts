@@ -26,6 +26,8 @@ export interface LLMOptions {
   store?: boolean;
   metadata?: Record<string, string>;
   strictToolSchema?: boolean;
+  /** Specifies the processing tier (e.g. 'auto', 'default', 'priority', 'flex'). */
+  serviceTier?: string;
 
   /**
    * Whether to use the WebSocket API.
@@ -112,6 +114,10 @@ class ResponsesHttpLLM extends llm.LLM {
 
     if (this.#opts.metadata) {
       modelOptions.metadata = this.#opts.metadata;
+    }
+
+    if (this.#opts.serviceTier) {
+      modelOptions.service_tier = this.#opts.serviceTier;
     }
 
     return new ResponsesHttpLLMStream(this, {
