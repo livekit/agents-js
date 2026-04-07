@@ -531,7 +531,6 @@ class FallbackSynthesizeStream extends SynthesizeStream {
             // keep polling indefinitely, blocking fallback to the next TTS.
             // This flag tells it to exit early.
             streamOutputCompleted = true;
-            resampler?.close();
           }
         };
         const [outputResult, forwardBufferResult] = await Promise.allSettled([
@@ -579,6 +578,8 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         } else {
           throw error;
         }
+      } finally {
+        resampler?.close();
       }
     }
     await readInputLLMStream.catch(() => {});
