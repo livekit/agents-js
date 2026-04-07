@@ -115,6 +115,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected abortController = new AbortController();
   protected _connOptions: APIConnectOptions;
   protected logger = log();
+  /** @internal – Captured when run() fails so callers can inspect after iteration ends. */
+  _runError?: Error;
 
   #llm: LLM;
   #chatCtx: ChatContext;
@@ -148,7 +150,13 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    startSoon(() => this.mainTask().finally(() => this.queue.close()));
+    startSoon(() =>
+      this.mainTask()
+        .catch((e) => {
+          this._runError = e instanceof Error ? e : new Error(String(e));
+        })
+        .finally(() => this.queue.close()),
+    );
   }
 
   private _mainTaskImpl = async (span: Span) => {
