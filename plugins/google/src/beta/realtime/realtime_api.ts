@@ -810,6 +810,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.#closed = true;
 
     this.sessionShouldClose.set();
+    this.inputResampler?.close();
 
     await this.closeActiveSession();
 
@@ -1660,6 +1661,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (this.inputResampler) {
       if (frame.sampleRate !== this.inputResamplerInputRate) {
         // input audio changed to a different sample rate
+        this.inputResampler.close();
         this.inputResampler = undefined;
         this.inputResamplerInputRate = undefined;
       }

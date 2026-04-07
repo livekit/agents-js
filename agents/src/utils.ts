@@ -723,6 +723,7 @@ export function resampleStream({
         for (const frame of resampler.flush()) {
           controller.enqueue(frame);
         }
+        resampler.close();
       }
     },
   });
