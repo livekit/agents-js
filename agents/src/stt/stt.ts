@@ -445,6 +445,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     if (!this.queue.closed) this.queue.close();
     if (!this.output.closed) this.output.close();
     if (!this.abortController.signal.aborted) this.abortController.abort();
+    this.resampler?.close();
     this.closed = true;
   }
 

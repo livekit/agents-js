@@ -388,6 +388,7 @@ export class VADStream extends baseStream {
           }
         }
       }
+      resampler?.close();
     });
   }
 

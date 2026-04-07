@@ -366,6 +366,7 @@ class FallbackChunkedStream extends ChunkedStream {
             });
             audioReceived = true;
           }
+          resampler.close();
         }
 
         // Verify audio was actually received - silent failures should trigger fallback
@@ -519,6 +520,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
                 });
                 this.audioPushed = true;
               }
+              resampler.close();
             }
           } finally {
             // processOutput and forwardBufferToTTS run in parallel.
