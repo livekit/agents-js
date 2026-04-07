@@ -324,6 +324,8 @@ class FallbackChunkedStream extends ChunkedStream {
         this.adapter.markUnAvailable(i);
         continue;
       }
+      const resampler = this.adapter.createResamplerForTTS(i);
+
       try {
         this._logger.debug({ tts: tts.label }, 'attempting TTS synthesis');
         const connOptions: APIConnectOptions = {
@@ -332,7 +334,6 @@ class FallbackChunkedStream extends ChunkedStream {
         };
         const stream = tts.synthesize(this.inputText, connOptions, this.abortSignal);
         let audioReceived = false;
-        const resampler = this.adapter.createResamplerForTTS(i);
         for await (const audio of stream) {
           if (this.abortController.signal.aborted) {
             stream.close();
@@ -366,7 +367,6 @@ class FallbackChunkedStream extends ChunkedStream {
             });
             audioReceived = true;
           }
-          resampler.close();
         }
 
         // Verify audio was actually received - silent failures should trigger fallback
@@ -385,6 +385,8 @@ class FallbackChunkedStream extends ChunkedStream {
         } else {
           throw error;
         }
+      } finally {
+        resampler?.close();
       }
     }
     const labels = this.adapter.ttsInstances.map((t) => t.label).join(', ');
@@ -444,6 +446,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         this.adapter.markUnAvailable(i);
         continue;
       }
+      const resampler = this.adapter.createResamplerForTTS(i);
 
       try {
         this._logger.debug({ tts: originalTts.label }, 'attempting TTS stream');
@@ -454,7 +457,6 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         };
 
         const stream = tts.stream({ connOptions });
-        const resampler = this.adapter.createResamplerForTTS(i);
         let bufferIndex = 0;
         let streamOutputCompleted = false;
         const forwardBufferToTTS = async () => {
@@ -520,7 +522,6 @@ class FallbackSynthesizeStream extends SynthesizeStream {
                 });
                 this.audioPushed = true;
               }
-              resampler.close();
             }
           } finally {
             // processOutput and forwardBufferToTTS run in parallel.
@@ -530,6 +531,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
             // keep polling indefinitely, blocking fallback to the next TTS.
             // This flag tells it to exit early.
             streamOutputCompleted = true;
+            resampler?.close();
           }
         };
         const [outputResult, forwardBufferResult] = await Promise.allSettled([

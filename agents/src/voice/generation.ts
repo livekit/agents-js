@@ -839,7 +839,6 @@ async function forwardAudio(
       for (const f of resampler.flush()) {
         await audioOutput.captureFrame(f);
       }
-      resampler.close();
     }
   } catch (e) {
     if (e instanceof IdleTimeoutError) {
@@ -856,6 +855,7 @@ async function forwardAudio(
 
     reader?.releaseLock();
     audioOutput.flush();
+    resampler?.close();
   }
 }
 
