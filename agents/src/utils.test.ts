@@ -147,7 +147,7 @@ describe('utils', () => {
         return 'completed';
       });
 
-      await delay(39);
+      await delay(35);
       task.cancel();
 
       expect(arr).toEqual([0, 1, 2]);
