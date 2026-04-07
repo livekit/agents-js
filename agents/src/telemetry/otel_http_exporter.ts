@@ -57,6 +57,7 @@ export interface SimpleOTLPHttpLogExporterConfig {
 export class SimpleOTLPHttpLogExporter {
   private readonly config: SimpleOTLPHttpLogExporterConfig;
   private jwt: string | null = null;
+  private jwtExpiresAt = 0;
 
   private static readonly FORCE_DOUBLE_KEYS = new Set([
     'transcriptConfidence',
@@ -102,7 +103,7 @@ export class SimpleOTLPHttpLogExporter {
   }
 
   private async ensureJwt(): Promise<void> {
-    if (this.jwt) return;
+    if (this.jwt && Date.now() < this.jwtExpiresAt) return;
 
     const apiKey = process.env.LIVEKIT_API_KEY;
     const apiSecret = process.env.LIVEKIT_API_SECRET;
@@ -114,6 +115,7 @@ export class SimpleOTLPHttpLogExporter {
     const token = new AccessToken(apiKey, apiSecret, { ttl: '6h' });
     token.addObservabilityGrant({ write: true });
     this.jwt = await token.toJwt();
+    this.jwtExpiresAt = Date.now() + 5 * 60 * 60 * 1000;
   }
 
   private buildPayload(records: SimpleLogRecord[]): object {

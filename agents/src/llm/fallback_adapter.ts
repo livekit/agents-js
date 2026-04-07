@@ -209,13 +209,6 @@ class FallbackLLMStream extends LLMStream {
       extraKwargs: this.extraKwargs,
     });
 
-    // Listen for error events - child LLMs emit errors via their LLM instance, not the stream
-    let streamError: Error | undefined;
-    const errorHandler = (ev: { error: Error }) => {
-      streamError = ev.error;
-    };
-    llm.on('error', errorHandler);
-
     try {
       let shouldSetCurrent = !checkRecovery;
       for await (const chunk of stream) {
@@ -224,11 +217,6 @@ class FallbackLLMStream extends LLMStream {
           this._currentStream = stream;
         }
         yield chunk;
-      }
-
-      // If an error was emitted but not thrown through iteration, throw it now
-      if (streamError) {
-        throw streamError;
       }
     } catch (error) {
       if (error instanceof APIError) {
@@ -257,8 +245,6 @@ class FallbackLLMStream extends LLMStream {
         this._log.error({ llm: llm.label(), error }, 'unexpected error, switching to next LLM');
       }
       throw error;
-    } finally {
-      llm.off('error', errorHandler);
     }
   }
 
