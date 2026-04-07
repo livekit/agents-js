@@ -63,6 +63,7 @@ export interface ChatCompletionOptions extends Record<string, unknown> {
   prediction?: ChatCompletionPredictionContentParam | null;
   presence_penalty?: number;
   prompt_cache_key?: string;
+  prompt_cache_retention?: 'in_memory' | '24h';
   reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high';
   safety_identifier?: string;
   seed?: number;
