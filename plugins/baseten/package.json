@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-baseten",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Baseten plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

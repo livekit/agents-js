@@ -1,5 +1,19 @@
 # @livekit/agents
 
+## 1.2.4
+
+### Patch Changes
+
+- fix(agents): release initMutex after warming to restore pool concurrency - [#1214](https://github.com/livekit/agents-js/pull/1214) ([@drain-zine](https://github.com/drain-zine))
+
+- fix: pass queueSizeMs from RoomOutputOptions through to AudioSource - [#1207](https://github.com/livekit/agents-js/pull/1207) ([@cxyangs](https://github.com/cxyangs))
+
+- Add prompt_cache_retention option to inference - [#1212](https://github.com/livekit/agents-js/pull/1212) ([@s-hamdananwar](https://github.com/s-hamdananwar))
+
+- (inference): add debug metadata headers to inference requests - [#1208](https://github.com/livekit/agents-js/pull/1208) ([@adrian-cowham](https://github.com/adrian-cowham))
+
+- Explicitly close AudioResampler instances too free up resources - [#1210](https://github.com/livekit/agents-js/pull/1210) ([@lukasIO](https://github.com/lukasIO))
+
 ## 1.2.3
 
 ### Patch Changes
