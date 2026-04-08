@@ -97,6 +97,7 @@ export class ProcPool {
       this.executors.push(proc);
 
       const unlock = await this.initMutex.lock();
+      let initReleased = false;
       let procUnlockTransferred = false;
       try {
         if (this.closed) {
@@ -108,13 +109,19 @@ export class ProcPool {
           await proc.initialize();
           await this.warmedProcQueue.put({ proc, unlock: procUnlock });
           procUnlockTransferred = true;
+          // Release initMutex after enqueue — holding it through join() serialises
+          // the pool to concurrency 1 since child procs are one-shot.
+          unlock();
+          initReleased = true;
         } catch {
           // Initialization failed before enqueue, so release the acquired slot immediately.
         }
 
         await proc.join();
       } finally {
-        unlock();
+        if (!initReleased) {
+          unlock();
+        }
         if (!procUnlockTransferred) {
           procUnlock();
         }
