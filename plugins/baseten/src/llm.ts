@@ -17,6 +17,9 @@ export interface LLMOptions {
   baseURL?: string;
   user?: string;
   temperature?: number;
+  topP?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
   client?: OpenAI;
   toolChoice?: llm.ToolChoice;
   parallelToolCalls?: boolean;
@@ -96,8 +99,20 @@ export class OpenAILLM extends llm.LLM {
       extras.max_completion_tokens = this.#opts.maxCompletionTokens;
     }
 
-    if (this.#opts.temperature) {
+    if (this.#opts.temperature !== undefined) {
       extras.temperature = this.#opts.temperature;
+    }
+
+    if (this.#opts.topP !== undefined) {
+      extras.top_p = this.#opts.topP;
+    }
+
+    if (this.#opts.presencePenalty !== undefined) {
+      extras.presence_penalty = this.#opts.presencePenalty;
+    }
+
+    if (this.#opts.frequencyPenalty !== undefined) {
+      extras.frequency_penalty = this.#opts.frequencyPenalty;
     }
 
     if (this.#opts.serviceTier) {
@@ -159,6 +174,9 @@ export class LLM extends OpenAILLM {
       apiKey,
       baseURL: 'https://inference.baseten.co/v1',
       temperature: opts.temperature,
+      topP: opts.topP,
+      presencePenalty: opts.presencePenalty,
+      frequencyPenalty: opts.frequencyPenalty,
       user: opts.user,
       maxCompletionTokens: opts.maxTokens,
       toolChoice: opts.toolChoice,
