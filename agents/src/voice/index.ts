@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 export { Agent, AgentTask, StopResponse, type AgentOptions, type ModelSettings } from './agent.js';
+export * from './amd.js';
 export {
   AgentSession,
   type AgentSessionOptions,
