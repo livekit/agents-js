@@ -23,6 +23,10 @@ const PHONIC_INPUT_FRAME_MS = 20;
 const DEFAULT_MODEL = 'merritt';
 const WS_CLOSE_NORMAL = 1000;
 const TOOL_CALL_OUTPUT_TIMEOUT_MS = 60_000;
+const CONVERSATION_HISTORY_PREFIX =
+  '\n\nThis conversation is being continued from an existing ' +
+  'conversation. You are the assistant speaking to the user. ' +
+  'The following is the conversation history:\n';
 
 export interface RealtimeModelOptions {
   apiKey: string;
@@ -54,6 +58,10 @@ export class RealtimeModel extends llm.RealtimeModel {
 
   get model(): string {
     return this._options.model;
+  }
+
+  get provider(): string {
+    return 'phonic';
   }
 
   constructor(
@@ -146,6 +154,10 @@ export class RealtimeModel extends llm.RealtimeModel {
       autoToolReplyGeneration: true,
       manualFunctionCalls: false,
       audioOutput: true,
+      midSessionChatCtxUpdate: true,
+      midSessionInstructionsUpdate: true,
+      midSessionToolsUpdate: true,
+      perResponseToolChoice: false,
     });
 
     const apiKey = options.apiKey || process.env.PHONIC_API_KEY;
@@ -236,7 +248,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private connectTask: Promise<void>;
   private toolDefinitions: Record<string, unknown>[] = [];
   private pendingToolCallIds = new Set<string>();
-  private readyToStart = false;
+  private readyToStart = new Future<void>();
+  private pendingGenerateReplyFut?: Future<llm.GenerationCreatedEvent>;
   private systemPromptPostfix = '';
 
   constructor(realtimeModel: RealtimeModel) {
@@ -294,9 +307,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           this.logger.debug(
             'updateChatCtx called with messages prior to config being sent to Phonic. Including conversation state in system instructions.',
           );
-          this.systemPromptPostfix =
-            '\n\nThis conversation is being continued from an existing conversation. You are the assistant speaking to the user. The following is the conversation history:\n' +
-            turnHistory;
+          this.systemPromptPostfix = CONVERSATION_HISTORY_PREFIX + turnHistory;
         }
         this._chatCtx = chatCtx.copy();
       }
@@ -375,12 +386,69 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.toolsReady.resolve();
   }
 
+  async _updateSession(
+    instructions?: string,
+    chatCtx?: llm.ChatContext,
+    tools?: llm.ToolContext,
+  ): Promise<void> {
+    await this.readyToStart.await;
+    if (instructions !== undefined) {
+      this.options.instructions = instructions;
+    }
+    if (tools !== undefined) {
+      this._tools = { ...tools };
+      this.toolDefinitions = Object.entries(tools)
+        .filter(([, tool]) => llm.isFunctionTool(tool))
+        .map(([name, tool]) => ({
+          type: 'custom_websocket',
+          tool_schema: {
+            type: 'function',
+            function: {
+              name,
+              description: tool.description,
+              parameters: llm.toJsonSchema(tool.parameters),
+              strict: true,
+            },
+          },
+          tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
+          wait_for_speech_before_tool_call: true,
+          allow_tool_chaining: false,
+        }));
+    }
+    if (chatCtx !== undefined) {
+      this._chatCtx = chatCtx.copy();
+    }
+
+    let systemPrompt = this.options.instructions ?? '';
+    if (chatCtx !== undefined) {
+      const history = this.buildTurnHistory(chatCtx);
+      if (history) {
+        systemPrompt += CONVERSATION_HISTORY_PREFIX + history;
+      }
+    }
+
+    this.closeCurrentGeneration({ interrupted: true });
+
+    const toolsPayload: Phonic.ConfigOptions.Tools.Item[] = [
+      ...(this.options.phonicTools ?? []),
+      ...this.toolDefinitions,
+    ];
+
+    if (this.socket) {
+      this.logger.info('Sending mid-session reset to Phonic');
+      this.socket.sendReset({
+        type: 'reset',
+        config: this.buildConfigOptions({ systemPrompt, toolsPayload }),
+      });
+    }
+  }
+
   updateOptions(_options: { toolChoice?: llm.ToolChoice | null }): void {
     this.logger.warn('updateOptions is not supported by the Phonic realtime model.');
   }
 
   pushAudio(frame: AudioFrame): void {
-    if (this.closed || !this.readyToStart) {
+    if (this.closed || !this.readyToStart.done) {
       return;
     }
 
@@ -401,14 +469,24 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
-    if (this.socket) {
-      this.socket.sendGenerateReply({ type: 'generate_reply', system_message: instructions });
-    } else {
-      this.logger.warn('Cannot send generate_reply: WebSocket not available');
+    if (this.closed) {
+      return Promise.reject(new Error('session is closed'));
     }
-
     this.closeCurrentGeneration({ interrupted: false });
-    return this.startNewAssistantTurn({ userInitiated: true });
+    this.pendingGenerateReplyFut = new Future<llm.GenerationCreatedEvent>();
+    this.sendGenerateReply(instructions);
+
+    return this.pendingGenerateReplyFut.await;
+  }
+
+  private async sendGenerateReply(instructions?: string): Promise<void> {
+    await this.readyToStart.await;
+    if (this.closed || !this.socket) {
+      this.pendingGenerateReplyFut?.reject(new Error('session is closed'));
+      this.pendingGenerateReplyFut = undefined;
+      return;
+    }
+    this.socket.sendGenerateReply({ type: 'generate_reply', system_message: instructions });
   }
 
   async commitAudio(): Promise<void> {
@@ -433,7 +511,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.closedFuture.resolve();
     this.instructionsReady.resolve();
     this.toolsReady.resolve();
+    this.readyToStart.resolve();
     this.closeCurrentGeneration({ interrupted: false });
+    this.rejectPendingGenerateReply();
+    this.inputResampler = undefined;
     this.socket?.close();
     await this.connectTask;
     await super.close();
@@ -455,6 +536,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.socket.on('error', (error: Error) => this.emitError(error, false));
     this.socket.on('close', (event: { code?: number }) => {
       this.closeCurrentGeneration({ interrupted: false });
+      this.rejectPendingGenerateReply();
       if (!this.closed && event.code !== WS_CLOSE_NORMAL) {
         this.emitError(new Error(`Phonic STS socket closed with code ${event.code ?? -1}`), false);
       }
@@ -482,30 +564,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.socket.sendConfig({
       type: 'config',
       model: this.options.model as Phonic.ConfigPayload['model'],
-      agent: this.options.phonicAgent,
-      project: this.options.project,
-      welcome_message: this.options.welcomeMessage,
-      generate_welcome_message: this.options.generateWelcomeMessage,
-      system_prompt: this.options.instructions + this.systemPromptPostfix,
-      voice_id: this.options.voice,
-      input_format: 'pcm_44100',
-      output_format: 'pcm_44100',
-      ...(this.options.defaultLanguage !== undefined && {
-        default_language: this.options.defaultLanguage,
+      ...this.buildConfigOptions({
+        systemPrompt: this.options.instructions + this.systemPromptPostfix,
+        toolsPayload: [...(this.options.phonicTools ?? []), ...this.toolDefinitions],
       }),
-      ...(this.options.additionalLanguages !== undefined && {
-        additional_languages: this.options.additionalLanguages,
-      }),
-      ...(this.options.multilingualMode !== undefined && {
-        multilingual_mode: this.options.multilingualMode,
-      }),
-      audio_speed: this.options.audioSpeed,
-      tools: [...(this.options.phonicTools ?? []), ...this.toolDefinitions],
-      boosted_keywords: this.options.boostedKeywords,
-      generate_no_input_poke_text: this.options.generateNoInputPokeText,
-      no_input_poke_sec: this.options.noInputPokeSec,
-      no_input_poke_text: this.options.noInputPokeText,
-      no_input_end_conversation_sec: this.options.noInputEndConversationSec,
     });
   }
 
@@ -557,7 +619,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.handleToolCallInterrupted(message);
         break;
       case 'ready_to_start_conversation':
-        this.readyToStart = true;
+        this.readyToStart.resolve();
         break;
       case 'assistant_chose_not_to_respond':
       case 'input_cancelled':
@@ -698,6 +760,12 @@ export class RealtimeSession extends llm.RealtimeSession {
       responseId,
     };
 
+    if (this.pendingGenerateReplyFut && !this.pendingGenerateReplyFut.done) {
+      generationEvent.userInitiated = true;
+      this.pendingGenerateReplyFut.resolve(generationEvent);
+      this.pendingGenerateReplyFut = undefined;
+    }
+
     this.emit('generation_created', generationEvent);
     return generationEvent;
   }
@@ -726,6 +794,13 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.currentGeneration = undefined;
   }
 
+  private rejectPendingGenerateReply(): void {
+    if (this.pendingGenerateReplyFut && !this.pendingGenerateReplyFut.done) {
+      this.pendingGenerateReplyFut.reject(new Error('session is closed'));
+      this.pendingGenerateReplyFut = undefined;
+    }
+  }
+
   private emitError(error: Error, recoverable: boolean): void {
     this.emit('error', {
       timestamp: Date.now(),
@@ -736,9 +811,61 @@ export class RealtimeSession extends llm.RealtimeSession {
     } satisfies llm.RealtimeModelError);
   }
 
+  private buildConfigOptions({
+    systemPrompt,
+    toolsPayload,
+  }: {
+    systemPrompt: string;
+    toolsPayload: Phonic.ConfigOptions.Tools.Item[];
+  }): Phonic.ConfigOptions {
+    return {
+      agent: this.options.phonicAgent,
+      project: this.options.project,
+      welcome_message: this.options.welcomeMessage,
+      generate_welcome_message: this.options.generateWelcomeMessage,
+      system_prompt: systemPrompt,
+      voice_id: this.options.voice,
+      input_format: 'pcm_44100',
+      output_format: 'pcm_44100',
+      ...(this.options.defaultLanguage !== undefined && {
+        default_language: this.options.defaultLanguage,
+      }),
+      ...(this.options.additionalLanguages !== undefined && {
+        additional_languages: this.options.additionalLanguages,
+      }),
+      ...(this.options.multilingualMode !== undefined && {
+        multilingual_mode: this.options.multilingualMode,
+      }),
+      audio_speed: this.options.audioSpeed,
+      tools: toolsPayload,
+      boosted_keywords: this.options.boostedKeywords,
+      // ...(this.options.minWordsToInterrupt !== undefined && {
+      //   min_words_to_interrupt: this.options.minWordsToInterrupt,
+      // }),
+      generate_no_input_poke_text: this.options.generateNoInputPokeText,
+      no_input_poke_sec: this.options.noInputPokeSec,
+      no_input_poke_text: this.options.noInputPokeText,
+      no_input_end_conversation_sec: this.options.noInputEndConversationSec,
+    };
+  }
+
+  private buildTurnHistory(chatCtx: llm.ChatContext): string | undefined {
+    const messages = chatCtx.items.filter(
+      (item): item is llm.ChatMessage =>
+        item.type === 'message' &&
+        'textContent' in item &&
+        item.textContent !== undefined &&
+        item.textContent.trim() !== '',
+    );
+    if (messages.length === 0) return undefined;
+    const history = messages.map((m) => `${m.role}: ${m.textContent}`).join('\n');
+    return history.trim() || undefined;
+  }
+
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
     if (this.inputResampler) {
       if (frame.sampleRate !== this.inputResamplerInputRate) {
+        this.inputResampler.close();
         this.inputResampler = undefined;
         this.inputResamplerInputRate = undefined;
       }
