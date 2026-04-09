@@ -12,7 +12,6 @@ import {
   stream,
 } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
-import type { ReadableStream } from 'node:stream/web';
 import type { Phonic } from 'phonic';
 import { PhonicClient } from 'phonic';
 import type { ServerEvent, Voice } from './api_proto.js';
@@ -215,7 +214,6 @@ interface GenerationState {
  * Realtime session for Phonic (https://docs.phonic.co/)
  */
 export class RealtimeSession extends llm.RealtimeSession {
-  private static readonly SAY_TIMEOUT_MS = 10_000;
   private _tools: llm.ToolContext = {};
   private _chatCtx = llm.ChatContext.empty();
 
@@ -411,56 +409,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     this.closeCurrentGeneration({ interrupted: false });
     return this.startNewAssistantTurn({ userInitiated: true });
-  }
-
-  async say(
-    text: string | ReadableStream<string>,
-    options?: { allowInterruptions?: boolean },
-  ): Promise<llm.GenerationCreatedEvent> {
-    await Promise.race([
-      this.sendSayAsync(text, options?.allowInterruptions),
-      new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('say() timed out.')), RealtimeSession.SAY_TIMEOUT_MS);
-      }),
-    ]);
-
-    this.closeCurrentGeneration({ interrupted: false });
-    return this.startNewAssistantTurn({ userInitiated: true });
-  }
-
-  private async sendSayAsync(
-    text: string | ReadableStream<string>,
-    allowInterruptions?: boolean,
-  ): Promise<void> {
-    if (this.closed) return;
-
-    let fullText: string;
-    if (typeof text === 'string') {
-      fullText = text;
-    } else {
-      const chunks: string[] = [];
-      const reader = text.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-        }
-      } finally {
-        reader.releaseLock();
-      }
-      fullText = chunks.join('');
-    }
-
-    if (!this.socket) {
-      throw new Error('Cannot send say: WebSocket not available');
-    }
-
-    const payload: Record<string, unknown> = { type: 'say', text: fullText };
-    if (allowInterruptions !== undefined) {
-      payload.interruptible = allowInterruptions;
-    }
-    this.socket.socket.send(JSON.stringify(payload));
   }
 
   async commitAudio(): Promise<void> {

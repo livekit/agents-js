@@ -408,27 +408,39 @@ export class AgentActivity implements RecognitionHooks {
       // skip the update if the session is reused and no mid-session update is supported
       // this means the content is the same as the previous session
       const capabilities = this.llm.capabilities;
-      if (!rtReused || capabilities.midSessionInstructionsUpdate) {
+      if (!rtReused && this.realtimeSession?.realtimeModel.provider == 'phonic') {
         try {
-          await this.realtimeSession!.updateInstructions(this.agent.instructions);
+          await (this.realtimeSession as any)._updateSession(
+            this.agent.instructions,
+            this.agent.chatCtx,
+            this.tools,
+          );
         } catch (error) {
-          this.logger.error(error, 'failed to update the instructions');
+          this.logger.error(error, 'failed to update phonic session');
         }
-      }
-
-      if (!rtReused || capabilities.midSessionChatCtxUpdate) {
-        try {
-          await this.realtimeSession!.updateChatCtx(this.agent.chatCtx);
-        } catch (error) {
-          this.logger.error(error, 'failed to update the chat context');
+      } else {
+        if (!rtReused || capabilities.midSessionInstructionsUpdate) {
+          try {
+            await this.realtimeSession!.updateInstructions(this.agent.instructions);
+          } catch (error) {
+            this.logger.error(error, 'failed to update the instructions');
+          }
         }
-      }
 
-      if (!rtReused || capabilities.midSessionToolsUpdate) {
-        try {
-          await this.realtimeSession!.updateTools(this.tools);
-        } catch (error) {
-          this.logger.error(error, 'failed to update the tools');
+        if (!rtReused || capabilities.midSessionChatCtxUpdate) {
+          try {
+            await this.realtimeSession!.updateChatCtx(this.agent.chatCtx);
+          } catch (error) {
+            this.logger.error(error, 'failed to update the chat context');
+          }
+        }
+
+        if (!rtReused || capabilities.midSessionToolsUpdate) {
+          try {
+            await this.realtimeSession!.updateTools(this.tools);
+          } catch (error) {
+            this.logger.error(error, 'failed to update the tools');
+          }
         }
       }
 
@@ -819,33 +831,15 @@ export class AgentActivity implements RecognitionHooks {
       allowInterruptions: defaultAllowInterruptions,
       addToChatCtx = true,
     } = options ?? {};
-    let allowInterruptions = defaultAllowInterruptions;
-
-    if (
-      this.llm instanceof RealtimeModel &&
-      this.llm.capabilities.turnDetection &&
-      this.tts &&
-      allowInterruptions === false
-    ) {
-      this.logger.warn(
-        'the RealtimeModel uses a server-side turn detection, allowInterruptions cannot be false when using VoiceAgent.say(), ' +
-          'disable turnDetection in the RealtimeModel and use VAD on the AgentTask/VoiceAgent instead',
-      );
-      allowInterruptions = true;
-    }
+    const allowInterruptions = defaultAllowInterruptions;
 
     if (
       !audio &&
       !this.tts &&
-      this.realtimeSession === undefined &&
       this.agentSession.output.audio &&
       this.agentSession.output.audioEnabled
     ) {
-      const modelInfo =
-        this.llm instanceof RealtimeModel
-          ? 'a RealtimeSession that implements say()'
-          : 'a TTS model';
-      throw new Error(`trying to generate speech from text without ${modelInfo}`);
+      throw new Error('trying to generate speech from text without a TTS model');
     }
 
     const handle = SpeechHandle.create({
@@ -861,28 +855,14 @@ export class AgentActivity implements RecognitionHooks {
       }),
     );
 
-    let task: Task<void>;
-    if (this.realtimeSession !== undefined && !audio && !this.tts) {
-      task = this.createSpeechTask({
-        taskFn: (abortController: AbortController) =>
-          this.realtimeSayTask(handle, text, addToChatCtx, {}, abortController),
-        ownedSpeechHandle: handle,
-        name: 'AgentActivity.realtime_say',
-      });
-    } else {
-      task = this.createSpeechTask({
-        taskFn: (abortController: AbortController) =>
-          this.ttsTask(handle, text, addToChatCtx, {}, abortController, audio),
-        ownedSpeechHandle: handle,
-        name: 'AgentActivity.tts_say',
-      });
-    }
+    const task = this.createSpeechTask({
+      taskFn: (abortController: AbortController) =>
+        this.ttsTask(handle, text, addToChatCtx, {}, abortController, audio),
+      ownedSpeechHandle: handle,
+      name: 'AgentActivity.tts_say',
+    });
 
-    // Avoid duplicate state transitions for realtime say path: realtimeGenerationTask already
-    // performs end-of-speech transitions internally.
-    if (this.realtimeSession === undefined || audio !== undefined || this.tts) {
-      task.result.finally(() => this.onPipelineReplyDone());
-    }
+    task.result.finally(() => this.onPipelineReplyDone());
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
     return handle;
   }
@@ -2899,46 +2879,6 @@ export class AgentActivity implements RecognitionHooks {
       newAgentTask,
       ignoreTaskSwitch,
     };
-  }
-
-  private async realtimeSayTask(
-    speechHandle: SpeechHandle,
-    text: string | ReadableStream<string>,
-    addToChatCtx: boolean,
-    modelSettings: ModelSettings,
-    replyAbortController: AbortController,
-  ): Promise<void> {
-    speechHandleStorage.enterWith(speechHandle);
-
-    if (!this.realtimeSession) {
-      throw new Error('realtimeSession is not available');
-    }
-
-    await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
-
-    if (speechHandle.interrupted) {
-      return;
-    }
-
-    let generationEv: GenerationCreatedEvent;
-    try {
-      generationEv = await this.realtimeSession.say(text, {
-        allowInterruptions: speechHandle.allowInterruptions,
-      });
-    } catch (e) {
-      this.logger.error('failed to say text: %s', String(e));
-      // Keep state transition logic centralized so queued/planned speeches are respected.
-      this.onPipelineReplyDone();
-      return;
-    }
-
-    await this.realtimeGenerationTask(
-      speechHandle,
-      generationEv,
-      modelSettings,
-      replyAbortController,
-      addToChatCtx,
-    );
   }
 
   private async realtimeReplyTask({
