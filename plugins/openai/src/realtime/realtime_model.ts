@@ -185,9 +185,10 @@ export class RealtimeModel extends llm.RealtimeModel {
       autoToolReplyGeneration: false,
       audioOutput: modalities.includes('audio'),
       manualFunctionCalls: true,
-      midSessionContextUpdate: true,
+      midSessionChatCtxUpdate: true,
       midSessionInstructionsUpdate: true,
       midSessionToolsUpdate: true,
+      perResponseToolChoice: true,
     });
 
     const isAzure = !!(options.apiVersion || options.entraToken || options.azureDeployment);
@@ -480,8 +481,52 @@ export class RealtimeSession extends llm.RealtimeSession {
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
     const unlock = await this.updateChatCtxLock.lock();
     try {
+      const validation = llm.validateChatContextStructure(_chatCtx);
+      const blockingErrors = validation.issues.filter(
+        (issue: llm.ChatContextValidationIssue) =>
+          issue.severity === 'error' && issue.code !== 'timestamp_order',
+      );
+      const timestampOrderIssue = validation.issues.find(
+        (issue: llm.ChatContextValidationIssue) => issue.code === 'timestamp_order',
+      );
+      if (blockingErrors.length > 0) {
+        this.#logger.error(
+          { issues: validation.issues, blockingErrors },
+          'Invalid chat context supplied to updateChatCtx',
+        );
+        throw new Error(
+          `Invalid chat context: ${validation.errors} errors, ${validation.warnings} warnings`,
+        );
+      }
+      if (timestampOrderIssue) {
+        this.#logger.warn(
+          { timestampOrderIssue },
+          'Proceeding with non-monotonic createdAt ordering in realtime chat context',
+        );
+      }
+      if (lkOaiDebug > 0 && validation.warnings > 0) {
+        this.#logger.debug(
+          {
+            warnings: validation.warnings,
+            issues: validation.issues,
+          },
+          'Chat context warnings detected before realtime update',
+        );
+      }
+
       const events = await this.createChatCtxUpdateEvents(_chatCtx);
       const futures: Future<void>[] = [];
+      const cleanupTimedOutFutures = () => {
+        // remove timed-out entries so late server acks
+        // don't resolve stale futures from a previous updateChatCtx call.
+        for (const event of events) {
+          if (event.type === 'conversation.item.delete') {
+            delete this.itemDeleteFutures[event.item_id];
+          } else if (event.type === 'conversation.item.create') {
+            delete this.itemCreateFutures[event.item.id];
+          }
+        }
+      };
 
       for (const event of events) {
         if (event.type === 'conversation.item.create') {
@@ -510,6 +555,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       await Promise.race([
         Promise.all(futures),
         delay(5000).then(() => {
+          cleanupTimedOutFutures();
           throw new Error('Chat ctx update events timed out');
         }),
       ]);

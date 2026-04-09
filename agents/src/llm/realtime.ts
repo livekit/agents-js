@@ -49,9 +49,10 @@ export interface RealtimeCapabilities {
   autoToolReplyGeneration: boolean;
   audioOutput: boolean;
   manualFunctionCalls: boolean;
-  midSessionContextUpdate?: boolean;
+  midSessionChatCtxUpdate?: boolean;
   midSessionInstructionsUpdate?: boolean;
   midSessionToolsUpdate?: boolean;
+  perResponseToolChoice?: boolean;
 }
 
 export interface InputTranscriptionCompleted {

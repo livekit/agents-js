@@ -167,7 +167,7 @@ describe('AgentActivity RT session reuse eligibility', () => {
       autoToolReplyGeneration: false,
       audioOutput: true,
       manualFunctionCalls: false,
-      midSessionContextUpdate: false,
+      midSessionChatCtxUpdate: false,
       midSessionInstructionsUpdate: false,
       midSessionToolsUpdate: false,
       ...capabilitiesOverrides,
@@ -251,8 +251,8 @@ describe('AgentActivity RT session reuse eligibility', () => {
     expect(resources.rtSession).toBe(rtSession);
   });
 
-  it('reuses RT session when context differs but midSessionContextUpdate is true', async () => {
-    const sharedLlm = createFakeRealtimeModel({ midSessionContextUpdate: true });
+  it('reuses RT session when context differs but midSessionChatCtxUpdate is true', async () => {
+    const sharedLlm = createFakeRealtimeModel({ midSessionChatCtxUpdate: true });
     const rtSession = createFakeRtSession();
     // Give the session a non-empty chat context
     (rtSession as any).chatCtx = ChatContext.empty();

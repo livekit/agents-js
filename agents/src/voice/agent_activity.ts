@@ -8,6 +8,7 @@ import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api'
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream, TransformStream } from 'node:stream/web';
+import type { Logger } from 'pino';
 import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
@@ -101,14 +102,42 @@ export interface ReusableResources {
   rtSession?: RealtimeSession;
 }
 
-export async function cleanupReusableResources(resources: ReusableResources): Promise<void> {
+export class SchedulingPausedError extends Error {
+  constructor() {
+    super('cannot schedule new speech, the speech scheduling is draining/pausing');
+    this.name = 'SchedulingPausedError';
+  }
+}
+
+export function isSchedulingPausedError(error: unknown): error is SchedulingPausedError {
+  return error instanceof SchedulingPausedError;
+}
+
+export async function cleanupReusableResources(
+  resources: ReusableResources,
+  logger: Logger,
+): Promise<void> {
+  const tasks: Promise<void>[] = [];
   if (resources.sttPipeline) {
-    await resources.sttPipeline.close();
+    tasks.push(resources.sttPipeline.close());
     resources.sttPipeline = undefined;
   }
   if (resources.rtSession) {
-    await resources.rtSession.close();
+    tasks.push(resources.rtSession.close());
     resources.rtSession = undefined;
+  }
+
+  if (tasks.length > 0) {
+    const outputs = await Promise.allSettled(tasks);
+    for (const output of outputs) {
+      if (output.status === 'rejected') {
+        if (logger) {
+          logger.error({ error: output.reason }, 'error cleaning up reusable resources');
+        } else {
+          console.error('error cleaning up reusable resources', output.reason);
+        }
+      }
+    }
   }
 }
 
@@ -387,7 +416,7 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
 
-      if (!rtReused || capabilities.midSessionContextUpdate) {
+      if (!rtReused || capabilities.midSessionChatCtxUpdate) {
         try {
           await this.realtimeSession!.updateChatCtx(this.agent.chatCtx);
         } catch (error) {
@@ -495,56 +524,65 @@ export class AgentActivity implements RecognitionHooks {
 
   async _detachReusableResources(newActivity: AgentActivity): Promise<ReusableResources> {
     const resources: ReusableResources = {};
-
-    // stt pipeline
-    if (
-      this.audioRecognition &&
-      this.stt &&
-      newActivity.stt &&
-      this.stt === newActivity.stt &&
-      Object.getPrototypeOf(this.agent).sttNode === Object.getPrototypeOf(newActivity.agent).sttNode
-    ) {
-      resources.sttPipeline = await this.audioRecognition.detachSttPipeline();
-    }
-
-    // rt session
-    if (this.realtimeSession && this.llm instanceof RealtimeModel && this.llm === newActivity.llm) {
-      const capabilities = this.llm.capabilities;
-
-      // context update is supported or chat context is equivalent
-      let reusable =
-        capabilities.midSessionContextUpdate ||
-        this.realtimeSession.chatCtx
-          .copy({ excludeInstructions: true, excludeHandoff: true })
-          .isEquivalent(
-            newActivity.agent.chatCtx.copy({ excludeInstructions: true, excludeHandoff: true }),
-          );
-
-      // instructions update is supported or instructions are the same
-      reusable =
-        reusable &&
-        (capabilities.midSessionInstructionsUpdate ||
-          this.agent.instructions === newActivity.agent.instructions);
-
-      // tools update is supported or tools are the same
-      reusable =
-        reusable &&
-        (capabilities.midSessionToolsUpdate || isSameToolContext(this.tools, newActivity.tools));
-
-      if (reusable) {
-        // detach: remove event listeners but don't close the session
-        this.realtimeSession.off('generation_created', this.onRealtimeGenerationCreated);
-        this.realtimeSession.off('input_speech_started', this.onRealtimeInputSpeechStarted);
-        this.realtimeSession.off('input_speech_stopped', this.onRealtimeInputSpeechStopped);
-        this.realtimeSession.off(
-          'input_audio_transcription_completed',
-          this.onRealtimeInputAudioTranscriptionCompleted,
-        );
-        this.realtimeSession.off('metrics_collected', this.onMetricsCollected);
-        this.realtimeSession.off('error', this.onModelError);
-        resources.rtSession = this.realtimeSession;
-        this.realtimeSession = undefined; // prevent _closeSessionResources from closing it
+    try {
+      // stt pipeline
+      if (
+        this.audioRecognition &&
+        this.stt &&
+        newActivity.stt &&
+        this.stt === newActivity.stt &&
+        Object.getPrototypeOf(this.agent).sttNode ===
+          Object.getPrototypeOf(newActivity.agent).sttNode
+      ) {
+        resources.sttPipeline = await this.audioRecognition.detachSttPipeline();
       }
+
+      // rt session
+      if (
+        this.realtimeSession &&
+        this.llm instanceof RealtimeModel &&
+        this.llm === newActivity.llm
+      ) {
+        const capabilities = this.llm.capabilities;
+
+        // context update is supported or chat context is equivalent
+        let reusable =
+          capabilities.midSessionChatCtxUpdate ||
+          this.realtimeSession.chatCtx
+            .copy({ excludeInstructions: true, excludeHandoff: true })
+            .isEquivalent(
+              newActivity.agent.chatCtx.copy({ excludeInstructions: true, excludeHandoff: true }),
+            );
+
+        // instructions update is supported or instructions are the same
+        reusable =
+          reusable &&
+          (capabilities.midSessionInstructionsUpdate ||
+            this.agent.instructions === newActivity.agent.instructions);
+
+        // tools update is supported or tools are the same
+        reusable =
+          reusable &&
+          (capabilities.midSessionToolsUpdate || isSameToolContext(this.tools, newActivity.tools));
+
+        if (reusable) {
+          // detach: remove event listeners but don't close the session
+          this.realtimeSession.off('generation_created', this.onRealtimeGenerationCreated);
+          this.realtimeSession.off('input_speech_started', this.onRealtimeInputSpeechStarted);
+          this.realtimeSession.off('input_speech_stopped', this.onRealtimeInputSpeechStopped);
+          this.realtimeSession.off(
+            'input_audio_transcription_completed',
+            this.onRealtimeInputAudioTranscriptionCompleted,
+          );
+          this.realtimeSession.off('metrics_collected', this.onMetricsCollected);
+          this.realtimeSession.off('error', this.onModelError);
+          resources.rtSession = this.realtimeSession;
+          this.realtimeSession = undefined; // prevent _closeSessionResources from closing it
+        }
+      }
+    } catch (error) {
+      await cleanupReusableResources(resources, this.logger);
+      throw error;
     }
 
     return resources;
@@ -2963,7 +3001,7 @@ export class AgentActivity implements RecognitionHooks {
     // when force=true, we allow tool responses to bypass scheduling pause
     // This allows for tool responses to be generated before the AgentActivity is finalized
     if (this.schedulingPaused && !force) {
-      throw new Error('cannot schedule new speech, the speech scheduling is draining/pausing');
+      throw new SchedulingPausedError();
     }
 
     // Monotonic time to avoid near 0 collisions
@@ -3021,7 +3059,7 @@ export class AgentActivity implements RecognitionHooks {
         await this._closeSessionResources();
       } catch (error) {
         if (resources) {
-          await cleanupReusableResources(resources);
+          await cleanupReusableResources(resources, this.logger);
         }
         throw error;
       } finally {
@@ -3069,7 +3107,11 @@ export class AgentActivity implements RecognitionHooks {
 
       // detach after speech tasks are done but before _closeSessionResources
       if (newActivity) {
-        return await this._detachReusableResources(newActivity);
+        try {
+          return await this._detachReusableResources(newActivity);
+        } catch (error) {
+          this.logger.error(error, 'failed to detach reusable resources');
+        }
       }
       return undefined;
     } finally {

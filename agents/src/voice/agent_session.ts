@@ -43,6 +43,7 @@ import {
   AgentActivity,
   type ReusableResources,
   cleanupReusableResources,
+  isSchedulingPausedError,
 } from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import {
@@ -684,7 +685,22 @@ export class AgentSession<
         }
         return nextActivity.generateReply({ userMessage, ...options });
       }
-      return activity.generateReply({ userMessage, ...options });
+
+      // Handoff can race with scheduling pause between the check above and generateReply().
+      // If that happens, retry on the next activity instead of surfacing an avoidable error.
+      try {
+        return activity.generateReply({ userMessage, ...options });
+      } catch (error) {
+        const canFallback = nextActivity !== undefined && isSchedulingPausedError(error);
+        if (!canFallback) {
+          throw error;
+        }
+        this.logger.debug(
+          { error },
+          'generateReply scheduling raced with handoff drain; retrying on next activity',
+        );
+        return nextActivity.generateReply({ userMessage, ...options });
+      }
     };
 
     // attach to the session span if called outside of the AgentSession
@@ -809,7 +825,7 @@ export class AgentSession<
             'Session is closing, skipping start of next activity',
           );
           if (reusableResources) {
-            await cleanupReusableResources(reusableResources);
+            await cleanupReusableResources(reusableResources, this.logger);
             reusableResources = undefined;
           }
           this.nextActivity = undefined;
@@ -856,7 +872,7 @@ export class AgentSession<
         // JS safeguard: session cleanup owns the detached resources until the next activity
         // starts successfully, preventing leaks when handoff fails mid-transition.
         if (reusableResources) {
-          await cleanupReusableResources(reusableResources);
+          await cleanupReusableResources(reusableResources, this.logger);
         }
         throw error;
       } finally {
