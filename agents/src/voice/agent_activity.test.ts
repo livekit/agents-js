@@ -16,8 +16,10 @@
  */
 import { Heap } from 'heap-js';
 import { describe, expect, it, vi } from 'vitest';
+import { LLM } from '../llm/llm.js';
 import { Future } from '../utils.js';
 import { AgentActivity } from './agent_activity.js';
+import type { PreemptiveGenerationInfo } from './audio_recognition.js';
 import { SpeechHandle } from './speech_handle.js';
 
 // Break circular dependency: agent_activity.ts → agent.js → beta/workflows/task_group.ts
@@ -81,7 +83,7 @@ function buildMainTaskRunner() {
     },
   };
 
-  const mainTask = (AgentActivity.prototype as Record<string, unknown>).mainTask as (
+  const mainTask = (AgentActivity.prototype as unknown as Record<string, unknown>).mainTask as (
     signal: AbortSignal,
   ) => Promise<void>;
 
@@ -92,6 +94,70 @@ function buildMainTaskRunner() {
     q_updated,
   };
 }
+
+describe('AgentActivity - _toolExecutionInProgress guard', () => {
+  it('should block preemptive generation when tool execution is in progress', () => {
+    // onPreemptiveGeneration checks this._toolExecutionInProgress and early-returns.
+    // We verify the guard by calling the method on a minimal stub where all other
+    // guards pass but _toolExecutionInProgress is true.
+    const onPreemptiveGeneration = (AgentActivity.prototype as unknown as Record<string, unknown>)
+      .onPreemptiveGeneration as (info: PreemptiveGenerationInfo) => void;
+
+    const generateReplySpy = vi.fn();
+    const fakeActivity = {
+      agentSession: { sessionOptions: { preemptiveGeneration: true } },
+      schedulingPaused: false,
+      _currentSpeech: undefined,
+      _toolExecutionInProgress: true,
+      llm: Object.create(LLM.prototype),
+      _preemptiveGeneration: undefined,
+      cancelPreemptiveGeneration: vi.fn(),
+      generateReply: generateReplySpy,
+      agent: { chatCtx: { copy: () => ({ copy: () => ({}) }) } },
+      tools: {},
+      toolChoice: null,
+      logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    };
+
+    onPreemptiveGeneration.call(fakeActivity, {
+      newTranscript: 'test transcript',
+      transcriptConfidence: 1.0,
+    } as PreemptiveGenerationInfo);
+
+    expect(generateReplySpy).not.toHaveBeenCalled();
+    expect(fakeActivity._preemptiveGeneration).toBeUndefined();
+  });
+
+  it('should allow preemptive generation when no tool execution is in progress', () => {
+    const onPreemptiveGeneration = (AgentActivity.prototype as unknown as Record<string, unknown>)
+      .onPreemptiveGeneration as (info: PreemptiveGenerationInfo) => void;
+
+    const mockSpeechHandle = { id: 'test' };
+    const generateReplySpy = vi.fn().mockReturnValue(mockSpeechHandle);
+    const fakeActivity = {
+      agentSession: { sessionOptions: { preemptiveGeneration: true } },
+      schedulingPaused: false,
+      _currentSpeech: undefined,
+      _toolExecutionInProgress: false,
+      llm: Object.create(LLM.prototype),
+      _preemptiveGeneration: undefined,
+      cancelPreemptiveGeneration: vi.fn(),
+      generateReply: generateReplySpy,
+      agent: { chatCtx: { copy: () => ({ copy: () => ({}) }) } },
+      tools: {},
+      toolChoice: null,
+      logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    };
+
+    onPreemptiveGeneration.call(fakeActivity, {
+      newTranscript: 'test transcript',
+      transcriptConfidence: 1.0,
+    } as PreemptiveGenerationInfo);
+
+    expect(generateReplySpy).toHaveBeenCalledOnce();
+    expect(fakeActivity._preemptiveGeneration).toBeDefined();
+  });
+});
 
 describe('AgentActivity - mainTask', () => {
   it('should recover when speech handle is interrupted after authorization', async () => {

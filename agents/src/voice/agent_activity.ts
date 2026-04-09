@@ -130,6 +130,7 @@ export class AgentActivity implements RecognitionHooks {
 
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
+  private _toolExecutionInProgress = false;
   private _preemptiveGeneration?: PreemptiveGeneration;
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
@@ -1042,6 +1043,7 @@ export class AgentActivity implements RecognitionHooks {
       !this.agentSession.sessionOptions.preemptiveGeneration ||
       this.schedulingPaused ||
       (this._currentSpeech !== undefined && !this._currentSpeech.interrupted) ||
+      this._toolExecutionInProgress ||
       !(this.llm instanceof LLM)
     ) {
       return;
@@ -1966,233 +1968,241 @@ export class AgentActivity implements RecognitionHooks {
       onToolExecutionStarted,
       onToolExecutionCompleted,
     });
-
-    await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
-
-    if (audioOutput) {
-      await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
-    }
-
-    const agentStoppedSpeakingAt = Date.now();
-    const assistantMetrics: MetricsReport = {};
-
-    if (llmGenData.ttft !== undefined) {
-      assistantMetrics.llmNodeTtft = llmGenData.ttft; // already in seconds
-    }
-    if (ttsGenData?.ttfb !== undefined) {
-      assistantMetrics.ttsNodeTtfb = ttsGenData.ttfb; // already in seconds
-    }
-    if (agentStartedSpeakingAt !== undefined) {
-      assistantMetrics.startedSpeakingAt = agentStartedSpeakingAt / 1000; // ms -> seconds
-      assistantMetrics.stoppedSpeakingAt = agentStoppedSpeakingAt / 1000; // ms -> seconds
-
-      if (userMetrics?.stoppedSpeakingAt !== undefined) {
-        const e2eLatency = agentStartedSpeakingAt / 1000 - userMetrics.stoppedSpeakingAt;
-        assistantMetrics.e2eLatency = e2eLatency;
-        span.setAttribute(traceTypes.ATTR_E2E_LATENCY, e2eLatency);
-      }
-    }
-
-    span.setAttribute(traceTypes.ATTR_SPEECH_INTERRUPTED, speechHandle.interrupted);
-    let hasSpeechMessage = false;
-
-    // add the tools messages that triggers this reply to the chat context
-    if (toolsMessages) {
-      for (const msg of toolsMessages) {
-        msg.createdAt = replyStartedAt;
-      }
-      // Only insert FunctionCallOutput items into agent._chatCtx since FunctionCall items
-      // were already added by onToolExecutionStarted when the tool execution began.
-      // Inserting function_calls again would create duplicates that break provider APIs
-      // (e.g. Google's "function response parts != function call parts" error).
-      const toolCallOutputs = toolsMessages.filter(
-        (m): m is FunctionCallOutput => m.type === 'function_call_output',
-      );
-      if (toolCallOutputs.length > 0) {
-        this.agent._chatCtx.insert(toolCallOutputs);
-        this.agentSession._toolItemsAdded(toolCallOutputs);
-      }
-    }
-
-    if (speechHandle.interrupted) {
-      this.logger.debug(
-        { speech_id: speechHandle.id },
-        'Aborting all pipeline reply tasks due to interruption',
-      );
-
-      // Stop playout ASAP (don't wait for cancellations), otherwise the segment may finish and we
-      // will correctly (but undesirably) commit a long transcript even though the user said "stop".
-      if (audioOutput) {
-        audioOutput.clearBuffer();
-      }
-
-      replyAbortController.abort();
-      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
-
-      let forwardedText = textOut?.text || '';
+    this._toolExecutionInProgress = true;
+    try {
+      await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
       if (audioOutput) {
-        const playbackEv = await audioOutput.waitForPlayout();
-        if (audioOut?.firstFrameFut.done && !audioOut.firstFrameFut.rejected) {
-          // playback EV is valid only if the first frame was already played
-          this.logger.info(
-            { speech_id: speechHandle.id, playbackPositionInS: playbackEv.playbackPosition },
-            'playout interrupted',
-          );
-          if (playbackEv.synchronizedTranscript) {
-            forwardedText = playbackEv.synchronizedTranscript;
-          }
-        } else {
-          forwardedText = '';
+        await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
+      }
+
+      const agentStoppedSpeakingAt = Date.now();
+      const assistantMetrics: MetricsReport = {};
+
+      if (llmGenData.ttft !== undefined) {
+        assistantMetrics.llmNodeTtft = llmGenData.ttft; // already in seconds
+      }
+      if (ttsGenData?.ttfb !== undefined) {
+        assistantMetrics.ttsNodeTtfb = ttsGenData.ttfb; // already in seconds
+      }
+      if (agentStartedSpeakingAt !== undefined) {
+        assistantMetrics.startedSpeakingAt = agentStartedSpeakingAt / 1000; // ms -> seconds
+        assistantMetrics.stoppedSpeakingAt = agentStoppedSpeakingAt / 1000; // ms -> seconds
+
+        if (userMetrics?.stoppedSpeakingAt !== undefined) {
+          const e2eLatency = agentStartedSpeakingAt / 1000 - userMetrics.stoppedSpeakingAt;
+          assistantMetrics.e2eLatency = e2eLatency;
+          span.setAttribute(traceTypes.ATTR_E2E_LATENCY, e2eLatency);
         }
       }
 
-      if (forwardedText) {
+      span.setAttribute(traceTypes.ATTR_SPEECH_INTERRUPTED, speechHandle.interrupted);
+      let hasSpeechMessage = false;
+
+      // add the tools messages that triggers this reply to the chat context
+      if (toolsMessages) {
+        for (const msg of toolsMessages) {
+          msg.createdAt = replyStartedAt;
+        }
+        // Only insert FunctionCallOutput items into agent._chatCtx since FunctionCall items
+        // were already added by onToolExecutionStarted when the tool execution began.
+        // Inserting function_calls again would create duplicates that break provider APIs
+        // (e.g. Google's "function response parts != function call parts" error).
+        const toolCallOutputs = toolsMessages.filter(
+          (m): m is FunctionCallOutput => m.type === 'function_call_output',
+        );
+        if (toolCallOutputs.length > 0) {
+          this.agent._chatCtx.insert(toolCallOutputs);
+          this.agentSession._toolItemsAdded(toolCallOutputs);
+        }
+      }
+
+      if (speechHandle.interrupted) {
+        this.logger.debug(
+          { speech_id: speechHandle.id },
+          'Aborting all pipeline reply tasks due to interruption',
+        );
+
+        // Stop playout ASAP (don't wait for cancellations), otherwise the segment may finish and we
+        // will correctly (but undesirably) commit a long transcript even though the user said "stop".
+        if (audioOutput) {
+          audioOutput.clearBuffer();
+        }
+
+        replyAbortController.abort();
+        await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+
+        let forwardedText = textOut?.text || '';
+
+        if (audioOutput) {
+          const playbackEv = await audioOutput.waitForPlayout();
+          if (audioOut?.firstFrameFut.done && !audioOut.firstFrameFut.rejected) {
+            // playback EV is valid only if the first frame was already played
+            this.logger.info(
+              { speech_id: speechHandle.id, playbackPositionInS: playbackEv.playbackPosition },
+              'playout interrupted',
+            );
+            if (playbackEv.synchronizedTranscript) {
+              forwardedText = playbackEv.synchronizedTranscript;
+            }
+          } else {
+            forwardedText = '';
+          }
+        }
+
+        if (forwardedText) {
+          hasSpeechMessage = true;
+          const message = ChatMessage.create({
+            role: 'assistant',
+            content: forwardedText,
+            id: llmGenData.id,
+            interrupted: true,
+            createdAt: replyStartedAt,
+            metrics: assistantMetrics,
+          });
+          chatCtx.insert(message);
+          this.agent._chatCtx.insert(message);
+          speechHandle._itemAdded([message]);
+          this.agentSession._conversationItemAdded(message);
+          span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, forwardedText);
+        }
+
+        if (this.agentSession.agentState === 'speaking') {
+          this.agentSession._updateAgentState('listening');
+          if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+            this.audioRecognition.onEndOfAgentSpeech(Date.now());
+            this.restoreInterruptionByAudioActivity();
+          }
+        }
+
+        this.logger.info(
+          { speech_id: speechHandle.id, message: forwardedText },
+          'playout completed with interrupt',
+        );
+        speechHandle._markGenerationDone();
+        await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        return;
+      }
+
+      if (textOut && textOut.text) {
         hasSpeechMessage = true;
         const message = ChatMessage.create({
           role: 'assistant',
-          content: forwardedText,
           id: llmGenData.id,
-          interrupted: true,
+          interrupted: false,
           createdAt: replyStartedAt,
+          content: textOut.text,
           metrics: assistantMetrics,
         });
         chatCtx.insert(message);
         this.agent._chatCtx.insert(message);
         speechHandle._itemAdded([message]);
         this.agentSession._conversationItemAdded(message);
-        span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, forwardedText);
+        span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, textOut.text);
+        this.logger.info(
+          { speech_id: speechHandle.id, message: textOut.text },
+          'playout completed without interruption',
+        );
       }
 
-      if (this.agentSession.agentState === 'speaking') {
+      if (toolOutput.output.length > 0) {
+        this.agentSession._updateAgentState('thinking');
+      } else if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
         if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-          this.audioRecognition.onEndOfAgentSpeech(Date.now());
-          this.restoreInterruptionByAudioActivity();
+          {
+            this.audioRecognition.onEndOfAgentSpeech(Date.now());
+            this.restoreInterruptionByAudioActivity();
+          }
         }
       }
 
-      this.logger.info(
-        { speech_id: speechHandle.id, message: forwardedText },
-        'playout completed with interrupt',
-      );
+      // mark the playout done before waiting for the tool execution
       speechHandle._markGenerationDone();
-      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
-      return;
-    }
+      await executeToolsTask.result;
 
-    if (textOut && textOut.text) {
-      hasSpeechMessage = true;
-      const message = ChatMessage.create({
-        role: 'assistant',
-        id: llmGenData.id,
-        interrupted: false,
-        createdAt: replyStartedAt,
-        content: textOut.text,
-        metrics: assistantMetrics,
-      });
-      chatCtx.insert(message);
-      this.agent._chatCtx.insert(message);
-      speechHandle._itemAdded([message]);
-      this.agentSession._conversationItemAdded(message);
-      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, textOut.text);
-      this.logger.info(
-        { speech_id: speechHandle.id, message: textOut.text },
-        'playout completed without interruption',
+      if (toolOutput.output.length === 0) return;
+
+      // important: no agent output should be used after this point
+      const { maxToolSteps } = this.agentSession.sessionOptions;
+      if (speechHandle.numSteps >= maxToolSteps) {
+        this.logger.warn(
+          { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
+          'maximum number of function calls steps reached',
+        );
+        return;
+      }
+
+      const {
+        functionToolsExecutedEvent,
+        shouldGenerateToolReply,
+        newAgentTask,
+        ignoreTaskSwitch,
+      } = this.summarizeToolExecutionOutput(toolOutput, speechHandle);
+
+      this.agentSession.emit(
+        AgentSessionEventTypes.FunctionToolsExecuted,
+        functionToolsExecutedEvent,
       );
-    }
 
-    if (toolOutput.output.length > 0) {
-      this.agentSession._updateAgentState('thinking');
-    } else if (this.agentSession.agentState === 'speaking') {
-      this.agentSession._updateAgentState('listening');
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        {
-          this.audioRecognition.onEndOfAgentSpeech(Date.now());
-          this.restoreInterruptionByAudioActivity();
+      let schedulingPaused = this.schedulingPaused;
+      if (!ignoreTaskSwitch && newAgentTask !== null) {
+        this.agentSession.updateAgent(newAgentTask);
+        schedulingPaused = true;
+      }
+
+      const toolMessages = [
+        ...functionToolsExecutedEvent.functionCalls,
+        ...functionToolsExecutedEvent.functionCallOutputs,
+      ] as ChatItem[];
+      if (shouldGenerateToolReply) {
+        chatCtx.insert(toolMessages);
+
+        // Increment step count on SAME handle (parity with Python agent_activity.py L2081)
+        speechHandle._numSteps += 1;
+
+        // Avoid setting tool_choice to "required" or a specific function when
+        // passing tool response back to the LLM
+        const respondToolChoice =
+          schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
+
+        // Reuse same speechHandle for tool response (parity with Python agent_activity.py L2122-2140)
+        const toolResponseTask = this.createSpeechTask({
+          taskFn: () =>
+            this.pipelineReplyTask(
+              speechHandle,
+              chatCtx,
+              toolCtx,
+              { toolChoice: respondToolChoice },
+              replyAbortController,
+              instructions,
+              undefined,
+              toolMessages,
+              hasSpeechMessage ? undefined : userMetrics,
+            ),
+          ownedSpeechHandle: speechHandle,
+          name: 'AgentActivity.pipelineReply',
+        });
+
+        toolResponseTask.result.finally(() => this.onPipelineReplyDone());
+
+        this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
+      } else if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
+        for (const msg of toolMessages) {
+          msg.createdAt = replyStartedAt;
+        }
+
+        const toolCallOutputs = toolMessages.filter(
+          (m): m is FunctionCallOutput => m.type === 'function_call_output',
+        );
+
+        if (toolCallOutputs.length > 0) {
+          this.agent._chatCtx.insert(toolCallOutputs);
+          this.agentSession._toolItemsAdded(toolCallOutputs);
         }
       }
-    }
-
-    // mark the playout done before waiting for the tool execution
-    speechHandle._markGenerationDone();
-    await executeToolsTask.result;
-
-    if (toolOutput.output.length === 0) return;
-
-    // important: no agent output should be used after this point
-    const { maxToolSteps } = this.agentSession.sessionOptions;
-    if (speechHandle.numSteps >= maxToolSteps) {
-      this.logger.warn(
-        { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
-        'maximum number of function calls steps reached',
-      );
-      return;
-    }
-
-    const { functionToolsExecutedEvent, shouldGenerateToolReply, newAgentTask, ignoreTaskSwitch } =
-      this.summarizeToolExecutionOutput(toolOutput, speechHandle);
-
-    this.agentSession.emit(
-      AgentSessionEventTypes.FunctionToolsExecuted,
-      functionToolsExecutedEvent,
-    );
-
-    let schedulingPaused = this.schedulingPaused;
-    if (!ignoreTaskSwitch && newAgentTask !== null) {
-      this.agentSession.updateAgent(newAgentTask);
-      schedulingPaused = true;
-    }
-
-    const toolMessages = [
-      ...functionToolsExecutedEvent.functionCalls,
-      ...functionToolsExecutedEvent.functionCallOutputs,
-    ] as ChatItem[];
-    if (shouldGenerateToolReply) {
-      chatCtx.insert(toolMessages);
-
-      // Increment step count on SAME handle (parity with Python agent_activity.py L2081)
-      speechHandle._numSteps += 1;
-
-      // Avoid setting tool_choice to "required" or a specific function when
-      // passing tool response back to the LLM
-      const respondToolChoice =
-        schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
-
-      // Reuse same speechHandle for tool response (parity with Python agent_activity.py L2122-2140)
-      const toolResponseTask = this.createSpeechTask({
-        taskFn: () =>
-          this.pipelineReplyTask(
-            speechHandle,
-            chatCtx,
-            toolCtx,
-            { toolChoice: respondToolChoice },
-            replyAbortController,
-            instructions,
-            undefined,
-            toolMessages,
-            hasSpeechMessage ? undefined : userMetrics,
-          ),
-        ownedSpeechHandle: speechHandle,
-        name: 'AgentActivity.pipelineReply',
-      });
-
-      toolResponseTask.result.finally(() => this.onPipelineReplyDone());
-
-      this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
-    } else if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
-      for (const msg of toolMessages) {
-        msg.createdAt = replyStartedAt;
-      }
-
-      const toolCallOutputs = toolMessages.filter(
-        (m): m is FunctionCallOutput => m.type === 'function_call_output',
-      );
-
-      if (toolCallOutputs.length > 0) {
-        this.agent._chatCtx.insert(toolCallOutputs);
-        this.agentSession._toolItemsAdded(toolCallOutputs);
-      }
+    } finally {
+      this._toolExecutionInProgress = false;
     }
   };
 
@@ -2482,201 +2492,209 @@ export class AgentActivity implements RecognitionHooks {
       onToolExecutionStarted,
       onToolExecutionCompleted,
     });
+    this._toolExecutionInProgress = true;
+    try {
+      await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
-    await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
+      // TODO(brian): add tracing span
 
-    // TODO(brian): add tracing span
+      if (audioOutput) {
+        await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
+      }
 
-    if (audioOutput) {
-      await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
-    }
+      if (speechHandle.interrupted) {
+        this.logger.debug(
+          { speech_id: speechHandle.id },
+          'Aborting all realtime generation tasks due to interruption',
+        );
+        replyAbortController.abort();
+        await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
 
-    if (speechHandle.interrupted) {
-      this.logger.debug(
-        { speech_id: speechHandle.id },
-        'Aborting all realtime generation tasks due to interruption',
-      );
-      replyAbortController.abort();
-      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        if (messageOutputs.length > 0) {
+          // there should be only one message
+          const [msgId, textOut, audioOut, msgModalities] = messageOutputs[0]!;
+          let forwardedText = textOut?.text || '';
+
+          if (audioOutput) {
+            audioOutput.clearBuffer();
+            const playbackEv = await audioOutput.waitForPlayout();
+            let playbackPositionInS = playbackEv.playbackPosition;
+            if (audioOut?.firstFrameFut.done && !audioOut.firstFrameFut.rejected) {
+              // playback EV is valid only if the first frame was already played
+              this.logger.info(
+                { speech_id: speechHandle.id, playbackPositionInS },
+                'playout interrupted',
+              );
+              if (playbackEv.synchronizedTranscript) {
+                forwardedText = playbackEv.synchronizedTranscript;
+              }
+            } else {
+              forwardedText = '';
+              playbackPositionInS = 0;
+            }
+
+            // truncate server-side message
+            this.realtimeSession.truncate({
+              messageId: msgId,
+              audioEndMs: Math.floor(playbackPositionInS * 1000),
+              modalities: msgModalities,
+              audioTranscript: forwardedText,
+            });
+          }
+
+          if (forwardedText) {
+            const message = ChatMessage.create({
+              role: 'assistant',
+              content: forwardedText,
+              id: msgId,
+              interrupted: true,
+            });
+            this.agent._chatCtx.insert(message);
+            speechHandle._itemAdded([message]);
+            this.agentSession._conversationItemAdded(message);
+
+            // TODO(brian): add tracing span
+          }
+          this.logger.info(
+            { speech_id: speechHandle.id, message: forwardedText },
+            'playout completed with interrupt',
+          );
+        }
+        speechHandle._markGenerationDone();
+        await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+
+        // TODO(brian): close tees
+        return;
+      }
 
       if (messageOutputs.length > 0) {
         // there should be only one message
-        const [msgId, textOut, audioOut, msgModalities] = messageOutputs[0]!;
-        let forwardedText = textOut?.text || '';
-
-        if (audioOutput) {
-          audioOutput.clearBuffer();
-          const playbackEv = await audioOutput.waitForPlayout();
-          let playbackPositionInS = playbackEv.playbackPosition;
-          if (audioOut?.firstFrameFut.done && !audioOut.firstFrameFut.rejected) {
-            // playback EV is valid only if the first frame was already played
-            this.logger.info(
-              { speech_id: speechHandle.id, playbackPositionInS },
-              'playout interrupted',
-            );
-            if (playbackEv.synchronizedTranscript) {
-              forwardedText = playbackEv.synchronizedTranscript;
-            }
-          } else {
-            forwardedText = '';
-            playbackPositionInS = 0;
-          }
-
-          // truncate server-side message
-          this.realtimeSession.truncate({
-            messageId: msgId,
-            audioEndMs: Math.floor(playbackPositionInS * 1000),
-            modalities: msgModalities,
-            audioTranscript: forwardedText,
-          });
-        }
-
-        if (forwardedText) {
-          const message = ChatMessage.create({
-            role: 'assistant',
-            content: forwardedText,
-            id: msgId,
-            interrupted: true,
-          });
-          this.agent._chatCtx.insert(message);
-          speechHandle._itemAdded([message]);
-          this.agentSession._conversationItemAdded(message);
-
-          // TODO(brian): add tracing span
-        }
-        this.logger.info(
-          { speech_id: speechHandle.id, message: forwardedText },
-          'playout completed with interrupt',
-        );
+        const [msgId, textOut, _, __] = messageOutputs[0]!;
+        const message = ChatMessage.create({
+          role: 'assistant',
+          content: textOut?.text || '',
+          id: msgId,
+          interrupted: false,
+        });
+        this.agent._chatCtx.insert(message);
+        speechHandle._itemAdded([message]);
+        this.agentSession._conversationItemAdded(message); // mark the playout done before waiting for the tool execution\
+        // TODO(brian): add tracing span
       }
+
+      // mark the playout done before waiting for the tool execution
       speechHandle._markGenerationDone();
-      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
-
       // TODO(brian): close tees
-      return;
-    }
 
-    if (messageOutputs.length > 0) {
-      // there should be only one message
-      const [msgId, textOut, _, __] = messageOutputs[0]!;
-      const message = ChatMessage.create({
-        role: 'assistant',
-        content: textOut?.text || '',
-        id: msgId,
-        interrupted: false,
-      });
-      this.agent._chatCtx.insert(message);
-      speechHandle._itemAdded([message]);
-      this.agentSession._conversationItemAdded(message); // mark the playout done before waiting for the tool execution\
-      // TODO(brian): add tracing span
-    }
+      await executeToolsTask.result;
 
-    // mark the playout done before waiting for the tool execution
-    speechHandle._markGenerationDone();
-    // TODO(brian): close tees
+      if (toolOutput.output.length > 0) {
+        this.agentSession._updateAgentState('thinking');
+      } else if (this.agentSession.agentState === 'speaking') {
+        this.agentSession._updateAgentState('listening');
+      }
 
-    await executeToolsTask.result;
+      if (toolOutput.output.length === 0) {
+        return;
+      }
 
-    if (toolOutput.output.length > 0) {
-      this.agentSession._updateAgentState('thinking');
-    } else if (this.agentSession.agentState === 'speaking') {
-      this.agentSession._updateAgentState('listening');
-    }
+      // important: no agent ouput should be used after this point
+      const { maxToolSteps } = this.agentSession.sessionOptions;
+      if (speechHandle.numSteps >= maxToolSteps) {
+        this.logger.warn(
+          { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
+          'maximum number of function calls steps reached',
+        );
+        return;
+      }
 
-    if (toolOutput.output.length === 0) {
-      return;
-    }
+      const {
+        functionToolsExecutedEvent,
+        shouldGenerateToolReply,
+        newAgentTask,
+        ignoreTaskSwitch,
+      } = this.summarizeToolExecutionOutput(toolOutput, speechHandle);
 
-    // important: no agent ouput should be used after this point
-    const { maxToolSteps } = this.agentSession.sessionOptions;
-    if (speechHandle.numSteps >= maxToolSteps) {
-      this.logger.warn(
-        { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
-        'maximum number of function calls steps reached',
+      this.agentSession.emit(
+        AgentSessionEventTypes.FunctionToolsExecuted,
+        functionToolsExecutedEvent,
       );
-      return;
-    }
 
-    const { functionToolsExecutedEvent, shouldGenerateToolReply, newAgentTask, ignoreTaskSwitch } =
-      this.summarizeToolExecutionOutput(toolOutput, speechHandle);
+      let schedulingPaused = this.schedulingPaused;
+      if (!ignoreTaskSwitch && newAgentTask !== null) {
+        this.agentSession.updateAgent(newAgentTask);
+        schedulingPaused = true;
+      }
 
-    this.agentSession.emit(
-      AgentSessionEventTypes.FunctionToolsExecuted,
-      functionToolsExecutedEvent,
-    );
+      if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
+        // wait all speeches played before updating the tool output and generating the response
+        // most realtime models dont support generating multiple responses at the same time
+        while (this.currentSpeech || this.speechQueue.size() > 0) {
+          if (
+            this.currentSpeech &&
+            !this.currentSpeech.done() &&
+            this.currentSpeech !== speechHandle
+          ) {
+            await this.currentSpeech.waitForPlayout();
+          } else {
+            // Don't block the event loop
+            await new Promise((resolve) => setImmediate(resolve));
+          }
+        }
+        const chatCtx = this.realtimeSession.chatCtx.copy();
+        chatCtx.items.push(...functionToolsExecutedEvent.functionCallOutputs);
 
-    let schedulingPaused = this.schedulingPaused;
-    if (!ignoreTaskSwitch && newAgentTask !== null) {
-      this.agentSession.updateAgent(newAgentTask);
-      schedulingPaused = true;
-    }
+        this.agentSession._toolItemsAdded(
+          functionToolsExecutedEvent.functionCallOutputs as FunctionCallOutput[],
+        );
 
-    if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
-      // wait all speeches played before updating the tool output and generating the response
-      // most realtime models dont support generating multiple responses at the same time
-      while (this.currentSpeech || this.speechQueue.size() > 0) {
-        if (
-          this.currentSpeech &&
-          !this.currentSpeech.done() &&
-          this.currentSpeech !== speechHandle
-        ) {
-          await this.currentSpeech.waitForPlayout();
-        } else {
-          // Don't block the event loop
-          await new Promise((resolve) => setImmediate(resolve));
+        try {
+          await this.realtimeSession.updateChatCtx(chatCtx);
+        } catch (error) {
+          this.logger.warn(
+            { error },
+            'failed to update chat context before generating the function calls results',
+          );
         }
       }
-      const chatCtx = this.realtimeSession.chatCtx.copy();
-      chatCtx.items.push(...functionToolsExecutedEvent.functionCallOutputs);
 
-      this.agentSession._toolItemsAdded(
-        functionToolsExecutedEvent.functionCallOutputs as FunctionCallOutput[],
+      // skip realtime reply if not required or auto-generated
+      if (!shouldGenerateToolReply || this.llm.capabilities.autoToolReplyGeneration) {
+        return;
+      }
+
+      this.realtimeSession.interrupt();
+
+      const replySpeechHandle = SpeechHandle.create({
+        allowInterruptions: speechHandle.allowInterruptions,
+        stepIndex: speechHandle.numSteps + 1,
+        parent: speechHandle,
+      });
+      this.agentSession.emit(
+        AgentSessionEventTypes.SpeechCreated,
+        createSpeechCreatedEvent({
+          userInitiated: false,
+          source: 'tool_response',
+          speechHandle: replySpeechHandle,
+        }),
       );
 
-      try {
-        await this.realtimeSession.updateChatCtx(chatCtx);
-      } catch (error) {
-        this.logger.warn(
-          { error },
-          'failed to update chat context before generating the function calls results',
-        );
-      }
+      const toolChoice = schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
+      this.createSpeechTask({
+        taskFn: (abortController: AbortController) =>
+          this.realtimeReplyTask({
+            speechHandle: replySpeechHandle,
+            modelSettings: { toolChoice },
+            abortController,
+          }),
+        ownedSpeechHandle: replySpeechHandle,
+        name: 'AgentActivity.realtime_reply',
+      });
+
+      this.scheduleSpeech(replySpeechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
+    } finally {
+      this._toolExecutionInProgress = false;
     }
-
-    // skip realtime reply if not required or auto-generated
-    if (!shouldGenerateToolReply || this.llm.capabilities.autoToolReplyGeneration) {
-      return;
-    }
-
-    this.realtimeSession.interrupt();
-
-    const replySpeechHandle = SpeechHandle.create({
-      allowInterruptions: speechHandle.allowInterruptions,
-      stepIndex: speechHandle.numSteps + 1,
-      parent: speechHandle,
-    });
-    this.agentSession.emit(
-      AgentSessionEventTypes.SpeechCreated,
-      createSpeechCreatedEvent({
-        userInitiated: false,
-        source: 'tool_response',
-        speechHandle: replySpeechHandle,
-      }),
-    );
-
-    const toolChoice = schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
-    this.createSpeechTask({
-      taskFn: (abortController: AbortController) =>
-        this.realtimeReplyTask({
-          speechHandle: replySpeechHandle,
-          modelSettings: { toolChoice },
-          abortController,
-        }),
-      ownedSpeechHandle: replySpeechHandle,
-      name: 'AgentActivity.realtime_reply',
-    });
-
-    this.scheduleSpeech(replySpeechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
   }
 
   private summarizeToolExecutionOutput(toolOutput: ToolOutput, speechHandle: SpeechHandle) {
