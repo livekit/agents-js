@@ -584,7 +584,7 @@ export class WSLLMStream extends llm.LLMStream {
           promptTokens: event.response.usage.input_tokens,
           promptCachedTokens: event.response.usage.input_tokens_details.cached_tokens,
           totalTokens: event.response.usage.total_tokens,
-          serviceTier: (event.response as Record<string, unknown>).service_tier as string | undefined,
+          serviceTier: event.response.service_tier ?? undefined,
         },
       };
     }
