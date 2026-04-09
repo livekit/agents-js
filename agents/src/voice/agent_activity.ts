@@ -517,6 +517,7 @@ export class AgentActivity implements RecognitionHooks {
         inlineTask: true,
         name: 'AgentActivity_onEnter',
       });
+      this.agentSession._trackRunHandle(this._onEnterTask);
     }
 
     startSpan.end();

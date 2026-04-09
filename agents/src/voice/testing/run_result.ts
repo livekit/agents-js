@@ -35,6 +35,13 @@ type OutputSchema<T> = z.ZodType<T>;
 
 // Environment variable for verbose output
 const evalsVerbose = parseInt(process.env.LIVEKIT_EVALS_VERBOSE || '0', 10);
+const rawVerboseMaxChars = parseInt(process.env.LIVEKIT_EVALS_VERBOSE_MAX_CHARS || '300', 10);
+const evalsVerboseMaxChars =
+  Number.isFinite(rawVerboseMaxChars) && rawVerboseMaxChars > 0 ? rawVerboseMaxChars : 300;
+
+function truncateVerboseText(text: string): string {
+  return text.length > evalsVerboseMaxChars ? `${text.slice(0, evalsVerboseMaxChars)}...` : text;
+}
 
 /**
  * Result of a test run containing recorded events and assertion utilities.
@@ -49,6 +56,7 @@ const evalsVerbose = parseInt(process.env.LIVEKIT_EVALS_VERBOSE || '0', 10);
 export class RunResult<T = unknown> {
   private _events: RunEvent[] = [];
   private doneFut = new Future<void>();
+  private minCreatedAt = Number.NEGATIVE_INFINITY;
   private userInput?: string;
   private outputType?: OutputSchema<T>;
   private finalOutputValue?: T;
@@ -65,6 +73,12 @@ export class RunResult<T = unknown> {
   constructor(options?: { userInput?: string; outputType?: OutputSchema<T> }) {
     this.userInput = options?.userInput;
     this.outputType = options?.outputType;
+  }
+
+  /** @internal */
+  _setMinCreatedAt(createdAt: number): void {
+    this.minCreatedAt = createdAt;
+    this._events = this._events.filter((event) => event.item.createdAt >= this.minCreatedAt);
   }
 
   /**
@@ -136,6 +150,9 @@ export class RunResult<T = unknown> {
    * Records an agent handoff event.
    */
   _agentHandoff(params: { item: AgentHandoffItem; oldAgent?: Agent; newAgent: Agent }): void {
+    if (params.item.createdAt < this.minCreatedAt) {
+      return;
+    }
     const event: AgentHandoffEvent = {
       type: 'agent_handoff',
       item: params.item,
@@ -151,6 +168,9 @@ export class RunResult<T = unknown> {
    * Called when a chat item is added during the run.
    */
   _itemAdded(item: ChatItem): void {
+    if (item.createdAt < this.minCreatedAt) {
+      return;
+    }
     if (this.doneFut.done) {
       return;
     }
@@ -225,10 +245,17 @@ export class RunResult<T = unknown> {
     if (isSpeechHandle(handle)) {
       this.lastSpeechHandle = handle;
     }
-
     const allDone = [...this.handles].every((h) => (isSpeechHandle(h) ? h.done() : h.done));
     if (allDone) {
-      this._markDone();
+      // Defer by one microtask so in-flight AgentTask finally blocks can add
+      // resumeTransitionTask before we resolve.  If a new handle appears during
+      // the tick we abort and let the new handle's done callback re-trigger.
+      const countBefore = this.handles.size;
+      Promise.resolve().then(() => {
+        if (this.doneFut.done) return;
+        if (this.handles.size !== countBefore) return;
+        this._markDone();
+      });
     }
   }
 
@@ -882,8 +909,7 @@ export class MessageAssert extends EventAssert {
     if (!success) {
       this._raise(`Judgment failed: ${reason}`);
     } else if (evalsVerbose) {
-      const printMsg =
-        msgContent.length > 30 ? msgContent.slice(0, 30).replace(/\n/g, '\\n') + '...' : msgContent;
+      const printMsg = truncateVerboseText(msgContent.replace(/\n/g, '\\n'));
       console.log(`- Judgment succeeded for \`${printMsg}\`: \`${reason}\``);
     }
 
@@ -973,14 +999,14 @@ function formatEvents(events: RunEvent[], selectedIndex?: number): string[] {
           : Array.isArray(content)
             ? content.filter((c): c is string => typeof c === 'string').join(' ')
             : '';
-      const truncated = textContent.length > 50 ? textContent.slice(0, 50) + '...' : textContent;
+      const truncated = truncateVerboseText(textContent);
       line = `${prefix}[${i}] { type: "message", role: "${role}", content: "${truncated}", interrupted: ${interrupted} }`;
     } else if (isFunctionCallEvent(event)) {
       const { name, args } = event.item;
       line = `${prefix}[${i}] { type: "function_call", name: "${name}", args: ${args} }`;
     } else if (isFunctionCallOutputEvent(event)) {
       const { output, isError } = event.item;
-      const truncated = output.length > 50 ? output.slice(0, 50) + '...' : output;
+      const truncated = truncateVerboseText(output);
       line = `${prefix}[${i}] { type: "function_call_output", output: "${truncated}", isError: ${isError} }`;
     } else if (isAgentHandoffEvent(event)) {
       line = `${prefix}[${i}] { type: "agent_handoff", oldAgent: "${event.oldAgent?.constructor.name}", newAgent: "${event.newAgent.constructor.name}" }`;
