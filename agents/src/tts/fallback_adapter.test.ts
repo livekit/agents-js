@@ -50,11 +50,12 @@ class MockSynthesizeStream extends SynthesizeStream {
 class MockChunkedStream extends ChunkedStream {
   label = 'mock.ChunkedStream';
   constructor(
-    tts: MockTTS,
+    private mockTts: MockTTS,
     text: string,
     private shouldFail: boolean,
+    connOptions?: APIConnectOptions,
   ) {
-    super(text, tts);
+    super(text, mockTts, connOptions);
   }
   protected async run(): Promise<void> {
     if (this.shouldFail) {
@@ -63,7 +64,7 @@ class MockChunkedStream extends ChunkedStream {
     this.queue.put({
       requestId: 'mock-req',
       segmentId: 'mock-seg',
-      frame: new AudioFrame(new Int16Array(160), SAMPLE_RATE, 1, 160),
+      frame: new AudioFrame(new Int16Array(160), this.mockTts.sampleRate, 1, 160),
       final: true,
     });
   }
@@ -78,8 +79,8 @@ class MockTTS extends TTS {
     this.label = label;
   }
 
-  synthesize(text: string): ChunkedStream {
-    return new MockChunkedStream(this, text, this.shouldFail);
+  synthesize(text: string, connOptions?: APIConnectOptions): ChunkedStream {
+    return new MockChunkedStream(this, text, this.shouldFail, connOptions);
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
@@ -186,6 +187,44 @@ describe('TTS FallbackAdapter', () => {
     expect(adapter.status[1]!.available).toBe(true);
 
     stream.close();
+    await adapter.close();
+  });
+
+  it('should fall back in the non-streaming (synthesize) path with mismatched sample rates', async () => {
+    // FallbackChunkedStream has the same phantom-flush vulnerability as
+    // FallbackSynthesizeStream: when the primary's sample rate differs from
+    // the adapter's output rate a resampler is created, and flushing an
+    // unused resampler can return a ghost frame that masks a silent
+    // failure. Exercise the non-streaming adapter.synthesize() path.
+    const primary = new MockTTS('primary', 22050);
+    primary.shouldFail = true;
+    const secondary = new MockTTS('secondary', 24000);
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, secondary],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+
+    const chunked = adapter.synthesize('hello world');
+
+    const iterate = (async () => {
+      let frameCount = 0;
+      for await (const _event of chunked) {
+        frameCount++;
+      }
+      return frameCount;
+    })();
+
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('fallback adapter deadlocked')), 3000),
+    );
+
+    const frameCount = await Promise.race([iterate, timeout]);
+
+    expect(frameCount).toBeGreaterThan(0);
+    expect(adapter.status[0]!.available).toBe(false);
+    expect(adapter.status[1]!.available).toBe(true);
+
     await adapter.close();
   });
 });

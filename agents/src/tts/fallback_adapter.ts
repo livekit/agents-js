@@ -333,12 +333,17 @@ class FallbackChunkedStream extends ChunkedStream {
           maxRetry: this.adapter.maxRetryPerTTS,
         };
         const stream = tts.synthesize(this.inputText, connOptions, this.abortSignal);
-        let audioReceived = false;
+        // Tracks whether the inner stream yielded any real audio frames.
+        // A phantom `AudioResampler.flush()` frame (observed on rtc-node
+        // 0.13.25) could otherwise mask a silent failure as a success.
+        let sawRawAudio = false;
         for await (const audio of stream) {
           if (this.abortController.signal.aborted) {
             stream.close();
             return;
           }
+
+          sawRawAudio = true;
 
           if (resampler) {
             for (const frame of resampler.push(audio.frame)) {
@@ -346,18 +351,18 @@ class FallbackChunkedStream extends ChunkedStream {
                 ...audio,
                 frame,
               });
-              audioReceived = true;
             }
           } else {
             this.queue.put(audio);
-            audioReceived = true;
           }
           lastRequestId = audio.requestId;
           lastSegmentId = audio.segmentId;
         }
 
-        // Flush any remaining resampled frames
-        if (resampler) {
+        // Only flush the resampler if real audio actually went in — otherwise
+        // flush() can return phantom frames that would mask a silent failure
+        // from the primary provider.
+        if (resampler && sawRawAudio) {
           for (const frame of resampler.flush()) {
             this.queue.put({
               requestId: lastRequestId || '',
@@ -365,12 +370,11 @@ class FallbackChunkedStream extends ChunkedStream {
               frame,
               final: true,
             });
-            audioReceived = true;
           }
         }
 
-        // Verify audio was actually received - silent failures should trigger fallback
-        if (!audioReceived) {
+        // Silent failures must trigger fallback.
+        if (!sawRawAudio) {
           throw new APIConnectionError({
             message: 'TTS synthesis completed but no audio was received',
           });
