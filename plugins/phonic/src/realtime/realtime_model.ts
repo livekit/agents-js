@@ -154,6 +154,10 @@ export class RealtimeModel extends llm.RealtimeModel {
       autoToolReplyGeneration: true,
       manualFunctionCalls: false,
       audioOutput: true,
+      midSessionChatCtxUpdate: true,
+      midSessionInstructionsUpdate: true,
+      midSessionToolsUpdate: true,
+      perResponseToolChoice: false,
     });
 
     const apiKey = options.apiKey || process.env.PHONIC_API_KEY;
@@ -244,7 +248,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private connectTask: Promise<void>;
   private toolDefinitions: Record<string, unknown>[] = [];
   private pendingToolCallIds = new Set<string>();
-  private readyToStart = false;
+  private readyToStart = new Future<void>();
+  private pendingGenerateReplyFut?: Future<llm.GenerationCreatedEvent>;
   private systemPromptPostfix = '';
 
   constructor(realtimeModel: RealtimeModel) {
@@ -381,15 +386,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.toolsReady.resolve();
   }
 
-  async _updateSession({
-    instructions,
-    chatCtx,
-    tools,
-  }: {
-    instructions?: string;
-    chatCtx?: llm.ChatContext;
-    tools?: llm.ToolContext;
-  } = {}): Promise<void> {
+  async _updateSession(
+    instructions?: string,
+    chatCtx?: llm.ChatContext,
+    tools?: llm.ToolContext,
+  ): Promise<void> {
     if (!this.configSent) {
       if (instructions !== undefined) {
         await this.updateInstructions(instructions);
@@ -459,7 +460,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   pushAudio(frame: AudioFrame): void {
-    if (this.closed || !this.readyToStart) {
+    if (this.closed || !this.readyToStart.done) {
       return;
     }
 
@@ -480,14 +481,24 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
-    if (this.socket) {
-      this.socket.sendGenerateReply({ type: 'generate_reply', system_message: instructions });
-    } else {
-      this.logger.warn('Cannot send generate_reply: WebSocket not available');
+    if (this.closed) {
+      return Promise.reject(new Error('session is closed'));
     }
-
     this.closeCurrentGeneration({ interrupted: false });
-    return this.startNewAssistantTurn({ userInitiated: true });
+    this.pendingGenerateReplyFut = new Future<llm.GenerationCreatedEvent>();
+    this.sendGenerateReply(instructions);
+
+    return this.pendingGenerateReplyFut.await;
+  }
+
+  private async sendGenerateReply(instructions?: string): Promise<void> {
+    await this.readyToStart.await;
+    if (this.closed || !this.socket) {
+      this.pendingGenerateReplyFut?.reject(new Error('session is closed'));
+      this.pendingGenerateReplyFut = undefined;
+      return;
+    }
+    this.socket.sendGenerateReply({ type: 'generate_reply', system_message: instructions });
   }
 
   async commitAudio(): Promise<void> {
@@ -512,6 +523,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.closedFuture.resolve();
     this.instructionsReady.resolve();
     this.toolsReady.resolve();
+    this.readyToStart.resolve();
     this.closeCurrentGeneration({ interrupted: false });
     this.inputResampler = undefined;
     this.socket?.close();
@@ -617,7 +629,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.handleToolCallInterrupted(message);
         break;
       case 'ready_to_start_conversation':
-        this.readyToStart = true;
+        this.readyToStart.resolve();
         break;
       case 'assistant_chose_not_to_respond':
       case 'input_cancelled':
@@ -758,6 +770,12 @@ export class RealtimeSession extends llm.RealtimeSession {
       responseId,
     };
 
+    if (this.pendingGenerateReplyFut && !this.pendingGenerateReplyFut.done) {
+      generationEvent.userInitiated = true;
+      this.pendingGenerateReplyFut.resolve(generationEvent);
+      this.pendingGenerateReplyFut = undefined;
+    }
+
     this.emit('generation_created', generationEvent);
     return generationEvent;
   }
@@ -850,6 +868,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
     if (this.inputResampler) {
       if (frame.sampleRate !== this.inputResamplerInputRate) {
+        this.inputResampler.close();
         this.inputResampler = undefined;
         this.inputResamplerInputRate = undefined;
       }
