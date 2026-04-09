@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  type APIConnectOptions,
   APIConnectionError,
   APIError,
   APIStatusError,
@@ -787,8 +788,8 @@ export class TTS extends tts.TTS {
     return new ChunkedStream(this, text, { ...this.#opts });
   }
 
-  stream(): SynthesizeStream {
-    const stream = new SynthesizeStream(this, { ...this.#opts });
+  stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
+    const stream = new SynthesizeStream(this, { ...this.#opts }, options?.connOptions);
     this.#streams.add(stream);
     return stream;
   }
@@ -910,8 +911,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
   label = 'elevenlabs.SynthesizeStream';
 
-  constructor(tts: TTS, opts: ResolvedTTSOptions) {
-    super(tts);
+  constructor(tts: TTS, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions) {
+    super(tts, connOptions);
     this.#tts = tts;
     this.#opts = opts;
     this.#contextId = shortuuid();

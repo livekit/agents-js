@@ -204,7 +204,28 @@ export abstract class SynthesizeStream
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    startSoon(() => this.mainTask().finally(() => this.queue.close()));
+    startSoon(async () => {
+      try {
+        await this.mainTask();
+      } catch {
+        // errors are already reported via emitError; swallow here to
+        // avoid an unhandled rejection from this fire-and-forget task.
+      } finally {
+        this.queue.close();
+        // Wait for monitorMetrics (if it ever started) to drain the now-closed
+        // queue; its own .finally will close `this.output`. If it never started
+        // (e.g. mainTask failed before any pushText was called), close `this.output`
+        // directly — otherwise consumers iterating over this stream would hang
+        // forever. This matters for FallbackAdapter, which needs to observe the
+        // inner stream's completion in order to fall back to the next provider.
+        if (this.#monitorMetricsTask) {
+          await this.#monitorMetricsTask.catch(() => {});
+        }
+        if (!this.output.closed) {
+          this.output.close();
+        }
+      }
+    });
   }
 
   private _mainTaskImpl = async (span: Span) => {
