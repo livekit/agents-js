@@ -336,7 +336,7 @@ export class LLMStream extends llm.LLMStream {
       if (this.provider) {
         extraHeaders['X-LiveKit-Inference-Provider'] = this.provider;
       }
-      requestOptions.extra_headers = extraHeaders;
+      delete requestOptions.extra_headers;
 
       const stream = await this.client.chat.completions.create(
         {
@@ -348,6 +348,7 @@ export class LLMStream extends llm.LLMStream {
           ...requestOptions,
         },
         {
+          headers: extraHeaders,
           timeout: this.connOptions.timeoutMs,
           signal: this.abortController.signal,
         },
