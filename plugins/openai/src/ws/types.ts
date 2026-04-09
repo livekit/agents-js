@@ -66,6 +66,7 @@ export const wsResponseCompletedEventSchema = z.object({
   response: z
     .object({
       id: z.string(),
+      service_tier: z.string().nullable().optional(),
       usage: z
         .object({
           output_tokens: z.number(),
