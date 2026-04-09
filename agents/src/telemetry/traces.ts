@@ -259,8 +259,7 @@ export async function setupCloudTracer(options: {
       resource,
       spanProcessors: [new MetadataSpanProcessor(metadata), new BatchSpanProcessor(spanExporter)],
     });
-    tracerProvider.register();
-
+    // Don't call tracerProvider.register() — it would replace the global context manager.
     setTracerProvider(tracerProvider);
 
     // Initialize standalone Pino cloud exporter (no OTEL SDK dependency)
