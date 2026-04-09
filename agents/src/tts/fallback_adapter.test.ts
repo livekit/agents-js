@@ -16,11 +16,11 @@ class MockSynthesizeStream extends SynthesizeStream {
   label = 'mock.SynthesizeStream';
 
   constructor(
-    tts: MockTTS,
+    private mockTts: MockTTS,
     private shouldFail: boolean,
     connOptions?: APIConnectOptions,
   ) {
-    super(tts, connOptions);
+    super(mockTts, connOptions);
   }
 
   protected async run(): Promise<void> {
@@ -40,7 +40,7 @@ class MockSynthesizeStream extends SynthesizeStream {
       this.queue.put({
         requestId: 'mock-req',
         segmentId: 'mock-seg',
-        frame: new AudioFrame(new Int16Array(160), SAMPLE_RATE, 1, 160),
+        frame: new AudioFrame(new Int16Array(160), this.mockTts.sampleRate, 1, 160),
         final: false,
       });
     }
@@ -73,8 +73,8 @@ class MockTTS extends TTS {
   label: string;
   shouldFail = false;
 
-  constructor(label: string) {
-    super(SAMPLE_RATE, 1, { streaming: true });
+  constructor(label: string, sampleRate: number = SAMPLE_RATE) {
+    super(sampleRate, 1, { streaming: true });
     this.label = label;
   }
 
@@ -117,6 +117,55 @@ describe('TTS FallbackAdapter', () => {
     // With the deadlock bug, this loop hangs forever because the inner
     // primary stream's this.output is never closed. Use a hard timeout to
     // turn the deadlock into a test failure.
+    const iterate = (async () => {
+      let frameCount = 0;
+      for await (const event of stream) {
+        if (event === SynthesizeStream.END_OF_STREAM) break;
+        frameCount++;
+      }
+      return frameCount;
+    })();
+
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('fallback adapter deadlocked')), 3000),
+    );
+
+    const frameCount = await Promise.race([iterate, timeout]);
+
+    expect(frameCount).toBeGreaterThan(0);
+    expect(adapter.status[0]!.available).toBe(false);
+    expect(adapter.status[1]!.available).toBe(true);
+
+    stream.close();
+    await adapter.close();
+  });
+
+  it('should fall back when the primary has a mismatched sample rate and emits no audio', async () => {
+    // Primary runs at 22050Hz, adapter aggregates at 24000Hz → a resampler is
+    // created for the primary. The primary throws with no frames ever pushed,
+    // so `resampler.push()` is never called. Regression test for a bug where
+    // `resampler.flush()` on an unused resampler returned a phantom frame,
+    // flipping `audioPushed` to true and making the adapter incorrectly
+    // treat a silent failure as a success.
+    const primary = new MockTTS('primary', 22050);
+    primary.shouldFail = true;
+    const secondary = new MockTTS('secondary', 24000);
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, secondary],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+
+    const stream = adapter.stream();
+    stream.updateInputStream(
+      new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('hello world');
+          controller.close();
+        },
+      }),
+    );
+
     const iterate = (async () => {
       let frameCount = 0;
       for await (const event of stream) {
