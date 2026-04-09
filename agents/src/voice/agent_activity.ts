@@ -2927,7 +2927,8 @@ export class AgentActivity implements RecognitionHooks {
       });
     } catch (e) {
       this.logger.error('failed to say text: %s', String(e));
-      this.agentSession._updateAgentState('listening');
+      // Keep state transition logic centralized so queued/planned speeches are respected.
+      this.onPipelineReplyDone();
       return;
     }
 
