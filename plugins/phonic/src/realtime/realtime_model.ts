@@ -391,19 +391,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     chatCtx?: llm.ChatContext,
     tools?: llm.ToolContext,
   ): Promise<void> {
-    if (!this.configSent) {
-      if (instructions !== undefined) {
-        await this.updateInstructions(instructions);
-      }
-      if (chatCtx !== undefined) {
-        await this.updateChatCtx(chatCtx);
-      }
-      if (tools !== undefined) {
-        await this.updateTools(tools);
-      }
-      return;
-    }
-
+    await this.readyToStart.await;
     if (instructions !== undefined) {
       this.options.instructions = instructions;
     }
@@ -525,6 +513,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.toolsReady.resolve();
     this.readyToStart.resolve();
     this.closeCurrentGeneration({ interrupted: false });
+    this.rejectPendingGenerateReply();
     this.inputResampler = undefined;
     this.socket?.close();
     await this.connectTask;
@@ -547,6 +536,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.socket.on('error', (error: Error) => this.emitError(error, false));
     this.socket.on('close', (event: { code?: number }) => {
       this.closeCurrentGeneration({ interrupted: false });
+      this.rejectPendingGenerateReply();
       if (!this.closed && event.code !== WS_CLOSE_NORMAL) {
         this.emitError(new Error(`Phonic STS socket closed with code ${event.code ?? -1}`), false);
       }
@@ -804,6 +794,13 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.currentGeneration = undefined;
   }
 
+  private rejectPendingGenerateReply(): void {
+    if (this.pendingGenerateReplyFut && !this.pendingGenerateReplyFut.done) {
+      this.pendingGenerateReplyFut.reject(new Error('session is closed'));
+      this.pendingGenerateReplyFut = undefined;
+    }
+  }
+
   private emitError(error: Error, recoverable: boolean): void {
     this.emit('error', {
       timestamp: Date.now(),
@@ -842,9 +839,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       audio_speed: this.options.audioSpeed,
       tools: toolsPayload,
       boosted_keywords: this.options.boostedKeywords,
-      ...(this.options.minWordsToInterrupt !== undefined && {
-        min_words_to_interrupt: this.options.minWordsToInterrupt,
-      }),
+      // ...(this.options.minWordsToInterrupt !== undefined && {
+      //   min_words_to_interrupt: this.options.minWordsToInterrupt,
+      // }),
       generate_no_input_poke_text: this.options.generateNoInputPokeText,
       no_input_poke_sec: this.options.noInputPokeSec,
       no_input_poke_text: this.options.noInputPokeText,
