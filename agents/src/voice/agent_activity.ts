@@ -408,7 +408,9 @@ export class AgentActivity implements RecognitionHooks {
       // skip the update if the session is reused and no mid-session update is supported
       // this means the content is the same as the previous session
       const capabilities = this.llm.capabilities;
-      if (!rtReused && this.realtimeSession?.realtimeModel.provider == 'phonic') {
+      if (rtReused && this.realtimeSession?.realtimeModel.provider == 'phonic') {
+        // if the session is being reused, then call phonic's _updateSession to send a full mid-session config update.
+        // otherwise, call the separate update_* functions to build the initial config.
         try {
           await (this.realtimeSession as any)._updateSession(
             this.agent.instructions,
