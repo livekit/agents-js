@@ -22,6 +22,7 @@ import type {
   TTSModelUsage,
 } from '../metrics/model_usage.js';
 import { Future, Task, shortuuid } from '../utils.js';
+import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
 import {
   AgentSessionEventTypes,
@@ -724,6 +725,14 @@ export class SessionHost {
         });
       case 'getSessionUsage':
         return this.handleGetSessionUsage(req.requestId);
+      case 'getFrameworkInfo':
+        return this.sendResponse(req.requestId, {
+          case: 'getFrameworkInfo',
+          value: new pb.SessionResponse_GetFrameworkInfoResponse({
+            sdk: 'js',
+            sdkVersion: version,
+          }),
+        });
     }
   }
 
