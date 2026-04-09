@@ -10,10 +10,10 @@ import { setParticipantSpanAttributes } from './utils.js';
 
 export enum AMDCategory {
   HUMAN = 'human',
-  MACHINE = 'machine',
   MACHINE_IVR = 'machine-ivr',
   MACHINE_VM = 'machine-vm',
-  UNKNOWN = 'unknown',
+  MACHINE_UNAVAILABLE = 'machine-unavailable',
+  UNCERTAIN = 'uncertain',
 }
 
 export interface AMDResult {
@@ -36,12 +36,12 @@ const DEFAULT_MAX_TRANSCRIPT_TURNS = 2;
 
 const AMD_PROMPT = `You classify the start of a phone call.
 Return strict JSON with keys "category" and "reason".
-Valid categories: "human", "machine", "machine-ivr", "machine-vm", "unknown".
+Valid categories: "human", "machine-ivr", "machine-vm", "machine-unavailable", "uncertain".
 - "human": a live person answered.
-- "machine": generic answering machine signal without enough detail to distinguish IVR or voicemail.
 - "machine-ivr": an IVR, phone tree, or menu system answered.
 - "machine-vm": a voicemail greeting or mailbox prompt answered.
-- "unknown": not enough evidence yet.
+- "machine-unavailable": the call reached an unavailable mailbox, failed mailbox, or generic machine state where no message should be left.
+- "uncertain": not enough evidence yet.
 Do not include markdown fences or extra text.`;
 
 export class AMD {
@@ -157,7 +157,7 @@ export class AMD {
               transcript.length > 0
                 ? await this.detect(transcript)
                 : {
-                    category: AMDCategory.UNKNOWN,
+                    category: AMDCategory.UNCERTAIN,
                     transcript: '',
                     reason,
                     rawResponse: '',
@@ -180,7 +180,7 @@ export class AMD {
 
           const result = await this.detect(transcriptParts.join('\n'));
           if (
-            result.category !== AMDCategory.UNKNOWN ||
+            result.category !== AMDCategory.UNCERTAIN ||
             transcriptParts.length >= this.maxTranscriptTurns
           ) {
             await finish(result, resolveRun);
@@ -240,9 +240,9 @@ export class AMD {
       transcript,
       rawResponse,
       isMachine:
-        parsed.category === AMDCategory.MACHINE ||
         parsed.category === AMDCategory.MACHINE_IVR ||
-        parsed.category === AMDCategory.MACHINE_VM,
+        parsed.category === AMDCategory.MACHINE_VM ||
+        parsed.category === AMDCategory.MACHINE_UNAVAILABLE,
     };
   }
 
@@ -263,7 +263,7 @@ export class AMD {
       };
     } catch {
       return {
-        category: AMDCategory.UNKNOWN,
+        category: AMDCategory.UNCERTAIN,
         reason: normalized || 'Failed to parse AMD model response.',
       };
     }
@@ -273,14 +273,16 @@ export class AMD {
     switch (category) {
       case AMDCategory.HUMAN:
         return AMDCategory.HUMAN;
-      case AMDCategory.MACHINE:
-        return AMDCategory.MACHINE;
       case AMDCategory.MACHINE_IVR:
         return AMDCategory.MACHINE_IVR;
       case AMDCategory.MACHINE_VM:
         return AMDCategory.MACHINE_VM;
+      case AMDCategory.MACHINE_UNAVAILABLE:
+        return AMDCategory.MACHINE_UNAVAILABLE;
+      case AMDCategory.UNCERTAIN:
+        return AMDCategory.UNCERTAIN;
       default:
-        return AMDCategory.UNKNOWN;
+        return AMDCategory.UNCERTAIN;
     }
   }
 }

@@ -89,6 +89,33 @@ describe('AMD', () => {
     expect(session.interrupt).toHaveBeenCalledWith({ force: true });
   });
 
+  it('should classify unavailable mailbox as machine', async () => {
+    const session = new MockSession();
+    const llm = new StaticLLM(
+      JSON.stringify({
+        category: AMDCategory.MACHINE_UNAVAILABLE,
+        reason: 'The mailbox is unavailable and cannot accept messages.',
+      }),
+    );
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), { llm });
+
+    const promise = amd.execute();
+    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
+      type: 'user_input_transcribed',
+      transcript: 'The mailbox you are trying to reach is unavailable',
+      isFinal: true,
+      speakerId: null,
+      createdAt: Date.now(),
+      language: null,
+    });
+
+    await expect(promise).resolves.toMatchObject({
+      category: AMDCategory.MACHINE_UNAVAILABLE,
+      isMachine: true,
+    });
+  });
+
   it('should resume authorization when detection fails', async () => {
     const session = new MockSession();
     const llm = new StaticLLM(new Error('boom'));
