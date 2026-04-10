@@ -128,7 +128,7 @@ export class LLMStream extends llm.LLMStream {
 
   protected async run(): Promise<void> {
     try {
-      const messages = buildMessages(this.chatCtx);
+      const messages = buildMessages(this.chatCtx, this.logger);
 
       // Build tools array from toolCtx
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -158,7 +158,13 @@ export class LLMStream extends llm.LLMStream {
             toolChoice: toMistralToolChoice(this.#toolChoice),
           }),
         },
-        { fetchOptions: { signal: this.abortController.signal } },
+        {
+          fetchOptions: {
+            signal: this.abortController.signal,
+            // @ts-ignore - Mistral SDK might not have 'timeout' in its TS definitions for fetchOptions, but passes it to fetch
+            timeout: Math.floor(this.connOptions.timeoutMs),
+          },
+        },
       );
 
       // Track each in-progress tool call by its stream index.
@@ -248,6 +254,11 @@ export class LLMStream extends llm.LLMStream {
         }
       }
     } catch (error: unknown) {
+      // Don't retry if the request was intentionally aborted
+      if (this.abortController.signal.aborted) {
+        throw error;
+      }
+
       // Re-throw errors already in the framework's error hierarchy
       if (error instanceof APIStatusError || error instanceof APIConnectionError) {
         throw error;
@@ -313,7 +324,7 @@ function toMistralToolChoice(choice: llm.ToolChoice | undefined): 'auto' | 'none
  * 3. Tool response messages use the FunctionCall's name (always populated), not the
  *    FunctionCallOutput's name (defaults to '').
  */
-function buildMessages(chatCtx: llm.ChatContext): object[] {
+function buildMessages(chatCtx: llm.ChatContext, logger: any): object[] {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const messages: any[] = [];
 
@@ -334,7 +345,13 @@ function buildMessages(chatCtx: llm.ChatContext): object[] {
     if (item.type === 'message') {
       const role = item.role;
       const text = item.content
-        .filter((c): c is string => typeof c === 'string')
+        .filter((c): c is string => {
+          if (typeof c !== 'string') {
+            logger.warn('Mistral plugin: non-string content found, vision content is not yet supported');
+            return false;
+          }
+          return true;
+        })
         .join('\n');
 
       if (role === 'system' || role === 'developer') {
