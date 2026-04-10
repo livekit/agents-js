@@ -970,6 +970,7 @@ export async function* readStream<T>(
   stream: ReadableStream<T>,
   signal?: AbortSignal,
 ): AsyncGenerator<T> {
+  if (signal?.aborted) return;
   const reader = stream.getReader();
   try {
     if (signal) {
@@ -998,6 +999,10 @@ export async function* readStream<T>(
 }
 
 export async function waitForAbort(signal: AbortSignal) {
+  if (signal.aborted) {
+    return;
+  }
+
   const abortFuture = new Future<void>();
   const handler = () => {
     abortFuture.resolve();

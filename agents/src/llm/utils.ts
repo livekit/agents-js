@@ -247,6 +247,33 @@ export interface FormatChatHistoryOptions {
   includeTimestamps?: boolean;
 }
 
+export type ChatContextValidationSeverity = 'error' | 'warning';
+
+export interface ChatContextValidationIssue {
+  severity: ChatContextValidationSeverity;
+  code:
+    | 'duplicate_id'
+    | 'timestamp_order'
+    | 'empty_message_content'
+    | 'empty_text_term'
+    | 'missing_image_term'
+    | 'invalid_audio_term'
+    | 'invalid_function_call'
+    | 'invalid_function_call_args'
+    | 'invalid_function_call_output'
+    | 'orphan_function_call_output';
+  index: number;
+  itemId: string;
+  message: string;
+}
+
+export interface ChatContextValidationResult {
+  valid: boolean;
+  errors: number;
+  warnings: number;
+  issues: ChatContextValidationIssue[];
+}
+
 /**
  * Render a chat context into a readable multiline string for debugging and logging.
  */
@@ -271,6 +298,148 @@ export function formatChatHistory(
     `Chat history (${chatCtx.items.length} items)`,
     ...formattedItems.flatMap((item) => ['', item]),
   ].join('\n');
+}
+
+/**
+ * Validate structural integrity of chat context items/terms for realtime usage.
+ */
+export function validateChatContextStructure(chatCtx: ChatContext): ChatContextValidationResult {
+  const issues: ChatContextValidationIssue[] = [];
+  const ids = new Set<string>();
+  const seenFunctionCallIds = new Set<string>();
+  let previousCreatedAt = -Infinity;
+
+  const pushIssue = (issue: ChatContextValidationIssue) => {
+    issues.push(issue);
+  };
+
+  for (let index = 0; index < chatCtx.items.length; index += 1) {
+    const item = chatCtx.items[index]!;
+
+    if (ids.has(item.id)) {
+      pushIssue({
+        severity: 'error',
+        code: 'duplicate_id',
+        index,
+        itemId: item.id,
+        message: `Duplicate item id '${item.id}'`,
+      });
+    } else {
+      ids.add(item.id);
+    }
+
+    if (item.createdAt < previousCreatedAt) {
+      pushIssue({
+        severity: 'error',
+        code: 'timestamp_order',
+        index,
+        itemId: item.id,
+        message: `Item createdAt (${item.createdAt}) is older than previous item (${previousCreatedAt})`,
+      });
+    }
+    previousCreatedAt = item.createdAt;
+
+    if (item.type === 'message') {
+      if (item.content.length === 0) {
+        pushIssue({
+          severity: 'warning',
+          code: 'empty_message_content',
+          index,
+          itemId: item.id,
+          message: 'Message has empty content array',
+        });
+      }
+
+      item.content.forEach((term, termIndex) => {
+        if (typeof term === 'string') {
+          if (term.trim().length === 0) {
+            pushIssue({
+              severity: 'warning',
+              code: 'empty_text_term',
+              index,
+              itemId: item.id,
+              message: `Message term[${termIndex}] is empty text`,
+            });
+          }
+          return;
+        }
+
+        if (term.type === 'image_content') {
+          if (!term.id || term.image === undefined || term.image === null) {
+            pushIssue({
+              severity: 'error',
+              code: 'missing_image_term',
+              index,
+              itemId: item.id,
+              message: `Message term[${termIndex}] has invalid image content`,
+            });
+          }
+          return;
+        }
+
+        if (!Array.isArray(term.frame)) {
+          pushIssue({
+            severity: 'error',
+            code: 'invalid_audio_term',
+            index,
+            itemId: item.id,
+            message: `Message term[${termIndex}] has invalid audio content`,
+          });
+        }
+      });
+    } else if (item.type === 'function_call') {
+      if (!item.name || !item.callId) {
+        pushIssue({
+          severity: 'error',
+          code: 'invalid_function_call',
+          index,
+          itemId: item.id,
+          message: 'Function call is missing name or callId',
+        });
+      } else {
+        seenFunctionCallIds.add(item.callId);
+      }
+
+      try {
+        JSON.parse(item.args);
+      } catch {
+        pushIssue({
+          severity: 'warning',
+          code: 'invalid_function_call_args',
+          index,
+          itemId: item.id,
+          message: 'Function call args are not valid JSON',
+        });
+      }
+    } else if (item.type === 'function_call_output') {
+      if (!item.callId) {
+        pushIssue({
+          severity: 'error',
+          code: 'invalid_function_call_output',
+          index,
+          itemId: item.id,
+          message: 'Function call output is missing callId',
+        });
+      } else if (!seenFunctionCallIds.has(item.callId)) {
+        pushIssue({
+          severity: 'warning',
+          code: 'orphan_function_call_output',
+          index,
+          itemId: item.id,
+          message: `Function call output references unknown callId '${item.callId}'`,
+        });
+      }
+    }
+  }
+
+  const errors = issues.filter((issue) => issue.severity === 'error').length;
+  const warnings = issues.length - errors;
+  return {
+    valid: errors === 0,
+    errors,
+    warnings,
+    issues,
+  };
 }
 
 function formatChatHistoryItem(
