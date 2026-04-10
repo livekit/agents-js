@@ -8,4 +8,4 @@ minimumReleaseAgeExclude:
   - '@livekit/*'
 
 catalog:
-  '@livekit/rtc-node': ^0.13.24
+  '@livekit/rtc-node': ^0.13.25

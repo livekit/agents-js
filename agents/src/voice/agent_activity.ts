@@ -380,6 +380,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.llm instanceof RealtimeModel) {
       const rtReused = reuseResources?.rtSession !== undefined;
+
       if (rtReused) {
         this.logger.debug('reusing realtime session from previous activity');
         this.realtimeSession = reuseResources!.rtSession;

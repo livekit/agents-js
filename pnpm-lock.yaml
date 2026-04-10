@@ -7,8 +7,8 @@ settings:
 catalogs:
   default:
     '@livekit/rtc-node':
-      specifier: ^0.13.24
-      version: 0.13.24
+      specifier: ^0.13.25
+      version: 0.13.25
 
 patchedDependencies:
   '@changesets/assemble-release-plan':
@@ -205,7 +205,7 @@ importers:
     devDependencies:
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.15.30)
@@ -295,7 +295,7 @@ importers:
         version: 0.1.9
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.0
@@ -369,7 +369,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -406,7 +406,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -434,7 +434,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -468,7 +468,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -502,7 +502,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -536,7 +536,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -576,7 +576,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -597,8 +597,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
-        specifier: ^0.13.22
-        version: 0.13.24
+        specifier: 'catalog:'
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -629,7 +629,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -654,7 +654,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -713,7 +713,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -753,7 +753,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -770,15 +770,15 @@ importers:
   plugins/phonic:
     dependencies:
       phonic:
-        specifier: ^0.31.8
-        version: 0.31.8
+        specifier: ^0.31.10
+        version: 0.31.10
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -806,7 +806,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -840,7 +840,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -874,7 +874,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -902,7 +902,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -933,7 +933,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@types/node':
         specifier: ^22.5.5
         version: 22.15.30
@@ -958,7 +958,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -986,7 +986,7 @@ importers:
         version: link:../openai
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.24
+        version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -2063,38 +2063,42 @@ packages:
   '@livekit/protocol@1.45.1':
     resolution: {integrity: sha512-sr6p0TwKofHO5KW6kUzjq4hH2de4Al5scQo824xFnyI1XYo0qQn6fTG+bdr+Uj4EedjYAOqjezwUju5OErVIRA==}
 
-  '@livekit/rtc-node-darwin-arm64@0.13.24':
-    resolution: {integrity: sha512-gm5xOpGu6Rj/mNU2jEijcGhQGN2GdxV2dNYQm3NCKN7ow0BmMFZvXSCAWOWf+9oTutPXHnrc7EN1mt2v+lfqhA==}
-    engines: {node: '>= 10'}
+  '@livekit/rtc-ffi-bindings-darwin-arm64@0.12.52-patch.0':
+    resolution: {integrity: sha512-IKUir6goV8yVRR7E2qrAP0JtH7gUyMkO0TG8G+dopO/fkXAsPpSealgI9fLcBJl0zhKK+eGCr741r6xR+xxsVw==}
+    engines: {node: '>= 18'}
     cpu: [arm64]
     os: [darwin]
 
-  '@livekit/rtc-node-darwin-x64@0.13.24':
-    resolution: {integrity: sha512-jZSK5lHDp7+u0jby7PEWMzbxc0F0nLx6FT3FVjuMlT13ZY6QWKDUUCFbfDOtbdhiOZJYc5A4SwvubY6woEJXTg==}
-    engines: {node: '>= 10'}
+  '@livekit/rtc-ffi-bindings-darwin-x64@0.12.52-patch.0':
+    resolution: {integrity: sha512-h2oKdGvK4E4nYxHc+hsHkYu+oJIhKKqrC96v1XSGa5fgIEcq4Bve6tNEwUCBTkvuGh/I2tOI83udgcF4P4+mhQ==}
+    engines: {node: '>= 18'}
     cpu: [x64]
     os: [darwin]
 
-  '@livekit/rtc-node-linux-arm64-gnu@0.13.24':
-    resolution: {integrity: sha512-I+IeZET2h+viZ48moEFF0EWDHa+kLii5yuEsw38ya4mHZaZtlfbzrYKGKdONqbI9M9ldvv8XXuD0wFPjuH5CZw==}
-    engines: {node: '>= 10'}
+  '@livekit/rtc-ffi-bindings-linux-arm64-gnu@0.12.52-patch.0':
+    resolution: {integrity: sha512-bWtJ3r+wQ1Fd8s8jiM7GnBMfaKepSYk5c4bgimMIC4mkz+puChpfaj9avz1M271FUgxnIAKCTz6fPN2ygIAFnw==}
+    engines: {node: '>= 18'}
     cpu: [arm64]
     os: [linux]
 
-  '@livekit/rtc-node-linux-x64-gnu@0.13.24':
-    resolution: {integrity: sha512-vKOxzN/SsrtV8zIVwZCi31bZUhlb6RhJZ0NnY5MwKGSRFPi7Dwt8fmr0Vh0YmsY/p+4eZjKxvFmy7L3WVE54zw==}
-    engines: {node: '>= 10'}
+  '@livekit/rtc-ffi-bindings-linux-x64-gnu@0.12.52-patch.0':
+    resolution: {integrity: sha512-y1j4ciiCMaUrii0/XYwLFyRBRHDvx4202YCK5ePF3xB+9tW3Fuwexd/z4GuupCpP9eadGkpALCQt60wnLnFDnw==}
+    engines: {node: '>= 18'}
     cpu: [x64]
     os: [linux]
 
-  '@livekit/rtc-node-win32-x64-msvc@0.13.24':
-    resolution: {integrity: sha512-yTzqwndq2oKLUkXW2i/BkZMJC6kZOpRO/DKvkkKQvqc3Q+JuWz1m48GmyjIwTOKF28QjqEU3+IrnD65Uu+mFOg==}
-    engines: {node: '>= 10'}
+  '@livekit/rtc-ffi-bindings-win32-x64-msvc@0.12.52-patch.0':
+    resolution: {integrity: sha512-a7eoTor7KgN4JDPqZjyBQjgkVIZcxkyP5Iau3O/1qDaYKboLMqSYHfSAk84Un4r0SsSFvxUXXDY3boMLJ7QYow==}
+    engines: {node: '>= 18'}
     cpu: [x64]
     os: [win32]
 
-  '@livekit/rtc-node@0.13.24':
-    resolution: {integrity: sha512-06pF8YJlJk11R6J7kFXFpwV8etpbmCskoXFvwfwcDDixMqaP6qtS5srq3G23mDaRjx7ofz/PXg2GtiZbqNGT5A==}
+  '@livekit/rtc-ffi-bindings@0.12.52-patch.0':
+    resolution: {integrity: sha512-e01PH3AAS0/oN93LzgLDycDWzLGCpHqvZ35qzSuBWrG7V9mmQpdW/bOc6r9UFGZx/BcUXov4OTtao4OyDVVyHw==}
+    engines: {node: '>= 18'}
+
+  '@livekit/rtc-node@0.13.25':
+    resolution: {integrity: sha512-4tL58O2DdTDP+g1ajyP5mgEOzjymD/u06IxWWVKBee1goEwDSQlMqEog/DJW34FoNNqXp1yRMCsphI4V/T1ILg==}
     engines: {node: '>= 18'}
 
   '@livekit/throws-transformer@0.0.0-20260320165515':
@@ -4482,8 +4486,8 @@ packages:
     resolution: {integrity: sha512-vE7JKRyES09KiunauX7nd2Q9/L7lhok4smP9RZTDeD4MVs72Dp2qNFVz39Nz5a0FVEW0BJR6C0DYrq6unoziZA==}
     engines: {node: '>= 14.16'}
 
-  phonic@0.31.8:
-    resolution: {integrity: sha512-BeUqRbr0Ta0uB+6OCB770BNJ/r77HvgF+5vE2c69HEylqO93IMQkeWVeXb56Vh8mT5D3LGoO6NRssG5ChtreMw==}
+  phonic@0.31.10:
+    resolution: {integrity: sha512-MMEbfgBnjdZ0j8dkRMCl3TQTpIiKtqaJY6U1DMJhl8F8diOVh92Q9XXbBeBCoRsrKhoHpfDxRrnKVunX6NlF1w==}
     engines: {node: '>=18.0.0'}
 
   picocolors@1.0.1:
@@ -4965,7 +4969,7 @@ packages:
   tar@7.4.3:
     resolution: {integrity: sha512-5S7Va8hKfV7W5U6g3aYxXmlPoZVAwUMy9AOKyF2fVuZa2UD3qZjg578OrLRt8PcNN1PleVaL/5/yYATNL0ICUw==}
     engines: {node: '>=18'}
-    deprecated: Old versions of tar are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+    deprecated: Old versions of tar are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exhorbitant rates) by contacting i@izs.me
 
   term-size@2.2.1:
     resolution: {integrity: sha512-wK0Ri4fOGjv/XPy8SBHZChl8CM7uMc5VML7SqiQ0zG7+J5Vr+RMQDoHa2CNT6KHUnTGIXH34UDMkPzAUyapBZg==}
@@ -6353,7 +6357,7 @@ snapshots:
 
   '@livekit/noise-cancellation-node@0.1.9':
     dependencies:
-      '@livekit/rtc-node': 0.13.24
+      '@livekit/rtc-node': 0.13.25
       tsx: 4.21.0
     optionalDependencies:
       '@livekit/noise-cancellation-darwin-arm64': 0.1.9
@@ -6369,35 +6373,39 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 1.10.1
 
-  '@livekit/rtc-node-darwin-arm64@0.13.24':
+  '@livekit/rtc-ffi-bindings-darwin-arm64@0.12.52-patch.0':
     optional: true
 
-  '@livekit/rtc-node-darwin-x64@0.13.24':
+  '@livekit/rtc-ffi-bindings-darwin-x64@0.12.52-patch.0':
     optional: true
 
-  '@livekit/rtc-node-linux-arm64-gnu@0.13.24':
+  '@livekit/rtc-ffi-bindings-linux-arm64-gnu@0.12.52-patch.0':
     optional: true
 
-  '@livekit/rtc-node-linux-x64-gnu@0.13.24':
+  '@livekit/rtc-ffi-bindings-linux-x64-gnu@0.12.52-patch.0':
     optional: true
 
-  '@livekit/rtc-node-win32-x64-msvc@0.13.24':
+  '@livekit/rtc-ffi-bindings-win32-x64-msvc@0.12.52-patch.0':
     optional: true
 
-  '@livekit/rtc-node@0.13.24':
+  '@livekit/rtc-ffi-bindings@0.12.52-patch.0':
     dependencies:
       '@bufbuild/protobuf': 1.10.1
+    optionalDependencies:
+      '@livekit/rtc-ffi-bindings-darwin-arm64': 0.12.52-patch.0
+      '@livekit/rtc-ffi-bindings-darwin-x64': 0.12.52-patch.0
+      '@livekit/rtc-ffi-bindings-linux-arm64-gnu': 0.12.52-patch.0
+      '@livekit/rtc-ffi-bindings-linux-x64-gnu': 0.12.52-patch.0
+      '@livekit/rtc-ffi-bindings-win32-x64-msvc': 0.12.52-patch.0
+
+  '@livekit/rtc-node@0.13.25':
+    dependencies:
       '@datastructures-js/deque': 1.0.8
       '@livekit/mutex': 1.1.1
+      '@livekit/rtc-ffi-bindings': 0.12.52-patch.0
       '@livekit/typed-emitter': 3.0.0
       pino: 9.6.0
       pino-pretty: 13.0.0
-    optionalDependencies:
-      '@livekit/rtc-node-darwin-arm64': 0.13.24
-      '@livekit/rtc-node-darwin-x64': 0.13.24
-      '@livekit/rtc-node-linux-arm64-gnu': 0.13.24
-      '@livekit/rtc-node-linux-x64-gnu': 0.13.24
-      '@livekit/rtc-node-win32-x64-msvc': 0.13.24
 
   '@livekit/throws-transformer@0.0.0-20260320165515(typescript@5.4.5)':
     dependencies:
@@ -9121,7 +9129,7 @@ snapshots:
 
   pathval@2.0.0: {}
 
-  phonic@0.31.8:
+  phonic@0.31.10:
     dependencies:
       ws: 8.20.0
     transitivePeerDependencies:
