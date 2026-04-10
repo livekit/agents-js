@@ -55,5 +55,4 @@ be approved:
 ## Assist others in the community
 
 If you can't contribute code, you can still help us greatly by helping out community members who
-may have questions about the framework and how to use it. Join the `#agents` channel on
-[our Slack](https://livekit.io/join-slack).
+may have questions about the framework and how to use it. Join and participate in the [LiveKit community](https://community.livekit.io/).
