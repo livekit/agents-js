@@ -245,7 +245,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private client: PhonicClient;
   private socket?: Awaited<ReturnType<PhonicClient['conversations']['connect']>>;
-  private logger = log();
+  #logger = log();
   private closed = false;
   private configSent = false;
   private instructionsReady = new Future<void>();
@@ -288,7 +288,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async updateInstructions(instructions: string): Promise<void> {
     if (this.configSent) {
-      this.logger.warn(
+      this.#logger.warn(
         'updateInstructions called after config was already sent. Phonic does not support updating instructions mid-session.',
       );
       return;
@@ -311,7 +311,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           .map((item) => `${item.role}: ${item.textContent}`)
           .join('\n');
         if (turnHistory.trim() !== '') {
-          this.logger.debug(
+          this.#logger.debug(
             'updateChatCtx called with messages prior to config being sent to Phonic. Including conversation state in system instructions.',
           );
           this.systemPromptPostfix = CONVERSATION_HISTORY_PREFIX + turnHistory;
@@ -329,7 +329,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const item = chatCtx.getById(itemId);
       if (item?.type === 'function_call_output' && this.pendingToolCallIds.has(item.callId)) {
         this.pendingToolCallIds.delete(item.callId);
-        this.logger.info(`Sending tool call output for ${item.name} (call_id: ${item.callId})`);
+        this.#logger.info(`Sending tool call output for ${item.name} (call_id: ${item.callId})`);
         this.socket?.sendToolCallOutput({
           type: 'tool_call_output',
           tool_call_id: item.callId,
@@ -339,7 +339,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       if (item?.type === 'message') {
         if ((item.role === 'system' || item.role === 'developer') && item.textContent) {
-          this.logger.debug(`Sending add system message: ${item.textContent}`);
+          this.#logger.debug(`Sending add system message: ${item.textContent}`);
           this.socket?.sendAddSystemMessage({
             type: 'add_system_message',
             system_message: item.textContent,
@@ -352,7 +352,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this._chatCtx = chatCtx.copy();
 
     if (!sentToolCallOutput && !sentAddSystemMessage) {
-      this.logger.warn(
+      this.#logger.warn(
         'updateChatCtx called but no new tool call outputs to send. Phonic does not support general chat context updates.',
       );
     }
@@ -363,7 +363,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async updateTools(tools: llm.ToolContext): Promise<void> {
     if (this.configSent) {
-      this.logger.warn(
+      this.#logger.warn(
         'updateTools called after config was already sent. Phonic does not support updating tools mid-session.',
       );
       return;
@@ -393,11 +393,15 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.toolsReady.resolve();
   }
 
-  async _updateSession(
+  override async _updateSession(
     instructions?: string,
     chatCtx?: llm.ChatContext,
     tools?: llm.ToolContext,
   ): Promise<void> {
+    if (!this.configSent) {
+      await super._updateSession(instructions, chatCtx, tools);
+      return;
+    }
     await this.readyToStart.await;
     if (instructions !== undefined) {
       this.options.instructions = instructions;
@@ -442,7 +446,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     ];
 
     if (this.socket) {
-      this.logger.info('Sending mid-session reset to Phonic');
+      this.#logger.info('Sending mid-session reset to Phonic');
       this.socket.sendReset({
         type: 'reset',
         config: this.buildConfigOptions({ systemPrompt, toolsPayload }),
@@ -451,7 +455,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   updateOptions(_options: { toolChoice?: llm.ToolChoice | null }): void {
-    this.logger.warn('updateOptions is not supported by the Phonic realtime model.');
+    this.#logger.warn('updateOptions is not supported by the Phonic realtime model.');
   }
 
   pushAudio(frame: AudioFrame): void {
@@ -512,20 +516,20 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async commitAudio(): Promise<void> {
-    this.logger.warn('commitAudio is not supported by the Phonic realtime model.');
+    this.#logger.warn('commitAudio is not supported by the Phonic realtime model.');
   }
   async clearAudio(): Promise<void> {
-    this.logger.warn('clearAudio is not supported by the Phonic realtime model.');
+    this.#logger.warn('clearAudio is not supported by the Phonic realtime model.');
   }
 
   async interrupt(): Promise<void> {
-    this.logger.warn(
+    this.#logger.warn(
       'interrupt() is not supported by Phonic realtime model. User interruptions are automatically handled by Phonic.',
     );
   }
 
   async truncate(_options: { messageId: string; audioEndMs: number; audioTranscript?: string }) {
-    this.logger.warn('truncate is not supported by the Phonic realtime model.');
+    this.#logger.warn('truncate is not supported by the Phonic realtime model.');
   }
 
   async close(): Promise<void> {
@@ -652,7 +656,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         break;
       case 'conversation_created':
         this.conversationId = message.conversation_id;
-        this.logger.info(`Phonic Conversation began with ID: ${this.conversationId}`);
+        this.#logger.info(`Phonic Conversation began with ID: ${this.conversationId}`);
         break;
       case 'tool_call_interrupted':
         this.handleToolCallInterrupted(message);
@@ -675,7 +679,7 @@ export class RealtimeSession extends llm.RealtimeSession {
      * we only process the chunks when the assistant is speaking to align with the generations model, whereby new streams are created for each turn.
      */
     if (this.currentGeneration === undefined && message.text) {
-      this.logger.debug('Starting new generation due to text in audio chunk');
+      this.#logger.debug('Starting new generation due to text in audio chunk');
       this.startNewAssistantTurn({ userInitiated: false });
     }
 
@@ -727,7 +731,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.pendingToolCallIds.add(message.tool_call_id);
 
     if (this.currentGeneration === undefined) {
-      this.logger.warn('Encountered tool call but no active generation. Starting new turn.');
+      this.#logger.warn('Encountered tool call but no active generation. Starting new turn.');
       this.startNewAssistantTurn({ userInitiated: false });
     }
 
@@ -744,7 +748,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private handleToolCallInterrupted(message: Phonic.ToolCallInterruptedPayload): void {
     this.pendingToolCallIds.delete(message.tool_call_id);
-    this.logger.warn(
+    this.#logger.warn(
       `Tool call for ${message.tool_name} (call_id: ${message.tool_call_id}) was cancelled due to user interruption.`,
     );
   }

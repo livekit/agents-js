@@ -4,6 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import type { ReadableStream } from 'node:stream/web';
+import { log } from '../log.js';
 import { MultiInputStream } from '../stream/multi_input_stream.js';
 import { Task } from '../utils.js';
 import type { TimedString } from '../voice/io.js';
@@ -88,6 +89,7 @@ export abstract class RealtimeModel {
 
 export abstract class RealtimeSession extends EventEmitter {
   protected _realtimeModel: RealtimeModel;
+  protected logger = log();
   private inputAudioStream = new MultiInputStream<AudioFrame>();
   private inputAudioStreamId?: string;
   private _mainTask: Task<void>;
@@ -148,6 +150,34 @@ export abstract class RealtimeSession extends EventEmitter {
     modalities?: ('text' | 'audio')[];
     audioTranscript?: string;
   }): Promise<void>;
+
+  async _updateSession(
+    instructions?: string,
+    chatCtx?: ChatContext,
+    tools?: ToolContext,
+  ): Promise<void> {
+    if (instructions !== undefined) {
+      try {
+        await this.updateInstructions(instructions);
+      } catch (error) {
+        this.logger.error(error, 'failed to update the instructions');
+      }
+    }
+    if (chatCtx !== undefined) {
+      try {
+        await this.updateChatCtx(chatCtx);
+      } catch (error) {
+        this.logger.error(error, 'failed to update the chat context');
+      }
+    }
+    if (tools !== undefined) {
+      try {
+        await this.updateTools(tools);
+      } catch (error) {
+        this.logger.error(error, 'failed to update the tools');
+      }
+    }
+  }
 
   async close(): Promise<void> {
     this._mainTask.cancel();
