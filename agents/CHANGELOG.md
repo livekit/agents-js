@@ -1,5 +1,15 @@
 # @livekit/agents
 
+## 1.2.6
+
+### Patch Changes
+
+- Add get_framework_info request/response support - [#1223](https://github.com/livekit/agents-js/pull/1223) ([@toubatbrian](https://github.com/toubatbrian))
+
+- update readme with community link - [#1225](https://github.com/livekit/agents-js/pull/1225) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- refactor \_updateSession in phonic and base realtimesession class - [#1224](https://github.com/livekit/agents-js/pull/1224) ([@tinalenguyen](https://github.com/tinalenguyen))
+
 ## 1.2.5
 
 ### Patch Changes
