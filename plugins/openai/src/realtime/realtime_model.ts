@@ -185,6 +185,10 @@ export class RealtimeModel extends llm.RealtimeModel {
       autoToolReplyGeneration: false,
       audioOutput: modalities.includes('audio'),
       manualFunctionCalls: true,
+      midSessionChatCtxUpdate: true,
+      midSessionInstructionsUpdate: true,
+      midSessionToolsUpdate: true,
+      perResponseToolChoice: true,
     });
 
     const isAzure = !!(options.apiVersion || options.entraToken || options.azureDeployment);
@@ -477,17 +481,75 @@ export class RealtimeSession extends llm.RealtimeSession {
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
     const unlock = await this.updateChatCtxLock.lock();
     try {
+      const validation = llm.validateChatContextStructure(_chatCtx);
+      const blockingErrors = validation.issues.filter(
+        (issue: llm.ChatContextValidationIssue) =>
+          issue.severity === 'error' && issue.code !== 'timestamp_order',
+      );
+      const timestampOrderIssue = validation.issues.find(
+        (issue: llm.ChatContextValidationIssue) => issue.code === 'timestamp_order',
+      );
+      if (blockingErrors.length > 0) {
+        this.#logger.error(
+          { issues: validation.issues, blockingErrors },
+          'Invalid chat context supplied to updateChatCtx',
+        );
+        throw new Error(
+          `Invalid chat context: ${validation.errors} errors, ${validation.warnings} warnings`,
+        );
+      }
+      if (timestampOrderIssue) {
+        this.#logger.warn(
+          { timestampOrderIssue },
+          'Proceeding with non-monotonic createdAt ordering in realtime chat context',
+        );
+      }
+      if (lkOaiDebug > 0 && validation.warnings > 0) {
+        this.#logger.debug(
+          {
+            warnings: validation.warnings,
+            issues: validation.issues,
+          },
+          'Chat context warnings detected before realtime update',
+        );
+      }
+
       const events = await this.createChatCtxUpdateEvents(_chatCtx);
       const futures: Future<void>[] = [];
+      const ownedCreateFutures: { [id: string]: Future<void> } = {};
+      const ownedDeleteFutures: { [id: string]: Future<void> } = {};
+
+      const cleanupTimedOutFutures = () => {
+        // remove timed-out entries so late server acks
+        // don't resolve stale futures from a previous updateChatCtx call.
+        for (const [itemId, future] of Object.entries(ownedDeleteFutures)) {
+          if (this.itemDeleteFutures[itemId] === future) {
+            delete this.itemDeleteFutures[itemId];
+          }
+        }
+        for (const [itemId, future] of Object.entries(ownedCreateFutures)) {
+          if (this.itemCreateFutures[itemId] === future) {
+            delete this.itemCreateFutures[itemId];
+          }
+        }
+      };
 
       for (const event of events) {
-        const future = new Future<void>();
-        futures.push(future);
-
         if (event.type === 'conversation.item.create') {
+          const future = new Future<void>();
+          futures.push(future);
           this.itemCreateFutures[event.item.id] = future;
+          ownedCreateFutures[event.item.id] = future;
         } else if (event.type == 'conversation.item.delete') {
+          const existingDeleteFuture = this.itemDeleteFutures[event.item_id];
+          if (existingDeleteFuture) {
+            futures.push(existingDeleteFuture);
+            continue;
+          }
+          const future = new Future<void>();
+          futures.push(future);
           this.itemDeleteFutures[event.item_id] = future;
+          ownedDeleteFutures[event.item_id] = future;
         }
 
         this.sendEvent(event);
@@ -497,13 +559,21 @@ export class RealtimeSession extends llm.RealtimeSession {
         return;
       }
 
-      // wait for futures to resolve or timeout
-      await Promise.race([
-        Promise.all(futures),
-        delay(5000).then(() => {
-          throw new Error('Chat ctx update events timed out');
-        }),
-      ]);
+      // wait for futures to resolve or timeout.
+      // Cancel the timeout branch once futures resolve to avoid stale cleanup.
+      const timeoutController = new AbortController();
+      const timeoutPromise = delay(5000, { signal: timeoutController.signal }).then(() => {
+        cleanupTimedOutFutures();
+        throw new Error('Chat ctx update events timed out');
+      });
+
+      try {
+        await Promise.race([Promise.all(futures), timeoutPromise]);
+      } finally {
+        if (!timeoutController.signal.aborted) {
+          timeoutController.abort();
+        }
+      }
     } catch (e) {
       this.#logger.error((e as Error).message);
       throw e;
