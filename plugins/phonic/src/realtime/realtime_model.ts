@@ -865,7 +865,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
     if (this.inputResampler) {
       if (frame.sampleRate !== this.inputResamplerInputRate) {
-        // this.inputResampler.close();
+        this.inputResampler.close();
         this.inputResampler = undefined;
         this.inputResamplerInputRate = undefined;
       }
