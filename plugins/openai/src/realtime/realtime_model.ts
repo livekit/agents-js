@@ -516,14 +516,20 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       const events = await this.createChatCtxUpdateEvents(_chatCtx);
       const futures: Future<void>[] = [];
+      const ownedCreateFutures: { [id: string]: Future<void> } = {};
+      const ownedDeleteFutures: { [id: string]: Future<void> } = {};
+
       const cleanupTimedOutFutures = () => {
         // remove timed-out entries so late server acks
         // don't resolve stale futures from a previous updateChatCtx call.
-        for (const event of events) {
-          if (event.type === 'conversation.item.delete') {
-            delete this.itemDeleteFutures[event.item_id];
-          } else if (event.type === 'conversation.item.create') {
-            delete this.itemCreateFutures[event.item.id];
+        for (const [itemId, future] of Object.entries(ownedDeleteFutures)) {
+          if (this.itemDeleteFutures[itemId] === future) {
+            delete this.itemDeleteFutures[itemId];
+          }
+        }
+        for (const [itemId, future] of Object.entries(ownedCreateFutures)) {
+          if (this.itemCreateFutures[itemId] === future) {
+            delete this.itemCreateFutures[itemId];
           }
         }
       };
@@ -533,6 +539,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           const future = new Future<void>();
           futures.push(future);
           this.itemCreateFutures[event.item.id] = future;
+          ownedCreateFutures[event.item.id] = future;
         } else if (event.type == 'conversation.item.delete') {
           const existingDeleteFuture = this.itemDeleteFutures[event.item_id];
           if (existingDeleteFuture) {
@@ -542,6 +549,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           const future = new Future<void>();
           futures.push(future);
           this.itemDeleteFutures[event.item_id] = future;
+          ownedDeleteFutures[event.item_id] = future;
         }
 
         this.sendEvent(event);
@@ -551,14 +559,21 @@ export class RealtimeSession extends llm.RealtimeSession {
         return;
       }
 
-      // wait for futures to resolve or timeout
-      await Promise.race([
-        Promise.all(futures),
-        delay(5000).then(() => {
-          cleanupTimedOutFutures();
-          throw new Error('Chat ctx update events timed out');
-        }),
-      ]);
+      // wait for futures to resolve or timeout.
+      // Cancel the timeout branch once futures resolve to avoid stale cleanup.
+      const timeoutController = new AbortController();
+      const timeoutPromise = delay(5000, { signal: timeoutController.signal }).then(() => {
+        cleanupTimedOutFutures();
+        throw new Error('Chat ctx update events timed out');
+      });
+
+      try {
+        await Promise.race([Promise.all(futures), timeoutPromise]);
+      } finally {
+        if (!timeoutController.signal.aborted) {
+          timeoutController.abort();
+        }
+      }
     } catch (e) {
       this.#logger.error((e as Error).message);
       throw e;

@@ -250,6 +250,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pendingToolCallIds = new Set<string>();
   private readyToStart = new Future<void>();
   private pendingGenerateReplyFut?: Future<llm.GenerationCreatedEvent>;
+  private generateReplyRequestId = 0;
   private systemPromptPostfix = '';
 
   constructor(realtimeModel: RealtimeModel) {
@@ -472,15 +473,30 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (this.closed) {
       return Promise.reject(new Error('session is closed'));
     }
+
+    if (this.pendingGenerateReplyFut && !this.pendingGenerateReplyFut.done) {
+      this.pendingGenerateReplyFut.reject(
+        new Error('generateReply superseded by a newer generateReply call'),
+      );
+    }
+
+    const requestId = ++this.generateReplyRequestId;
     this.closeCurrentGeneration({ interrupted: false });
     this.pendingGenerateReplyFut = new Future<llm.GenerationCreatedEvent>();
-    this.sendGenerateReply(instructions);
+    this.sendGenerateReply(instructions, requestId);
 
     return this.pendingGenerateReplyFut.await;
   }
 
-  private async sendGenerateReply(instructions?: string): Promise<void> {
+  private async sendGenerateReply(
+    instructions: string | undefined,
+    requestId: number,
+  ): Promise<void> {
     await this.readyToStart.await;
+    if (requestId !== this.generateReplyRequestId) {
+      return;
+    }
+
     if (this.closed || !this.socket) {
       this.pendingGenerateReplyFut?.reject(new Error('session is closed'));
       this.pendingGenerateReplyFut = undefined;
