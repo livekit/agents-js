@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-deepgram
 
+## 1.2.5
+
+### Patch Changes
+
+- Updated dependencies [[`a4ed445ba9140bc1c091e7ecbd6ad394ba2d5e8d`](https://github.com/livekit/agents-js/commit/a4ed445ba9140bc1c091e7ecbd6ad394ba2d5e8d), [`8a06cacb6f183e44b333da95ee706370b99eb597`](https://github.com/livekit/agents-js/commit/8a06cacb6f183e44b333da95ee706370b99eb597), [`a6f5c939e72aae8f8596636d0e425255499cc13e`](https://github.com/livekit/agents-js/commit/a6f5c939e72aae8f8596636d0e425255499cc13e), [`f7d11deb098222c916ab03808e6c342b2c83dfc9`](https://github.com/livekit/agents-js/commit/f7d11deb098222c916ab03808e6c342b2c83dfc9), [`a6f5c939e72aae8f8596636d0e425255499cc13e`](https://github.com/livekit/agents-js/commit/a6f5c939e72aae8f8596636d0e425255499cc13e), [`a6f5c939e72aae8f8596636d0e425255499cc13e`](https://github.com/livekit/agents-js/commit/a6f5c939e72aae8f8596636d0e425255499cc13e)]:
+  - @livekit/agents@1.2.5
+
 ## 1.2.4
 
 ### Patch Changes
